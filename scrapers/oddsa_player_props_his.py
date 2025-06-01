@@ -1,0 +1,127 @@
+# scrapers/odds_api_player_props_history.py
+
+import os
+import logging
+from datetime import datetime
+
+from .scraper_base import ScraperBase
+from .utils.exceptions import DownloadDataException
+
+logger = logging.getLogger("scraper_base")
+
+class GetOddsApiPlayerPropsHistory(ScraperBase):
+    """
+    Scraper for The Odds API (historical) that fetches NBA player props by event ID.
+
+    Usage example:
+      python odds_api_player_props_history.py --event_id=da359da99aa27e97d38f2df709343998 \
+        --apiKey=MY_SECRET_KEY \
+        --date=2023-11-29T22:45:00Z \
+        --markets=player_points,h2h_q1 \
+        --regions=us
+    """
+
+    required_opts = ["event_id", "apiKey", "date"]
+    additional_opts = []
+
+    use_proxy = False
+
+    exporters = [
+        {
+            "type": "gcs",
+            "key": "oddsapi/player-props/%(event_id)s/%(time)s.json",
+            "use_raw": True,
+            "groups": ["prod", "gcs"],
+        },
+        {
+            "type": "file",
+            "filename": "/tmp/oddsapi_player_props_history.json",
+            "use_raw": True,
+            "groups": ["dev", "file"],
+        }
+    ]
+
+    def set_url(self):
+        """
+        Construct the URL for The Odds API historical player props endpoint.
+        e.g.:
+        https://api.the-odds-api.com/v4/historical/sports/basketball_nba/events/<EVENT_ID>/odds
+        """
+        base_url = "https://api.the-odds-api.com/v4/historical/sports/basketball_nba/events"
+        event_id = self.opts["event_id"]
+        api_key = self.opts["apiKey"]
+        date_str = self.opts["date"]  # e.g. "2023-11-29T22:45:00Z"
+
+        # Optional parameters
+        regions = self.opts.get("regions", "us")
+        markets = self.opts.get("markets", "player_points")
+
+        self.url = (
+            f"{base_url}/{event_id}/odds"
+            f"?apiKey={api_key}"
+            f"&date={date_str}"
+            f"&regions={regions}"
+            f"&markets={markets}"
+        )
+
+        logger.info("Constructed Odds API Player Props URL: %s", self.url)
+
+    def set_headers(self):
+        """
+        Typically minimal headers needed for The Odds API.
+        """
+        self.headers = {
+            "Accept": "application/json"
+        }
+        logger.debug("Headers set for Player Props request: %s", self.headers)
+
+    def validate_download_data(self):
+        """
+        If there's an error, The Odds API might return an error JSON or an empty list.
+        We check basic structure here.
+        """
+        if isinstance(self.decoded_data, dict) and "message" in self.decoded_data:
+            msg = self.decoded_data["message"]
+            logger.error("API returned an error message: %s", msg)
+            raise DownloadDataException(f"API error: {msg}")
+
+        if isinstance(self.decoded_data, list):
+            if len(self.decoded_data) == 0:
+                logger.info("No player props returned. Possibly none available for this event.")
+            else:
+                logger.info("Found %d items in player props data for event_id=%s",
+                            len(self.decoded_data), self.opts["event_id"])
+        else:
+            logger.error("Unexpected data structure: expected a list, got %s", type(self.decoded_data))
+            raise DownloadDataException("Unexpected data structure; expected a list of odds info.")
+
+    def should_save_data(self):
+        """
+        Optional logic to skip exporting if there's no data.
+        """
+        if isinstance(self.decoded_data, list) and len(self.decoded_data) == 0:
+            logger.info("Skipping export because decoded_data is an empty list.")
+            return False
+        return True
+
+    ##################################################################
+    # Override get_scraper_stats() to include # of props, event_id, date
+    ##################################################################
+    def get_scraper_stats(self):
+        """
+        Return fields for the final SCRAPER_STATS line:
+        the number of props found, event_id, and date.
+        """
+        if isinstance(self.decoded_data, list):
+            records_found = len(self.decoded_data)
+        else:
+            records_found = 0
+
+        event_id = self.opts.get("event_id", "unknown")
+        date_str = self.opts.get("date", "unknown")
+
+        return {
+            "records_found": records_found,
+            "event_id": event_id,
+            "date": date_str
+        }
