@@ -1,17 +1,21 @@
+Below is an **updated** `README.md` for your `scrapers` directory, reflecting your **ScraperBase** improvements (enum-based export modes, structured logs, etc.). Feel free to adjust any details (like GCF commands or references) to match your environment.
+
+````markdown
 # README: NBA / Odds API Scrapers
 
 ## Overview
 
 This folder contains **Python scrapers** for NBA-related data (e.g., schedules, player movement, boxscores) and Odds API data (historical and current odds). All scrapers inherit from a central **`ScraperBase`** class that handles:
 
-* **HTTP requests** (with optional proxy usage)
-* **Automatic retries** for transient errors
-* **Decoding** JSON or other data
-* **Validation** (child classes provide domain-specific checks)
-* **Exporting** data (to GCS, local files, etc.) via a **configurable exporter registry**
-* **Logging** (structured logs for debugging and daily summary aggregation)
+- **HTTP requests** (with optional proxy usage)
+- **Automatic retries** for transient errors
+- **Decoding** JSON or other data (e.g., PDFs or raw bytes)
+- **Validation** (child classes provide domain-specific checks)
+- **Exporting** data (to GCS, local files, etc.) via a **configurable exporter registry**
+- **Logging** (structured logs for debugging and daily summary aggregation)
+- **Enums** for controlled “export modes” (`raw`, `decoded`, or `data`)
 
-Each scraper can be run **locally** or deployed as a **Google Cloud Function**. Cloud Workflows can chain them together if you want orchestrated runs.
+Each scraper can be run **locally** or deployed as a **Google Cloud Function**. You can also chain them in **Cloud Workflows** for orchestrated runs.
 
 ---
 
@@ -28,135 +32,201 @@ Each scraper can be run **locally** or deployed as a **Google Cloud Function**. 
 
 ## ScraperBase Design
 
-* **File**: `scraper_base.py`
-* **Responsibilities**:
+**Location**: [`scraper_base.py`](./scraper_base.py)
 
-  1. **Option Validation**: Each child class declares `required_opts` (e.g. `["gamedate"]`). `ScraperBase` checks them before running.
-  2. **`download_and_decode()`**: Handles HTTP GET (with retries, optional proxies). If decoding is set to JSON, automatically parses `self.decoded_data`.
-  3. **`validate_download_data()`**: Child scrapers override to ensure required fields exist in `self.decoded_data`.
-  4. **Exporting**: Based on each scraper’s `exporters` array (dicts specifying “type,” “key,” “groups,” etc.).
-  5. **Structured Logging**: Outputs logs for downloads, retries, validation steps, plus a final `SCRAPER_STATS` line you can parse for daily summaries.
-  6. **`post_export()`**: Hook method that logs final stats. By default, it merges default stats (runtime, scraper name) with any custom stats from `child_scraper.get_scraper_stats()`.
+**Responsibilities**:
 
-**Key Methods** Child scrapers might override:
+1. **Option Validation**  
+   Each child class declares `required_opts` (e.g., `["gamedate"]`). `ScraperBase` checks them before running.
 
-* `set_url()`: Build the request URL from `self.opts`.
-* `set_headers()`: Define any custom request headers.
-* `validate_download_data()`: Ensure the final JSON structure is valid.
-* `slice_data()`: If you want to transform or subset `self.decoded_data`, store results in `self.data[...]`.
-* `should_save_data()`: Return `False` to skip export under certain conditions.
-* `get_scraper_stats()`: Return a dict of custom fields (e.g. `records_found`) to include in the final `SCRAPER_STATS` log.
+2. **`download_and_decode()`**  
+   Handles HTTP GET with retries (and optional proxy). If `download_type` is JSON, it automatically decodes into `self.decoded_data`. Otherwise, you can parse it manually (e.g., PDFs).
+
+3. **`validate_download_data()`**  
+   Child scrapers override to ensure required fields exist in `self.decoded_data` (or the raw bytes).
+
+4. **Exporting**  
+   Each scraper’s `exporters` list specifies how to save data (e.g. GCS, file, Slack). Config fields like `"export_mode": "raw"` or `"decoded"` control whether the exporter receives bytes (`raw_response.content`), the JSON object (`decoded_data`), or a custom slice from `self.data`.
+
+5. **Structured Logging**  
+   Logs key steps (download, retries, validation) plus a final `SCRAPER_STATS` line you can parse for daily summaries. You can also override `post_export()` to add additional behaviors after exporting.
+
+6. **Hooks** (e.g. `set_url()`, `transform_data()`, `should_save_data()`)  
+   Child classes override these for domain-specific logic. That includes building URLs, deciding if data is valid, or slicing the final data for partial exports.
 
 ---
 
 ## Child Scrapers
 
-Each scraper is named after its domain, e.g.:
+### NBA.com Scrapers
 
-1. **NBA.com** scrapers:
+- **`nba_com_game_score.py`**  
+  Fetches the scoreboard data (scores/games) from NBA stats.
 
-   * `nba_com_game_score.py`: Fetch NBA scoreboard data.
-   * `nba_com_injury_report.py`: Parse the NBA’s injury report PDF.
-   * `nba_com_player_boxscore.py`: Fetch daily player boxscores from stats.nba.com.
-   * `nba_com_player_list.py`: Retrieve the current NBA player list.
-   * `nba_com_player_movement.py`: Grab transaction/player movement data.
-   * `nba_com_schedule.py`: Download and slice the NBA schedule.
+- **`nba_com_injury_report.py`**  
+  Parses the NBA injury report PDF file.
 
-2. **Odds API** scrapers:
+- **`nba_com_player_boxscore.py`**  
+  Retrieves per-player boxscores for a given date.
 
-   * `odds_api_historical_events.py`: Get historical NBA events for a given date/time.
-   * `odds_api_player_props_history.py`: Fetch historical player props for a given event ID.
-   * `odds_api_current_event_odds.py`: Get current odds/props for a given event ID.
-   * `odds_api_team_players.py`: Fetch team/player rosters from The Odds API (undocumented endpoint).
+- **`nba_com_player_list.py`**  
+  Retrieves the current list of all NBA players from the stats API.
 
-**Each** scraper:
+- **`nba_com_player_movement.py`**  
+  Fetches transaction / movement data (player trades, signings).
 
-* Declares `required_opts` and optionally `additional_opts`.
-* Has an `exporters` list specifying how to save data (GCS, file, Slack, etc.).
-* Typically overrides `get_scraper_stats()` to return the number of records found, a `date` or `gamedate`, etc.
+- **`nba_com_schedule.py`**  
+  Downloads the full NBA schedule, then slices it by date/team to produce multiple exports.
+
+### Odds API Scrapers
+
+- **`odds_api_historical_events.py`**  
+  Fetches historical odds events for a given date/time range.
+
+- **`odds_api_player_props_history.py`**  
+  Fetches historical player props for a given event ID.
+
+- **`odds_api_current_event_odds.py`**  
+  Retrieves current odds for a specific event (by sport + event ID).
+
+- **`odds_api_team_players.py`**  
+  Fetches a team’s player roster from an undocumented endpoint of The Odds API.
 
 ---
 
 ## Usage & Running Locally
 
-1. **Install** dependencies in your virtualenv (see the project’s main `requirements.txt`).
-2. **Activate** the venv:
+1. **Install** dependencies from your `requirements.txt`:
 
    ```bash
+   python -m venv .venv
    source .venv/bin/activate
-   ```
-3. **Run** a scraper locally:
+   pip install -r requirements.txt
+````
+
+2. **Run** a scraper locally:
 
    ```bash
+   cd scrapers
    python nba_com_game_score.py --gamedate=2023-12-01 --group=dev
    ```
 
    or for an Odds API example:
 
    ```bash
-   python odds_api_historical_events.py --apiKey=YOUR_KEY --date=2023-12-01T00:00:00Z
+   python odds_api_historical_events.py --apiKey=MY_SECRET_KEY --date=2023-12-01T22:45:00Z
    ```
-4. **Logs** print to console. The final line includes `SCRAPER_STATS {...}` with JSON you can parse.
 
-*(You can pass extra flags or environment variables as needed, e.g. `ENV=local`.)*
+3. **Logs** appear in the console. The final line includes `SCRAPER_STATS {...}` with JSON you can parse for daily summaries.
+
+4. **Options**:
+
+   * `--group=dev` or `--group=prod` typically determines which exporters run.
+   * Additional flags vary by scraper (e.g. `--gamedate`, `--apiKey`, etc.).
 
 ---
 
 ## Deployment as GCF
 
-Each scraper can be packaged as a **Google Cloud Function** (one per file) or you can create multiple GCFs from the same codebase:
+Each scraper can be deployed as a **Google Cloud Function**:
 
 1. **Example**:
 
    ```bash
-   gcloud functions deploy NBAComGameScore \
+   gcloud functions deploy NbaComGameScore \
      --runtime python310 \
-     --entry-point GetNbaComGameScore \
+     --entry-point gcf_entry \
      --trigger-http \
      --source .
    ```
-2. **Environment** variables / secrets can be handled via GCF config, Secret Manager, or your CI/CD pipeline.
+
+   * In your code, define a `gcf_entry(request)` function that instantiates the scraper, parses HTTP params, and calls `scraper.run(opts)`.
+
+2. **Environment Variables**
+
+   * If you rely on environment variables (like `SLACK_BOT_TOKEN`), set them via `gcloud functions deploy --set-env-vars ...` or use Secret Manager.
+
+3. **Cloud Scheduler + Cloud Workflows**
+
+   * You can schedule these GCF scrapers to run daily or orchestrate a workflow that calls multiple scrapers sequentially or in parallel.
 
 ---
 
 ## Logging & Daily Summaries
 
-* At the end of each run, **ScraperBase** logs `SCRAPER_STATS {...}` with:
+* **ScraperBase** logs a final line `SCRAPER_STATS { ... }` with:
 
-  * `scraper_name`, `timestamp_utc`, `total_runtime`, etc.
-  * Child-specific stats (e.g., `records_found`, `gamedate`) from `get_scraper_stats()`.
-* **Cloud Logging** collects these lines. You can do a daily aggregator script (Cloud Scheduler + a small script) that:
+  * Basic runtime fields: `run_id`, `scraper_name`, `timestamp_utc`, `total_runtime`
+  * Child-specific stats from `get_scraper_stats()` (e.g., `records_found`, `gamedate`)
 
-  1. Queries logs for `textPayload:"SCRAPER_STATS"`
-  2. Parses the JSON substring
-  3. Merges them into a summary (by date, by scraper)
-  4. Optionally sends Slack or email updates.
+* **Parsing**
 
-No extra JSON files or database needed—just parse logs once a day!
+  * In GCP, these lines go into Cloud Logging. You can run a daily aggregator (another Cloud Function or local script) that:
+
+    1. Queries logs for `textPayload:"SCRAPER_STATS"`.
+    2. Extracts the JSON substring.
+    3. Summarizes key fields (like `records_found`, `season`, `gamedate`).
+    4. Optionally posts a Slack or email summary.
+
+No need for extra DB tables or JSON files—just parse the logs once a day for a simple “what ran and what it found” summary.
 
 ---
 
 ## Adding a New Scraper
 
-1. **Create** a `.py` file in this directory, e.g. `my_new_scraper.py`.
-2. **Subclass** `ScraperBase`, override:
+1. **Create** a `.py` file, e.g. `my_new_scraper.py`.
 
-   * `set_url()`: Build your request URL from `self.opts`.
-   * `validate_download_data()`: Ensure you have the fields you expect in `self.decoded_data`.
-   * `get_scraper_stats()`: Return any record counts, IDs, etc., to be included in the final stats log.
-3. **Define** an `exporters` list specifying how/where to save data.
-4. Optionally handle **`should_save_data()`** if you want to skip exporting under certain conditions.
-5. **Test** locally, then deploy to GCF if needed.
+2. **Subclass** `ScraperBase`:
+
+   ```python
+   from .scraper_base import ScraperBase
+
+   class MyNewScraper(ScraperBase):
+       required_opts = ["some_required_arg"]
+       additional_opts = []
+
+       exporters = [
+         {
+           "type": "gcs",
+           "key": "my/new/data/%(some_required_arg)s/%(time)s.json",
+           "export_mode": "raw",
+           "groups": ["prod", "gcs"],
+         },
+         {
+           "type": "file",
+           "filename": "/tmp/my_new_data.json",
+           "export_mode": "decoded",
+           "groups": ["dev", "file"],
+         }
+       ]
+
+       def set_url(self):
+           self.url = f"https://example.com/api?arg={self.opts['some_required_arg']}"
+
+       def validate_download_data(self):
+           if "someKey" not in self.decoded_data:
+               raise DownloadDataException("Missing 'someKey' in response.")
+
+       def get_scraper_stats(self):
+           return {
+               "records_found": len(self.decoded_data["someKey"]),
+               "some_required_arg": self.opts.get("some_required_arg")
+           }
+   ```
+
+3. **Test** it locally. Then you can deploy to GCF if needed.
+
+4. **Profit**—the new scraper reuses the standard logic for retries, logging, exporting, etc.
 
 ---
 
 ## Conclusion
 
-This directory hosts all scrapers that follow a **common** pattern:
+This directory contains all scrapers following a **common** pattern:
 
-* **`ScraperBase`** provides the framework (logging, retries, decoding, exporting).
-* **Child classes** define domain logic: building URLs, validating results, collecting custom stats.
-* **Exporters** let you store data in GCS, local files, or other destinations (Slack, etc.).
-* **Logs** include a `SCRAPER_STATS` line, which you can parse daily for monitoring/summary.
+* **`ScraperBase`** orchestrates the lifecycle: (options → download → decode → validate → export → final stats).
+* **Child scrapers** override domain-specific methods (URL building, validations, data slicing).
+* **Exporters** store data in GCS, local files, Slack, etc., controlled by each scraper’s `exporters` array.
+* A final **`SCRAPER_STATS`** line in logs can be used for daily summary and monitoring.
 
-Feel free to explore each scraper for specific usage examples and to add your own as new APIs or data sources arise!
+Feel free to explore each file for usage examples or create your own new scrapers. Happy scraping!

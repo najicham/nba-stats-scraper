@@ -4,7 +4,7 @@ import os
 import logging
 from datetime import datetime
 
-from .scraper_base import ScraperBase
+from .scraper_base import ScraperBase, ExportMode
 from .utils.exceptions import DownloadDataException
 
 logger = logging.getLogger("scraper_base")
@@ -16,7 +16,7 @@ class GetOddsApiCurrentEventOdds(ScraperBase):
     Corresponds to:
       GET /v4/sports/{sport}/events/{eventId}/odds
 
-    Usage:
+    Usage (local CLI):
       python odds_api_current_event_odds.py \
         --sport=basketball_nba \
         --eventId=some-event-id \
@@ -29,19 +29,20 @@ class GetOddsApiCurrentEventOdds(ScraperBase):
     required_opts = ["sport", "eventId", "apiKey"]
     additional_opts = []
 
-    use_proxy = False  # Usually not needed for The Odds API
+    # Typically no proxy needed for The Odds API
+    proxy_enabled = False
 
     exporters = [
         {
             "type": "gcs",
             "key": "oddsapi/event-odds/current/%(sport)s/%(eventId)s/%(time)s.json",
-            "use_raw": True,
+            "export_mode": ExportMode.RAW,
             "groups": ["prod", "gcs"],
         },
         {
             "type": "file",
             "filename": "/tmp/oddsapi_current_event_odds.json",
-            "use_raw": True,
+            "export_mode": ExportMode.RAW,
             "groups": ["dev", "file"],
         }
     ]
@@ -50,8 +51,8 @@ class GetOddsApiCurrentEventOdds(ScraperBase):
         """
         Construct the URL for The Odds API endpoint (current event odds).
         e.g.:
-        https://api.the-odds-api.com/v4/sports/{sport}/events/{eventId}/odds
-            ?apiKey=MY_KEY
+        https://api.the-odds-api.com/v4/sports/basketball_nba/events/{eventId}/odds
+            ?apiKey=KEY
             &markets=player_points
             &regions=us
             &oddsFormat=decimal
@@ -87,8 +88,9 @@ class GetOddsApiCurrentEventOdds(ScraperBase):
 
     def validate_download_data(self):
         """
-        According to Swagger, a successful response is typically an object or an array with odds info.
-        If there's an error, a dict with {"message": "..."} might appear.
+        According to Swagger, a successful response is typically an object or
+        an array with odds info. If there's an error, a dict with {"message": "..."}
+        might appear.
         """
         if isinstance(self.decoded_data, dict) and "message" in self.decoded_data:
             msg = self.decoded_data["message"]
@@ -112,22 +114,18 @@ class GetOddsApiCurrentEventOdds(ScraperBase):
             return False
         return True
 
-    ##################################################################
-    # Override get_scraper_stats() to track record_count + event info
-    ##################################################################
     def get_scraper_stats(self):
         """
-        Return fields for the final SCRAPER_STATS line:
-        how many records found, plus sport/eventId for clarity.
+        Return fields for the final SCRAPER_STATS line: how many records found,
+        plus sport/eventId for clarity.
         """
-        # The response might be a dict or a list
         decoded = self.decoded_data
         records_found = 0
 
         if isinstance(decoded, list):
             records_found = len(decoded)
         elif isinstance(decoded, dict) and decoded:
-            # If we assume a non-empty dict means one set of odds
+            # Non-empty dict implies 1 set of odds
             records_found = 1
 
         event_id = self.opts.get("eventId", "unknown")
@@ -138,3 +136,56 @@ class GetOddsApiCurrentEventOdds(ScraperBase):
             "sport": sport,
             "event_id": event_id
         }
+
+
+##############################################################################
+# Cloud Function Entry Point
+##############################################################################
+def gcf_entry(request):
+    """
+    Cloud Function HTTP entry point.
+    Example usage:
+      GET .../OddsApiCurrentEventOdds?sport=basketball_nba&eventId=some-id&apiKey=SECRET&markets=player_points&regions=us&oddsFormat=decimal&group=prod
+    """
+    sport = request.args.get("sport", "basketball_nba")
+    event_id = request.args.get("eventId", "")
+    api_key = request.args.get("apiKey", "")
+    markets = request.args.get("markets", "player_points")
+    regions = request.args.get("regions", "us")
+    odds_format = request.args.get("oddsFormat", "decimal")
+    group = request.args.get("group", "prod")
+
+    opts = {
+        "sport": sport,
+        "eventId": event_id,
+        "apiKey": api_key,
+        "markets": markets,
+        "regions": regions,
+        "oddsFormat": odds_format,
+        "group": group
+    }
+
+    scraper = GetOddsApiCurrentEventOdds()
+    result = scraper.run(opts)
+    return f"OddsApiCurrentEventOdds run complete. Found result: {result}", 200
+
+
+##############################################################################
+# Local CLI Usage
+##############################################################################
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Run Odds API Current Event Odds locally")
+    parser.add_argument("--sport", default="basketball_nba", help="Sport name, e.g. basketball_nba")
+    parser.add_argument("--eventId", required=True, help="The event ID to fetch odds for")
+    parser.add_argument("--apiKey", required=True, help="Odds API key")
+    parser.add_argument("--markets", default="player_points", help="e.g. player_points,totals,h2h")
+    parser.add_argument("--regions", default="us", help="e.g. us")
+    parser.add_argument("--oddsFormat", default="decimal", help="e.g. decimal or american")
+    parser.add_argument("--group", default="test", help="Exporter group (test/prod)")
+    args = parser.parse_args()
+
+    opts = vars(args)
+    scraper = GetOddsApiCurrentEventOdds()
+    scraper.run(opts)

@@ -1,13 +1,13 @@
 # scrapers/nba_com_injury_report.py
 
+import os
 import re
 import sys
 import logging
-
 from pdfreader import SimplePDFViewer
 from pdfreader.viewer.pdfviewer import PageDoesNotExist
 
-from .scraper_base import ScraperBase
+from .scraper_base import ScraperBase, DownloadType, ExportMode
 from .utils.exceptions import InvalidRegionDecodeException, DownloadDataException
 
 logger = logging.getLogger("scraper_base")
@@ -17,39 +17,47 @@ class GetNbaComInjuryReport(ScraperBase):
     """
     Scraper for the NBA.com Injury Report PDF.
 
-    Usage example:
-      get_nbacominjuryreport --gamedate=2022-01-03 --hour=8
+    Usage example (local CLI):
+      python nba_com_injury_report.py --gamedate=2022-01-03 --hour=8
     """
 
+    # Required options
     required_opts = ["gamedate", "hour"]
+    # Additional (auto-set 'season' if you want it derived from gamedate)
     additional_opts = ["nba_season_from_gamedate"]
 
-    # PDF URL template, formatted with %(gamedate)s and %(hour)s
-    url_template = (
-        "https://ak-static.cms.nba.com/referee/injury/Injury-Report_%(gamedate)s_0%(hour)sPM.pdf"
-    )
+    # We'll parse a PDF manually, so treat raw response as BINARY
+    download_type = DownloadType.BINARY
 
-    use_proxy = True
-    no_retry_error_codes = [403]
+    # If we want a proxy, set proxy_enabled = True
+    proxy_enabled = True
 
+    # Skip retry on 403
+    no_retry_status_codes = [403]
+
+    # Define exporters:
+    # 1) GCS: store the raw PDF
+    # 2) File: store the *parsed* data from self.data
     exporters = [
         {
-            "type": "gcs", 
-            "key": "nbacom/injury-report/%(season)s/%(gamedate)s/0%(hour)sPM/%(time)s.json",
-            "groups": ["prod", "s3", "gcs"],
+            "type": "gcs",
+            "key": "nbacom/injury-report/%(season)s/%(gamedate)s/0%(hour)sPM/%(time)s.pdf",
+            "export_mode": ExportMode.RAW,  # raw PDF content
+            "groups": ["prod", "gcs"],
         },
         {
             "type": "file",
-            "filename": "/tmp/getnbacominjuryreport",
-            "test": True,
-            "groups": ["dev", "file1"],
+            "filename": "/tmp/getnbacominjuryreport.json",
+            "export_mode": ExportMode.DATA,  # final parsed data from self.data
+            "pretty_print": True,
+            "groups": ["dev", "file"],
         },
     ]
 
     def validate_opts(self):
         """
-        Validate required options. For instance, hour must be '1', '5', or '8'.
-        If the NBA changes their times, you might store valid hours in a config or ENV variable.
+        Ensure required options. 
+        hour must be '1', '5', or '8', for example.
         """
         super().validate_opts()
         valid_hours = ["1", "5", "8"]
@@ -58,29 +66,39 @@ class GetNbaComInjuryReport(ScraperBase):
             raise DownloadDataException("[hour] must be 1, 5, or 8")
 
     def set_url(self):
-        """Build the final PDF URL from the opts using the template."""
-        self.url = self.url_template % self.opts
+        """
+        Build the final PDF URL from 'gamedate' and 'hour'.
+        Example: 
+          https://ak-static.cms.nba.com/referee/injury/Injury-Report_2023-01-10_01PM.pdf
+        """
+        gamedate = self.opts["gamedate"]
+        hour_str = self.opts["hour"]  # '1', '5', or '8'
+        self.url = (
+            f"https://ak-static.cms.nba.com/referee/injury/Injury-Report_{gamedate}_0{hour_str}PM.pdf"
+        )
         logger.info("Injury Report PDF URL set to: %s", self.url)
 
     def should_save_data(self):
         """
-        We only export if self.data is non-empty (i.e. at least 1 record).
+        We only export if we have parsed at least 1 record in self.data.
         """
-        to_save = bool(self.data)
-        logger.info("should_save_data? %s. Found %d records.", to_save, len(self.data) if self.data else 0)
-        return to_save
+        record_count = len(self.data) if isinstance(self.data, list) else 0
+        logger.info("should_save_data? Found %d records.", record_count)
+        return record_count > 0
 
-    def decode_download_data(self):
+    def decode_download_content(self):
         """
-        Parse the PDF content. Raise exceptions if region is blocked or PDF is invalid.
+        Parse the PDF from self.raw_response.content.
+        Store the resulting list of records in self.data.
         """
         try:
-            if b"not accessible in this region" in self.download.content:
+            # Check if the content indicates a region block
+            if b"not accessible in this region" in self.raw_response.content:
                 logger.error("Region block detected in PDF content.")
                 raise InvalidRegionDecodeException("PDF blocked in this region.")
-            
-            # Quick check if the response is not recognized as PDF
-            if b"PDF" not in self.download.content[:1024]:
+
+            # Quick check if the response is recognized as PDF
+            if b"PDF" not in self.raw_response.content[:1024]:
                 logger.error("Download content does not appear to be PDF.")
                 raise InvalidRegionDecodeException("Content is not recognized as PDF.")
 
@@ -96,8 +114,9 @@ class GetNbaComInjuryReport(ScraperBase):
             }
 
             logger.debug("Starting PDF parse for Injury Report.")
-            viewer = SimplePDFViewer(self.download.content)
+            viewer = SimplePDFViewer(self.raw_response.content)
             page_count = 0
+
             while True:
                 viewer.render()
                 page_strings = viewer.canvas.strings
@@ -106,11 +125,10 @@ class GetNbaComInjuryReport(ScraperBase):
                 page_count += 1
 
         except PageDoesNotExist:
+            # End of PDF
             logger.info("Reached end of PDF after %d pages.", page_count)
-            self.stats["pdf_pages"] = page_count  # store page_count in self.stats for final logging
-
             if data:
-                self.data = data
+                self.data = data  # store final parsed data
                 logger.info("Parsed a total of %d injury records.", len(data))
             else:
                 logger.error("Parsed 0 records. PDF parse error.")
@@ -122,11 +140,12 @@ class GetNbaComInjuryReport(ScraperBase):
 
     def parse_strings(self, page_strings, current_record, data):
         """
-        Iterate over each string on the page. Decide which field to populate
-        based on current_record["next_is"] or pattern matching.
+        Process each string on the PDF page. 
+        We build up a record and append to 'data' once we have all fields.
         """
         for string in page_strings:
             if current_record["next_is"] == "player":
+                # e.g. "LastName, FirstName"
                 if re.match(r".*, .*", string):
                     current_record["player"] = string
                     current_record["next_is"] = "status"
@@ -150,6 +169,7 @@ class GetNbaComInjuryReport(ScraperBase):
                 current_record["next_is"] = "reason"
 
             elif current_record["next_is"] == "reason":
+                # finalize a record
                 data.append({
                     "date": current_record["date"],
                     "gametime": current_record["gametime"],
@@ -171,7 +191,7 @@ class GetNbaComInjuryReport(ScraperBase):
                 current_record["player"] = string
                 current_record["next_is"] = "status"
 
-            # If the string looks like "TEAM@TEAM"
+            # If it looks like "TEAM@TEAM"
             elif re.match(r".*@.*", string):
                 current_record["matchup"] = string
                 current_record["next_is"] = "team"
@@ -181,26 +201,61 @@ class GetNbaComInjuryReport(ScraperBase):
                 current_record["gametime"] = string
                 current_record["next_is"] = "matchup"
 
-            # Possibly a team name: "Los Angeles Lakers"
+            # Possibly a multi-word team name: "Los Angeles Lakers"
             elif current_record["next_is"] == "newline" and re.match(r"[\w]+\s+[\w]+", string):
                 current_record["team"] = string
                 current_record["next_is"] = ""
 
-    ##################################################################
-    # Override get_scraper_stats() to include # of PDF pages & record count
-    ##################################################################
     def get_scraper_stats(self):
         """
-        Return fields for the final SCRAPER_STATS line. We'll log how many records we found,
-        how many pages we parsed, plus the gamedate/hour.
+        Return # of parsed records, plus gamedate/hour used.
         """
-        # The data we store is a list of dicts (each representing an injury record)
-        record_count = len(self.data) if isinstance(self.data, list) else 0
-        pdf_pages = self.stats.get("pdf_pages", 0)
-
+        records_found = len(self.data) if isinstance(self.data, list) else 0
         return {
-            "records_found": record_count,
-            "pdf_pages": pdf_pages,
+            "records_found": records_found,
             "gamedate": self.opts.get("gamedate", "unknown"),
             "hour": self.opts.get("hour", "unknown"),
         }
+
+
+##############################################################################
+# Cloud Function Entry Point
+##############################################################################
+def gcf_entry(request):
+    """
+    Google Cloud Function (HTTP) entry point.
+    Example request: 
+      GET .../NbaComInjuryReport?gamedate=2023-01-03&hour=8&group=prod
+    """
+    gamedate = request.args.get("gamedate", "2023-01-01")
+    hour = request.args.get("hour", "8")
+    group = request.args.get("group", "prod")
+
+    opts = {
+        "gamedate": gamedate,
+        "hour": hour,
+        "group": group
+    }
+
+    scraper = GetNbaComInjuryReport()
+    result = scraper.run(opts)
+
+    return f"InjuryReport run complete. Found result: {result}", 200
+
+
+##############################################################################
+# Local CLI Usage
+##############################################################################
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Run NBA.com Injury Report locally")
+    parser.add_argument("--gamedate", required=True, help="e.g. 2023-01-03")
+    parser.add_argument("--hour", default="8", help="Possible values: 1, 5, or 8")
+    parser.add_argument("--group", default="test", help="Which group exporters to run, e.g. dev/test/prod")
+    args = parser.parse_args()
+
+    opts = vars(args)
+
+    scraper = GetNbaComInjuryReport()
+    scraper.run(opts)

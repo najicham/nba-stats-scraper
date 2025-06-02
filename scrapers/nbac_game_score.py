@@ -4,33 +4,41 @@ import os
 from datetime import datetime
 import logging
 
-from .scraper_base import ScraperBase
+from .scraper_base import ScraperBase, ExportMode
 from .utils.exceptions import DownloadDataException
 
 logger = logging.getLogger("scraper_base")
 
+
 class GetNbaComGameScore(ScraperBase):
     """
     Scraper for the NBA.com scoreboard (game scores).
-    Utilizes the new exporter classes via 'type': 'gcs' or 'file'.
+    Utilizes the new exporter classes and the revised ScraperBase approach.
     """
 
+    # This scraper requires 'gamedate'
     required_opts = ["gamedate"]
     additional_opts = ["nba_season_from_gamedate"]
 
-    use_proxy = True
+    # We want to enable proxy usage (formerly 'use_proxy = True')
+    proxy_enabled = True
 
+    # Define our exporters with new 'export_mode' usage
     exporters = [
         {
-            "type": "gcs", 
+            # GCS export: store raw bytes (unmodified HTTP response) if desired
+            # or if you prefer the decoded JSON as-is, switch to ExportMode.DECODED.
+            "type": "gcs",
             "key": "nbacom/game-score/%(season)s/%(gamedate)s/%(time)s.json",
-            "use_raw": True,
+            "export_mode": ExportMode.RAW,  # Previously was "use_raw": True
             "groups": ["prod", "gcs"],
         },
         {
+            # File export: store the decoded JSON (Python dict) with indentation
             "type": "file",
             "filename": "/tmp/getnbacomgamescore.json",
-            "use_raw": True,
+            "export_mode": ExportMode.DECODED,  # Previously "use_decoded_data": True
+            "pretty_print": True,
             "groups": ["test", "file"],
         }
     ]
@@ -45,7 +53,7 @@ class GetNbaComGameScore(ScraperBase):
 
     def set_headers(self):
         """
-        Set standard NBA stats headers to mimic a browser.
+        Set standard NBA stats headers to mimic a typical browser.
         """
         self.headers = {
             "Accept": "application/json, text/plain, */*",
@@ -71,8 +79,8 @@ class GetNbaComGameScore(ScraperBase):
 
     def validate_download_data(self):
         """
-        Ensure the JSON has a top-level 'scoreboard' and nested 'games' list.
-        Raises DownloadDataException if missing.
+        Ensure the JSON has a top-level 'scoreboard' with a 'games' list.
+        Raise DownloadDataException if missing or invalid.
         """
         scoreboard = self.decoded_data.get("scoreboard")
         if not scoreboard:
@@ -90,20 +98,11 @@ class GetNbaComGameScore(ScraperBase):
         game_count = len(scoreboard["games"])
         logger.info("Found %d games for gamedate=%s", game_count, self.opts["gamedate"])
 
-    # OPTIONAL: skip saving if no games are found
-    # def should_save_data(self):
-    #     games = self.decoded_data["scoreboard"].get("games", [])
-    #     logger.info("should_save_data? Found %d games", len(games))
-    #     return len(games) > 0
-
-    ##################################################################
-    # Override get_scraper_stats() to include # of games found, gamedate
-    ##################################################################
     def get_scraper_stats(self):
         """
-        Returns fields for the final SCRAPER_STATS line. We'll log how many games and the gamedate.
+        Returns extra fields for the final SCRAPER_STATS line:
+        e.g., number of games found, plus the gamedate used.
         """
-        # Attempt to find the scoreboard/games structure
         scoreboard = self.decoded_data.get("scoreboard", {})
         games = scoreboard.get("games", [])
         game_count = len(games)
@@ -112,3 +111,42 @@ class GetNbaComGameScore(ScraperBase):
             "records_found": game_count,
             "gamedate": self.opts.get("gamedate", "unknown"),
         }
+
+
+##############################################################################
+# Cloud Function Entry Point
+##############################################################################
+def gcf_entry(request):
+    """
+    Cloud Function entry point.
+    Triggered by Cloud Workflows or Scheduler calling the HTTP endpoint.
+    """
+    gamedate = request.args.get("gamedate", "2023-12-01")
+    group = request.args.get("group", "prod")
+
+    opts = {
+        "gamedate": gamedate,
+        "group": group
+    }
+
+    scraper = GetNbaComGameScore()
+    result = scraper.run(opts)
+
+    return f"Scraper run complete. Found result: {result}", 200
+
+
+##############################################################################
+# Local CLI Usage
+##############################################################################
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Run NBA Game Score locally")
+    parser.add_argument("--gamedate", required=True)
+    parser.add_argument("--group", default="test")
+    args = parser.parse_args()
+
+    opts = vars(args)
+
+    scraper = GetNbaComGameScore()
+    scraper.run(opts)

@@ -2,12 +2,14 @@
 
 import math
 from datetime import datetime, timedelta, timezone, date
+from zoneinfo import ZoneInfo
 import pytz
 
 def validate_date_string(date_text):
     """
     Check if date_text is in YYYY-MM-DD format.
-    Returns True/False instead of raising.
+    Returns:
+        bool: True if valid date string, False if invalid format.
     """
     try:
         datetime.strptime(date_text, "%Y-%m-%d")
@@ -17,14 +19,9 @@ def validate_date_string(date_text):
 
 
 def get_datetime_string_pacific(string=True):
-    """
-    Returns current time in Pacific Timezone.
-    If string=True, returns 'YYYY-MM-DD HH:MM:SS'.
-    Else returns a datetime object.
-    """
-    tz_west = pytz.timezone("America/Los_Angeles")
-    x = datetime.now(tz_west)
-    return x.strftime("%Y-%m-%d %H:%M:%S") if string else x
+    west = ZoneInfo("America/Los_Angeles")
+    now_pacific = datetime.now(tz=west)
+    return now_pacific.strftime("%Y-%m-%d %H:%M:%S") if string else now_pacific
 
 
 def get_year_pacific_time():

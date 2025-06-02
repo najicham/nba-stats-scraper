@@ -4,16 +4,17 @@ import os
 import logging
 from datetime import datetime
 
-from .scraper_base import ScraperBase
+from .scraper_base import ScraperBase, ExportMode
 from .utils.exceptions import DownloadDataException
 
 logger = logging.getLogger("scraper_base")
+
 
 class GetOddsApiPlayerPropsHistory(ScraperBase):
     """
     Scraper for The Odds API (historical) that fetches NBA player props by event ID.
 
-    Usage example:
+    Usage example (CLI):
       python odds_api_player_props_history.py --event_id=da359da99aa27e97d38f2df709343998 \
         --apiKey=MY_SECRET_KEY \
         --date=2023-11-29T22:45:00Z \
@@ -24,19 +25,20 @@ class GetOddsApiPlayerPropsHistory(ScraperBase):
     required_opts = ["event_id", "apiKey", "date"]
     additional_opts = []
 
-    use_proxy = False
+    # Usually no proxy needed for The Odds API
+    proxy_enabled = False
 
     exporters = [
         {
             "type": "gcs",
             "key": "oddsapi/player-props/%(event_id)s/%(time)s.json",
-            "use_raw": True,
+            "export_mode": ExportMode.RAW,
             "groups": ["prod", "gcs"],
         },
         {
             "type": "file",
             "filename": "/tmp/oddsapi_player_props_history.json",
-            "use_raw": True,
+            "export_mode": ExportMode.RAW,
             "groups": ["dev", "file"],
         }
     ]
@@ -46,13 +48,13 @@ class GetOddsApiPlayerPropsHistory(ScraperBase):
         Construct the URL for The Odds API historical player props endpoint.
         e.g.:
         https://api.the-odds-api.com/v4/historical/sports/basketball_nba/events/<EVENT_ID>/odds
+            ?apiKey=KEY&date=DATE&regions=us&markets=player_points
         """
         base_url = "https://api.the-odds-api.com/v4/historical/sports/basketball_nba/events"
         event_id = self.opts["event_id"]
         api_key = self.opts["apiKey"]
-        date_str = self.opts["date"]  # e.g. "2023-11-29T22:45:00Z"
+        date_str = self.opts["date"]
 
-        # Optional parameters
         regions = self.opts.get("regions", "us")
         markets = self.opts.get("markets", "player_points")
 
@@ -77,7 +79,7 @@ class GetOddsApiPlayerPropsHistory(ScraperBase):
 
     def validate_download_data(self):
         """
-        If there's an error, The Odds API might return an error JSON or an empty list.
+        If there's an error, The Odds API might return {"message": "..."} or an empty list.
         We check basic structure here.
         """
         if isinstance(self.decoded_data, dict) and "message" in self.decoded_data:
@@ -97,16 +99,13 @@ class GetOddsApiPlayerPropsHistory(ScraperBase):
 
     def should_save_data(self):
         """
-        Optional logic to skip exporting if there's no data.
+        Skip exporting if there's no data (empty list).
         """
         if isinstance(self.decoded_data, list) and len(self.decoded_data) == 0:
             logger.info("Skipping export because decoded_data is an empty list.")
             return False
         return True
 
-    ##################################################################
-    # Override get_scraper_stats() to include # of props, event_id, date
-    ##################################################################
     def get_scraper_stats(self):
         """
         Return fields for the final SCRAPER_STATS line:
@@ -125,3 +124,53 @@ class GetOddsApiPlayerPropsHistory(ScraperBase):
             "event_id": event_id,
             "date": date_str
         }
+
+
+##############################################################################
+# Cloud Function Entry Point
+##############################################################################
+def gcf_entry(request):
+    """
+    HTTP entry point for Cloud Functions.
+    Example usage:
+      GET .../OddsApiPlayerPropsHistory?event_id=XXXX&apiKey=SECRET&date=YYYY&regions=us&markets=player_points&group=prod
+    """
+    event_id = request.args.get("event_id", "")
+    api_key = request.args.get("apiKey", "")
+    date_str = request.args.get("date", "2023-11-29T00:00:00Z")
+    regions = request.args.get("regions", "us")
+    markets = request.args.get("markets", "player_points")
+    group = request.args.get("group", "prod")
+
+    opts = {
+        "event_id": event_id,
+        "apiKey": api_key,
+        "date": date_str,
+        "regions": regions,
+        "markets": markets,
+        "group": group
+    }
+
+    scraper = GetOddsApiPlayerPropsHistory()
+    result = scraper.run(opts)
+    return f"OddsApiPlayerPropsHistory run complete. Found result: {result}", 200
+
+
+##############################################################################
+# Local CLI Usage
+##############################################################################
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Run Odds API Player Props History locally")
+    parser.add_argument("--event_id", required=True, help="Event ID to fetch props for")
+    parser.add_argument("--apiKey", required=True, help="Odds API key")
+    parser.add_argument("--date", required=True, help="e.g. 2023-11-29T22:45:00Z")
+    parser.add_argument("--regions", default="us", help="Possible values: us, etc.")
+    parser.add_argument("--markets", default="player_points", help="e.g. player_points,h2h_q1")
+    parser.add_argument("--group", default="test", help="Which exporter group to run (dev/test/prod)")
+    args = parser.parse_args()
+
+    opts = vars(args)
+    scraper = GetOddsApiPlayerPropsHistory()
+    scraper.run(opts)
