@@ -39,7 +39,7 @@ class GetOddsApiPlayerPropsHistory(ScraperBase):
             "type": "file",
             "filename": "/tmp/oddsapi_player_props_history.json",
             "export_mode": ExportMode.RAW,
-            "groups": ["dev", "file"],
+            "groups": ["dev", "test", "file"],
         }
     ]
 

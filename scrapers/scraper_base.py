@@ -539,9 +539,13 @@ class ScraperBase:
         - Instantiates the appropriate exporter class from EXPORTER_REGISTRY.
         - Calls exporter.run(data_to_export, config, opts).
         """
+        # Track whether we actually used any exporter
+        ran_exporter = False
+
         for config in self.exporters:
             groups = config.get("groups", [])
             if self.opts["group"] not in groups:
+                # group mismatch => skip
                 continue
 
             if config.get("check_should_save"):
@@ -571,9 +575,19 @@ class ScraperBase:
                 raise DownloadDataException(f"Exporter type not found: {exporter_type}")
 
             self.step_info("export", f"Exporting with {exporter_type}",
-                           extra={"export_mode": str(export_mode), "config": config})
+                        extra={"export_mode": str(export_mode), "config": config})
             exporter = exporter_cls()
             exporter.run(data_to_export, config, self.opts)
+
+            # Mark that at least one exporter was triggered
+            ran_exporter = True
+
+        # If we never ran an exporter, log a warning
+        if not ran_exporter:
+            logger.warning(
+                "No exporters matched group=%r. No data was exported.",
+                self.opts.get("group")
+            )
 
     def post_export(self):
         """

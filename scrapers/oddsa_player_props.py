@@ -176,10 +176,11 @@ def gcf_entry(request):
 if __name__ == "__main__":
     import argparse
 
+    default_api_key = os.environ.get("ODDS_API_KEY", None)
+
     parser = argparse.ArgumentParser(description="Run Odds API Current Event Odds locally")
     parser.add_argument("--sport", default="basketball_nba", help="Sport name, e.g. basketball_nba")
     parser.add_argument("--eventId", required=True, help="The event ID to fetch odds for")
-    parser.add_argument("--apiKey", required=True, help="Odds API key")
     parser.add_argument("--markets", default="player_points", help="e.g. player_points,totals,h2h")
     parser.add_argument("--regions", default="us", help="e.g. us")
     parser.add_argument("--oddsFormat", default="decimal", help="e.g. decimal or american")

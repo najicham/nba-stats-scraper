@@ -17,6 +17,7 @@ protobuf==6.31.1
 pyasn1==0.6.1
 pyasn1_modules==0.4.2
 pycryptodome==3.23.0
+pytest==8.4.0
 python-dateutil==2.9.0.post0
 pytz==2025.2
 requests==2.32.3
