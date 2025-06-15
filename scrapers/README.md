@@ -1,6 +1,11 @@
-Below is an **updated** `README.md` for your `scrapers` directory, reflecting your **ScraperBase** improvements (enum-based export modes, structured logs, etc.). Feel free to adjust any details (like GCF commands or references) to match your environment.
-
 ````markdown
+
+# Testing
+$ python -m scrapers.espn_scoreboard --scoreDate 20231116
+$ python -m scrapers.espn_roster_api --teamId 2 --group dev
+$ python -m scrapers.espn_game_boxscore --gameId 401766123 --group dev --skip_json True
+
+
 # README: NBA / Odds API Scrapers
 
 ## Overview

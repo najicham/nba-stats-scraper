@@ -45,9 +45,10 @@ class GetNbaComPlayerList(ScraperBase):
         },
         {
             "type": "file",
-            "filename": "/tmp/getnbacomplayerlist2",
-            "export_mode": ExportMode.RAW,
-            "groups": ["dev", "file"],
+            "filename": "/tmp/getnbacomplayerlist%(season)s",
+            "export_mode": ExportMode.DECODED,  # Previously "use_decoded_data": True
+            "pretty_print": True,
+            "groups": ["dev", "test", "file"],
         },
     ]
 
@@ -66,6 +67,10 @@ class GetNbaComPlayerList(ScraperBase):
             f"Historical={historical}&LeagueID=00&Season={season}&"
             f"SeasonType={seasontype}&TeamID=0&Weight="
         )
+        # https://stats.nba.com/stats/playerindex?
+        # College=&Country=&DraftPick=&DraftRound=&DraftYear=&Height=&
+        # Historical=1&LeagueID=00&Season=2024-25&SeasonType=Playoffs&TeamID=0&Weight=
+
         logger.info("NBA.com PlayerList URL: %s", self.url)
 
     def set_headers(self):
@@ -176,7 +181,7 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Run NBA.com PlayerList locally")
-    parser.add_argument("--season", default="", help="e.g., 2022 (will auto-add dash => 2022-23). If omitted, uses 'nba_season_today'.")
+    parser.add_argument("--season", default="2011", help="e.g., 2022 (will auto-add dash => 2022-23). If omitted, uses 'nba_season_today'.")
     parser.add_argument("--group", default="test", help="Which exporter group to run (dev/test/prod)")
     args = parser.parse_args()
 

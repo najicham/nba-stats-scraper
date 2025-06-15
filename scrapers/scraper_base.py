@@ -12,6 +12,16 @@ A base class 'ScraperBase' that handles:
  - Providing hooks for child classes to override
 """
 
+import sentry_sdk
+from .utils.env_utils import is_local
+
+ENV = "local" if is_local() else "production"
+sentry_sdk.init(
+    dsn="https://96f5d7efbb7105ef2c05aa551fa5f4e0@o102085.ingest.us.sentry.io/4509460047790080",
+    send_default_pii=True,
+    environment=ENV
+)
+
 import enum
 import requests
 import logging
@@ -29,8 +39,6 @@ from requests.exceptions import ProxyError, ConnectTimeout, ConnectionError
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-# This environment check & custom exceptions are examples from your project.
-from .utils.env_utils import is_local
 from .utils.exceptions import (
     DownloadDataException,
     DownloadDecodeMaxRetryException,
@@ -41,7 +49,9 @@ from .utils.exceptions import (
 )
 from .exporters import EXPORTER_REGISTRY
 from .utils.proxy_utils import get_proxy_urls
-
+from .utils.nba_header_utils import (
+    stats_nba_headers, data_nba_headers, core_api_headers, _ua
+)
 
 ##############################################################################
 # Configure a default logger so INFO messages appear in the console.
@@ -63,10 +73,11 @@ class DownloadType(str, enum.Enum):
     Defines how the HTTP response is interpreted:
       - JSON: parse as JSON (store in self.decoded_data)
       - BINARY: do not parse, store raw bytes only
-      - (Add more if needed, e.g. XML)
+      - HTML: store the response text in self.decoded_data
     """
     JSON = "json"
     BINARY = "binary"
+    HTML = "html"
 
 
 class ExportMode(str, enum.Enum):
@@ -87,7 +98,7 @@ class ScraperBase:
       1) Parse/validate options
       2) Set up URL & headers
       3) Download (with optional proxy, retries, backoff)
-      4) Decode if configured (e.g., JSON)
+      4) Decode if configured (e.g., JSON or HTML text)
       5) Validate downloaded data
       6) Optionally extract opts from data & transform data
       7) Export results to GCS/File/etc.
@@ -109,23 +120,27 @@ class ScraperBase:
     exporters = []            # array of dicts describing export configs
 
     # Download / decode settings
-    proxy_enabled = False        # was use_proxy
+    proxy_enabled = False
     test_proxies = False
-    decode_download_data = True  # was should_decode_download_data
+    decode_download_data = True
     download_type = DownloadType.JSON
-    max_retries_http = 3         # was max_retries_http_downloader
-    timeout_http = 20            # was timeout_secs_http_downloader
-    no_retry_status_codes = [404]  # was no_retry_error_codes
-    max_retries_decode = 8       # was max_retries_download_decode
+    max_retries_http = 3
+    timeout_http = 20
+    no_retry_status_codes = [404]
+    max_retries_decode = 8
 
     # Data placeholders
-    raw_response = None   # the raw HTTP response object (requests.Response)
-    decoded_data = {}     # Python dict/list if we decode JSON
-    data = {}             # final transformed data or slices
-    stats = {}            # gather interesting metrics or stats for final logging
+    raw_response = None
+    decoded_data = {}
+    data = {}
+    stats = {}
 
-    time_markers = {}     # track time intervals (start, last) for measuring durations
+    # Time tracking
+    time_markers = {}
     pp = pprint.PrettyPrinter(indent=4)
+
+    # If set True, will store partial data on exception
+    save_data_on_error = True
 
     def __init__(self):
         """
@@ -212,11 +227,15 @@ class ScraperBase:
                 return True
 
         except Exception as e:
-            # If an exception occurs, log it, trace it, and optionally report it
             exc_type, exc_value, exc_traceback = sys.exc_info()
             logger.error("ScraperBase Error: %s %s", exc_type, e, exc_info=True)
             traceback.print_exc()
-            self.report_error(e)  # Hook for Slack/Sentry/email
+
+            # If we want to save partial data or raw data on error
+            if self.save_data_on_error:
+                self._debug_save_data_on_error(e)
+
+            self.report_error(e)  # Sentry/email/Slack, etc.
             return False
 
     def _reinit_except_run_id(self):
@@ -235,9 +254,39 @@ class ScraperBase:
     def report_error(self, exc):
         """
         Hook to integrate Slack, Sentry, or email for error reporting.
-        By default, does nothing. Child classes or your environment can override.
+        We'll send the exception to Sentry here.
         """
-        pass
+        import sentry_sdk
+        sentry_sdk.capture_exception(exc)
+
+    def _debug_save_data_on_error(self, exc):
+        """
+        Optionally save partial data or raw response if we hit an exception.
+        Customize as needed to store to GCS, S3, or just local disk for debugging.
+        """
+        try:
+            # Example: store raw response content (if any) to /tmp
+            if self.raw_response is not None and self.raw_response.content:
+                debug_html = f"/tmp/debug_raw_{self.run_id}.html"
+                with open(debug_html, "wb") as f:
+                    f.write(self.raw_response.content)
+                logger.info("Saved raw HTML to %s for debugging", debug_html)
+
+            # If we had decoded JSON or HTML text in self.decoded_data:
+            if self.decoded_data:
+                debug_json = f"/tmp/debug_decoded_{self.run_id}.json"
+                # If it's a string (HTML), just wrap in a dict so we can json.dump
+                if isinstance(self.decoded_data, str):
+                    out_data = {"html": self.decoded_data}
+                else:
+                    out_data = self.decoded_data
+
+                with open(debug_json, "w", encoding="utf-8") as f:
+                    json.dump(out_data, f, indent=2, ensure_ascii=False)
+                logger.info("Saved partial decoded data to %s for debugging", debug_json)
+
+        except Exception as save_ex:
+            logger.warning("Failed to save debug data on error: %s", save_ex)
 
     ##########################################################################
     # Step Logging (SCRAPER_STEP) for Structured Logs
@@ -307,9 +356,17 @@ class ScraperBase:
 
     def set_headers(self):
         """
-        Child classes override for custom HTTP headers if needed.
+        Provide sensible defaults unless a child overrides manually.
         """
-        pass
+        if self.header_profile == "stats":
+            self.headers = stats_nba_headers()
+        elif self.header_profile == "data":
+            self.headers = data_nba_headers()
+        elif self.header_profile == "core":
+            self.headers = core_api_headers()
+        else:
+            # Generic fallback – at least send a desktop UA
+            self.headers = {"User-Agent": _ua()}
 
     ##########################################################################
     # Download & Decode
@@ -449,14 +506,16 @@ class ScraperBase:
     def decode_download_content(self):
         """
         If we're expecting JSON, parse self.raw_response.content as JSON.
-        If DownloadType.BINARY, do nothing.
+        If DownloadType.HTML, store text in self.decoded_data.
+        If BINARY, do nothing special.
         """
         logger.debug("Decoding raw response as '%s'", self.download_type)
         if self.download_type == DownloadType.JSON:
             self.decoded_data = json.loads(self.raw_response.content)
+        elif self.download_type == DownloadType.HTML:
+            self.decoded_data = self.raw_response.text
         elif self.download_type == DownloadType.BINARY:
-            # No decode
-            pass
+            pass  # no decode
         else:
             pass
 
@@ -471,7 +530,7 @@ class ScraperBase:
     ##########################################################################
     def increment_retry_count(self):
         """
-        Increments self.download_retry_count, raise if we exceed max_retries_decode.
+        Increments self.download_retry_count; raise if we exceed max_retries_decode.
         """
         if self.download_retry_count < self.max_retries_decode:
             self.download_retry_count += 1
@@ -498,7 +557,8 @@ class ScraperBase:
         Child classes override. 
         E.g., check if 'scoreboard' in self.decoded_data, etc.
         """
-        pass
+        if not self.decoded_data:
+            raise DownloadDataException("Downloaded data is empty or None.")
 
     def extract_opts_from_data(self):
         """
@@ -575,7 +635,7 @@ class ScraperBase:
                 raise DownloadDataException(f"Exporter type not found: {exporter_type}")
 
             self.step_info("export", f"Exporting with {exporter_type}",
-                        extra={"export_mode": str(export_mode), "config": config})
+                           extra={"export_mode": str(export_mode), "config": config})
             exporter = exporter_cls()
             exporter.run(data_to_export, config, self.opts)
 
