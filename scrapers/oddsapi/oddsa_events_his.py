@@ -2,8 +2,8 @@ import os
 import logging
 from datetime import datetime
 
-from .scraper_base import ScraperBase, ExportMode
-from .utils.exceptions import DownloadDataException
+from ..scraper_base import ScraperBase, ExportMode
+from ..utils.exceptions import DownloadDataException
 
 logger = logging.getLogger("scraper_base")
 

@@ -4,8 +4,8 @@ import os
 import logging
 from datetime import datetime
 
-from .scraper_base import ScraperBase, ExportMode
-from .utils.exceptions import DownloadDataException
+from ..scraper_base import ScraperBase, ExportMode
+from ..utils.exceptions import DownloadDataException
 
 logger = logging.getLogger("scraper_base")
 
@@ -18,7 +18,7 @@ class GetNbaComPlayerList(ScraperBase):
 
     # Enable proxy usage if needed
     proxy_enabled = True
-
+    header_profile = "stats"
     # If 'season' is missing, we derive it from today's date
     additional_opts = ["nba_season_today"]
 
@@ -72,30 +72,6 @@ class GetNbaComPlayerList(ScraperBase):
         # Historical=1&LeagueID=00&Season=2024-25&SeasonType=Playoffs&TeamID=0&Weight=
 
         logger.info("NBA.com PlayerList URL: %s", self.url)
-
-    def set_headers(self):
-        """
-        Set standard NBA stats headers to mimic a typical browser request.
-        """
-        self.headers = {
-            "Accept": "*/*",
-            "Accept-Encoding": "gzip, deflate, br",
-            "Accept-Language": "en-US,en;q=0.9",
-            "Connection": "keep-alive",
-            "Host": "stats.nba.com",
-            "Origin": "https://www.nba.com",
-            "Referer": "https://www.nba.com/",
-            "sec-ch-ua-mobile": "?0",
-            "sec-ch-ua-platform": "Linux",
-            "Sec-Fetch-Dest": "empty",
-            "Sec-Fetch-Mode": "cors",
-            "Sec-Fetch-Site": "same-site",
-            "User-Agent": (
-                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-                "(KHTML, like Gecko) Chrome/90.0.4430.85 Safari/537.36"
-            ),
-        }
-        logger.debug("Headers set for PlayerList request: %s", self.headers)
 
     def validate_download_data(self):
         """

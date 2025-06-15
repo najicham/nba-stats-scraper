@@ -1,6 +1,6 @@
 import time
 from config.nba_teams import NBA_TEAMS
-from scrapers.nbac_roster import GetNbaTeamRoster
+from scrapers.nbacom.nbac_roster import GetNbaTeamRoster
 
 for team in NBA_TEAMS:
     opts = {

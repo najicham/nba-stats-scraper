@@ -4,8 +4,8 @@ import pytz
 import requests
 from datetime import datetime
 
-from .scraper_base import ScraperBase, DownloadType, ExportMode
-from .utils.exceptions import DownloadDataException
+from ..scraper_base import ScraperBase, DownloadType, ExportMode
+from ..utils.exceptions import DownloadDataException
 
 logger = logging.getLogger("scraper_base")
 

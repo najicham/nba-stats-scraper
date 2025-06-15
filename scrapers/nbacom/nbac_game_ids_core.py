@@ -28,7 +28,7 @@ class GetNbaGameIdsCore(ScraperBase):
     """
 
     required_opts = ["scoreDate"]           # YYYYMMDD
-
+    header_profile = "core"
     download_type = DownloadType.JSON
     decode_download_data = True
 
@@ -64,17 +64,6 @@ class GetNbaGameIdsCore(ScraperBase):
         base = "https://core-api.nba.com/cp/api/v1.9/feeds/gamecardfeed"
         self.url = f"{base}?gamedate={mmddyyyy}&platform=web"
         logger.info("Resolved Core‑API URL: %s", self.url)
-
-    def set_headers(self):
-        self.headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/125.0 Safari/537.36"
-            ),
-            "Origin": "https://www.nba.com",
-            "Referer": "https://www.nba.com/"
-        }
 
     # ------------------------------------------------------------------ validation
     def validate_download_data(self):

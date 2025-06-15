@@ -7,8 +7,8 @@ import logging
 from pdfreader import SimplePDFViewer
 from pdfreader.viewer.pdfviewer import PageDoesNotExist
 
-from .scraper_base import ScraperBase, DownloadType, ExportMode
-from .utils.exceptions import InvalidRegionDecodeException, DownloadDataException
+from ..scraper_base import ScraperBase, DownloadType, ExportMode
+from ..utils.exceptions import InvalidRegionDecodeException, DownloadDataException
 
 logger = logging.getLogger("scraper_base")
 
@@ -25,7 +25,7 @@ class GetNbaComInjuryReport(ScraperBase):
     required_opts = ["gamedate", "hour"]
     # Additional (auto-set 'season' if you want it derived from gamedate)
     additional_opts = ["nba_season_from_gamedate"]
-
+    header_profile = "data"
     # We'll parse a PDF manually, so treat raw response as BINARY
     download_type = DownloadType.BINARY
 

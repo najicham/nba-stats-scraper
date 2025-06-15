@@ -4,8 +4,8 @@ import os
 import logging
 from datetime import datetime
 
-from .scraper_base import ScraperBase, ExportMode
-from .utils.exceptions import DownloadDataException
+from ..scraper_base import ScraperBase, ExportMode
+from ..utils.exceptions import DownloadDataException
 
 logger = logging.getLogger("scraper_base")
 
@@ -21,7 +21,7 @@ class GetNbaComPlayerBoxscore(ScraperBase):
     # Required & optional opts
     required_opts = ["gamedate"]
     additional_opts = ["nba_season_from_gamedate", "nba_seasontype_from_gamedate"]
-
+    header_profile = "stats"
     # Proxy usage if we need to avoid blocked IPs
     proxy_enabled = True
 
@@ -73,32 +73,6 @@ class GetNbaComPlayerBoxscore(ScraperBase):
             f"SeasonType={season_type}&Sorter=DATE"
         )
         logger.info("Constructed PlayerBoxscore URL: %s", self.url)
-
-    def set_headers(self):
-        """
-        Mimic a standard browser for stats.nba.com requests.
-        """
-        self.headers = {
-            "Accept": "application/json, text/plain, */*",
-            "Accept-Encoding": "gzip, deflate, br",
-            "Accept-Language": "en-US,en;q=0.9",
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "Host": "stats.nba.com",
-            "Origin": "https://www.nba.com",
-            "Pragma": "no-cache",
-            "Referer": "https://www.nba.com/",
-            "Sec-Fetch-Dest": "empty",
-            "Sec-Fetch-Mode": "cors",
-            "Sec-Fetch-Site": "same-site",
-            "User-Agent": (
-                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-                "(KHTML, like Gecko) Chrome/90.0.4430.85 Safari/537.36"
-            ),
-            "x-nba-stats-origin": "stats",
-            "x-nba-stats-token": "true"
-        }
-        logger.debug("Headers set for PlayerBoxscore request: %s", self.headers)
 
     def validate_download_data(self):
         """

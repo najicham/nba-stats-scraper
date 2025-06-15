@@ -11,8 +11,8 @@ import pytz
 from pydantic import BaseModel, Field, ValidationError
 from typing import List
 
-from .scraper_base import ScraperBase, DownloadType, ExportMode
-from .utils.exceptions import DownloadDataException
+from ..scraper_base import ScraperBase, DownloadType, ExportMode
+from ..utils.exceptions import DownloadDataException
 from config.nba_teams import NBA_TEAMS
 
 logger = logging.getLogger("scraper_base")
@@ -57,6 +57,8 @@ class GetNbaTeamRoster(ScraperBase):
     required_opts = ["teamAbbr"]
     decode_download_data = True        # We'll let ScraperBase call validate_download_data
     download_type = DownloadType.BINARY  # We'll decode HTML ourselves
+    # Use the shared data‑site headers (UA + Referer) from ScraperBase
+    header_profile = "data"
 
     exporters = [
         {
@@ -109,12 +111,6 @@ class GetNbaTeamRoster(ScraperBase):
         self.opts["slug"] = team["slug"]
         self.url = f"https://www.nba.com/team/{team['teamId']}/{team['slug']}/roster"
         logger.info(f"Resolved roster URL: {self.url}")
-
-    def set_headers(self):
-        """
-        Use a realistic browser-style user-agent.
-        """
-        self.headers = {"User-Agent": "Mozilla/5.0"}
 
     # -------------------------------------------------------------------------
     # Overriding decode_download_content so we can store the raw HTML ourselves.

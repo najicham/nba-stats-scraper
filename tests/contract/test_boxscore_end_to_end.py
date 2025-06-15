@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from scrapers.espn_game_boxscore import GetEspnBoxscore
+from scrapers.espn.espn_game_boxscore import GetEspnBoxscore
 
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures"

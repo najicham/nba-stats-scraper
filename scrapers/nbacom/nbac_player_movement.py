@@ -4,8 +4,8 @@ import os
 import logging
 from datetime import datetime
 
-from .scraper_base import ScraperBase, ExportMode
-from .utils.exceptions import DownloadDataException
+from ..scraper_base import ScraperBase, ExportMode
+from ..utils.exceptions import DownloadDataException
 
 logger = logging.getLogger("scraper_base")
 
@@ -18,7 +18,7 @@ class GetNbaComPlayerMovement(ScraperBase):
 
     # If 'year' is not in self.opts, auto-populate with the current year
     additional_opts = ["current_year"]
-
+    header_profile = "stats"
     # Proxy if needed; set to True if certain IPs are blocked
     proxy_enabled = False
 

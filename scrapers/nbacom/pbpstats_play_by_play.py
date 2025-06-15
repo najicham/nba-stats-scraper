@@ -18,8 +18,8 @@ import pytz
 
 from pbpstats.client import Client
 
-from .scraper_base import ScraperBase, DownloadType, ExportMode
-from .utils.exceptions import DownloadDataException
+from ..scraper_base import ScraperBase, DownloadType, ExportMode
+from ..utils.exceptions import DownloadDataException
 
 logger = logging.getLogger("scraper_base")
 
@@ -34,7 +34,7 @@ class GetNbaPlayByPlayPBPStats(ScraperBase):
     # We bypass ScraperBase's HTTP downloader, so no decode.
     download_type = DownloadType.BINARY
     decode_download_data = False
-
+    header_profile = "data"
     RAW_KEY = "raw_json"
     POSS_KEY = "possessions"
 

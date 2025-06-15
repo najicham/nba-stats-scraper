@@ -5,8 +5,8 @@ import logging
 import enum
 from datetime import datetime
 
-from .scraper_base import ScraperBase, ExportMode
-from .utils.exceptions import DownloadDataException
+from ..scraper_base import ScraperBase, ExportMode
+from ..utils.exceptions import DownloadDataException
 
 logger = logging.getLogger("scraper_base")
 
@@ -217,7 +217,8 @@ class GetNbaComSchedule(ScraperBase):
 
     # We'll enable proxy if needed
     proxy_enabled = True
-
+    # Use the shared data‑site headers supplied by ScraperBase
+    header_profile = "data"
     # The main schedule JSON endpoint
     url = "https://cdn.nba.com/static/json/staticData/scheduleLeagueV2_1.json"
 

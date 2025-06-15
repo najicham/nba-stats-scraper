@@ -6,8 +6,8 @@ from datetime import datetime, timezone
 # import pytz
 from bs4 import BeautifulSoup
 
-from .scraper_base import ScraperBase, DownloadType, ExportMode
-from .utils.exceptions import DownloadDataException
+from ..scraper_base import ScraperBase, DownloadType, ExportMode
+from ..utils.exceptions import DownloadDataException
 
 # ---------------------------------------------------------------------------
 #  Assume we have a config file with a dictionary:

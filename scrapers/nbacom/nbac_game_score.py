@@ -4,8 +4,8 @@ import os
 from datetime import datetime
 import logging
 
-from .scraper_base import ScraperBase, ExportMode
-from .utils.exceptions import DownloadDataException
+from ..scraper_base import ScraperBase, ExportMode
+from ..utils.exceptions import DownloadDataException
 
 logger = logging.getLogger("scraper_base")
 
@@ -19,7 +19,8 @@ class GetNbaComGameScore(ScraperBase):
     # This scraper requires 'gamedate'
     required_opts = ["gamedate"]
     additional_opts = ["nba_season_from_gamedate"]
-
+    # Use the shared stats‑site headers from ScraperBase
+    header_profile = "stats"
     # We want to enable proxy usage (formerly 'use_proxy = True')
     proxy_enabled = True
 
@@ -50,32 +51,6 @@ class GetNbaComGameScore(ScraperBase):
         gamedate = self.opts["gamedate"]
         self.url = f"https://stats.nba.com/stats/scoreboardv3?GameDate={gamedate}&LeagueID=00"
         logger.info("GameScore URL constructed: %s", self.url)
-
-    def set_headers(self):
-        """
-        Set standard NBA stats headers to mimic a typical browser.
-        """
-        self.headers = {
-            "Accept": "application/json, text/plain, */*",
-            "Accept-Encoding": "gzip, deflate, br",
-            "Accept-Language": "en-US,en;q=0.9",
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "Host": "stats.nba.com",
-            "Origin": "https://www.nba.com",
-            "Pragma": "no-cache",
-            "Referer": "https://www.nba.com/",
-            "Sec-Fetch-Dest": "empty",
-            "Sec-Fetch-Mode": "cors",
-            "Sec-Fetch-Site": "same-site",
-            "User-Agent": (
-                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-                "(KHTML, like Gecko) Chrome/90.0.4430.85 Safari/537.36"
-            ),
-            "x-nba-stats-origin": "stats",
-            "x-nba-stats-token": "true"
-        }
-        logger.debug("Headers set for NBA scoreboard request: %s", self.headers)
 
     def validate_download_data(self):
         """

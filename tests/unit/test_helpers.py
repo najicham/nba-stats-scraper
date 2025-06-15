@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 from bs4 import BeautifulSoup
 
-from scrapers.espn_game_boxscore import GetEspnBoxscore
+from scrapers.espn.espn_game_boxscore import GetEspnBoxscore
 
 
 SCRAPER = GetEspnBoxscore()

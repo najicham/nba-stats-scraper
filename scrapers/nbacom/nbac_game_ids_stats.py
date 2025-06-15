@@ -34,6 +34,7 @@ class GetNbaGameIdsStats(ScraperBase):
     required_opts = ["scoreDate"]           # YYYYMMDD
     download_type = DownloadType.JSON
     decode_download_data = True
+    header_profile = "stats"
 
     exporters = [
         {

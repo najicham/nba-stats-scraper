@@ -26,6 +26,7 @@ class GetNbaPlayByPlayRawBackup(ScraperBase):
 
     required_opts = ["gameId"]
     download_type = DownloadType.JSON
+    header_profile = "data"
     decode_download_data = True
 
     exporters = [
@@ -59,21 +60,6 @@ class GetNbaPlayByPlayRawBackup(ScraperBase):
             f"playbyplay_{gid}.json"
         )
         logger.info("Resolved play‑by‑play URL: %s", self.url)
-
-    def set_headers(self):
-        """
-        Basic desktop UA is usually enough for cdn.nba.com.
-        Add referer/origin for good measure.
-        """
-        self.headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/125.0 Safari/537.36"
-            ),
-            "Origin": "https://www.nba.com",
-            "Referer": "https://www.nba.com/"
-        }
 
     # ------------------------------------------------------------ validation
     def validate_download_data(self):
