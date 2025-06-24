@@ -1,10 +1,18 @@
-# scrapers/nba_com_player_movement.py
+# scrapers/nbacom/nbac_player_movement.py
+"""
+NBA Player-Movement / Transaction feed                    v2 - 2025-06-16
+------------------------------------------------------------------------
+CLI quick-start:
+    python -m scrapers.nbacom.nbac_player_movement --year 2025 --group test
+"""
 
-import os
+from __future__ import annotations
+
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
+from typing import Dict, List
 
-from ..scraper_base import ScraperBase, ExportMode
+from ..scraper_base import DownloadType, ExportMode, ScraperBase
 from ..utils.exceptions import DownloadDataException
 
 logger = logging.getLogger("scraper_base")
@@ -12,21 +20,22 @@ logger = logging.getLogger("scraper_base")
 
 class GetNbaComPlayerMovement(ScraperBase):
     """
-    Fetches the 'NBA_Player_Movement.json' from stats.nba.com,
-    containing player movement/transaction data.
+    Downloads the static JSON blob at
+    https://stats.nba.com/js/data/playermovement/NBA_Player_Movement.json
     """
 
-    # If 'year' is not in self.opts, auto-populate with the current year
-    additional_opts = ["current_year"]
-    header_profile = "stats"
-    # Proxy if needed; set to True if certain IPs are blocked
-    proxy_enabled = False
+    # ------------------------------------------------------------------ #
+    # Configuration mirrors v1
+    # ------------------------------------------------------------------ #
+    additional_opts = ["current_year"]        # auto‑fill `year` if omitted
+    header_profile: str | None = "stats"
+    proxy_enabled: bool = False               # unchanged
+    download_type: DownloadType = DownloadType.JSON
+    decode_download_data: bool = True
 
-    # Directly define the URL (some child classes do set_url, but here it's simple)
+    # Fixed URL (same as before)
     url = "https://stats.nba.com/js/data/playermovement/NBA_Player_Movement.json"
 
-    # Exporters referencing the new "export_mode" approach
-    # all default to 'RAW' to mimic old 'use_raw=True'
     exporters = [
         {
             "type": "gcs",
@@ -41,7 +50,6 @@ class GetNbaComPlayerMovement(ScraperBase):
             "groups": ["prod", "s3", "gcs"],
         },
         {
-            # local file usage
             "type": "file",
             "filename": "/tmp/getnbacomplayermovement2.json",
             "export_mode": ExportMode.RAW,
@@ -49,78 +57,63 @@ class GetNbaComPlayerMovement(ScraperBase):
         },
     ]
 
-    def validate_download_data(self):
-        """
-        Ensure 'NBA_Player_Movement' and 'rows' exist, and that 'rows' is non-empty.
-        Raises DownloadDataException if missing or empty.
-        """
-        data_root = self.decoded_data.get("NBA_Player_Movement")
-        if not data_root:
-            logger.error("'NBA_Player_Movement' missing in decoded data.")
-            raise DownloadDataException("[NBA_Player_Movement] not found in decoded data")
+    # ------------------------------------------------------------------ #
+    # Option helpers
+    # ------------------------------------------------------------------ #
+    def set_additional_opts(self) -> None:
+        if not self.opts.get("year"):
+            self.opts["year"] = str(datetime.now(timezone.utc).year)
+        # exporter timestamp
+        self.opts["time"] = datetime.now(timezone.utc).strftime("%H-%M-%S")
 
-        rows = data_root.get("rows")
-        if rows is None:
-            logger.error("'rows' not found in 'NBA_Player_Movement'. Keys are: %s", data_root.keys())
-            raise DownloadDataException("[NBA_Player_Movement][rows] not found in decoded data")
+    # ------------------------------------------------------------------ #
+    # Validation
+    # ------------------------------------------------------------------ #
+    def validate_download_data(self) -> None:
+        root = self.decoded_data.get("NBA_Player_Movement")
+        rows: List = (root or {}).get("rows", [])
         if not rows:
-            logger.error("'rows' is empty in 'NBA_Player_Movement'.")
-            raise DownloadDataException("[NBA_Player_Movement][rows] is empty")
+            raise DownloadDataException("NBA_Player_Movement.rows missing or empty")
+        logger.info("Found %d movement rows for year=%s", len(rows), self.opts["year"])
 
-        logger.info("Found %d rows in NBA_Player_Movement data for year=%s",
-                    len(rows), self.opts.get("year", "unknown"))
+    # ------------------------------------------------------------------ #
+    # Transform (pass-through but add meta)
+    # ------------------------------------------------------------------ #
+    def transform_data(self) -> None:
+        self.data: Dict[str, any] = {
+            "year": self.opts["year"],
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "rows": self.decoded_data["NBA_Player_Movement"]["rows"],
+        }
 
-    def get_scraper_stats(self):
-        """
-        Return fields for the final SCRAPER_STATS line:
-        number of rows found and the year from opts.
-        """
-        data_root = self.decoded_data.get("NBA_Player_Movement", {})
-        rows = data_root.get("rows", [])
-        row_count = len(rows)
-
-        year = self.opts.get("year", "unknown")
-
+    # ------------------------------------------------------------------ #
+    # Stats
+    # ------------------------------------------------------------------ #
+    def get_scraper_stats(self) -> dict:
         return {
-            "records_found": row_count,
-            "year": year
+            "year": self.opts["year"],
+            "records_found": len(self.data["rows"]),
         }
 
 
-##############################################################################
-# Cloud Function Entry Point
-##############################################################################
-def gcf_entry(request):
-    """
-    HTTP entry point for Cloud Functions.
-    Example usage:
-      GET .../NbaComPlayerMovement?year=2023&group=prod
-      If 'year' is omitted, 'current_year' from additional_opts sets it automatically.
-    """
-    year = request.args.get("year", "")
+# ---------------------------------------------------------------------- #
+# Google Cloud Function / Cloud Run entry
+# ---------------------------------------------------------------------- #
+def gcf_entry(request):  # type: ignore[valid-type]
+    year = request.args.get("year", "")  # blank triggers auto‑fill
     group = request.args.get("group", "prod")
 
-    opts = {
-        "year": year,   # blank => uses current_year
-        "group": group
-    }
-
-    scraper = GetNbaComPlayerMovement()
-    result = scraper.run(opts)
-    return f"PlayerMovement run complete. Found result: {result}", 200
+    ok = GetNbaComPlayerMovement().run({"year": year, "group": group})
+    return (("Player‑movement scrape failed", 500) if ok is False else ("Scrape ok", 200))
 
 
-##############################################################################
-# Local CLI Usage
-##############################################################################
+# ---------------------------------------------------------------------- #
+# Local CLI usage
+# ---------------------------------------------------------------------- #
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="Run NBA Player Movement locally")
-    parser.add_argument("--year", default="", help="e.g. 2023; if omitted, uses current_year.")
-    parser.add_argument("--group", default="test", help="Which exporter group to run (dev/test/prod)")
-    args = parser.parse_args()
-
-    opts = vars(args)
-    scraper = GetNbaComPlayerMovement()
-    scraper.run(opts)
+    cli = argparse.ArgumentParser(description="Run NBA Player Movement locally")
+    cli.add_argument("--year", default="", help="e.g. 2025 (blank for current)")
+    cli.add_argument("--group", default="test")
+    GetNbaComPlayerMovement().run(vars(cli.parse_args()))

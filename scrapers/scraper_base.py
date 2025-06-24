@@ -23,8 +23,30 @@ sentry_sdk.init(
 )
 
 import enum
+from typing import Callable
 import requests
-import logging
+
+try:                                         # Playwright core
+    from playwright.sync_api import sync_playwright
+    _PLAYWRIGHT_AVAILABLE = True
+except ModuleNotFoundError:
+    _PLAYWRIGHT_AVAILABLE = False
+
+# ---- optional stealth plug‑in (v1.x or v2.x) ---------------------------
+# We try every known location/name and pick the first callable we find.
+_STEALTH_FN: Callable | None = None
+try:
+    from playwright_stealth import stealth_sync as _STEALTH_FN          # ≤ v1.1
+except ImportError:
+    try:
+        import playwright_stealth as _ps                                # ≥ v2.0
+        # v2 exposes ONLY "stealth" on the top level
+        _STEALTH_FN = getattr(_ps, "stealth", None)
+    except ImportError:
+        _STEALTH_FN = None
+_STEALTH_AVAILABLE = callable(_STEALTH_FN)
+
+import logging, urllib.parse
 import time
 import os
 import sys
@@ -33,9 +55,9 @@ import pprint
 import json
 import random
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
-from requests.exceptions import ProxyError, ConnectTimeout, ConnectionError
+from requests.exceptions import ProxyError, ConnectTimeout, ConnectionError, ReadTimeout
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
@@ -50,7 +72,12 @@ from .utils.exceptions import (
 from .exporters import EXPORTER_REGISTRY
 from .utils.proxy_utils import get_proxy_urls
 from .utils.nba_header_utils import (
-    stats_nba_headers, data_nba_headers, core_api_headers, _ua
+    stats_nba_headers,
+    data_nba_headers,
+    core_api_headers,
+    _ua,
+    cdn_nba_headers,
+    stats_api_headers,
 )
 
 ##############################################################################
@@ -65,9 +92,9 @@ logger = logging.getLogger("scraper_base")
 logger.setLevel(logging.INFO)
 
 
-##############################################################################
+# --------------------------------------------------------------------------- #
 # Enumerations to prevent magic strings for download types and export modes.
-##############################################################################
+# --------------------------------------------------------------------------- #
 class DownloadType(str, enum.Enum):
     """
     Defines how the HTTP response is interpreted:
@@ -121,18 +148,30 @@ class ScraperBase:
 
     # Download / decode settings
     proxy_enabled = False
+    # If you pass opts["proxyUrl"]="https://user:pass@1.2.3.4:3128"
+    # it will be copied into self.proxy_url during set_opts().
+    proxy_url: str | None = None
     test_proxies = False
     decode_download_data = True
     download_type = DownloadType.JSON
+
+    # ---- NEW default flags for headless browser support -----------------
+    browser_enabled = False          # subclasses set True if needed
+    browser_url: str | None = None   # page that sets the Akamai cookies
+    
     max_retries_http = 3
     timeout_http = 20
-    no_retry_status_codes = [404]
+    no_retry_status_codes: list[int] = [404]
     max_retries_decode = 8
+    
+    # Header/profile defaults
+    header_profile: str | None = None          # "stats" | "data" | "core" | "espn"
+    headers: dict[str, str] = {}
 
-    # Data placeholders
-    raw_response = None
-    decoded_data = {}
-    data = {}
+    # Data placeholders (typed so attr always exist)
+    raw_response: requests.Response | None = None
+    decoded_data: dict | list | str | bytes = {}
+    data: dict = {}
     stats = {}
 
     # Time tracking
@@ -225,10 +264,9 @@ class ScraperBase:
                 return self.get_return_value()
             else:
                 return True
-
+            
         except Exception as e:
-            exc_type, exc_value, exc_traceback = sys.exc_info()
-            logger.error("ScraperBase Error: %s %s", exc_type, e, exc_info=True)
+            logger.error("ScraperBase Error: %s", e, exc_info=True)            
             traceback.print_exc()
 
             # If we want to save partial data or raw data on error
@@ -308,10 +346,14 @@ class ScraperBase:
     # Option & Exporter Group Management
     ##########################################################################
     def set_opts(self, opts):
-        """
-        Store the user-supplied opts dict (e.g. from CLI or GCF request).
-        """
         self.opts = opts
+        self.proxy_url = opts.get("proxyUrl") or os.getenv("NBA_SCRAPER_PROXY")
+
+        # ── NEW: allow caller to lock the run_id up‑front ───────────────────
+        if opts.get("runId"):
+            self.run_id = str(opts["runId"])
+
+        self.opts["run_id"] = self.run_id 
 
     def validate_opts(self):
         """
@@ -356,16 +398,21 @@ class ScraperBase:
 
     def set_headers(self):
         """
-        Provide sensible defaults unless a child overrides manually.
+        Provide sensible defaults or map well‑known header profiles to helpers.
+        Added support for ``header_profile = "espn"`` (UA only).
         """
-        if self.header_profile == "stats":
-            self.headers = stats_nba_headers()
-        elif self.header_profile == "data":
-            self.headers = data_nba_headers()
-        elif self.header_profile == "core":
-            self.headers = core_api_headers()
+        profile_map = {
+            "stats": stats_nba_headers,
+            "data":  data_nba_headers,
+            "core":  core_api_headers,
+            "espn":  lambda: {"User-Agent": _ua()},
+            "nbacdn": cdn_nba_headers,
+            "statsapi": stats_api_headers,
+        }
+        if self.header_profile in profile_map:
+            fn = profile_map[self.header_profile]
+            self.headers = fn() if callable(fn) else fn
         else:
-            # Generic fallback – at least send a desktop UA
             self.headers = {"User-Agent": _ua()}
 
     ##########################################################################
@@ -373,42 +420,46 @@ class ScraperBase:
     ##########################################################################
     def download_and_decode(self):
         """
-        Main logic for:
-          - setting up the requests.Session
-          - starting the download (with/without proxy)
-          - checking status
-          - decoding if decode_download_data is True
+        Download with loop‑based retry (avoids recursive stack growth).
         """
-        try:
-            self.set_http_downloader()
-            self.start_download()
-            self.check_download_status()
-
-            if self.decode_download_data:
-                self.decode_download_content()
-
-        except (ValueError,
+        while True:
+            try:
+                self.set_http_downloader()
+                self.start_download()
+                self.check_download_status()
+                if self.decode_download_data:
+                    self.decode_download_content()
+                break  # success
+                
+            except (
+                ValueError,
                 InvalidRegionDecodeException,
                 NoHttpStatusCodeException,
-                RetryInvalidHttpStatusCodeException) as err:
-            # We'll retry these
-            self.increment_retry_count()
-            self.sleep_before_retry()
-            logger.warning(
-                "[Retry %s] after %s: %s",
-                self.download_retry_count, type(err).__name__, err
-            )
-            self.download_and_decode()
+                RetryInvalidHttpStatusCodeException,
+                ReadTimeout,
+            ) as err:
+                self.increment_retry_count()
+                self.sleep_before_retry()
+                logger.warning("[Retry %s] after %s: %s", self.download_retry_count, type(err).__name__, err)
 
-        except InvalidHttpStatusCodeException:
-            # No additional retry for these
-            raise
+            except InvalidHttpStatusCodeException:
+                raise
+
+            # Failsafe: stop if we somehow fell out of the retry bucket
+            if self.download_retry_count >= self.max_retries_decode:
+                raise DownloadDecodeMaxRetryException(
+                    f"Reached max retries ({self.max_retries_decode}) without success."
+                )
 
     def set_http_downloader(self):
         """
         Create a requests.Session with a custom retry strategy & adapter.
         """
         self.http_downloader = requests.Session()
+        # If a single proxy_url was supplied, use it for all schemes
+        if self.proxy_url:
+            self.http_downloader.proxies.update({"http": self.proxy_url, "https": self.proxy_url})
+
         retry_strategy = self.get_retry_strategy()
         adapter = self.get_http_adapter(retry_strategy)
         self.http_downloader.mount("https://", adapter)
@@ -433,23 +484,114 @@ class ScraperBase:
 
     def start_download(self):
         """
-        If proxy_enabled, attempt proxy-based download, else direct.
+        Choose download path:
+          • browser_enabled  → Playwright cookie harvest + requests
+          • proxy_enabled    → rotate proxies
+          • otherwise        → plain requests
         """
-        if self.proxy_enabled:
+        if self.browser_enabled:
+            self.download_via_browser()
+        elif self.proxy_enabled:
             self.download_data_with_proxy()
         else:
             self.download_data()
 
-    def download_data(self):
+
+    # ------------------------------------------------------------------ #
+    # Playwright helper – runs **headless only** when browser_enabled == True
+    # ------------------------------------------------------------------ #
+    def download_via_browser(self) -> None:
         """
-        Direct (non-proxy) download. 
-        Logs a step with the URL.
+        Headless Playwright path used *only* when a scraper sets
+        ``browser_enabled = True``.  We visit one page (``browser_url`` or
+        ``self.url``), let Akamai set cookies, copy those cookies into the
+        current ``requests.Session`` and immediately fall back to the normal
+        requests-based download.  No UI is ever shown.
         """
-        self.step_info("download", "Starting download (no proxy)", extra={"url": self.url})
+        if not _PLAYWRIGHT_AVAILABLE:
+            raise DownloadDataException("Playwright package not installed")
+
+        harvest_url = self.browser_url or self.url
+        self.step_info("browser", "Headless cookie harvest",
+                       extra={"harvest_url": harvest_url})
+
+        # ------------------------------------------------------- launch
+        launch_args = ["--disable-blink-features=AutomationControlled"]
+
+        pw_proxy = None
+        if self.proxy_url:
+            parsed = urllib.parse.urlparse(self.proxy_url)
+            pw_proxy = {
+                "server": f"{parsed.scheme}://{parsed.hostname}:{parsed.port}",
+                "username": parsed.username,
+                "password": parsed.password,
+            }
+
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True, args=launch_args,
+                                        proxy=pw_proxy)
+            page = browser.new_page()
+            if _STEALTH_AVAILABLE:
+                _STEALTH_FN(page)
+
+            # ── single hop ───────────────────────────────────────────
+            page.route("**/*.{png,jpg,jpeg,gif,svg,woff,css}", lambda r: r.abort())
+            page.goto(harvest_url, wait_until="networkidle", timeout=90_000)
+
+            # OneTrust → Accept cookies if shown (non-blocking)
+            try:
+                btn = page.locator("button#onetrust-accept-btn-handler")
+                if btn.is_visible(timeout=3_000):
+                    btn.click()
+            except Exception:
+                pass
+
+            # short pause so Akamai JS can finish
+            page.wait_for_timeout(1_500)
+
+            cookie_map = {c["name"]: c["value"] for c in page.context.cookies()}
+            browser.close()
+
+        # sanity
+        if not cookie_map:
+            raise DownloadDataException("Playwright did not return any cookies")
+
+        # inject into requests.Session
+        for name, val in cookie_map.items():
+            self.http_downloader.cookies.set(name, val, domain=".nba.com")
+
+        self.step_info("browser", "Cookie harvest complete",
+                       extra={"cookies": list(cookie_map)[:5]})
+
+        # -------------------- proceed with *normal* requests path -----------
         self.raw_response = self.http_downloader.get(
             self.url,
-            headers=self.headers,
-            timeout=self.timeout_http
+            timeout=self.timeout_http,
+            **self._common_requests_kwargs(),
+        )
+
+
+    # ------------------------------------------------------------------ #
+    # requests.get kwargs helpers
+    # ------------------------------------------------------------------ #
+    def get_requests_kwargs(self) -> dict:
+        """Child scrapers override to inject extra requests.get kwargs."""
+        return {}
+
+    def _common_requests_kwargs(self) -> dict:  # noqa: D401 (private)
+        kw = {"headers": self.headers, **self.get_requests_kwargs()}
+        if self.proxy_url:
+            kw["proxies"] = {"https": self.proxy_url, "http": self.proxy_url}
+        return kw
+    
+    def download_data(self):
+        """Direct (non-proxy) download."""
+        self.step_info("download", "Starting download (no proxy)", extra={"url": self.url})
+        logger.debug("Effective headers: %s", self.headers)
+        self.raw_response = self.http_downloader.get(
+            self.url,
+            timeout=self.timeout_http,
+            **self._common_requests_kwargs(),
         )
 
     def download_data_with_proxy(self):
@@ -467,9 +609,9 @@ class ScraperBase:
                 self.step_info("download_proxy", f"Attempting proxy {proxy}")
                 self.raw_response = self.http_downloader.get(
                     self.url,
-                    headers=self.headers,
                     proxies={"https": proxy},
-                    timeout=self.timeout_http
+                    timeout=self.timeout_http,
+                    **self._common_requests_kwargs(),
                 )
                 elapsed = self.mark_time("proxy")
 
@@ -511,11 +653,16 @@ class ScraperBase:
         """
         logger.debug("Decoding raw response as '%s'", self.download_type)
         if self.download_type == DownloadType.JSON:
-            self.decoded_data = json.loads(self.raw_response.content)
+            try:
+                self.decoded_data = json.loads(self.raw_response.content)
+            except json.JSONDecodeError as ex:
+                # eligible for retry
+                raise DownloadDataException(f"JSON decode failed: {ex}") from ex
         elif self.download_type == DownloadType.HTML:
             self.decoded_data = self.raw_response.text
         elif self.download_type == DownloadType.BINARY:
-            pass  # no decode
+            # Still place the bytes in decoded_data so ExportMode.DECODED works
+            self.decoded_data = self.raw_response.content
         else:
             pass
 
@@ -656,10 +803,10 @@ class ScraperBase:
         """
         summary = {
             "run_id": self.run_id,
-            "scraper_name": self.__class__.__name__,
-            "function_name": os.getenv("K_SERVICE", "unknown"),  # if running on GCF
-            "timestamp_utc": datetime.utcnow().isoformat(),
-            "total_runtime": self.stats.get("total_runtime", 0)
+            "scraper": self.__class__.__name__,
+            "function": os.getenv("K_SERVICE", "unknown"),
+            "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+            "total_runtime": self.stats.get("total_runtime", 0),
         }
 
         # Merge child stats

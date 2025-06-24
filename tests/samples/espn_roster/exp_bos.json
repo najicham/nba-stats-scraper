@@ -1,0 +1,196 @@
+{
+  "teamAbbr": "bos",
+  "teamSlug": "boston-celtics",
+  "season": "2025-26",
+  "timestamp": "2025-06-19T23:05:36.294991+00:00",
+  "playerCount": 17,
+  "players": [
+    {
+      "number": "7",
+      "name": "Jaylen Brown",
+      "playerId": "3917376",
+      "slug": "jaylen-brown",
+      "fullUrl": "https://www.espn.com/nba/player/_/id/3917376/jaylen-brown",
+      "position": "SG",
+      "age": "28",
+      "height": "6' 6\"",
+      "weight": "223 lbs"
+    },
+    {
+      "number": "12",
+      "name": "Torrey Craig",
+      "playerId": "2528693",
+      "slug": "torrey-craig",
+      "fullUrl": "https://www.espn.com/nba/player/_/id/2528693/torrey-craig",
+      "position": "SF",
+      "age": "34",
+      "height": "6' 5\"",
+      "weight": "221 lbs"
+    },
+    {
+      "number": "20",
+      "name": "JD Davison",
+      "playerId": "4576085",
+      "slug": "jd-davison",
+      "fullUrl": "https://www.espn.com/nba/player/_/id/4576085/jd-davison",
+      "position": "SG",
+      "age": "22",
+      "height": "6' 1\"",
+      "weight": "195 lbs"
+    },
+    {
+      "number": "30",
+      "name": "Sam Hauser",
+      "playerId": "4065804",
+      "slug": "sam-hauser",
+      "fullUrl": "https://www.espn.com/nba/player/_/id/4065804/sam-hauser",
+      "position": "SF",
+      "age": "27",
+      "height": "6' 7\"",
+      "weight": "217 lbs"
+    },
+    {
+      "number": "4",
+      "name": "Jrue Holiday",
+      "playerId": "3995",
+      "slug": "jrue-holiday",
+      "fullUrl": "https://www.espn.com/nba/player/_/id/3995/jrue-holiday",
+      "position": "PG",
+      "age": "35",
+      "height": "6' 4\"",
+      "weight": "205 lbs"
+    },
+    {
+      "number": "42",
+      "name": "Al Horford",
+      "playerId": "3213",
+      "slug": "al-horford",
+      "fullUrl": "https://www.espn.com/nba/player/_/id/3213/al-horford",
+      "position": "C",
+      "age": "39",
+      "height": "6' 9\"",
+      "weight": "240 lbs"
+    },
+    {
+      "number": "40",
+      "name": "Luke Kornet",
+      "playerId": "3064560",
+      "slug": "luke-kornet",
+      "fullUrl": "https://www.espn.com/nba/player/_/id/3064560/luke-kornet",
+      "position": "C",
+      "age": "29",
+      "height": "7' 1\"",
+      "weight": "250 lbs"
+    },
+    {
+      "number": "44",
+      "name": "Miles Norris",
+      "playerId": "4397104",
+      "slug": "miles-norris",
+      "fullUrl": "https://www.espn.com/nba/player/_/id/4397104/miles-norris",
+      "position": "F",
+      "age": "25",
+      "height": "6' 7\"",
+      "weight": "220 lbs"
+    },
+    {
+      "number": "13",
+      "name": "Drew Peterson",
+      "playerId": "4397689",
+      "slug": "drew-peterson",
+      "fullUrl": "https://www.espn.com/nba/player/_/id/4397689/drew-peterson",
+      "position": "F",
+      "age": "25",
+      "height": "6' 9\"",
+      "weight": "205 lbs"
+    },
+    {
+      "number": "8",
+      "name": "Kristaps Porzingis",
+      "playerId": "3102531",
+      "slug": "kristaps-porzingis",
+      "fullUrl": "https://www.espn.com/nba/player/_/id/3102531/kristaps-porzingis",
+      "position": "C",
+      "age": "29",
+      "height": "7' 2\"",
+      "weight": "240 lbs"
+    },
+    {
+      "number": "11",
+      "name": "Payton Pritchard",
+      "playerId": "4066354",
+      "slug": "payton-pritchard",
+      "fullUrl": "https://www.espn.com/nba/player/_/id/4066354/payton-pritchard",
+      "position": "PG",
+      "age": "27",
+      "height": "6' 1\"",
+      "weight": "195 lbs"
+    },
+    {
+      "number": "88",
+      "name": "Neemias Queta",
+      "playerId": "4397424",
+      "slug": "neemias-queta",
+      "fullUrl": "https://www.espn.com/nba/player/_/id/4397424/neemias-queta",
+      "position": "C",
+      "age": "25",
+      "height": "7' 0\"",
+      "weight": "248 lbs"
+    },
+    {
+      "number": "55",
+      "name": "Baylor Scheierman",
+      "playerId": "4593841",
+      "slug": "baylor-scheierman",
+      "fullUrl": "https://www.espn.com/nba/player/_/id/4593841/baylor-scheierman",
+      "position": "F",
+      "age": "24",
+      "height": "6' 6\"",
+      "weight": "205 lbs"
+    },
+    {
+      "number": "0",
+      "name": "Jayson Tatum",
+      "playerId": "4065648",
+      "slug": "jayson-tatum",
+      "fullUrl": "https://www.espn.com/nba/player/_/id/4065648/jayson-tatum",
+      "position": "SF",
+      "age": "27",
+      "height": "6' 8\"",
+      "weight": "210 lbs"
+    },
+    {
+      "number": "26",
+      "name": "Xavier Tillman",
+      "playerId": "4277964",
+      "slug": "xavier-tillman",
+      "fullUrl": "https://www.espn.com/nba/player/_/id/4277964/xavier-tillman",
+      "position": "F",
+      "age": "26",
+      "height": "6' 7\"",
+      "weight": "245 lbs"
+    },
+    {
+      "number": "27",
+      "name": "Jordan Walsh",
+      "playerId": "4683689",
+      "slug": "jordan-walsh",
+      "fullUrl": "https://www.espn.com/nba/player/_/id/4683689/jordan-walsh",
+      "position": "G",
+      "age": "21",
+      "height": "6' 6\"",
+      "weight": "205 lbs"
+    },
+    {
+      "number": "9",
+      "name": "Derrick White",
+      "playerId": "3078576",
+      "slug": "derrick-white",
+      "fullUrl": "https://www.espn.com/nba/player/_/id/3078576/derrick-white",
+      "position": "PG",
+      "age": "30",
+      "height": "6' 4\"",
+      "weight": "190 lbs"
+    }
+  ]
+}

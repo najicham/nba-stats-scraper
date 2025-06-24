@@ -1,133 +1,141 @@
-# nba_pbp_raw_backup.py
-#
-# One‑shot raw play‑by‑play fetcher.
-# Use when PBPStats fails or when you want to re‑download a corrupt file.
-#
-# CLI:
-#   python -m scrapers.nba_pbp_raw_backup --gameId 0022400987
-#
-# GCF:
-#   .../nbaPbpRaw?gameId=0022400987
+# scrapers/nbacom/nbac_pbp_raw_backup.py
+"""
+Raw play-by-play JSON backup scraper                     v2 - 2025-06-16
+------------------------------------------------------------------------
+Downloads the unprocessed PBP feed from data.nba.com for a given gameId.
+Useful when the cleaned PBPStats feed fails or you need to rehydrate
+historical data.
+
+CLI example
+-----------
+    python -m scrapers.nbacom.nbac_pbp_raw_backup --gameId 0022400987
+"""
+
+from __future__ import annotations
 
 import logging
-import pytz
-from datetime import datetime
+from datetime import datetime, timezone
+from typing import Any, Dict
 
-from .scraper_base import ScraperBase, DownloadType, ExportMode
-from .utils.exceptions import DownloadDataException
+from ..scraper_base import DownloadType, ExportMode, ScraperBase
+from ..utils.exceptions import DownloadDataException
 
 logger = logging.getLogger("scraper_base")
 
 
 class GetNbaPlayByPlayRawBackup(ScraperBase):
-    """
-    Downloads raw play‑by‑play JSON directly from data.nba.com.
-    """
+    """Downloads raw PBP JSON from the public CDN."""
 
+    # ------------------------------------------------------------------ #
+    # Configuration
+    # ------------------------------------------------------------------ #
     required_opts = ["gameId"]
-    download_type = DownloadType.JSON
-    header_profile = "data"
-    decode_download_data = True
+    download_type: DownloadType = DownloadType.JSON
+    decode_download_data: bool = True
+    header_profile: str | None = "data"
 
     exporters = [
         {
             "type": "file",
-            "filename": "/tmp/pbp_%(gameId)s_raw_backup.json",
+            "filename": "/tmp/pbp_raw_%(gameId)s.json",
             "export_mode": ExportMode.DECODED,
             "pretty_print": True,
-            "groups": ["dev", "test"]
+            "groups": ["dev", "test", "prod"],
         },
         {
             "type": "gcs",
             "key": "nba/pbp/raw_backup/%(season)s/%(gameId)s.json",
             "export_mode": ExportMode.DECODED,
-            "groups": ["prod", "gcs"]
-        }
+            "groups": ["prod", "gcs"],
+        },
     ]
 
-    # ------------------------------------------------------------ helpers
-    def set_additional_opts(self):
-        """
-        Derive season from GameID (same logic as other scraper).
-        """
-        yr_prefix = int(self.opts["gameId"][3:5]) + 2000
-        self.opts["season"] = f"{yr_prefix}-{(yr_prefix + 1) % 100:02d}"
+    # ------------------------------------------------------------------ #
+    # Additional opts helper (derive season)
+    # ------------------------------------------------------------------ #
+    def set_additional_opts(self) -> None:
+        gid = self.opts["gameId"]
+        try:
+            yr_prefix = 2000 + int(gid[3:5])
+            self.opts["season"] = f"{yr_prefix}-{(yr_prefix + 1) % 100:02d}"
+        except (ValueError, IndexError):
+            raise DownloadDataException("Invalid gameId format for season derivation")
 
-    def set_url(self):
+    # ------------------------------------------------------------------ #
+    # URL builder
+    # ------------------------------------------------------------------ #
+    def set_url(self) -> None:
         gid = self.opts["gameId"]
         self.url = (
-            "https://cdn.nba.com/static/json/liveData/playbyplay/"
+            f"https://cdn.nba.com/static/json/liveData/playbyplay/"
             f"playbyplay_{gid}.json"
         )
-        logger.info("Resolved play‑by‑play URL: %s", self.url)
+        logger.info("PBP URL: %s", self.url)
 
-    # ------------------------------------------------------------ validation
-    def validate_download_data(self):
-        if "game" not in self.decoded_data:
-            raise DownloadDataException("playbyplay JSON missing 'game' root key")
-        actions = self.decoded_data["game"].get("actions", [])
-        if not actions:
-            raise DownloadDataException("No 'actions' array in playbyplay JSON")
+    # ------------------------------------------------------------------ #
+    # Validation
+    # ------------------------------------------------------------------ #
+    def validate_download_data(self) -> None:
+        game = self.decoded_data.get("game")
+        if game is None or "actions" not in game:
+            raise DownloadDataException("PBP JSON missing game.actions array")
+        if not isinstance(game["actions"], list) or not game["actions"]:
+            raise DownloadDataException("game.actions is empty")
 
-    # ------------------------------------------------------------ transform
-    def transform_data(self):
-        """
-        Pass‑through JSON plus a tiny metadata wrapper.
-        """
-        ts = datetime.utcnow().replace(tzinfo=pytz.UTC).isoformat()
-        self.data = {
+    # ------------------------------------------------------------------ #
+    # Transform (wrap with metadata)
+    # ------------------------------------------------------------------ #
+    def transform_data(self) -> None:
+        ts = datetime.now(timezone.utc).isoformat()
+        actions = self.decoded_data["game"]["actions"]
+
+        self.data: Dict[str, Any] = {
             "metadata": {
                 "gameId": self.opts["gameId"],
                 "season": self.opts["season"],
-                "fetched": ts,
-                "eventCount": len(self.decoded_data["game"]["actions"])
+                "fetchedUtc": ts,
+                "eventCount": len(actions),
             },
-            "playByPlay": self.decoded_data
+            "playByPlay": self.decoded_data,
         }
 
-    # tell exporter which part to save (the whole dict)
-    def get_export_data_for_exporter(self, exporter):
+    # ------------------------------------------------------------------ #
+    # Tell exporters what to save (just the playByPlay section for GCS/file)
+    # ------------------------------------------------------------------ #
+    def get_export_data_for_exporter(self, _exporter_cfg):  # noqa: D401
         return self.data["playByPlay"]
 
-    # ------------------------------------------------------------ stats
-    def get_scraper_stats(self):
+    # ------------------------------------------------------------------ #
+    # Stats line
+    # ------------------------------------------------------------------ #
+    def get_scraper_stats(self) -> dict:
         return {
             "gameId": self.opts["gameId"],
-            "events": len(self.decoded_data["game"]["actions"])
+            "events": self.data["metadata"]["eventCount"],
         }
 
 
-# ------------------------------------------------------------ GCF entry
-def gcf_entry(request):
-    """
-    HTTP entry point for Cloud Function / Cloud Run.
-
-    ?gameId=0022400987
-    ?group=prod|test  (optional, default prod)
-    """
+# ---------------------------------------------------------------------- #
+# Cloud Function / Cloud Run HTTP entry
+# ---------------------------------------------------------------------- #
+def gcf_entry(request):  # type: ignore[valid-type]
     game_id = request.args.get("gameId")
-    group   = request.args.get("group", "prod")
-
     if not game_id:
-        return ("Missing required parameter: gameId", 400)
+        return ("Missing query param 'gameId'", 400)
 
-    opts = {"gameId": game_id, "group": group}
-    scraper = GetNbaPlayByPlayRawBackup()
-    ok = scraper.run(opts)
-
-    if ok is False:
-        return (f"Raw backup scrape failed for {game_id}", 500)
-    return (f"Raw backup scrape completed for {game_id}", 200)
+    ok = GetNbaPlayByPlayRawBackup().run(
+        {"gameId": game_id, "group": request.args.get("group", "prod")}
+    )
+    return (("PBP scrape failed", 500) if ok is False else ("Scrape ok", 200))
 
 
-# ------------------------------------------------------------ Local CLI
+# ---------------------------------------------------------------------- #
+# CLI helper
+# ---------------------------------------------------------------------- #
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--gameId", required=True, help="e.g. 0022400987")
-    parser.add_argument("--group", default="test", help="dev, test, prod, etc.")
-    args = parser.parse_args()
-
-    scraper = GetNbaPlayByPlayRawBackup()
-    scraper.run(vars(args))
+    cli = argparse.ArgumentParser()
+    cli.add_argument("--gameId", required=True, help="e.g. 0022400987")
+    cli.add_argument("--group", default="test")
+    GetNbaPlayByPlayRawBackup().run(vars(cli.parse_args()))

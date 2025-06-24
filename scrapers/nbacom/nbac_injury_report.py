@@ -1,261 +1,226 @@
-# scrapers/nba_com_injury_report.py
+# scrapers/nbacom/nbac_injury_report.py
+"""
+NBA.com Injury Report PDF scraper                       v2 - 2025-06-16
+-----------------------------------------------------------------------
+Downloads and parses the official Injury Report PDF.  Outputs a list of
+records like:
 
-import os
-import re
-import sys
+    {
+        "date": "03/16/2025",
+        "gametime": "7:30 PM ET",
+        "matchup": "LAL@BOS",
+        "team": "LOS ANGELES LAKERS",
+        "player": "James, LeBron",
+        "status": "Questionable",
+        "reason": "Left ankle soreness"
+    }
+"""
+
+from __future__ import annotations
+
 import logging
+import re
+from datetime import datetime, timezone
+from typing import List
+
 from pdfreader import SimplePDFViewer
 from pdfreader.viewer.pdfviewer import PageDoesNotExist
 
-from ..scraper_base import ScraperBase, DownloadType, ExportMode
-from ..utils.exceptions import InvalidRegionDecodeException, DownloadDataException
+from ..scraper_base import DownloadType, ExportMode, ScraperBase
+from ..utils.exceptions import DownloadDataException, InvalidRegionDecodeException
 
 logger = logging.getLogger("scraper_base")
 
 
 class GetNbaComInjuryReport(ScraperBase):
-    """
-    Scraper for the NBA.com Injury Report PDF.
+    """Scrapes and parses the daily NBA Injury Report PDF."""
 
-    Usage example (local CLI):
-      python nba_com_injury_report.py --gamedate=2022-01-03 --hour=8
-    """
-
-    # Required options
-    required_opts = ["gamedate", "hour"]
-    # Additional (auto-set 'season' if you want it derived from gamedate)
-    additional_opts = ["nba_season_from_gamedate"]
-    header_profile = "data"
-    # We'll parse a PDF manually, so treat raw response as BINARY
-    download_type = DownloadType.BINARY
-
-    # If we want a proxy, set proxy_enabled = True
-    proxy_enabled = True
-
-    # Skip retry on 403
+    # ------------------------------------------------------------------ #
+    # Config
+    # ------------------------------------------------------------------ #
+    required_opts = ["gamedate", "hour"]            # hour must be 1, 5, or 8
+    header_profile: str | None = "data"
+    download_type: DownloadType = DownloadType.BINARY
+    proxy_enabled: bool = True
     no_retry_status_codes = [403]
 
-    # Define exporters:
-    # 1) GCS: store the raw PDF
-    # 2) File: store the *parsed* data from self.data
     exporters = [
         {
             "type": "gcs",
             "key": "nbacom/injury-report/%(season)s/%(gamedate)s/0%(hour)sPM/%(time)s.pdf",
-            "export_mode": ExportMode.RAW,  # raw PDF content
+            "export_mode": ExportMode.RAW,
             "groups": ["prod", "gcs"],
         },
         {
             "type": "file",
-            "filename": "/tmp/getnbacominjuryreport.json",
-            "export_mode": ExportMode.DATA,  # final parsed data from self.data
+            "filename": "/tmp/nbacom_injury_report_%(gamedate)s_%(hour)s.json",
+            "export_mode": ExportMode.DATA,
             "pretty_print": True,
-            "groups": ["dev", "file"],
+            "groups": ["dev", "test", "prod"],
         },
     ]
 
-    def validate_opts(self):
-        """
-        Ensure required options. 
-        hour must be '1', '5', or '8', for example.
-        """
+    # ------------------------------------------------------------------ #
+    # Additional opts helper
+    # ------------------------------------------------------------------ #
+    def set_additional_opts(self) -> None:
+        now = datetime.now(timezone.utc)
+        self.opts["time"] = now.strftime("%H-%M-%S")
+        year = int(self.opts["gamedate"][0:4])
+        self.opts["season"] = f"{year}-{(year + 1) % 100:02d}"
+
+    # ------------------------------------------------------------------ #
+    # Option validation
+    # ------------------------------------------------------------------ #
+    def validate_opts(self) -> None:
         super().validate_opts()
-        valid_hours = ["1", "5", "8"]
-        if self.opts["hour"] not in valid_hours:
-            logger.error("Invalid hour %s. Must be one of %s", self.opts["hour"], valid_hours)
-            raise DownloadDataException("[hour] must be 1, 5, or 8")
+        if self.opts["hour"] not in {"1", "5", "8"}:
+            raise DownloadDataException("hour must be 1, 5, or 8")
 
-    def set_url(self):
-        """
-        Build the final PDF URL from 'gamedate' and 'hour'.
-        Example: 
-          https://ak-static.cms.nba.com/referee/injury/Injury-Report_2023-01-10_01PM.pdf
-        """
-        gamedate = self.opts["gamedate"]
-        hour_str = self.opts["hour"]  # '1', '5', or '8'
+    # ------------------------------------------------------------------ #
+    # URL builder
+    # ------------------------------------------------------------------ #
+    def set_url(self) -> None:
+        gd = self.opts["gamedate"]
+        hour = self.opts["hour"]
         self.url = (
-            f"https://ak-static.cms.nba.com/referee/injury/Injury-Report_{gamedate}_0{hour_str}PM.pdf"
+            f"https://ak-static.cms.nba.com/referee/injury/"
+            f"Injury-Report_{gd}_0{hour}PM.pdf"
         )
-        logger.info("Injury Report PDF URL set to: %s", self.url)
+        logger.info("Injury Report URL: %s", self.url)
 
-    def should_save_data(self):
-        """
-        We only export if we have parsed at least 1 record in self.data.
-        """
-        record_count = len(self.data) if isinstance(self.data, list) else 0
-        logger.info("should_save_data? Found %d records.", record_count)
-        return record_count > 0
+    # ------------------------------------------------------------------ #
+    # Only save if we parsed at least 1 record
+    # ------------------------------------------------------------------ #
+    def should_save_data(self) -> bool:
+        return isinstance(self.data, list) and len(self.data) > 0
 
-    def decode_download_content(self):
-        """
-        Parse the PDF from self.raw_response.content.
-        Store the resulting list of records in self.data.
-        """
+    # ------------------------------------------------------------------ #
+    # Decode PDF -> self.data
+    # ------------------------------------------------------------------ #
+    def decode_download_content(self) -> None:
+        content = self.raw_response.content
+
+        if b"not accessible in this region" in content.lower():
+            raise InvalidRegionDecodeException("PDF blocked in this region.")
+        if b"%PDF" not in content[:1024]:
+            raise InvalidRegionDecodeException("Response is not a PDF.")
+
+        records: List[dict] = []
+        temp = {
+            "date": "",
+            "gametime": "",
+            "matchup": "",
+            "team": "",
+            "player": "",
+            "status": "",
+            "next_state": "",
+        }
+
+        viewer = SimplePDFViewer(content)
+        page_num = 0
         try:
-            # Check if the content indicates a region block
-            if b"not accessible in this region" in self.raw_response.content:
-                logger.error("Region block detected in PDF content.")
-                raise InvalidRegionDecodeException("PDF blocked in this region.")
-
-            # Quick check if the response is recognized as PDF
-            if b"PDF" not in self.raw_response.content[:1024]:
-                logger.error("Download content does not appear to be PDF.")
-                raise InvalidRegionDecodeException("Content is not recognized as PDF.")
-
-            data = []
-            current_record = {
-                "date": "",
-                "gametime": "",
-                "matchup": "",
-                "team": "",
-                "status": "",
-                "player": "",
-                "next_is": ""
-            }
-
-            logger.debug("Starting PDF parse for Injury Report.")
-            viewer = SimplePDFViewer(self.raw_response.content)
-            page_count = 0
-
             while True:
                 viewer.render()
-                page_strings = viewer.canvas.strings
-                self.parse_strings(page_strings, current_record, data)
+                self._parse_strings(viewer.canvas.strings, temp, records)
                 viewer.next()
-                page_count += 1
-
+                page_num += 1
         except PageDoesNotExist:
-            # End of PDF
-            logger.info("Reached end of PDF after %d pages.", page_count)
-            if data:
-                self.data = data  # store final parsed data
-                logger.info("Parsed a total of %d injury records.", len(data))
-            else:
-                logger.error("Parsed 0 records. PDF parse error.")
-                raise DownloadDataException("PDF parse error: no data found.")
+            logger.info(
+                "Finished PDF after %d pages, parsed %d records.", page_num, len(records)
+            )
 
-        except Exception as ex:
-            logger.exception("Unexpected error parsing PDF.")
-            raise DownloadDataException(f"PDF parse unexpected error: {ex}")
+        if not records:
+            raise DownloadDataException("Parsed 0 records from PDF.")
+        self.data = records
 
-    def parse_strings(self, page_strings, current_record, data):
-        """
-        Process each string on the PDF page. 
-        We build up a record and append to 'data' once we have all fields.
-        """
-        for string in page_strings:
-            if current_record["next_is"] == "player":
-                # e.g. "LastName, FirstName"
-                if re.match(r".*, .*", string):
-                    current_record["player"] = string
-                    current_record["next_is"] = "status"
-                else:
-                    current_record["next_is"] = "newline"
+    # ------------------------------------------------------------------ #
+    # String parser with full state machine
+    # ------------------------------------------------------------------ #
+    def _parse_strings(self, strings: List[str], temp: dict, out_list: List[dict]) -> None:
+        for s in strings:
+            # ---------------- Continued-field states ------------------
+            if temp["next_state"] == "team":
+                # Accumulate multi-token team names until we hit a new logical token
+                if "@" not in s and "," not in s and not re.match(r"\d{1,2}:\d{2}", s):
+                    temp["team"] = (temp["team"] + " " + s).strip()
+                    continue
+                # Fall through to evaluate the new token as fresh input
 
-            elif current_record["next_is"] == "gametime":
-                current_record["gametime"] = string
-                current_record["next_is"] = "matchup"
+            if temp["next_state"] == "player":
+                if re.match(r".*, .*", s):
+                    temp["player"] = s
+                    temp["next_state"] = "status"
+                    continue
 
-            elif current_record["next_is"] == "matchup":
-                current_record["matchup"] = string
-                current_record["next_is"] = "team"
+            if temp["next_state"] == "status":
+                temp["status"] = s
+                temp["next_state"] = "reason"
+                continue
 
-            elif current_record["next_is"] == "team":
-                current_record["team"] = string
-                current_record["next_is"] = "player"
+            if temp["next_state"] == "reason":
+                out_list.append(
+                    {
+                        "date": temp["date"],
+                        "gametime": temp["gametime"],
+                        "matchup": temp["matchup"],
+                        "team": temp["team"],
+                        "player": temp["player"],
+                        "status": temp["status"],
+                        "reason": s,
+                    }
+                )
+                temp["next_state"] = ""
+                continue
 
-            elif current_record["next_is"] == "status":
-                current_record["status"] = string
-                current_record["next_is"] = "reason"
+            # ---------------- Fresh-record pattern matches -------------
+            if re.match(r"\d{2}/\d{2}/\d{4}", s):           # Date
+                temp.update(date=s, next_state="gametime")
+            elif re.match(r"\d{1,2}:\d{2}", s):             # Game time
+                temp.update(gametime=s, next_state="matchup")
+            elif "@" in s:                                  # Matchup
+                temp.update(matchup=s, next_state="team", team="")
+            elif re.match(r".*, .*", s):                    # Player
+                temp.update(player=s, next_state="status")
+            # If we are in 'team' state but token didn't match earlier,
+            # it might be the first chunk of a multi-word team name.
+            elif temp["next_state"] == "team":
+                temp["team"] = s
 
-            elif current_record["next_is"] == "reason":
-                # finalize a record
-                data.append({
-                    "date": current_record["date"],
-                    "gametime": current_record["gametime"],
-                    "matchup": current_record["matchup"],
-                    "team": current_record["team"],
-                    "player": current_record["player"],
-                    "status": current_record["status"],
-                    "reason": string
-                })
-                current_record["next_is"] = "newline"
-
-            # If we detect a date like "MM/DD/YYYY"
-            elif re.match(r"[\d]{2}/[\d]{2}/[\d]{4}", string):
-                current_record["date"] = string
-                current_record["next_is"] = "gametime"
-
-            # If the string looks like "LastName, FirstName"
-            elif re.match(r".*, .*", string):
-                current_record["player"] = string
-                current_record["next_is"] = "status"
-
-            # If it looks like "TEAM@TEAM"
-            elif re.match(r".*@.*", string):
-                current_record["matchup"] = string
-                current_record["next_is"] = "team"
-
-            # "HH:MM (ET)" or similar
-            elif current_record["next_is"] == "newline" and re.match(r"[\d]+:[\d]+[\s].+", string):
-                current_record["gametime"] = string
-                current_record["next_is"] = "matchup"
-
-            # Possibly a multi-word team name: "Los Angeles Lakers"
-            elif current_record["next_is"] == "newline" and re.match(r"[\w]+\s+[\w]+", string):
-                current_record["team"] = string
-                current_record["next_is"] = ""
-
-    def get_scraper_stats(self):
-        """
-        Return # of parsed records, plus gamedate/hour used.
-        """
-        records_found = len(self.data) if isinstance(self.data, list) else 0
+    # ------------------------------------------------------------------ #
+    # Stats line
+    # ------------------------------------------------------------------ #
+    def get_scraper_stats(self) -> dict:
         return {
-            "records_found": records_found,
-            "gamedate": self.opts.get("gamedate", "unknown"),
-            "hour": self.opts.get("hour", "unknown"),
+            "gamedate": self.opts["gamedate"],
+            "hour": self.opts["hour"],
+            "records": len(self.data) if isinstance(self.data, list) else 0,
         }
 
 
-##############################################################################
-# Cloud Function Entry Point
-##############################################################################
-def gcf_entry(request):
-    """
-    Google Cloud Function (HTTP) entry point.
-    Example request: 
-      GET .../NbaComInjuryReport?gamedate=2023-01-03&hour=8&group=prod
-    """
-    gamedate = request.args.get("gamedate", "2023-01-01")
-    hour = request.args.get("hour", "8")
-    group = request.args.get("group", "prod")
+# ---------------------------------------------------------------------- #
+# Cloud Function entry
+# ---------------------------------------------------------------------- #
+def gcf_entry(request):  # type: ignore[valid-type]
+    gd = request.args.get("gamedate")
+    hr = request.args.get("hour")
+    if not gd or not hr:
+        return ("Missing 'gamedate' or 'hour'", 400)
 
-    opts = {
-        "gamedate": gamedate,
-        "hour": hour,
-        "group": group
-    }
-
-    scraper = GetNbaComInjuryReport()
-    result = scraper.run(opts)
-
-    return f"InjuryReport run complete. Found result: {result}", 200
+    ok = GetNbaComInjuryReport().run(
+        {"gamedate": gd, "hour": hr, "group": request.args.get("group", "prod")}
+    )
+    return (("Injury PDF scrape failed", 500) if ok is False else ("Scrape ok", 200))
 
 
-##############################################################################
-# Local CLI Usage
-##############################################################################
+# ---------------------------------------------------------------------- #
+# CLI helper
+# ---------------------------------------------------------------------- #
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="Run NBA.com Injury Report locally")
-    parser.add_argument("--gamedate", required=True, help="e.g. 2023-01-03")
-    parser.add_argument("--hour", default="8", help="Possible values: 1, 5, or 8")
-    parser.add_argument("--group", default="test", help="Which group exporters to run, e.g. dev/test/prod")
-    args = parser.parse_args()
-
-    opts = vars(args)
-
-    scraper = GetNbaComInjuryReport()
-    scraper.run(opts)
+    cli = argparse.ArgumentParser()
+    cli.add_argument("--gamedate", required=True, help="YYYY-MM-DD")
+    cli.add_argument("--hour", required=True, choices=["1", "5", "8"])
+    cli.add_argument("--group", default="test")
+    GetNbaComInjuryReport().run(vars(cli.parse_args()))

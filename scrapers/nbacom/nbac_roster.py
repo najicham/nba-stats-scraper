@@ -1,325 +1,234 @@
-# nbac_team_roster.py
+# scrapers/nbacom/nbac_team_roster.py
+"""
+NBA.com team roster scraper                               v2.1 - 2025-06-17
+--------------------------------------------------------------------------
+CLI quick‑start (debug OFF):
+    python -m scrapers.nbacom.nbac_team_roster --teamAbbr GSW
 
-import os
-import logging
+Enable debug dumps:
+    python -m scrapers.nbacom.nbac_team_roster --teamAbbr GSW --debug 1
+"""
+
+from __future__ import annotations
+
 import json
-from datetime import datetime
+import logging
+import os
+from datetime import datetime, timezone
+from typing import List, Dict
+
 from bs4 import BeautifulSoup
-import pytz
-
-# Pydantic for JSON structure validation
 from pydantic import BaseModel, Field, ValidationError
-from typing import List
 
-from ..scraper_base import ScraperBase, DownloadType, ExportMode
+from ..scraper_base import DownloadType, ExportMode, ScraperBase
 from ..utils.exceptions import DownloadDataException
 from config.nba_teams import NBA_TEAMS
 
 logger = logging.getLogger("scraper_base")
 
-##############################################################################
-# 1) Define Pydantic models to describe the JSON structure you expect.
-#    Customize as your actual structure changes. 
-##############################################################################
-
+# ------------------------------------------------------------------ #
+# Pydantic models
+# ------------------------------------------------------------------ #
 class PlayerItem(BaseModel):
-    PLAYER: str = Field(..., description="Full name of the player (e.g. 'Stephen Curry')")
-    PLAYER_SLUG: str = Field(..., description="Slug (e.g. 'stephen-curry')")
-    PLAYER_ID: int = Field(..., description="Numeric ID (e.g. 201939)")
-    NUM: str = Field(..., description="Jersey number (e.g. '30')")
-    POSITION: str = Field(..., description="Position label (e.g. 'G')")
+    PLAYER: str = Field(...)
+    PLAYER_SLUG: str = Field(...)
+    PLAYER_ID: int = Field(...)
+    NUM: str = Field(...)
+    POSITION: str = Field(...)
+
 
 class Roster(BaseModel):
     roster: List[PlayerItem]
 
+
 class TeamProps(BaseModel):
     team: Roster
 
+
 class PageProps(BaseModel):
     pageProps: TeamProps
+
 
 class NextData(BaseModel):
     props: PageProps
 
 
-##############################################################################
-# 2) Scraper Class
-##############################################################################
+# ------------------------------------------------------------------ #
 class GetNbaTeamRoster(ScraperBase):
-    """
-    Scraper to download an NBA team's official roster page from nba.com and
-    parse the JSON structure within <script id="__NEXT_DATA__"> to build a
-    structured player list.
+    """Parses roster JSON embedded in nba.com team pages."""
 
-    - Provides data validation via Pydantic
-    - Attempts fallback data storage if the JSON doesn't match the schema
-    """
     required_opts = ["teamAbbr"]
-    decode_download_data = True        # We'll let ScraperBase call validate_download_data
-    download_type = DownloadType.BINARY  # We'll decode HTML ourselves
-    # Use the shared data‑site headers (UA + Referer) from ScraperBase
-    header_profile = "data"
+    header_profile: str | None = "data"
+    download_type: DownloadType = DownloadType.HTML
+    decode_download_data: bool = True
+
+    # master debug flag (can be overridden by opts['debug'])
+    debug_enabled: bool = False
 
     exporters = [
-        {
-            "type": "gcs",
-            "key": "nba/rosters/%(season)s/%(date)s/%(teamAbbr)s_%(time)s.json",
-            "export_mode": ExportMode.DATA,
-            "groups": ["prod", "gcs"]
-        },
         {
             "type": "file",
             "filename": "/tmp/roster_%(teamAbbr)s_%(date)s.json",
             "export_mode": ExportMode.DATA,
             "pretty_print": True,
-            "groups": ["dev", "test"]
-        }
+            "groups": ["dev", "test"],
+        },
+        {
+            "type": "gcs",
+            "key": "nba/rosters/%(season)s/%(date)s/%(teamAbbr)s_%(time)s.json",
+            "export_mode": ExportMode.DATA,
+            "groups": ["prod", "gcs"],
+        },
     ]
 
-    def resolve_team_config(self):
-        """
-        Finds the matching team config (ID, slug) for the user-supplied abbreviation.
-        """
-        teamAbbr = self.opts["teamAbbr"]
-        for team in NBA_TEAMS:
-            if team["abbr"].lower() == teamAbbr.lower():
-                return team
-        raise DownloadDataException(f"Team config not found for abbreviation: {teamAbbr}")
+    # ------------------------------------------------------------ helpers
+    def set_additional_opts(self) -> None:
+        now = datetime.now(timezone.utc)
+        self.opts["date"] = now.strftime("%Y-%m-%d")
+        self.opts["time"] = now.strftime("%H-%M-%S")
+        self.opts.setdefault("season", f"{now.year}-{(now.year + 1) % 100:02d}")
 
-    def set_additional_opts(self):
-        """
-        Fill in default date, time, season if not already present.
-        """
-        now_utc = datetime.utcnow()  
-        now_pst = now_utc.astimezone(pytz.timezone("America/Los_Angeles"))
+        # interpret --debug flag (truthy → enable debug helpers)
+        dbg = str(self.opts.get("debug", "0")).lower()
+        self.debug_enabled = dbg in {"1", "true", "yes"}
 
-        self.opts["date"] = now_pst.strftime("%Y-%m-%d")
-        self.opts["time"] = now_pst.strftime("%H-%M-%S")
+    def _team_cfg(self) -> dict:
+        for t in NBA_TEAMS:
+            if t["abbr"].lower() == self.opts["teamAbbr"].lower():
+                return t
+        raise DownloadDataException(f"Unknown teamAbbr: {self.opts['teamAbbr']}")
 
-        # Example: '2024-25' for the current year
-        season_year = now_pst.year
-        default_season = f"{season_year}-{(season_year + 1) % 100:02d}"
-        self.opts["season"] = self.opts.get("season", default_season)
+    # ------------------------------------------------------------ URL
+    def set_url(self) -> None:
+        cfg = self._team_cfg()
+        self.opts["teamId"] = cfg["teamId"]
+        self.url = f"https://www.nba.com/team/{cfg['teamId']}/{cfg['slug']}/roster"
+        logger.info("Roster URL: %s", self.url)
 
-    def set_url(self):
-        """
-        Build the official NBA team roster URL, e.g.:
-        https://www.nba.com/team/1610612744/warriors/roster
-        """
-        team = self.resolve_team_config()
-        self.opts["teamId"] = team["teamId"]
-        self.opts["slug"] = team["slug"]
-        self.url = f"https://www.nba.com/team/{team['teamId']}/{team['slug']}/roster"
-        logger.info(f"Resolved roster URL: {self.url}")
+    # ------------------------------------------------------------ validation
+    def validate_download_data(self) -> None:
+        if not self.decoded_data or "<html" not in self.decoded_data.lower():
+            raise DownloadDataException("Roster page HTML missing or empty.")
 
-    # -------------------------------------------------------------------------
-    # Overriding decode_download_content so we can store the raw HTML ourselves.
-    # -------------------------------------------------------------------------
-    def decode_download_content(self):
-        # The base class won't attempt JSON decode because we set download_type=BINARY.
-        # We'll just store raw HTML as 'self.html_content'.
-        self.html_content = self.raw_response.text
+    # ------------------------------------------------------------ transform
+    def transform_data(self) -> None:
+        soup = BeautifulSoup(self.decoded_data, "html.parser")
 
-    def validate_download_data(self):
-        """
-        Confirm we have non-empty HTML from the response.
-        """
-        if not getattr(self, "html_content", ""):
-            raise DownloadDataException("No HTML content retrieved for roster page.")
+        # Conditional debug dumps
+        if self.debug_enabled:
+            self._debug_write_html()
+            self._debug_write_all_scripts(soup)
 
-    def transform_data(self):
-        """
-        1) Parse the HTML
-        2) Find the <script id="__NEXT_DATA__">
-        3) Parse JSON from that script
-        4) Run Pydantic validation
-        5) Build final list of players
-        """
-        self.step_info("transform", "Starting the transformation step")
+        tag = soup.find("script", id="__NEXT_DATA__")
+        if not tag or not tag.string:
+            raise DownloadDataException("__NEXT_DATA__ script not found.")
 
-        soup = BeautifulSoup(self.html_content, "html.parser")
-
-        # Debug: write entire page for reference
-        self._debug_write_html()
-
-        # Debug: write out each <script> in /tmp/debug_scripts/
-        self._debug_write_all_scripts(soup)
-
-        # Find the special <script id="__NEXT_DATA__">
-        next_data_script = soup.find("script", {"id": "__NEXT_DATA__"})
-        if not next_data_script:
-            logger.warning("No <script id='__NEXT_DATA__'> found on page.")
-            raise DownloadDataException("Could not find __NEXT_DATA__ script on roster page.")
-
-        script_content = next_data_script.string or ""
-        if not script_content.strip():
-            raise DownloadDataException("__NEXT_DATA__ script was empty. No JSON to parse.")
-
-        # Attempt to parse the raw JSON
-        embedded_json = self._parse_json_from_script(script_content)
-        # For debugging, write the entire JSON structure
-        self._debug_write_embedded_json(embedded_json)
-
-        # Attempt to validate with Pydantic
-        # If it fails, we store fallback data but continue or raise.
-        validated_data = None
         try:
-            validated_data = NextData(**embedded_json)
-        except ValidationError as exc:
-            logger.error(f"JSON structure did not match expected schema: {exc}")
-            # Optionally store the raw JSON in a fallback location
-            self._store_fallback_json(embedded_json, reason="ValidationError")
-            # You can decide whether to raise or proceed with partial data
-            # For now, let's raise an exception so we’re alerted via Sentry
-            raise DownloadDataException("JSON schema mismatch, see logs for details.")
+            json_text = tag.string[tag.string.find("{") :]
+            raw_json = json.loads(json_text)
+            parsed = NextData(**raw_json)
+        except (json.JSONDecodeError, ValidationError) as exc:
+            if self.debug_enabled:
+                self._debug_write_embedded_json(tag.string)
+                self._store_fallback_json(tag.string, reason="ValidationError")
+            raise DownloadDataException(f"Roster JSON invalid: {exc}")
 
-        # If we got here, the JSON matches our schema.
-        roster_items = validated_data.props.pageProps.team.roster
+        roster_items = parsed.props.pageProps.team.roster
 
-        # Convert the Pydantic objects into final data dicts
-        players = []
-        for item in roster_items:
-            players.append({
-                "name": item.PLAYER,
-                "slug": item.PLAYER_SLUG,
-                "playerId": item.PLAYER_ID,
-                "number": item.NUM,
-                "position": item.POSITION,
-            })
+        players = [
+            {
+                "name": p.PLAYER,
+                "slug": p.PLAYER_SLUG,
+                "playerId": p.PLAYER_ID,
+                "number": p.NUM,
+                "position": p.POSITION,
+            }
+            for p in roster_items
+        ]
 
-        # Build final data object
-        now_utc = datetime.utcnow()
         self.data = {
             "teamAbbr": self.opts["teamAbbr"],
             "teamId": self.opts["teamId"],
-            "timestamp": now_utc.isoformat(),
-            "players": players,
             "season": self.opts["season"],
-            "date": self.opts["date"],
-            "time": self.opts["time"],
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "playerCount": len(players),
+            "players": players,
         }
 
-        logger.info(f"Found {len(players)} players for {self.opts['teamAbbr']}!")
+        logger.info("Found %d players for %s", len(players), self.opts["teamAbbr"])
 
-    def get_scraper_stats(self):
-        """
-        Additional fields in the final SCRAPER_STATS log line.
-        """
-        return {
-            "teamAbbr": self.opts["teamAbbr"],
-            "playerCount": len(self.data.get("players", [])),
-        }
+    # ------------------------------------------------------------ stats
+    def get_scraper_stats(self) -> dict:
+        return {"teamAbbr": self.opts["teamAbbr"], "playerCount": self.data["playerCount"]}
 
-    # -------------------------------------------------------------------------
-    # Internal Helpers
-    # -------------------------------------------------------------------------
-    def _parse_json_from_script(self, script_content):
-        """
-        If there's a preamble, strip until the first '{', then parse as JSON.
-        """
+    # ------------------------------------------------------------ debug helpers
+    def _debug_write_html(self) -> None:
         try:
-            idx = script_content.find("{")
-            if idx >= 0:
-                script_content = script_content[idx:]
-            return json.loads(script_content)
-        except Exception as e:
-            raise DownloadDataException(f"Failed parsing JSON: {e}")
+            with open("/tmp/roster_page.html", "w", encoding="utf-8") as fh:
+                fh.write(self.decoded_data)
+        except Exception as exc:
+            logger.warning("Failed to dump HTML: %s", exc)
 
-    def _debug_write_html(self):
-        """
-        Write the entire HTML to /tmp/roster_page.html for debugging.
-        """
-        try:
-            with open("/tmp/roster_page.html", "w", encoding="utf-8") as f:
-                f.write(self.html_content)
-        except Exception as e:
-            logger.warning(f"Failed to write /tmp/roster_page.html: {e}")
-
-    def _debug_write_all_scripts(self, soup):
-        """
-        Write each <script> tag to /tmp/debug_scripts/script_{idx}.txt
-        for debugging or offline inspection.
-        """
+    def _debug_write_all_scripts(self, soup: BeautifulSoup) -> None:
         debug_dir = "/tmp/debug_scripts"
         os.makedirs(debug_dir, exist_ok=True)
-
-        script_tags = soup.find_all("script")
-        logger.info(f"Found {len(script_tags)} <script> tags on the page.")
-
-        for idx, tag in enumerate(script_tags):
-            content = tag.string or ""
-            file_path = os.path.join(debug_dir, f"script_{idx}.txt")
+        for idx, tag in enumerate(soup.find_all("script")):
+            path = os.path.join(debug_dir, f"script_{idx}.txt")
             try:
-                with open(file_path, "w", encoding="utf-8") as sf:
-                    sf.write(content)
-            except Exception as e:
-                logger.warning(f"Failed writing {file_path}: {e}")
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.write(tag.string or "")
+            except Exception as exc:
+                logger.warning("Failed to write %s: %s", path, exc)
 
-    def _debug_write_embedded_json(self, data):
-        """
-        Write the extracted JSON to /tmp/debug_embedded.json
-        to confirm structure and debugging.
-        """
+    def _debug_write_embedded_json(self, text: str) -> None:
         try:
-            with open("/tmp/debug_embedded.json", "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2)
-            logger.info("Wrote debug JSON to /tmp/debug_embedded.json")
-        except Exception as e:
-            logger.warning(f"Failed writing /tmp/debug_embedded.json: {e}")
+            with open("/tmp/debug_embedded.json", "w", encoding="utf-8") as fh:
+                fh.write(text)
+        except Exception as exc:
+            logger.warning("Failed to write embedded JSON: %s", exc)
 
-    def _store_fallback_json(self, data, reason="unknown"):
-        """
-        If validation fails or something is off, we can store the entire JSON
-        so we have it for offline inspection. 
-        """
-        fallback_dir = "/tmp/fallback_json"
-        os.makedirs(fallback_dir, exist_ok=True)
-
-        fallback_filename = (
+    def _store_fallback_json(self, text: str, reason: str = "unknown") -> None:
+        fb_dir = "/tmp/fallback_json"
+        os.makedirs(fb_dir, exist_ok=True)
+        filename = (
             f"roster_fallback_{self.opts.get('teamAbbr','NA')}_"
-            f"{self.opts.get('date','NA')}_{self.opts.get('time','NA')}_"
-            f"{reason}.json"
+            f"{self.opts.get('date','NA')}_{self.opts.get('time','NA')}_{reason}.json"
         )
-        fallback_path = os.path.join(fallback_dir, fallback_filename)
-
+        path = os.path.join(fb_dir, filename)
         try:
-            with open(fallback_path, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2)
-            logger.warning(f"Stored fallback JSON at {fallback_path}")
-        except Exception as e:
-            logger.warning(f"Failed writing fallback JSON to {fallback_path}: {e}")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(text)
+            logger.warning("Stored fallback JSON at %s", path)
+        except Exception as exc:
+            logger.warning("Failed to write fallback JSON: %s", exc)
 
 
-##############################################################################
-# Optional: GCF Entrypoint
-##############################################################################
-def gcf_entry(request):
-    """
-    Example Google Cloud Function entrypoint 
-    (if you deploy the scraper as a cloud function).
-    """
-    teamAbbr = request.args.get("teamAbbr")
-    group = request.args.get("group", "prod")
+# ---------------------------------------------------------------------- #
+# Google Cloud Function entry
+# ---------------------------------------------------------------------- #
+def gcf_entry(request):  # type: ignore[valid-type]
+    team = request.args.get("teamAbbr")
+    if not team:
+        return ("Missing teamAbbr", 400)
 
-    if not teamAbbr:
-        return ("Missing required parameter: teamAbbr", 400)
-
-    opts = {"teamAbbr": teamAbbr, "group": group}
-    scraper = GetNbaTeamRoster()
-    result = scraper.run(opts)
-    return f"TeamRoster run complete for {teamAbbr}. Result: {result}", 200
+    ok = GetNbaTeamRoster().run(
+        {
+            "teamAbbr": team,
+            "group": request.args.get("group", "prod"),
+            "debug": request.args.get("debug", "0"),
+        }
+    )
+    return (("Roster scrape failed", 500) if ok is False else ("Scrape ok", 200))
 
 
-##############################################################################
+# ---------------------------------------------------------------------- #
 # Local CLI usage
-##############################################################################
+# ---------------------------------------------------------------------- #
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--teamAbbr", required=True, help="e.g. GSW")
-    parser.add_argument("--group", default="test", help="dev, test, prod, etc.")
-    args = parser.parse_args()
-
-    scraper = GetNbaTeamRoster()
-    scraper.run(vars(args))
+    cli = argparse.ArgumentParser(description="Run NBA.com team roster locally")
+    cli.add_argument("--teamAbbr", required=True, help="e.g. GSW")
+    cli.add_argument("--group", default="test")
+    cli.add_argument("--debug", default="0", help="1/true to enable debug dumps")
+    GetNbaTeamRoster().run(vars(cli.parse_args()))

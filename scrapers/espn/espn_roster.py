@@ -1,34 +1,60 @@
 # scrapers/espn_roster.py
-# python -m scrapers.espn_roster --teamSlug boston-celtics --teamAbbr bos
+"""
+ESPN NBA Roster (HTML) scraper                         v2 - 2025-06-16
+----------------------------------------------------------------------
+Scrapes the public roster page, e.g.
 
-import os
+    https://www.espn.com/nba/team/roster/_/name/bos/boston-celtics
+
+Key upgrades
+------------
+* `header_profile = "espn"`  - UA managed in ScraperBase
+* Strict ISO-8601 UTC timestamp
+* Exporter groups now include **prod**
+* Selector constants moved top-of-file for quick hot-patching
+* Jersey number extraction falls back to regex if ESPN tweaks classnames
+* Sentry warning only when *all three* of [name, slug, playerId] missing
+"""
+
+from __future__ import annotations
+
 import logging
-import json
-from datetime import datetime
-import pytz
 import re
+from datetime import datetime, timezone
+from typing import Dict, List
 
 import sentry_sdk
 from bs4 import BeautifulSoup
 
-from ..scraper_base import ScraperBase, DownloadType, ExportMode
-from ..utils.exceptions import DownloadDataException
+from ..scraper_base import DownloadType, ExportMode, ScraperBase
 
 logger = logging.getLogger("scraper_base")
+
+# ------------------------------------------------------------------ #
+# Tweak‑point constants (ESPN sometimes A/B tests these class names)
+# ------------------------------------------------------------------ #
+ROW_SELECTOR = "tr.Table__TR"          # main roster rows
+NAME_CELL_ANCHOR = "a[href*='/player/_/id/']"
+
+# ------------------------------------------------------------------ #
 
 
 class GetEspnTeamRoster(ScraperBase):
     """
-    Scraper for ESPN rosters, e.g.:
-      https://www.espn.com/nba/team/roster/_/name/bos/boston-celtics
-    Requires:
-      --teamSlug (e.g. 'boston-celtics')
-      --teamAbbr (e.g. 'bos')
+    Scrape roster from ESPN’s HTML team page.
+
+    CLI
+    ---
+        python -m scrapers.espn_roster --teamSlug boston-celtics --teamAbbr bos
     """
 
-    required_opts = ["teamSlug", "teamAbbr"]
-    decode_download_data = True
-    download_type = DownloadType.BINARY  # We'll parse raw HTML ourselves
+    # ------------------------------------------------------------------ #
+    # Config
+    # ------------------------------------------------------------------ #
+    required_opts: List[str] = ["teamSlug", "teamAbbr"]
+    download_type: DownloadType = DownloadType.HTML
+    decode_download_data: bool = True
+    header_profile: str | None = "espn"
 
     exporters = [
         {
@@ -36,220 +62,166 @@ class GetEspnTeamRoster(ScraperBase):
             "filename": "/tmp/espn_roster_%(teamAbbr)s_%(date)s.json",
             "export_mode": ExportMode.DATA,
             "pretty_print": True,
-            "groups": ["dev", "test"]
+            "groups": ["dev", "test", "prod"],
         },
-        # Add GCS or other exporters here if desired
-        # {
-        #     "type": "gcs",
-        #     "key": "nba/espn/rosters/%(season)s/%(date)s/%(teamAbbr)s_%(time)s.json",
-        #     "export_mode": ExportMode.DATA,
-        #     "groups": ["prod", "gcs"]
-        # }
+        # ---------- raw HTML fixture (offline tests) ----------
+        {
+            "type": "file",
+            # capture.py expects filenames that start with raw_
+            "filename": "/tmp/raw_%(teamAbbr)s.html",
+            "export_mode": ExportMode.RAW,
+            "groups": ["capture"],
+        },
+
+        # ---------- golden snapshot (parsed DATA) ----------
+        {
+            "type": "file",
+            # capture.py expects filenames that start with exp_
+            "filename": "/tmp/exp_%(teamAbbr)s.json",
+            "export_mode": ExportMode.DATA,
+            "pretty_print": True,
+            "groups": ["capture"],
+        },
     ]
 
-    def set_additional_opts(self):
-        """
-        Fill in default date, time, season if not provided.
-        """
-        now_utc = datetime.utcnow()
-        now_pst = now_utc.astimezone(pytz.timezone("America/Los_Angeles"))
+    # ------------------------------------------------------------------ #
+    # Additional opts (date / season) helpers
+    # ------------------------------------------------------------------ #
+    def set_additional_opts(self) -> None:
+        now = datetime.now(timezone.utc)
+        self.opts["date"] = now.strftime("%Y-%m-%d")
+        self.opts["time"] = now.strftime("%H-%M-%S")
+        season_start = now.year
+        self.opts.setdefault("season", f"{season_start}-{(season_start+1)%100:02d}")
 
-        self.opts["date"] = now_pst.strftime("%Y-%m-%d")
-        self.opts["time"] = now_pst.strftime("%H-%M-%S")
-        # Example season = "2025-26"
-        season_year = now_pst.year
-        next_year_2dig = f"{(season_year + 1) % 100:02d}"
-        self.opts["season"] = self.opts.get("season", f"{season_year}-{next_year_2dig}")
-
-    def set_url(self):
-        """
-        Build ESPN URL, e.g.:
-          https://www.espn.com/nba/team/roster/_/name/bos/boston-celtics
-        """
-        teamSlug = self.opts["teamSlug"]
-        teamAbbr = self.opts["teamAbbr"]
+    # ------------------------------------------------------------------ #
+    # URL
+    # ------------------------------------------------------------------ #
+    def set_url(self) -> None:
         self.url = (
-            f"https://www.espn.com/nba/team/roster/_/name/{teamAbbr}/{teamSlug}"
+            f"https://www.espn.com/nba/team/roster/_/name/{self.opts['teamAbbr']}"
+            f"/{self.opts['teamSlug']}"
         )
-        logger.info(f"Resolved ESPN roster URL: {self.url}")
+        logger.info("Resolved ESPN roster URL: %s", self.url)
 
-    def set_headers(self):
-        """Use a 'real browser' style user-agent."""
-        self.headers = {"User-Agent": "Mozilla/5.0"}
+    # ------------------------------------------------------------------ #
+    # Validation
+    # ------------------------------------------------------------------ #
+    def validate_download_data(self) -> None:
+        if not isinstance(self.decoded_data, str) or "<html" not in self.decoded_data.lower():
+            raise ValueError("Roster page did not return HTML.")
 
-    def decode_download_content(self):
-        """
-        We'll store the raw HTML text ourselves in self.html_content.
-        """
-        self.html_content = self.raw_response.text
+    # ------------------------------------------------------------------ #
+    # Transform
+    # ------------------------------------------------------------------ #
+    def transform_data(self) -> None:
+        soup = BeautifulSoup(self.decoded_data, "html.parser")
+        rows = soup.select(ROW_SELECTOR)
 
-    def validate_download_data(self):
-        """
-        Confirm we have HTML content.
-        """
-        if not getattr(self, "html_content", ""):
-            raise DownloadDataException("No HTML content retrieved from ESPN roster page.")
-
-    def transform_data(self):
-        """
-        1) Parse HTML with BeautifulSoup
-        2) Extract table rows for roster
-        3) Build a list of players with fields:
-            number, name, playerId, slug, fullUrl, position, age, height, weight
-        4) Perform light validation (Sentry alert if name/slug/playerId missing)
-        """
-        self.step_info("transform", "Starting ESPN roster transformation via table")
-
-        # Optionally, store the raw HTML to a debug file
-        self._debug_write_raw_html()
-
-        soup = BeautifulSoup(self.html_content, "html.parser")
-        table_rows = soup.select("tr.Table__TR")
-
-        players = []
-        for tr in table_rows:
-            # ESPN's pattern:
-            #  1st <td> = headshot
-            #  2nd <td> = name + jersey
-            #  3rd <td> = position
-            #  4th <td> = age
-            #  5th <td> = height
-            #  6th <td> = weight
-            # (And possibly more columns for college, salary, etc.)
-
+        players: List[Dict[str, str]] = []
+        for tr in rows:
             tds = tr.find_all("td")
             if len(tds) < 6:
-                # Not a valid roster row
                 continue
 
-            # The 2nd td (index 1) typically has:
-            #   <a href=".../id/4397424/neemias-queta">Neemias Queta</a><span>88</span>
-            anchor = tds[1].find("a", href=True)
+            anchor = tds[1].select_one(NAME_CELL_ANCHOR)
             if not anchor:
                 continue
+
+            full_href = anchor["href"]  # /nba/player/_/id/4397424/neemias-queta
             name = anchor.get_text(strip=True)
-            full_href = anchor["href"]  # e.g. 'https://www.espn.com/nba/player/_/id/4397424/neemias-queta'
 
-            # Attempt to find <span> (the jersey number) inside the same TD
-            jersey_span = tds[1].find("span", {"class": "pl2"})
-            jersey_number = jersey_span.get_text(strip=True) if jersey_span else ""
+            # PlayerId & slug
+            m = re.search(r"/id/(\d+)/(.*)$", full_href)
+            player_id = m.group(1) if m else ""
+            slug = m.group(2) if m else ""
 
-            # Player ID is usually after '/id/'
-            # Slug is after that ID, e.g. ".../id/4397424/neemias-queta"
-            # A quick approach:
-            #   pattern = /id/(\d+)/(.*)$
-            # We'll store the entire absolute URL as well
-            full_url = f"https://www.espn.com{full_href}" if full_href.startswith("/") else full_href
-            player_id = ""
-            slug = ""
+            # Jersey number – class has changed before, so fallback to regex
+            jersey_span = tds[1].find("span", class_=re.compile("pl"))
+            jersey = (
+                re.sub(r"[^\d]", "", jersey_span.get_text()) if jersey_span else ""
+            )
+            if not jersey:
+                jersey = re.sub(r".*\s(\d+)$", r"\1", tds[1].get_text()).strip()
 
-            pattern = re.compile(r"/id/(\d+)/(.*)$")
-            match = pattern.search(full_href)
-            if match:
-                player_id = match.group(1)  # "4397424"
-                slug = match.group(2)      # "neemias-queta"
+            position = tds[2].get_text(strip=True)
+            age = tds[3].get_text(strip=True)
+            height = tds[4].get_text(strip=True)
+            weight = tds[5].get_text(strip=True)
 
-            position = tds[2].get_text(strip=True) or ""
-            age = tds[3].get_text(strip=True) or ""
-            height = tds[4].get_text(strip=True) or ""
-            weight = tds[5].get_text(strip=True) or ""
+            players.append(
+                {
+                    "number": jersey,
+                    "name": name,
+                    "playerId": player_id,
+                    "slug": slug,
+                    "fullUrl": (
+                        f"https://www.espn.com{full_href}"
+                        if full_href.startswith("/")
+                        else full_href
+                    ),
+                    "position": position,
+                    "age": age,
+                    "height": height,
+                    "weight": weight,
+                }
+            )
 
-            players.append({
-                "number": jersey_number,
-                "name": name,
-                "playerId": player_id,
-                "slug": slug,
-                "fullUrl": full_url,
-                "position": position,
-                "age": age,
-                "height": height,
-                "weight": weight,
-            })
-
-        # Light schema validation: If name, slug, or playerId is empty => log + Sentry
-        validated_players = []
+        # Basic schema‑sanity warning
         for p in players:
-            missing = []
-            for key in ("name", "slug", "playerId"):
-                if not p.get(key):
-                    missing.append(key)
+            missing = [k for k in ("name", "slug", "playerId") if not p.get(k)]
+            if len(missing) == 3:  # all missing → definitely broken row
+                logger.warning("ESPN roster: missing all ids for row %s", p)
+                sentry_sdk.capture_message(f"[ESPN Roster] Unparsed row: {p}", level="warning")
 
-            if missing:
-                # Log a warning
-                logger.warning(
-                    f"ESPN Roster: Missing {missing} for player record: {p}"
-                )
-                # Send Sentry notification
-                sentry_sdk.capture_message(
-                    f"[ESPN Roster Alert] Missing {', '.join(missing)} for player: {p}",
-                    level="warning",
-                )
-            validated_players.append(p)
-
-        # Build final data
-        now_utc = datetime.utcnow()
         self.data = {
             "teamAbbr": self.opts["teamAbbr"],
             "teamSlug": self.opts["teamSlug"],
-            "timestamp": now_utc.isoformat(),
-            "players": validated_players,
             "season": self.opts["season"],
-            "date": self.opts["date"],
-            "time": self.opts["time"],
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "playerCount": len(players),
+            "players": players,
         }
+        logger.info("Parsed %d players for %s", len(players), self.opts["teamAbbr"])
 
-        logger.info(f"Found {len(validated_players)} players for ESPN team {self.opts['teamAbbr']}!")
-
-    def get_scraper_stats(self):
-        """
-        Add custom stats to the final log line (SCRAPER_STATS).
-        """
+    # ------------------------------------------------------------------ #
+    # Stats
+    # ------------------------------------------------------------------ #
+    def get_scraper_stats(self) -> dict:
         return {
             "teamAbbr": self.opts["teamAbbr"],
-            "playerCount": len(self.data.get("players", [])),
+            "playerCount": self.data.get("playerCount", 0),
         }
 
-    # -------------------------------------------------------------------------
-    # Debug utility: write raw HTML to a file.
-    # -------------------------------------------------------------------------
-    def _debug_write_raw_html(self):
-        debug_file = f"/tmp/debug_raw_{self.run_id}.html"
-        try:
-            with open(debug_file, "w", encoding="utf-8") as f:
-                f.write(self.html_content)
-            logger.info(f"Saved raw HTML to {debug_file} for debugging")
-        except Exception as e:
-            logger.warning(f"Failed to write {debug_file}: {e}")
+
+# ---------------------------------------------------------------------- #
+# GCF entry
+# ---------------------------------------------------------------------- #
+def gcf_entry(request):  # type: ignore[valid-type]
+    team_slug = request.args.get("teamSlug")
+    team_abbr = request.args.get("teamAbbr")
+    if not team_slug or not team_abbr:
+        return ("Missing teamSlug or teamAbbr", 400)
+
+    opts = {
+        "teamSlug": team_slug,
+        "teamAbbr": team_abbr,
+        "group": request.args.get("group", "prod"),
+    }
+    GetEspnTeamRoster().run(opts)
+    return f"ESPN roster HTML scrape done for {team_slug}", 200
 
 
-# -------------------------------------------------------------------------
-# CLI or GCF entry point
-# -------------------------------------------------------------------------
-def gcf_entry(request):
-    """
-    Google Cloud Function entry point
-    """
-    teamSlug = request.args.get("teamSlug")
-    teamAbbr = request.args.get("teamAbbr")
-    group = request.args.get("group", "prod")
-
-    if not teamSlug or not teamAbbr:
-        return ("Missing required parameters: teamSlug, teamAbbr", 400)
-
-    opts = {"teamSlug": teamSlug, "teamAbbr": teamAbbr, "group": group}
-    scraper = GetEspnTeamRoster()
-    result = scraper.run(opts)
-    return f"ESPN Roster run complete for {teamSlug}. Result: {result}", 200
-
-
+# ---------------------------------------------------------------------- #
+# CLI usage
+# ---------------------------------------------------------------------- #
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--teamSlug", required=True, help="e.g. 'boston-celtics'")
-    parser.add_argument("--teamAbbr", required=True, help="e.g. 'bos'")
-    parser.add_argument("--group", default="test", help="dev, test, prod, etc.")
-    args = parser.parse_args()
+    cli = argparse.ArgumentParser()
+    cli.add_argument("--teamSlug", required=True, help="boston-celtics")
+    cli.add_argument("--teamAbbr", required=True, help="bos")
+    cli.add_argument("--group", default="test")
+    args = cli.parse_args()
 
-    scraper = GetEspnTeamRoster()
-    scraper.run(vars(args))
+    GetEspnTeamRoster().run(vars(args))

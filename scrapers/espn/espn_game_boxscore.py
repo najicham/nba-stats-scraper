@@ -52,7 +52,22 @@ class GetEspnBoxscore(ScraperBase):
             "export_mode": ExportMode.DATA,
             "pretty_print": True,
             "groups": ["dev", "test", "prod"]
-        }
+        },
+        {
+            # NEW: raw HTML dump for fixture collection
+            "type": "file",
+            "filename": "/tmp/raw_%(gameId)s.html",
+            "export_mode": ExportMode.RAW,   # untouched bytes
+            "groups": ["capture"],           # fires only when you say --group capture
+        },
+        {
+            "type": "file",
+            # leave it in /tmp – the helper will move/gzip it for you
+            "filename": "/tmp/exp_%(gameId)s.json",
+            "export_mode": ExportMode.DATA,      # the parsed result
+            "pretty_print": True,                # easier to read
+            "groups": ["golden", "capture"],                # fires only on --group golden
+        },
     ]
 
     def __init__(self):

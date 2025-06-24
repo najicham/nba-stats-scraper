@@ -1,11 +1,11 @@
 """
-Centralised helpers for NBA‑site request headers.
+Centralised helpers for NBA-site request headers.
 
 There are three patterns:
 
-1.  STATS_NBA_HEADERS   – classic stats.nba.com endpoints
-2.  DATA_NBA_HEADERS    – cdn.nba.com / data.nba.com JSON (play‑by‑play, shotcharts)
-3.  CORE_API_HEADERS    – core-api.nba.com (gamecardfeed, play‑by‑play meta)
+1.  STATS_NBA_HEADERS   - classic stats.nba.com endpoints
+2.  DATA_NBA_HEADERS    - cdn.nba.com / data.nba.com JSON (play-by-play, shotcharts)
+3.  CORE_API_HEADERS    - core-api.nba.com (gamecardfeed, play-by-play meta)
 
 Each helper returns a *copy* so callers can safely mutate individual fields.
 """
@@ -27,6 +27,22 @@ def _ua():
     """Return a random desktop User‑Agent each call."""
     return random.choice(USER_AGENTS)
 
+# ---------------------------------------------------------------------------
+#  Light‑weight headers for ALL stats.nba.com JSON endpoints
+# ---------------------------------------------------------------------------
+def stats_api_headers() -> dict:
+    """
+    Minimal but sufficient header block for stats.nba.com.
+    Keeps request size small while passing Akamai checks.
+    """
+    return {
+        "User-Agent":         _ua(),
+        "Referer":            "https://stats.nba.com",
+        "Origin":             "https://stats.nba.com",
+        "Accept":             "application/json, text/plain, */*",
+        "x-nba-stats-origin": "stats",
+        "x-nba-stats-token":  "true",
+    }
 
 def stats_nba_headers() -> dict:
     base = {
@@ -49,15 +65,35 @@ def stats_nba_headers() -> dict:
     return deepcopy(base)
 
 
+def cdn_nba_headers() -> dict:
+    """
+    Headers that satisfy Akamai for cdn.nba.com JSON feeds
+    (liveData/scoreboard, static schedule, etc.).
+    """
+    base = stats_nba_headers()           # reuse UA, Accept, cache flags
+    # Remove host‑specific and stats‑only headers
+    base.pop("Host", None)
+    base.pop("x-nba-stats-origin", None)
+    base.pop("x-nba-stats-token", None)
+    # Ensure compulsory Origin & Referer
+    base["Origin"]  = "https://www.nba.com"
+    base["Referer"] = "https://www.nba.com/"
+    return deepcopy(base)
+
+# -- helpers/nba_header_utils.py ---------------------------------
 def data_nba_headers() -> dict:
-    # CDN endpoints are far less picky; UA + Referer is enough.
+    """Headers for cdn.nba.com / data.nba.com JSON feeds."""
     base = {
         "User-Agent": _ua(),
+        "Accept": "application/json, text/plain, */*",   # optional
+        "Accept-Encoding": "gzip, deflate, br",
         "Referer": "https://www.nba.com/",
         "Origin": "https://www.nba.com",
     }
     return deepcopy(base)
 
+# backward‑compat alias if any code still imports cdn_nba_headers
+cdn_nba_headers = data_nba_headers
 
 def core_api_headers() -> dict:
     base = {

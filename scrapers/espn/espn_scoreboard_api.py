@@ -1,35 +1,60 @@
+# scrapers/espn_scoreboard.py
+"""
+ESPN NBA Scoreboard scraper                           v2 - 2025-06-16
+--------------------------------------------------------------------
+Pulls the daily scoreboard JSON from ESPN's public API and converts it
+into a lightweight game list, suitable for job fan-out:
+
+    [
+        {
+            "gameId": "401585725",
+            "statusId": 2,
+            "state": "in",          # pre / in / post
+            "status": "2nd Quarter",
+            "startTime": "2025-01-14T03:00Z",
+            "teams": [
+                {"teamId": "2",  "abbreviation": "BOS", "score": "47", ...},
+                {"teamId": "17", "abbreviation": "LAL", "score": "45", ...}
+            ]
+        },
+        ...
+    ]
+
+Improvements v2
+---------------
+*  `header_profile = "espn"`  → one-line UA updates if ESPN blocks a string
+*  Strict ISO-8601 `timestamp`
+*  Adds `state` & `statusId`
+*  Uses new `_common_requests_kwargs()` helper in ScraperBase
+"""
+
+from __future__ import annotations
+
 import logging
-import json
-import pytz
-from datetime import datetime
+from datetime import datetime, timezone
+from typing import Any, Dict, List
 
-import requests
-
-from ..scraper_base import ScraperBase, DownloadType, ExportMode
-from ..utils.exceptions import DownloadDataException
+from ..scraper_base import DownloadType, ExportMode, ScraperBase
 
 logger = logging.getLogger("scraper_base")
 
 
 class GetEspnScoreboard(ScraperBase):
     """
-    ESPN scoreboard scraper that uses ESPN's scoreboard API JSON.
+    ESPN scoreboard scraper (JSON API).
 
-    Usage:
-      python -m scrapers.espn_scoreboard --scoreDate 20231116
-
-    Relies on the normal base class workflow:
-      - sets self.url to the ESPN scoreboard API
-      - sets download_type=JSON
-      - transform_data() to parse decoded_data
-      - exports self.data as configured
+    CLI example
+    -----------
+        python -m scrapers.espn_scoreboard --scoreDate 20250214
     """
 
-    required_opts = ["scoreDate"]
-
-    # Since we want to parse JSON from ESPN’s scoreboard API:
-    download_type = DownloadType.JSON
-    decode_download_data = True
+    # ------------------------------------------------------------------ #
+    # Class‑level configuration
+    # ------------------------------------------------------------------ #
+    required_opts: List[str] = ["scoreDate"]
+    download_type: DownloadType = DownloadType.JSON
+    decode_download_data: bool = True
+    header_profile: str | None = "espn"
 
     exporters = [
         {
@@ -37,138 +62,117 @@ class GetEspnScoreboard(ScraperBase):
             "filename": "/tmp/espn_scoreboard_%(scoreDate)s.json",
             "export_mode": ExportMode.DATA,
             "pretty_print": True,
-            "groups": ["dev", "test", "prod"]
-        }
+            "groups": ["dev", "test", "prod"],
+        },
+        # ---------- raw JSON fixture (offline tests) ----------
+        {
+            "type": "file",
+            "filename": "/tmp/raw_%(scoreDate)s.json",   # capture.py looks for raw_*
+            "export_mode": ExportMode.RAW,               # untouched bytes from ESPN
+            "groups": ["capture"],
+        },
+
+        # ---------- golden snapshot (parsed DATA) ----------
+        {
+            "type": "file",
+            "filename": "/tmp/exp_%(scoreDate)s.json",   # capture.py looks for exp_*
+            "export_mode": ExportMode.DATA,
+            "pretty_print": True,
+            "groups": ["capture"],
+        },
     ]
 
-    def __init__(self):
-        super().__init__()
-        self.games = []
+    # ------------------------------------------------------------------ #
+    # URL & HEADERS
+    # ------------------------------------------------------------------ #
+    def set_url(self) -> None:
+        base = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"
+        self.url = f"{base}?dates={self.opts['scoreDate']}"
+        logger.info("Resolved ESPN scoreboard URL: %s", self.url)
 
-    ##########################################################################
-    # Overriding set_url so the base class will download from ESPN scoreboard API
-    ##########################################################################
-    def set_url(self):
-        """
-        Build the ESPN scoreboard API URL:
-        e.g. https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard?dates=YYYYMMDD
-        """
-        base_api = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"
-        self.url = f"{base_api}?dates={self.opts['scoreDate']}"
-        logger.info(f"Resolved ESPN scoreboard API URL: {self.url}")
+    # No `set_headers` needed – ScraperBase injects via header_profile
 
-    def set_headers(self):
-        """
-        Use a typical 'real browser' style user-agent.
-        """
-        self.headers = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64)"}
-
-    ##########################################################################
+    # ------------------------------------------------------------------ #
     # Validation
-    ##########################################################################
-    def validate_download_data(self):
-        """
-        Ensure 'events' is present in self.decoded_data.
-        """
+    # ------------------------------------------------------------------ #
+    def validate_download_data(self) -> None:
         if not isinstance(self.decoded_data, dict):
-            raise DownloadDataException("Decoded data is not a dictionary.")
+            raise ValueError("Scoreboard response is not JSON dict.")
         if "events" not in self.decoded_data:
-            raise DownloadDataException("No 'events' key found in scoreboard JSON.")
+            raise ValueError("'events' key missing in JSON.")
 
-    ##########################################################################
-    # Transform
-    ##########################################################################
-    def transform_data(self):
-        """
-        Read self.decoded_data["events"], parse each event, store in self.games,
-        then finalize self.data. The base class will export self.data.
-        """
-        self.step_info("transform", "Parsing ESPN scoreboard JSON")
-        events = self.decoded_data.get("events", [])
-        logger.info(f"Found {len(events)} events for date={self.opts['scoreDate']}")
+    # ------------------------------------------------------------------ #
+    # Transform → self.data
+    # ------------------------------------------------------------------ #
+    def transform_data(self) -> None:
+        events: List[dict] = self.decoded_data.get("events", [])
+        logger.info("Found %d events for %s", len(events), self.opts["scoreDate"])
 
+        games: List[Dict[str, Any]] = []
         for event in events:
-            comps = event.get("competitions", [])
-            if not comps:
-                continue
-
-            comp = comps[0]
-            game_id = comp.get("id")
-            teams_info = []
+            comp = (event.get("competitions") or [{}])[0]
+            status_blob = comp.get("status", {}).get("type", {})
+            teams_info: List[Dict[str, Any]] = []
             for c in comp.get("competitors", []):
                 tm = c.get("team", {})
-                teams_info.append({
-                    "teamId": tm.get("id"),
-                    "displayName": tm.get("displayName"),
-                    "abbreviation": tm.get("abbreviation"),
-                    "score": c.get("score"),
-                    "winner": c.get("winner", False),
-                    "homeAway": c.get("homeAway"),
-                })
+                teams_info.append(
+                    {
+                        "teamId": tm.get("id"),
+                        "displayName": tm.get("displayName"),
+                        "abbreviation": tm.get("abbreviation"),
+                        "score": c.get("score"),
+                        "winner": c.get("winner", False),
+                        "homeAway": c.get("homeAway"),
+                    }
+                )
 
-            game = {
-                "gameId": game_id,
-                "teams": teams_info,
-                "status": comp.get("status", {}).get("type", {}).get("description", ""),
-                "startTime": comp.get("date"),
-            }
-            self.games.append(game)
+            games.append(
+                {
+                    "gameId": comp.get("id"),
+                    "statusId": status_blob.get("id"),
+                    "state": status_blob.get("state"),  # pre / in / post
+                    "status": status_blob.get("description"),
+                    "startTime": comp.get("date"),
+                    "teams": teams_info,
+                }
+            )
 
-        # final scoreboard data
-        now_utc = datetime.utcnow().replace(tzinfo=pytz.UTC).isoformat()
         self.data = {
-            "timestamp": now_utc,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "scoreDate": self.opts["scoreDate"],
-            "games": self.games
-        }
-        logger.info(f"Parsed {len(self.games)} games for date={self.opts['scoreDate']}")
-
-    ##########################################################################
-    # Stats for Final Log
-    ##########################################################################
-    def get_scraper_stats(self):
-        """
-        Additional fields for final log line
-        """
-        return {
-            "scoreDate": self.opts["scoreDate"],
-            "gameCount": len(self.games),
+            "gameCount": len(games),
+            "games": games,
         }
 
+    # ------------------------------------------------------------------ #
+    # Stats line
+    # ------------------------------------------------------------------ #
+    def get_scraper_stats(self) -> dict:
+        return {"scoreDate": self.opts["scoreDate"], "gameCount": self.data.get("gameCount", 0)}
 
-# -----------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------- #
 # GCF entry point (optional)
-# -----------------------------------------------------------------------------
-def gcf_entry(request):
-    """
-    Google Cloud Function entry point for ESPN Scoreboard.
-      Expects `scoreDate` (yyyyMMdd) in query string, e.g. ?scoreDate=20231116
-      Optional `group` param defaults to 'prod'.
-    """
-    scoreDate = request.args.get("scoreDate")
-    group = request.args.get("group", "prod")
+# ---------------------------------------------------------------------- #
+def gcf_entry(request):  # type: ignore[valid-type]
+    score_date = request.args.get("scoreDate")
+    if not score_date:
+        return ("Missing query param 'scoreDate' (YYYYMMDD)", 400)
 
-    if not scoreDate:
-        return ("Missing required parameter: scoreDate", 400)
-
-    opts = {"scoreDate": scoreDate, "group": group}
-    scraper = GetEspnScoreboard()
-    result = scraper.run(opts)
-
-    return f"ESPN Scoreboard run complete for date={scoreDate}. Result={result}", 200
+    opts = {"scoreDate": score_date, "group": request.args.get("group", "prod")}
+    GetEspnScoreboard().run(opts)
+    return f"ESPN Scoreboard scrape complete for {score_date}", 200
 
 
-# -----------------------------------------------------------------------------
-# Local CLI usage
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------- #
+# CLI usage
+# ---------------------------------------------------------------------- #
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--scoreDate", required=True, help="e.g. 20231116")
-    parser.add_argument("--group", default="test", help="dev, test, prod, etc.")
-    args = parser.parse_args()
+    cli = argparse.ArgumentParser()
+    cli.add_argument("--scoreDate", required=True, help="YYYYMMDD")
+    cli.add_argument("--group", default="test", help="dev, test, prod, etc.")
+    args = cli.parse_args()
 
-    scraper = GetEspnScoreboard()
-    # The base class run() method orchestrates everything
-    scraper.run(vars(args))
+    GetEspnScoreboard().run(vars(args))

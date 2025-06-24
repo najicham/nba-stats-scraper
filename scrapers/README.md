@@ -5,6 +5,20 @@ $ python -m scrapers.espn_scoreboard --scoreDate 20231116
 $ python -m scrapers.espn_roster_api --teamId 2 --group dev
 $ python -m scrapers.espn_game_boxscore --gameId 401766123 --group dev --skip_json True
 
+$ python -m scrapers.espn_scoreboard --scoreDate 20250214
+$ python -m scrapers.espn_roster_api --teamId 2
+
+
+python tools/fixtures/capture.py espn_game_boxscore --gameId 401766123
+python tools/fixtures/capture.py espn_roster_api --teamId 2
+python tools/fixtures/capture.py espn_roster --teamSlug boston-celtics --teamAbbr bos
+python tools/fixtures/capture.py espn_scoreboard --scoreDate 20250214
+
+# March‑16‑2025 games
+python tools/fixtures/capture.py nbac_game_ids_core --scoreDate 20250316
+
+
+
 
 # README: NBA / Odds API Scrapers
 

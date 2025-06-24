@@ -25,3 +25,5 @@ rsa==4.9.1
 six==1.17.0
 slack_sdk==3.35.0
 urllib3==2.4.0
+playwright==1.52.0
+playwright-stealth==2.0.0

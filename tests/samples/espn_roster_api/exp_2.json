@@ -1,0 +1,222 @@
+{
+  "teamId": "2",
+  "teamName": "Boston Celtics",
+  "timestamp": "2025-06-19T23:01:35.455228+00:00",
+  "playerCount": 17,
+  "players": [
+    {
+      "playerId": "3917376",
+      "fullName": "Jaylen Brown",
+      "jersey": "7",
+      "position": "Shooting Guard",
+      "heightIn": 78,
+      "weightLb": 223.0,
+      "injuries": [
+        {
+          "id": "495299",
+          "longComment": "Brown finished the 2025 NBA Playoffs with a partially torn right meniscus, and he was having to manage the issue for several weeks. Fortunately for Brown and the Celtics, by addressing the issue now, the star forward is expected to participate in training camp without any limitations. Brown could have a ton on his plate in 2025-26 with Jayson Tatum (Achilles) sidelined.",
+          "shortComment": "Brown underwent a successful right knee arthroscopic debridement procedure Wednesday, the Celtics announced.",
+          "status": "Out",
+          "date": "2025-06-11T15:30Z",
+          "athlete": {},
+          "source": {
+            "id": "1",
+            "description": "basic/manual",
+            "state": "basic"
+          },
+          "type": {
+            "id": "4",
+            "name": "INJURY_STATUS_OUT",
+            "description": "out",
+            "abbreviation": "O"
+          },
+          "details": {
+            "fantasyStatus": {
+              "description": "OUT",
+              "abbreviation": "OUT"
+            },
+            "type": "Knee",
+            "location": "Leg",
+            "side": "Not Specified",
+            "returnDate": "2025-10-01"
+          }
+        }
+      ]
+    },
+    {
+      "playerId": "2528693",
+      "fullName": "Torrey Craig",
+      "jersey": "12",
+      "position": "Small Forward",
+      "heightIn": 77,
+      "weightLb": 221.0,
+      "injuries": []
+    },
+    {
+      "playerId": "4576085",
+      "fullName": "JD Davison",
+      "jersey": "20",
+      "position": "Shooting Guard",
+      "heightIn": 73,
+      "weightLb": 195.0,
+      "injuries": []
+    },
+    {
+      "playerId": "4065804",
+      "fullName": "Sam Hauser",
+      "jersey": "30",
+      "position": "Small Forward",
+      "heightIn": 79,
+      "weightLb": 217.0,
+      "injuries": []
+    },
+    {
+      "playerId": "3995",
+      "fullName": "Jrue Holiday",
+      "jersey": "4",
+      "position": "Point Guard",
+      "heightIn": 76,
+      "weightLb": 205.0,
+      "injuries": []
+    },
+    {
+      "playerId": "3213",
+      "fullName": "Al Horford",
+      "jersey": "42",
+      "position": "Center",
+      "heightIn": 81,
+      "weightLb": 240.0,
+      "injuries": []
+    },
+    {
+      "playerId": "3064560",
+      "fullName": "Luke Kornet",
+      "jersey": "40",
+      "position": "Center",
+      "heightIn": 85,
+      "weightLb": 250.0,
+      "injuries": []
+    },
+    {
+      "playerId": "4397104",
+      "fullName": "Miles Norris",
+      "jersey": "44",
+      "position": "Forward",
+      "heightIn": 79,
+      "weightLb": 220.0,
+      "injuries": []
+    },
+    {
+      "playerId": "4397689",
+      "fullName": "Drew Peterson",
+      "jersey": "13",
+      "position": "Forward",
+      "heightIn": 81,
+      "weightLb": 205.0,
+      "injuries": []
+    },
+    {
+      "playerId": "3102531",
+      "fullName": "Kristaps Porzingis",
+      "jersey": "8",
+      "position": "Center",
+      "heightIn": 86,
+      "weightLb": 240.0,
+      "injuries": []
+    },
+    {
+      "playerId": "4066354",
+      "fullName": "Payton Pritchard",
+      "jersey": "11",
+      "position": "Point Guard",
+      "heightIn": 73,
+      "weightLb": 195.0,
+      "injuries": []
+    },
+    {
+      "playerId": "4397424",
+      "fullName": "Neemias Queta",
+      "jersey": "88",
+      "position": "Center",
+      "heightIn": 84,
+      "weightLb": 248.0,
+      "injuries": []
+    },
+    {
+      "playerId": "4593841",
+      "fullName": "Baylor Scheierman",
+      "jersey": "55",
+      "position": "Forward",
+      "heightIn": 78,
+      "weightLb": 205.0,
+      "injuries": []
+    },
+    {
+      "playerId": "4065648",
+      "fullName": "Jayson Tatum",
+      "jersey": "0",
+      "position": "Small Forward",
+      "heightIn": 80,
+      "weightLb": 210.0,
+      "injuries": [
+        {
+          "id": "494990",
+          "longComment": "The Celtics will be without Tatum for the rest of these NBA playoffs, as he will have a long recovery process ahead of him due to the Achilles injury. The superstar forward went down with the injury during Game 4 against the Knicks, with the team fearing the worst. The defending NBA champions will have to press on without their best player while facing a 3-1 series deficit heading into Game 5.",
+          "shortComment": "Tatum will miss the rest of the season after undergoing surgery to repair a torn left Achilles tendon Tuesday, Shams Charania of ESPN reports.",
+          "status": "Out",
+          "date": "2025-05-13T20:52Z",
+          "athlete": {},
+          "source": {
+            "id": "1",
+            "description": "basic/manual",
+            "state": "basic"
+          },
+          "type": {
+            "id": "4",
+            "name": "INJURY_STATUS_OUT",
+            "description": "out",
+            "abbreviation": "O"
+          },
+          "details": {
+            "fantasyStatus": {
+              "description": "OUT",
+              "abbreviation": "OUT"
+            },
+            "type": "Achilles",
+            "location": "Leg",
+            "detail": "Surgery",
+            "side": "Right",
+            "returnDate": "2026-02-01"
+          }
+        }
+      ]
+    },
+    {
+      "playerId": "4277964",
+      "fullName": "Xavier Tillman",
+      "jersey": "26",
+      "position": "Forward",
+      "heightIn": 79,
+      "weightLb": 245.0,
+      "injuries": []
+    },
+    {
+      "playerId": "4683689",
+      "fullName": "Jordan Walsh",
+      "jersey": "27",
+      "position": "Guard",
+      "heightIn": 78,
+      "weightLb": 205.0,
+      "injuries": []
+    },
+    {
+      "playerId": "3078576",
+      "fullName": "Derrick White",
+      "jersey": "9",
+      "position": "Point Guard",
+      "heightIn": 76,
+      "weightLb": 190.0,
+      "injuries": []
+    }
+  ]
+}
