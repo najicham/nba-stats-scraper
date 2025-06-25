@@ -1,11 +1,11 @@
 """
-BallDontLie – Teams endpoint                                    v1.1 • 2025‑06‑23
+BallDontLie - Teams endpoint                                    v1.1 • 2025-06-23
 -------------------------------------------------------------------------------
 Grabs the full list of NBA franchises from
 
     https://api.balldontlie.io/v1/teams            (no auth required for free tier)
 
-If pagination ever appears (meta.next_page > current_page) we’ll loop until done.
+If pagination ever appears (meta.next_page > current_page) we'll loop until done.
 
 CLI
 ---
@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)  # module‑specific logger
 # Scraper
 # --------------------------------------------------------------------------- #
 class BdlTeams(ScraperBase):
-    """Static reference table – typically run once per season."""
+    """Static reference table - typically run once per season."""
 
     # Basic config
     download_type = DownloadType.JSON

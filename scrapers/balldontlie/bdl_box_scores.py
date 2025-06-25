@@ -1,23 +1,13 @@
 """
-BALLDONTLIE ‑ Box‑Scores (final) endpoint                v1 – 2025‑06‑22
------------------------------------------------------------------------------
-Final (post‑game) box scores from
+BALLDONTLIE – Box‑Scores (final) endpoint                 v1.1 • 2025‑06‑24
+-------------------------------------------------------------------------------
+Finished‑game box scores:
 
     https://api.balldontlie.io/v1/box_scores
 
-### Parameters
-* `date` – required by the API; single YYYY‑MM‑DD value.
-          If omitted we default to **yesterday (UTC)** because that is the
-          date most games will have finished.
-
-The endpoint is *currently* single‑page (no cursor), but the scraper is coded
-defensively to follow `next_cursor` if it ever appears.
-
-CLI
----
-    python -m scrapers.bdl.bdl_box_scores_scraper          # defaults to yesterday
-    python -m scrapers.bdl.bdl_box_scores_scraper --date 2025-06-21
+--date param defaults to **yesterday (UTC)**.
 """
+
 from __future__ import annotations
 
 import logging
@@ -27,22 +17,20 @@ from typing import Any, Dict, List, Optional
 
 from ..scraper_base import DownloadType, ExportMode, ScraperBase
 
-logger = logging.getLogger("scraper_base")
+logger = logging.getLogger(__name__)
 
-
+# --------------------------------------------------------------------------- #
+# Scraper                                                                     #
+# --------------------------------------------------------------------------- #
 class BdlBoxScoresScraper(ScraperBase):
-    """
-    Daily or on‑demand scraper for /box_scores (finished games only).
-    """
+    """Daily or on‑demand scraper for /box_scores."""
 
-    # ------------------------------------------------------------------ #
-    # Config                                                             #
-    # ------------------------------------------------------------------ #
-    required_opts: List[str] = []            # we supply default date
-    download_type: DownloadType = DownloadType.JSON
-    decode_download_data: bool = True
+    required_opts: List[str] = []
+    download_type = DownloadType.JSON
+    decode_download_data = True
 
     exporters = [
+        # Normal artifact
         {
             "type": "file",
             "filename": "/tmp/bdl_box_scores_%(date)s.json",
@@ -50,20 +38,27 @@ class BdlBoxScoresScraper(ScraperBase):
             "export_mode": ExportMode.DATA,
             "groups": ["dev", "test", "prod"],
         },
+        # Capture RAW + EXP
         {
             "type": "file",
-            "filename": "/tmp/raw_box_scores_%(date)s.json",
+            "filename": "/tmp/raw_%(run_id)s.json",
             "export_mode": ExportMode.RAW,
+            "groups": ["capture"],
+        },
+        {
+            "type": "file",
+            "filename": "/tmp/exp_%(run_id)s.json",
+            "pretty_print": True,
+            "export_mode": ExportMode.DECODED,
             "groups": ["capture"],
         },
     ]
 
     # ------------------------------------------------------------------ #
-    # Additional opts – supply default date                              #
+    # Additional opts                                                    #
     # ------------------------------------------------------------------ #
     def set_additional_opts(self) -> None:
         if not self.opts.get("date"):
-            # Yesterday in UTC
             yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).date()
             self.opts["date"] = yesterday.isoformat()
 
@@ -75,26 +70,23 @@ class BdlBoxScoresScraper(ScraperBase):
     def set_url(self) -> None:
         self.base_url = self._API_ROOT
         self.url = f"{self.base_url}?date={self.opts['date']}&per_page=100"
-        logger.info("Resolved BALLDONTLIE box‑scores URL: %s", self.url)
+        logger.debug("Box‑scores URL: %s", self.url)
 
     def set_headers(self) -> None:
-        api_key = os.getenv("BDL_API_KEY")
-        if not api_key:
-            raise RuntimeError("Environment variable BDL_API_KEY not set")
+        api_key = self.opts.get("apiKey") or os.getenv("BDL_API_KEY")
         self.headers = {
-            "Authorization": api_key,
-            "User-Agent": "Mozilla/5.0 (compatible; scrape-bdl/1.0)",
+            "User-Agent": "scrape-bdl-box-scores/1.1 (+github.com/your-org)",
             "Accept": "application/json",
         }
+        if api_key:
+            self.headers["Authorization"] = f"Bearer {api_key}"
 
     # ------------------------------------------------------------------ #
     # Validation                                                         #
     # ------------------------------------------------------------------ #
     def validate_download_data(self) -> None:
-        if not isinstance(self.decoded_data, dict):
-            raise ValueError("Box‑scores response is not JSON object")
-        if "data" not in self.decoded_data:
-            raise ValueError("'data' field missing in box‑scores JSON")
+        if not isinstance(self.decoded_data, dict) or "data" not in self.decoded_data:
+            raise ValueError("Box‑scores response malformed: missing 'data' key")
 
     # ------------------------------------------------------------------ #
     # Transform (cursor‑safe)                                            #
@@ -115,7 +107,6 @@ class BdlBoxScoresScraper(ScraperBase):
             rows.extend(page_json.get("data", []))
             cursor = page_json.get("meta", {}).get("next_cursor")
 
-        # Deterministic order: gameId ASC, playerId ASC
         rows.sort(key=lambda r: (r.get("game", {}).get("id"), r.get("player_id")))
 
         self.data = {
@@ -124,9 +115,7 @@ class BdlBoxScoresScraper(ScraperBase):
             "rowCount": len(rows),
             "boxScores": rows,
         }
-        logger.info(
-            "Fetched %d box‑score rows for %s", len(rows), self.opts["date"]
-        )
+        logger.info("Fetched %d box‑score rows for %s", len(rows), self.opts["date"])
 
     # ------------------------------------------------------------------ #
     # Stats                                                              #
@@ -135,24 +124,33 @@ class BdlBoxScoresScraper(ScraperBase):
         return {"rowCount": self.data.get("rowCount", 0), "date": self.opts["date"]}
 
 
-# ---------------------------------------------------------------------- #
-# Google Cloud Function entry point                                      #
-# ---------------------------------------------------------------------- #
+# --------------------------------------------------------------------------- #
+# Google Cloud Function entry                                                #
+# --------------------------------------------------------------------------- #
 def gcf_entry(request):  # type: ignore[valid-type]
-    date_param = request.args.get("date")
-    group = request.args.get("group", "prod")
-    opts = {"date": date_param, "group": group}
+    opts = {
+        "date": request.args.get("date"),
+        "group": request.args.get("group", "prod"),
+        "apiKey": request.args.get("apiKey"),
+        "runId": request.args.get("runId"),
+    }
     BdlBoxScoresScraper().run(opts)
-    return f"BALLDONTLIE box‑scores scrape complete ({opts.get('date') or 'yesterday'})", 200
+    return f"BallDontLie box‑scores scrape complete ({opts.get('date') or 'yesterday'})", 200
 
 
-# ---------------------------------------------------------------------- #
-# CLI usage                                                              #
-# ---------------------------------------------------------------------- #
+# --------------------------------------------------------------------------- #
+# CLI usage                                                                  #
+# --------------------------------------------------------------------------- #
 if __name__ == "__main__":
     import argparse
+    from scrapers.utils.cli_utils import add_common_args
 
-    cli = argparse.ArgumentParser()
-    cli.add_argument("--date", help="YYYY‑MM‑DD (default: yesterday UTC)")
-    cli.add_argument("--group", default="test")
-    BdlBoxScoresScraper().run(vars(cli.parse_args()))
+    parser = argparse.ArgumentParser(description="Scrape BallDontLie /box_scores")
+    parser.add_argument("--date", help="YYYY‑MM‑DD (default: yesterday UTC)")
+    add_common_args(parser)  # --group --apiKey --runId --debug
+    args = parser.parse_args()
+
+    if args.debug:
+        logging.getLogger().setLevel(logging.DEBUG)
+
+    BdlBoxScoresScraper().run(vars(args))

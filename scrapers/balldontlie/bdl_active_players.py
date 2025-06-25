@@ -1,22 +1,23 @@
 """
-BALLDONTLIE ‑ Active Players endpoint                       v1 – 2025‑06‑22
------------------------------------------------------------------------------
-Filters & cursor‑paginated list of **players who are active this season**
+BALLDONTLIE - Active Players endpoint                         v1.1 • 2025‑06‑24
+-------------------------------------------------------------------------------
+Lists players flagged “active” this season.
 
     https://api.balldontlie.io/v1/players/active
 
-### Optional query parameters (mirrors `/players`)
-* `teamId`    – restrict to one NBA franchise
-* `search`    – free‑text search on first/last name
-* `playerId`  – fetch one specific player
+Optional query params mirror /players:
+  --teamId      restrict to one franchise
+  --playerId    one specific player
+  --search      free-text on first/last name
 
-If **none** are supplied we grab the full league list (~500 rows).
+If none supplied: returns the full league (~500 rows).
 
 CLI
 ---
-    python -m scrapers.bdl.bdl_active_players_scraper            # entire league
-    python -m scrapers.bdl.bdl_active_players_scraper --teamId 3 # ATL only
+    python -m scrapers.balldontlie.bdl_active_players          # entire league
+    python -m scrapers.balldontlie.bdl_active_players --teamId 3
 """
+
 from __future__ import annotations
 
 import logging
@@ -26,22 +27,23 @@ from typing import Any, Dict, List, Optional
 
 from ..scraper_base import DownloadType, ExportMode, ScraperBase
 
-logger = logging.getLogger("scraper_base")
+logger = logging.getLogger(__name__)
 
-
+# --------------------------------------------------------------------------- #
+# Scraper
+# --------------------------------------------------------------------------- #
 class BdlActivePlayersScraper(ScraperBase):
-    """
-    Daily (or ad‑hoc) scraper for /players/active.
-    """
+    """Daily (or ad-hoc) scrape of /players/active."""
+
+    required_opts: List[str] = []
+    download_type = DownloadType.JSON
+    decode_download_data = True
 
     # ------------------------------------------------------------------ #
-    # Config                                                             #
+    # Exporters
     # ------------------------------------------------------------------ #
-    required_opts: List[str] = []               # everything optional
-    download_type: DownloadType = DownloadType.JSON
-    decode_download_data: bool = True
-
     exporters = [
+        # Normal dev / prod artifact (keyed by ident)
         {
             "type": "file",
             "filename": "/tmp/bdl_active_players_%(ident)s.json",
@@ -49,16 +51,24 @@ class BdlActivePlayersScraper(ScraperBase):
             "export_mode": ExportMode.DATA,
             "groups": ["dev", "test", "prod"],
         },
+        # Capture RAW + EXP (keyed by run_id)
         {
             "type": "file",
-            "filename": "/tmp/raw_active_players_%(ident)s.json",
+            "filename": "/tmp/raw_%(run_id)s.json",
             "export_mode": ExportMode.RAW,
+            "groups": ["capture"],
+        },
+        {
+            "type": "file",
+            "filename": "/tmp/exp_%(run_id)s.json",
+            "pretty_print": True,
+            "export_mode": ExportMode.DECODED,
             "groups": ["capture"],
         },
     ]
 
     # ------------------------------------------------------------------ #
-    # Additional opts – build a concise identifier                       #
+    # Additional opts – build concise identifier                         #
     # ------------------------------------------------------------------ #
     def set_additional_opts(self) -> None:
         if self.opts.get("playerId"):
@@ -87,26 +97,23 @@ class BdlActivePlayersScraper(ScraperBase):
         query = "&".join(f"{k}={v}" for k, v in params.items())
         self.base_url = self._API_ROOT
         self.url = f"{self.base_url}?{query}"
-        logger.info("Resolved BALLDONTLIE active‑players URL: %s", self.url)
+        logger.debug("Active‑players URL: %s", self.url)
 
     def set_headers(self) -> None:
-        api_key = os.getenv("BDL_API_KEY")
-        if not api_key:
-            raise RuntimeError("Environment variable BDL_API_KEY not set")
+        api_key = self.opts.get("apiKey") or os.getenv("BDL_API_KEY")
         self.headers = {
-            "Authorization": api_key,
-            "User-Agent": "Mozilla/5.0 (compatible; scrape-bdl/1.0)",
+            "User-Agent": "scrape-bdl-active/1.1 (+github.com/your-org)",
             "Accept": "application/json",
         }
+        if api_key:
+            self.headers["Authorization"] = f"Bearer {api_key}"
 
     # ------------------------------------------------------------------ #
     # Validation                                                         #
     # ------------------------------------------------------------------ #
     def validate_download_data(self) -> None:
-        if not isinstance(self.decoded_data, dict):
-            raise ValueError("Active‑players response is not JSON object")
-        if "data" not in self.decoded_data:
-            raise ValueError("'data' field missing in active‑players JSON")
+        if not isinstance(self.decoded_data, dict) or "data" not in self.decoded_data:
+            raise ValueError("Unexpected active‑players JSON structure")
 
     # ------------------------------------------------------------------ #
     # Transform (cursor walk)                                            #
@@ -135,9 +142,7 @@ class BdlActivePlayersScraper(ScraperBase):
             "playerCount": len(players),
             "activePlayers": players,
         }
-        logger.info(
-            "Fetched %d active players (%s)", len(players), self.opts["ident"]
-        )
+        logger.info("Fetched %d active players (%s)", len(players), self.opts["ident"])
 
     # ------------------------------------------------------------------ #
     # Stats                                                              #
@@ -149,34 +154,40 @@ class BdlActivePlayersScraper(ScraperBase):
         }
 
 
-# ---------------------------------------------------------------------- #
-# Google Cloud Function entry point                                      #
-# ---------------------------------------------------------------------- #
+# --------------------------------------------------------------------------- #
+# Google Cloud Function entry                                                #
+# --------------------------------------------------------------------------- #
 def gcf_entry(request):  # type: ignore[valid-type]
-    team_id = request.args.get("teamId")
-    player_id = request.args.get("playerId")
-    search = request.args.get("search")
-    group = request.args.get("group", "prod")
-
-    opts = {"teamId": team_id, "playerId": player_id, "search": search, "group": group}
+    opts = {
+        "teamId": request.args.get("teamId"),
+        "playerId": request.args.get("playerId"),
+        "search": request.args.get("search"),
+        "group": request.args.get("group", "prod"),
+        "apiKey": request.args.get("apiKey"),
+        "runId": request.args.get("runId"),
+    }
     BdlActivePlayersScraper().run(opts)
-    ident = (
-        opts.get("playerId")
-        or opts.get("teamId")
-        or (f"search_{search}" if search else "league")
+    ident = opts.get("playerId") or opts.get("teamId") or (
+        f"search_{opts['search']}" if opts.get("search") else "league"
     )
-    return f"BALLDONTLIE active‑players scrape complete ({ident})", 200
+    return f"BallDontLie active players scrape complete ({ident})", 200
 
 
-# ---------------------------------------------------------------------- #
-# CLI usage                                                              #
-# ---------------------------------------------------------------------- #
+# --------------------------------------------------------------------------- #
+# CLI usage                                                                  #
+# --------------------------------------------------------------------------- #
 if __name__ == "__main__":
     import argparse
+    from scrapers.utils.cli_utils import add_common_args
 
-    cli = argparse.ArgumentParser()
-    cli.add_argument("--teamId", help="Restrict to one team")
-    cli.add_argument("--playerId", help="Restrict to one player")
-    cli.add_argument("--search", help="Name search term")
-    cli.add_argument("--group", default="test")
-    BdlActivePlayersScraper().run(vars(cli.parse_args()))
+    parser = argparse.ArgumentParser(description="Scrape BallDontLie /players/active")
+    parser.add_argument("--teamId", help="Restrict to one team")
+    parser.add_argument("--playerId", help="Restrict to one player")
+    parser.add_argument("--search", help="Name search term")
+    add_common_args(parser)                         # --group --apiKey --runId --debug
+    args = parser.parse_args()
+
+    if args.debug:
+        logging.getLogger().setLevel(logging.DEBUG)
+
+    BdlActivePlayersScraper().run(vars(args))

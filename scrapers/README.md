@@ -18,6 +18,14 @@ python tools/fixtures/capture.py espn_scoreboard --scoreDate 20250214
 python tools/fixtures/capture.py nbac_game_ids_core --scoreDate 20250316
 
 
+# Test BDL
+rm -f /tmp/raw_* /tmp/exp_*
+python tools/fixtures/capture.py bdl_teams --debug
+python tools/fixtures/capture.py bdl_active_players --debug
+
+python tools/fixtures/capture.py bdl_advanced_stats --debug  --startDate 2025-06-22 --endDate 2025-06-22
+
+
 
 
 # README: NBA / Odds API Scrapers

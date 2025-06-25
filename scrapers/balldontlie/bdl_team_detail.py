@@ -1,19 +1,13 @@
 """
-BALLDONTLIE ‑ Team‑Detail endpoint                          v1 – 2025‑06‑22
------------------------------------------------------------------------------
-Retrieve the JSON object for one NBA franchise:
+BALLDONTLIE - Team Detail endpoint                         v1.2  2025-06-24
+---------------------------------------------------------------------------
+Fetch a single NBA franchise record:
 
     https://api.balldontlie.io/v1/teams/{teamId}
 
-Typical uses
-------------
-* On‑demand lookup when a user drills into a team page.
-* Enrich game rows with official team nicknames + abbreviations.
-* Periodic audit to detect venue / conference re‑alignments.
-
-CLI
----
-    python -m scrapers.bdl.bdl_team_detail --teamId 14   # L.A. Lakers
+Example
+-------
+    python -m scrapers.balldontlie.bdl_team_detail --teamId 14
 """
 from __future__ import annotations
 
@@ -23,21 +17,17 @@ from datetime import datetime, timezone
 from typing import List
 
 from ..scraper_base import DownloadType, ExportMode, ScraperBase
+from ..utils.cli_utils import add_common_args
 
-logger = logging.getLogger("scraper_base")
+logger = logging.getLogger(__name__)
 
 
 class BdlTeamDetailScraper(ScraperBase):
-    """
-    Simple GET /teams/{id}.
-    """
+    """GET /teams/{id}"""
 
-    # ------------------------------------------------------------------ #
-    # Class‑level config                                                 #
-    # ------------------------------------------------------------------ #
     required_opts: List[str] = ["teamId"]
-    download_type: DownloadType = DownloadType.JSON
-    decode_download_data: bool = True
+    download_type = DownloadType.JSON
+    decode_download_data = True
 
     exporters = [
         {
@@ -49,38 +39,52 @@ class BdlTeamDetailScraper(ScraperBase):
         },
         {
             "type": "file",
-            "filename": "/tmp/raw_team_%(teamId)s.json",
+            "filename": "/tmp/raw_%(run_id)s.json",
             "export_mode": ExportMode.RAW,
+            "groups": ["capture"],
+        },
+        {
+            "type": "file",
+            "filename": "/tmp/exp_%(run_id)s.json",
+            "export_mode": ExportMode.DECODED,
+            "pretty_print": True,
             "groups": ["capture"],
         },
     ]
 
     # ------------------------------------------------------------------ #
-    # URL & headers                                                      #
+    # URL and headers                                                    #
     # ------------------------------------------------------------------ #
     def set_url(self) -> None:
         self.base_url = "https://api.balldontlie.io/v1/teams"
         self.url = f"{self.base_url}/{self.opts['teamId']}"
-        logger.info("Resolved BALLDONTLIE team‑detail URL: %s", self.url)
+        logger.debug("Team detail URL: %s", self.url)
 
     def set_headers(self) -> None:
-        api_key = os.getenv("BDL_API_KEY")
-        if not api_key:
-            raise RuntimeError("Environment variable BDL_API_KEY not set")
+        api_key = self.opts.get("apiKey") or os.getenv("BDL_API_KEY")
         self.headers = {
-            "Authorization": api_key,
-            "User-Agent": "Mozilla/5.0 (compatible; scrape-bdl/1.0)",
+            "User-Agent": "scrape-bdl-team-detail/1.1 (+github.com/your-org)",
             "Accept": "application/json",
         }
+        if api_key:
+            self.headers["Authorization"] = f"Bearer {api_key}"
 
     # ------------------------------------------------------------------ #
     # Validation                                                         #
     # ------------------------------------------------------------------ #
     def validate_download_data(self) -> None:
         if not isinstance(self.decoded_data, dict):
-            raise ValueError("Team‑detail response is not JSON object")
-        if self.decoded_data.get("id") != int(self.opts["teamId"]):
-            raise ValueError("Returned teamId does not match requested teamId")
+            raise ValueError("Team detail response is not a JSON object")
+
+        # BallDontLie wraps single objects in {"data": {...}}
+        payload = self.decoded_data.get("data", self.decoded_data)
+        if payload.get("id") != int(self.opts["teamId"]):
+            raise ValueError(
+                f"Returned teamId {payload.get('id')} does not match requested {self.opts['teamId']}"
+            )
+
+        # Cache for transform
+        self._team_obj = payload
 
     # ------------------------------------------------------------------ #
     # Transform                                                          #
@@ -89,7 +93,7 @@ class BdlTeamDetailScraper(ScraperBase):
         self.data = {
             "teamId": self.opts["teamId"],
             "timestamp": datetime.now(timezone.utc).isoformat(),
-            "team": self.decoded_data,
+            "team": self._team_obj,
         }
         logger.info("Fetched team detail for teamId=%s", self.opts["teamId"])
 
@@ -100,25 +104,37 @@ class BdlTeamDetailScraper(ScraperBase):
         return {"teamId": self.opts["teamId"]}
 
 
-# ---------------------------------------------------------------------- #
-# Google Cloud Function entry point                                      #
-# ---------------------------------------------------------------------- #
+# --------------------------------------------------------------------------- #
+# Google Cloud Function entry                                                #
+# --------------------------------------------------------------------------- #
 def gcf_entry(request):  # type: ignore[valid-type]
-    team_id = request.args.get("teamId")
-    if not team_id:
+    opts = {
+        "teamId": request.args.get("teamId"),
+        "apiKey": request.args.get("apiKey"),
+        "group": request.args.get("group", "prod"),
+        "runId": request.args.get("runId"),
+    }
+    if not opts["teamId"]:
         return ("Missing query param 'teamId'", 400)
-    group = request.args.get("group", "prod")
-    BdlTeamDetailScraper().run({"teamId": team_id, "group": group})
-    return f"BALLDONTLIE team‑detail scrape complete (teamId={team_id})", 200
+    BdlTeamDetailScraper().run(opts)
+    return (
+        f"BallDontLie team detail scrape complete (teamId={opts['teamId']})",
+        200,
+    )
 
 
-# ---------------------------------------------------------------------- #
-# CLI usage                                                              #
-# ---------------------------------------------------------------------- #
+# --------------------------------------------------------------------------- #
+# CLI usage                                                                  #
+# --------------------------------------------------------------------------- #
 if __name__ == "__main__":
     import argparse
 
-    cli = argparse.ArgumentParser()
-    cli.add_argument("--teamId", required=True, help="NBA team ID to fetch")
-    cli.add_argument("--group", default="test")
-    BdlTeamDetailScraper().run(vars(cli.parse_args()))
+    parser = argparse.ArgumentParser(description="Scrape BallDontLie /teams/{id}")
+    parser.add_argument("--teamId", required=True, help="NBA team ID to fetch")
+    add_common_args(parser)  # adds --group, --apiKey, --runId, --debug
+    args = parser.parse_args()
+
+    if args.debug:
+        logging.getLogger().setLevel(logging.DEBUG)
+
+    BdlTeamDetailScraper().run(vars(args))

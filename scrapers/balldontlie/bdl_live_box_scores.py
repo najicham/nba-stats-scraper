@@ -1,21 +1,13 @@
 """
-BALLDONTLIE ‑ Live Box‑Scores endpoint                    v1 – 2025‑06‑22
------------------------------------------------------------------------------
-Continuously updated, play‑by‑play‑level box scores from
+BALLDONTLIE - Live Box-Scores endpoint                      v1.1 • 2025-06-24
+-------------------------------------------------------------------------------
+Continuously updated box scores:
 
     https://api.balldontlie.io/v1/box_scores/live
 
-The endpoint returns **all** games that are currently in progress; if no games
-are underway the `"data"` array is empty.
-
-Typical use:
-• Schedule every 2 minutes between 23:00 UTC and 06:00 UTC (typical NBA hours).
-• Combine with the static `/box_scores` scraper (end‑of‑game snapshot).
-
-CLI
----
-    python -m scrapers.bdl.bdl_live_box_scores_scraper
+Endpoint returns all games in progress; empty array when none.
 """
+
 from __future__ import annotations
 
 import logging
@@ -25,44 +17,48 @@ from typing import Any, Dict, List, Optional
 
 from ..scraper_base import DownloadType, ExportMode, ScraperBase
 
-logger = logging.getLogger("scraper_base")
+logger = logging.getLogger(__name__)
 
-
+# --------------------------------------------------------------------------- #
+# Scraper                                                                     #
+# --------------------------------------------------------------------------- #
 class BdlLiveBoxScoresScraper(ScraperBase):
-    """
-    Fast‑cadence scraper for /box_scores/live.
-    """
+    """Fast-cadence scraper for /box_scores/live."""
 
-    # ------------------------------------------------------------------ #
-    # Config                                                             #
-    # ------------------------------------------------------------------ #
-    required_opts: List[str] = []            # no params needed
-    download_type: DownloadType = DownloadType.JSON
-    decode_download_data: bool = True
+    required_opts: List[str] = []
+    download_type = DownloadType.JSON
+    decode_download_data = True
 
     exporters = [
+        # Normal artifact (timestamp keeps files unique)
         {
             "type": "file",
-            # Timestamped to avoid collisions when polling every 2 min
             "filename": "/tmp/bdl_live_boxes_%(ts)s.json",
             "pretty_print": True,
             "export_mode": ExportMode.DATA,
             "groups": ["dev", "test", "prod"],
         },
+        # Capture RAW + EXP
         {
             "type": "file",
-            "filename": "/tmp/raw_live_boxes_%(ts)s.json",
+            "filename": "/tmp/raw_%(run_id)s.json",
             "export_mode": ExportMode.RAW,
+            "groups": ["capture"],
+        },
+        {
+            "type": "file",
+            "filename": "/tmp/exp_%(run_id)s.json",
+            "pretty_print": True,
+            "export_mode": ExportMode.DECODED,
             "groups": ["capture"],
         },
     ]
 
     # ------------------------------------------------------------------ #
-    # Additional opts → timestamp token for filename                     #
+    # Additional opts – timestamp token                                  #
     # ------------------------------------------------------------------ #
     def set_additional_opts(self) -> None:
-        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        self.opts.setdefault("ts", ts)
+        self.opts.setdefault("ts", datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"))
 
     # ------------------------------------------------------------------ #
     # URL & headers                                                      #
@@ -71,30 +67,27 @@ class BdlLiveBoxScoresScraper(ScraperBase):
 
     def set_url(self) -> None:
         self.base_url = self._API_ROOT
-        self.url = self._API_ROOT   # no query params
-        logger.info("Resolved BALLDONTLIE live box‑scores URL: %s", self.url)
+        self.url = self._API_ROOT
+        logger.debug("Live box‑scores URL: %s", self.url)
 
     def set_headers(self) -> None:
-        api_key = os.getenv("BDL_API_KEY")
-        if not api_key:
-            raise RuntimeError("Environment variable BDL_API_KEY not set")
+        api_key = self.opts.get("apiKey") or os.getenv("BDL_API_KEY")
         self.headers = {
-            "Authorization": api_key,
-            "User-Agent": "Mozilla/5.0 (compatible; scrape-bdl/1.0)",
+            "User-Agent": "scrape-bdl-live/1.1 (+github.com/your-org)",
             "Accept": "application/json",
         }
+        if api_key:
+            self.headers["Authorization"] = f"Bearer {api_key}"
 
     # ------------------------------------------------------------------ #
     # Validation                                                         #
     # ------------------------------------------------------------------ #
     def validate_download_data(self) -> None:
-        if not isinstance(self.decoded_data, dict):
-            raise ValueError("Live boxes response is not JSON object")
-        if "data" not in self.decoded_data:
-            raise ValueError("'data' field missing in live boxes JSON")
+        if not isinstance(self.decoded_data, dict) or "data" not in self.decoded_data:
+            raise ValueError("Live boxes response malformed: missing 'data' key")
 
     # ------------------------------------------------------------------ #
-    # Transform (cursor‑safe though endpoint is single‑page today)       #
+    # Transform                                                          #
     # ------------------------------------------------------------------ #
     def transform_data(self) -> None:
         live_boxes: List[Dict[str, Any]] = list(self.decoded_data["data"])
@@ -129,21 +122,31 @@ class BdlLiveBoxScoresScraper(ScraperBase):
         return {"gameCount": self.data.get("gameCount", 0), "pollId": self.opts["ts"]}
 
 
-# ---------------------------------------------------------------------- #
-# Google Cloud Function entry point                                      #
-# ---------------------------------------------------------------------- #
+# --------------------------------------------------------------------------- #
+# Google Cloud Function entry                                                #
+# --------------------------------------------------------------------------- #
 def gcf_entry(request):  # type: ignore[valid-type]
-    group = request.args.get("group", "prod")
-    BdlLiveBoxScoresScraper().run({"group": group})
-    return "BALLDONTLIE live box‑scores scrape complete", 200
+    opts = {
+        "group": request.args.get("group", "prod"),
+        "apiKey": request.args.get("apiKey"),
+        "runId": request.args.get("runId"),
+    }
+    BdlLiveBoxScoresScraper().run(opts)
+    return "BallDontLie live box‑scores scrape complete", 200
 
 
-# ---------------------------------------------------------------------- #
-# CLI usage                                                              #
-# ---------------------------------------------------------------------- #
+# --------------------------------------------------------------------------- #
+# CLI usage                                                                  #
+# --------------------------------------------------------------------------- #
 if __name__ == "__main__":
     import argparse
+    from scrapers.utils.cli_utils import add_common_args
 
-    cli = argparse.ArgumentParser()
-    cli.add_argument("--group", default="test")
-    BdlLiveBoxScoresScraper().run(vars(cli.parse_args()))
+    parser = argparse.ArgumentParser(description="Scrape BallDontLie /box_scores/live")
+    add_common_args(parser)  # --group --apiKey --runId --debug
+    args = parser.parse_args()
+
+    if args.debug:
+        logging.getLogger().setLevel(logging.DEBUG)
+
+    BdlLiveBoxScoresScraper().run(vars(args))

@@ -1,19 +1,15 @@
 """
-BALLDONTLIE ‑ Player‑Detail endpoint                      v1 – 2025‑06‑22
------------------------------------------------------------------------------
+BALLDONTLIE - Player-Detail endpoint                         v1.1 • 2025-06-24
+-------------------------------------------------------------------------------
 Fetch the JSON object for a single NBA player:
 
     https://api.balldontlie.io/v1/players/{playerId}
 
-Use‑cases
----------
-* Populate a player‑info cache on demand.
-* Back‑fill missing height / position fields after roster updates.
-
 CLI
 ---
-    python -m scrapers.bdl.bdl_player_detail --playerId 237   # LeBron
+    python -m scrapers.balldontlie.bdl_player_detail --playerId 237 --debug
 """
+
 from __future__ import annotations
 
 import logging
@@ -23,22 +19,20 @@ from typing import List
 
 from ..scraper_base import DownloadType, ExportMode, ScraperBase
 
-logger = logging.getLogger("scraper_base")
+logger = logging.getLogger(__name__)
 
-
+# --------------------------------------------------------------------------- #
+# Scraper                                                                     #
+# --------------------------------------------------------------------------- #
 class BdlPlayerDetailScraper(ScraperBase):
-    """
-    Simple GET /players/{id}.
-    """
+    """Simple GET /players/{id} scraper."""
 
-    # ------------------------------------------------------------------ #
-    # Config                                                             #
-    # ------------------------------------------------------------------ #
     required_opts: List[str] = ["playerId"]
-    download_type: DownloadType = DownloadType.JSON
-    decode_download_data: bool = True
+    download_type = DownloadType.JSON
+    decode_download_data = True
 
     exporters = [
+        # Normal artifact
         {
             "type": "file",
             "filename": "/tmp/bdl_player_%(playerId)s.json",
@@ -46,10 +40,18 @@ class BdlPlayerDetailScraper(ScraperBase):
             "export_mode": ExportMode.DATA,
             "groups": ["dev", "test", "prod"],
         },
+        # Capture RAW + EXP
         {
             "type": "file",
-            "filename": "/tmp/raw_player_%(playerId)s.json",
+            "filename": "/tmp/raw_%(run_id)s.json",
             "export_mode": ExportMode.RAW,
+            "groups": ["capture"],
+        },
+        {
+            "type": "file",
+            "filename": "/tmp/exp_%(run_id)s.json",
+            "pretty_print": True,
+            "export_mode": ExportMode.DECODED,
             "groups": ["capture"],
         },
     ]
@@ -57,29 +59,42 @@ class BdlPlayerDetailScraper(ScraperBase):
     # ------------------------------------------------------------------ #
     # URL & headers                                                      #
     # ------------------------------------------------------------------ #
+    _API_ROOT = "https://api.balldontlie.io/v1/players"
+
     def set_url(self) -> None:
-        self.base_url = "https://api.balldontlie.io/v1/players"
+        self.base_url = self._API_ROOT
         self.url = f"{self.base_url}/{self.opts['playerId']}"
-        logger.info("Resolved BALLDONTLIE player‑detail URL: %s", self.url)
+        logger.debug("Player-detail URL: %s", self.url)
 
     def set_headers(self) -> None:
-        api_key = os.getenv("BDL_API_KEY")
-        if not api_key:
-            raise RuntimeError("Environment variable BDL_API_KEY not set")
+        api_key = self.opts.get("apiKey") or os.getenv("BDL_API_KEY")
         self.headers = {
-            "Authorization": api_key,
-            "User-Agent": "Mozilla/5.0 (compatible; scrape-bdl/1.0)",
+            "User-Agent": "scrape-bdl-player-detail/1.1 (+github.com/your-org)",
             "Accept": "application/json",
         }
+        if api_key:
+            self.headers["Authorization"] = f"Bearer {api_key}"
 
     # ------------------------------------------------------------------ #
     # Validation                                                         #
     # ------------------------------------------------------------------ #
     def validate_download_data(self) -> None:
-        if not isinstance(self.decoded_data, dict):
-            raise ValueError("Player‑detail response is not JSON object")
-        if self.decoded_data.get("id") != int(self.opts["playerId"]):
+        """
+        BDL v1.4 wraps responses in {"data": {...}}.
+        Accept both wrapped and legacy bare objects.
+        """
+        if "id" in self.decoded_data:
+            player = self.decoded_data                       # legacy format
+        elif "data" in self.decoded_data and "id" in self.decoded_data["data"]:
+            player = self.decoded_data["data"]               # new format
+        else:
+            raise ValueError(f"PlayerId {self.opts['playerId']} not found in BallDontLie")
+
+        if player["id"] != int(self.opts["playerId"]):
             raise ValueError("Returned playerId does not match requested playerId")
+
+        # Unwrap so transform/exporters work consistently
+        self.decoded_data = player
 
     # ------------------------------------------------------------------ #
     # Transform                                                          #
@@ -99,25 +114,36 @@ class BdlPlayerDetailScraper(ScraperBase):
         return {"playerId": self.opts["playerId"]}
 
 
-# ---------------------------------------------------------------------- #
-# Google Cloud Function entry point                                      #
-# ---------------------------------------------------------------------- #
+# --------------------------------------------------------------------------- #
+# Google Cloud Function entry                                                #
+# --------------------------------------------------------------------------- #
 def gcf_entry(request):  # type: ignore[valid-type]
     player_id = request.args.get("playerId")
     if not player_id:
         return ("Missing query param 'playerId'", 400)
-    group = request.args.get("group", "prod")
-    BdlPlayerDetailScraper().run({"playerId": player_id, "group": group})
-    return f"BALLDONTLIE player‑detail scrape complete (playerId={player_id})", 200
+    opts = {
+        "playerId": player_id,
+        "group": request.args.get("group", "prod"),
+        "apiKey": request.args.get("apiKey"),
+        "runId": request.args.get("runId"),
+    }
+    BdlPlayerDetailScraper().run(opts)
+    return f"BallDontLie player-detail scrape complete (playerId={player_id})", 200
 
 
-# ---------------------------------------------------------------------- #
-# CLI usage                                                              #
-# ---------------------------------------------------------------------- #
+# --------------------------------------------------------------------------- #
+# CLI usage                                                                  #
+# --------------------------------------------------------------------------- #
 if __name__ == "__main__":
     import argparse
+    from scrapers.utils.cli_utils import add_common_args
 
-    cli = argparse.ArgumentParser()
-    cli.add_argument("--playerId", required=True, help="NBA player ID to fetch")
-    cli.add_argument("--group", default="test")
-    BdlPlayerDetailScraper().run(vars(cli.parse_args()))
+    parser = argparse.ArgumentParser(description="Scrape BallDontLie /players/{id}")
+    parser.add_argument("--playerId", required=True, help="NBA player ID to fetch")
+    add_common_args(parser)  # --group --apiKey --runId --debug
+    args = parser.parse_args()
+
+    if args.debug:
+        logging.getLogger().setLevel(logging.DEBUG)
+
+    BdlPlayerDetailScraper().run(vars(args))

@@ -1,25 +1,11 @@
 """
-BALLDONTLIE ‑ Leaders endpoint                             v1 – 2025‑06‑22
------------------------------------------------------------------------------
-Top‑N league leaders for a single statistic:
+BALLDONTLIE - Player Leaders endpoint                   v1.2  2025-06-24
+-----------------------------------------------------------------------
+Top-N league leaders for a single statistic:
 
     https://api.balldontlie.io/v1/leaders
 
-### Required query parameters
-* `statType` – one of:
-      pts, ast, reb, stl, blk, fg_pct, fg3_pct, ft_pct,
-      tov, plus_minus, off_rtg, def_rtg, ts_pct, efg_pct, usg_pct, etc.
-* `season`   – season start year, e.g. 2024 for the 2024‑25 season.
-
-If neither is supplied we default to:
-    • `statType = "pts"`
-    • `season    = active NBA season` (same logic as standings scraper).
-
-CLI
----
-    python -m scrapers.bdl.bdl_leaders_scraper                   # defaults
-    python -m scrapers.bdl.bdl_leaders_scraper --statType ast \
-            --season 2024
+Defaults:  statType = "pts",  season = current NBA season
 """
 from __future__ import annotations
 
@@ -29,9 +15,9 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from ..scraper_base import DownloadType, ExportMode, ScraperBase
+from ..utils.cli_utils import add_common_args
 
-logger = logging.getLogger("scraper_base")
-
+logger = logging.getLogger(__name__)
 
 # --------------------------------------------------------------------------- #
 # Helpers                                                                     #
@@ -48,48 +34,53 @@ _VALID_STATS = {
     "ts_pct", "efg_pct", "usg_pct",
 }
 
+# --------------------------------------------------------------------------- #
+# Scraper                                                                     #
+# --------------------------------------------------------------------------- #
+class BdlPlayerLeadersScraper(ScraperBase):
+    """Scraper for /leaders (top-N players for one stat)."""
 
-class BdlLeadersScraper(ScraperBase):
-    """
-    Daily (or ad‑hoc) scraper for /leaders.
-    """
-
-    # ------------------------------------------------------------------ #
-    # Config                                                             #
-    # ------------------------------------------------------------------ #
-    required_opts: List[str] = []           # we derive sensible defaults
-    download_type: DownloadType = DownloadType.JSON
-    decode_download_data: bool = True
+    required_opts: List[str] = []
+    download_type = DownloadType.JSON
+    decode_download_data = True
 
     exporters = [
+        # Normal artefact
         {
             "type": "file",
-            "filename": "/tmp/bdl_leaders_%(ident)s.json",
+            "filename": "/tmp/bdl_player_leaders_%(ident)s.json",
             "pretty_print": True,
             "export_mode": ExportMode.DATA,
             "groups": ["dev", "test", "prod"],
         },
+        # Capture RAW + EXP
         {
             "type": "file",
-            "filename": "/tmp/raw_leaders_%(ident)s.json",
+            "filename": "/tmp/raw_%(run_id)s.json",
             "export_mode": ExportMode.RAW,
+            "groups": ["capture"],
+        },
+        {
+            "type": "file",
+            "filename": "/tmp/exp_%(run_id)s.json",
+            "export_mode": ExportMode.DECODED,
+            "pretty_print": True,
             "groups": ["capture"],
         },
     ]
 
     # ------------------------------------------------------------------ #
-    # Additional opts – defaults & ident                                 #
+    # Additional opts                                                    #
     # ------------------------------------------------------------------ #
     def set_additional_opts(self) -> None:
         stat_type = (self.opts.get("statType") or "pts").lower()
         if stat_type not in _VALID_STATS:
             raise ValueError(
-                f"Invalid statType '{stat_type}'. "
-                f"Allowed: {', '.join(sorted(_VALID_STATS))}"
+                f"Invalid statType '{stat_type}'. Allowed: {', '.join(sorted(_VALID_STATS))}"
             )
         self.opts["statType"] = stat_type
         self.opts["season"] = int(self.opts.get("season") or _current_nba_season())
-        self.opts["ident"] = f"{self.opts['season']}_{self.opts['statType']}"
+        self.opts["ident"] = f"{self.opts['season']}_{stat_type}"
 
     # ------------------------------------------------------------------ #
     # URL & headers                                                      #
@@ -102,29 +93,26 @@ class BdlLeadersScraper(ScraperBase):
             f"{self.base_url}?season={self.opts['season']}"
             f"&stat_type={self.opts['statType']}&per_page=100"
         )
-        logger.info("Resolved BALLDONTLIE leaders URL: %s", self.url)
+        logger.debug("Leaders URL: %s", self.url)
 
     def set_headers(self) -> None:
-        api_key = os.getenv("BDL_API_KEY")
-        if not api_key:
-            raise RuntimeError("Environment variable BDL_API_KEY not set")
+        api_key = self.opts.get("apiKey") or os.getenv("BDL_API_KEY")
         self.headers = {
-            "Authorization": api_key,
-            "User-Agent": "Mozilla/5.0 (compatible; scrape-bdl/1.0)",
+            "User-Agent": "scrape-bdl-player-leaders/1.1 (+github.com/your-org)",
             "Accept": "application/json",
         }
+        if api_key:
+            self.headers["Authorization"] = f"Bearer {api_key}"
 
     # ------------------------------------------------------------------ #
     # Validation                                                         #
     # ------------------------------------------------------------------ #
     def validate_download_data(self) -> None:
-        if not isinstance(self.decoded_data, dict):
-            raise ValueError("Leaders response is not JSON object")
-        if "data" not in self.decoded_data:
-            raise ValueError("'data' field missing in leaders JSON")
+        if not isinstance(self.decoded_data, dict) or "data" not in self.decoded_data:
+            raise ValueError("Leaders response malformed: missing 'data' key")
 
     # ------------------------------------------------------------------ #
-    # Transform (cursor‑aware)                                           #
+    # Transform (cursor-aware)                                           #
     # ------------------------------------------------------------------ #
     def transform_data(self) -> None:
         leaders: List[Dict[str, Any]] = list(self.decoded_data["data"])
@@ -147,7 +135,6 @@ class BdlLeadersScraper(ScraperBase):
             leaders.extend(page_json.get("data", []))
             cursor = page_json.get("meta", {}).get("next_cursor")
 
-        # Deterministic order: rank ascending
         leaders.sort(key=lambda r: r.get("rank", 999))
 
         self.data = {
@@ -156,41 +143,44 @@ class BdlLeadersScraper(ScraperBase):
             "rowCount": len(leaders),
             "leaders": leaders,
         }
-        logger.info(
-            "Fetched %d leader rows for %s", len(leaders), self.opts["ident"]
-        )
+        logger.info("Fetched %d leader rows for %s", len(leaders), self.opts["ident"])
 
     # ------------------------------------------------------------------ #
     # Stats                                                              #
     # ------------------------------------------------------------------ #
     def get_scraper_stats(self) -> dict:
-        return {
-            "rowCount": self.data.get("rowCount", 0),
-            "ident": self.opts["ident"],
-        }
+        return {"rowCount": self.data.get("rowCount", 0), "ident": self.opts["ident"]}
 
 
-# ---------------------------------------------------------------------- #
-# Google Cloud Function entry point                                      #
-# ---------------------------------------------------------------------- #
+# --------------------------------------------------------------------------- #
+# Google Cloud Function entry                                                #
+# --------------------------------------------------------------------------- #
 def gcf_entry(request):  # type: ignore[valid-type]
-    stat_type = request.args.get("statType")
-    season = request.args.get("season")
-    group = request.args.get("group", "prod")
-    opts = {"statType": stat_type, "season": season, "group": group}
-    BdlLeadersScraper().run(opts)
+    opts = {
+        "statType": request.args.get("statType"),
+        "season": request.args.get("season"),
+        "group": request.args.get("group", "prod"),
+        "apiKey": request.args.get("apiKey"),
+        "runId": request.args.get("runId"),
+    }
+    BdlPlayerLeadersScraper().run(opts)
     ident = f"{opts.get('season') or _current_nba_season()}_{opts.get('statType') or 'pts'}"
-    return f"BALLDONTLIE leaders scrape complete ({ident})", 200
+    return f"BallDontLie player leaders scrape complete ({ident})", 200
 
 
-# ---------------------------------------------------------------------- #
-# CLI usage                                                              #
-# ---------------------------------------------------------------------- #
+# --------------------------------------------------------------------------- #
+# CLI usage                                                                  #
+# --------------------------------------------------------------------------- #
 if __name__ == "__main__":
     import argparse
 
-    cli = argparse.ArgumentParser()
-    cli.add_argument("--statType", help="e.g. pts, ast, reb (default: pts)")
-    cli.add_argument("--season", type=int, help="Season start year, e.g. 2024")
-    cli.add_argument("--group", default="test")
-    BdlLeadersScraper().run(vars(cli.parse_args()))
+    parser = argparse.ArgumentParser(description="Scrape BallDontLie /leaders")
+    parser.add_argument("--statType", help="pts, ast, reb, etc. (default pts)")
+    parser.add_argument("--season", type=int, help="Season start year, e.g. 2024")
+    add_common_args(parser)  # --group --apiKey --runId --debug
+    args = parser.parse_args()
+
+    if args.debug:
+        logging.getLogger().setLevel(logging.DEBUG)
+
+    BdlPlayerLeadersScraper().run(vars(args))

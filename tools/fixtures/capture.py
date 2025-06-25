@@ -45,7 +45,7 @@ sys.path.insert(0, str(ROOT))                               # ensure root on sys
 SAMPLES = ROOT / "tests" / "samples"
 TMP_DIR = pathlib.Path("/tmp")
 
-SIZE_CAP = 100_000                # gzip if fixture > 100 kB
+SIZE_CAP = 200_000                # gzip if fixture > 200 kB (changed from 100 kB)
 RAW_FMT = "raw_{run}.html"        # extension can be .html, .json, …
 EXP_FMT = "exp_{run}.json"
 

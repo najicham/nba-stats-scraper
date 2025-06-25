@@ -1,22 +1,15 @@
 """
-BALLDONTLIE ‑ Player Injuries endpoint                    v1 – 2025‑06‑22
------------------------------------------------------------------------------
-Current injury statuses from
+BALLDONTLIE - Player Injuries endpoint                       v1.1 • 2025-06-24
+-------------------------------------------------------------------------------
+Current injuries:
 
     https://api.balldontlie.io/v1/player_injuries
 
-### Parameters (all optional)
-* `teamId`   – restrict to one NBA team
-* `playerId` – restrict to one player
-
-If **neither** is supplied we fetch the *entire* league list.  
-The endpoint is cursor‑paginated; we follow the chain until exhausted.
-
-CLI
----
-    python -m scrapers.bdl.bdl_injuries_scraper            # whole league
-    python -m scrapers.bdl.bdl_injuries_scraper --teamId 2 # BOS only
+Optional query params:
+  --teamId     restrict to one team
+  --playerId   restrict to one player
 """
+
 from __future__ import annotations
 
 import logging
@@ -26,22 +19,20 @@ from typing import Any, Dict, List, Optional
 
 from ..scraper_base import DownloadType, ExportMode, ScraperBase
 
-logger = logging.getLogger("scraper_base")
+logger = logging.getLogger(__name__)
 
-
+# --------------------------------------------------------------------------- #
+# Scraper                                                                     #
+# --------------------------------------------------------------------------- #
 class BdlInjuriesScraper(ScraperBase):
-    """
-    Hourly or ad‑hoc scraper for /player_injuries.
-    """
+    """Hourly or ad-hoc scraper for /player_injuries."""
 
-    # ------------------------------------------------------------------ #
-    # Config                                                             #
-    # ------------------------------------------------------------------ #
-    required_opts: List[str] = []    # all params optional
-    download_type: DownloadType = DownloadType.JSON
-    decode_download_data: bool = True
+    required_opts: List[str] = []
+    download_type = DownloadType.JSON
+    decode_download_data = True
 
     exporters = [
+        # Normal artifact
         {
             "type": "file",
             "filename": "/tmp/bdl_injuries_%(ident)s.json",
@@ -49,22 +40,29 @@ class BdlInjuriesScraper(ScraperBase):
             "export_mode": ExportMode.DATA,
             "groups": ["dev", "test", "prod"],
         },
+        # Capture RAW + EXP
         {
             "type": "file",
-            "filename": "/tmp/raw_injuries_%(ident)s.json",
+            "filename": "/tmp/raw_%(run_id)s.json",
             "export_mode": ExportMode.RAW,
+            "groups": ["capture"],
+        },
+        {
+            "type": "file",
+            "filename": "/tmp/exp_%(run_id)s.json",
+            "pretty_print": True,
+            "export_mode": ExportMode.DECODED,
             "groups": ["capture"],
         },
     ]
 
     # ------------------------------------------------------------------ #
-    # Additional opts → ident string                                     #
+    # Additional opts – ident string                                     #
     # ------------------------------------------------------------------ #
     def set_additional_opts(self) -> None:
-        """Build a concise identifier for file names & logs."""
-        if "playerId" in self.opts and self.opts["playerId"]:
+        if self.opts.get("playerId"):
             self.opts["ident"] = f"player_{self.opts['playerId']}"
-        elif "teamId" in self.opts and self.opts["teamId"]:
+        elif self.opts.get("teamId"):
             self.opts["ident"] = f"team_{self.opts['teamId']}"
         else:
             self.opts["ident"] = "league"
@@ -84,29 +82,26 @@ class BdlInjuriesScraper(ScraperBase):
         query = "&".join(f"{k}={v}" for k, v in params.items())
         self.base_url = self._API_ROOT
         self.url = f"{self.base_url}?{query}"
-        logger.info("Resolved BALLDONTLIE injuries URL: %s", self.url)
+        logger.debug("Injuries URL: %s", self.url)
 
     def set_headers(self) -> None:
-        api_key = os.getenv("BDL_API_KEY")
-        if not api_key:
-            raise RuntimeError("Environment variable BDL_API_KEY not set")
+        api_key = self.opts.get("apiKey") or os.getenv("BDL_API_KEY")
         self.headers = {
-            "Authorization": api_key,
-            "User-Agent": "Mozilla/5.0 (compatible; scrape-bdl/1.0)",
+            "User-Agent": "scrape-bdl-injuries/1.1 (+github.com/your-org)",
             "Accept": "application/json",
         }
+        if api_key:
+            self.headers["Authorization"] = f"Bearer {api_key}"
 
     # ------------------------------------------------------------------ #
     # Validation                                                         #
     # ------------------------------------------------------------------ #
     def validate_download_data(self) -> None:
-        if not isinstance(self.decoded_data, dict):
-            raise ValueError("Injuries response is not JSON object")
-        if "data" not in self.decoded_data:
-            raise ValueError("'data' field missing in injuries JSON")
+        if not isinstance(self.decoded_data, dict) or "data" not in self.decoded_data:
+            raise ValueError("Injuries response malformed: missing 'data' key")
 
     # ------------------------------------------------------------------ #
-    # Transform (cursor‑aware)                                           #
+    # Transform                                                          #
     # ------------------------------------------------------------------ #
     def transform_data(self) -> None:
         injuries: List[Dict[str, Any]] = list(self.decoded_data["data"])
@@ -132,9 +127,7 @@ class BdlInjuriesScraper(ScraperBase):
             "rowCount": len(injuries),
             "injuries": injuries,
         }
-        logger.info(
-            "Fetched %d injury rows for %s", len(injuries), self.opts["ident"]
-        )
+        logger.info("Fetched %d injury rows for %s", len(injuries), self.opts["ident"])
 
     # ------------------------------------------------------------------ #
     # Stats                                                              #
@@ -143,27 +136,36 @@ class BdlInjuriesScraper(ScraperBase):
         return {"rowCount": self.data.get("rowCount", 0), "ident": self.opts["ident"]}
 
 
-# ---------------------------------------------------------------------- #
-# Google Cloud Function entry point                                      #
-# ---------------------------------------------------------------------- #
+# --------------------------------------------------------------------------- #
+# Google Cloud Function entry                                                #
+# --------------------------------------------------------------------------- #
 def gcf_entry(request):  # type: ignore[valid-type]
-    team_id = request.args.get("teamId")
-    player_id = request.args.get("playerId")
-    group = request.args.get("group", "prod")
-    opts = {"teamId": team_id, "playerId": player_id, "group": group}
+    opts = {
+        "teamId": request.args.get("teamId"),
+        "playerId": request.args.get("playerId"),
+        "group": request.args.get("group", "prod"),
+        "apiKey": request.args.get("apiKey"),
+        "runId": request.args.get("runId"),
+    }
     BdlInjuriesScraper().run(opts)
     ident = opts.get("playerId") or opts.get("teamId") or "league"
-    return f"BALLDONTLIE injuries scrape complete ({ident})", 200
+    return f"BallDontLie injuries scrape complete ({ident})", 200
 
 
-# ---------------------------------------------------------------------- #
-# CLI usage                                                              #
-# ---------------------------------------------------------------------- #
+# --------------------------------------------------------------------------- #
+# CLI usage                                                                  #
+# --------------------------------------------------------------------------- #
 if __name__ == "__main__":
     import argparse
+    from scrapers.utils.cli_utils import add_common_args
 
-    cli = argparse.ArgumentParser()
-    cli.add_argument("--teamId", help="Restrict to one team")
-    cli.add_argument("--playerId", help="Restrict to one player")
-    cli.add_argument("--group", default="test")
-    BdlInjuriesScraper().run(vars(cli.parse_args()))
+    parser = argparse.ArgumentParser(description="Scrape BallDontLie /player_injuries")
+    parser.add_argument("--teamId", help="Restrict to one team")
+    parser.add_argument("--playerId", help="Restrict to one player")
+    add_common_args(parser)  # --group --apiKey --runId --debug
+    args = parser.parse_args()
+
+    if args.debug:
+        logging.getLogger().setLevel(logging.DEBUG)
+
+    BdlInjuriesScraper().run(vars(args))

@@ -1,153 +1,127 @@
 """
-BALLDONTLIE ‑ Games endpoint                                   v1 – 2025‑06‑22
+BALLDONTLIE – Games endpoint                                  v1.2 • 2025‑06‑24
 -------------------------------------------------------------------------------
-Fetches all NBA games in an arbitrary date window from
+Fetches every NBA game between **startDate** and **endDate** (inclusive).
 
-    https://api.balldontlie.io/v1/games
+    /games?start_date=YYYY‑MM‑DD&end_date=YYYY‑MM‑DD
 
-The endpoint is cursor‑paginated.  We grab the first page via the standard
-ScraperBase download flow, then—*inside `transform_data()`*—loop over any
-follow‑up cursors **using the same `requests.Session` that ScraperBase already
-created** (`self.http_downloader`).  This keeps proxy, retry, and header logic
-centralised.
+The endpoint is cursor‑paginated.  We grab the first page through
+ScraperBase’s normal downloader, then—inside **transform_data()**—walk any
+`next_cursor` links with the **same requests.Session** (self.http_downloader)
+so we inherit proxy / retry / header behaviour.
 
-Typical payload size:
-    • Regular‑season day  → ≈ 10‑15 games  → fits in one page (≤ 100)
-    • Busy playoff day    → max 15 games  → also one page
-So the cursor loop is future‑proof but rarely needed in practice.
-
-CLI
----
-    python -m scrapers.bdl.bdl_games_scraper --startDate 2025-06-21 --endDate 2025-06-22
+Typical page size is ≤ 15 games, so extra pages are rare today but the loop is
+future‑proof.
 """
 from __future__ import annotations
 
+import datetime as _dt
 import logging
 import os
-from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from ..scraper_base import DownloadType, ExportMode, ScraperBase
+from ..utils.cli_utils import add_common_args
 
-logger = logging.getLogger("scraper_base")
+logger = logging.getLogger(__name__)
 
 # --------------------------------------------------------------------------- #
-# Small helper – date coercion                                                #
+# Small helper – date coercion                                                #
 # --------------------------------------------------------------------------- #
-def _coerce_date(val: str | date | None, default: date) -> date:
+def _coerce_date(val: str | _dt.date | None, default: _dt.date) -> _dt.date:
     if val is None:
         return default
-    if isinstance(val, date):
+    if isinstance(val, _dt.date):
         return val
-    return datetime.strptime(str(val), "%Y-%m-%d").date()
+    return _dt.datetime.strptime(str(val), "%Y-%m-%d").date()
 
 
+# --------------------------------------------------------------------------- #
+# Scraper                                                                     #
+# --------------------------------------------------------------------------- #
 class BdlGamesScraper(ScraperBase):
-    """
-    Scraper for /games (with optional date filter).
-    """
+    """Fetch game rows, follow cursor pagination, merge pages."""
 
-    # ------------------------------------------------------------------ #
-    # Class‑level config                                                 #
-    # ------------------------------------------------------------------ #
-    required_opts: List[str] = []        # dates default automatically
-    download_type: DownloadType = DownloadType.JSON
-    decode_download_data: bool = True
+    required_opts: List[str] = []
+    download_type = DownloadType.JSON
+    decode_download_data = True
 
-    # Each child scraper overrides this list as needed.
     exporters = [
+        # Normal artifact (pretty JSON after full transform)
         {
             "type": "file",
-            "filename": (
-                "/tmp/bdl_games_%(startDate)s_%(endDate)s.json"
-            ),
-            "pretty_print": True,
+            "filename": "/tmp/bdl_games_%(startDate)s_%(endDate)s.json",
             "export_mode": ExportMode.DATA,
+            "pretty_print": True,
             "groups": ["dev", "test", "prod"],
         },
-        # Raw API response snapshot — useful for capture tests / fixtures
+        # Capture RAW + EXP
         {
             "type": "file",
-            "filename": "/tmp/raw_games_%(startDate)s_%(endDate)s.json",
+            "filename": "/tmp/raw_%(run_id)s.json",
             "export_mode": ExportMode.RAW,
+            "groups": ["capture"],
+        },
+        {
+            "type": "file",
+            "filename": "/tmp/exp_%(run_id)s.json",
+            "export_mode": ExportMode.DECODED,
+            "pretty_print": True,
             "groups": ["capture"],
         },
     ]
 
     # ------------------------------------------------------------------ #
-    # Additional option derivation & validation                          #
+    # Option derivation                                                  #
     # ------------------------------------------------------------------ #
     def set_additional_opts(self) -> None:
-        """
-        Populate default 'startDate' and 'endDate' (YYYY‑MM‑DD) if caller
-        did not supply them.
-        """
-        today_utc = datetime.now(timezone.utc).date()
+        today_utc = _dt.datetime.now(_dt.timezone.utc).date()
         self.opts["startDate"] = _coerce_date(
-            self.opts.get("startDate"), default=today_utc - timedelta(days=1)
+            self.opts.get("startDate"), default=today_utc - _dt.timedelta(days=1)
         ).isoformat()
         self.opts["endDate"] = _coerce_date(
-            self.opts.get("endDate"), default=today_utc + timedelta(days=1)
+            self.opts.get("endDate"), default=today_utc + _dt.timedelta(days=1)
         ).isoformat()
 
     # ------------------------------------------------------------------ #
-    # URL & headers                                                      #
+    # HTTP setup                                                         #
     # ------------------------------------------------------------------ #
     _API_ROOT = "https://api.balldontlie.io/v1/games"
 
     def set_url(self) -> None:
-        """
-        Store the *first‑page* URL in self.url; keep a base_url for the
-        cursor loop later.
-        """
         params = {
             "start_date": self.opts["startDate"],
             "end_date": self.opts["endDate"],
             "per_page": 100,
         }
-        # Save as string; ScraperBase doesn’t expose a helper for this
         query = "&".join(f"{k}={v}" for k, v in params.items())
-        self.base_url = self._API_ROOT            # keep for cursor loop
+        self.base_url = self._API_ROOT
         self.url = f"{self.base_url}?{query}"
-
-        logger.info("Resolved BALLDONTLIE games URL: %s", self.url)
+        logger.debug("Games URL: %s", self.url)
 
     def set_headers(self) -> None:
-        """
-        BALLDONTLIE requires an `Authorization` bearer token sent via header.
-        """
-        api_key = os.getenv("BDL_API_KEY")
-        if not api_key:
-            raise RuntimeError("Environment variable BDL_API_KEY not set")
+        api_key = self.opts.get("apiKey") or os.getenv("BDL_API_KEY")
         self.headers = {
-            "Authorization": api_key,
-            "User-Agent": "Mozilla/5.0 (compatible; scrape-bdl/1.0)",
+            "User-Agent": "scrape-bdl-games/1.1 (+github.com/your-org)",
             "Accept": "application/json",
         }
+        if api_key:
+            self.headers["Authorization"] = f"Bearer {api_key}"
 
     # ------------------------------------------------------------------ #
     # Validation                                                         #
     # ------------------------------------------------------------------ #
     def validate_download_data(self) -> None:
-        if not isinstance(self.decoded_data, dict):
-            raise ValueError("Games response is not a JSON object")
-        if "data" not in self.decoded_data:
-            raise ValueError("'data' field missing in games JSON")
+        if not isinstance(self.decoded_data, dict) or "data" not in self.decoded_data:
+            raise ValueError("Games response malformed: no 'data' key")
 
     # ------------------------------------------------------------------ #
     # Transform (cursor walk + packaging)                                #
     # ------------------------------------------------------------------ #
     def transform_data(self) -> None:
-        """
-        Consolidate *all* pages (if any) into one list then attach
-        metadata. Uses the already‑configured `self.http_downloader`
-        (requests.Session) so we inherit proxy / retry behaviour.
-        """
-        all_games: List[Dict[str, Any]] = list(self.decoded_data["data"])
-        meta: Dict[str, Any] = self.decoded_data.get("meta", {})
-        cursor: Optional[str] = meta.get("next_cursor")
+        games: List[Dict[str, Any]] = list(self.decoded_data["data"])
+        cursor: Optional[str] = self.decoded_data.get("meta", {}).get("next_cursor")
 
-        # Preserve original query params for subsequent pages
         base_params = {
             "start_date": self.opts["startDate"],
             "end_date": self.opts["endDate"],
@@ -156,38 +130,37 @@ class BdlGamesScraper(ScraperBase):
 
         while cursor:
             base_params["cursor"] = cursor
-            resp = self.http_downloader.get(
+            r = self.http_downloader.get(
                 self.base_url,
                 headers=self.headers,
                 params=base_params,
                 timeout=self.timeout_http,
             )
-            resp.raise_for_status()
-            page_json: Dict[str, Any] = resp.json()
-            all_games.extend(page_json.get("data", []))
-            cursor = page_json.get("meta", {}).get("next_cursor")
+            r.raise_for_status()
+            j = r.json()
+            games.extend(j.get("data", []))
+            cursor = j.get("meta", {}).get("next_cursor")
 
-        # Optional: sort deterministically by gameId
-        all_games.sort(key=lambda g: g.get("id"))
+        games.sort(key=lambda g: g.get("id", 0))
 
         self.data = {
             "startDate": self.opts["startDate"],
             "endDate": self.opts["endDate"],
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "gameCount": len(all_games),
-            "games": all_games,
+            "timestamp": _dt.datetime.now(_dt.timezone.utc).isoformat(),
+            "gameCount": len(games),
+            "games": games,
         }
         logger.info(
             "Fetched %d games (%s → %s)",
-            len(all_games),
+            len(games),
             self.opts["startDate"],
             self.opts["endDate"],
         )
 
     # ------------------------------------------------------------------ #
-    # Stats for SCRAPER_STATS line                                       #
+    # Stats                                                              #
     # ------------------------------------------------------------------ #
-    def get_scraper_stats(self) -> dict:
+    def get_scraper_stats(self) -> dict:  # noqa: D401
         return {
             "startDate": self.opts["startDate"],
             "endDate": self.opts["endDate"],
@@ -195,32 +168,37 @@ class BdlGamesScraper(ScraperBase):
         }
 
 
-# ---------------------------------------------------------------------- #
-# Google Cloud Functions entry point (optional)                          #
-# ---------------------------------------------------------------------- #
+# --------------------------------------------------------------------------- #
+# Google Cloud Function entry                                                #
+# --------------------------------------------------------------------------- #
 def gcf_entry(request):  # type: ignore[valid-type]
-    start_date = request.args.get("startDate")     # YYYY‑MM‑DD
-    end_date = request.args.get("endDate")         # YYYY‑MM‑DD
-    group = request.args.get("group", "prod")
-
-    opts = {"startDate": start_date, "endDate": end_date, "group": group}
+    opts = {
+        "startDate": request.args.get("startDate"),
+        "endDate": request.args.get("endDate"),
+        "apiKey": request.args.get("apiKey"),
+        "group": request.args.get("group", "prod"),
+        "runId": request.args.get("runId"),
+    }
     BdlGamesScraper().run(opts)
     return (
-        f"BALLDONTLIE games scrape OK ({start_date} → {end_date})",
+        f"BallDontLie games scrape complete ({opts.get('startDate')} → {opts.get('endDate')})",
         200,
     )
 
 
-# ---------------------------------------------------------------------- #
-# CLI usage                                                              #
-# ---------------------------------------------------------------------- #
+# --------------------------------------------------------------------------- #
+# CLI usage                                                                  #
+# --------------------------------------------------------------------------- #
 if __name__ == "__main__":
     import argparse
 
-    cli = argparse.ArgumentParser()
-    cli.add_argument("--startDate", help="YYYY‑MM‑DD (default: yesterday)")
-    cli.add_argument("--endDate", help="YYYY‑MM‑DD (default: tomorrow)")
-    cli.add_argument("--group", default="test")
-    args = cli.parse_args()
+    parser = argparse.ArgumentParser(description="Scrape BallDontLie /games")
+    parser.add_argument("--startDate", help="YYYY-MM-DD (default: yesterday)")
+    parser.add_argument("--endDate", help="YYYY-MM-DD (default: tomorrow)")
+    add_common_args(parser)  # --group --apiKey --runId --debug
+    args = parser.parse_args()
+
+    if args.debug:
+        logging.getLogger().setLevel(logging.DEBUG)
 
     BdlGamesScraper().run(vars(args))

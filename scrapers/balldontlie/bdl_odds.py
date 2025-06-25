@@ -1,36 +1,35 @@
 """
-BALLDONTLIE – Odds endpoint                                   v1.1 • 2025‑06‑22
+BALLDONTLIE – Odds endpoint                                   v1.2 • 2025‑06‑24
 -------------------------------------------------------------------------------
 Fetch betting odds either by calendar **date** or by **game_id**.
 
-    • /odds?date=YYYY‑MM‑DD
-    • /odds?game_id=123456
-
-The scraper auto‑detects which mode to use depending on the CLI /
-Cloud Function parameters.
+    /odds?date=YYYY‑MM‑DD
+    /odds?game_id=123456
 """
+
 from __future__ import annotations
 
-import datetime
+import datetime as _dt
 import logging
 import os
 from typing import Any, Dict, List, Optional
 
 from ..scraper_base import DownloadType, ExportMode, ScraperBase
 
-logger = logging.getLogger("scraper_base")
+logger = logging.getLogger(__name__)
 
 # --------------------------------------------------------------------------- #
 # Scraper                                                                     #
 # --------------------------------------------------------------------------- #
 class BdlOddsScraper(ScraperBase):
-    """Fetches odds rows, follows cursor pagination, and merges pages."""
+    """Fetch odds rows, follow cursor pagination, merge pages."""
 
-    required_opts: List[str] = []         # date/gameId default automatically
+    required_opts: List[str] = []
     download_type = DownloadType.JSON
     decode_download_data = True
 
     exporters = [
+        # Normal artifact
         {
             "type": "file",
             "filename": "/tmp/bdl_odds_%(ident)s.json",
@@ -38,10 +37,18 @@ class BdlOddsScraper(ScraperBase):
             "pretty_print": True,
             "groups": ["dev", "test", "prod"],
         },
+        # Capture RAW + EXP
         {
             "type": "file",
-            "filename": "/tmp/raw_odds_%(ident)s.json",
+            "filename": "/tmp/raw_%(run_id)s.json",
             "export_mode": ExportMode.RAW,
+            "groups": ["capture"],
+        },
+        {
+            "type": "file",
+            "filename": "/tmp/exp_%(run_id)s.json",
+            "pretty_print": True,
+            "export_mode": ExportMode.DECODED,
             "groups": ["capture"],
         },
     ]
@@ -50,11 +57,11 @@ class BdlOddsScraper(ScraperBase):
     # Option derivation                                                  #
     # ------------------------------------------------------------------ #
     def set_additional_opts(self) -> None:
-        today = datetime.datetime.now(datetime.timezone.utc).date()
+        today = _dt.date.today().isoformat()
         if self.opts.get("gameId"):
             self.opts["ident"] = f"game_{self.opts['gameId']}"
         else:
-            self.opts["date"] = self.opts.get("date") or today.isoformat()
+            self.opts["date"] = self.opts.get("date") or today
             self.opts["ident"] = f"date_{self.opts['date']}"
 
     # ------------------------------------------------------------------ #
@@ -64,32 +71,31 @@ class BdlOddsScraper(ScraperBase):
 
     def set_url(self) -> None:
         if self.opts.get("gameId"):
-            self.base_url = self._API_ROOT
-            self.url = f"{self._API_ROOT}?game_id={self.opts['gameId']}&per_page=100"
+            qs = f"game_id={self.opts['gameId']}"
         else:
-            self.base_url = self._API_ROOT
-            self.url = f"{self._API_ROOT}?date={self.opts['date']}&per_page=100"
-        logger.info("Resolved BALLDONTLIE odds URL: %s", self.url)
+            qs = f"date={self.opts['date']}"
+        self.base_url = self._API_ROOT
+        self.url = f"{self._API_ROOT}?{qs}&per_page=100"
+        logger.debug("Odds URL: %s", self.url)
 
     def set_headers(self) -> None:
         api_key = self.opts.get("apiKey") or os.getenv("BDL_API_KEY")
-        if not api_key:
-            raise RuntimeError("BDL API key missing; set BDL_API_KEY or pass --apiKey")
         self.headers = {
-            "Authorization": api_key,
-            "User-Agent": "nba-stats-scraper/1.0",
+            "User-Agent": "scrape-bdl-odds/1.1 (+github.com/your-org)",
             "Accept": "application/json",
         }
+        if api_key:
+            self.headers["Authorization"] = f"Bearer {api_key}"
 
     # ------------------------------------------------------------------ #
     # Validation                                                         #
     # ------------------------------------------------------------------ #
     def validate_download_data(self) -> None:
         if not isinstance(self.decoded_data, dict) or "data" not in self.decoded_data:
-            raise ValueError("Odds response malformed: no top‑level 'data' key")
+            raise ValueError("Odds response malformed: no 'data' key")
 
     # ------------------------------------------------------------------ #
-    # Transform : cursor loop + merge                                    #
+    # Transform                                                          #
     # ------------------------------------------------------------------ #
     def transform_data(self) -> None:
         rows: List[Dict[str, Any]] = list(self.decoded_data["data"])
@@ -107,12 +113,6 @@ class BdlOddsScraper(ScraperBase):
             rows.extend(j.get("data", []))
             cursor = j.get("meta", {}).get("next_cursor")
 
-        # Warn if schema unexpected
-        for idx, row in enumerate(rows[:3]):  # sample first few
-            if "game_id" not in row or "type" not in row:
-                logger.warning("Odds row %s missing standard keys: %s", idx, row.keys())
-
-        # Robust sort: game_id → wager type → vendor → updated_at
         def _sort_key(r):
             return (
                 r.get("game_id", 0),
@@ -125,7 +125,7 @@ class BdlOddsScraper(ScraperBase):
 
         self.data = {
             "ident": self.opts["ident"],
-            "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "timestamp": _dt.datetime.now(_dt.timezone.utc).isoformat(),
             "rowCount": len(rows),
             "odds": rows,
         }
@@ -138,40 +138,38 @@ class BdlOddsScraper(ScraperBase):
         return {"rowCount": self.data.get("rowCount", 0), "ident": self.opts["ident"]}
 
 
-# ---------------------------------------------------------------------- #
-# Google Cloud Function entry point                                      #
-# ---------------------------------------------------------------------- #
+# --------------------------------------------------------------------------- #
+# Google Cloud Function entry                                                #
+# --------------------------------------------------------------------------- #
 def gcf_entry(request):  # type: ignore[valid-type]
-    """
-    Examples:
-      • /bdl-odds?date=2025-01-01
-      • /bdl-odds?gameId=123456
-    """
     opts = {
         "gameId": request.args.get("gameId"),
         "date": request.args.get("date"),
         "apiKey": request.args.get("apiKey"),
         "group": request.args.get("group", "prod"),
+        "runId": request.args.get("runId"),
     }
     BdlOddsScraper().run(opts)
+    ident = opts.get("gameId") or opts.get("date") or "today"
+    return f"BallDontLie odds scrape complete ({ident})", 200
 
-    ident = f"gameId={opts['gameId']}" if opts.get("gameId") else f"date={opts.get('date') or 'today'}"
-    return f"BALLDONTLIE odds scrape complete ({ident})", 200
 
-
-# ---------------------------------------------------------------------- #
-# CLI usage                                                              #
-# ---------------------------------------------------------------------- #
+# --------------------------------------------------------------------------- #
+# CLI usage                                                                  #
+# --------------------------------------------------------------------------- #
 if __name__ == "__main__":
     import argparse
-    today = datetime.date.today().isoformat()
+    from scrapers.utils.cli_utils import add_common_args
 
-    cli = argparse.ArgumentParser(
-        description="Scrape BALLDONTLIE odds by date or gameId"
-    )
-    cli.add_argument("--gameId", help="NBA game ID (overrides --date)")
-    cli.add_argument("--date", default=today, help=f"YYYY-MM-DD, default {today}")
-    cli.add_argument("--apiKey", help="Override BDL_API_KEY env var")
-    cli.add_argument("--group", default="test", help="Exporter group (dev/test/prod)")
+    today = _dt.date.today().isoformat()
 
-    BdlOddsScraper().run(vars(cli.parse_args()))
+    parser = argparse.ArgumentParser(description="Scrape BallDontLie /odds")
+    parser.add_argument("--gameId", help="NBA game ID (overrides --date)")
+    parser.add_argument("--date", default=today, help=f"YYYY-MM-DD (default {today})")
+    add_common_args(parser)  # --group --apiKey --runId --debug
+    args = parser.parse_args()
+
+    if args.debug:
+        logging.getLogger().setLevel(logging.DEBUG)
+
+    BdlOddsScraper().run(vars(args))

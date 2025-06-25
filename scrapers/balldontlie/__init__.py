@@ -8,7 +8,7 @@ BDL_SCRAPER_MATRIX = {
     "bdl_advanced_stats":         ["--dates", _TODAY],
     "bdl_box_scores":             ["--date", _TODAY],
     "bdl_game_detail":            ["--gameId", "18444564"],
-    "bdl_game_stats":             ["--date", _TODAY],
+    "bdl_player_box_scores":      ["--date", _TODAY],
     "bdl_games":                  ["--startDate", _TODAY, "--endDate", _TODAY],
     "bdl_injuries":               [],
     "bdl_leaders":                ["--stat", "points"],
