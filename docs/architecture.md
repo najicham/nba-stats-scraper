@@ -2,50 +2,53 @@
 
 ```mermaid
 flowchart TD
-    subgraph "Google Scheduler"
-        Sched[⏰ Cron\n(once per feed)]
+    subgraph Google_Scheduler
+        SCHED[Cron<br/>(once&nbsp;per&nbsp;feed)]
     end
 
-    subgraph "Cloud Workflow"
-        WF[🧩 Workflow\nodds_ingest_workflow]
+    subgraph Cloud_Workflow
+        WF[Workflow<br/>odds_ingest_workflow]
     end
 
-    subgraph "Scraper Runtime"
-        Scraper[🐍 Python Scraper\n(Cloud Run / GCF)]
+    subgraph Scraper_Runtime
+        SCR[Python&nbsp;Scraper<br/>(Cloud&nbsp;Run&nbsp;/&nbsp;GCF)]
     end
 
-    subgraph "Landing Zone"
-        GCS[(📂 Raw JSON\nGCS Bucket)]
+    subgraph Landing_Zone
+        GCS[(Raw&nbsp;JSON<br/>GCS&nbsp;Bucket)]
     end
 
-    subgraph "Processor Runtime"
-        Processor[⚙️ Processor\n(Cloud Run)]
+    subgraph Processor_Runtime
+        PROC[Processor<br/>(Cloud&nbsp;Run)]
     end
 
-    BQ[nba.odds_intraday<br/>BigQuery Table]
+    BQ[nba.odds_intraday<br/>BigQuery]
     PT[ops_process_tracking]
-    PubBox((📣 box_ingest_complete\nPub/Sub))
-    ReportGen[📝 Report Generator\n(Cloud Run)]
+    PUBBOX((box_ingest_complete<br/>Pub/Sub))
+    REPORTGEN[Report&nbsp;Generator<br/>(Cloud&nbsp;Run)]
     PR[player_report_runs]
 
-    Sched --> WF
-    WF --> Scraper
-    Scraper -->|raw file| GCS
-    GCS -- Object Finalize --> Processor
-    Processor -->|WRITE| BQ
-    Processor -->|INSERT row| PT
-    Processor -->|if box-score| PubBox
-    PubBox --> ReportGen
-    PT --> ReportGen
-    ReportGen -->|REPORT| PR
-    style Sched fill:#d0e6ff,stroke:#1f78ff
-    style WF fill:#e6d4ff,stroke:#8e44ad
-    style Scraper fill:#fff2cc,stroke:#d4aa00
-    style Processor fill:#fff2cc,stroke:#d4aa00
-    style BQ fill:#d5f5e3,stroke:#27ae60
-    style PT fill:#d5f5e3,stroke:#27ae60
-    style ReportGen fill:#fce4ec,stroke:#c2185b
-    style PR fill:#d5f5e3,stroke:#27ae60
+    SCHED --> WF
+    WF --> SCR
+    SCR -->|raw&nbsp;file| GCS
+    GCS -- Object&nbsp;Finalize --> PROC
+    PROC -->|write| BQ
+    PROC -->|insert| PT
+    PROC -->|if&nbsp;box&nbsp;score| PUBBOX
+    PUBBOX --> REPORTGEN
+    PT --> REPORTGEN
+    REPORTGEN -->|report| PR
+
+    %% simple colour hints
+    classDef control fill:#d0e6ff,stroke:#1f78ff;
+    classDef runtime fill:#fff2cc,stroke:#d4aa00;
+    classDef storage fill:#d5f5e3,stroke:#27ae60;
+    classDef service fill:#fce4ec,stroke:#c2185b;
+
+    class SCHED,WF control;
+    class SCR,PROC runtime;
+    class GCS,BQ,PT,PR storage;
+    class REPORTGEN service;
 ```
 
 
