@@ -2,53 +2,44 @@
 
 ```mermaid
 flowchart TD
+    %% ------------- CLUSTERS -------------
     subgraph Google_Scheduler
-        SCHED[Cron<br/>(once&nbsp;per&nbsp;feed)]
+        SCHED["Cron<br>(once per feed)"]
     end
 
     subgraph Cloud_Workflow
-        WF[Workflow<br/>odds_ingest_workflow]
+        WF["Workflow<br>odds_ingest_workflow"]
     end
 
     subgraph Scraper_Runtime
-        SCR[Python&nbsp;Scraper<br/>(Cloud&nbsp;Run&nbsp;/&nbsp;GCF)]
+        SCR["Python Scraper<br>(Cloud Run / GCF)"]
     end
 
     subgraph Landing_Zone
-        GCS[(Raw&nbsp;JSON<br/>GCS&nbsp;Bucket)]
+        GCS["Raw JSON<br>GCS Bucket"]
     end
 
     subgraph Processor_Runtime
-        PROC[Processor<br/>(Cloud&nbsp;Run)]
+        PROC["Processor<br>(Cloud Run)"]
     end
+    %% ------------- STAND‑ALONE NODES -------------
+    BQ["nba.odds_intraday<br>BigQuery"]
+    PT["ops_process_tracking"]
+    PUBBOX["box_ingest_complete<br>Pub/Sub"]
+    REPORTGEN["Report Generator<br>(Cloud Run)"]
+    PR["player_report_runs"]
 
-    BQ[nba.odds_intraday<br/>BigQuery]
-    PT[ops_process_tracking]
-    PUBBOX((box_ingest_complete<br/>Pub/Sub))
-    REPORTGEN[Report&nbsp;Generator<br/>(Cloud&nbsp;Run)]
-    PR[player_report_runs]
-
+    %% ------------- EDGES -------------
     SCHED --> WF
     WF --> SCR
-    SCR -->|raw&nbsp;file| GCS
-    GCS -- Object&nbsp;Finalize --> PROC
+    SCR -->|raw file| GCS
+    GCS -- "Object Finalize" --> PROC
     PROC -->|write| BQ
     PROC -->|insert| PT
-    PROC -->|if&nbsp;box&nbsp;score| PUBBOX
+    PROC -->|if box score| PUBBOX
     PUBBOX --> REPORTGEN
     PT --> REPORTGEN
     REPORTGEN -->|report| PR
-
-    %% simple colour hints
-    classDef control fill:#d0e6ff,stroke:#1f78ff;
-    classDef runtime fill:#fff2cc,stroke:#d4aa00;
-    classDef storage fill:#d5f5e3,stroke:#27ae60;
-    classDef service fill:#fce4ec,stroke:#c2185b;
-
-    class SCHED,WF control;
-    class SCR,PROC runtime;
-    class GCS,BQ,PT,PR storage;
-    class REPORTGEN service;
 ```
 
 
