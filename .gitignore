@@ -50,4 +50,17 @@ nosetests.xml
 coverage.xml
 *.cover
 
+# ── Terraform working directory ──────────────────────────
+**/.terraform/            # provider binaries & plugin cache (any depth)
 
+# Local state (never commit)
+terraform.tfstate*
+terraform.tfstate.d/      # workspace dir
+crash.log                 # crash diagnostics
+
+# ── Environment‑specific variable files ──────────────────
+*.tfvars                  # dev.tfvars, staging.tfvars, prod.tfvars…
+
+# ── Editor / OS noise (optional) ─────────────────────────
+*.swp
+.DS_Store
