@@ -51,15 +51,18 @@ coverage.xml
 *.cover
 
 # ── Terraform working directory ──────────────────────────
-**/.terraform/            # provider binaries & plugin cache (any depth)
+.terraform/
 
 # Local state (never commit)
 terraform.tfstate*
-terraform.tfstate.d/      # workspace dir
-crash.log                 # crash diagnostics
+# workspace dir
+terraform.tfstate.d/
+# crash diagnostics
+crash.log
 
 # ── Environment‑specific variable files ──────────────────
-*.tfvars                  # dev.tfvars, staging.tfvars, prod.tfvars…
+# dev.tfvars, staging.tfvars, prod.tfvars…
+*.tfvars
 
 # ── Editor / OS noise (optional) ─────────────────────────
 *.swp
