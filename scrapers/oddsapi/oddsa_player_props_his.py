@@ -1,176 +1,291 @@
-# scrapers/odds_api_player_props_history.py
+"""
+odds_api_historical_event_odds.py
+Scraper for The-Odds-API v4 “historical event odds” endpoint.
+
+Docs:
+  https://the-odds-api.com/liveapi/guides/v4/#get-historical-event-odds
+
+# Activate your venv and ensure ODDS_API_KEY is exported (or in .env)
+    python -m scrapers.oddsapi.odds_api_historical_event_odds \
+        --sport=basketball_nba \
+        --eventId=6f0b6f8d8cc9c5bc6375cdee \
+        --date=2025-06-10T00:00:00Z \
+        --regions=us \
+        --markets=player_points,player_assists \
+        --group=dev --debug
+"""
+
+from __future__ import annotations
 
 import os
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+from urllib.parse import urlencode
+from typing import Any, Dict, List
 
-from ..scraper_base import ScraperBase, ExportMode
-from ..utils.exceptions import DownloadDataException
+from scrapers.scraper_base import ScraperBase, ExportMode
+from scrapers.utils.exceptions import DownloadDataException
 
-logger = logging.getLogger("scraper_base")
+logger = logging.getLogger(__name__)
 
 
-class GetOddsApiPlayerPropsHistory(ScraperBase):
+# --------------------------------------------------------------------------- #
+# Helper - snap ISO timestamp to previous 5-minute boundary                   #
+# --------------------------------------------------------------------------- #
+def snap_iso_ts_to_five_minutes(iso_ts: str) -> str:
     """
-    Scraper for The Odds API (historical) that fetches NBA player props by event ID.
+    '2025-06-10T22:43:17Z'  ->  '2025-06-10T22:40:00Z'
+    """
+    dt = datetime.fromisoformat(iso_ts.replace("Z", "+00:00"))
+    floored = dt - timedelta(minutes=dt.minute % 5,
+                             seconds=dt.second,
+                             microseconds=dt.microsecond)
+    return (floored.replace(tzinfo=timezone.utc)
+                   .isoformat(timespec="seconds")
+                   .replace("+00:00", "Z"))
 
-    Usage example (CLI):
-      python odds_api_player_props_history.py --event_id=da359da99aa27e97d38f2df709343998 \
-        --apiKey=MY_SECRET_KEY \
-        --date=2023-11-29T22:45:00Z \
-        --markets=player_points,h2h_q1 \
-        --regions=us
+
+# --------------------------------------------------------------------------- #
+# Scraper                                                                     #
+# --------------------------------------------------------------------------- #
+class GetOddsApiHistoricalEventOdds(ScraperBase):
+    """
+    Required opts:
+      • sport      - e.g. basketball_nba
+      • eventId    - e.g. 6f0b6f8d8cc9…
+      • date       - snapshot timestamp (ISO-8601)
+      • regions    - comma-separated list (us, uk, eu, au)
+      • markets    - comma-separated list (player_points, player_assists, …)
+
+    Optional:
+      • oddsFormat  - american | decimal | fractional
+      • dateFormat  - iso | unix
+      • apiKey      - if omitted, pulled from env `ODDS_API_KEY`
     """
 
-    required_opts = ["event_id", "apiKey", "date"]
-    additional_opts = []
+    # required_opts = ["sport", "eventId", "date", "regions", "markets"]
+    required_opts = ["eventId", "date"]
 
-    # Usually no proxy needed for The Odds API
     proxy_enabled = False
+    browser_enabled = False
 
+    # ------------------------------------------------------------------ #
+    # Exporters                                                          #
+    # ------------------------------------------------------------------ #
     exporters = [
-        {
+        {   # RAW payload for prod / GCS archival
             "type": "gcs",
-            "key": "oddsapi/player-props/%(event_id)s/%(time)s.json",
+            "key": "oddsapi/historical-event-odds/%(sport)s/%(eventId)s_%(date)s.raw.json",
             "export_mode": ExportMode.RAW,
             "groups": ["prod", "gcs"],
         },
+        {   # Pretty JSON for dev & capture
+            "type": "file",
+            "filename": "/tmp/oddsapi_hist_event_odds_%(sport)s_%(eventId)s.json",
+            "pretty_print": True,
+            "export_mode": ExportMode.DATA,
+            "groups": ["dev", "test"],
+        },
+        # Capture RAW + EXP
         {
             "type": "file",
-            "filename": "/tmp/oddsapi_player_props_history.json",
+            "filename": "/tmp/raw_%(run_id)s.json",
             "export_mode": ExportMode.RAW,
-            "groups": ["dev", "test", "file"],
-        }
+            "groups": ["capture"],
+        },
+        {
+            "type": "file",
+            "filename": "/tmp/exp_%(run_id)s.json",
+            "pretty_print": True,
+            "export_mode": ExportMode.DECODED,
+            "groups": ["capture"],
+        },
     ]
 
-    def set_url(self):
-        """
-        Construct the URL for The Odds API historical player props endpoint.
-        e.g.:
-        https://api.the-odds-api.com/v4/historical/sports/basketball_nba/events/<EVENT_ID>/odds
-            ?apiKey=KEY&date=DATE&regions=us&markets=player_points
-        """
-        base_url = "https://api.the-odds-api.com/v4/historical/sports/basketball_nba/events"
-        event_id = self.opts["event_id"]
-        api_key = self.opts["apiKey"]
-        date_str = self.opts["date"]
+    # ------------------------------------------------------------------ #
+    # Additional opts                                                    #
+    # ------------------------------------------------------------------ #
+    def set_additional_opts(self) -> None:
+        # Snap to valid snapshot boundary
+        self.opts["date"] = snap_iso_ts_to_five_minutes(self.opts["date"])
+        # ── season‑wide defaults ──────────────────────────────
+        self.opts.setdefault("sport", "basketball_nba")
+        self.opts.setdefault("regions", "us")
+        self.opts.setdefault("markets", "player_points")
+        self.opts.setdefault("bookmakers", "draftkings,fanduel")
 
-        regions = self.opts.get("regions", "us")
-        markets = self.opts.get("markets", "player_points")
+    # ------------------------------------------------------------------ #
+    # URL & headers                                                      #
+    # ------------------------------------------------------------------ #
+    _API_ROOT_TMPL = (
+        "https://api.the-odds-api.com/v4/historical/sports/"
+        "{sport}/events/{eventId}/odds"
+    )
 
-        self.url = (
-            f"{base_url}/{event_id}/odds"
-            f"?apiKey={api_key}"
-            f"&date={date_str}"
-            f"&regions={regions}"
-            f"&markets={markets}"
+    def set_url(self) -> None:
+        api_key = self.opts.get("apiKey") or os.getenv("ODDS_API_KEY")
+        if not api_key:
+            raise DownloadDataException(
+                "Missing apiKey and env var ODDS_API_KEY not set."
+            )
+
+        base = self._API_ROOT_TMPL.format(
+            sport=self.opts["sport"],
+            eventId=self.opts["eventId"],
         )
 
-        logger.info("Constructed Odds API Player Props URL: %s", self.url)
-
-    def set_headers(self):
-        """
-        Typically minimal headers needed for The Odds API.
-        """
-        self.headers = {
-            "Accept": "application/json"
+        query: Dict[str, Any] = {
+            "apiKey": api_key,
+            "date": self.opts["date"],
+            "regions": self.opts["regions"],
+            "markets": self.opts["markets"],
+            "bookmakers": self.opts["bookmakers"],
+            "oddsFormat": self.opts.get("oddsFormat"),
+            "dateFormat": self.opts.get("dateFormat"),
         }
-        logger.debug("Headers set for Player Props request: %s", self.headers)
+        query = {k: v for k, v in query.items() if v is not None}
+        self.url = f"{base}?{urlencode(query, doseq=True)}"
+        logger.info("Odds-API Historical Event Odds URL: %s", self.url)
 
-    def validate_download_data(self):
+    def set_headers(self) -> None:
+        self.headers = {"Accept": "application/json"}
+
+    # ------------------------------------------------------------------ #
+    # HTTP status handling                                               #
+    # ------------------------------------------------------------------ #
+    def check_download_status(self) -> None:
         """
-        If there's an error, The Odds API might return {"message": "..."} or an empty list.
-        We check basic structure here.
+        200 and 204 are “okay” for this endpoint.
+        """
+        if self.raw_response.status_code in (200, 204):
+            return
+        super().check_download_status()
+
+    # ------------------------------------------------------------------ #
+    # Validation                                                         #
+    # ------------------------------------------------------------------ #
+    def validate_download_data(self) -> None:
+        """
+        Expect wrapper dict with 'data' object.
         """
         if isinstance(self.decoded_data, dict) and "message" in self.decoded_data:
-            msg = self.decoded_data["message"]
-            logger.error("API returned an error message: %s", msg)
-            raise DownloadDataException(f"API error: {msg}")
+            raise DownloadDataException(f"API error: {self.decoded_data['message']}")
 
-        if isinstance(self.decoded_data, list):
-            if len(self.decoded_data) == 0:
-                logger.info("No player props returned. Possibly none available for this event.")
-            else:
-                logger.info("Found %d items in player props data for event_id=%s",
-                            len(self.decoded_data), self.opts["event_id"])
-        else:
-            logger.error("Unexpected data structure: expected a list, got %s", type(self.decoded_data))
-            raise DownloadDataException("Unexpected data structure; expected a list of odds info.")
+        if not (isinstance(self.decoded_data, dict) and "data" in self.decoded_data):
+            raise DownloadDataException("Expected dict with 'data' key.")
 
-    def should_save_data(self):
-        """
-        Skip exporting if there's no data (empty list).
-        """
-        if isinstance(self.decoded_data, list) and len(self.decoded_data) == 0:
-            logger.info("Skipping export because decoded_data is an empty list.")
-            return False
-        return True
+    # ------------------------------------------------------------------ #
+    # Transform                                                          #
+    # ------------------------------------------------------------------ #
+    def transform_data(self) -> None:
+        wrapper: Dict[str, Any] = self.decoded_data  # type: ignore[assignment]
+        event_odds: Dict[str, Any] = wrapper.get("data", {})
 
-    def get_scraper_stats(self):
-        """
-        Return fields for the final SCRAPER_STATS line:
-        the number of props found, event_id, and date.
-        """
-        if isinstance(self.decoded_data, list):
-            records_found = len(self.decoded_data)
-        else:
-            records_found = 0
+        # Count distinct bookmaker × market entries
+        row_count = 0
+        for bm in event_odds.get("bookmakers", []):
+            for mk in bm.get("markets", []):
+                row_count += len(mk.get("outcomes", [])) or 1
 
-        event_id = self.opts.get("event_id", "unknown")
-        date_str = self.opts.get("date", "unknown")
+        self.data = {
+            "sport": self.opts["sport"],
+            "eventId": self.opts["eventId"],
+            "snapshot_timestamp": wrapper.get("timestamp"),
+            "previous_snapshot": wrapper.get("previous_timestamp"),
+            "next_snapshot": wrapper.get("next_timestamp"),
+            "regions": self.opts["regions"],
+            "markets": self.opts["markets"],
+            "rowCount": row_count,
+            "eventOdds": event_odds,
+        }
+        logger.info(
+            "Fetched %d bookmaker-market rows for event %s", row_count, self.opts["eventId"]
+        )
 
+    # ------------------------------------------------------------------ #
+    # Conditional save                                                   #
+    # ------------------------------------------------------------------ #
+    def should_save_data(self) -> bool:
+        return bool(self.data.get("rowCount"))
+
+    # ------------------------------------------------------------------ #
+    # Stats line                                                         #
+    # ------------------------------------------------------------------ #
+    def get_scraper_stats(self) -> dict:
         return {
-            "records_found": records_found,
-            "event_id": event_id,
-            "date": date_str
+            "rowCount": self.data.get("rowCount", 0),
+            "sport": self.opts.get("sport"),
+            "eventId": self.opts.get("eventId"),
+            "markets": self.opts.get("markets"),
+            "regions": self.opts.get("regions"),
+            "snapshot": self.data.get("snapshot_timestamp"),
         }
 
 
-##############################################################################
-# Cloud Function Entry Point
-##############################################################################
-def gcf_entry(request):
-    """
-    HTTP entry point for Cloud Functions.
-    Example usage:
-      GET .../OddsApiPlayerPropsHistory?event_id=XXXX&apiKey=SECRET&date=YYYY&regions=us&markets=player_points&group=prod
-    """
-    event_id = request.args.get("event_id", "")
-    api_key = request.args.get("apiKey", "")
-    date_str = request.args.get("date", "2023-11-29T00:00:00Z")
-    regions = request.args.get("regions", "us")
-    markets = request.args.get("markets", "player_points")
-    group = request.args.get("group", "prod")
+# --------------------------------------------------------------------------- #
+# Google Cloud Function entry point                                           #
+# --------------------------------------------------------------------------- #
+def gcf_entry(request):  # type: ignore[valid-type]
+    from dotenv import load_dotenv
+
+    load_dotenv()  # harmless if .env absent in prod
 
     opts = {
-        "event_id": event_id,
-        "apiKey": api_key,
-        "date": date_str,
-        "regions": regions,
-        "markets": markets,
-        "group": group
+        "apiKey": request.args.get("apiKey"),  # optional (env fallback)
+        "sport": request.args["sport"],
+        "eventId": request.args["eventId"],
+        "date": request.args["date"],
+        "regions": request.args["regions"],
+        "markets": request.args["markets"],
+        "oddsFormat": request.args.get("oddsFormat"),
+        "dateFormat": request.args.get("dateFormat"),
+        "group": request.args.get("group", "prod"),
     }
+    scraper = GetOddsApiHistoricalEventOdds()
+    scraper.run(opts)
+    return (
+        f"Odds-API historical event-odds scrape complete ({opts['eventId']} @ {opts['date']})",
+        200,
+    )
 
-    scraper = GetOddsApiPlayerPropsHistory()
-    result = scraper.run(opts)
-    return f"OddsApiPlayerPropsHistory run complete. Found result: {result}", 200
 
-
-##############################################################################
-# Local CLI Usage
-##############################################################################
+# --------------------------------------------------------------------------- #
+# CLI                                                                         #
+# --------------------------------------------------------------------------- #
 if __name__ == "__main__":
     import argparse
+    from dotenv import load_dotenv
 
-    parser = argparse.ArgumentParser(description="Run Odds API Player Props History locally")
-    parser.add_argument("--event_id", required=True, help="Event ID to fetch props for")
-    parser.add_argument("--apiKey", required=True, help="Odds API key")
-    parser.add_argument("--date", required=True, help="e.g. 2023-11-29T22:45:00Z")
-    parser.add_argument("--regions", default="us", help="Possible values: us, etc.")
-    parser.add_argument("--markets", default="player_points", help="e.g. player_points,h2h_q1")
-    parser.add_argument("--group", default="test", help="Which exporter group to run (dev/test/prod)")
+    load_dotenv()
+
+    parser = argparse.ArgumentParser(
+        description="Scrape The-Odds-API historical event odds (player props etc.)"
+    )
+    parser.add_argument("--eventId", required=True)
+    parser.add_argument(
+        "--date", required=True, help="snapshot ISO timestamp (rounded to 5-min)"
+    )
+
+    parser.add_argument("--sport", default="basketball_nba")
+    parser.add_argument("--regions", default="us")
+    parser.add_argument("--markets", default="player_points")
+
+    parser.add_argument("--oddsFormat", choices=["american", "decimal", "fractional"])
+    parser.add_argument("--dateFormat", choices=["iso", "unix"])
+    parser.add_argument("--apiKey", help="Optional - env ODDS_API_KEY fallback")
+    parser.add_argument("--group", default="dev", help="exporter group")
+
+    parser.add_argument("--runId",
+                        help="Optional - capture.py injects one for fixture runs")
+    parser.add_argument("--debug", action="store_true",
+                        help="Verbose logging")
+    parser.add_argument("--bookmakers", default="draftkings,fanduel",
+                    help="comma-sep list, e.g. draftkings,fanduel")
+
     args = parser.parse_args()
+    if args.debug:
+        logging.getLogger().setLevel(logging.DEBUG)
 
-    opts = vars(args)
-    scraper = GetOddsApiPlayerPropsHistory()
-    scraper.run(opts)
+    args = parser.parse_args()
+    scraper = GetOddsApiHistoricalEventOdds()
+    scraper.run(vars(args))

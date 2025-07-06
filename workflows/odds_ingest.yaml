@@ -1,0 +1,22 @@
+main:
+  params: [project_id]
+  steps:
+  - startRow:
+      call: googleapis.bigquery.v2.tabledata.insertAll
+      args:
+        projectId: ${project_id}
+        datasetId: ops
+        tableId: scraper_runs
+        rows: [ { json: { process_id: "odds_player_props", run_ts: ${time.now()}, status: "STARTED" } } ]
+  - callScraper:
+      call: http.post
+      args:
+        url: https://odds-player-props-xyz.a.run.app
+        timeout: 60s
+  - doneRow:
+      call: googleapis.bigquery.v2.tabledata.insertAll
+      args:
+        projectId: ${project_id}
+        datasetId: ops
+        tableId: scraper_runs
+        rows: [ { json: { process_id: "odds_player_props", run_ts: ${time.now()}, status: "SUCCESS" } } ]

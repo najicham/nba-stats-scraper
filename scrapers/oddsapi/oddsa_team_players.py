@@ -1,166 +1,200 @@
-# scrapers/odds_api_team_players.py
+"""
+odds_api_team_players.py
+Scraper for the (undocumented) The-Odds-API v4 endpoint:
+
+  GET /v4/sports/{sport}/participants/{participantId}/players
+
+Returns the current roster for a given team / participant.
+
+python -m scrapers.oddsapi.odds_api_team_players \
+    --sport=basketball_nba \
+    --participantId=team-1234 \
+    --group=dev --debug
+
+"""
+
+from __future__ import annotations
 
 import os
 import logging
-from datetime import datetime
+from urllib.parse import urlencode, quote_plus
+from typing import Any, Dict, List
 
-from ..scraper_base import ScraperBase, ExportMode
-from ..utils.exceptions import DownloadDataException
+from scrapers.scraper_base import ScraperBase, ExportMode
+from scrapers.utils.exceptions import DownloadDataException
 
-logger = logging.getLogger("scraper_base")
+logger = logging.getLogger(__name__)
 
 
+# --------------------------------------------------------------------------- #
+# Scraper                                                                     #
+# --------------------------------------------------------------------------- #
 class GetOddsApiTeamPlayers(ScraperBase):
     """
-    Scraper for The Odds API endpoint that returns a list of players for a given team.
+    Required opts:
+      • sport          - e.g. basketball_nba
+      • participantId  - Odds-API team / participant key
 
-    Example usage:
-      python odds_api_team_players.py \
-        --sport=basketball_nba \
-        --participantId=team-1234 \
-        --apiKey=MY_SECRET_KEY
-
-    Endpoint (undocumented):
-      GET https://api.the-odds-api.com/v4/sports/{sport}/participants/{participantId}/players?apiKey={apiKey}
-
-    We assume the response is a list of player info for the given team.
+    Optional opts:
+      • apiKey - falls back to env ODDS_API_KEY
     """
 
-    required_opts = ["sport", "participantId", "apiKey"]
-    additional_opts = []
-
-    # Typically not needed for The Odds API
+    required_opts = ["sport", "participantId"]
     proxy_enabled = False
+    browser_enabled = False
 
+    # ------------------------------------------------------------------ #
+    # Exporters                                                          #
+    # ------------------------------------------------------------------ #
     exporters = [
-        {
+        {   # RAW for prod / archival
             "type": "gcs",
-            "key": "oddsapi/team-players/%(sport)s/%(participantId)s/%(time)s.json",
+            "key": (
+                "oddsapi/team-players/%(sport)s/%(participantId)s/"
+                "%(run_id)s.raw.json"
+            ),
             "export_mode": ExportMode.RAW,
             "groups": ["prod", "gcs"],
         },
-        {
+        {   # Pretty JSON for dev & capture
             "type": "file",
-            "filename": "/tmp/oddsapi_team_players.json",
-            "export_mode": ExportMode.RAW,
-            "groups": ["dev", "file"],
-        }
+            "filename": "/tmp/oddsapi_team_players_%(participantId)s.json",
+            "pretty_print": True,
+            "export_mode": ExportMode.DATA,
+            "groups": ["dev", "capture", "test"],
+        },
     ]
 
-    def set_url(self):
-        """
-        Construct the /players endpoint for a given sport, participant/team ID, and API key.
+    # ------------------------------------------------------------------ #
+    # URL & headers                                                      #
+    # ------------------------------------------------------------------ #
+    _API_ROOT_TMPL = (
+        "https://api.the-odds-api.com/v4/sports/"
+        "{sport}/participants/{participantId}/players"
+    )
 
-        Example:
-          https://api.the-odds-api.com/v4/sports/basketball_nba/participants/team-1234/players?apiKey=MYKEY
-        """
-        base_url = "https://api.the-odds-api.com/v4/sports"
-        sport = self.opts["sport"]
-        participant_id = self.opts["participantId"]
-        api_key = self.opts["apiKey"]
+    def set_url(self) -> None:
+        api_key = self.opts.get("apiKey") or os.getenv("ODDS_API_KEY")
+        if not api_key:
+            raise DownloadDataException(
+                "Missing apiKey and env var ODDS_API_KEY not set."
+            )
 
-        self.url = (
-            f"{base_url}/{sport}/participants/{participant_id}/players"
-            f"?apiKey={api_key}"
+        base = self._API_ROOT_TMPL.format(
+            sport=self.opts["sport"],
+            # Belt-and-suspenders: ensure any slashes in participantId are encoded
+            participantId=quote_plus(self.opts["participantId"]),
         )
-        logger.info("Constructed Team Players URL: %s", self.url)
+        self.url = f"{base}?{urlencode({'apiKey': api_key})}"
+        logger.info("Odds-API Team-Players URL: %s", self.url)
 
-    def set_headers(self):
-        """
-        Minimal headers for The Odds API. Expand if needed.
-        """
-        self.headers = {
-            "Accept": "application/json"
-        }
-        logger.debug("Headers set for team players request: %s", self.headers)
+    def set_headers(self) -> None:
+        self.headers = {"Accept": "application/json"}
 
-    def validate_download_data(self):
+    # ------------------------------------------------------------------ #
+    # HTTP status handling                                               #
+    # ------------------------------------------------------------------ #
+    def check_download_status(self) -> None:
         """
-        Because this endpoint is not documented, we assume the response is either:
-         - a list of players, or
-         - a dict with an error: {"message": "..."}.
+        Consider 200 and 204 as successful.
         """
+        if self.raw_response.status_code in (200, 204):
+            return
+        super().check_download_status()
+
+    # ------------------------------------------------------------------ #
+    # Validation                                                         #
+    # ------------------------------------------------------------------ #
+    def validate_download_data(self) -> None:
         if isinstance(self.decoded_data, dict) and "message" in self.decoded_data:
-            msg = self.decoded_data["message"]
-            logger.error("API returned error: %s", msg)
-            raise DownloadDataException(f"API error: {msg}")
+            raise DownloadDataException(f"API error: {self.decoded_data['message']}")
 
+        if not isinstance(self.decoded_data, (list, dict)):
+            raise DownloadDataException("Expected list or dict payload.")
+
+    # ------------------------------------------------------------------ #
+    # Transform                                                          #
+    # ------------------------------------------------------------------ #
+    def transform_data(self) -> None:
+        players: List[Dict[str, Any]]
         if isinstance(self.decoded_data, list):
-            if len(self.decoded_data) == 0:
-                logger.info("No players returned for participantId=%s", self.opts["participantId"])
+            players = self.decoded_data
+        elif isinstance(self.decoded_data, dict):
+            # Some back-end variants wrap the list under 'players'
+            players = self.decoded_data.get("players", [])
         else:
-            logger.error("Unexpected response structure. Expected list or error dict. Got: %s",
-                         type(self.decoded_data))
-            raise DownloadDataException("Unexpected response structure; expected a list or error dict.")
+            players = []
 
-    def should_save_data(self):
-        """
-        Optionally skip saving if the list is empty.
-        We'll proceed to save anyway unless we explicitly want to skip an empty response.
-        """
-        if isinstance(self.decoded_data, list) and len(self.decoded_data) == 0:
-            logger.info("Skipping save because the team players list is empty.")
-            return False
-        return True
+        self.data = {
+            "sport": self.opts["sport"],
+            "participantId": self.opts["participantId"],
+            "rowCount": len(players),
+            "players": players,
+        }
+        logger.info(
+            "Fetched %d players for participantId=%s",
+            len(players),
+            self.opts["participantId"],
+        )
 
-    def get_scraper_stats(self):
-        """
-        Return fields for the final SCRAPER_STATS line:
-        how many players found, plus the sport & participantId.
-        """
-        records_found = 0
-        if isinstance(self.decoded_data, list):
-            records_found = len(self.decoded_data)
+    # ------------------------------------------------------------------ #
+    # Conditional save                                                   #
+    # ------------------------------------------------------------------ #
+    def should_save_data(self) -> bool:
+        return bool(self.data.get("rowCount"))
 
-        sport = self.opts.get("sport", "unknown")
-        participant_id = self.opts.get("participantId", "unknown")
-
+    # ------------------------------------------------------------------ #
+    # Stats line                                                         #
+    # ------------------------------------------------------------------ #
+    def get_scraper_stats(self) -> dict:
         return {
-            "records_found": records_found,
-            "sport": sport,
-            "participantId": participant_id
+            "rowCount": self.data.get("rowCount", 0),
+            "sport": self.opts.get("sport"),
+            "participantId": self.opts.get("participantId"),
         }
 
 
-##############################################################################
-# Cloud Function Entry Point
-##############################################################################
-def gcf_entry(request):
-    """
-    HTTP entry point for Cloud Functions to fetch team players via The Odds API.
-    Example usage:
-      GET .../OddsApiTeamPlayers?sport=basketball_nba&participantId=team-1234&apiKey=SECRET&group=prod
-    """
-    sport = request.args.get("sport", "basketball_nba")
-    participant_id = request.args.get("participantId", "")
-    api_key = request.args.get("apiKey", "")
-    group = request.args.get("group", "prod")
+# --------------------------------------------------------------------------- #
+# Google Cloud Function entry point                                           #
+# --------------------------------------------------------------------------- #
+def gcf_entry(request):  # type: ignore[valid-type]
+    from dotenv import load_dotenv
+
+    load_dotenv()
 
     opts = {
-        "sport": sport,
-        "participantId": participant_id,
-        "apiKey": api_key,
-        "group": group
+        "sport": request.args.get("sport", "basketball_nba"),
+        "participantId": request.args["participantId"],
+        "apiKey": request.args.get("apiKey"),  # optional - env fallback
+        "group": request.args.get("group", "prod"),
     }
+    GetOddsApiTeamPlayers().run(opts)
+    return (
+        f"Odds-API team-players scrape complete ({opts['participantId']})",
+        200,
+    )
 
-    scraper = GetOddsApiTeamPlayers()
-    result = scraper.run(opts)
-    return f"OddsApiTeamPlayers run complete. Found result: {result}", 200
 
-
-##############################################################################
-# Local CLI Usage
-##############################################################################
+# --------------------------------------------------------------------------- #
+# CLI                                                                         #
+# --------------------------------------------------------------------------- #
 if __name__ == "__main__":
     import argparse
+    from dotenv import load_dotenv
 
-    parser = argparse.ArgumentParser(description="Run The Odds API Team Players locally")
-    parser.add_argument("--sport", default="basketball_nba", help="e.g. basketball_nba")
-    parser.add_argument("--participantId", required=True, help="Team ID e.g. 'team-1234'")
-    parser.add_argument("--apiKey", required=True, help="Odds API key")
-    parser.add_argument("--group", default="test", help="Which exporter group to run (dev/test/prod)")
+    load_dotenv()
+
+    parser = argparse.ArgumentParser(
+        description="Scrape The-Odds-API players list for one team"
+    )
+    parser.add_argument("--sport", default="basketball_nba")
+    parser.add_argument("--participantId", required=True)
+    parser.add_argument("--apiKey", help="Optional - env ODDS_API_KEY fallback")
+    parser.add_argument("--group", default="dev")
+    parser.add_argument("--debug", action="store_true")
     args = parser.parse_args()
 
-    opts = vars(args)
-    scraper = GetOddsApiTeamPlayers()
-    scraper.run(opts)
+    if args.debug:
+        logging.getLogger().setLevel(logging.DEBUG)
+
+    GetOddsApiTeamPlayers().run(vars(args))

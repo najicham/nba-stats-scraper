@@ -1,175 +1,184 @@
+"""
+odds_api_events.py
+Scraper for The-Odds-API v4 **current events** endpoint.
+
+Docs
+  https://the-odds-api.com/liveapi/guides/v4/#get-events
+
+Endpoint
+  GET /v4/sports/{sport}/events
+Query params
+  * apiKey (required - but we default to env ODDS_API_KEY)
+  * commenceTimeFrom / commenceTimeTo (optional ISO timestamps)
+  * dateFormat=iso|unix  (optional)
+
+The endpoint returns **a list of event objects**.
+"""
+
+from __future__ import annotations
+
 import os
 import logging
-from datetime import datetime
+from urllib.parse import urlencode
+from typing import Any, Dict, List
 
-from ..scraper_base import ScraperBase, ExportMode
-from ..utils.exceptions import DownloadDataException
+from scrapers.scraper_base import ScraperBase, ExportMode
+from scrapers.utils.exceptions import DownloadDataException
 
-logger = logging.getLogger("scraper_base")
+logger = logging.getLogger(__name__)
 
 
+# --------------------------------------------------------------------------- #
+# Scraper                                                                     #
+# --------------------------------------------------------------------------- #
 class GetOddsApiEvents(ScraperBase):
     """
-    Scraper for The Odds API (current events). 
-    Only requires:
-      - apiKey (query param)
-      - sport (in the URL, e.g. /v4/sports/basketball_nba/events)
+    Required opts:
+      • sport - e.g. basketball_nba
 
-    Optionally includes:
-      - commenceTimeFrom
-      - commenceTimeTo
-
-    Example usage (local CLI):
-      python odds_api_events.py --apiKey=MY_SECRET_KEY --sport=basketball_nba \
-        --commenceTimeFrom=2025-06-05T00:00:00Z \
-        --commenceTimeTo=2025-06-06T00:00:00Z
+    Optional opts (all map 1-to-1 onto query params):
+      • apiKey  - falls back to env ODDS_API_KEY
+      • commenceTimeFrom / commenceTimeTo
+      • dateFormat
     """
 
-    # We'll require 'apiKey' and 'sport'
-    required_opts = ["apiKey", "sport"]
-    additional_opts = []
+    required_opts: List[str] = ["sport"]  # apiKey via env if omitted
+    proxy_enabled = False
+    browser_enabled = False
 
-    proxy_enabled = False  # Typically no proxy needed
-
+    # ------------------------------------------------------------------ #
+    # Exporters                                                          #
+    # ------------------------------------------------------------------ #
     exporters = [
-        {
+        {   # RAW for prod / GCS archival
             "type": "gcs",
-            "key": "oddsapi/events/current/%(sport)s/%(time)s.json",
+            "key": "oddsapi/events/current/%(sport)s/%(run_id)s.raw.json",
             "export_mode": ExportMode.RAW,
             "groups": ["prod", "gcs"],
         },
-        {
+        {   # Pretty JSON for dev & capture
             "type": "file",
-            "filename": "/tmp/oddsapi_events.json",
-            "export_mode": ExportMode.RAW,
-            "groups": ["dev", "test", "file"],
-        }
+            "filename": "/tmp/oddsapi_events_%(sport)s.json",
+            "pretty_print": True,
+            "export_mode": ExportMode.DATA,
+            "groups": ["dev", "capture", "test"],
+        },
     ]
 
-    def set_url(self):
-        """
-        Base URL: https://api.the-odds-api.com/v4/sports/{sport}/events?apiKey=KEY
-        Optionally add &commenceTimeFrom= and &commenceTimeTo=
-        """
-        base_url = f"https://api.the-odds-api.com/v4/sports/{self.opts['sport']}/events"
-        api_key = self.opts["apiKey"]
+    # ------------------------------------------------------------------ #
+    # URL & headers                                                      #
+    # ------------------------------------------------------------------ #
+    _API_ROOT_TMPL = "https://api.the-odds-api.com/v4/sports/{sport}/events"
 
-        # Build base query with apiKey
-        query_params = f"?apiKey={api_key}"
+    def set_url(self) -> None:
+        api_key = self.opts.get("apiKey") or os.getenv("ODDS_API_KEY")
+        if not api_key:
+            raise DownloadDataException(
+                "Missing apiKey and env var ODDS_API_KEY not set."
+            )
 
-        # If commenceTimeFrom or commenceTimeTo are present, append them
-        ctf = self.opts.get("commenceTimeFrom")  # e.g. 2025-06-05T00:00:00Z
-        ctt = self.opts.get("commenceTimeTo")    # e.g. 2025-06-06T00:00:00Z
+        base = self._API_ROOT_TMPL.format(sport=self.opts["sport"])
 
-        if ctf:
-            query_params += f"&commenceTimeFrom={ctf}"
-        if ctt:
-            query_params += f"&commenceTimeTo={ctt}"
-
-        self.url = f"{base_url}{query_params}"
-        print(self.url)
-        logger.info("Constructed Odds API Events URL: %s", self.url)
-
-    def set_headers(self):
-        """
-        Minimal headers for The Odds API.
-        """
-        self.headers = {
-            "Accept": "application/json"
+        query: Dict[str, Any] = {
+            "apiKey": api_key,
+            "commenceTimeFrom": self.opts.get("commenceTimeFrom"),
+            "commenceTimeTo": self.opts.get("commenceTimeTo"),
+            "dateFormat": self.opts.get("dateFormat"),
         }
-        logger.debug("Headers set for events request: %s", self.headers)
+        # strip None values
+        query = {k: v for k, v in query.items() if v is not None}
+        self.url = f"{base}?{urlencode(query, doseq=True)}"
+        logger.info("Odds-API Events URL: %s", self.url)
 
-    def validate_download_data(self):
+    def set_headers(self) -> None:
+        self.headers = {"Accept": "application/json"}
+
+    # ------------------------------------------------------------------ #
+    # Validation                                                         #
+    # ------------------------------------------------------------------ #
+    def validate_download_data(self) -> None:
         """
-        Typically a list of event objects or a dict with {"message": "..."} if there's an error.
+        Expect a *list* of events.  Handle API error messages.
         """
         if isinstance(self.decoded_data, dict) and "message" in self.decoded_data:
-            msg = self.decoded_data["message"]
-            logger.error("API returned an error message: %s", msg)
-            raise DownloadDataException(f"API error: {msg}")
+            raise DownloadDataException(f"API error: {self.decoded_data['message']}")
 
-        if isinstance(self.decoded_data, list):
-            count = len(self.decoded_data)
-            if count == 0:
-                logger.info("No events returned for sport=%s", self.opts["sport"])
-            else:
-                logger.info("Found %d events for sport=%s", count, self.opts["sport"])
-        else:
-            logger.error("Unexpected data structure; expected a list. Got %s", type(self.decoded_data))
-            raise DownloadDataException("Unexpected data structure; expected a list of events.")
+        if not isinstance(self.decoded_data, list):
+            raise DownloadDataException("Expected a list of events.")
 
-    def should_save_data(self):
-        """
-        Optionally skip saving if it's an empty list.
-        """
-        if isinstance(self.decoded_data, list) and len(self.decoded_data) == 0:
-            logger.info("Skipping save because data is empty for sport=%s", self.opts["sport"])
-            return False
-        return True
+    # ------------------------------------------------------------------ #
+    # Transform                                                          #
+    # ------------------------------------------------------------------ #
+    def transform_data(self) -> None:
+        events: List[Dict[str, Any]] = self.decoded_data  # type: ignore[assignment]
+        events.sort(key=lambda e: e.get("commence_time", ""))
 
-    def get_scraper_stats(self):
-        """
-        Fields for the final SCRAPER_STATS line: # of events, plus the sport used.
-        """
-        if isinstance(self.decoded_data, list):
-            events_found = len(self.decoded_data)
-        else:
-            events_found = 0
+        self.data = {
+            "sport": self.opts["sport"],
+            "rowCount": len(events),
+            "events": events,
+        }
+        logger.info("Fetched %d events for %s", len(events), self.opts["sport"])
 
-        sport = self.opts.get("sport", "unknown")
+    # ------------------------------------------------------------------ #
+    # Conditional save                                                   #
+    # ------------------------------------------------------------------ #
+    def should_save_data(self) -> bool:
+        return bool(self.data.get("rowCount"))
+
+    # ------------------------------------------------------------------ #
+    # Stats line                                                         #
+    # ------------------------------------------------------------------ #
+    def get_scraper_stats(self) -> dict:
         return {
-            "records_found": events_found,
-            "sport": sport
+            "rowCount": self.data.get("rowCount", 0),
+            "sport": self.opts.get("sport"),
         }
 
 
-##############################################################################
-# Cloud Function Entry Point
-##############################################################################
-def gcf_entry(request):
-    """
-    Cloud Function HTTP entry point for events.
-    Example request:
-      GET .../OddsApiEvents?apiKey=SECRET&sport=basketball_nba
-        &commenceTimeFrom=2025-06-05T00:00:00Z
-        &commenceTimeTo=2025-06-06T00:00:00Z
-        &group=prod
-    """
-    sport = request.args.get("sport", "basketball_nba")
-    api_key = request.args.get("apiKey", "")
-    commence_time_from = request.args.get("commenceTimeFrom")
-    commence_time_to = request.args.get("commenceTimeTo")
-    group = request.args.get("group", "prod")
+# --------------------------------------------------------------------------- #
+# Google Cloud Function entry point                                           #
+# --------------------------------------------------------------------------- #
+def gcf_entry(request):  # type: ignore[valid-type]
+    from dotenv import load_dotenv
+
+    load_dotenv()  # harmless in prod if .env absent
 
     opts = {
-        "sport": sport,
-        "apiKey": api_key,
-        "commenceTimeFrom": commence_time_from,
-        "commenceTimeTo": commence_time_to,
-        "group": group
+        "apiKey": request.args.get("apiKey"),  # env fallback is fine
+        "sport": request.args.get("sport", "basketball_nba"),
+        "commenceTimeFrom": request.args.get("commenceTimeFrom"),
+        "commenceTimeTo": request.args.get("commenceTimeTo"),
+        "dateFormat": request.args.get("dateFormat"),
+        "group": request.args.get("group", "prod"),
     }
-
-    scraper = GetOddsApiEvents()
-    result = scraper.run(opts)
-    return f"OddsApiEvents run complete. Found result: {result}", 200
+    GetOddsApiEvents().run(opts)
+    return f"Odds-API current events scrape complete ({opts['sport']})", 200
 
 
-##############################################################################
-# Local CLI Usage
-##############################################################################
+# --------------------------------------------------------------------------- #
+# Local CLI                                                                   #
+# --------------------------------------------------------------------------- #
 if __name__ == "__main__":
     import argparse
+    from dotenv import load_dotenv
 
-    parser = argparse.ArgumentParser(description="Run Odds API Current Events scraper locally")
-    parser.add_argument("--apiKey", required=True, help="Odds API key")
-    parser.add_argument("--sport", default="basketball_nba", help="Sport name, e.g. basketball_nba")
-    # Optional time window for commenceTime
-    parser.add_argument("--commenceTimeFrom", help="e.g. 2025-06-05T00:00:00Z")
-    parser.add_argument("--commenceTimeTo", help="e.g. 2025-06-06T00:00:00Z")
-    parser.add_argument("--group", default="test", help="Exporter group (test/prod)")
+    load_dotenv()
+
+    parser = argparse.ArgumentParser(
+        description="Scrape The-Odds-API current events list"
+    )
+    parser.add_argument("--sport", default="basketball_nba")
+    parser.add_argument("--commenceTimeFrom")
+    parser.add_argument("--commenceTimeTo")
+    parser.add_argument("--dateFormat", choices=["iso", "unix"])
+    parser.add_argument("--apiKey", help="Optional - env ODDS_API_KEY fallback")
+    parser.add_argument("--group", default="dev")
+    parser.add_argument("--debug", action="store_true")
 
     args = parser.parse_args()
-    opts = vars(args)
 
-    scraper = GetOddsApiEvents()
-    scraper.run(opts)
+    if args.debug:
+        logging.getLogger().setLevel(logging.DEBUG)
+
+    GetOddsApiEvents().run(vars(args))

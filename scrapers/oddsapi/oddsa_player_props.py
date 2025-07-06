@@ -1,192 +1,252 @@
-# scrapers/odds_api_current_event_odds.py
+"""
+odds_api_current_event_odds.py
+Scraper for The-Odds-API v4 **current event odds** endpoint.
+
+Docs:
+  https://the-odds-api.com/liveapi/guides/v4/#get-event-odds
+
+Endpoint:
+  GET /v4/sports/{sport}/events/{eventId}/odds
+
+python -m scrapers.oddsapi.odds_api_current_event_odds \
+    --sport=basketball_nba \
+    --eventId=6f0b6f8d8cc9c5bc6375cdee \
+    --markets=player_points \
+    --regions=us \
+    --group=dev --debug
+
+"""
+
+from __future__ import annotations
 
 import os
 import logging
-from datetime import datetime
+from urllib.parse import urlencode
+from typing import Any, Dict, List
 
-from ..scraper_base import ScraperBase, ExportMode
-from ..utils.exceptions import DownloadDataException
+from scrapers.scraper_base import ScraperBase, ExportMode
+from scrapers.utils.exceptions import DownloadDataException
 
-logger = logging.getLogger("scraper_base")
+logger = logging.getLogger(__name__)
 
+
+# --------------------------------------------------------------------------- #
+# Scraper                                                                     #
+# --------------------------------------------------------------------------- #
 class GetOddsApiCurrentEventOdds(ScraperBase):
     """
-    Scraper for The Odds API (current odds) that fetches odds for a specific NBA event.
-    
-    Corresponds to:
-      GET /v4/sports/{sport}/events/{eventId}/odds
+    Required opts:
+      • sport    - e.g. basketball_nba
+      • eventId  - Odds-API event ID
 
-    Usage (local CLI):
-      python odds_api_current_event_odds.py \
-        --sport=basketball_nba \
-        --eventId=some-event-id \
-        --apiKey=MY_SECRET_KEY \
-        --markets=player_points,totals \
-        --regions=us \
-        --oddsFormat=decimal
+    Optional opts (map to query params):
+      • apiKey      - env ODDS_API_KEY fallback
+      • markets     - comma-sep (player_points, totals, …)
+      • regions     - comma-sep (us, uk, eu, au)
+      • oddsFormat  - american | decimal | fractional
+      • dateFormat  - iso | unix
     """
 
-    required_opts = ["sport", "eventId", "apiKey"]
-    additional_opts = []
-
-    # Typically no proxy needed for The Odds API
+    # required_opts = ["sport", "eventId"]
+    required_opts = ["eventId"]
     proxy_enabled = False
+    browser_enabled = False
 
+    # ------------------------------------------------------------------ #
+    # Exporters                                                          #
+    # ------------------------------------------------------------------ #
     exporters = [
-        {
+        {   # RAW payload for prod / GCS archival
             "type": "gcs",
-            "key": "oddsapi/event-odds/current/%(sport)s/%(eventId)s/%(time)s.json",
+            "key": (
+                "oddsapi/event-odds/current/%(sport)s/%(eventId)s/"
+                "%(run_id)s.raw.json"
+            ),
             "export_mode": ExportMode.RAW,
             "groups": ["prod", "gcs"],
         },
-        {
+        {   # Pretty JSON for dev & capture
             "type": "file",
-            "filename": "/tmp/oddsapi_current_event_odds.json",
-            "export_mode": ExportMode.RAW,
-            "groups": ["dev", "file"],
-        }
+            "filename": "/tmp/oddsapi_curr_event_odds_%(eventId)s.json",
+            "pretty_print": True,
+            "export_mode": ExportMode.DATA,
+            "groups": ["dev", "capture", "test"],
+        },
     ]
 
-    def set_url(self):
-        """
-        Construct the URL for The Odds API endpoint (current event odds).
-        e.g.:
-        https://api.the-odds-api.com/v4/sports/basketball_nba/events/{eventId}/odds
-            ?apiKey=KEY
-            &markets=player_points
-            &regions=us
-            &oddsFormat=decimal
-        """
-        base_url = "https://api.the-odds-api.com/v4/sports"
-        sport = self.opts["sport"]
-        event_id = self.opts["eventId"]
-        api_key = self.opts["apiKey"]
 
-        # Optional params
-        markets = self.opts.get("markets", "player_points")
-        regions = self.opts.get("regions", "us")
-        odds_format = self.opts.get("oddsFormat", "decimal")
+    def set_additional_opts(self) -> None:
+        """Fill season-wide defaults for optional opts."""
+        self.opts.setdefault("sport", "basketball_nba")
+        self.opts.setdefault("regions", "us")
+        self.opts.setdefault("markets", "player_points")
+        self.opts.setdefault("bookmakers", "draftkings,fanduel")
 
-        self.url = (
-            f"{base_url}/{sport}/events/{event_id}/odds"
-            f"?apiKey={api_key}"
-            f"&markets={markets}"
-            f"&regions={regions}"
-            f"&oddsFormat={odds_format}"
+
+    # ------------------------------------------------------------------ #
+    # URL & headers                                                      #
+    # ------------------------------------------------------------------ #
+    _API_ROOT_TMPL = (
+        "https://api.the-odds-api.com/v4/sports/{sport}/events/{eventId}/odds"
+    )
+
+    def set_url(self) -> None:
+        api_key = self.opts.get("apiKey") or os.getenv("ODDS_API_KEY")
+        if not api_key:
+            raise DownloadDataException(
+                "Missing apiKey and env var ODDS_API_KEY not set."
+            )
+
+        base = self._API_ROOT_TMPL.format(
+            sport=self.opts["sport"],
+            eventId=self.opts["eventId"],
         )
 
-        logger.info("Constructed Odds API Current Event URL: %s", self.url)
-
-    def set_headers(self):
-        """
-        Minimal headers for The Odds API. Expand if needed.
-        """
-        self.headers = {
-            "Accept": "application/json"
+        query: Dict[str, Any] = {
+            "apiKey": api_key,
+            "markets": self.opts["markets"],
+            "regions": self.opts["regions"],
+            "bookmakers": self.opts["bookmakers"],
+            "oddsFormat": self.opts.get("oddsFormat"),
+            "dateFormat": self.opts.get("dateFormat"),
         }
-        logger.debug("Headers set for current event odds request: %s", self.headers)
+        query = {k: v for k, v in query.items() if v is not None}
+        self.url = f"{base}?{urlencode(query, doseq=True)}"
+        logger.info("Odds-API Current Event Odds URL: %s", self.url)
 
-    def validate_download_data(self):
+    def set_headers(self) -> None:
+        self.headers = {"Accept": "application/json"}
+
+    # ------------------------------------------------------------------ #
+    # HTTP status handling                                               #
+    # ------------------------------------------------------------------ #
+    def check_download_status(self) -> None:
         """
-        According to Swagger, a successful response is typically an object or
-        an array with odds info. If there's an error, a dict with {"message": "..."}
-        might appear.
+        Treat 200 and 204 as success (204 => no markets yet).
+        """
+        if self.raw_response.status_code in (200, 204):
+            return
+        super().check_download_status()
+
+    # ------------------------------------------------------------------ #
+    # Validation                                                         #
+    # ------------------------------------------------------------------ #
+    def validate_download_data(self) -> None:
+        """
+        Success is an **object** with bookmakers[], or an empty list/dict if no odds.
         """
         if isinstance(self.decoded_data, dict) and "message" in self.decoded_data:
-            msg = self.decoded_data["message"]
-            logger.error("API returned an error message: %s", msg)
-            raise DownloadDataException(f"API error: {msg}")
+            raise DownloadDataException(f"API error: {self.decoded_data['message']}")
 
+        if not isinstance(self.decoded_data, (dict, list)):
+            raise DownloadDataException("Expected dict or list for odds payload.")
+
+    # ------------------------------------------------------------------ #
+    # Transform                                                          #
+    # ------------------------------------------------------------------ #
+    def transform_data(self) -> None:
         if not self.decoded_data:
-            logger.info("No odds data returned (empty). Possibly no markets available.")
-        elif not isinstance(self.decoded_data, (dict, list)):
-            logger.error("Unexpected response type: %s", type(self.decoded_data))
-            raise DownloadDataException("Unexpected response type; expected dict or list of odds data.")
+            row_count = 0
+            bookmakers: List[Dict[str, Any]] = []
+        elif isinstance(self.decoded_data, list):
+            # Some sports return [event] list
+            bookmakers = self.decoded_data[0].get("bookmakers", []) if self.decoded_data else []
+        else:  # dict
+            bookmakers = self.decoded_data.get("bookmakers", [])
 
-        logger.info("Odds data received. Type=%s", type(self.decoded_data))
+        # Count bookmaker × market rows
+        row_count = 0
+        for bm in bookmakers:
+            for mk in bm.get("markets", []):
+                row_count += len(mk.get("outcomes", [])) or 1
 
-    def should_save_data(self):
-        """
-        Decide if we skip exporting if there's no data.
-        """
-        if not self.decoded_data:
-            logger.info("Skipping save due to empty odds data.")
-            return False
-        return True
+        self.data = {
+            "sport": self.opts["sport"],
+            "eventId": self.opts["eventId"],
+            "markets": self.opts.get("markets", "player_points"),
+            "regions": self.opts.get("regions", "us"),
+            "rowCount": row_count,
+            "odds": self.decoded_data,
+        }
+        logger.info(
+            "Fetched %d bookmaker-market rows for event %s",
+            row_count,
+            self.opts["eventId"],
+        )
 
-    def get_scraper_stats(self):
-        """
-        Return fields for the final SCRAPER_STATS line: how many records found,
-        plus sport/eventId for clarity.
-        """
-        decoded = self.decoded_data
-        records_found = 0
+    # ------------------------------------------------------------------ #
+    # Conditional save                                                   #
+    # ------------------------------------------------------------------ #
+    def should_save_data(self) -> bool:
+        return bool(self.data.get("rowCount"))
 
-        if isinstance(decoded, list):
-            records_found = len(decoded)
-        elif isinstance(decoded, dict) and decoded:
-            # Non-empty dict implies 1 set of odds
-            records_found = 1
-
-        event_id = self.opts.get("eventId", "unknown")
-        sport = self.opts.get("sport", "unknown")
-
+    # ------------------------------------------------------------------ #
+    # Stats line                                                         #
+    # ------------------------------------------------------------------ #
+    def get_scraper_stats(self) -> dict:
         return {
-            "records_found": records_found,
-            "sport": sport,
-            "event_id": event_id
+            "rowCount": self.data.get("rowCount", 0),
+            "sport": self.opts.get("sport"),
+            "eventId": self.opts.get("eventId"),
+            "markets": self.opts.get("markets"),
+            "regions": self.opts.get("regions"),
         }
 
 
-##############################################################################
-# Cloud Function Entry Point
-##############################################################################
-def gcf_entry(request):
-    """
-    Cloud Function HTTP entry point.
-    Example usage:
-      GET .../OddsApiCurrentEventOdds?sport=basketball_nba&eventId=some-id&apiKey=SECRET&markets=player_points&regions=us&oddsFormat=decimal&group=prod
-    """
-    sport = request.args.get("sport", "basketball_nba")
-    event_id = request.args.get("eventId", "")
-    api_key = request.args.get("apiKey", "")
-    markets = request.args.get("markets", "player_points")
-    regions = request.args.get("regions", "us")
-    odds_format = request.args.get("oddsFormat", "decimal")
-    group = request.args.get("group", "prod")
+# --------------------------------------------------------------------------- #
+# Google Cloud Function entry point                                           #
+# --------------------------------------------------------------------------- #
+def gcf_entry(request):  # type: ignore[valid-type]
+    from dotenv import load_dotenv
+
+    load_dotenv()
 
     opts = {
-        "sport": sport,
-        "eventId": event_id,
-        "apiKey": api_key,
-        "markets": markets,
-        "regions": regions,
-        "oddsFormat": odds_format,
-        "group": group
+        "sport": request.args.get("sport", "basketball_nba"),
+        "eventId": request.args["eventId"],
+        "apiKey": request.args.get("apiKey"),  # optional - env fallback
+        "markets": request.args.get("markets", "player_points"),
+        "regions": request.args.get("regions", "us"),
+        "oddsFormat": request.args.get("oddsFormat"),
+        "dateFormat": request.args.get("dateFormat"),
+        "group": request.args.get("group", "prod"),
     }
+    GetOddsApiCurrentEventOdds().run(opts)
+    return (
+        f"Odds-API current event-odds scrape complete ({opts['eventId']})",
+        200,
+    )
 
-    scraper = GetOddsApiCurrentEventOdds()
-    result = scraper.run(opts)
-    return f"OddsApiCurrentEventOdds run complete. Found result: {result}", 200
 
-
-##############################################################################
-# Local CLI Usage
-##############################################################################
+# --------------------------------------------------------------------------- #
+# CLI                                                                         #
+# --------------------------------------------------------------------------- #
 if __name__ == "__main__":
     import argparse
+    from dotenv import load_dotenv
 
-    default_api_key = os.environ.get("ODDS_API_KEY", None)
+    load_dotenv()
 
-    parser = argparse.ArgumentParser(description="Run Odds API Current Event Odds locally")
-    parser.add_argument("--sport", default="basketball_nba", help="Sport name, e.g. basketball_nba")
-    parser.add_argument("--eventId", required=True, help="The event ID to fetch odds for")
-    parser.add_argument("--markets", default="player_points", help="e.g. player_points,totals,h2h")
-    parser.add_argument("--regions", default="us", help="e.g. us")
-    parser.add_argument("--oddsFormat", default="decimal", help="e.g. decimal or american")
-    parser.add_argument("--group", default="test", help="Exporter group (test/prod)")
+    parser = argparse.ArgumentParser(
+        description="Scrape The-Odds-API current odds for one event"
+    )
+    parser.add_argument("--sport", default="basketball_nba")
+    parser.add_argument("--eventId", required=True)
+    parser.add_argument("--markets", default="player_points")
+    parser.add_argument("--regions", default="us")
+    parser.add_argument("--oddsFormat", choices=["american", "decimal", "fractional"])
+    parser.add_argument("--dateFormat", choices=["iso", "unix"])
+    parser.add_argument("--apiKey", help="Optional - env ODDS_API_KEY fallback")
+    parser.add_argument("--group", default="dev")
+    parser.add_argument("--runId",
+                        help="Optional - capture.py injects one for fixture runs")
+    parser.add_argument("--debug", action="store_true",
+                        help="Verbose logging")
+    parser.add_argument("--bookmakers", default="draftkings,fanduel",
+                    help="comma-sep list, e.g. draftkings,fanduel")
+
     args = parser.parse_args()
+    if args.debug:
+        logging.getLogger().setLevel(logging.DEBUG)
 
-    opts = vars(args)
-    scraper = GetOddsApiCurrentEventOdds()
-    scraper.run(opts)
+    GetOddsApiCurrentEventOdds().run(vars(args))
