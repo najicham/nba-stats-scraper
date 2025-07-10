@@ -1,0 +1,114 @@
+version: '3.8'
+
+services:
+  scrapers:
+    build: 
+      context: .
+      dockerfile: scrapers/Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      - PORT=8080
+      - PYTHONPATH=/app:/app/shared
+      - LOCAL_DEV=true
+      # API Keys from .env file
+      - ODDS_API_KEY=${ODDS_API_KEY}
+      - BDL_API_KEY=${BDL_API_KEY}
+      - PROJECT_ID=${PROJECT_ID}
+    env_file:
+      - .env  # This will load your .env file
+    volumes:
+      # Mount source code for development
+      - ./scrapers:/app/scrapers
+      - ./shared:/app/shared
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - nba-network
+
+  processors:
+    build:
+      context: .
+      dockerfile: processors/Dockerfile  
+    ports:
+      - "8081:8081"
+    environment:
+      - PORT=8081
+      - PYTHONPATH=/app:/app/shared
+      - LOCAL_DEV=true
+      - PROJECT_ID=${PROJECT_ID}
+    env_file:
+      - .env
+    volumes:
+      - ./processors:/app/processors
+      - ./shared:/app/shared
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - nba-network
+
+  reportgen:
+    build:
+      context: .
+      dockerfile: reportgen/Dockerfile
+    ports:
+      - "8082:8082" 
+    environment:
+      - PORT=8082
+      - PYTHONPATH=/app:/app/shared
+      - LOCAL_DEV=true
+      - PROJECT_ID=${PROJECT_ID}
+    env_file:
+      - .env
+    volumes:
+      - ./reportgen:/app/reportgen
+      - ./shared:/app/shared
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - nba-network
+
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_DB=nba_dev
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - nba-network
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    networks:
+      - nba-network
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+    volumes:
+      - minio_data:/data
+    networks:
+      - nba-network
+
+volumes:
+  postgres_data:
+  minio_data:
+
+networks:
+  nba-network:
+    driver: bridge

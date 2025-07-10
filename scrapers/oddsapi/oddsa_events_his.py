@@ -20,6 +20,7 @@ import os
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 from typing import Any, Dict, List
+from flask import Flask, request, jsonify
 
 from ..scraper_base import ScraperBase, ExportMode
 from ..utils.exceptions import DownloadDataException
@@ -199,55 +200,144 @@ class GetOddsApiHistoricalEvents(ScraperBase):
             "snapshot": self.data.get("snapshot_timestamp"),
         }
 
-
 # --------------------------------------------------------------------------- #
-# Google Cloud Function entry point                                           #
+# Cloud Run / Flask entry point for Events Scraper                           #
 # --------------------------------------------------------------------------- #
-def gcf_entry(request):  # type: ignore[valid-type]
+def create_app():
+    """Create Flask app for Events Scraper."""
+    from flask import Flask, request, jsonify
     from dotenv import load_dotenv
+    import logging
+    import sys
+    
+    app = Flask(__name__)
     load_dotenv()
-
-    opts = {
-        "apiKey": request.args.get("apiKey"),
-        "sport": request.args.get("sport", "basketball_nba"),
-        "date": request.args.get("date"),                       # REQUIRED!
-        "commenceTimeFrom": request.args.get("commenceTimeFrom"),
-        "commenceTimeTo": request.args.get("commenceTimeTo"),
-        "eventIds": request.args.get("eventIds"),
-        "dateFormat": request.args.get("dateFormat"),
-        "group": request.args.get("group", "prod"),
-    }
-    scraper = GetOddsApiHistoricalEvents()
-    scraper.run(opts)
-    return f"Odds-API historical events scrape complete ({opts['date']})", 200
+    
+    # Configure logging for Cloud Run
+    if not app.debug:
+        logging.basicConfig(level=logging.INFO)
+    
+    @app.route('/', methods=['GET'])
+    @app.route('/health', methods=['GET'])
+    def health_check():
+        return jsonify({
+            "status": "healthy", 
+            "service": "scrapers",
+            "scraper": "odds_api_historical_events",
+            "version": "1.0.0",
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }), 200
+    
+    @app.route('/scrape', methods=['POST'])
+    def scrape_events():
+        """Scrape historical NBA events"""
+        try:
+            # Get parameters from JSON body or query params
+            if request.is_json:
+                params = request.get_json()
+            else:
+                params = request.args.to_dict()
+            
+            # Events scraper specific parameters
+            opts = {
+                "apiKey": params.get("apiKey"),  # Falls back to env var
+                "sport": params.get("sport", "basketball_nba"),
+                "date": params.get("date"),  # REQUIRED
+                "commenceTimeFrom": params.get("commenceTimeFrom"),
+                "commenceTimeTo": params.get("commenceTimeTo"),
+                "eventIds": params.get("eventIds"),
+                "dateFormat": params.get("dateFormat"),
+                "group": params.get("group", "prod"),
+                "runId": params.get("runId"),
+                "debug": bool(params.get("debug", False))
+            }
+            
+            # Validate required params for events scraper
+            if not opts["date"]:
+                return jsonify({"error": "Missing required parameter: date"}), 400
+            
+            # Set debug logging
+            if opts["debug"]:
+                logging.getLogger().setLevel(logging.DEBUG)
+            
+            # Run the events scraper
+            scraper = GetOddsApiHistoricalEvents()
+            result = scraper.run(opts)
+            
+            if result:
+                return jsonify({
+                    "status": "success",
+                    "message": "Events scraping completed successfully",
+                    "scraper": "odds_api_historical_events",
+                    "run_id": scraper.run_id,
+                    "data_summary": scraper.get_scraper_stats()
+                }), 200
+            else:
+                return jsonify({
+                    "status": "error",
+                    "message": "Events scraping failed",
+                    "scraper": "odds_api_historical_events",
+                    "run_id": scraper.run_id
+                }), 500
+                
+        except Exception as e:
+            app.logger.error(f"Events scraper error: {str(e)}", exc_info=True)
+            return jsonify({
+                "status": "error",
+                "scraper": "odds_api_historical_events",
+                "message": str(e)
+            }), 500
+    
+    return app
 
 
 # --------------------------------------------------------------------------- #
-# Local CLI                                                                   #
+# Main entry point for Events Scraper                                         #
 # --------------------------------------------------------------------------- #
 if __name__ == "__main__":
     import argparse
     from dotenv import load_dotenv
+    import sys
+    
     load_dotenv()
 
-    parser = argparse.ArgumentParser(description="Scrape The-Odds-API historical events")
-    parser.add_argument("--apiKey", help="Optional - env ODDS_API_KEY fallback")
-    parser.add_argument("--sport", required=True, help="e.g. basketball_nba")
-    parser.add_argument("--date", required=True, help="ISO timestamp (max every 5 min)")
-
-    parser.add_argument("--commenceTimeFrom")
-    parser.add_argument("--commenceTimeTo")
-    parser.add_argument("--eventIds")
-    parser.add_argument("--dateFormat", choices=["iso", "unix"])
-    parser.add_argument("--group", default="dev",
-                        help="exporter group (dev/prod/gcs/capture)")
-    parser.add_argument("--runId",
-                        help="Optional - capture.py injects one for fixture runs")
-    parser.add_argument("--debug", action="store_true",
-                        help="Verbose logging")
-    
-    args = parser.parse_args()
-    if args.debug:
-        logging.getLogger().setLevel(logging.DEBUG)
-    scraper = GetOddsApiHistoricalEvents()
-    scraper.run(vars(args))
+    # Check if we're running as a web service or CLI
+    if len(sys.argv) > 1 and sys.argv[1] == "--serve":
+        # Web service mode for Cloud Run
+        app = create_app()
+        port = int(os.getenv("PORT", 8080))
+        debug = "--debug" in sys.argv
+        app.run(host="0.0.0.0", port=port, debug=debug)
+    else:
+        # CLI mode (existing argparse code)
+        parser = argparse.ArgumentParser(description="Scrape The-Odds-API historical events")
+        parser.add_argument("--serve", action="store_true", help="Start web server")
+        parser.add_argument("--apiKey", help="Optional - env ODDS_API_KEY fallback")
+        parser.add_argument("--sport", default="basketball_nba", help="e.g. basketball_nba")
+        parser.add_argument("--date", help="ISO timestamp (required for CLI)")
+        parser.add_argument("--commenceTimeFrom")
+        parser.add_argument("--commenceTimeTo")
+        parser.add_argument("--eventIds")
+        parser.add_argument("--dateFormat", choices=["iso", "unix"])
+        parser.add_argument("--debug", action="store_true", help="Verbose logging")
+        parser.add_argument("--group", default="dev", help="exporter group")
+        parser.add_argument("--runId", help="Optional correlation ID")
+        
+        args = parser.parse_args()
+        
+        if args.serve:
+            # Start web server
+            app = create_app()
+            port = int(os.getenv("PORT", 8080))
+            app.run(host="0.0.0.0", port=port, debug=args.debug)
+        else:
+            # CLI scraping mode
+            if not args.date:
+                parser.error("--date is required for CLI scraping")
+                
+            if args.debug:
+                logging.getLogger().setLevel(logging.DEBUG)
+                
+            # Run the events scraper
+            scraper = GetOddsApiHistoricalEvents()
+            scraper.run(vars(args))

@@ -1,0 +1,173 @@
+# docker/cloudbuild.yaml
+# Multi-service build for NBA platform
+
+steps:
+  # Step 1: Build base image (foundation for all services)
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'build-base'
+    args: [
+      'build',
+      '-f', 'docker/base.Dockerfile',
+      '-t', 'gcr.io/$PROJECT_ID/nba-base:$BUILD_ID',
+      '-t', 'gcr.io/$PROJECT_ID/nba-base:latest',
+      '.'
+    ]
+
+  # Step 2: Push base image (so parallel builds can use it)
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'push-base'
+    args: ['push', 'gcr.io/$PROJECT_ID/nba-base:$BUILD_ID']
+    waitFor: ['build-base']
+
+  # Step 3: Build scrapers (parallel)
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'build-scrapers'
+    args: [
+      'build',
+      '-f', 'scrapers/Dockerfile',
+      '--build-arg', 'PROJECT_ID=$PROJECT_ID',
+      '--build-arg', 'BASE_IMAGE_TAG=$BUILD_ID',
+      '-t', 'gcr.io/$PROJECT_ID/nba-scrapers:$BUILD_ID',
+      '-t', 'gcr.io/$PROJECT_ID/nba-scrapers:latest',
+      '.'
+    ]
+    waitFor: ['push-base']
+
+  # Step 4: Build processors (parallel)
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'build-processors'
+    args: [
+      'build', 
+      '-f', 'processors/Dockerfile',
+      '--build-arg', 'PROJECT_ID=$PROJECT_ID',
+      '--build-arg', 'BASE_IMAGE_TAG=$BUILD_ID',
+      '-t', 'gcr.io/$PROJECT_ID/nba-processors:$BUILD_ID',
+      '-t', 'gcr.io/$PROJECT_ID/nba-processors:latest',
+      '.'
+    ]
+    waitFor: ['push-base']
+
+  # Step 5: Build report generators (parallel)
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'build-reportgen'
+    args: [
+      'build',
+      '-f', 'reportgen/Dockerfile', 
+      '--build-arg', 'PROJECT_ID=$PROJECT_ID',
+      '--build-arg', 'BASE_IMAGE_TAG=$BUILD_ID',
+      '-t', 'gcr.io/$PROJECT_ID/nba-reportgen:$BUILD_ID',
+      '-t', 'gcr.io/$PROJECT_ID/nba-reportgen:latest',
+      '.'
+    ]
+    waitFor: ['push-base']
+
+  # Step 6: Push all service images (parallel)
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'push-scrapers'
+    args: ['push', '--all-tags', 'gcr.io/$PROJECT_ID/nba-scrapers']
+    waitFor: ['build-scrapers']
+
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'push-processors' 
+    args: ['push', '--all-tags', 'gcr.io/$PROJECT_ID/nba-processors']
+    waitFor: ['build-processors']
+
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'push-reportgen'
+    args: ['push', '--all-tags', 'gcr.io/$PROJECT_ID/nba-reportgen']
+    waitFor: ['build-reportgen']
+
+  # Step 7: Deploy specific scrapers to Cloud Run (if enabled)
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: 'deploy-events-scraper'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        if [[ "$_DEPLOY_SERVICES" == "true" ]]; then
+          gcloud run deploy nba-scraper-events \
+            --image gcr.io/$PROJECT_ID/nba-scrapers:$BUILD_ID \
+            --region $_REGION \
+            --platform managed \
+            --allow-unauthenticated \
+            --memory 1Gi \
+            --cpu 1 \
+            --timeout 300 \
+            --max-instances 10 \
+            --set-env-vars PROJECT_ID=$PROJECT_ID \
+            --service-account nba-scraper-sa@$PROJECT_ID.iam.gserviceaccount.com \
+            --args="events,--serve"
+        else
+          echo "Skipping deployment (set _DEPLOY_SERVICES=true to deploy)"
+        fi
+    waitFor: ['push-scrapers']
+
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: 'deploy-odds-scraper'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        if [[ "$_DEPLOY_SERVICES" == "true" ]]; then
+          gcloud run deploy nba-scraper-odds \
+            --image gcr.io/$PROJECT_ID/nba-scrapers:$BUILD_ID \
+            --region $_REGION \
+            --platform managed \
+            --allow-unauthenticated \
+            --memory 1Gi \
+            --cpu 1 \
+            --timeout 300 \
+            --max-instances 10 \
+            --set-env-vars PROJECT_ID=$PROJECT_ID \
+            --service-account nba-scraper-sa@$PROJECT_ID.iam.gserviceaccount.com \
+            --args="odds,--serve"
+        else
+          echo "Skipping deployment"
+        fi
+    waitFor: ['push-scrapers']
+
+  # Step 8: Deploy a sample processor (if enabled)
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: 'deploy-events-processor'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        if [[ "$_DEPLOY_SERVICES" == "true" ]]; then
+          gcloud run deploy nba-processor-events \
+            --image gcr.io/$PROJECT_ID/nba-processors:$BUILD_ID \
+            --region $_REGION \
+            --platform managed \
+            --no-allow-unauthenticated \
+            --memory 2Gi \
+            --cpu 2 \
+            --timeout 600 \
+            --max-instances 5 \
+            --set-env-vars PROJECT_ID=$PROJECT_ID \
+            --service-account nba-processor-sa@$PROJECT_ID.iam.gserviceaccount.com \
+            --args="events,--serve"
+        else
+          echo "Skipping processor deployment"
+        fi
+    waitFor: ['push-processors']
+
+# Substitution variables (can be overridden)
+substitutions:
+  _REGION: 'us-central1'
+  _DEPLOY_SERVICES: 'false'  # Set to 'true' to auto-deploy
+
+# Build options
+options:
+  logging: CLOUD_LOGGING_ONLY
+  machineType: 'E2_HIGHCPU_8'
+  substitution_option: 'ALLOW_LOOSE'
+
+# Images to retain in Container Registry
+images:
+  - 'gcr.io/$PROJECT_ID/nba-base'
+  - 'gcr.io/$PROJECT_ID/nba-scrapers'  
+  - 'gcr.io/$PROJECT_ID/nba-processors'
+  - 'gcr.io/$PROJECT_ID/nba-reportgen'
+
+# Timeout for entire build
+timeout: '1800s'
