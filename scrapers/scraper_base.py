@@ -10,16 +10,23 @@ A base class 'ScraperBase' that handles:
  - Logging structured steps & final stats
  - Capturing a short run ID for correlation
  - Providing hooks for child classes to override
+ - Enhanced Sentry integration for monitoring
 """
 
 import sentry_sdk
 from .utils.env_utils import is_local
+import os
 
-ENV = "local" if is_local() else "production"
+# Initialize Sentry with environment-specific configuration
+ENV = "development" if is_local() else "production"
+sentry_dsn = os.getenv("SENTRY_DSN", "https://96f5d7efbb7105ef2c05aa551fa5f4e0@o102085.ingest.us.sentry.io/4509460047790080")
+
 sentry_sdk.init(
-    dsn="https://96f5d7efbb7105ef2c05aa551fa5f4e0@o102085.ingest.us.sentry.io/4509460047790080",
-    send_default_pii=True,
-    environment=ENV
+    dsn=sentry_dsn,
+    environment=ENV,
+    traces_sample_rate=1.0 if ENV == "development" else 0.1,
+    profiles_sample_rate=1.0 if ENV == "development" else 0.01,
+    send_default_pii=False,
 )
 
 import enum
@@ -32,15 +39,13 @@ try:                                         # Playwright core
 except ModuleNotFoundError:
     _PLAYWRIGHT_AVAILABLE = False
 
-# ---- optional stealth plug‑in (v1.x or v2.x) ---------------------------
-# We try every known location/name and pick the first callable we find.
+# ---- optional stealth plug‑in (v1.x or v2.x) ---------------------------
 _STEALTH_FN: Callable | None = None
 try:
-    from playwright_stealth import stealth_sync as _STEALTH_FN          # ≤ v1.1
+    from playwright_stealth import stealth_sync as _STEALTH_FN          # ≤ v1.1
 except ImportError:
     try:
-        import playwright_stealth as _ps                                # ≥ v2.0
-        # v2 exposes ONLY "stealth" on the top level
+        import playwright_stealth as _ps                                # ≥ v2.0
         _STEALTH_FN = getattr(_ps, "stealth", None)
     except ImportError:
         _STEALTH_FN = None
@@ -48,7 +53,6 @@ _STEALTH_AVAILABLE = callable(_STEALTH_FN)
 
 import logging, urllib.parse
 import time
-import os
 import sys
 import traceback
 import pprint
@@ -82,7 +86,6 @@ from .utils.nba_header_utils import (
 
 ##############################################################################
 # Configure a default logger so INFO messages appear in the console.
-# You can tweak the format or level as desired.
 ##############################################################################
 logging.basicConfig(
     level=logging.INFO,
@@ -199,82 +202,123 @@ class ScraperBase:
         self.run_id = str(uuid.uuid4())[:8]
         self.stats["run_id"] = self.run_id
 
-    ##########################################################################
-    # Main Entrypoint for the Lifecycle
+##########################################################################
+    # Main Entrypoint for the Lifecycle (Enhanced with Sentry)
     ##########################################################################
     def run(self, opts=None):
         """
-        Orchestrates the main flow:
-          1) re-init, set run_id
-          2) set_opts, validate
-          3) set_exporter_group_to_opts, set_additional_opts, validate_additional_opts
-          4) set_url, set_headers
-          5) download_and_decode
-          6) validate_download_data, extract_opts_from_data, validate_extracted_opts, transform_data
-          7) export_data
-          8) post_export
-          9) return final data or True
+        Enhanced run method with comprehensive Sentry tracking and error handling.
         """
         if opts is None:
             opts = {}
 
-        try:
-            # Re-init, but preserve the run_id
-            self._reinit_except_run_id()
+        # Add scraper context to Sentry
+        sentry_sdk.set_tag("scraper.name", self.__class__.__name__)
+        sentry_sdk.set_tag("scraper.run_id", self.run_id)
+        sentry_sdk.set_context("scraper_opts", {
+            "sport": opts.get("sport"),
+            "date": opts.get("date"),
+            "group": opts.get("group"),
+            "debug": opts.get("debug", False)
+        })
 
-            self.mark_time("total")
-            self.step_info("start", "Scraper run starting", extra={"opts": opts})
-
-            self.set_opts(opts)
-            self.validate_opts()
-            self.set_exporter_group_to_opts()
-            self.set_additional_opts()
-            self.validate_additional_opts()
-
-            self.set_url()
-            self.set_headers()
-
-            self.mark_time("download")
-            self.download_and_decode()
-            download_seconds = self.get_elapsed_seconds("download")
-            self.stats["download_time"] = download_seconds
-            self.step_info("download_complete", "Download+Decode completed",
-                           extra={"elapsed": download_seconds})
-
-            if self.decode_download_data:
-                self.validate_download_data()
-                self.extract_opts_from_data()
-                self.validate_extracted_opts()
-                self.transform_data()
-
-            self.mark_time("export")
-            self.export_data()
-            export_seconds = self.get_elapsed_seconds("export")
-            self.stats["export_time"] = export_seconds
-            self.step_info("export_complete", "Export completed", extra={"elapsed": export_seconds})
-
-            self.post_export()
-
-            total_seconds = self.get_elapsed_seconds("total")
-            self.stats["total_runtime"] = total_seconds
-            self.step_info("finish", "Scraper run completed",
-                           extra={"total_seconds": total_seconds})
-
-            if self.decode_download_data:
-                return self.get_return_value()
-            else:
-                return True
+        # Track the entire scraper run as a transaction
+        with sentry_sdk.start_transaction(
+            op="scraper.run",
+            name=f"{self.__class__.__name__}.run"
+        ) as transaction:
             
-        except Exception as e:
-            logger.error("ScraperBase Error: %s", e, exc_info=True)            
-            traceback.print_exc()
+            transaction.set_tag("scraper.sport", opts.get("sport", "unknown"))
+            transaction.set_tag("scraper.group", opts.get("group", "unknown"))
+            
+            try:
+                # Re-init, but preserve the run_id
+                self._reinit_except_run_id()
 
-            # If we want to save partial data or raw data on error
-            if self.save_data_on_error:
-                self._debug_save_data_on_error(e)
+                self.mark_time("total")
+                self.step_info("start", "Scraper run starting", extra={"opts": opts})
 
-            self.report_error(e)  # Sentry/email/Slack, etc.
-            return False
+                self.set_opts(opts)
+                self.validate_opts()
+                self.set_exporter_group_to_opts()
+                self.set_additional_opts()
+                self.validate_additional_opts()
+
+                self.set_url()
+                self.set_headers()
+
+                self.mark_time("download")
+                self.download_and_decode()
+                download_seconds = self.get_elapsed_seconds("download")
+                self.stats["download_time"] = download_seconds
+                self.step_info("download_complete", "Download+Decode completed",
+                            extra={"elapsed": download_seconds})
+
+                if self.decode_download_data:
+                    self.validate_download_data()
+                    self.extract_opts_from_data()
+                    self.validate_extracted_opts()
+                    self.transform_data()
+
+                self.mark_time("export")
+                self.export_data()
+                export_seconds = self.get_elapsed_seconds("export")
+                self.stats["export_time"] = export_seconds
+                self.step_info("export_complete", "Export completed", extra={"elapsed": export_seconds})
+
+                self.post_export()
+
+                total_seconds = self.get_elapsed_seconds("total")
+                self.stats["total_runtime"] = total_seconds
+                self.step_info("finish", "Scraper run completed",
+                            extra={"total_seconds": total_seconds})
+
+                # Track success metrics in Sentry
+                transaction.set_tag("scraper.status", "success")
+                transaction.set_data("scraper.row_count", self.get_scraper_stats().get("rowCount", 0))
+                transaction.set_data("scraper.runtime_seconds", total_seconds)
+                
+                if self.decode_download_data:
+                    return self.get_return_value()
+                else:
+                    return True
+                
+            except Exception as e:
+                logger.error("ScraperBase Error: %s", e, exc_info=True)            
+                traceback.print_exc()
+
+                # Enhanced Sentry error tracking
+                sentry_sdk.set_tag("scraper.status", "error")
+                sentry_sdk.set_context("scraper_error", {
+                    "error_type": type(e).__name__,
+                    "url": getattr(self, 'url', 'unknown'),
+                    "retry_count": getattr(self, 'download_retry_count', 0),
+                    "opts": opts,
+                    "step": self._get_current_step()
+                })
+                
+                # Capture exception in Sentry
+                sentry_sdk.capture_exception(e)
+
+                # If we want to save partial data or raw data on error
+                if self.save_data_on_error:
+                    self._debug_save_data_on_error(e)
+
+                self.report_error(e)  # Sentry/email/Slack, etc.
+                return False
+
+    def _get_current_step(self):
+        """Helper to determine current processing step for error context."""
+        if not hasattr(self, 'url') or not self.url:
+            return "initialization"
+        elif not self.raw_response:
+            return "download"
+        elif not self.decoded_data:
+            return "decode"
+        elif not self.data:
+            return "transform"
+        else:
+            return "export"
 
     def _reinit_except_run_id(self):
         """
@@ -416,40 +460,56 @@ class ScraperBase:
             self.headers = {"User-Agent": _ua()}
 
     ##########################################################################
-    # Download & Decode
+    # Download & Decode (Enhanced with Sentry)
     ##########################################################################
     def download_and_decode(self):
         """
         Download with loop‑based retry (avoids recursive stack growth).
+        Enhanced with Sentry span tracking.
         """
-        while True:
+        with sentry_sdk.start_span(op="http.request", description="Scraper API call") as span:
+            span.set_tag("http.url", getattr(self, 'url', 'unknown'))
+            span.set_tag("scraper.retry_count", self.download_retry_count)
+            
             try:
-                self.set_http_downloader()
-                self.start_download()
-                self.check_download_status()
-                if self.decode_download_data:
-                    self.decode_download_content()
-                break  # success
+                while True:
+                    try:
+                        self.set_http_downloader()
+                        self.start_download()
+                        self.check_download_status()
+                        if self.decode_download_data:
+                            self.decode_download_content()
+                        break  # success
+                        
+                    except (
+                        ValueError,
+                        InvalidRegionDecodeException,
+                        NoHttpStatusCodeException,
+                        RetryInvalidHttpStatusCodeException,
+                        ReadTimeout,
+                    ) as err:
+                        self.increment_retry_count()
+                        self.sleep_before_retry()
+                        logger.warning("[Retry %s] after %s: %s", self.download_retry_count, type(err).__name__, err)
+
+                    except InvalidHttpStatusCodeException:
+                        raise
+
+                    # Failsafe: stop if we somehow fell out of the retry bucket
+                    if self.download_retry_count >= self.max_retries_decode:
+                        raise DownloadDecodeMaxRetryException(
+                            f"Reached max retries ({self.max_retries_decode}) without success."
+                        )
+
+                # Track successful request
+                span.set_tag("http.status_code", self.raw_response.status_code)
+                span.set_data("response.size", len(self.raw_response.content))
                 
-            except (
-                ValueError,
-                InvalidRegionDecodeException,
-                NoHttpStatusCodeException,
-                RetryInvalidHttpStatusCodeException,
-                ReadTimeout,
-            ) as err:
-                self.increment_retry_count()
-                self.sleep_before_retry()
-                logger.warning("[Retry %s] after %s: %s", self.download_retry_count, type(err).__name__, err)
-
-            except InvalidHttpStatusCodeException:
+            except Exception as e:
+                # Track failed requests
+                span.set_tag("http.status_code", getattr(self.raw_response, 'status_code', 'unknown'))
+                span.set_tag("error.type", type(e).__name__)
                 raise
-
-            # Failsafe: stop if we somehow fell out of the retry bucket
-            if self.download_retry_count >= self.max_retries_decode:
-                raise DownloadDecodeMaxRetryException(
-                    f"Reached max retries ({self.max_retries_decode}) without success."
-                )
 
     def set_http_downloader(self):
         """
@@ -496,8 +556,7 @@ class ScraperBase:
         else:
             self.download_data()
 
-
-    # ------------------------------------------------------------------ #
+# ------------------------------------------------------------------ #
     # Playwright helper – runs **headless only** when browser_enabled == True
     # ------------------------------------------------------------------ #
     def download_via_browser(self) -> None:
@@ -569,7 +628,6 @@ class ScraperBase:
             timeout=self.timeout_http,
             **self._common_requests_kwargs(),
         )
-
 
     # ------------------------------------------------------------------ #
     # requests.get kwargs helpers
@@ -728,7 +786,7 @@ class ScraperBase:
         pass
 
     ##########################################################################
-    # Export
+    # Export (Enhanced with Sentry)
     ##########################################################################
     def should_save_data(self):
         """
@@ -740,61 +798,70 @@ class ScraperBase:
     def export_data(self):
         """
         Evaluate each exporter config in self.exporters.
-        - Only proceed if config["groups"] includes self.opts["group"].
-        - If check_should_save is True, also see if should_save_data().
-        - Derive data_to_export based on 'export_mode'.
-        - Instantiates the appropriate exporter class from EXPORTER_REGISTRY.
-        - Calls exporter.run(data_to_export, config, opts).
+        Enhanced with Sentry span tracking.
         """
-        # Track whether we actually used any exporter
-        ran_exporter = False
+        with sentry_sdk.start_span(op="data.export", description="Export scraper data") as span:
+            span.set_tag("export.group", self.opts.get("group", "unknown"))
+            span.set_data("export.data_size", len(str(self.data)))
+            
+            try:
+                # Track whether we actually used any exporter
+                ran_exporter = False
 
-        for config in self.exporters:
-            groups = config.get("groups", [])
-            if self.opts["group"] not in groups:
-                # group mismatch => skip
-                continue
+                for config in self.exporters:
+                    groups = config.get("groups", [])
+                    if self.opts["group"] not in groups:
+                        # group mismatch => skip
+                        continue
 
-            if config.get("check_should_save"):
-                if not self.should_save_data():
-                    logger.info("Skipping export for config %s (should_save_data=False)", config)
-                    continue
+                    if config.get("check_should_save"):
+                        if not self.should_save_data():
+                            logger.info("Skipping export for config %s (should_save_data=False)", config)
+                            continue
 
-            # read export_mode, default ExportMode.DATA if missing
-            export_mode = config.get("export_mode", ExportMode.DATA)
-            if isinstance(export_mode, str):
-                export_mode = ExportMode(export_mode)  # convert from string if needed
+                    # read export_mode, default ExportMode.DATA if missing
+                    export_mode = config.get("export_mode", ExportMode.DATA)
+                    if isinstance(export_mode, str):
+                        export_mode = ExportMode(export_mode)  # convert from string if needed
 
-            if export_mode == ExportMode.RAW:
-                data_to_export = self.raw_response.content
-            elif export_mode == ExportMode.DECODED:
-                data_to_export = self.decoded_data
-            else:  # ExportMode.DATA
-                data_key = config.get("data_key")
-                if data_key:
-                    data_to_export = self.data.get(data_key, {})
-                else:
-                    data_to_export = self.data
+                    if export_mode == ExportMode.RAW:
+                        data_to_export = self.raw_response.content
+                    elif export_mode == ExportMode.DECODED:
+                        data_to_export = self.decoded_data
+                    else:  # ExportMode.DATA
+                        data_key = config.get("data_key")
+                        if data_key:
+                            data_to_export = self.data.get(data_key, {})
+                        else:
+                            data_to_export = self.data
 
-            exporter_type = config["type"]
-            exporter_cls = EXPORTER_REGISTRY.get(exporter_type)
-            if not exporter_cls:
-                raise DownloadDataException(f"Exporter type not found: {exporter_type}")
+                    exporter_type = config["type"]
+                    exporter_cls = EXPORTER_REGISTRY.get(exporter_type)
+                    if not exporter_cls:
+                        raise DownloadDataException(f"Exporter type not found: {exporter_type}")
 
-            self.step_info("export", f"Exporting with {exporter_type}",
-                           extra={"export_mode": str(export_mode), "config": config})
-            exporter = exporter_cls()
-            exporter.run(data_to_export, config, self.opts)
+                    self.step_info("export", f"Exporting with {exporter_type}",
+                                extra={"export_mode": str(export_mode), "config": config})
+                    exporter = exporter_cls()
+                    exporter.run(data_to_export, config, self.opts)
 
-            # Mark that at least one exporter was triggered
-            ran_exporter = True
+                    # Mark that at least one exporter was triggered
+                    ran_exporter = True
 
-        # If we never ran an exporter, log a warning
-        if not ran_exporter:
-            logger.warning(
-                "No exporters matched group=%r. No data was exported.",
-                self.opts.get("group")
-            )
+                # If we never ran an exporter, log a warning
+                if not ran_exporter:
+                    logger.warning(
+                        "No exporters matched group=%r. No data was exported.",
+                        self.opts.get("group")
+                    )
+                
+                span.set_tag("export.status", "success")
+                span.set_data("export.count", len([c for c in self.exporters if self.opts["group"] in c.get("groups", [])]))
+                
+            except Exception as e:
+                span.set_tag("export.status", "error")
+                span.set_tag("error.type", type(e).__name__)
+                raise
 
     def post_export(self):
         """
@@ -862,3 +929,4 @@ class ScraperBase:
         start_time = self.time_markers[label]["start"]
         now_time = datetime.now()
         return (now_time - start_time).total_seconds()
+    

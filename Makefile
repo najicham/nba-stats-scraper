@@ -212,3 +212,21 @@ emergency-stop: ## Emergency stop all services
 
 emergency-reset: emergency-stop clean-all dev-start ## Emergency reset everything
 	@echo "🚨 Emergency reset complete"
+
+# Monitoring Commands
+status: ## Complete system status check
+	./monitoring/scripts/system_status.sh
+
+debug: ## Debug scraper issues
+	./monitoring/scripts/scraper_debug.sh
+
+api-test: ## Test API connectivity
+	./tools/health/api_connectivity.sh
+
+dev-helpers: ## Load development helper functions
+	@echo "Run: source tools/development/dev_helpers.sh"
+	@echo "Then use: dev_start, dev_stop, dev_test, dev_debug, dev_logs"
+
+aliases: ## Load monitoring aliases
+	@echo "Run: source monitoring/scripts/aliases.sh"
+	@echo "Then use: nba-status, nba-debug, nba-test, nba-restart"
