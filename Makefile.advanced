@@ -1,0 +1,8 @@
+# Advanced/Complex operations (include only when needed)
+
+# All your existing complex targets can go here:
+# - build-prod, deploy-staging, test-integration
+# - db-reset, infra-destroy, emergency-reset
+# - monitoring, debugging, etc.
+
+# Include this file in main Makefile when you need the complexity

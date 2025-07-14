@@ -1,40 +1,24 @@
-# scrapers/requirements.txt
-# Existing dependencies (keep these)
-bitarray==3.4.2
-cachetools==5.5.2
-certifi==2025.4.26
-charset-normalizer==3.4.2
-google-api-core==2.25.0rc1
-google-auth==2.40.2
-google-cloud-core==2.4.3
-google-cloud-storage==3.1.0
-google-crc32c==1.7.1
-google-resumable-media==2.7.2
-googleapis-common-protos==1.70.0
-idna==3.10
+# NBA Scrapers specific dependencies (change more frequently)
+
+# PDF processing (scraper-specific)
 pdfreader==0.1.15
+
+# Image processing (scraper-specific)  
 pillow==11.2.1
-proto-plus==1.26.1
-protobuf==6.31.1
-pyasn1==0.6.1
-pyasn1_modules==0.4.2
-pycryptodome==3.23.0
-pytest==8.4.0
-python-dateutil==2.9.0.post0
-pytz==2025.2
-requests==2.32.3
-rsa==4.9.1
-six==1.17.0
-slack_sdk==3.35.0
-urllib3==2.4.0
+
+# Browser automation (scraper-specific)
 playwright==1.52.0
 playwright-stealth==2.0.0
 
-flask==2.3.3
-gunicorn==21.2.0
-python-dotenv==1.0.0
-jinja2==3.1.2
-werkzeug==2.3.7
-itsdangerous==2.1.2
-click==8.1.7
-blinker==1.7.0
+# Data structures (scraper-specific)
+bitarray==3.4.2
+
+# Testing (development)
+pytest==8.4.0
+
+# Communications (scraper-specific)
+slack_sdk==3.35.0
+
+# Google Protocol Buffers - REMOVED (use version from shared/requirements.txt)
+# proto-plus==1.26.1  # Already in shared
+# protobuf==6.31.1    # REMOVED - conflicts with google-cloud-bigquery

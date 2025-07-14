@@ -2,6 +2,7 @@
 main_scraper_service.py
 
 Single Cloud Run service that routes to all scrapers based on the 'scraper' parameter.
+FIXED: Import paths for sophisticated base image deployment.
 
 Usage:
   # Start service
@@ -24,30 +25,25 @@ from datetime import datetime, timezone
 from flask import Flask, request, jsonify
 from dotenv import load_dotenv
 
-# Add scrapers to path
-sys.path.insert(0, os.path.dirname(__file__))
-
-# Import all scraper classes
+# Import all scraper classes - FIXED for root deployment
 SCRAPER_REGISTRY = {
-    # Odds API scrapers
-    "oddsa_events_his": ("oddsapi.oddsa_events_his", "GetOddsApiHistoricalEvents"),
-    "oddsa_events": ("oddsapi.oddsa_events", "GetOddsApiEvents"),
-    "oddsa_player_props": ("oddsapi.oddsa_player_props", "GetOddsApiPlayerProps"),
+    # Odds API scrapers (WITH 'scrapers.' prefix for root deployment)
+    "oddsa_events_his": ("scrapers.oddsapi.oddsa_events_his", "GetOddsApiHistoricalEvents"),
+    "oddsa_events": ("scrapers.oddsapi.oddsa_events", "GetOddsApiEvents"),
+    "oddsa_player_props": ("scrapers.oddsapi.oddsa_player_props", "GetOddsApiPlayerProps"),
     
-    # Ball Don't Lie scrapers
-    "bdl_players": ("balldontlie.bdl_players", "GetBallDontLiePlayers"),
-    "bdl_games": ("balldontlie.bdl_games", "GetBallDontLieGames"),
-    "bdl_box_scores": ("balldontlie.bdl_box_scores", "GetBallDontLieBoxScores"),
+    # Ball Don't Lie scrapers  
+    "bdl_players": ("scrapers.balldontlie.bdl_players", "GetBallDontLiePlayers"),
+    "bdl_games": ("scrapers.balldontlie.bdl_games", "GetBallDontLieGames"),
+    "bdl_box_scores": ("scrapers.balldontlie.bdl_box_scores", "GetBallDontLieBoxScores"),
     
     # ESPN scrapers
-    "espn_roster": ("espn.espn_roster", "GetEspnRoster"),
-    "espn_scoreboard": ("espn.espn_scoreboard_api", "GetEspnScoreboard"),
+    "espn_roster": ("scrapers.espn.espn_roster", "GetEspnRoster"), 
+    "espn_scoreboard": ("scrapers.espn.espn_scoreboard_api", "GetEspnScoreboard"),
     
     # NBA.com scrapers
-    "nbac_roster": ("nbacom.nbac_roster", "GetNbaComRoster"),
-    "nbac_schedule": ("nbacom.nbac_current_schedule_v2_1", "GetNbaComSchedule"),
-    
-    # Add more scrapers as you convert them...
+    "nbac_roster": ("scrapers.nbacom.nbac_roster", "GetNbaComRoster"),
+    "nbac_schedule": ("scrapers.nbacom.nbac_current_schedule_v2_1", "GetNbaComSchedule"),
 }
 
 def create_app():
@@ -66,6 +62,7 @@ def create_app():
             "status": "healthy",
             "service": "nba-scrapers",
             "version": "1.0.0",
+            "deployment": "sophisticated-base-image",
             "available_scrapers": list(SCRAPER_REGISTRY.keys()),
             "timestamp": datetime.now(timezone.utc).isoformat()
         }), 200
@@ -113,15 +110,26 @@ def create_app():
             
             module_path, class_name = SCRAPER_REGISTRY[scraper_name]
             
-            # Dynamic import of the scraper class
+            # Dynamic import of the scraper class - FIXED import path
             try:
+                app.logger.info(f"Loading scraper: {scraper_name} from {module_path}")
                 module = __import__(module_path, fromlist=[class_name])
                 scraper_class = getattr(module, class_name)
+                app.logger.info(f"Successfully loaded {class_name}")
             except (ImportError, AttributeError) as e:
                 app.logger.error(f"Failed to import scraper {scraper_name}: {e}")
+                # Add debugging info for import errors
+                app.logger.error(f"Module path: {module_path}")
+                app.logger.error(f"Python path: {sys.path}")
+                app.logger.error(f"Working directory: {os.getcwd()}")
                 return jsonify({
                     "error": f"Failed to load scraper: {scraper_name}",
-                    "details": str(e)
+                    "details": str(e),
+                    "module_path": module_path,
+                    "debug_info": {
+                        "python_path": sys.path,
+                        "working_dir": os.getcwd()
+                    }
                 }), 500
             
             # Remove 'scraper' from params before passing to scraper
@@ -136,6 +144,7 @@ def create_app():
                 logging.getLogger().setLevel(logging.DEBUG)
             
             # Run the scraper
+            app.logger.info(f"Running scraper {scraper_name} with params: {scraper_params}")
             scraper = scraper_class()
             result = scraper.run(scraper_params)
             

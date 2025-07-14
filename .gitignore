@@ -67,3 +67,7 @@ crash.log
 # ── Editor / OS noise (optional) ─────────────────────────
 *.swp
 .DS_Store
+Makefile.complex
+
+.last_image
+

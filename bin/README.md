@@ -1,112 +1,170 @@
-# Dev Ops Pocket Guide  
-*(place this file at **`bin/README.md`** so it lives next to the helper scripts)*
+# NBA Scrapers DevOps Guide
+*Simple unified architecture for NBA stats scraping*
 
 ---
 
-## 1  Helper scripts in `bin/`
-
-### **build_image.sh** — build & push container  
-```bash
-# Build mutable “dev” tag
-./bin/build_image.sh dev
-
-# Build immutable tag based on current Git commit
-./bin/build_image.sh $(git rev-parse --short HEAD)
-````
-
-*Environment overrides*
-`PROJECT` (default *nba‑props‑platform*), `REGION` (*us‑west2*), `TAG` (first arg).
-On success, the script writes the full image URI to **`.last_image`**.
-
----
-
-### **deploy\_run.sh** — deploy / update Cloud Run service
+## 1. Quick Commands
 
 ```bash
-# Deploy odds player‑props scraper
-./bin/deploy_run.sh odds-player-props scrapers.oddsapi.oddsa_player_props
+# Deploy scrapers to Cloud Run
+make deploy
+
+# Test the deployment
+make test
+
+# View recent logs
+make logs
+
+# Deploy and test in one command
+make deploy-test
 ```
 
-*Positional args*
-`SERVICE` = Cloud Run service name
-`MODULE`  = Python module to execute (`python -m …`)
-
-*Environment overrides* `PROJECT`, `REGION`.
-The image URI is read from `.last_image`.
-
 ---
 
-### **deploy\_workflow\.sh** — deploy / update a Workflow
+## 2. Helper Scripts in `bin/`
 
+### **deploy_scrapers.sh** — Deploy unified scraper service
 ```bash
-./bin/deploy_workflow.sh odds_ingest workflows/odds_ingest.yaml
+./bin/deploy_scrapers.sh
 ```
 
-`NAME` = workflow name  `FILE` = path to YAML
-Env `PROJECT`, `REGION` override defaults.
+Deploys the unified NBA scrapers service to Cloud Run using source-based deployment.
+
+*Requirements*:
+- `ODDS_API_KEY` environment variable must be set
+- Authenticated with gcloud (`gcloud auth login`)
 
 ---
 
-## 2  Common Cloud Run / Workflow commands
+### **test_scrapers.sh** — Test the deployed service
+```bash
+./bin/test_scrapers.sh
+```
+
+Runs comprehensive tests:
+- Health check
+- Available scrapers list
+- Odds API historical events test
+- GCS bucket verification
+
+---
+
+### **logs_scrapers.sh** — View recent logs
+```bash
+./bin/logs_scrapers.sh
+```
+
+Shows the last 20 log entries from the NBA scrapers service.
+
+---
+
+### **deploy_workflow.sh** — Deploy Workflows (unchanged)
+```bash
+./bin/deploy_workflow.sh workflow_name path/to/workflow.yaml
+```
+
+Still used for deploying Google Cloud Workflows when needed.
+
+---
+
+## 3. Development Workflow
+
+### Simple 2-step loop:
+```bash
+# 1. Deploy your changes
+make deploy
+
+# 2. Test they work
+make test
+```
+
+### Debug if needed:
+```bash
+# Check logs
+make logs
+
+# Check service status
+gcloud run services describe nba-scrapers --region us-west2
+```
+
+---
+
+## 4. Architecture Overview
+
+**Unified Service**: Single Cloud Run service (`nba-scrapers`) handles all scraper types
+**Routing**: POST to `/scrape` with `{"scraper": "oddsa_events_his", ...}`
+**Available Scrapers**: GET `/scrapers` to see all available scrapers
+
+### Example API calls:
+```bash
+# List available scrapers
+curl https://nba-scrapers-[hash].a.run.app/scrapers
+
+# Run odds historical events scraper
+curl -X POST https://nba-scrapers-[hash].a.run.app/scrape \
+  -H "Content-Type: application/json" \
+  -d '{
+    "scraper": "oddsa_events_his",
+    "sport": "basketball_nba",
+    "date": "2025-07-13T00:00:00Z"
+  }'
+```
+
+---
+
+## 5. Useful gcloud Commands
 
 ```bash
-# List Cloud Run services
+# List Cloud Run services
 gcloud run services list --region us-west2
 
-# List revisions of one service
-gcloud run revisions list --service odds-player-props --region us-west2
+# Get service URL
+gcloud run services describe nba-scrapers --region us-west2 --format="value(status.url)"
 
-# Tail last 20 log lines
-gcloud logging read \
-  'resource.type="cloud_run_revision" AND resource.labels.service_name="odds-player-props"' \
-  --limit 20 --freshness 1h --project $PROJECT
+# View detailed logs
+gcloud run services logs read nba-scrapers --region us-west2 --limit 50
 
-# List workflows
-gcloud workflows list --location us-west2
-
-# List recent executions of a workflow
-gcloud workflows executions list odds_ingest_workflow --location us-west2 --limit 5
+# Check recent GCS files
+gsutil ls gs://nba-analytics-raw-data/oddsapi/historical-events/ | tail -10
 ```
 
 ---
 
-## 3  Terraform basics (infra/ directory)
+## 6. Troubleshooting
 
-```bash
-# Preview changes
-cd infra && terraform plan
+### Common Issues:
 
-# Apply updated image tag or config
-terraform apply -auto-approve
-```
+**Deployment fails**:
+- Check `ODDS_API_KEY` is set: `echo $ODDS_API_KEY`
+- Verify gcloud auth: `gcloud auth list`
 
-*(Add `lifecycle { ignore_changes = [ template[0].containers[0].image ] }`
-to your Cloud Run resource if you prefer to deploy images with `gcloud run`
-and let Terraform ignore tag drift.)*
+**Service returns errors**:
+- Check logs: `make logs`
+- Test health endpoint: `curl $SERVICE_URL/health`
 
----
-
-## 4  Three‑step dev loop
-
-```bash
-# 1. Build & push new image
-./bin/build_image.sh $(git rev-parse --short HEAD)
-
-# 2. Deploy / update Cloud Run service
-./bin/deploy_run.sh odds-player-props scrapers.oddsapi.oddsa_player_props
-
-# 3. Trigger workflow & verify
-gcloud workflows run odds_ingest_workflow --location us-west2
-```
+**No data in GCS**:
+- Normal for empty snapshots (204 responses)
+- Check logs for any error messages
 
 ---
 
-## 5  Console quick links
+## 7. Archived Scripts
 
-* **Cloud Run › Services** → logs & metrics per service
-* **Workflows › Executions** → step‑level status & errors
-* **BigQuery › ops.scraper\_runs** → STARTED / SUCCESS / FAILED rows
+Previous multi-service architecture scripts are preserved in `bin/archive/`:
+- `build_image.sh` - Container building
+- `deploy_all_services.sh` - Multi-service deployment  
+- `deploy_cloud_run.sh` - Complex deployment
+- `deploy_run.sh` - Individual service deployment
 
-Memorise the three‑step loop, keep this guide handy for everything else, and you’re set. 🌴🚀
+These can be referenced if returning to a multi-service architecture later.
 
-```
+---
+
+## 8. Future Growth
+
+**Phase 1** (current): Simple unified service  
+**Phase 2**: Add more scrapers to the unified service  
+**Phase 3**: Add automation (Cloud Scheduler, monitoring)  
+**Phase 4**: Add sophistication (Cloud Build, Terraform, multiple environments)
+
+Keep it simple until you need the complexity! 🚀

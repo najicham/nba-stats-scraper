@@ -1,36 +1,30 @@
 # scrapers/Dockerfile
-# NBA Scrapers service - builds FROM base image
-ARG PROJECT_ID
-FROM nba-base
+# Simple self-contained version for Cloud Run deployment
 
-# Switch to root temporarily to install dependencies
-USER root
+FROM python:3.11-slim
 
-# Copy scrapers-specific requirements and install
-COPY scrapers/requirements.txt /app/scrapers/
-RUN pip install --no-cache-dir -r scrapers/requirements.txt
+# Set working directory
+WORKDIR /app
 
-# Copy the scrapers package and entry point
-COPY scrapers/ /app/scrapers/
-COPY scrapers/docker-entrypoint.sh /app/
-RUN chmod +x /app/docker-entrypoint.sh
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    gcc \
+    g++ \
+    && rm -rf /var/lib/apt/lists/*
 
-# Note: .env files should be provided at runtime via docker-compose or deployment
-# Don't copy .env files into the image for security
+# Copy requirements and install Python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Set ownership and switch back to non-root user
-RUN chown -R appuser:appuser /app
-USER appuser
+# Copy all application code
+COPY . .
 
-# Expose port for scrapers service
+# Set Python path for imports
+ENV PYTHONPATH=/app
+
+# Expose port
 EXPOSE 8080
 
-# Health check for scrapers
-HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-  CMD curl -f http://localhost:8080/health || exit 1
-
-# Use entrypoint script for flexibility
-ENTRYPOINT ["/app/docker-entrypoint.sh"]
-
-# Default to web service mode
-CMD ["--serve"]
+# Run the Flask application directly
+CMD exec python main_scraper_service.py --port ${PORT:-8080} --host 0.0.0.0
