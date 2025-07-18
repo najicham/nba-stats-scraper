@@ -1,7 +1,7 @@
 """
-BALLDONTLIE – Box‑Scores (final) endpoint                 v1.1 • 2025‑06‑24
+BALLDONTLIE - Box-Scores (final) endpoint                 v1.1 • 2025-06-24
 -------------------------------------------------------------------------------
-Finished‑game box scores:
+Finished-game box scores:
 
     https://api.balldontlie.io/v1/box_scores
 
@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 # Scraper                                                                     #
 # --------------------------------------------------------------------------- #
 class BdlBoxScoresScraper(ScraperBase):
-    """Daily or on‑demand scraper for /box_scores."""
+    """Daily or on-demand scraper for /box_scores."""
 
     required_opts: List[str] = []
     download_type = DownloadType.JSON
@@ -70,7 +70,7 @@ class BdlBoxScoresScraper(ScraperBase):
     def set_url(self) -> None:
         self.base_url = self._API_ROOT
         self.url = f"{self.base_url}?date={self.opts['date']}&per_page=100"
-        logger.debug("Box‑scores URL: %s", self.url)
+        logger.debug("Box-scores URL: %s", self.url)
 
     def set_headers(self) -> None:
         api_key = self.opts.get("apiKey") or os.getenv("BDL_API_KEY")
@@ -86,7 +86,7 @@ class BdlBoxScoresScraper(ScraperBase):
     # ------------------------------------------------------------------ #
     def validate_download_data(self) -> None:
         if not isinstance(self.decoded_data, dict) or "data" not in self.decoded_data:
-            raise ValueError("Box‑scores response malformed: missing 'data' key")
+            raise ValueError("Box-scores response malformed: missing 'data' key")
 
     # ------------------------------------------------------------------ #
     # Transform (cursor‑safe)                                            #

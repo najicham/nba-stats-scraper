@@ -1,12 +1,13 @@
-# scrapers/nbacom/nbac_team_roster.py
+# scrapers/nbacom/nbac_roster.py
 """
 NBA.com team roster scraper                               v2.1 - 2025-06-17
 --------------------------------------------------------------------------
-CLI quick‑start (debug OFF):
-    python -m scrapers.nbacom.nbac_team_roster --teamAbbr GSW
+Downloads current team rosters from NBA.com team pages by parsing embedded
+JSON data. Essential for tracking active players for prop betting analysis.
 
-Enable debug dumps:
-    python -m scrapers.nbacom.nbac_team_roster --teamAbbr GSW --debug 1
+CLI example
+-----------
+    python -m scrapers.nbacom.nbac_team_roster --teamAbbr GSW --debug
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from ..scraper_base import DownloadType, ExportMode, ScraperBase
 from ..utils.exceptions import DownloadDataException
-from config.nba_teams import NBA_TEAMS
+from shared.config.nba_teams import NBA_TEAMS
 
 logger = logging.getLogger("scraper_base")
 
@@ -33,7 +34,7 @@ class PlayerItem(BaseModel):
     PLAYER: str = Field(...)
     PLAYER_SLUG: str = Field(...)
     PLAYER_ID: int = Field(...)
-    NUM: str = Field(...)
+    NUM: str | None = Field(...)  # Allow None for players without jersey numbers
     POSITION: str = Field(...)
 
 
@@ -68,16 +69,30 @@ class GetNbaTeamRoster(ScraperBase):
     exporters = [
         {
             "type": "file",
-            "filename": "/tmp/roster_%(teamAbbr)s_%(date)s.json",
+            "filename": "/tmp/nbacom_roster_%(teamAbbr)s_%(date)s.json",
             "export_mode": ExportMode.DATA,
             "pretty_print": True,
-            "groups": ["dev", "test"],
+            "groups": ["dev", "test", "prod"],
         },
         {
             "type": "gcs",
             "key": "nba/rosters/%(season)s/%(date)s/%(teamAbbr)s_%(time)s.json",
             "export_mode": ExportMode.DATA,
             "groups": ["prod", "gcs"],
+        },
+        # ADD CAPTURE EXPORTERS for testing with capture.py
+        {
+            "type": "file",
+            "filename": "/tmp/raw_%(run_id)s.html",
+            "export_mode": ExportMode.RAW,
+            "groups": ["capture"],
+        },
+        {
+            "type": "file",
+            "filename": "/tmp/exp_%(run_id)s.json",
+            "export_mode": ExportMode.DATA,
+            "pretty_print": True,
+            "groups": ["capture"],
         },
     ]
 
@@ -107,8 +122,69 @@ class GetNbaTeamRoster(ScraperBase):
 
     # ------------------------------------------------------------ validation
     def validate_download_data(self) -> None:
-        if not self.decoded_data or "<html" not in self.decoded_data.lower():
-            raise DownloadDataException("Roster page HTML missing or empty.")
+        if not self.decoded_data:
+            raise DownloadDataException("Roster page HTML is empty")
+            
+        if not isinstance(self.decoded_data, str):
+            raise DownloadDataException("Roster page response is not HTML text")
+            
+        if "<html" not in self.decoded_data.lower():
+            raise DownloadDataException("Response does not appear to be valid HTML")
+            
+        if len(self.decoded_data) < 1000:
+            raise DownloadDataException("HTML response suspiciously short - possible error page")
+
+    # ------------------------------------------------------------ enhanced validation
+    def validate_roster_data(self) -> None:
+        """
+        Production validation for roster data quality.
+        """
+        players = self.data["players"]
+        
+        # 1. REASONABLE PLAYER COUNT CHECK
+        player_count = len(players)
+        if player_count < 8:
+            raise DownloadDataException(f"Suspiciously low player count: {player_count} (expected 12-20)")
+        elif player_count > 25:
+            raise DownloadDataException(f"Suspiciously high player count: {player_count} (expected 12-20)")
+        
+        # 2. REQUIRED PLAYER FIELDS VALIDATION
+        required_fields = ['name', 'slug', 'playerId', 'number', 'position']
+        for i, player in enumerate(players[:5]):  # Check first 5 players
+            for field in required_fields:
+                if field not in player or not player[field]:
+                    raise DownloadDataException(f"Player {i}: Missing or empty required field '{field}': {player}")
+        
+        # 3. PLAYER ID VALIDATION
+        player_ids = [p.get('playerId') for p in players if p.get('playerId')]
+        if len(player_ids) != len(set(player_ids)):
+            raise DownloadDataException("Duplicate player IDs found in roster")
+        
+        # Check for reasonable player ID values
+        for player in players[:3]:  # Check first 3
+            player_id = player.get('playerId')
+            if not isinstance(player_id, int) or player_id <= 0:
+                raise DownloadDataException(f"Invalid player ID: {player_id} for player {player.get('name')}")
+        
+        # 4. POSITION VALIDATION
+        valid_positions = {'G', 'F', 'C', 'PG', 'SG', 'SF', 'PF', 'G-F', 'F-G', 'F-C', 'C-F'}
+        invalid_positions = []
+        for player in players:
+            position = player.get('position', '').upper()
+            if position and position not in valid_positions:
+                invalid_positions.append(f"{player.get('name')}: {position}")
+        
+        if invalid_positions:
+            # Log warning but don't fail - positions might have new formats
+            logger.warning(f"Unusual position formats found: {invalid_positions[:3]}")
+        
+        # 5. TEAM CONSISTENCY CHECK
+        team_abbr = self.data.get('teamAbbr', '').upper()
+        expected_abbr = self.opts.get('teamAbbr', '').upper()
+        if team_abbr != expected_abbr:
+            logger.warning(f"Team abbreviation mismatch: expected {expected_abbr}, got {team_abbr}")
+        
+        logger.info(f"✅ Roster validation passed: {player_count} players for {team_abbr}")
 
     # ------------------------------------------------------------ transform
     def transform_data(self) -> None:
@@ -120,18 +196,26 @@ class GetNbaTeamRoster(ScraperBase):
             self._debug_write_all_scripts(soup)
 
         tag = soup.find("script", id="__NEXT_DATA__")
-        if not tag or not tag.string:
-            raise DownloadDataException("__NEXT_DATA__ script not found.")
+        if not tag:
+            raise DownloadDataException("__NEXT_DATA__ script tag not found in HTML")
+            
+        if not tag.string:
+            raise DownloadDataException("__NEXT_DATA__ script tag is empty")
 
         try:
             json_text = tag.string[tag.string.find("{") :]
             raw_json = json.loads(json_text)
             parsed = NextData(**raw_json)
-        except (json.JSONDecodeError, ValidationError) as exc:
+        except json.JSONDecodeError as exc:
+            if self.debug_enabled:
+                self._debug_write_embedded_json(tag.string)
+                self._store_fallback_json(tag.string, reason="JSONDecodeError")
+            raise DownloadDataException(f"Failed to parse embedded JSON: {exc}")
+        except ValidationError as exc:
             if self.debug_enabled:
                 self._debug_write_embedded_json(tag.string)
                 self._store_fallback_json(tag.string, reason="ValidationError")
-            raise DownloadDataException(f"Roster JSON invalid: {exc}")
+            raise DownloadDataException(f"Roster data structure validation failed: {exc}")
 
         roster_items = parsed.props.pageProps.team.roster
 
@@ -140,13 +224,20 @@ class GetNbaTeamRoster(ScraperBase):
                 "name": p.PLAYER,
                 "slug": p.PLAYER_SLUG,
                 "playerId": p.PLAYER_ID,
-                "number": p.NUM,
+                "number": p.NUM or "N/A",  # Handle None jersey numbers
                 "position": p.POSITION,
             }
             for p in roster_items
         ]
 
         self.data = {
+            "metadata": {
+                "teamAbbr": self.opts["teamAbbr"],
+                "teamId": self.opts["teamId"],
+                "season": self.opts["season"],
+                "fetchedUtc": datetime.now(timezone.utc).isoformat(),
+                "playerCount": len(players),
+            },
             "teamAbbr": self.opts["teamAbbr"],
             "teamId": self.opts["teamId"],
             "season": self.opts["season"],
@@ -156,34 +247,53 @@ class GetNbaTeamRoster(ScraperBase):
         }
 
         logger.info("Found %d players for %s", len(players), self.opts["teamAbbr"])
+        
+        # Add production validation
+        self.validate_roster_data()
+
+    # ------------------------------------------------------------ only save if we have reasonable data
+    def should_save_data(self) -> bool:
+        if not isinstance(self.data, dict):
+            return False
+        return self.data.get("playerCount", 0) > 0
 
     # ------------------------------------------------------------ stats
     def get_scraper_stats(self) -> dict:
-        return {"teamAbbr": self.opts["teamAbbr"], "playerCount": self.data["playerCount"]}
+        return {
+            "teamAbbr": self.opts["teamAbbr"],
+            "teamId": self.opts.get("teamId"),
+            "players": self.data.get("playerCount", 0),
+        }
 
     # ------------------------------------------------------------ debug helpers
     def _debug_write_html(self) -> None:
         try:
             with open("/tmp/roster_page.html", "w", encoding="utf-8") as fh:
                 fh.write(self.decoded_data)
+            logger.info("Debug: Saved HTML to /tmp/roster_page.html")
         except Exception as exc:
             logger.warning("Failed to dump HTML: %s", exc)
 
     def _debug_write_all_scripts(self, soup: BeautifulSoup) -> None:
         debug_dir = "/tmp/debug_scripts"
         os.makedirs(debug_dir, exist_ok=True)
+        script_count = 0
         for idx, tag in enumerate(soup.find_all("script")):
-            path = os.path.join(debug_dir, f"script_{idx}.txt")
-            try:
-                with open(path, "w", encoding="utf-8") as fh:
-                    fh.write(tag.string or "")
-            except Exception as exc:
-                logger.warning("Failed to write %s: %s", path, exc)
+            if tag.string:  # Only write scripts with content
+                path = os.path.join(debug_dir, f"script_{idx}.txt")
+                try:
+                    with open(path, "w", encoding="utf-8") as fh:
+                        fh.write(tag.string)
+                    script_count += 1
+                except Exception as exc:
+                    logger.warning("Failed to write %s: %s", path, exc)
+        logger.info(f"Debug: Saved {script_count} scripts to {debug_dir}")
 
     def _debug_write_embedded_json(self, text: str) -> None:
         try:
             with open("/tmp/debug_embedded.json", "w", encoding="utf-8") as fh:
                 fh.write(text)
+            logger.info("Debug: Saved embedded JSON to /tmp/debug_embedded.json")
         except Exception as exc:
             logger.warning("Failed to write embedded JSON: %s", exc)
 
@@ -222,13 +332,22 @@ def gcf_entry(request):  # type: ignore[valid-type]
 
 
 # ---------------------------------------------------------------------- #
-# Local CLI usage
+# CLI helper with standardized arguments
 # ---------------------------------------------------------------------- #
 if __name__ == "__main__":
     import argparse
+    from scrapers.utils.cli_utils import add_common_args
 
-    cli = argparse.ArgumentParser(description="Run NBA.com team roster locally")
-    cli.add_argument("--teamAbbr", required=True, help="e.g. GSW")
-    cli.add_argument("--group", default="test")
-    cli.add_argument("--debug", default="0", help="1/true to enable debug dumps")
-    GetNbaTeamRoster().run(vars(cli.parse_args()))
+    cli = argparse.ArgumentParser(description="NBA.com Team Roster Scraper")
+    cli.add_argument("--teamAbbr", required=True, help="Team abbreviation (e.g. GSW, LAL, BOS)")
+    add_common_args(cli)  # Adds --group, --runId, --debug logging, etc.
+    args = cli.parse_args()
+
+    # Enable debug logging if requested (standardized --debug flag from add_common_args)
+    if args.debug:
+        logging.getLogger().setLevel(logging.DEBUG)
+        # Also enable roster-specific debug dumps
+        args.debug = "1"  # Convert to format expected by roster scraper
+
+    GetNbaTeamRoster().run(vars(args))
+    

@@ -1,0 +1,470 @@
+[
+  {
+    "date": "03/15/25",
+    "gametime": "06:00 (ET)",
+    "matchup": "BOS@BKN",
+    "team": "Nets",
+    "player": "Claxton, Nic",
+    "status": "Out",
+    "reason": "Rest"
+  },
+  {
+    "date": "03/15/25",
+    "gametime": "06:00 (ET)",
+    "matchup": "BOS@BKN",
+    "team": "Nets",
+    "player": "Clowney, Noah",
+    "status": "Out",
+    "reason": "Injury/Illness Right Ankle; Sprain"
+  },
+  {
+    "date": "03/15/25",
+    "gametime": "06:00 (ET)",
+    "matchup": "BOS@BKN",
+    "team": "Nets",
+    "player": "Etienne, Tyson",
+    "status": "Out",
+    "reason": "G League - Two Way"
+  },
+  {
+    "date": "03/15/25",
+    "gametime": "06:00 (ET)",
+    "matchup": "BOS@BKN",
+    "team": "Nets",
+    "player": "Evbuomwan, Tosan",
+    "status": "Out",
+    "reason": "G League - Two Way"
+  },
+  {
+    "date": "03/15/25",
+    "gametime": "06:00 (ET)",
+    "matchup": "BOS@BKN",
+    "team": "Nets",
+    "player": "Melton, De'Anthony",
+    "status": "Out",
+    "reason": "Injury/Illness Left Knee; ACL Tear"
+  },
+  {
+    "date": "03/15/25",
+    "gametime": "06:00 (ET)",
+    "matchup": "BOS@BKN",
+    "team": "Nets",
+    "player": "Thomas, Cam",
+    "status": "Out",
+    "reason": "Injury/Illness Left Hamstring; Management"
+  },
+  {
+    "date": "03/15/25",
+    "gametime": "06:00 (ET)",
+    "matchup": "BOS@BKN",
+    "team": "Nets",
+    "player": "Watford, Trendon",
+    "status": "Out",
+    "reason": "Injury/Illness Left Hamstring; Management"
+  },
+  {
+    "date": "03/15/25",
+    "gametime": "06:00 (ET)",
+    "matchup": "BOS@BKN",
+    "team": "Nets",
+    "player": "Whitehead, Dariq",
+    "status": "Out",
+    "reason": "G League - On Assignment"
+  },
+  {
+    "date": "03/15/25",
+    "gametime": "07:00 (ET)",
+    "matchup": "OKC@DET",
+    "team": "Thunder",
+    "player": "Carlson, Branden",
+    "status": "Out",
+    "reason": "G League - Two Way"
+  },
+  {
+    "date": "03/15/25",
+    "gametime": "07:00 (ET)",
+    "matchup": "OKC@DET",
+    "team": "Thunder",
+    "player": "Ducas, Alex",
+    "status": "Out",
+    "reason": "G League - Two Way"
+  },
+  {
+    "date": "03/15/25",
+    "gametime": "07:00 (ET)",
+    "matchup": "OKC@DET",
+    "team": "Thunder",
+    "player": "Hartenstein, Isaiah",
+    "status": "Available",
+    "reason": "Injury/Illness Nasal; Fracture"
+  },
+  {
+    "date": "03/15/25",
+    "gametime": "07:00 (ET)",
+    "matchup": "OKC@DET",
+    "team": "Thunder",
+    "player": "Holmgren, Chet",
+    "status": "Out",
+    "reason": "Rest"
+  },
+  {
+    "date": "03/15/25",
+    "gametime": "07:00 (ET)",
+    "matchup": "OKC@DET",
+    "team": "Thunder",
+    "player": "Jones, Dillon",
+    "status": "Probable",
+    "reason": "G League - On Assignment"
+  },
+  {
+    "date": "03/15/25",
+    "gametime": "07:00 (ET)",
+    "matchup": "OKC@DET",
+    "team": "Thunder",
+    "player": "Mitchell, Ajay",
+    "status": "Out",
+    "reason": "Injury/Illness Right Great Toe; Surgery"
+  },
+  {
+    "date": "03/15/25",
+    "gametime": "07:00 (ET)",
+    "matchup": "OKC@DET",
+    "team": "Thunder",
+    "player": "Topic, Nikola",
+    "status": "Out",
+    "reason": "Injury/Illness Left Knee; Surgery"
+  },
+  {
+    "date": "03/15/25",
+    "gametime": "01:30",
+    "matchup": "OKC@DET",
+    "team": "Thunder",
+    "player": "Wiggins, Aaron",
+    "status": "Questionable",
+    "reason": "Injury/Illness N/a; Illness"
+  },
+  {
+    "date": "03/15/25",
+    "gametime": "01:30",
+    "matchup": "OKC@DET",
+    "team": "Thunder",
+    "player": "Williams, Jalen",
+    "status": "Out",
+    "reason": "Injury/Illness Right Hip; Strain"
+  },
+  {
+    "date": "03/15/25",
+    "gametime": "01:30",
+    "matchup": "OKC@DET",
+    "team": "Detroit Pistons",
+    "player": "Harper Jr., Ron",
+    "status": "Out",
+    "reason": "G League - Two Way"
+  },
+  {
+    "date": "03/15/25",
+    "gametime": "01:30",
+    "matchup": "OKC@DET",
+    "team": "Detroit Pistons",
+    "player": "Ivey, Jaden",
+    "status": "Out",
+    "reason": "Injury/Illness Left Fibula; Fracture"
+  },
+  {
+    "date": "03/15/25",
+    "gametime": "01:30",
+    "matchup": "OKC@DET",
+    "team": "Detroit Pistons",
+    "player": "Jenkins, Daniss",
+    "status": "Out",
+    "reason": "G League - Two Way"
+  },
+  {
+    "date": "03/15/25",
+    "gametime": "01:30",
+    "matchup": "OKC@DET",
+    "team": "Detroit Pistons",
+    "player": "Klintman, Bobi",
+    "status": "Out",
+    "reason": "G League - On Assignment"
+  },
+  {
+    "date": "03/15/25",
+    "gametime": "01:30",
+    "matchup": "OKC@DET",
+    "team": "Detroit Pistons",
+    "player": "Smith, Tolu",
+    "status": "Out",
+    "reason": "G League - Two Way"
+  },
+  {
+    "date": "03/15/25",
+    "gametime": "08:00 (ET)",
+    "matchup": "CHI@HOU",
+    "team": "Chicago Bulls",
+    "player": "Ball, Lonzo",
+    "status": "Out",
+    "reason": "Injury/Illness Right Wrist; Sprain"
+  },
+  {
+    "date": "03/15/25",
+    "gametime": "08:00 (ET)",
+    "matchup": "CHI@HOU",
+    "team": "Chicago Bulls",
+    "player": "Dosunmu, Ayo",
+    "status": "Out",
+    "reason": "Injury/Illness Left Shoulder; Surgery"
+  },
+  {
+    "date": "03/15/25",
+    "gametime": "08:00 (ET)",
+    "matchup": "CHI@HOU",
+    "team": "Chicago Bulls",
+    "player": "Giddey, Josh",
+    "status": "Doubtful",
+    "reason": "Injury/Illness Right Ankle; Sprain"
+  },
+  {
+    "date": "03/15/25",
+    "gametime": "08:00 (ET)",
+    "matchup": "CHI@HOU",
+    "team": "Chicago Bulls",
+    "player": "Liddell, E.J.",
+    "status": "Out",
+    "reason": "G League - Two Way"
+  },
+  {
+    "date": "03/15/25",
+    "gametime": "08:00 (ET)",
+    "matchup": "CHI@HOU",
+    "team": "Chicago Bulls",
+    "player": "Miller, Emanuel",
+    "status": "Out",
+    "reason": "G League - Two Way"
+  },
+  {
+    "date": "03/15/25",
+    "gametime": "08:00 (ET)",
+    "matchup": "CHI@HOU",
+    "team": "Chicago Bulls",
+    "player": "White, Coby",
+    "status": "Probable",
+    "reason": "Injury/Illness Right Toe; Sesamoiditis"
+  },
+  {
+    "date": "03/15/25",
+    "gametime": "08:00 (ET)",
+    "matchup": "CHI@HOU",
+    "team": "Chicago Bulls",
+    "player": "Young, Jahmir",
+    "status": "Out",
+    "reason": "G League - Two Way"
+  },
+  {
+    "date": "03/15/25",
+    "gametime": "08:00 (ET)",
+    "matchup": "IND@MIL",
+    "team": "Milwaukee Bucks",
+    "player": "Antetokounmpo, Giannis",
+    "status": "Probable",
+    "reason": "Injury/Illness Left Calf; Strain"
+  },
+  {
+    "date": "03/15/25",
+    "gametime": "08:00 (ET)",
+    "matchup": "IND@MIL",
+    "team": "Milwaukee Bucks",
+    "player": "Lillard, Damian",
+    "status": "Probable",
+    "reason": "Injury/Illness Right Groin; Soreness"
+  },
+  {
+    "date": "03/15/25",
+    "gametime": "08:00 (ET)",
+    "matchup": "IND@MIL",
+    "team": "Milwaukee Bucks",
+    "player": "Porter Jr., Kevin",
+    "status": "Probable",
+    "reason": "Injury/Illness Left Ankle; Sprain"
+  },
+  {
+    "date": "03/15/25",
+    "gametime": "01:30",
+    "matchup": "IND@MIL",
+    "team": "Milwaukee Bucks",
+    "player": "Portis, Bobby",
+    "status": "Out",
+    "reason": "League Suspension"
+  },
+  {
+    "date": "03/15/25",
+    "gametime": "01:30",
+    "matchup": "IND@MIL",
+    "team": "Milwaukee Bucks",
+    "player": "Smith, Tyler",
+    "status": "Questionable",
+    "reason": "Injury/Illness Back; Spasms"
+  },
+  {
+    "date": "03/15/25",
+    "gametime": "08:30 (ET)",
+    "matchup": "NOP@SAS",
+    "team": "Pelicans",
+    "player": "Boston, Brandon",
+    "status": "Out",
+    "reason": "Injury/Illness Left Ankle; Stress Reaction"
+  },
+  {
+    "date": "03/15/25",
+    "gametime": "08:30 (ET)",
+    "matchup": "NOP@SAS",
+    "team": "Pelicans",
+    "player": "Brooks Jr., Keion",
+    "status": "Out",
+    "reason": "G League - Two Way"
+  },
+  {
+    "date": "03/15/25",
+    "gametime": "08:30 (ET)",
+    "matchup": "NOP@SAS",
+    "team": "Pelicans",
+    "player": "Jones, Herbert",
+    "status": "Out",
+    "reason": "Injury/Illness Right Shoulder; Torn Rotator Cuff"
+  },
+  {
+    "date": "03/15/25",
+    "gametime": "08:30 (ET)",
+    "matchup": "NOP@SAS",
+    "team": "Pelicans",
+    "player": "Missi, Yves",
+    "status": "Questionable",
+    "reason": "Injury/Illness Left Ankle; Sprain"
+  },
+  {
+    "date": "03/15/25",
+    "gametime": "08:30 (ET)",
+    "matchup": "NOP@SAS",
+    "team": "Pelicans",
+    "player": "Murray, Dejounte",
+    "status": "Out",
+    "reason": "Injury/Illness Right Achilles; Rupture"
+  },
+  {
+    "date": "03/15/25",
+    "gametime": "08:30 (ET)",
+    "matchup": "NOP@SAS",
+    "team": "Pelicans",
+    "player": "Quinones, Lester",
+    "status": "Out",
+    "reason": "G League - Two Way"
+  },
+  {
+    "date": "03/15/25",
+    "gametime": "08:30 (ET)",
+    "matchup": "NYK@GSW",
+    "team": "Knicks",
+    "player": "Brunson, Jalen",
+    "status": "Out",
+    "reason": "Injury/Illness Right Ankle; Sprain"
+  },
+  {
+    "date": "03/15/25",
+    "gametime": "08:30 (ET)",
+    "matchup": "NYK@GSW",
+    "team": "Knicks",
+    "player": "Dadiet, Pacome",
+    "status": "Questionable",
+    "reason": "G League - On Assignment"
+  },
+  {
+    "date": "03/15/25",
+    "gametime": "08:30 (ET)",
+    "matchup": "NYK@GSW",
+    "team": "Knicks",
+    "player": "Hukporti, Ariel",
+    "status": "Out",
+    "reason": "Injury/Illness Left Knee; Meniscus Surgery"
+  },
+  {
+    "date": "03/15/25",
+    "gametime": "08:30 (ET)",
+    "matchup": "NYK@GSW",
+    "team": "Knicks",
+    "player": "McCullar Jr., Kevin",
+    "status": "Out",
+    "reason": "G League - Two Way"
+  },
+  {
+    "date": "03/15/25",
+    "gametime": "08:30 (ET)",
+    "matchup": "NYK@GSW",
+    "team": "Knicks",
+    "player": "Wright, Delon",
+    "status": "Questionable",
+    "reason": "Injury/Illness Illness; Illness"
+  },
+  {
+    "date": "03/15/25",
+    "gametime": "08:30 (ET)",
+    "matchup": "NYK@GSW",
+    "team": "Warriors",
+    "player": "Payton II, Gary",
+    "status": "Available",
+    "reason": "Injury/Illness Bilateral Nasal Bone; Fracture Facemask"
+  },
+  {
+    "date": "03/15/25",
+    "gametime": "01:30",
+    "matchup": "NYK@GSW",
+    "team": "Warriors",
+    "player": "Podziemski, Brandin",
+    "status": "Out",
+    "reason": "Injury/Illness Bilateral Low Back; Strain"
+  },
+  {
+    "date": "03/15/25",
+    "gametime": "09:00 (ET)",
+    "matchup": "WAS@DEN",
+    "team": "Washington Wizards",
+    "player": "Bey, Saddiq",
+    "status": "Out",
+    "reason": "Injury/Illness Left Knee; ACL surgery"
+  },
+  {
+    "date": "03/15/25",
+    "gametime": "09:00 (ET)",
+    "matchup": "WAS@DEN",
+    "team": "Washington Wizards",
+    "player": "Brogdon, Malcolm",
+    "status": "Out",
+    "reason": "Injury/Illness Left Ankle; Sprain"
+  },
+  {
+    "date": "03/15/25",
+    "gametime": "09:00 (ET)",
+    "matchup": "WAS@DEN",
+    "team": "Washington Wizards",
+    "player": "Coulibaly, Bilal",
+    "status": "Out",
+    "reason": "Injury/Illness Right Hamstring; Strain"
+  },
+  {
+    "date": "03/15/25",
+    "gametime": "09:00 (ET)",
+    "matchup": "WAS@DEN",
+    "team": "Washington Wizards",
+    "player": "Martin, Jaylen",
+    "status": "Out",
+    "reason": "G League - Two Way"
+  },
+  {
+    "date": "03/15/25",
+    "gametime": "09:00 (ET)",
+    "matchup": "WAS@DEN",
+    "team": "Washington Wizards",
+    "player": "Thor, JT",
+    "status": "Out",
+    "reason": "G League - Two Way"
+  }
+]

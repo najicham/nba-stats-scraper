@@ -1,0 +1,138 @@
+{
+  "scoreboard": {
+    "games": [
+      {
+        "gameId": "0022300555",
+        "homeTeam": {
+          "teamTricode": "PHI"
+        },
+        "awayTeam": {
+          "teamTricode": "HOU"
+        },
+        "gameStatus": 3,
+        "gameEt": "2024-01-15T00:00:00",
+        "gameCode": "20240115/HOUPHI"
+      },
+      {
+        "gameId": "0022300556",
+        "homeTeam": {
+          "teamTricode": "DAL"
+        },
+        "awayTeam": {
+          "teamTricode": "NOP"
+        },
+        "gameStatus": 3,
+        "gameEt": "2024-01-15T00:00:00",
+        "gameCode": "20240115/NOPDAL"
+      },
+      {
+        "gameId": "0022300557",
+        "homeTeam": {
+          "teamTricode": "NYK"
+        },
+        "awayTeam": {
+          "teamTricode": "ORL"
+        },
+        "gameStatus": 3,
+        "gameEt": "2024-01-15T00:00:00",
+        "gameCode": "20240115/ORLNYK"
+      },
+      {
+        "gameId": "0022300558",
+        "homeTeam": {
+          "teamTricode": "WAS"
+        },
+        "awayTeam": {
+          "teamTricode": "DET"
+        },
+        "gameStatus": 3,
+        "gameEt": "2024-01-15T00:00:00",
+        "gameCode": "20240115/DETWAS"
+      },
+      {
+        "gameId": "0022300559",
+        "homeTeam": {
+          "teamTricode": "ATL"
+        },
+        "awayTeam": {
+          "teamTricode": "SAS"
+        },
+        "gameStatus": 3,
+        "gameEt": "2024-01-15T00:00:00",
+        "gameCode": "20240115/SASATL"
+      },
+      {
+        "gameId": "0022300560",
+        "homeTeam": {
+          "teamTricode": "MEM"
+        },
+        "awayTeam": {
+          "teamTricode": "GSW"
+        },
+        "gameStatus": 3,
+        "gameEt": "2024-01-15T00:00:00",
+        "gameCode": "20240115/GSWMEM"
+      },
+      {
+        "gameId": "0022300561",
+        "homeTeam": {
+          "teamTricode": "CLE"
+        },
+        "awayTeam": {
+          "teamTricode": "CHI"
+        },
+        "gameStatus": 3,
+        "gameEt": "2024-01-15T00:00:00",
+        "gameCode": "20240115/CHICLE"
+      },
+      {
+        "gameId": "0022300562",
+        "homeTeam": {
+          "teamTricode": "BKN"
+        },
+        "awayTeam": {
+          "teamTricode": "MIA"
+        },
+        "gameStatus": 3,
+        "gameEt": "2024-01-15T00:00:00",
+        "gameCode": "20240115/MIABKN"
+      },
+      {
+        "gameId": "0022300563",
+        "homeTeam": {
+          "teamTricode": "TOR"
+        },
+        "awayTeam": {
+          "teamTricode": "BOS"
+        },
+        "gameStatus": 3,
+        "gameEt": "2024-01-15T00:00:00",
+        "gameCode": "20240115/BOSTOR"
+      },
+      {
+        "gameId": "0022300564",
+        "homeTeam": {
+          "teamTricode": "UTA"
+        },
+        "awayTeam": {
+          "teamTricode": "IND"
+        },
+        "gameStatus": 3,
+        "gameEt": "2024-01-15T00:00:00",
+        "gameCode": "20240115/INDUTA"
+      },
+      {
+        "gameId": "0022300565",
+        "homeTeam": {
+          "teamTricode": "LAL"
+        },
+        "awayTeam": {
+          "teamTricode": "OKC"
+        },
+        "gameStatus": 3,
+        "gameEt": "2024-01-15T00:00:00",
+        "gameCode": "20240115/OKCLAL"
+      }
+    ]
+  }
+}

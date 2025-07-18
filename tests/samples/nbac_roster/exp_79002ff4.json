@@ -1,0 +1,142 @@
+{
+  "metadata": {
+    "teamAbbr": "GSW",
+    "teamId": "1610612744",
+    "season": "2025-26",
+    "fetchedUtc": "2025-07-17T23:58:39.841253+00:00",
+    "playerCount": 18
+  },
+  "teamAbbr": "GSW",
+  "teamId": "1610612744",
+  "season": "2025-26",
+  "timestamp": "2025-07-17T23:58:39.841267+00:00",
+  "playerCount": 18,
+  "players": [
+    {
+      "name": "Will Richard",
+      "slug": "will-richard",
+      "playerId": 1642954,
+      "number": "N/A",
+      "position": "G"
+    },
+    {
+      "name": "Gary Payton II",
+      "slug": "gary-payton-ii",
+      "playerId": 1627780,
+      "number": "0",
+      "position": "G"
+    },
+    {
+      "name": "Jonathan Kuminga",
+      "slug": "jonathan-kuminga",
+      "playerId": 1630228,
+      "number": "00",
+      "position": "F"
+    },
+    {
+      "name": "Taran Armstrong",
+      "slug": "taran-armstrong",
+      "playerId": 1642379,
+      "number": "1",
+      "position": "G"
+    },
+    {
+      "name": "Brandin Podziemski",
+      "slug": "brandin-podziemski",
+      "playerId": 1641764,
+      "number": "2",
+      "position": "G"
+    },
+    {
+      "name": "Moses Moody",
+      "slug": "moses-moody",
+      "playerId": 1630541,
+      "number": "4",
+      "position": "G"
+    },
+    {
+      "name": "Buddy Hield",
+      "slug": "buddy-hield",
+      "playerId": 1627741,
+      "number": "7",
+      "position": "G"
+    },
+    {
+      "name": "Jimmy Butler III",
+      "slug": "jimmy-butler-iii",
+      "playerId": 202710,
+      "number": "10",
+      "position": "F"
+    },
+    {
+      "name": "Braxton Key",
+      "slug": "braxton-key",
+      "playerId": 1630296,
+      "number": "12",
+      "position": "F"
+    },
+    {
+      "name": "Gui Santos",
+      "slug": "gui-santos",
+      "playerId": 1630611,
+      "number": "15",
+      "position": "F"
+    },
+    {
+      "name": "Quinten Post",
+      "slug": "quinten-post",
+      "playerId": 1642366,
+      "number": "21",
+      "position": "C"
+    },
+    {
+      "name": "Alex Toohey",
+      "slug": "alex-toohey",
+      "playerId": 1642893,
+      "number": "22",
+      "position": "F"
+    },
+    {
+      "name": "Draymond Green",
+      "slug": "draymond-green",
+      "playerId": 203110,
+      "number": "23",
+      "position": "F"
+    },
+    {
+      "name": "Stephen Curry",
+      "slug": "stephen-curry",
+      "playerId": 201939,
+      "number": "30",
+      "position": "G"
+    },
+    {
+      "name": "Kevin Knox II",
+      "slug": "kevin-knox-ii",
+      "playerId": 1628995,
+      "number": "31",
+      "position": "F"
+    },
+    {
+      "name": "Trayce Jackson-Davis",
+      "slug": "trayce-jackson-davis",
+      "playerId": 1631218,
+      "number": "32",
+      "position": "F"
+    },
+    {
+      "name": "Jackson Rowe",
+      "slug": "jackson-rowe",
+      "playerId": 1642050,
+      "number": "44",
+      "position": "F"
+    },
+    {
+      "name": "Pat Spencer",
+      "slug": "pat-spencer",
+      "playerId": 1630311,
+      "number": "61",
+      "position": "G"
+    }
+  ]
+}

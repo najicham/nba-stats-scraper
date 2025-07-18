@@ -67,15 +67,14 @@ class GetEspnScoreboard(ScraperBase):
         # ---------- raw JSON fixture (offline tests) ----------
         {
             "type": "file",
-            "filename": "/tmp/raw_%(scoreDate)s.json",   # capture.py looks for raw_*
-            "export_mode": ExportMode.RAW,               # untouched bytes from ESPN
+            "filename": "/tmp/raw_%(run_id)s.json",  # FIXED: Use run_id instead of scoreDate
+            "export_mode": ExportMode.RAW,
             "groups": ["capture"],
         },
-
         # ---------- golden snapshot (parsed DATA) ----------
         {
             "type": "file",
-            "filename": "/tmp/exp_%(scoreDate)s.json",   # capture.py looks for exp_*
+            "filename": "/tmp/exp_%(run_id)s.json",  # FIXED: Use run_id instead of scoreDate
             "export_mode": ExportMode.DATA,
             "pretty_print": True,
             "groups": ["capture"],
@@ -169,10 +168,15 @@ def gcf_entry(request):  # type: ignore[valid-type]
 # ---------------------------------------------------------------------- #
 if __name__ == "__main__":
     import argparse
+    from scrapers.utils.cli_utils import add_common_args
 
-    cli = argparse.ArgumentParser()
+    cli = argparse.ArgumentParser(description="Scrape ESPN NBA Scoreboard")
     cli.add_argument("--scoreDate", required=True, help="YYYYMMDD")
-    cli.add_argument("--group", default="test", help="dev, test, prod, etc.")
+    add_common_args(cli)  # This adds --group, --runId, --debug, etc.
     args = cli.parse_args()
+
+    if args.debug:
+        import logging
+        logging.getLogger().setLevel(logging.DEBUG)
 
     GetEspnScoreboard().run(vars(args))

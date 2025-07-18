@@ -1,0 +1,710 @@
+{
+  "scoreboard": {
+    "games": [
+      {
+        "gameId": "0022300555",
+        "homeTeam": {
+          "teamTricode": "PHI",
+          "teamName": "76ers",
+          "teamCity": "Philadelphia",
+          "winsLosses": "25-13",
+          "points": 124,
+          "quarters": {
+            "q1": 33,
+            "q2": 33,
+            "q3": 32,
+            "q4": 26,
+            "ot1": 0,
+            "ot2": 0
+          },
+          "stats": {
+            "fgPct": 0.482,
+            "ftPct": 0.853,
+            "fg3Pct": 0.484,
+            "assists": 25,
+            "rebounds": 41,
+            "turnovers": 10
+          }
+        },
+        "awayTeam": {
+          "teamTricode": "HOU",
+          "teamName": "Rockets",
+          "teamCity": "Houston",
+          "winsLosses": "19-20",
+          "points": 115,
+          "quarters": {
+            "q1": 19,
+            "q2": 28,
+            "q3": 30,
+            "q4": 38,
+            "ot1": 0,
+            "ot2": 0
+          },
+          "stats": {
+            "fgPct": 0.5,
+            "ftPct": 0.594,
+            "fg3Pct": 0.296,
+            "assists": 21,
+            "rebounds": 46,
+            "turnovers": 13
+          }
+        },
+        "gameStatus": 3,
+        "gameStatusText": "Final",
+        "gameEt": "2024-01-15T00:00:00",
+        "gameCode": "20240115/HOUPHI",
+        "gameSequence": 1,
+        "season": "2023",
+        "arenaName": "Wells Fargo Center",
+        "broadcasts": {
+          "national": "NBA TV",
+          "home": "NBCSP",
+          "away": "SCHN"
+        },
+        "livePeriod": 4,
+        "livePcTime": "     ",
+        "livePeriodTimeBcast": "Q4       - NBA TV"
+      },
+      {
+        "gameId": "0022300556",
+        "homeTeam": {
+          "teamTricode": "DAL",
+          "teamName": "Mavericks",
+          "teamCity": "Dallas",
+          "winsLosses": "24-17",
+          "points": 125,
+          "quarters": {
+            "q1": 33,
+            "q2": 26,
+            "q3": 33,
+            "q4": 33,
+            "ot1": 0,
+            "ot2": 0
+          },
+          "stats": {
+            "fgPct": 0.459,
+            "ftPct": 0.829,
+            "fg3Pct": 0.419,
+            "assists": 24,
+            "rebounds": 42,
+            "turnovers": 11
+          }
+        },
+        "awayTeam": {
+          "teamTricode": "NOP",
+          "teamName": "Pelicans",
+          "teamCity": "New Orleans",
+          "winsLosses": "24-17",
+          "points": 120,
+          "quarters": {
+            "q1": 17,
+            "q2": 42,
+            "q3": 40,
+            "q4": 21,
+            "ot1": 0,
+            "ot2": 0
+          },
+          "stats": {
+            "fgPct": 0.506,
+            "ftPct": 0.756,
+            "fg3Pct": 0.304,
+            "assists": 21,
+            "rebounds": 37,
+            "turnovers": 9
+          }
+        },
+        "gameStatus": 3,
+        "gameStatusText": "Final",
+        "gameEt": "2024-01-15T00:00:00",
+        "gameCode": "20240115/NOPDAL",
+        "gameSequence": 2,
+        "season": "2023",
+        "arenaName": "American Airlines Center",
+        "broadcasts": {
+          "national": null,
+          "home": "BSSW-DAL",
+          "away": "BSNO"
+        },
+        "livePeriod": 4,
+        "livePcTime": "     ",
+        "livePeriodTimeBcast": "Q4       - "
+      },
+      {
+        "gameId": "0022300557",
+        "homeTeam": {
+          "teamTricode": "NYK",
+          "teamName": "Knicks",
+          "teamCity": "New York",
+          "winsLosses": "23-17",
+          "points": 94,
+          "quarters": {
+            "q1": 24,
+            "q2": 28,
+            "q3": 26,
+            "q4": 16,
+            "ot1": 0,
+            "ot2": 0
+          },
+          "stats": {
+            "fgPct": 0.398,
+            "ftPct": 0.682,
+            "fg3Pct": 0.325,
+            "assists": 20,
+            "rebounds": 41,
+            "turnovers": 9
+          }
+        },
+        "awayTeam": {
+          "teamTricode": "ORL",
+          "teamName": "Magic",
+          "teamCity": "Orlando",
+          "winsLosses": "22-18",
+          "points": 98,
+          "quarters": {
+            "q1": 24,
+            "q2": 26,
+            "q3": 23,
+            "q4": 25,
+            "ot1": 0,
+            "ot2": 0
+          },
+          "stats": {
+            "fgPct": 0.447,
+            "ftPct": 0.667,
+            "fg3Pct": 0.276,
+            "assists": 26,
+            "rebounds": 46,
+            "turnovers": 7
+          }
+        },
+        "gameStatus": 3,
+        "gameStatusText": "Final",
+        "gameEt": "2024-01-15T00:00:00",
+        "gameCode": "20240115/ORLNYK",
+        "gameSequence": 3,
+        "season": "2023",
+        "arenaName": "Madison Square Garden",
+        "broadcasts": {
+          "national": null,
+          "home": "MSG",
+          "away": "BSFL"
+        },
+        "livePeriod": 4,
+        "livePcTime": "     ",
+        "livePeriodTimeBcast": "Q4       - "
+      },
+      {
+        "gameId": "0022300558",
+        "homeTeam": {
+          "teamTricode": "WAS",
+          "teamName": "Wizards",
+          "teamCity": "Washington",
+          "winsLosses": "7-32",
+          "points": 117,
+          "quarters": {
+            "q1": 22,
+            "q2": 40,
+            "q3": 25,
+            "q4": 30,
+            "ot1": 0,
+            "ot2": 0
+          },
+          "stats": {
+            "fgPct": 0.463,
+            "ftPct": 0.909,
+            "fg3Pct": 0.463,
+            "assists": 30,
+            "rebounds": 33,
+            "turnovers": 8
+          }
+        },
+        "awayTeam": {
+          "teamTricode": "DET",
+          "teamName": "Pistons",
+          "teamCity": "Detroit",
+          "winsLosses": "4-36",
+          "points": 129,
+          "quarters": {
+            "q1": 29,
+            "q2": 34,
+            "q3": 31,
+            "q4": 35,
+            "ot1": 0,
+            "ot2": 0
+          },
+          "stats": {
+            "fgPct": 0.556,
+            "ftPct": 0.739,
+            "fg3Pct": 0.387,
+            "assists": 30,
+            "rebounds": 52,
+            "turnovers": 15
+          }
+        },
+        "gameStatus": 3,
+        "gameStatusText": "Final",
+        "gameEt": "2024-01-15T00:00:00",
+        "gameCode": "20240115/DETWAS",
+        "gameSequence": 4,
+        "season": "2023",
+        "arenaName": "Capital One Arena",
+        "broadcasts": {
+          "national": null,
+          "home": "MNMT",
+          "away": "BSDET"
+        },
+        "livePeriod": 4,
+        "livePcTime": "     ",
+        "livePeriodTimeBcast": "Q4       - "
+      },
+      {
+        "gameId": "0022300559",
+        "homeTeam": {
+          "teamTricode": "ATL",
+          "teamName": "Hawks",
+          "teamCity": "Atlanta",
+          "winsLosses": "16-23",
+          "points": 109,
+          "quarters": {
+            "q1": 35,
+            "q2": 34,
+            "q3": 18,
+            "q4": 22,
+            "ot1": 0,
+            "ot2": 0
+          },
+          "stats": {
+            "fgPct": 0.43,
+            "ftPct": 0.762,
+            "fg3Pct": 0.342,
+            "assists": 24,
+            "rebounds": 57,
+            "turnovers": 16
+          }
+        },
+        "awayTeam": {
+          "teamTricode": "SAS",
+          "teamName": "Spurs",
+          "teamCity": "San Antonio",
+          "winsLosses": "7-32",
+          "points": 99,
+          "quarters": {
+            "q1": 16,
+            "q2": 18,
+            "q3": 33,
+            "q4": 32,
+            "ot1": 0,
+            "ot2": 0
+          },
+          "stats": {
+            "fgPct": 0.4,
+            "ftPct": 0.706,
+            "fg3Pct": 0.262,
+            "assists": 27,
+            "rebounds": 44,
+            "turnovers": 17
+          }
+        },
+        "gameStatus": 3,
+        "gameStatusText": "Final",
+        "gameEt": "2024-01-15T00:00:00",
+        "gameCode": "20240115/SASATL",
+        "gameSequence": 5,
+        "season": "2023",
+        "arenaName": "State Farm Arena",
+        "broadcasts": {
+          "national": "TNT",
+          "home": null,
+          "away": null
+        },
+        "livePeriod": 4,
+        "livePcTime": "     ",
+        "livePeriodTimeBcast": "Q4       - TNT"
+      },
+      {
+        "gameId": "0022300560",
+        "homeTeam": {
+          "teamTricode": "MEM",
+          "teamName": "Grizzlies",
+          "teamCity": "Memphis",
+          "winsLosses": "15-25",
+          "points": 116,
+          "quarters": {
+            "q1": 23,
+            "q2": 31,
+            "q3": 31,
+            "q4": 31,
+            "ot1": 0,
+            "ot2": 0
+          },
+          "stats": {
+            "fgPct": 0.372,
+            "ftPct": 0.8,
+            "fg3Pct": 0.37,
+            "assists": 24,
+            "rebounds": 42,
+            "turnovers": 11
+          }
+        },
+        "awayTeam": {
+          "teamTricode": "GSW",
+          "teamName": "Warriors",
+          "teamCity": "Golden State",
+          "winsLosses": "18-22",
+          "points": 107,
+          "quarters": {
+            "q1": 29,
+            "q2": 27,
+            "q3": 30,
+            "q4": 21,
+            "ot1": 0,
+            "ot2": 0
+          },
+          "stats": {
+            "fgPct": 0.489,
+            "ftPct": 0.9,
+            "fg3Pct": 0.323,
+            "assists": 28,
+            "rebounds": 45,
+            "turnovers": 19
+          }
+        },
+        "gameStatus": 3,
+        "gameStatusText": "Final",
+        "gameEt": "2024-01-15T00:00:00",
+        "gameCode": "20240115/GSWMEM",
+        "gameSequence": 6,
+        "season": "2023",
+        "arenaName": "FedExForum",
+        "broadcasts": {
+          "national": "TNT",
+          "home": "BSSE-MEM",
+          "away": "NBCSBA"
+        },
+        "livePeriod": 4,
+        "livePcTime": "     ",
+        "livePeriodTimeBcast": "Q4       - TNT"
+      },
+      {
+        "gameId": "0022300561",
+        "homeTeam": {
+          "teamTricode": "CLE",
+          "teamName": "Cavaliers",
+          "teamCity": "Cleveland",
+          "winsLosses": "23-15",
+          "points": 109,
+          "quarters": {
+            "q1": 40,
+            "q2": 20,
+            "q3": 20,
+            "q4": 29,
+            "ot1": 0,
+            "ot2": 0
+          },
+          "stats": {
+            "fgPct": 0.411,
+            "ftPct": 1.0,
+            "fg3Pct": 0.351,
+            "assists": 28,
+            "rebounds": 48,
+            "turnovers": 11
+          }
+        },
+        "awayTeam": {
+          "teamTricode": "CHI",
+          "teamName": "Bulls",
+          "teamCity": "Chicago",
+          "winsLosses": "19-23",
+          "points": 91,
+          "quarters": {
+            "q1": 21,
+            "q2": 25,
+            "q3": 31,
+            "q4": 14,
+            "ot1": 0,
+            "ot2": 0
+          },
+          "stats": {
+            "fgPct": 0.422,
+            "ftPct": 0.75,
+            "fg3Pct": 0.281,
+            "assists": 21,
+            "rebounds": 43,
+            "turnovers": 18
+          }
+        },
+        "gameStatus": 3,
+        "gameStatusText": "Final",
+        "gameEt": "2024-01-15T00:00:00",
+        "gameCode": "20240115/CHICLE",
+        "gameSequence": 7,
+        "season": "2023",
+        "arenaName": "Rocket Mortgage FieldHouse",
+        "broadcasts": {
+          "national": null,
+          "home": "BSOH",
+          "away": "NBCSCH"
+        },
+        "livePeriod": 4,
+        "livePcTime": "     ",
+        "livePeriodTimeBcast": "Q4       - "
+      },
+      {
+        "gameId": "0022300562",
+        "homeTeam": {
+          "teamTricode": "BKN",
+          "teamName": "Nets",
+          "teamCity": "Brooklyn",
+          "winsLosses": "16-23",
+          "points": 95,
+          "quarters": {
+            "q1": 22,
+            "q2": 23,
+            "q3": 24,
+            "q4": 19,
+            "ot1": 7,
+            "ot2": 0
+          },
+          "stats": {
+            "fgPct": 0.343,
+            "ftPct": 0.938,
+            "fg3Pct": 0.218,
+            "assists": 26,
+            "rebounds": 50,
+            "turnovers": 8
+          }
+        },
+        "awayTeam": {
+          "teamTricode": "MIA",
+          "teamName": "Heat",
+          "teamCity": "Miami",
+          "winsLosses": "24-16",
+          "points": 96,
+          "quarters": {
+            "q1": 16,
+            "q2": 15,
+            "q3": 37,
+            "q4": 20,
+            "ot1": 8,
+            "ot2": 0
+          },
+          "stats": {
+            "fgPct": 0.379,
+            "ftPct": 0.88,
+            "fg3Pct": 0.258,
+            "assists": 22,
+            "rebounds": 54,
+            "turnovers": 12
+          }
+        },
+        "gameStatus": 3,
+        "gameStatusText": "Final",
+        "gameEt": "2024-01-15T00:00:00",
+        "gameCode": "20240115/MIABKN",
+        "gameSequence": 8,
+        "season": "2023",
+        "arenaName": "Barclays Center",
+        "broadcasts": {
+          "national": null,
+          "home": "YES",
+          "away": "BSSUN"
+        },
+        "livePeriod": 5,
+        "livePcTime": "     ",
+        "livePeriodTimeBcast": "Q5       - "
+      },
+      {
+        "gameId": "0022300563",
+        "homeTeam": {
+          "teamTricode": "TOR",
+          "teamName": "Raptors",
+          "teamCity": "Toronto",
+          "winsLosses": "15-25",
+          "points": 96,
+          "quarters": {
+            "q1": 25,
+            "q2": 30,
+            "q3": 20,
+            "q4": 21,
+            "ot1": 0,
+            "ot2": 0
+          },
+          "stats": {
+            "fgPct": 0.4,
+            "ftPct": 0.762,
+            "fg3Pct": 0.125,
+            "assists": 25,
+            "rebounds": 52,
+            "turnovers": 7
+          }
+        },
+        "awayTeam": {
+          "teamTricode": "BOS",
+          "teamName": "Celtics",
+          "teamCity": "Boston",
+          "winsLosses": "31-9",
+          "points": 105,
+          "quarters": {
+            "q1": 29,
+            "q2": 32,
+            "q3": 23,
+            "q4": 21,
+            "ot1": 0,
+            "ot2": 0
+          },
+          "stats": {
+            "fgPct": 0.402,
+            "ftPct": 0.92,
+            "fg3Pct": 0.41,
+            "assists": 20,
+            "rebounds": 53,
+            "turnovers": 12
+          }
+        },
+        "gameStatus": 3,
+        "gameStatusText": "Final",
+        "gameEt": "2024-01-15T00:00:00",
+        "gameCode": "20240115/BOSTOR",
+        "gameSequence": 9,
+        "season": "2023",
+        "arenaName": "Scotiabank Arena",
+        "broadcasts": {
+          "national": null,
+          "home": "TSN",
+          "away": "NBCSB"
+        },
+        "livePeriod": 4,
+        "livePcTime": "     ",
+        "livePeriodTimeBcast": "Q4       - "
+      },
+      {
+        "gameId": "0022300564",
+        "homeTeam": {
+          "teamTricode": "UTA",
+          "teamName": "Jazz",
+          "teamCity": "Utah",
+          "winsLosses": "22-20",
+          "points": 132,
+          "quarters": {
+            "q1": 33,
+            "q2": 31,
+            "q3": 41,
+            "q4": 27,
+            "ot1": 0,
+            "ot2": 0
+          },
+          "stats": {
+            "fgPct": 0.556,
+            "ftPct": 0.886,
+            "fg3Pct": 0.44,
+            "assists": 29,
+            "rebounds": 46,
+            "turnovers": 14
+          }
+        },
+        "awayTeam": {
+          "teamTricode": "IND",
+          "teamName": "Pacers",
+          "teamCity": "Indiana",
+          "winsLosses": "23-17",
+          "points": 105,
+          "quarters": {
+            "q1": 26,
+            "q2": 24,
+            "q3": 29,
+            "q4": 26,
+            "ot1": 0,
+            "ot2": 0
+          },
+          "stats": {
+            "fgPct": 0.4,
+            "ftPct": 0.8,
+            "fg3Pct": 0.29,
+            "assists": 27,
+            "rebounds": 43,
+            "turnovers": 13
+          }
+        },
+        "gameStatus": 3,
+        "gameStatusText": "Final",
+        "gameEt": "2024-01-15T00:00:00",
+        "gameCode": "20240115/INDUTA",
+        "gameSequence": 10,
+        "season": "2023",
+        "arenaName": "Delta Center",
+        "broadcasts": {
+          "national": null,
+          "home": "KJZZ",
+          "away": "BSIN"
+        },
+        "livePeriod": 4,
+        "livePcTime": "     ",
+        "livePeriodTimeBcast": "Q4       - "
+      },
+      {
+        "gameId": "0022300565",
+        "homeTeam": {
+          "teamTricode": "LAL",
+          "teamName": "Lakers",
+          "teamCity": "Los Angeles",
+          "winsLosses": "20-21",
+          "points": 112,
+          "quarters": {
+            "q1": 27,
+            "q2": 23,
+            "q3": 34,
+            "q4": 28,
+            "ot1": 0,
+            "ot2": 0
+          },
+          "stats": {
+            "fgPct": 0.524,
+            "ftPct": 0.889,
+            "fg3Pct": 0.333,
+            "assists": 30,
+            "rebounds": 44,
+            "turnovers": 17
+          }
+        },
+        "awayTeam": {
+          "teamTricode": "OKC",
+          "teamName": "Thunder",
+          "teamCity": "Oklahoma City",
+          "winsLosses": "27-12",
+          "points": 105,
+          "quarters": {
+            "q1": 26,
+            "q2": 24,
+            "q3": 26,
+            "q4": 29,
+            "ot1": 0,
+            "ot2": 0
+          },
+          "stats": {
+            "fgPct": 0.417,
+            "ftPct": 0.909,
+            "fg3Pct": 0.306,
+            "assists": 23,
+            "rebounds": 40,
+            "turnovers": 11
+          }
+        },
+        "gameStatus": 3,
+        "gameStatusText": "Final",
+        "gameEt": "2024-01-15T00:00:00",
+        "gameCode": "20240115/OKCLAL",
+        "gameSequence": 11,
+        "season": "2023",
+        "arenaName": "Crypto.com Arena",
+        "broadcasts": {
+          "national": "NBA TV",
+          "home": "SPECSN",
+          "away": "BSOK"
+        },
+        "livePeriod": 4,
+        "livePcTime": "     ",
+        "livePeriodTimeBcast": "Q4       - NBA TV"
+      }
+    ]
+  }
+}

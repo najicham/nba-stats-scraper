@@ -1,0 +1,282 @@
+{
+  "timestamp": "2025-07-17T17:16:27.235360+00:00",
+  "scoreDate": "20240115",
+  "gameCount": 11,
+  "games": [
+    {
+      "gameId": "401585183",
+      "statusId": "3",
+      "state": "post",
+      "status": "Final",
+      "startTime": "2024-01-15T18:00Z",
+      "teams": [
+        {
+          "teamId": "20",
+          "displayName": "Philadelphia 76ers",
+          "abbreviation": "PHI",
+          "score": "124",
+          "winner": true,
+          "homeAway": "home"
+        },
+        {
+          "teamId": "10",
+          "displayName": "Houston Rockets",
+          "abbreviation": "HOU",
+          "score": "115",
+          "winner": false,
+          "homeAway": "away"
+        }
+      ]
+    },
+    {
+      "gameId": "401585184",
+      "statusId": "3",
+      "state": "post",
+      "status": "Final",
+      "startTime": "2024-01-15T19:30Z",
+      "teams": [
+        {
+          "teamId": "6",
+          "displayName": "Dallas Mavericks",
+          "abbreviation": "DAL",
+          "score": "125",
+          "winner": true,
+          "homeAway": "home"
+        },
+        {
+          "teamId": "3",
+          "displayName": "New Orleans Pelicans",
+          "abbreviation": "NO",
+          "score": "120",
+          "winner": false,
+          "homeAway": "away"
+        }
+      ]
+    },
+    {
+      "gameId": "401585185",
+      "statusId": "3",
+      "state": "post",
+      "status": "Final",
+      "startTime": "2024-01-15T20:00Z",
+      "teams": [
+        {
+          "teamId": "18",
+          "displayName": "New York Knicks",
+          "abbreviation": "NY",
+          "score": "94",
+          "winner": false,
+          "homeAway": "home"
+        },
+        {
+          "teamId": "19",
+          "displayName": "Orlando Magic",
+          "abbreviation": "ORL",
+          "score": "98",
+          "winner": true,
+          "homeAway": "away"
+        }
+      ]
+    },
+    {
+      "gameId": "401585186",
+      "statusId": "3",
+      "state": "post",
+      "status": "Final",
+      "startTime": "2024-01-15T20:00Z",
+      "teams": [
+        {
+          "teamId": "27",
+          "displayName": "Washington Wizards",
+          "abbreviation": "WSH",
+          "score": "117",
+          "winner": false,
+          "homeAway": "home"
+        },
+        {
+          "teamId": "8",
+          "displayName": "Detroit Pistons",
+          "abbreviation": "DET",
+          "score": "129",
+          "winner": true,
+          "homeAway": "away"
+        }
+      ]
+    },
+    {
+      "gameId": "401585187",
+      "statusId": "3",
+      "state": "post",
+      "status": "Final",
+      "startTime": "2024-01-15T20:30Z",
+      "teams": [
+        {
+          "teamId": "1",
+          "displayName": "Atlanta Hawks",
+          "abbreviation": "ATL",
+          "score": "109",
+          "winner": true,
+          "homeAway": "home"
+        },
+        {
+          "teamId": "24",
+          "displayName": "San Antonio Spurs",
+          "abbreviation": "SA",
+          "score": "99",
+          "winner": false,
+          "homeAway": "away"
+        }
+      ]
+    },
+    {
+      "gameId": "401585188",
+      "statusId": "3",
+      "state": "post",
+      "status": "Final",
+      "startTime": "2024-01-15T23:00Z",
+      "teams": [
+        {
+          "teamId": "29",
+          "displayName": "Memphis Grizzlies",
+          "abbreviation": "MEM",
+          "score": "116",
+          "winner": true,
+          "homeAway": "home"
+        },
+        {
+          "teamId": "9",
+          "displayName": "Golden State Warriors",
+          "abbreviation": "GS",
+          "score": "107",
+          "winner": false,
+          "homeAway": "away"
+        }
+      ]
+    },
+    {
+      "gameId": "401585189",
+      "statusId": "3",
+      "state": "post",
+      "status": "Final",
+      "startTime": "2024-01-16T00:00Z",
+      "teams": [
+        {
+          "teamId": "5",
+          "displayName": "Cleveland Cavaliers",
+          "abbreviation": "CLE",
+          "score": "109",
+          "winner": true,
+          "homeAway": "home"
+        },
+        {
+          "teamId": "4",
+          "displayName": "Chicago Bulls",
+          "abbreviation": "CHI",
+          "score": "91",
+          "winner": false,
+          "homeAway": "away"
+        }
+      ]
+    },
+    {
+      "gameId": "401585190",
+      "statusId": "3",
+      "state": "post",
+      "status": "Final",
+      "startTime": "2024-01-16T00:30Z",
+      "teams": [
+        {
+          "teamId": "17",
+          "displayName": "Brooklyn Nets",
+          "abbreviation": "BKN",
+          "score": "95",
+          "winner": false,
+          "homeAway": "home"
+        },
+        {
+          "teamId": "14",
+          "displayName": "Miami Heat",
+          "abbreviation": "MIA",
+          "score": "96",
+          "winner": true,
+          "homeAway": "away"
+        }
+      ]
+    },
+    {
+      "gameId": "401585191",
+      "statusId": "3",
+      "state": "post",
+      "status": "Final",
+      "startTime": "2024-01-16T00:30Z",
+      "teams": [
+        {
+          "teamId": "28",
+          "displayName": "Toronto Raptors",
+          "abbreviation": "TOR",
+          "score": "96",
+          "winner": false,
+          "homeAway": "home"
+        },
+        {
+          "teamId": "2",
+          "displayName": "Boston Celtics",
+          "abbreviation": "BOS",
+          "score": "105",
+          "winner": true,
+          "homeAway": "away"
+        }
+      ]
+    },
+    {
+      "gameId": "401585192",
+      "statusId": "3",
+      "state": "post",
+      "status": "Final",
+      "startTime": "2024-01-16T02:00Z",
+      "teams": [
+        {
+          "teamId": "26",
+          "displayName": "Utah Jazz",
+          "abbreviation": "UTAH",
+          "score": "132",
+          "winner": true,
+          "homeAway": "home"
+        },
+        {
+          "teamId": "11",
+          "displayName": "Indiana Pacers",
+          "abbreviation": "IND",
+          "score": "105",
+          "winner": false,
+          "homeAway": "away"
+        }
+      ]
+    },
+    {
+      "gameId": "401585193",
+      "statusId": "3",
+      "state": "post",
+      "status": "Final",
+      "startTime": "2024-01-16T03:30Z",
+      "teams": [
+        {
+          "teamId": "13",
+          "displayName": "Los Angeles Lakers",
+          "abbreviation": "LAL",
+          "score": "112",
+          "winner": true,
+          "homeAway": "home"
+        },
+        {
+          "teamId": "25",
+          "displayName": "Oklahoma City Thunder",
+          "abbreviation": "OKC",
+          "score": "105",
+          "winner": false,
+          "homeAway": "away"
+        }
+      ]
+    }
+  ]
+}

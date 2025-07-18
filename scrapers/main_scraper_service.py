@@ -27,23 +27,30 @@ from dotenv import load_dotenv
 
 # Import all scraper classes - FIXED for root deployment
 SCRAPER_REGISTRY = {
-    # Odds API scrapers (WITH 'scrapers.' prefix for root deployment)
-    "oddsa_events_his": ("scrapers.oddsapi.oddsa_events_his", "GetOddsApiHistoricalEvents"),
-    "oddsa_events": ("scrapers.oddsapi.oddsa_events", "GetOddsApiEvents"),
-    "oddsa_player_props": ("scrapers.oddsapi.oddsa_player_props", "GetOddsApiPlayerProps"),
+    # Odds API scrapers
+    "oddsa_events_his": ("scrapers.oddsapi.oddsa_events_his", "GetOddsApiHistoricalEvents"),  # ✅ Correct
+    "oddsa_events": ("scrapers.oddsapi.oddsa_events", "GetOddsApiEvents"),  # ✅ Correct
+    "oddsa_player_props": ("scrapers.oddsapi.oddsa_player_props", "GetOddsApiCurrentEventOdds"),  # ⚠️ Check this
+    "oddsa_player_props_his": ("scrapers.oddsapi.oddsa_player_props_his", "GetOddsApiHistoricalEventOdds"),  # ➕ Add this
     
     # Ball Don't Lie scrapers  
-    "bdl_players": ("scrapers.balldontlie.bdl_players", "GetBallDontLiePlayers"),
-    "bdl_games": ("scrapers.balldontlie.bdl_games", "GetBallDontLieGames"),
-    "bdl_box_scores": ("scrapers.balldontlie.bdl_box_scores", "GetBallDontLieBoxScores"),
+    "bdl_games": ("scrapers.balldontlie.bdl_games", "BdlGamesScraper"),  # 🔧 Fixed
+    "bdl_box_scores": ("scrapers.balldontlie.bdl_box_scores", "BdlBoxScoresScraper"),  # 🔧 Fixed
+    "bdl_player_box_scores": ("scrapers.balldontlie.bdl_player_box_scores", "BdlPlayerBoxScoresScraper"),  # ➕ Add this
+    "bdl_injuries": ("scrapers.balldontlie.bdl_injuries", "BdlInjuriesScraper"),  # ➕ Add this
     
     # ESPN scrapers
-    "espn_roster": ("scrapers.espn.espn_roster", "GetEspnRoster"), 
-    "espn_scoreboard": ("scrapers.espn.espn_scoreboard_api", "GetEspnScoreboard"),
+    "espn_roster": ("scrapers.espn.espn_roster_api", "GetEspnTeamRosterAPI"),  # 🔧 Fixed
+    "espn_scoreboard": ("scrapers.espn.espn_scoreboard_api", "GetEspnScoreboard"),  # 🔧 Fixed
+    "espn_boxscore": ("scrapers.espn.espn_game_boxscore", "GetEspnBoxscore"),  # ➕ Add this
     
     # NBA.com scrapers
-    "nbac_roster": ("scrapers.nbacom.nbac_roster", "GetNbaComRoster"),
-    "nbac_schedule": ("scrapers.nbacom.nbac_current_schedule_v2_1", "GetNbaComSchedule"),
+    "nbac_roster": ("scrapers.nbacom.nbac_roster", "GetNbaTeamRoster"),  # 🔧 Fixed
+    "nbac_schedule": ("scrapers.nbacom.nbac_current_schedule_v2_1", "GetDataNbaSeasonSchedule"),  # 🔧 Fixed
+    "nbac_injury_report": ("scrapers.nbacom.nbac_injury_report", "GetNbaComInjuryReport"),  # ➕ Add this
+    "nbac_play_by_play": ("scrapers.nbacom.nbac_play_by_play", "GetNbaPlayByPlayRawBackup"),  # ➕ Add this
+    "nbac_player_boxscore": ("scrapers.nbacom.nbac_player_boxscore", "GetNbaComPlayerBoxscore"),  # ➕ Add this
+    "nbac_player_list": ("scrapers.nbacom.nbac_player_list", "GetNbaComPlayerList"),  # ➕ Add this
 }
 
 def create_app():

@@ -1,0 +1,294 @@
+# NBA Data Pipeline - Cloud Workflow Configuration
+# This workflow orchestrates all NBA data scrapers with proper dependencies and error handling
+
+main:
+  params: [args]
+  steps:
+    # Initialize workflow with current date and time
+    - init:
+        assign:
+          - current_date: ${time.format(sys.now(), "%Y-%m-%d")}
+          - workflow_start: ${sys.now()}
+          - failed_scrapers: []
+          - scraper_results: {}
+        
+    # Morning Data Collection (8-10 AM ET)
+    # Focus on current state data: rosters, injuries, schedule
+    - morning_collection:
+        try:
+          parallel:
+            shared: [scraper_results, failed_scrapers]
+            exception_policy: CONTINUE_ALL
+            branches:
+              # Roster updates - multiple teams can run in parallel
+              - roster_collection:
+                  parallel:
+                    branches:
+                      - espn_rosters:
+                          call: run_scraper
+                          args:
+                            scraper_name: "espn-roster"
+                            scraper_class: "GetEspnTeamRosterAPI"
+                            url: ${sys.get_env("ESPN_ROSTER_URL")}
+                            timeout: 300
+                          result: espn_roster_result
+                      - nba_rosters:
+                          call: run_scraper
+                          args:
+                            scraper_name: "nba-roster"
+                            scraper_class: "GetNbaTeamRoster"
+                            url: ${sys.get_env("NBA_ROSTER_URL")}
+                            timeout: 300
+                          result: nba_roster_result
+
+              # Injury status updates
+              - injury_collection:
+                  parallel:
+                    branches:
+                      - bdl_injuries:
+                          call: run_scraper
+                          args:
+                            scraper_name: "bdl-injuries"
+                            scraper_class: "BdlInjuriesScraper"
+                            url: ${sys.get_env("BDL_INJURIES_URL")}
+                            timeout: 180
+                          result: bdl_injuries_result
+                      - nba_injury_report:
+                          call: run_scraper
+                          args:
+                            scraper_name: "nba-injury-report"
+                            scraper_class: "GetNbaComInjuryReport"
+                            url: ${sys.get_env("NBA_INJURY_URL")}
+                            timeout: 240
+                          result: nba_injury_result
+
+              # Schedule monitoring
+              - schedule_collection:
+                  parallel:
+                    branches:
+                      - nba_schedule:
+                          call: run_scraper
+                          args:
+                            scraper_name: "nba-schedule"
+                            scraper_class: "GetDataNbaSeasonSchedule"
+                            url: ${sys.get_env("NBA_SCHEDULE_URL")}
+                            timeout: 180
+                          result: nba_schedule_result
+                      - bdl_games:
+                          call: run_scraper
+                          args:
+                            scraper_name: "bdl-games"
+                            scraper_class: "BdlGamesScraper"
+                            url: ${sys.get_env("BDL_GAMES_URL")}
+                            timeout: 180
+                          result: bdl_games_result
+        except:
+          as: e
+          steps:
+            - log_morning_error:
+                call: sys.log
+                args:
+                  text: ${"Morning collection had errors: " + e.message}
+                  severity: WARNING
+
+    # Afternoon Preparation (12-4 PM ET)  
+    # Focus on betting markets - CRITICAL DEPENDENCY: Events before Props
+    - afternoon_preparation:
+        try:
+          steps:
+            # STEP 1: Get betting events first (required for props)
+            - get_betting_events:
+                parallel:
+                  branches:
+                    - odds_events:
+                        call: run_scraper
+                        args:
+                          scraper_name: "odds-events"
+                          scraper_class: "GetOddsApiEvents"
+                          url: ${sys.get_env("ODDS_EVENTS_URL")}
+                          timeout: 300
+                        result: odds_events_result
+                    - espn_scoreboard:
+                        call: run_scraper
+                        args:
+                          scraper_name: "espn-scoreboard"
+                          scraper_class: "GetEspnScoreboard"
+                          url: ${sys.get_env("ESPN_SCOREBOARD_URL")}
+                          timeout: 180
+                        result: espn_scoreboard_result
+
+            # STEP 2: Check if events were successful before proceeding to props
+            - check_events_success:
+                switch:
+                  - condition: ${odds_events_result.status == "success"}
+                    next: collect_player_props
+                  - condition: true
+                    next: skip_props_collection
+
+            # STEP 3: Collect player props using event IDs (only if events succeeded)
+            - collect_player_props:
+                call: run_scraper
+                args:
+                  scraper_name: "odds-player-props"
+                  scraper_class: "GetOddsApiCurrentEventOdds"
+                  url: ${sys.get_env("ODDS_PROPS_URL")}
+                  timeout: 600  # Longer timeout for props collection
+                  depends_on: ${odds_events_result}
+                result: odds_props_result
+                next: afternoon_complete
+
+            # STEP 4: Handle case where events failed
+            - skip_props_collection:
+                assign:
+                  - odds_props_result:
+                      status: "skipped"
+                      message: "Skipped due to events failure"
+                call: sys.log
+                args:
+                  text: "Skipping player props collection due to events API failure"
+                  severity: ERROR
+
+            - afternoon_complete:
+                call: sys.log
+                args:
+                  text: "Afternoon preparation completed"
+                  severity: INFO
+        except:
+          as: e
+          steps:
+            - log_afternoon_error:
+                call: sys.log
+                args:
+                  text: ${"Afternoon preparation failed: " + e.message}
+                  severity: ERROR
+
+    # Evening Results Collection (6-11 PM ET)
+    # Focus on completed game data
+    - evening_results:
+        try:
+          parallel:
+            shared: [scraper_results, failed_scrapers]
+            exception_policy: CONTINUE_ALL
+            branches:
+              # Game results and boxscores
+              - game_results:
+                  parallel:
+                    branches:
+                      - bdl_boxscores:
+                          call: run_scraper
+                          args:
+                            scraper_name: "bdl-boxscores"
+                            scraper_class: "BdlBoxScoresScraper"
+                            url: ${sys.get_env("BDL_BOXSCORES_URL")}
+                            timeout: 300
+                          result: bdl_boxscores_result
+                      - nba_player_boxscores:
+                          call: run_scraper
+                          args:
+                            scraper_name: "nba-player-boxscores"
+                            scraper_class: "GetNbaComPlayerBoxscore"
+                            url: ${sys.get_env("NBA_PLAYER_BOXSCORES_URL")}
+                            timeout: 360
+                          result: nba_player_boxscores_result
+
+              # Individual game details (will be expanded to handle multiple games)
+              - game_details:
+                  parallel:
+                    branches:
+                      - espn_boxscores:
+                          call: run_scraper
+                          args:
+                            scraper_name: "espn-boxscores"
+                            scraper_class: "GetEspnBoxscore"
+                            url: ${sys.get_env("ESPN_BOXSCORES_URL")}
+                            timeout: 240
+                          result: espn_boxscores_result
+                      - nba_play_by_play:
+                          call: run_scraper
+                          args:
+                            scraper_name: "nba-play-by-play"
+                            scraper_class: "GetNbaPlayByPlayRawBackup"
+                            url: ${sys.get_env("NBA_PLAY_BY_PLAY_URL")}
+                            timeout: 300
+                          result: nba_play_by_play_result
+        except:
+          as: e
+          steps:
+            - log_evening_error:
+                call: sys.log
+                args:
+                  text: ${"Evening results collection had errors: " + e.message}
+                  severity: WARNING
+
+    # Workflow Summary and Cleanup
+    - workflow_summary:
+        assign:
+          - workflow_end: ${sys.now()}
+          - total_duration: ${workflow_end - workflow_start}
+          - success_count: 0
+          - failure_count: 0
+        call: sys.log
+        args:
+          text: ${"Workflow completed in " + string(total_duration) + " seconds"}
+          severity: INFO
+
+    # Return final status
+    - return_result:
+        return:
+          status: "completed"
+          duration_seconds: ${total_duration}
+          scraper_results: ${scraper_results}
+          failed_scrapers: ${failed_scrapers}
+          timestamp: ${current_date}
+
+# Reusable subworkflow for running individual scrapers
+run_scraper:
+  params: [scraper_name, scraper_class, url, timeout, depends_on]
+  steps:
+    - log_start:
+        call: sys.log
+        args:
+          text: ${"Starting " + scraper_name + " (" + scraper_class + ")"}
+          severity: INFO
+
+    - call_scraper:
+        try:
+          call: http.post
+          args:
+            url: ${url}
+            timeout: ${timeout}
+            headers:
+              Content-Type: "application/json"
+              Authorization: ${"Bearer " + sys.get_env("CLOUD_RUN_TOKEN")}
+            body:
+              date: ${time.format(sys.now(), "%Y-%m-%d")}
+              scraper_class: ${scraper_class}
+              depends_on: ${default(depends_on, null)}
+          result: scraper_response
+        except:
+          as: e
+          steps:
+            - log_failure:
+                call: sys.log
+                args:
+                  text: ${scraper_name + " failed: " + e.message}
+                  severity: ERROR
+            - return_failure:
+                return:
+                  status: "failure"
+                  scraper_name: ${scraper_name}
+                  error: ${e.message}
+                  timestamp: ${sys.now()}
+
+    - log_success:
+        call: sys.log
+        args:
+          text: ${scraper_name + " completed successfully"}
+          severity: INFO
+
+    - return_success:
+        return:
+          status: "success"
+          scraper_name: ${scraper_name}
+          response: ${scraper_response}
+          timestamp: ${sys.now()}

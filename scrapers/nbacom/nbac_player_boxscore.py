@@ -55,6 +55,20 @@ class GetNbaComPlayerBoxscore(ScraperBase):
             "export_mode": ExportMode.RAW,
             "groups": ["test", "file2"],
         },
+        # ADD THESE CAPTURE EXPORTERS:
+        {
+            "type": "file",
+            "filename": "/tmp/raw_%(run_id)s.json",
+            "export_mode": ExportMode.RAW,
+            "groups": ["capture"],
+        },
+        {
+            "type": "file",
+            "filename": "/tmp/exp_%(run_id)s.json",
+            "export_mode": ExportMode.DECODED,
+            "pretty_print": True,
+            "groups": ["capture"],
+        },
     ]
 
     # ------------------------------------------------------------------ #
@@ -67,8 +81,17 @@ class GetNbaComPlayerBoxscore(ScraperBase):
         # normalise
         self.opts["gamedate"] = raw_date
 
+        # NBA season logic: seasons run October to April (next year)
         year = int(raw_date[0:4])
-        self.opts.setdefault("season", str(year))
+        month = int(raw_date[4:6])
+        
+        # If month is Jan-Sep, it's part of the previous season start year
+        if month < 10:  # January through September
+            season_start_year = year - 1
+        else:  # October, November, December
+            season_start_year = year
+            
+        self.opts.setdefault("season", str(season_start_year))
         self.opts.setdefault("season_type", "Regular Season")
         self.opts["time"] = datetime.now(timezone.utc).strftime("%H-%M-%S")
 
@@ -118,13 +141,23 @@ class GetNbaComPlayerBoxscore(ScraperBase):
     # Stats line
     # ------------------------------------------------------------------ #
     def get_scraper_stats(self) -> dict:
-        rows = self.decoded_data["resultSets"][0]["rowSet"]
-        return {
-            "records_found": len(rows),
-            "gamedate": self.opts["gamedate"],
-            "season": self.opts["season"],
-            "season_type": self.opts["season_type"],
-        }
+        if hasattr(self, 'data') and self.data:
+            return {
+                "records_found": self.data.get("player_count", 0),
+                "gamedate": self.opts["gamedate"],
+                "season": self.opts["season"],
+                "season_type": self.opts["season_type"],
+                "source": "nba_player_boxscore"
+            }
+        else:
+            # Fallback to original logic
+            rows = self.decoded_data["resultSets"][0]["rowSet"]
+            return {
+                "records_found": len(rows),
+                "gamedate": self.opts["gamedate"],
+                "season": self.opts["season"],
+                "season_type": self.opts["season_type"],
+            }
 
 
 # ---------------------------------------------------------------------- #
@@ -145,8 +178,14 @@ def gcf_entry(request):  # type: ignore[valid-type]
 # ---------------------------------------------------------------------- #
 if __name__ == "__main__":
     import argparse
+    from scrapers.utils.cli_utils import add_common_args
 
-    cli = argparse.ArgumentParser(description="Run NBA Player Boxscore locally")
+    cli = argparse.ArgumentParser(description="NBA.com Player Boxscore Scraper")
     cli.add_argument("--gamedate", required=True, help="YYYYMMDD or YYYY-MM-DD")
-    cli.add_argument("--group", default="test", help="dev / test / prod")
-    GetNbaComPlayerBoxscore().run(vars(cli.parse_args()))
+    add_common_args(cli)  # This adds --group, --runId, --debug, etc.
+    args = cli.parse_args()
+
+    if args.debug:
+        logging.getLogger().setLevel(logging.DEBUG)
+
+    GetNbaComPlayerBoxscore().run(vars(args))

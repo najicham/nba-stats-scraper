@@ -59,6 +59,20 @@ class GetNbaComPlayerList(ScraperBase):
             "pretty_print": True,
             "groups": ["dev", "test", "file"],
         },
+        # ADD THESE CAPTURE GROUP EXPORTERS:
+        {
+            "type": "file",
+            "filename": "/tmp/raw_%(run_id)s.json",
+            "export_mode": ExportMode.RAW,
+            "groups": ["capture"],
+        },
+        {
+            "type": "file",
+            "filename": "/tmp/exp_%(run_id)s.json",
+            "export_mode": ExportMode.DECODED,
+            "pretty_print": True,
+            "groups": ["capture"],
+        },
     ]
 
     # ------------------------------------------------------------------ #
@@ -137,8 +151,15 @@ def gcf_entry(request):  # type: ignore[valid-type]
 # ---------------------------------------------------------------------- #
 if __name__ == "__main__":
     import argparse
+    from scrapers.utils.cli_utils import add_common_args
 
     cli = argparse.ArgumentParser(description="Run NBA.com PlayerList locally")
     cli.add_argument("--season", default="", help="e.g. 2022 or blank for current season")
-    cli.add_argument("--group", default="test")
-    GetNbaComPlayerList().run(vars(cli.parse_args()))
+    add_common_args(cli)  # This adds --group, --runId, --debug, etc.
+    args = cli.parse_args()
+
+    if args.debug:
+        import logging
+        logging.getLogger().setLevel(logging.DEBUG)
+
+    GetNbaComPlayerList().run(vars(args))
