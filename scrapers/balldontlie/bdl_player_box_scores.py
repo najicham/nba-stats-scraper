@@ -1,7 +1,7 @@
 """
 BALLDONTLIE - Player Box Scores (stats endpoint)           v1.3 (2025-06-24)
 ------------------------------------------------------------------------------
-Collect per-player box‑score rows from
+Collect per-player box-score rows from
 
     https://api.balldontlie.io/v1/stats
 
@@ -17,17 +17,41 @@ Supported query parameters (full parity with BDL docs)
 
 If any ID/season filter is supplied we make a single request.
 Otherwise we iterate date-by-date across the window.
+
+Usage examples:
+  # Via capture tool (recommended for data collection):
+  python tools/fixtures/capture.py bdl_player_box_scores \
+      --startDate 2025-01-15 --endDate 2025-01-16 \
+      --debug
+
+  # Direct CLI execution:
+  python scrapers/balldontlie/bdl_player_box_scores.py --playerIds 237,115 --debug
+
+  # Flask web service:
+  python scrapers/balldontlie/bdl_player_box_scores.py --serve --debug
 """
+
 from __future__ import annotations
 
 import logging
 import os
+import sys
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlencode
 
-from ..scraper_base import DownloadType, ExportMode, ScraperBase
-from ..utils.cli_utils import add_common_args
+# Support both module execution (python -m) and direct execution
+try:
+    # Module execution: python -m scrapers.balldontlie.bdl_player_box_scores
+    from ..scraper_base import DownloadType, ExportMode, ScraperBase
+    from ..scraper_flask_mixin import ScraperFlaskMixin
+    from ..scraper_flask_mixin import convert_existing_flask_scraper
+except ImportError:
+    # Direct execution: python scrapers/balldontlie/bdl_player_box_scores.py
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+    from scrapers.scraper_base import DownloadType, ExportMode, ScraperBase
+    from scrapers.scraper_flask_mixin import ScraperFlaskMixin
+    from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
 
 logger = logging.getLogger("scraper_base")
 
@@ -47,22 +71,48 @@ def _split(raw: str | None) -> List[str]:
 
 
 # --------------------------------------------------------------------------- #
-# Scraper                                                                     #
+# Scraper (USING MIXIN)
 # --------------------------------------------------------------------------- #
-class BdlPlayerBoxScoresScraper(ScraperBase):
-    """Cursor scraper for /stats, returns player box‑score rows."""
+class BdlPlayerBoxScoresScraper(ScraperBase, ScraperFlaskMixin):
+    """Cursor scraper for /stats, returns player box-score rows."""
 
+    # Flask Mixin Configuration
+    scraper_name = "bdl_player_box_scores"
+    required_params = []  # No required parameters
+    optional_params = {
+        "startDate": None,   # Defaults to yesterday
+        "endDate": None,     # Defaults to tomorrow
+        "gameIds": None,     # comma list
+        "playerIds": None,   # comma list
+        "teamIds": None,     # comma list
+        "seasons": None,     # comma list (season start years)
+        "postSeason": None,  # boolean flag
+        "perPage": 100,      # 1-100 (default 100)
+        "apiKey": None,      # Falls back to env var
+    }
+
+    # Original scraper config
     required_opts: List[str] = []
     download_type = DownloadType.JSON
     decode_download_data = True
 
+    # ------------------------------------------------------------------ #
+    # Exporters
+    # ------------------------------------------------------------------ #
     exporters = [
+        # GCS RAW for production
+        {
+            "type": "gcs",
+            "key": "balldontlie/player-box-scores/%(startDate)s_%(endDate)s_%(run_id)s.raw.json",
+            "export_mode": ExportMode.RAW,
+            "groups": ["prod", "gcs"],
+        },
         {
             "type": "file",
             "filename": "/tmp/bdl_player_box_scores_%(startDate)s_%(endDate)s.json",
             "pretty_print": True,
             "export_mode": ExportMode.DATA,
-            "groups": ["dev", "test", "prod"],
+            "groups": ["dev", "test"],
         },
         # capture artefacts (raw + decoded) keyed by run_id
         {
@@ -157,14 +207,13 @@ class BdlPlayerBoxScoresScraper(ScraperBase):
             d += timedelta(days=1)
 
     def set_headers(self) -> None:
-        api_key = os.getenv("BDL_API_KEY")
-        if not api_key:
-            raise RuntimeError("Environment variable BDL_API_KEY not set")
+        api_key = self.opts.get("apiKey") or os.getenv("BDL_API_KEY")
         self.headers = {
-            "Authorization": api_key,
-            "User-Agent": "scrape-bdl-player-box-scores/1.0",
+            "User-Agent": "scrape-bdl-player-box-scores/1.3",
             "Accept": "application/json",
         }
+        if api_key:
+            self.headers["Authorization"] = f"Bearer {api_key}"
 
     # ------------------------------------------------------------------ #
     # Validation                                                         #
@@ -250,51 +299,14 @@ class BdlPlayerBoxScoresScraper(ScraperBase):
 
 
 # --------------------------------------------------------------------------- #
-# Google Cloud Function entry                                                #
+# MIXIN-BASED Flask and CLI entry points (MUCH CLEANER!)
 # --------------------------------------------------------------------------- #
-def gcf_entry(request):  # type: ignore[valid-type]
-    opts = {
-        "startDate": request.args.get("startDate"),
-        "endDate": request.args.get("endDate"),
-        "gameIds": request.args.get("gameIds"),
-        "playerIds": request.args.get("playerIds"),
-        "teamIds": request.args.get("teamIds"),
-        "seasons": request.args.get("seasons"),
-        "postSeason": request.args.get("postSeason"),
-        "perPage": request.args.get("perPage"),
-        "group": request.args.get("group", "prod"),
-    }
-    BdlPlayerBoxScoresScraper().run(opts)
-    return (
-        f"BallDontLie player box-scores scrape complete "
-        f"({opts.get('startDate')} -> {opts.get('endDate')})",
-        200,
-    )
 
+# Use the mixin's utility to create the Flask app
+create_app = convert_existing_flask_scraper(BdlPlayerBoxScoresScraper)
 
-# --------------------------------------------------------------------------- #
-# CLI usage                                                                  #
-# --------------------------------------------------------------------------- #
+# Use the mixin's main function generator
 if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser(
-        description="Scrape BallDontLie /stats (player box-scores)"
-    )
-    parser.add_argument("--startDate", help="YYYY-MM-DD")
-    parser.add_argument("--endDate", help="YYYY-MM-DD")
-    parser.add_argument("--gameIds", help="comma list")
-    parser.add_argument("--playerIds", help="comma list")
-    parser.add_argument("--teamIds", help="comma list")
-    parser.add_argument("--seasons", help="comma list of season start years")
-    parser.add_argument(
-        "--postSeason", action="store_true", help="playoff games only"
-    )
-    parser.add_argument("--perPage", type=int, help="1-100 (default 100)")
-    add_common_args(parser)  # --group --apiKey --runId --debug
-    args = parser.parse_args()
-
-    if args.debug:
-        logging.getLogger().setLevel(logging.DEBUG)
-
-    BdlPlayerBoxScoresScraper().run(vars(args))
+    main = BdlPlayerBoxScoresScraper.create_cli_and_flask_main()
+    main()
+    

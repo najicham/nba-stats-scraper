@@ -1,32 +1,56 @@
 """
-BALLDONTLIE – Games endpoint                                  v1.2 • 2025‑06‑24
+BALLDONTLIE - Games endpoint                                  v1.2 - 2025-06-24
 -------------------------------------------------------------------------------
 Fetches every NBA game between **startDate** and **endDate** (inclusive).
 
-    /games?start_date=YYYY‑MM‑DD&end_date=YYYY‑MM‑DD
+    /games?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD
 
-The endpoint is cursor‑paginated.  We grab the first page through
-ScraperBase’s normal downloader, then—inside **transform_data()**—walk any
+The endpoint is cursor-paginated.  We grab the first page through
+ScraperBase's normal downloader, then—inside **transform_data()**—walk any
 `next_cursor` links with the **same requests.Session** (self.http_downloader)
 so we inherit proxy / retry / header behaviour.
 
-Typical page size is ≤ 15 games, so extra pages are rare today but the loop is
-future‑proof.
+Typical page size is <= 15 games, so extra pages are rare today but the loop is
+future-proof.
+
+Usage examples:
+  # Via capture tool (recommended for data collection):
+  python tools/fixtures/capture.py bdl_games \
+      --startDate 2025-01-15 --endDate 2025-01-16 \
+      --debug
+
+  # Direct CLI execution:
+  python scrapers/balldontlie/bdl_games.py --startDate 2025-01-15 --endDate 2025-01-16 --debug
+
+  # Flask web service:
+  python scrapers/balldontlie/bdl_games.py --serve --debug
 """
+
 from __future__ import annotations
 
 import datetime as _dt
 import logging
 import os
+import sys
 from typing import Any, Dict, List, Optional
 
-from ..scraper_base import DownloadType, ExportMode, ScraperBase
-from ..utils.cli_utils import add_common_args
+# Support both module execution (python -m) and direct execution
+try:
+    # Module execution: python -m scrapers.balldontlie.bdl_games
+    from ..scraper_base import DownloadType, ExportMode, ScraperBase
+    from ..scraper_flask_mixin import ScraperFlaskMixin
+    from ..scraper_flask_mixin import convert_existing_flask_scraper
+except ImportError:
+    # Direct execution: python scrapers/balldontlie/bdl_games.py
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+    from scrapers.scraper_base import DownloadType, ExportMode, ScraperBase
+    from scrapers.scraper_flask_mixin import ScraperFlaskMixin
+    from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
 
 logger = logging.getLogger(__name__)
 
 # --------------------------------------------------------------------------- #
-# Small helper – date coercion                                                #
+# Small helper - date coercion                                                #
 # --------------------------------------------------------------------------- #
 def _coerce_date(val: str | _dt.date | None, default: _dt.date) -> _dt.date:
     if val is None:
@@ -37,23 +61,43 @@ def _coerce_date(val: str | _dt.date | None, default: _dt.date) -> _dt.date:
 
 
 # --------------------------------------------------------------------------- #
-# Scraper                                                                     #
+# Scraper (USING MIXIN)
 # --------------------------------------------------------------------------- #
-class BdlGamesScraper(ScraperBase):
+class BdlGamesScraper(ScraperBase, ScraperFlaskMixin):
     """Fetch game rows, follow cursor pagination, merge pages."""
 
+    # Flask Mixin Configuration
+    scraper_name = "bdl_games"
+    required_params = []  # No required parameters
+    optional_params = {
+        "startDate": None,  # Defaults to yesterday
+        "endDate": None,    # Defaults to tomorrow
+        "apiKey": None,     # Falls back to env var
+    }
+
+    # Original scraper config
     required_opts: List[str] = []
     download_type = DownloadType.JSON
     decode_download_data = True
 
+    # ------------------------------------------------------------------ #
+    # Exporters
+    # ------------------------------------------------------------------ #
     exporters = [
+        # GCS RAW for production
+        {
+            "type": "gcs",
+            "key": "balldontlie/games/%(startDate)s_%(endDate)s_%(run_id)s.raw.json",
+            "export_mode": ExportMode.RAW,
+            "groups": ["prod", "gcs"],
+        },
         # Normal artifact (pretty JSON after full transform)
         {
             "type": "file",
             "filename": "/tmp/bdl_games_%(startDate)s_%(endDate)s.json",
             "export_mode": ExportMode.DATA,
             "pretty_print": True,
-            "groups": ["dev", "test", "prod"],
+            "groups": ["dev", "test"],
         },
         # Capture RAW + EXP
         {
@@ -151,7 +195,7 @@ class BdlGamesScraper(ScraperBase):
             "games": games,
         }
         logger.info(
-            "Fetched %d games (%s → %s)",
+            "Fetched %d games (%s -> %s)",
             len(games),
             self.opts["startDate"],
             self.opts["endDate"],
@@ -169,36 +213,14 @@ class BdlGamesScraper(ScraperBase):
 
 
 # --------------------------------------------------------------------------- #
-# Google Cloud Function entry                                                #
+# MIXIN-BASED Flask and CLI entry points (MUCH CLEANER!)
 # --------------------------------------------------------------------------- #
-def gcf_entry(request):  # type: ignore[valid-type]
-    opts = {
-        "startDate": request.args.get("startDate"),
-        "endDate": request.args.get("endDate"),
-        "apiKey": request.args.get("apiKey"),
-        "group": request.args.get("group", "prod"),
-        "runId": request.args.get("runId"),
-    }
-    BdlGamesScraper().run(opts)
-    return (
-        f"BallDontLie games scrape complete ({opts.get('startDate')} → {opts.get('endDate')})",
-        200,
-    )
 
+# Use the mixin's utility to create the Flask app
+create_app = convert_existing_flask_scraper(BdlGamesScraper)
 
-# --------------------------------------------------------------------------- #
-# CLI usage                                                                  #
-# --------------------------------------------------------------------------- #
+# Use the mixin's main function generator
 if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser(description="Scrape BallDontLie /games")
-    parser.add_argument("--startDate", help="YYYY-MM-DD (default: yesterday)")
-    parser.add_argument("--endDate", help="YYYY-MM-DD (default: tomorrow)")
-    add_common_args(parser)  # --group --apiKey --runId --debug
-    args = parser.parse_args()
-
-    if args.debug:
-        logging.getLogger().setLevel(logging.DEBUG)
-
-    BdlGamesScraper().run(vars(args))
+    main = BdlGamesScraper.create_cli_and_flask_main()
+    main()
+    

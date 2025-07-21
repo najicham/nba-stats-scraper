@@ -2,35 +2,65 @@
 """
 PBPStats **box-score** scraper                               v1 - 2025-06-17
 --------------------------------------------------------------------------
-Quick-start (local):
-    python -m scrapers.nbacom.nbac_pbpstats_boxscore --gameId 0022400987
+Downloads NBA box‑score data via the PBPStats library.
 
-What URL does PBPStats hit?
----------------------------
 For gameId ``0022400987`` the underlying request is:
-
     https://cdn.nba.com/static/json/liveData/boxscore/boxscore_0022400987.json
 
 See: https://pbpstats.readthedocs.io/en/latest/pbpstats.data_loader.data_nba.boxscore.html
+
+Usage examples
+--------------
+  # Via capture tool (recommended for data collection):
+  python tools/fixtures/capture.py pbpstats_boxscore \
+      --gameId 0022400987 \
+      --debug
+
+  # Direct CLI execution:
+  python scrapers/pbpstats/pbpstats_boxscore.py --gameId 0022400987 --debug
+
+  # Flask web service:
+  python scrapers/pbpstats/pbpstats_boxscore.py --serve --debug
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import os
+import sys
 from datetime import datetime, timezone
 from typing import Dict, List
 
-from pbpstats.client import Client
+# Support both module execution (python -m) and direct execution
+try:
+    # Module execution: python -m scrapers.pbpstats.pbpstats_boxscore
+    from ..scraper_base import DownloadType, ExportMode, ScraperBase
+    from ..scraper_flask_mixin import ScraperFlaskMixin
+    from ..scraper_flask_mixin import convert_existing_flask_scraper
+    from ..utils.exceptions import DownloadDataException
+except ImportError:
+    # Direct execution: python scrapers/pbpstats/pbpstats_boxscore.py
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+    from scrapers.scraper_base import DownloadType, ExportMode, ScraperBase
+    from scrapers.scraper_flask_mixin import ScraperFlaskMixin
+    from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
+    from scrapers.utils.exceptions import DownloadDataException
 
-from ..scraper_base import DownloadType, ExportMode, ScraperBase
-from ..utils.exceptions import DownloadDataException
+from pbpstats.client import Client
 
 logger = logging.getLogger("scraper_base")
 
 
-class GetNbaBoxscorePBPStats(ScraperBase):
+class GetNbaBoxscorePBPStats(ScraperBase, ScraperFlaskMixin):
     """Downloads NBA box‑score data via the PBPStats library."""
+
+    # Flask Mixin Configuration
+    scraper_name = "pbpstats_boxscore"
+    required_params = ["gameId"]
+    optional_params = {
+        "debug": None,
+    }
 
     required_opts = ["gameId"]
 
@@ -74,6 +104,22 @@ class GetNbaBoxscorePBPStats(ScraperBase):
             "export_mode": ExportMode.DATA,
             "data_key": PLAYER_KEY,
             "groups": ["prod", "gcs"],
+        },
+        # Add capture group exporters
+        {
+            "type": "file",
+            "filename": "/tmp/raw_%(run_id)s.json",
+            "export_mode": ExportMode.DATA,
+            "data_key": RAW_KEY,
+            "groups": ["capture"],
+        },
+        {
+            "type": "file",
+            "filename": "/tmp/exp_%(run_id)s.json",
+            "export_mode": ExportMode.DATA,
+            "data_key": PLAYER_KEY,
+            "pretty_print": True,
+            "groups": ["capture"],
         },
     ]
 
@@ -139,32 +185,15 @@ class GetNbaBoxscorePBPStats(ScraperBase):
         }
 
 
-# ---------------------------------------------------------------------- #
-# Google Cloud Function entry
-# ---------------------------------------------------------------------- #
-def gcf_entry(request):  # type: ignore[valid-type]
-    gid = request.args.get("gameId")
-    if not gid:
-        return ("Missing gameId", 400)
+# --------------------------------------------------------------------------- #
+# MIXIN-BASED Flask and CLI entry points
+# --------------------------------------------------------------------------- #
 
-    ok = GetNbaBoxscorePBPStats().run(
-        {
-            "gameId": gid,
-            "group": request.args.get("group", "prod"),
-            "debug": request.args.get("debug", "0"),
-        }
-    )
-    return (("Boxscore scrape failed", 500) if ok is False else ("Scrape ok", 200))
+# Use the mixin's utility to create the Flask app
+create_app = convert_existing_flask_scraper(GetNbaBoxscorePBPStats)
 
-
-# ---------------------------------------------------------------------- #
-# Local CLI usage
-# ---------------------------------------------------------------------- #
+# Use the mixin's main function generator
 if __name__ == "__main__":
-    import argparse
-
-    cli = argparse.ArgumentParser(description="Run PBPStats box‑score scraper")
-    cli.add_argument("--gameId", required=True, help="e.g. 0022400987")
-    cli.add_argument("--group", default="test", help="dev / test / prod")
-    cli.add_argument("--debug", default="0", help="1/true to print cache path")
-    GetNbaBoxscorePBPStats().run(vars(cli.parse_args()))
+    main = GetNbaBoxscorePBPStats.create_cli_and_flask_main()
+    main()
+    

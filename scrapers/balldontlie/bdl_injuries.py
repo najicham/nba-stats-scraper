@@ -1,5 +1,5 @@
 """
-BALLDONTLIE - Player Injuries endpoint                       v1.1 • 2025-06-24
+BALLDONTLIE - Player Injuries endpoint                       v1.1 - 2025-06-24
 -------------------------------------------------------------------------------
 Current injuries:
 
@@ -8,37 +8,81 @@ Current injuries:
 Optional query params:
   --teamId     restrict to one team
   --playerId   restrict to one player
+
+Usage examples:
+  # Via capture tool (recommended for data collection):
+  python tools/fixtures/capture.py bdl_injuries \
+      --teamId 3 \
+      --debug
+
+  # Direct CLI execution:
+  python scrapers/balldontlie/bdl_injuries.py --teamId 3 --debug
+
+  # Flask web service:
+  python scrapers/balldontlie/bdl_injuries.py --serve --debug
 """
 
 from __future__ import annotations
 
 import logging
 import os
+import sys
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from ..scraper_base import DownloadType, ExportMode, ScraperBase
+# Support both module execution (python -m) and direct execution
+try:
+    # Module execution: python -m scrapers.balldontlie.bdl_injuries
+    from ..scraper_base import DownloadType, ExportMode, ScraperBase
+    from ..scraper_flask_mixin import ScraperFlaskMixin
+    from ..scraper_flask_mixin import convert_existing_flask_scraper
+except ImportError:
+    # Direct execution: python scrapers/balldontlie/bdl_injuries.py
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+    from scrapers.scraper_base import DownloadType, ExportMode, ScraperBase
+    from scrapers.scraper_flask_mixin import ScraperFlaskMixin
+    from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
 
 logger = logging.getLogger(__name__)
 
 # --------------------------------------------------------------------------- #
-# Scraper                                                                     #
+# Scraper (USING MIXIN)
 # --------------------------------------------------------------------------- #
-class BdlInjuriesScraper(ScraperBase):
+class BdlInjuriesScraper(ScraperBase, ScraperFlaskMixin):
     """Hourly or ad-hoc scraper for /player_injuries."""
 
+    # Flask Mixin Configuration
+    scraper_name = "bdl_injuries"
+    required_params = []  # No required parameters
+    optional_params = {
+        "teamId": None,
+        "playerId": None,
+        "apiKey": None,  # Falls back to env var
+    }
+
+    # Original scraper config
     required_opts: List[str] = []
     download_type = DownloadType.JSON
     decode_download_data = True
 
+    # ------------------------------------------------------------------ #
+    # Exporters
+    # ------------------------------------------------------------------ #
     exporters = [
+        # GCS RAW for production
+        {
+            "type": "gcs",
+            "key": "balldontlie/injuries/%(ident)s_%(run_id)s.raw.json",
+            "export_mode": ExportMode.RAW,
+            "groups": ["prod", "gcs"],
+        },
         # Normal artifact
         {
             "type": "file",
             "filename": "/tmp/bdl_injuries_%(ident)s.json",
             "pretty_print": True,
             "export_mode": ExportMode.DATA,
-            "groups": ["dev", "test", "prod"],
+            "groups": ["dev", "test"],
         },
         # Capture RAW + EXP
         {
@@ -57,7 +101,7 @@ class BdlInjuriesScraper(ScraperBase):
     ]
 
     # ------------------------------------------------------------------ #
-    # Additional opts – ident string                                     #
+    # Additional opts - ident string                                     #
     # ------------------------------------------------------------------ #
     def set_additional_opts(self) -> None:
         if self.opts.get("playerId"):
@@ -137,35 +181,14 @@ class BdlInjuriesScraper(ScraperBase):
 
 
 # --------------------------------------------------------------------------- #
-# Google Cloud Function entry                                                #
+# MIXIN-BASED Flask and CLI entry points (MUCH CLEANER!)
 # --------------------------------------------------------------------------- #
-def gcf_entry(request):  # type: ignore[valid-type]
-    opts = {
-        "teamId": request.args.get("teamId"),
-        "playerId": request.args.get("playerId"),
-        "group": request.args.get("group", "prod"),
-        "apiKey": request.args.get("apiKey"),
-        "runId": request.args.get("runId"),
-    }
-    BdlInjuriesScraper().run(opts)
-    ident = opts.get("playerId") or opts.get("teamId") or "league"
-    return f"BallDontLie injuries scrape complete ({ident})", 200
 
+# Use the mixin's utility to create the Flask app
+create_app = convert_existing_flask_scraper(BdlInjuriesScraper)
 
-# --------------------------------------------------------------------------- #
-# CLI usage                                                                  #
-# --------------------------------------------------------------------------- #
+# Use the mixin's main function generator
 if __name__ == "__main__":
-    import argparse
-    from scrapers.utils.cli_utils import add_common_args
-
-    parser = argparse.ArgumentParser(description="Scrape BallDontLie /player_injuries")
-    parser.add_argument("--teamId", help="Restrict to one team")
-    parser.add_argument("--playerId", help="Restrict to one player")
-    add_common_args(parser)  # --group --apiKey --runId --debug
-    args = parser.parse_args()
-
-    if args.debug:
-        logging.getLogger().setLevel(logging.DEBUG)
-
-    BdlInjuriesScraper().run(vars(args))
+    main = BdlInjuriesScraper.create_cli_and_flask_main()
+    main()
+    

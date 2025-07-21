@@ -1,17 +1,26 @@
-# scrapers/nbacom/nbac_pbpstats_playbyplay.py
+# scrapers/pbpstats/pbpstats_play_by_play.py
 """
 PBPStats play-by-play scraper                               v2 - 2025-06-17
 --------------------------------------------------------------------------
-Quick-start (local):
-    python -m scrapers.nbacom.nbac_pbpstats_playbyplay --gameId 0022400987
+Downloads raw play-by-play via PBPStats and extracts cleaned possessions.
 
-What URL does PBPStats hit?
----------------------------
 For `gameId=0022400987` the library downloads:
-
     https://cdn.nba.com/static/json/liveData/playbyplay/playbyplay_0022400987.json
 
 See: https://pbpstats.readthedocs.io/en/latest/pbpstats.data_loader.data_nba.pbp.html
+
+Usage examples
+--------------
+  # Via capture tool (recommended for data collection):
+  python tools/fixtures/capture.py pbpstats_play_by_play \
+      --gameId 0022400987 \
+      --debug
+
+  # Direct CLI execution:
+  python scrapers/pbpstats/pbpstats_play_by_play.py --gameId 0022400987 --debug
+
+  # Flask web service:
+  python scrapers/pbpstats/pbpstats_play_by_play.py --serve --debug
 """
 
 from __future__ import annotations
@@ -19,25 +28,45 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sys
 from datetime import datetime, timezone
 from typing import Dict, List
 
-from pbpstats.client import Client
+# Support both module execution (python -m) and direct execution
+try:
+    # Module execution: python -m scrapers.pbpstats.pbpstats_play_by_play
+    from ..scraper_base import DownloadType, ExportMode, ScraperBase
+    from ..scraper_flask_mixin import ScraperFlaskMixin
+    from ..scraper_flask_mixin import convert_existing_flask_scraper
+    from ..utils.exceptions import DownloadDataException
+except ImportError:
+    # Direct execution: python scrapers/pbpstats/pbpstats_play_by_play.py
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+    from scrapers.scraper_base import DownloadType, ExportMode, ScraperBase
+    from scrapers.scraper_flask_mixin import ScraperFlaskMixin
+    from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
+    from scrapers.utils.exceptions import DownloadDataException
 
-from ..scraper_base import DownloadType, ExportMode, ScraperBase
-from ..utils.exceptions import DownloadDataException
+from pbpstats.client import Client
 
 logger = logging.getLogger("scraper_base")
 
 
-class GetNbaPlayByPlayPBPStats(ScraperBase):
+class GetNbaPlayByPlayPBPStats(ScraperBase, ScraperFlaskMixin):
     """
     Downloads raw play-by-play via PBPStats and extracts cleaned possessions.
     """
 
+    # Flask Mixin Configuration
+    scraper_name = "pbpstats_play_by_play"
+    required_params = ["gameId"]
+    optional_params = {
+        "debug": None,
+    }
+
     required_opts = ["gameId"]
 
-    # We bypass ScraperBase’s HTTP layer entirely
+    # We bypass ScraperBase's HTTP layer entirely
     download_type = DownloadType.BINARY
     decode_download_data = False
     header_profile = None
@@ -78,6 +107,22 @@ class GetNbaPlayByPlayPBPStats(ScraperBase):
             "data_key": POSS_KEY,
             "groups": ["prod", "gcs"],
         },
+        # Add capture group exporters
+        {
+            "type": "file",
+            "filename": "/tmp/raw_%(run_id)s.json",
+            "export_mode": ExportMode.DATA,
+            "data_key": RAW_KEY,
+            "groups": ["capture"],
+        },
+        {
+            "type": "file",
+            "filename": "/tmp/exp_%(run_id)s.json",
+            "export_mode": ExportMode.DATA,
+            "data_key": POSS_KEY,
+            "pretty_print": True,
+            "groups": ["capture"],
+        },
     ]
 
     # ------------------------------------------------------------------ #
@@ -90,15 +135,6 @@ class GetNbaPlayByPlayPBPStats(ScraperBase):
         # Derive season from GameID (e.g. 00224xxxxx -> 2023‑24)
         yr_prefix = int(gid[3:5]) + 2000
         self.opts["season"] = f"{yr_prefix}-{(yr_prefix + 1) % 100:02d}"
-
-        # PBPStats client settings with local cache dir
-        cache_dir = "/tmp/pbp_cache"
-        settings = {
-            "dir": cache_dir,
-            "Pbp": {"source": "web", "data_provider": "data_nba"},
-            "Possessions": {"source": "file", "data_provider": "data_nba"},
-            "Games": {"source": "file", "data_provider": "data_nba"},
-        }
 
         # -------------------------------- choose provider sequence
         providers = ["live", "stats_nba", "data_nba"]  # try live, then stats, then data
@@ -164,28 +200,15 @@ class GetNbaPlayByPlayPBPStats(ScraperBase):
         }
 
 
-# ---------------------------------------------------------------------- #
-# Google Cloud Function entry
-# ---------------------------------------------------------------------- #
-def gcf_entry(request):  # type: ignore[valid-type]
-    gid = request.args.get("gameId")
-    if not gid:
-        return ("Missing gameId", 400)
+# --------------------------------------------------------------------------- #
+# MIXIN-BASED Flask and CLI entry points
+# --------------------------------------------------------------------------- #
 
-    ok = GetNbaPlayByPlayPBPStats().run(
-        {"gameId": gid, "group": request.args.get("group", "prod")}
-    )
-    return (("PBPStats scrape failed", 500) if ok is False else ("Scrape ok", 200))
+# Use the mixin's utility to create the Flask app
+create_app = convert_existing_flask_scraper(GetNbaPlayByPlayPBPStats)
 
-
-# ---------------------------------------------------------------------- #
-# Local CLI usage
-# ---------------------------------------------------------------------- #
+# Use the mixin's main function generator
 if __name__ == "__main__":
-    import argparse
-
-    cli = argparse.ArgumentParser(description="Run PBPStats play‑by‑play scraper")
-    cli.add_argument("--gameId", required=True, help="e.g. 0022400987")
-    cli.add_argument("--group", default="test", help="dev / test / prod")
-    cli.add_argument("--debug", default="0", help="1/true to print cache path")
-    GetNbaPlayByPlayPBPStats().run(vars(cli.parse_args()))
+    main = GetNbaPlayByPlayPBPStats.create_cli_and_flask_main()
+    main()
+    

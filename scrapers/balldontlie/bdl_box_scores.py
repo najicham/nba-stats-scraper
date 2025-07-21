@@ -1,42 +1,85 @@
 """
-BALLDONTLIE - Box-Scores (final) endpoint                 v1.1 • 2025-06-24
+BALLDONTLIE - Box-Scores (final) endpoint                 v1.1 - 2025-06-24
 -------------------------------------------------------------------------------
 Finished-game box scores:
 
     https://api.balldontlie.io/v1/box_scores
 
 --date param defaults to **yesterday (UTC)**.
+
+Usage examples:
+  # Via capture tool (recommended for data collection):
+  python tools/fixtures/capture.py bdl_box_scores \
+      --date 2025-01-15 \
+      --debug
+
+  # Direct CLI execution:
+  python scrapers/balldontlie/bdl_box_scores.py --date 2025-01-15 --debug
+
+  # Flask web service:
+  python scrapers/balldontlie/bdl_box_scores.py --serve --debug
 """
 
 from __future__ import annotations
 
 import logging
 import os
+import sys
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
-from ..scraper_base import DownloadType, ExportMode, ScraperBase
+# Support both module execution (python -m) and direct execution
+try:
+    # Module execution: python -m scrapers.balldontlie.bdl_box_scores
+    from ..scraper_base import DownloadType, ExportMode, ScraperBase
+    from ..scraper_flask_mixin import ScraperFlaskMixin
+    from ..scraper_flask_mixin import convert_existing_flask_scraper
+except ImportError:
+    # Direct execution: python scrapers/balldontlie/bdl_box_scores.py
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+    from scrapers.scraper_base import DownloadType, ExportMode, ScraperBase
+    from scrapers.scraper_flask_mixin import ScraperFlaskMixin
+    from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
 
 logger = logging.getLogger(__name__)
 
 # --------------------------------------------------------------------------- #
-# Scraper                                                                     #
+# Scraper (USING MIXIN)
 # --------------------------------------------------------------------------- #
-class BdlBoxScoresScraper(ScraperBase):
+class BdlBoxScoresScraper(ScraperBase, ScraperFlaskMixin):
     """Daily or on-demand scraper for /box_scores."""
 
+    # Flask Mixin Configuration
+    scraper_name = "bdl_box_scores"
+    required_params = []  # No required parameters (defaults to yesterday)
+    optional_params = {
+        "date": None,  # Defaults to yesterday if not provided
+        "apiKey": None,  # Falls back to env var
+    }
+
+    # Original scraper config
     required_opts: List[str] = []
     download_type = DownloadType.JSON
     decode_download_data = True
 
+    # ------------------------------------------------------------------ #
+    # Exporters
+    # ------------------------------------------------------------------ #
     exporters = [
+        # GCS RAW for production
+        {
+            "type": "gcs",
+            "key": "balldontlie/box-scores/%(date)s_%(run_id)s.raw.json",
+            "export_mode": ExportMode.RAW,
+            "groups": ["prod", "gcs"],
+        },
         # Normal artifact
         {
             "type": "file",
             "filename": "/tmp/bdl_box_scores_%(date)s.json",
             "pretty_print": True,
             "export_mode": ExportMode.DATA,
-            "groups": ["dev", "test", "prod"],
+            "groups": ["dev", "test"],
         },
         # Capture RAW + EXP
         {
@@ -89,7 +132,7 @@ class BdlBoxScoresScraper(ScraperBase):
             raise ValueError("Box-scores response malformed: missing 'data' key")
 
     # ------------------------------------------------------------------ #
-    # Transform (cursor‑safe)                                            #
+    # Transform (cursor-safe)                                            #
     # ------------------------------------------------------------------ #
     def transform_data(self) -> None:
         rows: List[Dict[str, Any]] = list(self.decoded_data["data"])
@@ -115,7 +158,7 @@ class BdlBoxScoresScraper(ScraperBase):
             "rowCount": len(rows),
             "boxScores": rows,
         }
-        logger.info("Fetched %d box‑score rows for %s", len(rows), self.opts["date"])
+        logger.info("Fetched %d box-score rows for %s", len(rows), self.opts["date"])
 
     # ------------------------------------------------------------------ #
     # Stats                                                              #
@@ -125,32 +168,13 @@ class BdlBoxScoresScraper(ScraperBase):
 
 
 # --------------------------------------------------------------------------- #
-# Google Cloud Function entry                                                #
+# MIXIN-BASED Flask and CLI entry points (MUCH CLEANER!)
 # --------------------------------------------------------------------------- #
-def gcf_entry(request):  # type: ignore[valid-type]
-    opts = {
-        "date": request.args.get("date"),
-        "group": request.args.get("group", "prod"),
-        "apiKey": request.args.get("apiKey"),
-        "runId": request.args.get("runId"),
-    }
-    BdlBoxScoresScraper().run(opts)
-    return f"BallDontLie box‑scores scrape complete ({opts.get('date') or 'yesterday'})", 200
 
+# Use the mixin's utility to create the Flask app
+create_app = convert_existing_flask_scraper(BdlBoxScoresScraper)
 
-# --------------------------------------------------------------------------- #
-# CLI usage                                                                  #
-# --------------------------------------------------------------------------- #
+# Use the mixin's main function generator
 if __name__ == "__main__":
-    import argparse
-    from scrapers.utils.cli_utils import add_common_args
-
-    parser = argparse.ArgumentParser(description="Scrape BallDontLie /box_scores")
-    parser.add_argument("--date", help="YYYY‑MM‑DD (default: yesterday UTC)")
-    add_common_args(parser)  # --group --apiKey --runId --debug
-    args = parser.parse_args()
-
-    if args.debug:
-        logging.getLogger().setLevel(logging.DEBUG)
-
-    BdlBoxScoresScraper().run(vars(args))
+    main = BdlBoxScoresScraper.create_cli_and_flask_main()
+    main()

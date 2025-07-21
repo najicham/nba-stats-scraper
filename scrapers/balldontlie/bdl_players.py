@@ -13,55 +13,101 @@ Supports every documented query parameter:
 
 Examples
 --------
-# Entire catalogue (≈4,500 rows)
+# Entire catalogue (~4,500 rows)
 python -m scrapers.balldontlie.bdl_players
 
 # Active Celtics players, 50 per page
 python -m scrapers.balldontlie.bdl_players --active \
        --teamIds 2 --perPage 50
 
-# 1) Entire catalogue (default /players)
-python tools/fixtures/capture.py bdl_players --debug
+Usage examples:
+  # Via capture tool (recommended for data collection):
+  python tools/fixtures/capture.py bdl_players \
+      --debug
 
-# 2) Active Thunder players
-python tools/fixtures/capture.py bdl_players --debug --active --teamIds 21
+  # Active Thunder players
+  python tools/fixtures/capture.py bdl_players \
+      --debug --active --teamIds 21
 
-# 3) Name search
-python tools/fixtures/capture.py bdl_players --debug --search james --perPage 50
+  # Name search
+  python tools/fixtures/capture.py bdl_players \
+      --debug --search james --perPage 50
 
+  # Direct CLI execution:
+  python scrapers/balldontlie/bdl_players.py --active --teamIds 2 --debug
+
+  # Flask web service:
+  python scrapers/balldontlie/bdl_players.py --serve --debug
 """
+
 from __future__ import annotations
 
 import logging
 import os
+import sys
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 from urllib.parse import urlencode
 
-from ..scraper_base import DownloadType, ExportMode, ScraperBase
-from ..utils.cli_utils import add_common_args
+# Support both module execution (python -m) and direct execution
+try:
+    # Module execution: python -m scrapers.balldontlie.bdl_players
+    from ..scraper_base import DownloadType, ExportMode, ScraperBase
+    from ..scraper_flask_mixin import ScraperFlaskMixin
+    from ..scraper_flask_mixin import convert_existing_flask_scraper
+except ImportError:
+    # Direct execution: python scrapers/balldontlie/bdl_players.py
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+    from scrapers.scraper_base import DownloadType, ExportMode, ScraperBase
+    from scrapers.scraper_flask_mixin import ScraperFlaskMixin
+    from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
 
 logger = logging.getLogger(__name__)
 
 
 # --------------------------------------------------------------------------- #
-# Scraper                                                                     #
+# Scraper (USING MIXIN)
 # --------------------------------------------------------------------------- #
-class BdlPlayersScraper(ScraperBase):
+class BdlPlayersScraper(ScraperBase, ScraperFlaskMixin):
     """Scraper for /players and /players/active with full filter support."""
 
+    # Flask Mixin Configuration
+    scraper_name = "bdl_players"
+    required_params = []  # No required parameters
+    optional_params = {
+        "active": None,       # boolean flag for /players/active
+        "cursor": None,       # pagination cursor
+        "perPage": 100,       # items per page (1-100, default 100)
+        "search": None,       # free-text search
+        "firstName": None,    # exact match on first name
+        "lastName": None,     # exact match on last name
+        "teamIds": None,      # comma list of team IDs
+        "playerIds": None,    # comma list of player IDs
+        "apiKey": None,       # Falls back to env var
+    }
+
+    # Original scraper config
     download_type = DownloadType.JSON
     decode_download_data = True
     required_opts: List[str] = []
 
-    # ---------------- exporters ------------------
+    # ------------------------------------------------------------------ #
+    # Exporters
+    # ------------------------------------------------------------------ #
     exporters = [
+        # GCS RAW for production
+        {
+            "type": "gcs",
+            "key": "balldontlie/players/%(ident)s_%(run_id)s.raw.json",
+            "export_mode": ExportMode.RAW,
+            "groups": ["prod", "gcs"],
+        },
         {
             "type": "file",
             "filename": "/tmp/bdl_players_%(ident)s.json",
             "pretty_print": True,
             "export_mode": ExportMode.DATA,
-            "groups": ["dev", "test", "prod"],
+            "groups": ["dev", "test"],
         },
         # capture artefacts
         {
@@ -203,45 +249,14 @@ class BdlPlayersScraper(ScraperBase):
 
 
 # --------------------------------------------------------------------------- #
-# Google Cloud Function entry                                                #
+# MIXIN-BASED Flask and CLI entry points (MUCH CLEANER!)
 # --------------------------------------------------------------------------- #
-def gcf_entry(request):  # type: ignore[valid-type]
-    opts = {
-        "cursor": request.args.get("cursor"),
-        "perPage": request.args.get("perPage"),
-        "search": request.args.get("search"),
-        "firstName": request.args.get("first_name"),
-        "lastName": request.args.get("last_name"),
-        "teamIds": request.args.get("team_ids"),
-        "playerIds": request.args.get("player_ids"),
-        "active": request.args.get("active"),  # truthy string triggers /active
-        "group": request.args.get("group", "prod"),
-        "apiKey": request.args.get("apiKey"),
-        "runId": request.args.get("runId"),
-    }
-    BdlPlayersScraper().run(opts)
-    return "BallDontLie players scrape complete", 200
 
+# Use the mixin's utility to create the Flask app
+create_app = convert_existing_flask_scraper(BdlPlayersScraper)
 
-# --------------------------------------------------------------------------- #
-# CLI usage                                                                  #
-# --------------------------------------------------------------------------- #
+# Use the mixin's main function generator
 if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser(description="Scrape BallDontLie /players")
-    parser.add_argument("--active", action="store_true", help="Use /players/active")
-    parser.add_argument("--cursor", help="Cursor for pagination")
-    parser.add_argument("--perPage", type=int, help="Items per page (1-100, default 100)")
-    parser.add_argument("--search", help="Free-text search across first & last name")
-    parser.add_argument("--firstName", help="Exact match on first name")
-    parser.add_argument("--lastName", help="Exact match on last name")
-    parser.add_argument("--teamIds", help="Comma list of team IDs")
-    parser.add_argument("--playerIds", help="Comma list of player IDs")
-    add_common_args(parser)  # --group --apiKey --runId --debug
-    args = parser.parse_args()
-
-    if args.debug:
-        logging.getLogger().setLevel(logging.DEBUG)
-
-    BdlPlayersScraper().run(vars(args))
+    main = BdlPlayersScraper.create_cli_and_flask_main()
+    main()
+    

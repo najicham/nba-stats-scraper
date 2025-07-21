@@ -1,3 +1,4 @@
+# scrapers/nbacom/nbac_schedule_cdn.py
 """
 NBA.com CDN static schedule JSON scraper                 v1 - 2025-07-17
 ------------------------------------------------------------------------
@@ -9,28 +10,59 @@ Backup URL:  https://cdn.nba.com/static/json/staticData/scheduleLeagueV2.json
 This scraper gets the current season schedule from static CDN files.
 No season parameter needed - returns current/active season automatically.
 
-CLI:
-    python -m scrapers.nbacom.nbac_schedule_json --group test
+Usage examples
+--------------
+  # Via capture tool (recommended for data collection):
+  python tools/fixtures/capture.py nbac_schedule_cdn \
+      --debug
+
+  # Direct CLI execution:
+  python scrapers/nbacom/nbac_schedule_cdn.py --debug
+
+  # Flask web service:
+  python scrapers/nbacom/nbac_schedule_cdn.py --serve --debug
 """
 
 from __future__ import annotations
 
 import logging
+import os
+import sys
 from datetime import datetime, timezone
 from typing import Any, Dict, List
 
-from ..scraper_base import DownloadType, ExportMode, ScraperBase
-from ..utils.exceptions import DownloadDataException
+# Support both module execution (python -m) and direct execution
+try:
+    # Module execution: python -m scrapers.nbacom.nbac_schedule_cdn
+    from ..scraper_base import DownloadType, ExportMode, ScraperBase
+    from ..scraper_flask_mixin import ScraperFlaskMixin
+    from ..scraper_flask_mixin import convert_existing_flask_scraper
+    from ..utils.exceptions import DownloadDataException
+except ImportError:
+    # Direct execution: python scrapers/nbacom/nbac_schedule_cdn.py
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+    from scrapers.scraper_base import DownloadType, ExportMode, ScraperBase
+    from scrapers.scraper_flask_mixin import ScraperFlaskMixin
+    from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
+    from scrapers.utils.exceptions import DownloadDataException
 
 logger = logging.getLogger("scraper_base")
 
 
-class GetNbaComScheduleCdn(ScraperBase):
+class GetNbaComScheduleCdn(ScraperBase, ScraperFlaskMixin):
     """
     NBA.com CDN static schedule JSON scraper.
     
     No parameters required - gets current season from static CDN files.
     """
+
+    # Flask Mixin Configuration
+    scraper_name = "nbac_schedule_cdn"
+    required_params = []  # No parameters needed for CDN static files
+    optional_params = {
+        "apiKey": None,
+        "runId": None,
+    }
     
     required_opts = []  # No parameters needed for CDN static files
     download_type = DownloadType.JSON
@@ -192,39 +224,15 @@ class GetNbaComScheduleCdn(ScraperBase):
         }
 
 
-# Google Cloud Function entry point
-def gcf_entry(request):  # type: ignore[valid-type]
-    """Google Cloud Function entry point"""
-    group = request.args.get("group", "prod")
-    
-    opts = {
-        "group": group,
-        "apiKey": request.args.get("apiKey"),
-        "runId": request.args.get("runId"),
-    }
-    
-    try:
-        result = GetNbaComScheduleCdn().run(opts)
-        if result:
-            return "NBA.com CDN schedule scrape complete", 200
-        else:
-            return "NBA.com CDN schedule scrape failed", 500
-    except Exception as e:
-        logger.error("GCF error: %s", e)
-        return f"NBA.com CDN schedule scrape error: {str(e)}", 500
+# --------------------------------------------------------------------------- #
+# MIXIN-BASED Flask and CLI entry points
+# --------------------------------------------------------------------------- #
 
+# Use the mixin's utility to create the Flask app
+create_app = convert_existing_flask_scraper(GetNbaComScheduleCdn)
 
-# CLI usage
+# Use the mixin's main function generator
 if __name__ == "__main__":
-    import argparse
-    from scrapers.utils.cli_utils import add_common_args
-
-    cli = argparse.ArgumentParser(description="NBA.com CDN Static Schedule Scraper")
-    # No season parameter needed - CDN returns current season
-    add_common_args(cli)
-    args = cli.parse_args()
-
-    if args.debug:
-        logging.getLogger().setLevel(logging.DEBUG)
-
-    GetNbaComScheduleCdn().run(vars(args))
+    main = GetNbaComScheduleCdn.create_cli_and_flask_main()
+    main()
+    

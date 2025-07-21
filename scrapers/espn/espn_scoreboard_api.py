@@ -1,4 +1,3 @@
-# scrapers/espn_scoreboard.py
 """
 ESPN NBA Scoreboard scraper                           v2 - 2025-06-16
 --------------------------------------------------------------------
@@ -22,47 +21,84 @@ into a lightweight game list, suitable for job fan-out:
 
 Improvements v2
 ---------------
-*  `header_profile = "espn"`  → one-line UA updates if ESPN blocks a string
-*  Strict ISO-8601 `timestamp`
-*  Adds `state` & `statusId`
-*  Uses new `_common_requests_kwargs()` helper in ScraperBase
+- header_profile = "espn"  -> one-line UA updates if ESPN blocks a string
+- Strict ISO-8601 timestamp
+- Adds state & statusId
+- Uses new _common_requests_kwargs() helper in ScraperBase
+
+Usage examples:
+  # Via capture tool (recommended for data collection):
+  python tools/fixtures/capture.py espn_scoreboard_api \
+      --scoreDate 20250214 \
+      --debug
+
+  # Direct CLI execution:
+  python scrapers/espn/espn_scoreboard_api.py --scoreDate 20250214 --debug
+
+  # Flask web service:
+  python scrapers/espn/espn_scoreboard_api.py --serve --debug
 """
 
 from __future__ import annotations
 
 import logging
+import os
+import sys
 from datetime import datetime, timezone
 from typing import Any, Dict, List
 
-from ..scraper_base import DownloadType, ExportMode, ScraperBase
+# Support both module execution (python -m) and direct execution
+try:
+    # Module execution: python -m scrapers.espn.espn_scoreboard_api
+    from ..scraper_base import DownloadType, ExportMode, ScraperBase
+    from ..scraper_flask_mixin import ScraperFlaskMixin
+    from ..scraper_flask_mixin import convert_existing_flask_scraper
+except ImportError:
+    # Direct execution: python scrapers/espn/espn_scoreboard_api.py
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+    from scrapers.scraper_base import DownloadType, ExportMode, ScraperBase
+    from scrapers.scraper_flask_mixin import ScraperFlaskMixin
+    from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
 
 logger = logging.getLogger("scraper_base")
 
 
-class GetEspnScoreboard(ScraperBase):
+# --------------------------------------------------------------------------- #
+# Scraper (USING MIXIN)
+# --------------------------------------------------------------------------- #
+class GetEspnScoreboard(ScraperBase, ScraperFlaskMixin):
     """
     ESPN scoreboard scraper (JSON API).
-
-    CLI example
-    -----------
-        python -m scrapers.espn_scoreboard --scoreDate 20250214
     """
 
-    # ------------------------------------------------------------------ #
-    # Class‑level configuration
-    # ------------------------------------------------------------------ #
+    # Flask Mixin Configuration
+    scraper_name = "espn_scoreboard_api"
+    required_params = ["scoreDate"]  # scoreDate is required (YYYYMMDD format)
+    optional_params = {}
+
+    # Original scraper config
     required_opts: List[str] = ["scoreDate"]
     download_type: DownloadType = DownloadType.JSON
     decode_download_data: bool = True
     header_profile: str | None = "espn"
 
+    # ------------------------------------------------------------------ #
+    # Exporters
+    # ------------------------------------------------------------------ #
     exporters = [
+        # GCS RAW for production
+        {
+            "type": "gcs",
+            "key": "espn/scoreboard/%(scoreDate)s_%(run_id)s.raw.json",
+            "export_mode": ExportMode.RAW,
+            "groups": ["prod", "gcs"],
+        },
         {
             "type": "file",
             "filename": "/tmp/espn_scoreboard_%(scoreDate)s.json",
             "export_mode": ExportMode.DATA,
             "pretty_print": True,
-            "groups": ["dev", "test", "prod"],
+            "groups": ["dev", "test"],
         },
         # ---------- raw JSON fixture (offline tests) ----------
         {
@@ -89,7 +125,7 @@ class GetEspnScoreboard(ScraperBase):
         self.url = f"{base}?dates={self.opts['scoreDate']}"
         logger.info("Resolved ESPN scoreboard URL: %s", self.url)
 
-    # No `set_headers` needed – ScraperBase injects via header_profile
+    # No set_headers needed - ScraperBase injects via header_profile
 
     # ------------------------------------------------------------------ #
     # Validation
@@ -101,7 +137,7 @@ class GetEspnScoreboard(ScraperBase):
             raise ValueError("'events' key missing in JSON.")
 
     # ------------------------------------------------------------------ #
-    # Transform → self.data
+    # Transform -> self.data
     # ------------------------------------------------------------------ #
     def transform_data(self) -> None:
         events: List[dict] = self.decoded_data.get("events", [])
@@ -150,33 +186,15 @@ class GetEspnScoreboard(ScraperBase):
         return {"scoreDate": self.opts["scoreDate"], "gameCount": self.data.get("gameCount", 0)}
 
 
-# ---------------------------------------------------------------------- #
-# GCF entry point (optional)
-# ---------------------------------------------------------------------- #
-def gcf_entry(request):  # type: ignore[valid-type]
-    score_date = request.args.get("scoreDate")
-    if not score_date:
-        return ("Missing query param 'scoreDate' (YYYYMMDD)", 400)
+# --------------------------------------------------------------------------- #
+# MIXIN-BASED Flask and CLI entry points (MUCH CLEANER!)
+# --------------------------------------------------------------------------- #
 
-    opts = {"scoreDate": score_date, "group": request.args.get("group", "prod")}
-    GetEspnScoreboard().run(opts)
-    return f"ESPN Scoreboard scrape complete for {score_date}", 200
+# Use the mixin's utility to create the Flask app
+create_app = convert_existing_flask_scraper(GetEspnScoreboard)
 
-
-# ---------------------------------------------------------------------- #
-# CLI usage
-# ---------------------------------------------------------------------- #
+# Use the mixin's main function generator
 if __name__ == "__main__":
-    import argparse
-    from scrapers.utils.cli_utils import add_common_args
-
-    cli = argparse.ArgumentParser(description="Scrape ESPN NBA Scoreboard")
-    cli.add_argument("--scoreDate", required=True, help="YYYYMMDD")
-    add_common_args(cli)  # This adds --group, --runId, --debug, etc.
-    args = cli.parse_args()
-
-    if args.debug:
-        import logging
-        logging.getLogger().setLevel(logging.DEBUG)
-
-    GetEspnScoreboard().run(vars(args))
+    main = GetEspnScoreboard.create_cli_and_flask_main()
+    main()
+    

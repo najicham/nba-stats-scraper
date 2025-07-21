@@ -1,4 +1,3 @@
-# scrapers/espn_roster_api.py
 """
 ESPN NBA Roster API scraper                           v2 - 2025-06-16
 --------------------------------------------------------------------
@@ -7,60 +6,97 @@ Endpoint pattern
 
 Key upgrades vs. v1
 -------------------
-* header_profile="espn" → UA managed centrally
-* Strict ISO-8601 timestamp with timezone
-* Handles BOTH legacy integer-inch “height” **and** new `{feet, inches}` dict
-* Adds `prod` to exporter groups (keeps dev/test)
-* Type hints + concise log line
+- header_profile="espn" -> UA managed centrally
+- Strict ISO-8601 timestamp with timezone
+- Handles BOTH legacy integer-inch "height" AND new {feet, inches} dict
+- Adds prod to exporter groups (keeps dev/test)
+- Type hints + concise log line
+
+Usage examples:
+  # Via capture tool (recommended for data collection):
+  python tools/fixtures/capture.py espn_roster_api \
+      --teamId 2 \
+      --debug
+
+  # Direct CLI execution:
+  python scrapers/espn/espn_roster_api.py --teamId 2 --debug
+
+  # Flask web service:
+  python scrapers/espn/espn_roster_api.py --serve --debug
 """
 
 from __future__ import annotations
 
 import logging
+import os
+import sys
 from datetime import datetime, timezone
 from typing import Any, Dict, List
 
-from ..scraper_base import DownloadType, ExportMode, ScraperBase
+# Support both module execution (python -m) and direct execution
+try:
+    # Module execution: python -m scrapers.espn.espn_roster_api
+    from ..scraper_base import DownloadType, ExportMode, ScraperBase
+    from ..scraper_flask_mixin import ScraperFlaskMixin
+    from ..scraper_flask_mixin import convert_existing_flask_scraper
+except ImportError:
+    # Direct execution: python scrapers/espn/espn_roster_api.py
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+    from scrapers.scraper_base import DownloadType, ExportMode, ScraperBase
+    from scrapers.scraper_flask_mixin import ScraperFlaskMixin
+    from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
 
 logger = logging.getLogger("scraper_base")
 
 
-class GetEspnTeamRosterAPI(ScraperBase):
+# --------------------------------------------------------------------------- #
+# Scraper (USING MIXIN)
+# --------------------------------------------------------------------------- #
+class GetEspnTeamRosterAPI(ScraperBase, ScraperFlaskMixin):
     """
-    Scrape a single NBA roster via ESPN’s JSON API.
-
-    CLI
-    ---
-        python -m scrapers.espn_roster_api --teamId 2
+    Scrape a single NBA roster via ESPN's JSON API.
     """
 
-    # ------------------------------------------------------------------ #
-    # Class‑level config
-    # ------------------------------------------------------------------ #
+    # Flask Mixin Configuration
+    scraper_name = "espn_roster_api"
+    required_params = ["teamId"]  # teamId is required
+    optional_params = {}
+
+    # Original scraper config
     required_opts: List[str] = ["teamId"]
     download_type: DownloadType = DownloadType.JSON
     decode_download_data: bool = True
     header_profile: str | None = "espn"
 
+    # ------------------------------------------------------------------ #
+    # Exporters
+    # ------------------------------------------------------------------ #
     exporters = [
+        # GCS RAW for production
+        {
+            "type": "gcs",
+            "key": "espn/roster-api/%(teamId)s_%(run_id)s.raw.json",
+            "export_mode": ExportMode.RAW,
+            "groups": ["prod", "gcs"],
+        },
         {
             "type": "file",
             "filename": "/tmp/espn_roster_api_%(teamId)s.json",
             "export_mode": ExportMode.DATA,
             "pretty_print": True,
-            "groups": ["dev", "test", "prod"],
+            "groups": ["dev", "test"],
         },
         # --- raw fixture for offline tests ---------------------------------
         {
             "type": "file",
-            "filename": "/tmp/raw_%(teamId)s.json",   # <‑‑ capture.py expects raw_*
+            "filename": "/tmp/raw_%(teamId)s.json",   # <-- capture.py expects raw_*
             "export_mode": ExportMode.RAW,            # untouched bytes from ESPN
             "groups": ["capture"],
         },
         # --- golden snapshot (parsed DATA) ---------------------------------
         {
             "type": "file",
-            "filename": "/tmp/exp_%(teamId)s.json",   # <‑‑ capture.py expects exp_*
+            "filename": "/tmp/exp_%(teamId)s.json",   # <-- capture.py expects exp_*
             "export_mode": ExportMode.DATA,
             "pretty_print": True,
             "groups": ["capture"],
@@ -138,28 +174,15 @@ class GetEspnTeamRosterAPI(ScraperBase):
         return {"teamId": self.opts["teamId"], "playerCount": self.data.get("playerCount", 0)}
 
 
-# ---------------------------------------------------------------------- #
-# GCF entry point (optional)
-# ---------------------------------------------------------------------- #
-def gcf_entry(request):  # type: ignore[valid-type]
-    team_id = request.args.get("teamId")
-    if not team_id:
-        return ("Missing query param 'teamId'", 400)
+# --------------------------------------------------------------------------- #
+# MIXIN-BASED Flask and CLI entry points (MUCH CLEANER!)
+# --------------------------------------------------------------------------- #
 
-    opts = {"teamId": team_id, "group": request.args.get("group", "prod")}
-    GetEspnTeamRosterAPI().run(opts)
-    return f"ESPN roster API scrape complete for teamId={team_id}", 200
+# Use the mixin's utility to create the Flask app
+create_app = convert_existing_flask_scraper(GetEspnTeamRosterAPI)
 
-
-# ---------------------------------------------------------------------- #
-# CLI usage
-# ---------------------------------------------------------------------- #
+# Use the mixin's main function generator
 if __name__ == "__main__":
-    import argparse
-
-    cli = argparse.ArgumentParser()
-    cli.add_argument("--teamId", required=True, help="e.g. 2 => Celtics")
-    cli.add_argument("--group", default="test")
-    args = cli.parse_args()
-
-    GetEspnTeamRosterAPI().run(vars(args))
+    main = GetEspnTeamRosterAPI.create_cli_and_flask_main()
+    main()
+    

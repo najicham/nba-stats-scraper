@@ -1,5 +1,5 @@
 """
-BALLDONTLIE - Standings endpoint                              v1.1 • 2025-06-24
+BALLDONTLIE - Standings endpoint                              v1.1 - 2025-06-24
 -------------------------------------------------------------------------------
 Conference / division standings
 
@@ -8,22 +8,42 @@ Conference / division standings
 Params
 ------
 --season  2024 = 2024-25 season. If omitted, derive from today's date:
-            • month ≥ Sep → season = current year
-            • otherwise   → current year - 1
+            - month >= Sep -> season = current year
+            - otherwise   -> current year - 1
 
-CLI
----
-    python -m scrapers.balldontlie.bdl_standings --season 2024 --debug
+Usage examples:
+  # Via capture tool (recommended for data collection):
+  python tools/fixtures/capture.py bdl_standings \
+      --season 2024 \
+      --debug
+
+  # Direct CLI execution:
+  python scrapers/balldontlie/bdl_standings.py --season 2024 --debug
+
+  # Flask web service:
+  python scrapers/balldontlie/bdl_standings.py --serve --debug
 """
 
 from __future__ import annotations
 
 import logging
 import os
+import sys
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from ..scraper_base import DownloadType, ExportMode, ScraperBase
+# Support both module execution (python -m) and direct execution
+try:
+    # Module execution: python -m scrapers.balldontlie.bdl_standings
+    from ..scraper_base import DownloadType, ExportMode, ScraperBase
+    from ..scraper_flask_mixin import ScraperFlaskMixin
+    from ..scraper_flask_mixin import convert_existing_flask_scraper
+except ImportError:
+    # Direct execution: python scrapers/balldontlie/bdl_standings.py
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+    from scrapers.scraper_base import DownloadType, ExportMode, ScraperBase
+    from scrapers.scraper_flask_mixin import ScraperFlaskMixin
+    from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
 
 logger = logging.getLogger(__name__)
 
@@ -33,21 +53,43 @@ def _current_nba_season() -> int:
     return today.year if today.month >= 9 else today.year - 1
 
 
-class BdlStandingsScraper(ScraperBase):
-    """Daily or on‑demand scraper for /standings."""
+# --------------------------------------------------------------------------- #
+# Scraper (USING MIXIN)
+# --------------------------------------------------------------------------- #
+class BdlStandingsScraper(ScraperBase, ScraperFlaskMixin):
+    """Daily or on-demand scraper for /standings."""
 
+    # Flask Mixin Configuration
+    scraper_name = "bdl_standings"
+    required_params = []  # No required parameters
+    optional_params = {
+        "season": None,    # Defaults to current NBA season
+        "apiKey": None,    # Falls back to env var
+    }
+
+    # Original scraper config
     required_opts: List[str] = []
     download_type = DownloadType.JSON
     decode_download_data = True
 
+    # ------------------------------------------------------------------ #
+    # Exporters
+    # ------------------------------------------------------------------ #
     exporters = [
+        # GCS RAW for production
+        {
+            "type": "gcs",
+            "key": "balldontlie/standings/%(season)s_%(run_id)s.raw.json",
+            "export_mode": ExportMode.RAW,
+            "groups": ["prod", "gcs"],
+        },
         # Normal artifact
         {
             "type": "file",
             "filename": "/tmp/bdl_standings_%(season)s.json",
             "pretty_print": True,
             "export_mode": ExportMode.DATA,
-            "groups": ["dev", "test", "prod"],
+            "groups": ["dev", "test"],
         },
         # Capture RAW
         {
@@ -99,7 +141,7 @@ class BdlStandingsScraper(ScraperBase):
             raise ValueError("Unexpected standings JSON structure")
 
     # ------------------------------------------------------------------ #
-    # Transform (cursor‑aware)                                           #
+    # Transform (cursor-aware)                                           #
     # ------------------------------------------------------------------ #
     def transform_data(self) -> None:
         rows: List[Dict[str, Any]] = list(self.decoded_data["data"])
@@ -125,7 +167,7 @@ class BdlStandingsScraper(ScraperBase):
             "teamCount": len(rows),
             "standings": rows,
         }
-        logger.info("Fetched standings for %d teams (season %s)",
+        logger.info("Fetched standings for %d teams (season %s)",
                     len(rows), self.opts["season"])
 
     # ------------------------------------------------------------------ #
@@ -139,33 +181,14 @@ class BdlStandingsScraper(ScraperBase):
 
 
 # --------------------------------------------------------------------------- #
-# Google Cloud Function entry                                                #
+# MIXIN-BASED Flask and CLI entry points (MUCH CLEANER!)
 # --------------------------------------------------------------------------- #
-def gcf_entry(request):  # type: ignore[valid-type]
-    opts = {
-        "season": request.args.get("season"),
-        "group": request.args.get("group", "prod"),
-        "apiKey": request.args.get("apiKey"),
-        "runId": request.args.get("runId"),
-    }
-    BdlStandingsScraper().run(opts)
-    return (f"BallDontLie standings scrape complete "
-            f"(season {opts['season'] or _current_nba_season()})", 200)
 
+# Use the mixin's utility to create the Flask app
+create_app = convert_existing_flask_scraper(BdlStandingsScraper)
 
-# --------------------------------------------------------------------------- #
-# CLI usage                                                                  #
-# --------------------------------------------------------------------------- #
+# Use the mixin's main function generator
 if __name__ == "__main__":
-    import argparse
-    from scrapers.utils.cli_utils import add_common_args
-
-    parser = argparse.ArgumentParser(description="Scrape BallDontLie /standings")
-    parser.add_argument("--season", type=int, help="Season start year, e.g. 2024")
-    add_common_args(parser)                           # --group --apiKey --runId --debug
-    args = parser.parse_args()
-
-    if args.debug:
-        logging.getLogger().setLevel(logging.DEBUG)
-
-    BdlStandingsScraper().run(vars(args))
+    main = BdlStandingsScraper.create_cli_and_flask_main()
+    main()
+    

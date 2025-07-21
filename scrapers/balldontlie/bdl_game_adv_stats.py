@@ -5,24 +5,49 @@ Per-player advanced box-score rows from
 
     https://api.balldontlie.io/v1/stats/advanced
 
-python tools/fixtures/capture.py bdl_game_adv_stats --debug --startDate 2025-06-22 --endDate 2025-06-22
+Usage examples:
+  # Via capture tool (recommended for data collection):
+  python tools/fixtures/capture.py bdl_game_adv_stats \
+      --startDate 2025-06-22 --endDate 2025-06-22 \
+      --debug
 
+  # Direct CLI execution:
+  python scrapers/balldontlie/bdl_game_adv_stats.py --startDate 2025-06-22 --endDate 2025-06-22 --debug
+
+  # Flask web service:
+  python scrapers/balldontlie/bdl_game_adv_stats.py --serve --debug
 """
+
 from __future__ import annotations
 
 import logging
 import os
+import sys
 import json
 from datetime import date, datetime, timedelta, timezone
 from typing import Dict, List, Optional
 from urllib.parse import urlencode
 
-from ..scraper_base import DownloadType, ExportMode, ScraperBase
-from ..utils.cli_utils import add_common_args
-from ..utils.exceptions import (
-    NoHttpStatusCodeException,
-    InvalidHttpStatusCodeException,
-)
+# Support both module execution (python -m) and direct execution
+try:
+    # Module execution: python -m scrapers.balldontlie.bdl_game_adv_stats
+    from ..scraper_base import DownloadType, ExportMode, ScraperBase
+    from ..scraper_flask_mixin import ScraperFlaskMixin
+    from ..scraper_flask_mixin import convert_existing_flask_scraper
+    from ..utils.exceptions import (
+        NoHttpStatusCodeException,
+        InvalidHttpStatusCodeException,
+    )
+except ImportError:
+    # Direct execution: python scrapers/balldontlie/bdl_game_adv_stats.py
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+    from scrapers.scraper_base import DownloadType, ExportMode, ScraperBase
+    from scrapers.scraper_flask_mixin import ScraperFlaskMixin
+    from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
+    from scrapers.utils.exceptions import (
+        NoHttpStatusCodeException,
+        InvalidHttpStatusCodeException,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -48,11 +73,28 @@ def _qs(d: Dict[str, object]) -> str:
 
 
 # --------------------------------------------------------------------------- #
-# Scraper                                                                     #
+# Scraper (USING MIXIN)
 # --------------------------------------------------------------------------- #
-class BdlGameAdvStatsScraper(ScraperBase):
+class BdlGameAdvStatsScraper(ScraperBase, ScraperFlaskMixin):
     """Scraper for /stats/advanced with full filter support."""
 
+    # Flask Mixin Configuration
+    scraper_name = "bdl_game_adv_stats"
+    required_params = []  # No required parameters
+    optional_params = {
+        "cursor": None,
+        "perPage": 100,
+        "playerIds": None,  # comma separated
+        "gameIds": None,    # comma separated
+        "dates": None,      # comma separated
+        "seasons": None,    # comma separated
+        "postSeason": None, # boolean flag
+        "startDate": None,  # defaults to yesterday
+        "endDate": None,    # defaults to tomorrow
+        "apiKey": None,     # Falls back to env var
+    }
+
+    # Original scraper config
     download_type = DownloadType.JSON
     decode_download_data = True
     required_opts: List[str] = []
@@ -83,7 +125,7 @@ class BdlGameAdvStatsScraper(ScraperBase):
                 except (ValueError, json.JSONDecodeError):
                     detail = self.raw_response.text[:200].strip()
             raise InvalidHttpStatusCodeException(
-                f"{code} {self.raw_response.reason} – {detail or 'see docs'}"
+                f"{code} {self.raw_response.reason} - {detail or 'see docs'}"
             )
         super().check_download_status()
 
@@ -91,12 +133,19 @@ class BdlGameAdvStatsScraper(ScraperBase):
     # Exporters                                                          #
     # ------------------------------------------------------------------ #
     exporters = [
+        # GCS RAW for production
+        {
+            "type": "gcs",
+            "key": "balldontlie/game-adv-stats/%(ident)s_%(run_id)s.raw.json",
+            "export_mode": ExportMode.RAW,
+            "groups": ["prod", "gcs"],
+        },
         {
             "type": "file",
             "filename": "/tmp/bdl_game_adv_stats_%(ident)s.json",
             "pretty_print": True,
             "export_mode": ExportMode.DATA,
-            "groups": ["dev", "test", "prod"],
+            "groups": ["dev", "test"],
         },
         {
             "type": "file",
@@ -205,7 +254,7 @@ class BdlGameAdvStatsScraper(ScraperBase):
             logger.debug("Adv-stats URL (filters): %s", self.url)
             return
 
-        # Window mode: iterate startDate → endDate day by day
+        # Window mode: iterate startDate -> endDate day by day
         self._date_iter = self._gen_dates()
         first_date = next(self._date_iter)
         self.url = f"{self.base_url}?{_qs(self._build_params({'dates[]': first_date}))}"
@@ -305,47 +354,14 @@ class BdlGameAdvStatsScraper(ScraperBase):
 
 
 # --------------------------------------------------------------------------- #
-# Google Cloud Function entry                                                #
+# MIXIN-BASED Flask and CLI entry points (MUCH CLEANER!)
 # --------------------------------------------------------------------------- #
-def gcf_entry(request):  # type: ignore[valid-type]
-    opts = {
-        "cursor": request.args.get("cursor"),
-        "perPage": request.args.get("per_page"),
-        "playerIds": request.args.get("player_ids"),
-        "gameIds": request.args.get("game_ids"),
-        "dates": request.args.get("dates"),
-        "seasons": request.args.get("seasons"),
-        "postSeason": request.args.get("postseason"),
-        "startDate": request.args.get("start_date"),
-        "endDate": request.args.get("end_date"),
-        "apiKey": request.args.get("apiKey"),
-        "group": request.args.get("group", "prod"),
-        "runId": request.args.get("runId"),
-    }
-    BdlGameAdvStatsScraper().run(opts)
-    return "BallDontLie advanced-stats scrape complete", 200
 
+# Use the mixin's utility to create the Flask app
+create_app = convert_existing_flask_scraper(BdlGameAdvStatsScraper)
 
-# --------------------------------------------------------------------------- #
-# CLI usage                                                                  #
-# --------------------------------------------------------------------------- #
+# Use the mixin's main function generator
 if __name__ == "__main__":
-    import argparse
-
-    p = argparse.ArgumentParser(description="Scrape BallDontLie /stats/advanced")
-    p.add_argument("--cursor", help="Cursor for pagination")
-    p.add_argument("--perPage", type=int, help="1-100 (default 100)")
-    p.add_argument("--playerIds", help="comma list")
-    p.add_argument("--gameIds", help="comma list")
-    p.add_argument("--dates", help="comma list of YYYY-MM-DD")
-    p.add_argument("--seasons", help="comma list of season start years")
-    p.add_argument("--postSeason", action="store_true", help="playoff games only")
-    p.add_argument("--startDate", help="YYYY-MM-DD (window mode)")
-    p.add_argument("--endDate", help="YYYY-MM-DD (window mode)")
-    add_common_args(p)  # --group --apiKey --runId --debug
-    args = p.parse_args()
-
-    if args.debug:
-        logging.getLogger().setLevel(logging.DEBUG)
-
-    BdlGameAdvStatsScraper().run(vars(args))
+    main = BdlGameAdvStatsScraper.create_cli_and_flask_main()
+    main()
+    

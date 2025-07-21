@@ -1,3 +1,4 @@
+# scrapers/oddsapi/oddsa_events.py
 """
 odds_api_events.py
 Scraper for The-Odds-API v4 **current events** endpoint.
@@ -8,30 +9,56 @@ Docs
 Endpoint
   GET /v4/sports/{sport}/events
 Query params
-  * apiKey (required - but we default to env ODDS_API_KEY)
+  * apiKey (required - but we default to env ODDS_API_KEY)
   * commenceTimeFrom / commenceTimeTo (optional ISO timestamps)
   * dateFormat=iso|unix  (optional)
 
 The endpoint returns **a list of event objects**.
+
+Usage examples
+--------------
+  # Via capture tool (recommended for data collection):
+  python tools/fixtures/capture.py oddsa_events \
+      --sport basketball_nba \
+      --debug
+
+  # Direct CLI execution:
+  python scrapers/oddsapi/oddsa_events.py --sport basketball_nba --debug
+
+  # Flask web service:
+  python scrapers/oddsapi/oddsa_events.py --serve --debug
 """
 
 from __future__ import annotations
 
 import os
 import logging
+import sys
 from urllib.parse import urlencode
 from typing import Any, Dict, List
 
-from scrapers.scraper_base import ScraperBase, ExportMode
-from scrapers.utils.exceptions import DownloadDataException
+# Support both module execution (python -m) and direct execution
+try:
+    # Module execution: python -m scrapers.oddsapi.oddsa_events
+    from ..scraper_base import ScraperBase, ExportMode
+    from ..scraper_flask_mixin import ScraperFlaskMixin
+    from ..scraper_flask_mixin import convert_existing_flask_scraper
+    from ..utils.exceptions import DownloadDataException
+except ImportError:
+    # Direct execution: python scrapers/oddsapi/oddsa_events.py
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+    from scrapers.scraper_base import ScraperBase, ExportMode
+    from scrapers.scraper_flask_mixin import ScraperFlaskMixin
+    from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
+    from scrapers.utils.exceptions import DownloadDataException
 
 logger = logging.getLogger(__name__)
 
 
 # --------------------------------------------------------------------------- #
-# Scraper                                                                     #
+# Scraper (USING MIXIN)
 # --------------------------------------------------------------------------- #
-class GetOddsApiEvents(ScraperBase):
+class GetOddsApiEvents(ScraperBase, ScraperFlaskMixin):
     """
     Required opts:
       • sport - e.g. basketball_nba
@@ -41,6 +68,16 @@ class GetOddsApiEvents(ScraperBase):
       • commenceTimeFrom / commenceTimeTo
       • dateFormat
     """
+
+    # Flask Mixin Configuration
+    scraper_name = "oddsa_events"
+    required_params = ["sport"]
+    optional_params = {
+        "apiKey": None,  # Falls back to env ODDS_API_KEY
+        "commenceTimeFrom": None,
+        "commenceTimeTo": None,
+        "dateFormat": None,
+    }
 
     required_opts: List[str] = ["sport"]  # apiKey via env if omitted
     proxy_enabled = False
@@ -62,6 +99,20 @@ class GetOddsApiEvents(ScraperBase):
             "pretty_print": True,
             "export_mode": ExportMode.DATA,
             "groups": ["dev", "capture", "test"],
+        },
+        # Add capture group exporters
+        {
+            "type": "file",
+            "filename": "/tmp/raw_%(run_id)s.json",
+            "export_mode": ExportMode.RAW,
+            "groups": ["capture"],
+        },
+        {
+            "type": "file",
+            "filename": "/tmp/exp_%(run_id)s.json",
+            "pretty_print": True,
+            "export_mode": ExportMode.DECODED,
+            "groups": ["capture"],
         },
     ]
 
@@ -137,48 +188,14 @@ class GetOddsApiEvents(ScraperBase):
 
 
 # --------------------------------------------------------------------------- #
-# Google Cloud Function entry point                                           #
+# MIXIN-BASED Flask and CLI entry points
 # --------------------------------------------------------------------------- #
-def gcf_entry(request):  # type: ignore[valid-type]
-    from dotenv import load_dotenv
 
-    load_dotenv()  # harmless in prod if .env absent
+# Use the mixin's utility to create the Flask app
+create_app = convert_existing_flask_scraper(GetOddsApiEvents)
 
-    opts = {
-        "apiKey": request.args.get("apiKey"),  # env fallback is fine
-        "sport": request.args.get("sport", "basketball_nba"),
-        "commenceTimeFrom": request.args.get("commenceTimeFrom"),
-        "commenceTimeTo": request.args.get("commenceTimeTo"),
-        "dateFormat": request.args.get("dateFormat"),
-        "group": request.args.get("group", "prod"),
-    }
-    GetOddsApiEvents().run(opts)
-    return f"Odds-API current events scrape complete ({opts['sport']})", 200
-
-
-# --------------------------------------------------------------------------- #
-# Local CLI                                                                   #
-# --------------------------------------------------------------------------- #
+# Use the mixin's main function generator
 if __name__ == "__main__":
-    import argparse
-    from dotenv import load_dotenv
-
-    load_dotenv()
-
-    parser = argparse.ArgumentParser(
-        description="Scrape The-Odds-API current events list"
-    )
-    parser.add_argument("--sport", default="basketball_nba")
-    parser.add_argument("--commenceTimeFrom")
-    parser.add_argument("--commenceTimeTo")
-    parser.add_argument("--dateFormat", choices=["iso", "unix"])
-    parser.add_argument("--apiKey", help="Optional - env ODDS_API_KEY fallback")
-    parser.add_argument("--group", default="dev")
-    parser.add_argument("--debug", action="store_true")
-
-    args = parser.parse_args()
-
-    if args.debug:
-        logging.getLogger().setLevel(logging.DEBUG)
-
-    GetOddsApiEvents().run(vars(args))
+    main = GetOddsApiEvents.create_cli_and_flask_main()
+    main()
+    

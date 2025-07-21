@@ -1,4 +1,3 @@
-# scrapers/nbacom/nbac_injury_report.py
 """
 NBA.com Injury Report PDF scraper                       v2 - 2025-06-16
 -----------------------------------------------------------------------
@@ -14,12 +13,26 @@ records like:
         "status": "Questionable",
         "reason": "Left ankle soreness"
     }
+
+Usage examples:
+  # Via capture tool (recommended for data collection):
+  python tools/fixtures/capture.py nbac_injury_report \
+      --gamedate 20250216 --hour 5 --period PM \
+      --debug
+
+  # Direct CLI execution:
+  python scrapers/nbacom/nbac_injury_report.py --gamedate 20250216 --hour 5 --period PM --debug
+
+  # Flask web service:
+  python scrapers/nbacom/nbac_injury_report.py --serve --debug
 """
 
 from __future__ import annotations
 
 import logging
 import re
+import os
+import sys
 from datetime import datetime, timezone
 from typing import List
 import json
@@ -27,25 +40,47 @@ import json
 from pdfreader import SimplePDFViewer
 from pdfreader.viewer.pdfviewer import PageDoesNotExist
 
-from ..scraper_base import DownloadType, ExportMode, ScraperBase
-from ..utils.exceptions import DownloadDataException, InvalidRegionDecodeException
+# Support both module execution (python -m) and direct execution
+try:
+    # Module execution: python -m scrapers.nbacom.nbac_injury_report
+    from ..scraper_base import DownloadType, ExportMode, ScraperBase
+    from ..scraper_flask_mixin import ScraperFlaskMixin
+    from ..scraper_flask_mixin import convert_existing_flask_scraper
+    from ..utils.exceptions import DownloadDataException, InvalidRegionDecodeException
+except ImportError:
+    # Direct execution: python scrapers/nbacom/nbac_injury_report.py
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+    from scrapers.scraper_base import DownloadType, ExportMode, ScraperBase
+    from scrapers.scraper_flask_mixin import ScraperFlaskMixin
+    from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
+    from scrapers.utils.exceptions import DownloadDataException, InvalidRegionDecodeException
 
 logger = logging.getLogger("scraper_base")
 
 
-class GetNbaComInjuryReport(ScraperBase):
+# --------------------------------------------------------------------------- #
+# Scraper (USING MIXIN)
+# --------------------------------------------------------------------------- #
+class GetNbaComInjuryReport(ScraperBase, ScraperFlaskMixin):
     """Scrapes and parses the daily NBA Injury Report PDF."""
 
-    # ------------------------------------------------------------------ #
-    # Config
-    # ------------------------------------------------------------------ #
+    # Flask Mixin Configuration
+    scraper_name = "nbac_injury_report"
+    required_params = ["gamedate", "hour", "period"]  # All three parameters are required
+    optional_params = {}
+
+    # Original scraper config
     required_opts = ["gamedate", "hour", "period"]  # hour: 1-12, period: AM/PM
     header_profile: str | None = "data"
     download_type: DownloadType = DownloadType.BINARY
     proxy_enabled: bool = True
     # no_retry_status_codes = [403]
 
+    # ------------------------------------------------------------------ #
+    # Exporters
+    # ------------------------------------------------------------------ #
     exporters = [
+        # GCS RAW for production (PDF files)
         {
             "type": "gcs",
             "key": "nbacom/injury-report/%(season)s/%(gamedate)s/%(hour)s%(period)s/%(time)s.pdf",
@@ -57,7 +92,7 @@ class GetNbaComInjuryReport(ScraperBase):
             "filename": "/tmp/nbacom_injury_report_%(gamedate)s_%(hour)s.json",
             "export_mode": ExportMode.DATA,
             "pretty_print": True,
-            "groups": ["dev", "test", "prod"],
+            "groups": ["dev", "test"],
         },
         # ADD THESE CAPTURE EXPORTERS:
         {
@@ -570,7 +605,6 @@ class GetNbaComInjuryReport(ScraperBase):
         logger.info(f"VALIDATION_STATS {json.dumps(stats)}")
         logger.info("✅ All injury data validations passed")
 
-
     def get_scraper_stats(self) -> dict:
         """Enhanced stats with validation metrics"""
         base_stats = {
@@ -594,37 +628,15 @@ class GetNbaComInjuryReport(ScraperBase):
         return base_stats
 
 
-# ---------------------------------------------------------------------- #
-# Cloud Function entry
-# ---------------------------------------------------------------------- #
-def gcf_entry(request):  # type: ignore[valid-type]
-    gd = request.args.get("gamedate")
-    hr = request.args.get("hour")
-    period = request.args.get("period")
-    if not gd or not hr or not period:
-        return ("Missing 'gamedate', 'hour', or 'period'", 400)
+# --------------------------------------------------------------------------- #
+# MIXIN-BASED Flask and CLI entry points (MUCH CLEANER!)
+# --------------------------------------------------------------------------- #
 
-    ok = GetNbaComInjuryReport().run(
-        {"gamedate": gd, "hour": hr, "period": period, "group": request.args.get("group", "prod")}
-    )
-    return (("Injury PDF scrape failed", 500) if ok is False else ("Scrape ok", 200))
+# Use the mixin's utility to create the Flask app
+create_app = convert_existing_flask_scraper(GetNbaComInjuryReport)
 
-# ---------------------------------------------------------------------- #
-# CLI helper
-# ---------------------------------------------------------------------- #
+# Use the mixin's main function generator
 if __name__ == "__main__":
-    import argparse
-    from scrapers.utils.cli_utils import add_common_args
-
-    cli = argparse.ArgumentParser(description="NBA.com Injury Report Scraper")
-    cli.add_argument("--gamedate", required=True, help="YYYYMMDD or YYYY-MM-DD")
-    cli.add_argument("--hour", required=True, help="Hour (1-12)")
-    cli.add_argument("--period", required=True, choices=["AM", "PM"], help="AM or PM")
-    add_common_args(cli)  # This adds --group, --runId, --debug, etc.
-    args = cli.parse_args()
-
-    if args.debug:
-        logging.getLogger().setLevel(logging.DEBUG)
-
-    GetNbaComInjuryReport().run(vars(args))
-
+    main = GetNbaComInjuryReport.create_cli_and_flask_main()
+    main()
+    

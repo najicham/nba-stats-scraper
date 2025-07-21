@@ -1,28 +1,63 @@
-# Complete update for scrapers/nbacom/nbac_scoreboardv3.py
-# Replace the entire file with this updated version:
-
+# scrapers/nbacom/nbac_scoreboard_v2.py
 """
 NBA.com Scoreboard V2 scraper                           v3.2 – 2025‑07‑17
 ---------------------------------------------------------------------------
 * URL: https://stats.nba.com/stats/scoreboardV2
 * V3 endpoint is deprecated/blocked, so we go straight to V2
 Updated to skip V3 and use reliable V2 endpoint directly.
+
+Usage examples
+--------------
+  # Via capture tool (recommended for data collection):
+  python tools/fixtures/capture.py nbac_scoreboard_v2 \
+      --scoreDate 20250120 \
+      --debug
+
+  # Direct CLI execution:
+  python scrapers/nbacom/nbac_scoreboard_v2.py --scoreDate 20250120 --debug
+
+  # Flask web service:
+  python scrapers/nbacom/nbac_scoreboard_v2.py --serve --debug
 """
 
 from __future__ import annotations
 
 import logging
+import os
+import sys
 import time
 from datetime import datetime, timezone, date
 from typing import Any, Dict, List
 
-from ..scraper_base import DownloadType, ExportMode, ScraperBase
-from ..utils.exceptions import DownloadDataException
+# Support both module execution (python -m) and direct execution
+try:
+    # Module execution: python -m scrapers.nbacom.nbac_scoreboard_v2
+    from ..scraper_base import DownloadType, ExportMode, ScraperBase
+    from ..scraper_flask_mixin import ScraperFlaskMixin
+    from ..scraper_flask_mixin import convert_existing_flask_scraper
+    from ..utils.exceptions import DownloadDataException
+except ImportError:
+    # Direct execution: python scrapers/nbacom/nbac_scoreboard_v2.py
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+    from scrapers.scraper_base import DownloadType, ExportMode, ScraperBase
+    from scrapers.scraper_flask_mixin import ScraperFlaskMixin
+    from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
+    from scrapers.utils.exceptions import DownloadDataException
 
 logger = logging.getLogger("scraper_base")
 
 
-class GetNbaComScoreboardV2(ScraperBase):
+class GetNbaComScoreboardV2(ScraperBase, ScraperFlaskMixin):
+    """NBA.com Scoreboard V2 scraper with V3 format conversion and rich data extraction."""
+
+    # Flask Mixin Configuration
+    scraper_name = "nbac_scoreboard_v2"
+    required_params = ["scoreDate"]
+    optional_params = {
+        "apiKey": None,
+        "runId": None,
+    }
+
     # ------------------------------------------------------------------ #
     # Config - Updated to match other scrapers
     # ------------------------------------------------------------------ #
@@ -462,50 +497,15 @@ class GetNbaComScoreboardV2(ScraperBase):
         }
 
 
-# ---------------------------------------------------------------------- #
-# Cloud Function entry - Updated
-# ---------------------------------------------------------------------- #
-def gcf_entry(request):  # type: ignore[valid-type]
-    """Google Cloud Function entry point"""
-    score_date = request.args.get("scoreDate")
-    if not score_date:
-        return ("Missing query param 'scoreDate'", 400)
+# --------------------------------------------------------------------------- #
+# MIXIN-BASED Flask and CLI entry points
+# --------------------------------------------------------------------------- #
 
-    opts = {
-        "scoreDate": score_date,
-        "group": request.args.get("group", "prod"),
-        "apiKey": request.args.get("apiKey"),
-        "runId": request.args.get("runId"),
-    }
+# Use the mixin's utility to create the Flask app
+create_app = convert_existing_flask_scraper(GetNbaComScoreboardV2)
 
-    try:
-        result = GetNbaComScoreboardV2().run(opts)
-        if result:
-            return f"NBA.com scoreboard scrape complete for {score_date}", 200
-        else:
-            return f"NBA.com scoreboard scrape failed for {score_date}", 500
-    except Exception as e:
-        logger.error("GCF error: %s", e)
-        return f"NBA.com scoreboard scrape error: {str(e)}", 500
-
-
-# ---------------------------------------------------------------------- #
-# CLI - Updated to match other scrapers
-# ---------------------------------------------------------------------- #
+# Use the mixin's main function generator
 if __name__ == "__main__":
-    import argparse
-    from scrapers.utils.cli_utils import add_common_args
-
-    cli = argparse.ArgumentParser(description="NBA.com Scoreboard V3 Scraper")
-    cli.add_argument(
-        "--scoreDate",
-        default=date.today().isoformat(),
-        help="YYYYMMDD or YYYY-MM-DD (default=today)",
-    )
-    add_common_args(cli)  # This adds --group, --runId, --debug, etc.
-    args = cli.parse_args()
-
-    if args.debug:
-        logging.getLogger().setLevel(logging.DEBUG)
-
-    GetNbaComScoreboardV2().run(vars(args))
+    main = GetNbaComScoreboardV2.create_cli_and_flask_main()
+    main()
+    

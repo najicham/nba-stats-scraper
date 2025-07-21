@@ -1,4 +1,3 @@
-# scrapers/espn_roster.py
 """
 ESPN NBA Roster (HTML) scraper                         v2 - 2025-06-16
 ----------------------------------------------------------------------
@@ -8,61 +7,96 @@ Scrapes the public roster page, e.g.
 
 Key upgrades
 ------------
-* `header_profile = "espn"`  - UA managed in ScraperBase
-* Strict ISO-8601 UTC timestamp
-* Exporter groups now include **prod**
-* Selector constants moved top-of-file for quick hot-patching
-* Jersey number extraction falls back to regex if ESPN tweaks classnames
-* Sentry warning only when *all three* of [name, slug, playerId] missing
+- header_profile = "espn"  - UA managed in ScraperBase
+- Strict ISO-8601 UTC timestamp
+- Exporter groups now include prod
+- Selector constants moved top-of-file for quick hot-patching
+- Jersey number extraction falls back to regex if ESPN tweaks classnames
+- Sentry warning only when *all three* of [name, slug, playerId] missing
+
+Usage examples:
+  # Via capture tool (recommended for data collection):
+  python tools/fixtures/capture.py espn_roster \
+      --teamSlug boston-celtics --teamAbbr bos \
+      --debug
+
+  # Direct CLI execution:
+  python scrapers/espn/espn_roster.py --teamSlug boston-celtics --teamAbbr bos --debug
+
+  # Flask web service:
+  python scrapers/espn/espn_roster.py --serve --debug
 """
 
 from __future__ import annotations
 
 import logging
 import re
+import os
+import sys
 from datetime import datetime, timezone
 from typing import Dict, List
 
 import sentry_sdk
 from bs4 import BeautifulSoup
 
-from ..scraper_base import DownloadType, ExportMode, ScraperBase
+# Support both module execution (python -m) and direct execution
+try:
+    # Module execution: python -m scrapers.espn.espn_roster
+    from ..scraper_base import DownloadType, ExportMode, ScraperBase
+    from ..scraper_flask_mixin import ScraperFlaskMixin
+    from ..scraper_flask_mixin import convert_existing_flask_scraper
+except ImportError:
+    # Direct execution: python scrapers/espn/espn_roster.py
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+    from scrapers.scraper_base import DownloadType, ExportMode, ScraperBase
+    from scrapers.scraper_flask_mixin import ScraperFlaskMixin
+    from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
 
 logger = logging.getLogger("scraper_base")
 
 # ------------------------------------------------------------------ #
-# Tweak‑point constants (ESPN sometimes A/B tests these class names)
+# Tweak-point constants (ESPN sometimes A/B tests these class names)
 # ------------------------------------------------------------------ #
 ROW_SELECTOR = "tr.Table__TR"          # main roster rows
 NAME_CELL_ANCHOR = "a[href*='/player/_/id/']"
 
-# ------------------------------------------------------------------ #
 
-
-class GetEspnTeamRoster(ScraperBase):
+# --------------------------------------------------------------------------- #
+# Scraper (USING MIXIN)
+# --------------------------------------------------------------------------- #
+class GetEspnTeamRoster(ScraperBase, ScraperFlaskMixin):
     """
-    Scrape roster from ESPN’s HTML team page.
-
-    CLI
-    ---
-        python -m scrapers.espn_roster --teamSlug boston-celtics --teamAbbr bos
+    Scrape roster from ESPN's HTML team page.
     """
 
-    # ------------------------------------------------------------------ #
-    # Config
-    # ------------------------------------------------------------------ #
+    # Flask Mixin Configuration
+    scraper_name = "espn_roster"
+    required_params = ["teamSlug", "teamAbbr"]  # Both parameters are required
+    optional_params = {}
+
+    # Original scraper config
     required_opts: List[str] = ["teamSlug", "teamAbbr"]
     download_type: DownloadType = DownloadType.HTML
     decode_download_data: bool = True
     header_profile: str | None = "espn"
 
+    # ------------------------------------------------------------------ #
+    # Exporters
+    # ------------------------------------------------------------------ #
     exporters = [
+        # GCS RAW for production
+        {
+            "type": "gcs",
+            "key": "espn/roster/%(teamAbbr)s_%(date)s_%(run_id)s.raw.html",
+            "export_mode": ExportMode.RAW,
+            "groups": ["prod", "gcs"],
+        },
         {
             "type": "file",
             "filename": "/tmp/espn_roster_%(teamAbbr)s_%(date)s.json",
             "export_mode": ExportMode.DATA,
             "pretty_print": True,
-            "groups": ["dev", "test", "prod"],
+            "groups": ["dev", "test"],
         },
         # ---------- raw HTML fixture (offline tests) ----------
         {
@@ -136,7 +170,7 @@ class GetEspnTeamRoster(ScraperBase):
             player_id = m.group(1) if m else ""
             slug = m.group(2) if m else ""
 
-            # Jersey number – class has changed before, so fallback to regex
+            # Jersey number - class has changed before, so fallback to regex
             jersey_span = tds[1].find("span", class_=re.compile("pl"))
             jersey = (
                 re.sub(r"[^\d]", "", jersey_span.get_text()) if jersey_span else ""
@@ -167,12 +201,12 @@ class GetEspnTeamRoster(ScraperBase):
                 }
             )
 
-        # Basic schema‑sanity warning
+        # Basic schema-sanity warning
         for p in players:
             missing = [k for k in ("name", "slug", "playerId") if not p.get(k)]
-            if len(missing) == 3:  # all missing → definitely broken row
+            if len(missing) == 3:  # all missing -> definitely broken row
                 logger.warning("ESPN roster: missing all ids for row %s", p)
-                sentry_sdk.capture_message(f"[ESPN Roster] Unparsed row: {p}", level="warning")
+                sentry_sdk.capture_message(f"[ESPN Roster] Unparsed row: {p}", level="warning")
 
         self.data = {
             "teamAbbr": self.opts["teamAbbr"],
@@ -194,34 +228,15 @@ class GetEspnTeamRoster(ScraperBase):
         }
 
 
-# ---------------------------------------------------------------------- #
-# GCF entry
-# ---------------------------------------------------------------------- #
-def gcf_entry(request):  # type: ignore[valid-type]
-    team_slug = request.args.get("teamSlug")
-    team_abbr = request.args.get("teamAbbr")
-    if not team_slug or not team_abbr:
-        return ("Missing teamSlug or teamAbbr", 400)
+# --------------------------------------------------------------------------- #
+# MIXIN-BASED Flask and CLI entry points (MUCH CLEANER!)
+# --------------------------------------------------------------------------- #
 
-    opts = {
-        "teamSlug": team_slug,
-        "teamAbbr": team_abbr,
-        "group": request.args.get("group", "prod"),
-    }
-    GetEspnTeamRoster().run(opts)
-    return f"ESPN roster HTML scrape done for {team_slug}", 200
+# Use the mixin's utility to create the Flask app
+create_app = convert_existing_flask_scraper(GetEspnTeamRoster)
 
-
-# ---------------------------------------------------------------------- #
-# CLI usage
-# ---------------------------------------------------------------------- #
+# Use the mixin's main function generator
 if __name__ == "__main__":
-    import argparse
-
-    cli = argparse.ArgumentParser()
-    cli.add_argument("--teamSlug", required=True, help="boston-celtics")
-    cli.add_argument("--teamAbbr", required=True, help="bos")
-    cli.add_argument("--group", default="test")
-    args = cli.parse_args()
-
-    GetEspnTeamRoster().run(vars(args))
+    main = GetEspnTeamRoster.create_cli_and_flask_main()
+    main()
+    

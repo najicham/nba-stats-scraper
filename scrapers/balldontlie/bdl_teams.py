@@ -1,5 +1,5 @@
 """
-BallDontLie - Teams endpoint                                    v1.1 • 2025-06-23
+BallDontLie - Teams endpoint                                    v1.1 - 2025-06-23
 -------------------------------------------------------------------------------
 Grabs the full list of NBA franchises from
 
@@ -7,43 +7,78 @@ Grabs the full list of NBA franchises from
 
 If pagination ever appears (meta.next_page > current_page) we'll loop until done.
 
-CLI
----
-    python -m scrapers.balldontlie.bdl_teams --group dev
+Usage examples:
+  # Via capture tool (recommended for data collection):
+  python tools/fixtures/capture.py bdl_teams \
+      --debug
+
+  # Direct CLI execution:
+  python scrapers/balldontlie/bdl_teams.py --debug
+
+  # Flask web service:
+  python scrapers/balldontlie/bdl_teams.py --serve --debug
 """
 
 from __future__ import annotations
 
 import logging
 import os
+import sys
 from datetime import datetime, timezone
 from typing import Any, Dict, List
 
-from ..scraper_base import DownloadType, ExportMode, ScraperBase
+# Support both module execution (python -m) and direct execution
+try:
+    # Module execution: python -m scrapers.balldontlie.bdl_teams
+    from ..scraper_base import DownloadType, ExportMode, ScraperBase
+    from ..scraper_flask_mixin import ScraperFlaskMixin
+    from ..scraper_flask_mixin import convert_existing_flask_scraper
+except ImportError:
+    # Direct execution: python scrapers/balldontlie/bdl_teams.py
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+    from scrapers.scraper_base import DownloadType, ExportMode, ScraperBase
+    from scrapers.scraper_flask_mixin import ScraperFlaskMixin
+    from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
 
-logger = logging.getLogger(__name__)  # module‑specific logger
+logger = logging.getLogger(__name__)  # module-specific logger
 
 
 # --------------------------------------------------------------------------- #
-# Scraper
+# Scraper (USING MIXIN)
 # --------------------------------------------------------------------------- #
-class BdlTeams(ScraperBase):
+class BdlTeams(ScraperBase, ScraperFlaskMixin):
     """Static reference table - typically run once per season."""
 
-    # Basic config
+    # Flask Mixin Configuration
+    scraper_name = "bdl_teams"
+    required_params = []  # No required parameters
+    optional_params = {
+        "apiKey": None,  # Falls back to env var (optional for free tier)
+    }
+
+    # Original scraper config
     download_type = DownloadType.JSON
     decode_download_data = True
     required_opts: List[str] = []  # no CLI options required
 
-    # Exporter configs
+    # ------------------------------------------------------------------ #
+    # Exporters
+    # ------------------------------------------------------------------ #
     exporters = [
+        # GCS RAW for production
+        {
+            "type": "gcs",
+            "key": "balldontlie/teams/teams_%(run_id)s.raw.json",
+            "export_mode": ExportMode.RAW,
+            "groups": ["prod", "gcs"],
+        },
         # Normal dev / prod artifact
         {
             "type": "file",
             "filename": "/tmp/bdl_teams.json",
             "pretty_print": True,
             "export_mode": ExportMode.DATA,
-            "groups": ["dev", "test", "prod"],
+            "groups": ["dev", "test"],
         },
         # Capture RAW
         {
@@ -129,33 +164,14 @@ class BdlTeams(ScraperBase):
 
 
 # --------------------------------------------------------------------------- #
-# Google Cloud Function entry point
+# MIXIN-BASED Flask and CLI entry points (MUCH CLEANER!)
 # --------------------------------------------------------------------------- #
-def gcf_entry(request):  # type: ignore[valid-type]
-    opts = {
-        "group": request.args.get("group", "prod"),
-        "apiKey": request.args.get("apiKey"),  # optional override
-        "runId": request.args.get("runId"),    # allow external run‑id
-    }
-    BdlTeams().run(opts)
-    return ("BALLDONTLIE teams scrape complete", 200)
 
+# Use the mixin's utility to create the Flask app
+create_app = convert_existing_flask_scraper(BdlTeams)
 
-# --------------------------------------------------------------------------- #
-# CLI usage                                                                  #
-# --------------------------------------------------------------------------- #
+# Use the mixin's main function generator
 if __name__ == "__main__":
-    import argparse
-    from scrapers.utils.cli_utils import add_common_args
-
-    parser = argparse.ArgumentParser(
-        description="Scrape BallDontLie /teams endpoint"
-    )
-    add_common_args(parser)  # --group, --apiKey, --runId, --debug
-    args = parser.parse_args()
-
-    # Optional: flip logging level when --debug is set
-    if getattr(args, "debug", False):
-        logging.getLogger().setLevel(logging.DEBUG)
-
-    BdlTeams().run(vars(args))
+    main = BdlTeams.create_cli_and_flask_main()
+    main()
+    

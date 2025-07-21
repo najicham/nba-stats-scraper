@@ -6,16 +6,40 @@ Top-N league leaders for a single statistic:
     https://api.balldontlie.io/v1/leaders
 
 Defaults:  statType = "pts",  season = current NBA season
+
+Usage examples:
+  # Via capture tool (recommended for data collection):
+  python tools/fixtures/capture.py bdl_player_leaders \
+      --statType pts --season 2024 \
+      --debug
+
+  # Direct CLI execution:
+  python scrapers/balldontlie/bdl_player_leaders.py --statType ast --season 2024 --debug
+
+  # Flask web service:
+  python scrapers/balldontlie/bdl_player_leaders.py --serve --debug
 """
+
 from __future__ import annotations
 
 import logging
 import os
+import sys
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from ..scraper_base import DownloadType, ExportMode, ScraperBase
-from ..utils.cli_utils import add_common_args
+# Support both module execution (python -m) and direct execution
+try:
+    # Module execution: python -m scrapers.balldontlie.bdl_player_leaders
+    from ..scraper_base import DownloadType, ExportMode, ScraperBase
+    from ..scraper_flask_mixin import ScraperFlaskMixin
+    from ..scraper_flask_mixin import convert_existing_flask_scraper
+except ImportError:
+    # Direct execution: python scrapers/balldontlie/bdl_player_leaders.py
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+    from scrapers.scraper_base import DownloadType, ExportMode, ScraperBase
+    from scrapers.scraper_flask_mixin import ScraperFlaskMixin
+    from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
 
 logger = logging.getLogger(__name__)
 
@@ -35,23 +59,43 @@ _VALID_STATS = {
 }
 
 # --------------------------------------------------------------------------- #
-# Scraper                                                                     #
+# Scraper (USING MIXIN)
 # --------------------------------------------------------------------------- #
-class BdlPlayerLeadersScraper(ScraperBase):
+class BdlPlayerLeadersScraper(ScraperBase, ScraperFlaskMixin):
     """Scraper for /leaders (top-N players for one stat)."""
 
+    # Flask Mixin Configuration
+    scraper_name = "bdl_player_leaders"
+    required_params = []  # No required parameters
+    optional_params = {
+        "statType": "pts",    # Default to points
+        "season": None,       # Defaults to current NBA season
+        "apiKey": None,       # Falls back to env var
+    }
+
+    # Original scraper config
     required_opts: List[str] = []
     download_type = DownloadType.JSON
     decode_download_data = True
 
+    # ------------------------------------------------------------------ #
+    # Exporters
+    # ------------------------------------------------------------------ #
     exporters = [
+        # GCS RAW for production
+        {
+            "type": "gcs",
+            "key": "balldontlie/player-leaders/%(ident)s_%(run_id)s.raw.json",
+            "export_mode": ExportMode.RAW,
+            "groups": ["prod", "gcs"],
+        },
         # Normal artefact
         {
             "type": "file",
             "filename": "/tmp/bdl_player_leaders_%(ident)s.json",
             "pretty_print": True,
             "export_mode": ExportMode.DATA,
-            "groups": ["dev", "test", "prod"],
+            "groups": ["dev", "test"],
         },
         # Capture RAW + EXP
         {
@@ -98,7 +142,7 @@ class BdlPlayerLeadersScraper(ScraperBase):
     def set_headers(self) -> None:
         api_key = self.opts.get("apiKey") or os.getenv("BDL_API_KEY")
         self.headers = {
-            "User-Agent": "scrape-bdl-player-leaders/1.1 (+github.com/your-org)",
+            "User-Agent": "scrape-bdl-player-leaders/1.2 (+github.com/your-org)",
             "Accept": "application/json",
         }
         if api_key:
@@ -153,34 +197,14 @@ class BdlPlayerLeadersScraper(ScraperBase):
 
 
 # --------------------------------------------------------------------------- #
-# Google Cloud Function entry                                                #
+# MIXIN-BASED Flask and CLI entry points (MUCH CLEANER!)
 # --------------------------------------------------------------------------- #
-def gcf_entry(request):  # type: ignore[valid-type]
-    opts = {
-        "statType": request.args.get("statType"),
-        "season": request.args.get("season"),
-        "group": request.args.get("group", "prod"),
-        "apiKey": request.args.get("apiKey"),
-        "runId": request.args.get("runId"),
-    }
-    BdlPlayerLeadersScraper().run(opts)
-    ident = f"{opts.get('season') or _current_nba_season()}_{opts.get('statType') or 'pts'}"
-    return f"BallDontLie player leaders scrape complete ({ident})", 200
 
+# Use the mixin's utility to create the Flask app
+create_app = convert_existing_flask_scraper(BdlPlayerLeadersScraper)
 
-# --------------------------------------------------------------------------- #
-# CLI usage                                                                  #
-# --------------------------------------------------------------------------- #
+# Use the mixin's main function generator
 if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser(description="Scrape BallDontLie /leaders")
-    parser.add_argument("--statType", help="pts, ast, reb, etc. (default pts)")
-    parser.add_argument("--season", type=int, help="Season start year, e.g. 2024")
-    add_common_args(parser)  # --group --apiKey --runId --debug
-    args = parser.parse_args()
-
-    if args.debug:
-        logging.getLogger().setLevel(logging.DEBUG)
-
-    BdlPlayerLeadersScraper().run(vars(args))
+    main = BdlPlayerLeadersScraper.create_cli_and_flask_main()
+    main()
+    

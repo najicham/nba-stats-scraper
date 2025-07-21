@@ -1,3 +1,4 @@
+# scrapers/nbacom/nbac_schedule_api.py
 """
 NBA.com stats API schedule scraper                       v1 - 2025-07-17
 ------------------------------------------------------------------------
@@ -5,29 +6,61 @@ Uses the current NBA.com stats API endpoint to get season schedules.
 
 URL: https://stats.nba.com/stats/scheduleleaguev2int
 
-CLI:
-    python -m scrapers.nbacom.nbac_data_schedule --season 2025 --group test
+Usage examples
+--------------
+  # Via capture tool (recommended for data collection):
+  python tools/fixtures/capture.py nbac_schedule_api \
+      --season 2025 \
+      --debug
+
+  # Direct CLI execution:
+  python scrapers/nbacom/nbac_schedule_api.py --season 2025 --debug
+
+  # Flask web service:
+  python scrapers/nbacom/nbac_schedule_api.py --serve --debug
 """
 
 from __future__ import annotations
 
 import logging
+import os
+import sys
 from datetime import datetime, timezone
 from typing import Any, Dict, List
 
-from ..scraper_base import DownloadType, ExportMode, ScraperBase
-from ..utils.exceptions import DownloadDataException
+# Support both module execution (python -m) and direct execution
+try:
+    # Module execution: python -m scrapers.nbacom.nbac_schedule_api
+    from ..scraper_base import DownloadType, ExportMode, ScraperBase
+    from ..scraper_flask_mixin import ScraperFlaskMixin
+    from ..scraper_flask_mixin import convert_existing_flask_scraper
+    from ..utils.exceptions import DownloadDataException
+except ImportError:
+    # Direct execution: python scrapers/nbacom/nbac_schedule_api.py
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+    from scrapers.scraper_base import DownloadType, ExportMode, ScraperBase
+    from scrapers.scraper_flask_mixin import ScraperFlaskMixin
+    from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
+    from scrapers.utils.exceptions import DownloadDataException
 
 logger = logging.getLogger("scraper_base")
 
 
-class GetNbaComScheduleApi(ScraperBase):
+class GetNbaComScheduleApi(ScraperBase, ScraperFlaskMixin):
     """
     NBA.com stats API schedule scraper.
     
     Required opts:
         season: 4-digit start year (e.g., 2025 for 2025-26 season)
     """
+
+    # Flask Mixin Configuration
+    scraper_name = "nbac_schedule_api"
+    required_params = ["season"]
+    optional_params = {
+        "apiKey": None,
+        "runId": None,
+    }
     
     required_opts = ["season"]
     download_type = DownloadType.JSON
@@ -175,47 +208,15 @@ class GetNbaComScheduleApi(ScraperBase):
         }
 
 
-# Google Cloud Function entry point
-def gcf_entry(request):  # type: ignore[valid-type]
-    """Google Cloud Function entry point"""
-    season = request.args.get("season")
-    if not season:
-        return ("Missing required parameter 'season'", 400)
-    
-    group = request.args.get("group", "prod")
-    
-    opts = {
-        "season": season,
-        "group": group,
-        "apiKey": request.args.get("apiKey"),
-        "runId": request.args.get("runId"),
-    }
-    
-    try:
-        result = GetNbaComScheduleApi().run(opts)
-        if result:
-            return f"NBA.com schedule scrape complete for {season}", 200
-        else:
-            return f"NBA.com schedule scrape failed for {season}", 500
-    except Exception as e:
-        logger.error("GCF error: %s", e)
-        return f"NBA.com schedule scrape error: {str(e)}", 500
+# --------------------------------------------------------------------------- #
+# MIXIN-BASED Flask and CLI entry points
+# --------------------------------------------------------------------------- #
 
+# Use the mixin's utility to create the Flask app
+create_app = convert_existing_flask_scraper(GetNbaComScheduleApi)
 
-# CLI usage
+# Use the mixin's main function generator
 if __name__ == "__main__":
-    import argparse
-    from scrapers.utils.cli_utils import add_common_args
-
-    cli = argparse.ArgumentParser(description="NBA.com Stats API Schedule Scraper")
-    cli.add_argument("--season", required=True, 
-                    help="4-digit start year (e.g., 2025 for 2025-26 season)")
-    add_common_args(cli)
-    args = cli.parse_args()
-
-    if args.debug:
-        logging.getLogger().setLevel(logging.DEBUG)
-
-    GetNbaComScheduleApi().run(vars(args))
-
+    main = GetNbaComScheduleApi.create_cli_and_flask_main()
+    main()
     

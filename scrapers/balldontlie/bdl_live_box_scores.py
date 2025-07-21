@@ -1,42 +1,83 @@
 """
-BALLDONTLIE - Live Box-Scores endpoint                      v1.1 • 2025-06-24
+BALLDONTLIE - Live Box-Scores endpoint                      v1.1 - 2025-06-24
 -------------------------------------------------------------------------------
 Continuously updated box scores:
 
     https://api.balldontlie.io/v1/box_scores/live
 
 Endpoint returns all games in progress; empty array when none.
+
+Usage examples:
+  # Via capture tool (recommended for data collection):
+  python tools/fixtures/capture.py bdl_live_box_scores \
+      --debug
+
+  # Direct CLI execution:
+  python scrapers/balldontlie/bdl_live_box_scores.py --debug
+
+  # Flask web service:
+  python scrapers/balldontlie/bdl_live_box_scores.py --serve --debug
 """
 
 from __future__ import annotations
 
 import logging
 import os
+import sys
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from ..scraper_base import DownloadType, ExportMode, ScraperBase
+# Support both module execution (python -m) and direct execution
+try:
+    # Module execution: python -m scrapers.balldontlie.bdl_live_box_scores
+    from ..scraper_base import DownloadType, ExportMode, ScraperBase
+    from ..scraper_flask_mixin import ScraperFlaskMixin
+    from ..scraper_flask_mixin import convert_existing_flask_scraper
+except ImportError:
+    # Direct execution: python scrapers/balldontlie/bdl_live_box_scores.py
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+    from scrapers.scraper_base import DownloadType, ExportMode, ScraperBase
+    from scrapers.scraper_flask_mixin import ScraperFlaskMixin
+    from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
 
 logger = logging.getLogger(__name__)
 
 # --------------------------------------------------------------------------- #
-# Scraper                                                                     #
+# Scraper (USING MIXIN)
 # --------------------------------------------------------------------------- #
-class BdlLiveBoxScoresScraper(ScraperBase):
+class BdlLiveBoxScoresScraper(ScraperBase, ScraperFlaskMixin):
     """Fast-cadence scraper for /box_scores/live."""
 
+    # Flask Mixin Configuration
+    scraper_name = "bdl_live_box_scores"
+    required_params = []  # No required parameters
+    optional_params = {
+        "apiKey": None,  # Falls back to env var
+    }
+
+    # Original scraper config
     required_opts: List[str] = []
     download_type = DownloadType.JSON
     decode_download_data = True
 
+    # ------------------------------------------------------------------ #
+    # Exporters
+    # ------------------------------------------------------------------ #
     exporters = [
+        # GCS RAW for production
+        {
+            "type": "gcs",
+            "key": "balldontlie/live-box-scores/%(ts)s_%(run_id)s.raw.json",
+            "export_mode": ExportMode.RAW,
+            "groups": ["prod", "gcs"],
+        },
         # Normal artifact (timestamp keeps files unique)
         {
             "type": "file",
             "filename": "/tmp/bdl_live_boxes_%(ts)s.json",
             "pretty_print": True,
             "export_mode": ExportMode.DATA,
-            "groups": ["dev", "test", "prod"],
+            "groups": ["dev", "test"],
         },
         # Capture RAW + EXP
         {
@@ -55,7 +96,7 @@ class BdlLiveBoxScoresScraper(ScraperBase):
     ]
 
     # ------------------------------------------------------------------ #
-    # Additional opts – timestamp token                                  #
+    # Additional opts - timestamp token                                  #
     # ------------------------------------------------------------------ #
     def set_additional_opts(self) -> None:
         self.opts.setdefault("ts", datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"))
@@ -68,7 +109,7 @@ class BdlLiveBoxScoresScraper(ScraperBase):
     def set_url(self) -> None:
         self.base_url = self._API_ROOT
         self.url = self._API_ROOT
-        logger.debug("Live box‑scores URL: %s", self.url)
+        logger.debug("Live box-scores URL: %s", self.url)
 
     def set_headers(self) -> None:
         api_key = self.opts.get("apiKey") or os.getenv("BDL_API_KEY")
@@ -113,7 +154,7 @@ class BdlLiveBoxScoresScraper(ScraperBase):
             "gameCount": len(live_boxes),
             "liveBoxes": live_boxes,
         }
-        logger.info("Fetched live box‑scores for %d in‑progress games", len(live_boxes))
+        logger.info("Fetched live box-scores for %d in-progress games", len(live_boxes))
 
     # ------------------------------------------------------------------ #
     # Stats                                                              #
@@ -123,30 +164,14 @@ class BdlLiveBoxScoresScraper(ScraperBase):
 
 
 # --------------------------------------------------------------------------- #
-# Google Cloud Function entry                                                #
+# MIXIN-BASED Flask and CLI entry points (MUCH CLEANER!)
 # --------------------------------------------------------------------------- #
-def gcf_entry(request):  # type: ignore[valid-type]
-    opts = {
-        "group": request.args.get("group", "prod"),
-        "apiKey": request.args.get("apiKey"),
-        "runId": request.args.get("runId"),
-    }
-    BdlLiveBoxScoresScraper().run(opts)
-    return "BallDontLie live box‑scores scrape complete", 200
 
+# Use the mixin's utility to create the Flask app
+create_app = convert_existing_flask_scraper(BdlLiveBoxScoresScraper)
 
-# --------------------------------------------------------------------------- #
-# CLI usage                                                                  #
-# --------------------------------------------------------------------------- #
+# Use the mixin's main function generator
 if __name__ == "__main__":
-    import argparse
-    from scrapers.utils.cli_utils import add_common_args
-
-    parser = argparse.ArgumentParser(description="Scrape BallDontLie /box_scores/live")
-    add_common_args(parser)  # --group --apiKey --runId --debug
-    args = parser.parse_args()
-
-    if args.debug:
-        logging.getLogger().setLevel(logging.DEBUG)
-
-    BdlLiveBoxScoresScraper().run(vars(args))
+    main = BdlLiveBoxScoresScraper.create_cli_and_flask_main()
+    main()
+    

@@ -1,3 +1,4 @@
+# scrapers/oddsapi/oddsa_team_players.py
 """
 odds_api_team_players.py
 Scraper for the (undocumented) The-Odds-API v4 endpoint:
@@ -6,30 +7,54 @@ Scraper for the (undocumented) The-Odds-API v4 endpoint:
 
 Returns the current roster for a given team / participant.
 
-python -m scrapers.oddsapi.odds_api_team_players \
-    --sport=basketball_nba \
-    --participantId=team-1234 \
-    --group=dev --debug
+Usage examples
+--------------
+  # Via capture tool (recommended for data collection):
+  python tools/fixtures/capture.py oddsa_team_players \
+      --sport basketball_nba \
+      --participantId team-1234 \
+      --debug
 
+  # Direct CLI execution:
+  python scrapers/oddsapi/oddsa_team_players.py \
+      --sport basketball_nba \
+      --participantId team-1234 \
+      --debug
+
+  # Flask web service:
+  python scrapers/oddsapi/oddsa_team_players.py --serve --debug
 """
 
 from __future__ import annotations
 
 import os
 import logging
+import sys
 from urllib.parse import urlencode, quote_plus
 from typing import Any, Dict, List
 
-from scrapers.scraper_base import ScraperBase, ExportMode
-from scrapers.utils.exceptions import DownloadDataException
+# Support both module execution (python -m) and direct execution
+try:
+    # Module execution: python -m scrapers.oddsapi.oddsa_team_players
+    from ..scraper_base import ScraperBase, ExportMode
+    from ..scraper_flask_mixin import ScraperFlaskMixin
+    from ..scraper_flask_mixin import convert_existing_flask_scraper
+    from ..utils.exceptions import DownloadDataException
+except ImportError:
+    # Direct execution: python scrapers/oddsapi/oddsa_team_players.py
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+    from scrapers.scraper_base import ScraperBase, ExportMode
+    from scrapers.scraper_flask_mixin import ScraperFlaskMixin
+    from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
+    from scrapers.utils.exceptions import DownloadDataException
 
 logger = logging.getLogger(__name__)
 
 
 # --------------------------------------------------------------------------- #
-# Scraper                                                                     #
+# Scraper (USING MIXIN)
 # --------------------------------------------------------------------------- #
-class GetOddsApiTeamPlayers(ScraperBase):
+class GetOddsApiTeamPlayers(ScraperBase, ScraperFlaskMixin):
     """
     Required opts:
       • sport          - e.g. basketball_nba
@@ -38,6 +63,13 @@ class GetOddsApiTeamPlayers(ScraperBase):
     Optional opts:
       • apiKey - falls back to env ODDS_API_KEY
     """
+
+    # Flask Mixin Configuration
+    scraper_name = "oddsa_team_players"
+    required_params = ["sport", "participantId"]
+    optional_params = {
+        "apiKey": None,  # Falls back to env ODDS_API_KEY
+    }
 
     required_opts = ["sport", "participantId"]
     proxy_enabled = False
@@ -62,6 +94,20 @@ class GetOddsApiTeamPlayers(ScraperBase):
             "pretty_print": True,
             "export_mode": ExportMode.DATA,
             "groups": ["dev", "capture", "test"],
+        },
+        # Add capture group exporters
+        {
+            "type": "file",
+            "filename": "/tmp/raw_%(run_id)s.json",
+            "export_mode": ExportMode.RAW,
+            "groups": ["capture"],
+        },
+        {
+            "type": "file",
+            "filename": "/tmp/exp_%(run_id)s.json",
+            "pretty_print": True,
+            "export_mode": ExportMode.DECODED,
+            "groups": ["capture"],
         },
     ]
 
@@ -155,46 +201,14 @@ class GetOddsApiTeamPlayers(ScraperBase):
 
 
 # --------------------------------------------------------------------------- #
-# Google Cloud Function entry point                                           #
+# MIXIN-BASED Flask and CLI entry points
 # --------------------------------------------------------------------------- #
-def gcf_entry(request):  # type: ignore[valid-type]
-    from dotenv import load_dotenv
 
-    load_dotenv()
+# Use the mixin's utility to create the Flask app
+create_app = convert_existing_flask_scraper(GetOddsApiTeamPlayers)
 
-    opts = {
-        "sport": request.args.get("sport", "basketball_nba"),
-        "participantId": request.args["participantId"],
-        "apiKey": request.args.get("apiKey"),  # optional - env fallback
-        "group": request.args.get("group", "prod"),
-    }
-    GetOddsApiTeamPlayers().run(opts)
-    return (
-        f"Odds-API team-players scrape complete ({opts['participantId']})",
-        200,
-    )
-
-
-# --------------------------------------------------------------------------- #
-# CLI                                                                         #
-# --------------------------------------------------------------------------- #
+# Use the mixin's main function generator
 if __name__ == "__main__":
-    import argparse
-    from dotenv import load_dotenv
-
-    load_dotenv()
-
-    parser = argparse.ArgumentParser(
-        description="Scrape The-Odds-API players list for one team"
-    )
-    parser.add_argument("--sport", default="basketball_nba")
-    parser.add_argument("--participantId", required=True)
-    parser.add_argument("--apiKey", help="Optional - env ODDS_API_KEY fallback")
-    parser.add_argument("--group", default="dev")
-    parser.add_argument("--debug", action="store_true")
-    args = parser.parse_args()
-
-    if args.debug:
-        logging.getLogger().setLevel(logging.DEBUG)
-
-    GetOddsApiTeamPlayers().run(vars(args))
+    main = GetOddsApiTeamPlayers.create_cli_and_flask_main()
+    main()
+    

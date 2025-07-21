@@ -7,23 +7,48 @@ Per-player season averages from:
 
 All route/query parameters from the public docs are supported.
 
-python tools/fixtures/capture.py bdl_player_averages --group capture --debug \
-       --playerIds 237,115,140 --season 2024
+Usage examples:
+  # Via capture tool (recommended for data collection):
+  python tools/fixtures/capture.py bdl_player_averages \
+      --playerIds 237,115,140 --season 2024 \
+      --debug
 
+  # Direct CLI execution:
+  python scrapers/balldontlie/bdl_player_averages.py --playerIds 237,115,140 --season 2024 --debug
+
+  # Flask web service:
+  python scrapers/balldontlie/bdl_player_averages.py --serve --debug
 """
+
 from __future__ import annotations
 
 import logging
 import os
+import sys
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 from urllib.parse import urlencode
 
-from ..scraper_base import DownloadType, ExportMode, ScraperBase
-from ..utils.exceptions import (
-    NoHttpStatusCodeException,
-    InvalidHttpStatusCodeException,
-)
+# Support both module execution (python -m) and direct execution
+try:
+    # Module execution: python -m scrapers.balldontlie.bdl_player_averages
+    from ..scraper_base import DownloadType, ExportMode, ScraperBase
+    from ..scraper_flask_mixin import ScraperFlaskMixin
+    from ..scraper_flask_mixin import convert_existing_flask_scraper
+    from ..utils.exceptions import (
+        NoHttpStatusCodeException,
+        InvalidHttpStatusCodeException,
+    )
+except ImportError:
+    # Direct execution: python scrapers/balldontlie/bdl_player_averages.py
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+    from scrapers.scraper_base import DownloadType, ExportMode, ScraperBase
+    from scrapers.scraper_flask_mixin import ScraperFlaskMixin
+    from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
+    from scrapers.utils.exceptions import (
+        NoHttpStatusCodeException,
+        InvalidHttpStatusCodeException,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -68,11 +93,30 @@ def _qs(d: Dict[str, object]) -> str:
 
 
 # --------------------------------------------------------------------------- #
-# Scraper                                                                     #
+# Scraper (USING MIXIN)
 # --------------------------------------------------------------------------- #
-class BdlPlayerAveragesScraper(ScraperBase):
+class BdlPlayerAveragesScraper(ScraperBase, ScraperFlaskMixin):
     """Scraper for /season_averages/<category> with full filter support."""
 
+    # Flask Mixin Configuration
+    scraper_name = "bdl_player_averages"
+    required_params = []  # All parameters are optional
+    optional_params = {
+        "playerIds": None,      # comma separated
+        "gameIds": None,        # comma separated
+        "dates": None,          # comma separated
+        "seasons": None,        # comma separated
+        "postseason": None,     # boolean flag
+        "startDate": None,      # YYYY-MM-DD
+        "endDate": None,        # YYYY-MM-DD
+        "season": None,         # single int (defaults to current)
+        "category": "general",  # general|clutch|defense|shooting
+        "seasonType": "regular", # regular|playoffs|ist|playin
+        "type": "base",         # stat grouping type
+        "apiKey": None,         # Falls back to env var
+    }
+
+    # Original scraper config
     required_opts: List[str] = []  # all parameters optional
     download_type = DownloadType.JSON
     decode_download_data = True
@@ -106,7 +150,7 @@ class BdlPlayerAveragesScraper(ScraperBase):
                 except ValueError:
                     pass
             raise InvalidHttpStatusCodeException(
-                f"503 Service Unavailable – {msg or 'see BallDontLie docs'}"
+                f"503 Service Unavailable - {msg or 'see BallDontLie docs'}"
             )
 
         super().check_download_status()
@@ -115,12 +159,19 @@ class BdlPlayerAveragesScraper(ScraperBase):
     # Exporters                                                          #
     # ------------------------------------------------------------------ #
     exporters = [
+        # GCS RAW for production
+        {
+            "type": "gcs",
+            "key": "balldontlie/player-averages/%(ident)s_%(run_id)s.raw.json",
+            "export_mode": ExportMode.RAW,
+            "groups": ["prod", "gcs"],
+        },
         {
             "type": "file",
             "filename": "/tmp/bdl_player_averages_%(ident)s.json",
             "pretty_print": True,
             "export_mode": ExportMode.DATA,
-            "groups": ["dev", "test", "prod", "capture"],
+            "groups": ["dev", "test", "capture"],
         },
         {
             "type": "file",
@@ -163,14 +214,14 @@ class BdlPlayerAveragesScraper(ScraperBase):
             self.opts["season"] = _current_nba_season()
 
         self._player_ids = [int(x) for x in _split(self.opts.get("playerIds"))]
-        # do NOT raise if empty; league‑wide queries are allowed
+        # do NOT raise if empty; league-wide queries are allowed
 
         # treat comma lists for other array params
         self._game_ids = [int(x) for x in _split(self.opts.get("gameIds"))]
         self._dates = _split(self.opts.get("dates"))
         self._seasons_multi = [int(x) for x in _split(self.opts.get("seasons"))]
 
-        # 3. chunk player IDs ≤100 each
+        # 3. chunk player IDs <=100 each
         if self._player_ids:
             self._id_chunks: List[List[int]] = [
                 self._player_ids[i : i + _CHUNK_SIZE]
@@ -306,69 +357,14 @@ class BdlPlayerAveragesScraper(ScraperBase):
 
 
 # --------------------------------------------------------------------------- #
-# Google Cloud Function entry                                                #
+# MIXIN-BASED Flask and CLI entry points (MUCH CLEANER!)
 # --------------------------------------------------------------------------- #
-def gcf_entry(request):  # type: ignore[valid-type]
-    opts = {
-        "playerIds": request.args.get("playerIds"),
-        "gameIds": request.args.get("gameIds"),
-        "dates": request.args.get("dates"),
-        "seasons": request.args.get("seasons"),
-        "postseason": request.args.get("postseason"),
-        "startDate": request.args.get("start_date"),
-        "endDate": request.args.get("end_date"),
-        "season": request.args.get("season"),
-        "category": request.args.get("category"),
-        "seasonType": request.args.get("season_type"),
-        "type": request.args.get("type"),
-        "apiKey": request.args.get("apiKey"),
-        "group": request.args.get("group", "prod"),
-        "runId": request.args.get("runId"),
-    }
-    BdlPlayerAveragesScraper().run(opts)
-    return "BallDontLie player-averages scrape complete", 200
 
+# Use the mixin's utility to create the Flask app
+create_app = convert_existing_flask_scraper(BdlPlayerAveragesScraper)
 
-# --------------------------------------------------------------------------- #
-# CLI usage                                                                  #
-# --------------------------------------------------------------------------- #
+# Use the mixin's main function generator
 if __name__ == "__main__":
-    import argparse
-    from scrapers.utils.cli_utils import add_common_args
-
-    cli = argparse.ArgumentParser(
-        description="Scrape BallDontLie /season_averages/<category>"
-    )
-    cli.add_argument("--playerIds", help="Comma list of player IDs")
-    cli.add_argument("--gameIds", help="Comma list of game IDs")
-    cli.add_argument("--dates", help="Comma list of YYYY-MM-DD values")
-    cli.add_argument("--seasons", help="Comma list of season start years")
-    cli.add_argument("--postseason", choices=["true", "false"])
-    cli.add_argument("--startDate", help="YYYY-MM-DD (on/after)")
-    cli.add_argument("--endDate", help="YYYY-MM-DD (on/before)")
-    cli.add_argument("--season", type=int, help="Season start year (default current)")
-    cli.add_argument(
-        "--category",
-        choices=sorted(_VALID_CATEGORIES),
-        default="general",
-        help="general|clutch|defense|shooting",
-    )
-    cli.add_argument(
-        "--seasonType",
-        choices=sorted(_VALID_SEASON_TYPES),
-        default="regular",
-        help="regular|playoffs|ist|playin",
-    )
-    cli.add_argument(
-        "--type",
-        choices=sorted(_VALID_TYPES),
-        default="base",
-        help="Stat grouping - see docs",
-    )
-    add_common_args(cli)  # --group --apiKey --runId --debug
-    args = cli.parse_args()
-
-    if args.debug:
-        logging.getLogger().setLevel(logging.DEBUG)
-
-    BdlPlayerAveragesScraper().run(vars(args))
+    main = BdlPlayerAveragesScraper.create_cli_and_flask_main()
+    main()
+    

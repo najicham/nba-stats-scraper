@@ -1,44 +1,82 @@
 """
-BALLDONTLIE - Player-Detail endpoint                         v1.1 • 2025-06-24
+BALLDONTLIE - Player-Detail endpoint                         v1.1 - 2025-06-24
 -------------------------------------------------------------------------------
 Fetch the JSON object for a single NBA player:
 
     https://api.balldontlie.io/v1/players/{playerId}
 
-CLI
----
-    python -m scrapers.balldontlie.bdl_player_detail --playerId 237 --debug
+Usage examples:
+  # Via capture tool (recommended for data collection):
+  python tools/fixtures/capture.py bdl_player_detail \
+      --playerId 237 \
+      --debug
+
+  # Direct CLI execution:
+  python scrapers/balldontlie/bdl_player_detail.py --playerId 237 --debug
+
+  # Flask web service:
+  python scrapers/balldontlie/bdl_player_detail.py --serve --debug
 """
 
 from __future__ import annotations
 
 import logging
 import os
+import sys
 from datetime import datetime, timezone
 from typing import List
 
-from ..scraper_base import DownloadType, ExportMode, ScraperBase
+# Support both module execution (python -m) and direct execution
+try:
+    # Module execution: python -m scrapers.balldontlie.bdl_player_detail
+    from ..scraper_base import DownloadType, ExportMode, ScraperBase
+    from ..scraper_flask_mixin import ScraperFlaskMixin
+    from ..scraper_flask_mixin import convert_existing_flask_scraper
+except ImportError:
+    # Direct execution: python scrapers/balldontlie/bdl_player_detail.py
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+    from scrapers.scraper_base import DownloadType, ExportMode, ScraperBase
+    from scrapers.scraper_flask_mixin import ScraperFlaskMixin
+    from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
 
 logger = logging.getLogger(__name__)
 
 # --------------------------------------------------------------------------- #
-# Scraper                                                                     #
+# Scraper (USING MIXIN)
 # --------------------------------------------------------------------------- #
-class BdlPlayerDetailScraper(ScraperBase):
+class BdlPlayerDetailScraper(ScraperBase, ScraperFlaskMixin):
     """Simple GET /players/{id} scraper."""
 
+    # Flask Mixin Configuration
+    scraper_name = "bdl_player_detail"
+    required_params = ["playerId"]  # playerId is required
+    optional_params = {
+        "apiKey": None,  # Falls back to env var
+    }
+
+    # Original scraper config
     required_opts: List[str] = ["playerId"]
     download_type = DownloadType.JSON
     decode_download_data = True
 
+    # ------------------------------------------------------------------ #
+    # Exporters
+    # ------------------------------------------------------------------ #
     exporters = [
+        # GCS RAW for production
+        {
+            "type": "gcs",
+            "key": "balldontlie/player-detail/%(playerId)s_%(run_id)s.raw.json",
+            "export_mode": ExportMode.RAW,
+            "groups": ["prod", "gcs"],
+        },
         # Normal artifact
         {
             "type": "file",
             "filename": "/tmp/bdl_player_%(playerId)s.json",
             "pretty_print": True,
             "export_mode": ExportMode.DATA,
-            "groups": ["dev", "test", "prod"],
+            "groups": ["dev", "test"],
         },
         # Capture RAW + EXP
         {
@@ -115,35 +153,14 @@ class BdlPlayerDetailScraper(ScraperBase):
 
 
 # --------------------------------------------------------------------------- #
-# Google Cloud Function entry                                                #
+# MIXIN-BASED Flask and CLI entry points (MUCH CLEANER!)
 # --------------------------------------------------------------------------- #
-def gcf_entry(request):  # type: ignore[valid-type]
-    player_id = request.args.get("playerId")
-    if not player_id:
-        return ("Missing query param 'playerId'", 400)
-    opts = {
-        "playerId": player_id,
-        "group": request.args.get("group", "prod"),
-        "apiKey": request.args.get("apiKey"),
-        "runId": request.args.get("runId"),
-    }
-    BdlPlayerDetailScraper().run(opts)
-    return f"BallDontLie player-detail scrape complete (playerId={player_id})", 200
 
+# Use the mixin's utility to create the Flask app
+create_app = convert_existing_flask_scraper(BdlPlayerDetailScraper)
 
-# --------------------------------------------------------------------------- #
-# CLI usage                                                                  #
-# --------------------------------------------------------------------------- #
+# Use the mixin's main function generator
 if __name__ == "__main__":
-    import argparse
-    from scrapers.utils.cli_utils import add_common_args
-
-    parser = argparse.ArgumentParser(description="Scrape BallDontLie /players/{id}")
-    parser.add_argument("--playerId", required=True, help="NBA player ID to fetch")
-    add_common_args(parser)  # --group --apiKey --runId --debug
-    args = parser.parse_args()
-
-    if args.debug:
-        logging.getLogger().setLevel(logging.DEBUG)
-
-    BdlPlayerDetailScraper().run(vars(args))
+    main = BdlPlayerDetailScraper.create_cli_and_flask_main()
+    main()
+    

@@ -1,31 +1,64 @@
 # scrapers/pbpstats/pbpstats_schedule.py
 """
-PBPStats season‑schedule scraper                         v2.5 – 2025‑06‑22
+PBPStats season‑schedule scraper                         v2.5 – 2025‑06‑22
 --------------------------------------------------------------------------
 Runs on:
   • pbpstats 1.3.x  (legacy)
   • pbpstats 2.0‑RC variants that lack DataNbaWebLoader.load_data()
 
-Local test:
-    python -m scrapers.pbpstats.pbpstats_schedule --season 2024 --group test --debug 1
+Usage examples
+--------------
+  # Via capture tool (recommended for data collection):
+  python tools/fixtures/capture.py pbpstats_schedule \
+      --season 2024 \
+      --debug
+
+  # Direct CLI execution:
+  python scrapers/pbpstats/pbpstats_schedule.py --season 2024 --debug
+
+  # Flask web service:
+  python scrapers/pbpstats/pbpstats_schedule.py --serve --debug
 """
 
 from __future__ import annotations
 
 import inspect
 import logging
+import os
+import sys
 from datetime import datetime, timezone
 from typing import Any, Dict, List
 
 import requests
 
-from ..scraper_base import DownloadType, ExportMode, ScraperBase
-from ..utils.exceptions import DownloadDataException
+# Support both module execution (python -m) and direct execution
+try:
+    # Module execution: python -m scrapers.pbpstats.pbpstats_schedule
+    from ..scraper_base import DownloadType, ExportMode, ScraperBase
+    from ..scraper_flask_mixin import ScraperFlaskMixin
+    from ..scraper_flask_mixin import convert_existing_flask_scraper
+    from ..utils.exceptions import DownloadDataException
+except ImportError:
+    # Direct execution: python scrapers/pbpstats/pbpstats_schedule.py
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+    from scrapers.scraper_base import DownloadType, ExportMode, ScraperBase
+    from scrapers.scraper_flask_mixin import ScraperFlaskMixin
+    from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
+    from scrapers.utils.exceptions import DownloadDataException
 
 logger = logging.getLogger("scraper_base")
 
 
-class GetNbaSchedulePBPStats(ScraperBase):
+class GetNbaSchedulePBPStats(ScraperBase, ScraperFlaskMixin):
+    """PBPStats season schedule scraper with version compatibility handling."""
+
+    # Flask Mixin Configuration
+    scraper_name = "pbpstats_schedule"
+    required_params = ["season"]
+    optional_params = {
+        "debug": None,
+    }
+
     required_opts: List[str] = ["season"]            # four‑digit start year
     download_type: DownloadType = DownloadType.BINARY
     decode_download_data: bool = False
@@ -52,6 +85,22 @@ class GetNbaSchedulePBPStats(ScraperBase):
             "data_key": GAMES_KEY,
             "pretty_print": True,
             "groups": ["dev", "test", "prod"],
+        },
+        # Add capture group exporters
+        {
+            "type": "file",
+            "filename": "/tmp/raw_%(run_id)s.json",
+            "export_mode": ExportMode.DATA,
+            "data_key": RAW_KEY,
+            "groups": ["capture"],
+        },
+        {
+            "type": "file",
+            "filename": "/tmp/exp_%(run_id)s.json",
+            "export_mode": ExportMode.DATA,
+            "data_key": GAMES_KEY,
+            "pretty_print": True,
+            "groups": ["capture"],
         },
     ]
 
@@ -80,7 +129,6 @@ class GetNbaSchedulePBPStats(ScraperBase):
         modern_api = {"league", "season_type"}.issubset(sig.parameters)
 
         # -------------------- shim for broken RC ------------------------ #
-                # -------------------- shim for broken RC ------------------------ #
         class _ShimScheduleSourceLoader:
             """Fallback for pbpstats 2.0‑RC variants without a working loader."""
 
@@ -124,7 +172,6 @@ class GetNbaSchedulePBPStats(ScraperBase):
                     data = self._get(data_url)
                     self.file_path = f"/tmp/pbp_cache/schedule_{start_year}_data.json"
                     return data
-
 
         try:
             if modern_api:
@@ -187,14 +234,15 @@ class GetNbaSchedulePBPStats(ScraperBase):
         return {"season": self.opts["season"], "games": len(self.games)}
 
 
-# ---------------------------------------------------------------------- #
-# CLI
-# ---------------------------------------------------------------------- #
-if __name__ == "__main__":
-    import argparse
+# --------------------------------------------------------------------------- #
+# MIXIN-BASED Flask and CLI entry points
+# --------------------------------------------------------------------------- #
 
-    cli = argparse.ArgumentParser(description="Run PBPStats schedule scraper")
-    cli.add_argument("--season", required=True, help="Start year, e.g. 2024 for 2024‑25")
-    cli.add_argument("--group", default="test", help="dev / test / prod")
-    cli.add_argument("--debug", default="0", help="1/true to print cache path")
-    GetNbaSchedulePBPStats().run(vars(cli.parse_args()))
+# Use the mixin's utility to create the Flask app
+create_app = convert_existing_flask_scraper(GetNbaSchedulePBPStats)
+
+# Use the mixin's main function generator
+if __name__ == "__main__":
+    main = GetNbaSchedulePBPStats.create_cli_and_flask_main()
+    main()
+    

@@ -5,29 +5,59 @@ NBA Player-Movement / Transaction feed                    v2 - 2025-06-16
 Downloads player movement and transaction data from NBA.com. Useful for 
 tracking roster changes, trades, signings, and player availability.
 
-CLI example
------------
-    python -m scrapers.nbacom.nbac_player_movement --year 2025 --debug
+Usage examples
+--------------
+  # Via capture tool (recommended for data collection):
+  python tools/fixtures/capture.py nbac_player_movement \
+      --year 2025 \
+      --debug
+
+  # Direct CLI execution:
+  python scrapers/nbacom/nbac_player_movement.py --year 2025 --debug
+
+  # Flask web service:
+  python scrapers/nbacom/nbac_player_movement.py --serve --debug
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import os
+import sys
 from datetime import datetime, timezone
 from typing import Dict, List
 
-from ..scraper_base import DownloadType, ExportMode, ScraperBase
-from ..utils.exceptions import DownloadDataException
+# Support both module execution (python -m) and direct execution
+try:
+    # Module execution: python -m scrapers.nbacom.nbac_player_movement
+    from ..scraper_base import DownloadType, ExportMode, ScraperBase
+    from ..scraper_flask_mixin import ScraperFlaskMixin
+    from ..scraper_flask_mixin import convert_existing_flask_scraper
+    from ..utils.exceptions import DownloadDataException
+except ImportError:
+    # Direct execution: python scrapers/nbacom/nbac_player_movement.py
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+    from scrapers.scraper_base import DownloadType, ExportMode, ScraperBase
+    from scrapers.scraper_flask_mixin import ScraperFlaskMixin
+    from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
+    from scrapers.utils.exceptions import DownloadDataException
 
 logger = logging.getLogger("scraper_base")
 
 
-class GetNbaComPlayerMovement(ScraperBase):
+class GetNbaComPlayerMovement(ScraperBase, ScraperFlaskMixin):
     """
     Downloads the static JSON blob at
     https://stats.nba.com/js/data/playermovement/NBA_Player_Movement.json
     """
+
+    # Flask Mixin Configuration
+    scraper_name = "nbac_player_movement"
+    required_params = []  # No required parameters (year defaults to current)
+    optional_params = {
+        "year": None,  # Defaults to current year if not provided
+    }
 
     # ------------------------------------------------------------------ #
     # Configuration
@@ -227,31 +257,15 @@ class GetNbaComPlayerMovement(ScraperBase):
         }
 
 
-# ---------------------------------------------------------------------- #
-# Google Cloud Function / Cloud Run entry
-# ---------------------------------------------------------------------- #
-def gcf_entry(request):  # type: ignore[valid-type]
-    year = request.args.get("year", "")  # blank triggers auto-fill
-    group = request.args.get("group", "prod")
+# --------------------------------------------------------------------------- #
+# MIXIN-BASED Flask and CLI entry points
+# --------------------------------------------------------------------------- #
 
-    ok = GetNbaComPlayerMovement().run({"year": year, "group": group})
-    return (("Player-movement scrape failed", 500) if ok is False else ("Scrape ok", 200))
+# Use the mixin's utility to create the Flask app
+create_app = convert_existing_flask_scraper(GetNbaComPlayerMovement)
 
-
-# ---------------------------------------------------------------------- #
-# CLI helper with standardized arguments
-# ---------------------------------------------------------------------- #
+# Use the mixin's main function generator
 if __name__ == "__main__":
-    import argparse
-    from scrapers.utils.cli_utils import add_common_args
-
-    cli = argparse.ArgumentParser(description="NBA.com Player Movement Scraper")
-    cli.add_argument("--year", default="", help="Year (e.g. 2025) - defaults to current year")
-    add_common_args(cli)  # Adds --group, --runId, --debug, etc.
-    args = cli.parse_args()
-
-    if args.debug:
-        logging.getLogger().setLevel(logging.DEBUG)
-
-    GetNbaComPlayerMovement().run(vars(args))
+    main = GetNbaComPlayerMovement.create_cli_and_flask_main()
+    main()
     

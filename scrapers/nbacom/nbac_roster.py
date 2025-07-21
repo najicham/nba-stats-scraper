@@ -5,9 +5,18 @@ NBA.com team roster scraper                               v2.1 - 2025-06-17
 Downloads current team rosters from NBA.com team pages by parsing embedded
 JSON data. Essential for tracking active players for prop betting analysis.
 
-CLI example
------------
-    python -m scrapers.nbacom.nbac_team_roster --teamAbbr GSW --debug
+Usage examples
+--------------
+  # Via capture tool (recommended for data collection):
+  python tools/fixtures/capture.py nbac_roster \
+      --teamAbbr GSW \
+      --debug
+
+  # Direct CLI execution:
+  python scrapers/nbacom/nbac_roster.py --teamAbbr GSW --debug
+
+  # Flask web service:
+  python scrapers/nbacom/nbac_roster.py --serve --debug
 """
 
 from __future__ import annotations
@@ -15,14 +24,28 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sys
 from datetime import datetime, timezone
 from typing import List, Dict
 
 from bs4 import BeautifulSoup
 from pydantic import BaseModel, Field, ValidationError
 
-from ..scraper_base import DownloadType, ExportMode, ScraperBase
-from ..utils.exceptions import DownloadDataException
+# Support both module execution (python -m) and direct execution
+try:
+    # Module execution: python -m scrapers.nbacom.nbac_roster
+    from ..scraper_base import DownloadType, ExportMode, ScraperBase
+    from ..scraper_flask_mixin import ScraperFlaskMixin
+    from ..scraper_flask_mixin import convert_existing_flask_scraper
+    from ..utils.exceptions import DownloadDataException
+except ImportError:
+    # Direct execution: python scrapers/nbacom/nbac_roster.py
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+    from scrapers.scraper_base import DownloadType, ExportMode, ScraperBase
+    from scrapers.scraper_flask_mixin import ScraperFlaskMixin
+    from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
+    from scrapers.utils.exceptions import DownloadDataException
+
 from shared.config.nba_teams import NBA_TEAMS
 
 logger = logging.getLogger("scraper_base")
@@ -55,8 +78,15 @@ class NextData(BaseModel):
 
 
 # ------------------------------------------------------------------ #
-class GetNbaTeamRoster(ScraperBase):
+class GetNbaTeamRoster(ScraperBase, ScraperFlaskMixin):
     """Parses roster JSON embedded in nba.com team pages."""
+
+    # Flask Mixin Configuration
+    scraper_name = "nbac_roster"
+    required_params = ["teamAbbr"]
+    optional_params = {
+        "debug": None,  # Special debug parameter for extra functionality
+    }
 
     required_opts = ["teamAbbr"]
     header_profile: str | None = "data"
@@ -313,41 +343,15 @@ class GetNbaTeamRoster(ScraperBase):
             logger.warning("Failed to write fallback JSON: %s", exc)
 
 
-# ---------------------------------------------------------------------- #
-# Google Cloud Function entry
-# ---------------------------------------------------------------------- #
-def gcf_entry(request):  # type: ignore[valid-type]
-    team = request.args.get("teamAbbr")
-    if not team:
-        return ("Missing teamAbbr", 400)
+# --------------------------------------------------------------------------- #
+# MIXIN-BASED Flask and CLI entry points
+# --------------------------------------------------------------------------- #
 
-    ok = GetNbaTeamRoster().run(
-        {
-            "teamAbbr": team,
-            "group": request.args.get("group", "prod"),
-            "debug": request.args.get("debug", "0"),
-        }
-    )
-    return (("Roster scrape failed", 500) if ok is False else ("Scrape ok", 200))
+# Use the mixin's utility to create the Flask app
+create_app = convert_existing_flask_scraper(GetNbaTeamRoster)
 
-
-# ---------------------------------------------------------------------- #
-# CLI helper with standardized arguments
-# ---------------------------------------------------------------------- #
+# Use the mixin's main function generator
 if __name__ == "__main__":
-    import argparse
-    from scrapers.utils.cli_utils import add_common_args
-
-    cli = argparse.ArgumentParser(description="NBA.com Team Roster Scraper")
-    cli.add_argument("--teamAbbr", required=True, help="Team abbreviation (e.g. GSW, LAL, BOS)")
-    add_common_args(cli)  # Adds --group, --runId, --debug logging, etc.
-    args = cli.parse_args()
-
-    # Enable debug logging if requested (standardized --debug flag from add_common_args)
-    if args.debug:
-        logging.getLogger().setLevel(logging.DEBUG)
-        # Also enable roster-specific debug dumps
-        args.debug = "1"  # Convert to format expected by roster scraper
-
-    GetNbaTeamRoster().run(vars(args))
+    main = GetNbaTeamRoster.create_cli_and_flask_main()
+    main()
     

@@ -1,3 +1,4 @@
+# scrapers/oddsapi/oddsa_player_props.py
 """
 odds_api_current_event_odds.py
 Scraper for The-Odds-API v4 **current event odds** endpoint.
@@ -8,46 +9,81 @@ Docs:
 Endpoint:
   GET /v4/sports/{sport}/events/{eventId}/odds
 
-python -m scrapers.oddsapi.odds_api_current_event_odds \
-    --sport=basketball_nba \
-    --eventId=6f0b6f8d8cc9c5bc6375cdee \
-    --markets=player_points \
-    --regions=us \
-    --group=dev --debug
+Usage examples
+--------------
+  # Via capture tool (recommended for data collection):
+  python tools/fixtures/capture.py oddsa_player_props \
+      --eventId 6f0b6f8d8cc9c5bc6375cdee \
+      --markets player_points \
+      --debug
 
+  # Direct CLI execution:
+  python scrapers/oddsapi/oddsa_player_props.py \
+      --eventId 6f0b6f8d8cc9c5bc6375cdee \
+      --markets player_points \
+      --debug
+
+  # Flask web service:
+  python scrapers/oddsapi/oddsa_player_props.py --serve --debug
 """
 
 from __future__ import annotations
 
 import os
 import logging
+import sys
 from urllib.parse import urlencode
 from typing import Any, Dict, List
 
-from scrapers.scraper_base import ScraperBase, ExportMode
-from scrapers.utils.exceptions import DownloadDataException
+# Support both module execution (python -m) and direct execution
+try:
+    # Module execution: python -m scrapers.oddsapi.oddsa_player_props
+    from ..scraper_base import ScraperBase, ExportMode
+    from ..scraper_flask_mixin import ScraperFlaskMixin
+    from ..scraper_flask_mixin import convert_existing_flask_scraper
+    from ..utils.exceptions import DownloadDataException
+except ImportError:
+    # Direct execution: python scrapers/oddsapi/oddsa_player_props.py
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+    from scrapers.scraper_base import ScraperBase, ExportMode
+    from scrapers.scraper_flask_mixin import ScraperFlaskMixin
+    from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
+    from scrapers.utils.exceptions import DownloadDataException
 
 logger = logging.getLogger(__name__)
 
 
 # --------------------------------------------------------------------------- #
-# Scraper                                                                     #
+# Scraper (USING MIXIN)
 # --------------------------------------------------------------------------- #
-class GetOddsApiCurrentEventOdds(ScraperBase):
+class GetOddsApiCurrentEventOdds(ScraperBase, ScraperFlaskMixin):
     """
     Required opts:
-      • sport    - e.g. basketball_nba
       • eventId  - Odds-API event ID
 
     Optional opts (map to query params):
+      • sport       - e.g. basketball_nba (defaults to basketball_nba)
       • apiKey      - env ODDS_API_KEY fallback
-      • markets     - comma-sep (player_points, totals, …)
-      • regions     - comma-sep (us, uk, eu, au)
+      • markets     - comma-sep (player_points, totals, …) (defaults to player_points)
+      • regions     - comma-sep (us, uk, eu, au) (defaults to us)
+      • bookmakers  - comma-sep (defaults to draftkings,fanduel)
       • oddsFormat  - american | decimal | fractional
       • dateFormat  - iso | unix
     """
 
-    # required_opts = ["sport", "eventId"]
+    # Flask Mixin Configuration
+    scraper_name = "oddsa_player_props"
+    required_params = ["eventId"]
+    optional_params = {
+        "apiKey": None,  # Falls back to env ODDS_API_KEY
+        "sport": None,  # Defaults to basketball_nba in set_additional_opts
+        "markets": None,  # Defaults to player_points in set_additional_opts
+        "regions": None,  # Defaults to us in set_additional_opts
+        "bookmakers": None,  # Defaults to draftkings,fanduel in set_additional_opts
+        "oddsFormat": None,
+        "dateFormat": None,
+    }
+
     required_opts = ["eventId"]
     proxy_enabled = False
     browser_enabled = False
@@ -72,8 +108,21 @@ class GetOddsApiCurrentEventOdds(ScraperBase):
             "export_mode": ExportMode.DATA,
             "groups": ["dev", "capture", "test"],
         },
+        # Add capture group exporters
+        {
+            "type": "file",
+            "filename": "/tmp/raw_%(run_id)s.json",
+            "export_mode": ExportMode.RAW,
+            "groups": ["capture"],
+        },
+        {
+            "type": "file",
+            "filename": "/tmp/exp_%(run_id)s.json",
+            "pretty_print": True,
+            "export_mode": ExportMode.DECODED,
+            "groups": ["capture"],
+        },
     ]
-
 
     def set_additional_opts(self) -> None:
         """Fill season-wide defaults for optional opts."""
@@ -81,7 +130,6 @@ class GetOddsApiCurrentEventOdds(ScraperBase):
         self.opts.setdefault("regions", "us")
         self.opts.setdefault("markets", "player_points")
         self.opts.setdefault("bookmakers", "draftkings,fanduel")
-
 
     # ------------------------------------------------------------------ #
     # URL & headers                                                      #
@@ -194,59 +242,14 @@ class GetOddsApiCurrentEventOdds(ScraperBase):
 
 
 # --------------------------------------------------------------------------- #
-# Google Cloud Function entry point                                           #
+# MIXIN-BASED Flask and CLI entry points
 # --------------------------------------------------------------------------- #
-def gcf_entry(request):  # type: ignore[valid-type]
-    from dotenv import load_dotenv
 
-    load_dotenv()
+# Use the mixin's utility to create the Flask app
+create_app = convert_existing_flask_scraper(GetOddsApiCurrentEventOdds)
 
-    opts = {
-        "sport": request.args.get("sport", "basketball_nba"),
-        "eventId": request.args["eventId"],
-        "apiKey": request.args.get("apiKey"),  # optional - env fallback
-        "markets": request.args.get("markets", "player_points"),
-        "regions": request.args.get("regions", "us"),
-        "oddsFormat": request.args.get("oddsFormat"),
-        "dateFormat": request.args.get("dateFormat"),
-        "group": request.args.get("group", "prod"),
-    }
-    GetOddsApiCurrentEventOdds().run(opts)
-    return (
-        f"Odds-API current event-odds scrape complete ({opts['eventId']})",
-        200,
-    )
-
-
-# --------------------------------------------------------------------------- #
-# CLI                                                                         #
-# --------------------------------------------------------------------------- #
+# Use the mixin's main function generator
 if __name__ == "__main__":
-    import argparse
-    from dotenv import load_dotenv
-
-    load_dotenv()
-
-    parser = argparse.ArgumentParser(
-        description="Scrape The-Odds-API current odds for one event"
-    )
-    parser.add_argument("--sport", default="basketball_nba")
-    parser.add_argument("--eventId", required=True)
-    parser.add_argument("--markets", default="player_points")
-    parser.add_argument("--regions", default="us")
-    parser.add_argument("--oddsFormat", choices=["american", "decimal", "fractional"])
-    parser.add_argument("--dateFormat", choices=["iso", "unix"])
-    parser.add_argument("--apiKey", help="Optional - env ODDS_API_KEY fallback")
-    parser.add_argument("--group", default="dev")
-    parser.add_argument("--runId",
-                        help="Optional - capture.py injects one for fixture runs")
-    parser.add_argument("--debug", action="store_true",
-                        help="Verbose logging")
-    parser.add_argument("--bookmakers", default="draftkings,fanduel",
-                    help="comma-sep list, e.g. draftkings,fanduel")
-
-    args = parser.parse_args()
-    if args.debug:
-        logging.getLogger().setLevel(logging.DEBUG)
-
-    GetOddsApiCurrentEventOdds().run(vars(args))
+    main = GetOddsApiCurrentEventOdds.create_cli_and_flask_main()
+    main()
+    

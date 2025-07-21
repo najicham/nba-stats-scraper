@@ -1,31 +1,52 @@
+# scrapers/oddsapi/oddsa_player_props_his.py
 """
 odds_api_historical_event_odds.py
-Scraper for The-Odds-API v4 “historical event odds” endpoint.
+Scraper for The-Odds-API v4 "historical event odds" endpoint.
 
 Docs:
   https://the-odds-api.com/liveapi/guides/v4/#get-historical-event-odds
 
-# Activate your venv and ensure ODDS_API_KEY is exported (or in .env)
-    python -m scrapers.oddsapi.odds_api_historical_event_odds \
-        --sport=basketball_nba \
-        --eventId=6f0b6f8d8cc9c5bc6375cdee \
-        --date=2025-06-10T00:00:00Z \
-        --regions=us \
-        --markets=player_points,player_assists \
-        --group=dev --debug
+Usage examples
+--------------
+  # Via capture tool (recommended for data collection):
+  python tools/fixtures/capture.py oddsa_player_props_his \
+      --eventId 6f0b6f8d8cc9c5bc6375cdee \
+      --date 2025-06-10T00:00:00Z \
+      --debug
+
+  # Direct CLI execution:
+  python scrapers/oddsapi/oddsa_player_props_his.py \
+      --eventId 6f0b6f8d8cc9c5bc6375cdee \
+      --date 2025-06-10T00:00:00Z \
+      --debug
+
+  # Flask web service:
+  python scrapers/oddsapi/oddsa_player_props_his.py --serve --debug
 """
 
 from __future__ import annotations
 
 import os
 import logging
+import sys
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 from typing import Any, Dict, List
-from flask import Flask, request, jsonify
 
-from scrapers.scraper_base import ScraperBase, ExportMode
-from scrapers.utils.exceptions import DownloadDataException
+# Support both module execution (python -m) and direct execution
+try:
+    # Module execution: python -m scrapers.oddsapi.oddsa_player_props_his
+    from ..scraper_base import ScraperBase, ExportMode
+    from ..scraper_flask_mixin import ScraperFlaskMixin
+    from ..scraper_flask_mixin import convert_existing_flask_scraper
+    from ..utils.exceptions import DownloadDataException
+except ImportError:
+    # Direct execution: python scrapers/oddsapi/oddsa_player_props_his.py
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+    from scrapers.scraper_base import ScraperBase, ExportMode
+    from scrapers.scraper_flask_mixin import ScraperFlaskMixin
+    from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
+    from scrapers.utils.exceptions import DownloadDataException
 
 logger = logging.getLogger(__name__)
 
@@ -47,26 +68,38 @@ def snap_iso_ts_to_five_minutes(iso_ts: str) -> str:
 
 
 # --------------------------------------------------------------------------- #
-# Scraper                                                                     #
+# Scraper (USING MIXIN)
 # --------------------------------------------------------------------------- #
-class GetOddsApiHistoricalEventOdds(ScraperBase):
+class GetOddsApiHistoricalEventOdds(ScraperBase, ScraperFlaskMixin):
     """
     Required opts:
-      • sport      - e.g. basketball_nba
       • eventId    - e.g. 6f0b6f8d8cc9…
       • date       - snapshot timestamp (ISO-8601)
-      • regions    - comma-separated list (us, uk, eu, au)
-      • markets    - comma-separated list (player_points, player_assists, …)
 
-    Optional:
+    Optional opts:
+      • sport      - e.g. basketball_nba (defaults to basketball_nba)
+      • regions    - comma-separated list (us, uk, eu, au) (defaults to us)
+      • markets    - comma-separated list (player_points, player_assists, …) (defaults to player_points)
+      • bookmakers - comma-separated list (defaults to draftkings,fanduel)
       • oddsFormat  - american | decimal | fractional
       • dateFormat  - iso | unix
       • apiKey      - if omitted, pulled from env `ODDS_API_KEY`
     """
 
-    # required_opts = ["sport", "eventId", "date", "regions", "markets"]
-    required_opts = ["eventId", "date"]
+    # Flask Mixin Configuration
+    scraper_name = "oddsa_player_props_his"
+    required_params = ["eventId", "date"]
+    optional_params = {
+        "apiKey": None,  # Falls back to env ODDS_API_KEY
+        "sport": None,  # Defaults to basketball_nba in set_additional_opts
+        "regions": None,  # Defaults to us in set_additional_opts
+        "markets": None,  # Defaults to player_points in set_additional_opts
+        "bookmakers": None,  # Defaults to draftkings,fanduel in set_additional_opts
+        "oddsFormat": None,
+        "dateFormat": None,
+    }
 
+    required_opts = ["eventId", "date"]
     proxy_enabled = False
     browser_enabled = False
 
@@ -156,7 +189,7 @@ class GetOddsApiHistoricalEventOdds(ScraperBase):
     # ------------------------------------------------------------------ #
     def check_download_status(self) -> None:
         """
-        200 and 204 are “okay” for this endpoint.
+        200 and 204 are "okay" for this endpoint.
         """
         if self.raw_response.status_code in (200, 204):
             return
@@ -224,149 +257,14 @@ class GetOddsApiHistoricalEventOdds(ScraperBase):
 
 
 # --------------------------------------------------------------------------- #
-# Cloud Run / Flask entry point for Player Props Scraper                     #
+# MIXIN-BASED Flask and CLI entry points
 # --------------------------------------------------------------------------- #
-def create_app():
-    """Create Flask app for Player Props Scraper."""
-    from dotenv import load_dotenv
-    import sys
-    
-    app = Flask(__name__)
-    load_dotenv()
-    
-    # Configure logging for Cloud Run
-    if not app.debug:
-        logging.basicConfig(level=logging.INFO)
-    
-    @app.route('/', methods=['GET'])
-    @app.route('/health', methods=['GET'])
-    def health_check():
-        return jsonify({
-            "status": "healthy", 
-            "service": "scrapers",
-            "scraper": "odds_api_historical_event_odds",
-            "version": "1.0.0",
-            "timestamp": datetime.now(timezone.utc).isoformat()
-        }), 200
-    
-    @app.route('/scrape', methods=['POST'])
-    def scrape_player_props():
-        """Scrape historical NBA player prop odds"""
-        try:
-            # Get parameters from JSON body or query params
-            if request.is_json:
-                params = request.get_json()
-            else:
-                params = request.args.to_dict()
-            
-            # Player props scraper specific parameters
-            opts = {
-                "apiKey": params.get("apiKey"),  # Falls back to env var
-                "sport": params.get("sport", "basketball_nba"),
-                "eventId": params.get("eventId"),  # REQUIRED
-                "date": params.get("date"),  # REQUIRED
-                "regions": params.get("regions", "us"),
-                "markets": params.get("markets", "player_points"),
-                "bookmakers": params.get("bookmakers", "draftkings,fanduel"),
-                "oddsFormat": params.get("oddsFormat"),
-                "dateFormat": params.get("dateFormat"),
-                "group": params.get("group", "prod"),
-                "runId": params.get("runId"),
-                "debug": bool(params.get("debug", False))
-            }
-            
-            # Validate required params for player props scraper
-            if not opts["date"]:
-                return jsonify({"error": "Missing required parameter: date"}), 400
-            if not opts["eventId"]:
-                return jsonify({"error": "Missing required parameter: eventId"}), 400
-            
-            # Set debug logging
-            if opts["debug"]:
-                logging.getLogger().setLevel(logging.DEBUG)
-            
-            # Run the player props scraper
-            scraper = GetOddsApiHistoricalEventOdds()
-            result = scraper.run(opts)
-            
-            if result:
-                return jsonify({
-                    "status": "success",
-                    "message": "Player props scraping completed successfully",
-                    "scraper": "odds_api_historical_event_odds",
-                    "run_id": scraper.run_id,
-                    "data_summary": scraper.get_scraper_stats()
-                }), 200
-            else:
-                return jsonify({
-                    "status": "error",
-                    "message": "Player props scraping failed",
-                    "scraper": "odds_api_historical_event_odds",
-                    "run_id": scraper.run_id
-                }), 500
-                
-        except Exception as e:
-            app.logger.error(f"Player props scraper error: {str(e)}", exc_info=True)
-            return jsonify({
-                "status": "error",
-                "scraper": "odds_api_historical_event_odds",
-                "message": str(e)
-            }), 500
-    
-    return app
 
+# Use the mixin's utility to create the Flask app
+create_app = convert_existing_flask_scraper(GetOddsApiHistoricalEventOdds)
 
-# --------------------------------------------------------------------------- #
-# Main entry point for Player Props Scraper                                   #
-# --------------------------------------------------------------------------- #
+# Use the mixin's main function generator
 if __name__ == "__main__":
-    import argparse
-    from dotenv import load_dotenv
-    import sys
+    main = GetOddsApiHistoricalEventOdds.create_cli_and_flask_main()
+    main()
     
-    load_dotenv()
-
-    # Check if we're running as a web service or CLI
-    if len(sys.argv) > 1 and sys.argv[1] == "--serve":
-        # Web service mode for Cloud Run
-        app = create_app()
-        port = int(os.getenv("PORT", 8080))
-        debug = "--debug" in sys.argv
-        app.run(host="0.0.0.0", port=port, debug=debug)
-    else:
-        # CLI mode (existing argparse code)
-        parser = argparse.ArgumentParser(description="Scrape The-Odds-API historical player props")
-        parser.add_argument("--serve", action="store_true", help="Start web server")
-        parser.add_argument("--apiKey", help="Optional - env ODDS_API_KEY fallback")
-        parser.add_argument("--sport", default="basketball_nba", help="e.g. basketball_nba")
-        parser.add_argument("--eventId", help="Event ID (required for CLI)")
-        parser.add_argument("--date", help="ISO timestamp (required for CLI)")
-        parser.add_argument("--regions", default="us")
-        parser.add_argument("--markets", default="player_points")
-        parser.add_argument("--bookmakers", default="draftkings,fanduel")
-        parser.add_argument("--oddsFormat", choices=["american", "decimal", "fractional"])
-        parser.add_argument("--dateFormat", choices=["iso", "unix"])
-        parser.add_argument("--debug", action="store_true", help="Verbose logging")
-        parser.add_argument("--group", default="dev", help="exporter group")
-        parser.add_argument("--runId", help="Optional correlation ID")
-        
-        args = parser.parse_args()
-        
-        if args.serve:
-            # Start web server
-            app = create_app()
-            port = int(os.getenv("PORT", 8080))
-            app.run(host="0.0.0.0", port=port, debug=args.debug)
-        else:
-            # CLI scraping mode
-            if not args.date:
-                parser.error("--date is required for CLI scraping")
-            if not args.eventId:
-                parser.error("--eventId is required for CLI scraping")
-                
-            if args.debug:
-                logging.getLogger().setLevel(logging.DEBUG)
-                
-            # Run the player props scraper
-            scraper = GetOddsApiHistoricalEventOdds()
-            scraper.run(vars(args))

@@ -5,25 +5,55 @@ NBA.com Play-by-Play scraper                            v2 - 2025-06-16
 Downloads the official play-by-play feed from data.nba.com for a given gameId.
 This is NBA.com's primary play-by-play data source.
 
-CLI example
------------
-    python -m scrapers.nbacom.nbac_play_by_play --gameId 0022400987 --debug
+Usage examples
+--------------
+  # Via capture tool (recommended for data collection):
+  python tools/fixtures/capture.py nbac_play_by_play \
+      --gameId 0022400987 \
+      --debug
+
+  # Direct CLI execution:
+  python scrapers/nbacom/nbac_play_by_play.py --gameId 0022400987 --debug
+
+  # Flask web service:
+  python scrapers/nbacom/nbac_play_by_play.py --serve --debug
 """
 
 from __future__ import annotations
 
 import logging
+import os
+import sys
 from datetime import datetime, timezone
 from typing import Any, Dict
 
-from ..scraper_base import DownloadType, ExportMode, ScraperBase
-from ..utils.exceptions import DownloadDataException
+# Support both module execution (python -m) and direct execution
+try:
+    # Module execution: python -m scrapers.nbacom.nbac_play_by_play
+    from ..scraper_base import DownloadType, ExportMode, ScraperBase
+    from ..scraper_flask_mixin import ScraperFlaskMixin
+    from ..scraper_flask_mixin import convert_existing_flask_scraper
+    from ..utils.exceptions import DownloadDataException
+except ImportError:
+    # Direct execution: python scrapers/nbacom/nbac_play_by_play.py
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+    from scrapers.scraper_base import DownloadType, ExportMode, ScraperBase
+    from scrapers.scraper_flask_mixin import ScraperFlaskMixin
+    from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
+    from scrapers.utils.exceptions import DownloadDataException
 
 logger = logging.getLogger("scraper_base")
 
 
-class GetNbaComPlayByPlay(ScraperBase):
+class GetNbaComPlayByPlay(ScraperBase, ScraperFlaskMixin):
     """Downloads official play-by-play JSON from NBA.com CDN."""
+
+    # Flask Mixin Configuration
+    scraper_name = "nbac_play_by_play"
+    required_params = ["gameId"]
+    optional_params = {
+        "apiKey": None,  # Falls back to env var if needed
+    }
 
     # ------------------------------------------------------------------ #
     # Configuration
@@ -191,33 +221,15 @@ class GetNbaComPlayByPlay(ScraperBase):
         }
 
 
-# ---------------------------------------------------------------------- #
-# Cloud Function / Cloud Run HTTP entry
-# ---------------------------------------------------------------------- #
-def gcf_entry(request):  # type: ignore[valid-type]
-    game_id = request.args.get("gameId")
-    if not game_id:
-        return ("Missing query param 'gameId'", 400)
+# --------------------------------------------------------------------------- #
+# MIXIN-BASED Flask and CLI entry points
+# --------------------------------------------------------------------------- #
 
-    ok = GetNbaComPlayByPlay().run(
-        {"gameId": game_id, "group": request.args.get("group", "prod")}
-    )
-    return (("PBP scrape failed", 500) if ok is False else ("Scrape ok", 200))
+# Use the mixin's utility to create the Flask app
+create_app = convert_existing_flask_scraper(GetNbaComPlayByPlay)
 
-
-# ---------------------------------------------------------------------- #
-# CLI helper with standardized arguments
-# ---------------------------------------------------------------------- #
+# Use the mixin's main function generator
 if __name__ == "__main__":
-    import argparse
-    from scrapers.utils.cli_utils import add_common_args
-
-    cli = argparse.ArgumentParser(description="NBA.com Play-by-Play Scraper")
-    cli.add_argument("--gameId", required=True, help="NBA Game ID (e.g. 0022400987)")
-    add_common_args(cli)  # Adds --group, --runId, --debug, etc.
-    args = cli.parse_args()
-
-    if args.debug:
-        logging.getLogger().setLevel(logging.DEBUG)
-
-    GetNbaComPlayByPlay().run(vars(args))
+    main = GetNbaComPlayByPlay.create_cli_and_flask_main()
+    main()
+    

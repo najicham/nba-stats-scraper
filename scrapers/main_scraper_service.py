@@ -27,30 +27,35 @@ from dotenv import load_dotenv
 
 # Import all scraper classes - FIXED for root deployment
 SCRAPER_REGISTRY = {
-    # Odds API scrapers
-    "oddsa_events_his": ("scrapers.oddsapi.oddsa_events_his", "GetOddsApiHistoricalEvents"),  # ✅ Correct
-    "oddsa_events": ("scrapers.oddsapi.oddsa_events", "GetOddsApiEvents"),  # ✅ Correct
-    "oddsa_player_props": ("scrapers.oddsapi.oddsa_player_props", "GetOddsApiCurrentEventOdds"),  # ⚠️ Check this
-    "oddsa_player_props_his": ("scrapers.oddsapi.oddsa_player_props_his", "GetOddsApiHistoricalEventOdds"),  # ➕ Add this
+    # Odds API scrapers (5 total)
+    "oddsa_events_his": ("scrapers.oddsapi.oddsa_events_his", "GetOddsApiHistoricalEvents"),
+    "oddsa_events": ("scrapers.oddsapi.oddsa_events", "GetOddsApiEvents"),
+    "oddsa_player_props": ("scrapers.oddsapi.oddsa_player_props", "GetOddsApiCurrentEventOdds"),
+    "oddsa_player_props_his": ("scrapers.oddsapi.oddsa_player_props_his", "GetOddsApiHistoricalEventOdds"),
+    "oddsa_team_players": ("scrapers.oddsapi.oddsa_team_players", "GetOddsApiTeamPlayers"),
     
-    # Ball Don't Lie scrapers  
-    "bdl_games": ("scrapers.balldontlie.bdl_games", "BdlGamesScraper"),  # 🔧 Fixed
-    "bdl_box_scores": ("scrapers.balldontlie.bdl_box_scores", "BdlBoxScoresScraper"),  # 🔧 Fixed
-    "bdl_player_box_scores": ("scrapers.balldontlie.bdl_player_box_scores", "BdlPlayerBoxScoresScraper"),  # ➕ Add this
-    "bdl_injuries": ("scrapers.balldontlie.bdl_injuries", "BdlInjuriesScraper"),  # ➕ Add this
+    # Ball Don't Lie scrapers (5 total)
+    "bdl_games": ("scrapers.balldontlie.bdl_games", "BdlGamesScraper"),
+    "bdl_box_scores": ("scrapers.balldontlie.bdl_box_scores", "BdlBoxScoresScraper"),
+    "bdl_player_box_scores": ("scrapers.balldontlie.bdl_player_box_scores", "BdlPlayerBoxScoresScraper"),
+    "bdl_active_players": ("scrapers.balldontlie.bdl_active_players", "BdlActivePlayersScraper"),
+    "bdl_injuries": ("scrapers.balldontlie.bdl_injuries", "BdlInjuriesScraper"),
     
-    # ESPN scrapers
-    "espn_roster": ("scrapers.espn.espn_roster_api", "GetEspnTeamRosterAPI"),  # 🔧 Fixed
-    "espn_scoreboard": ("scrapers.espn.espn_scoreboard_api", "GetEspnScoreboard"),  # 🔧 Fixed
-    "espn_boxscore": ("scrapers.espn.espn_game_boxscore", "GetEspnBoxscore"),  # ➕ Add this
+    # NBA.com scrapers (9 total)
+    "nbac_player_list": ("scrapers.nbacom.nbac_player_list", "GetNbaComPlayerList"),
+    "nbac_player_movement": ("scrapers.nbacom.nbac_player_movement", "GetNbaComPlayerMovement"),
+    "nbac_schedule": ("scrapers.nbacom.nbac_current_schedule_v2_1", "GetDataNbaSeasonSchedule"),
+    "nbac_schedule_cdn": ("scrapers.nbacom.nbac_schedule_cdn", "GetNbaComScheduleCdn"),
+    "nbac_scoreboard_v2": ("scrapers.nbacom.nbac_scoreboard_v2", "GetNbaComScoreboardV2"),
+    "nbac_injury_report": ("scrapers.nbacom.nbac_injury_report", "GetNbaComInjuryReport"),
+    "nbac_play_by_play": ("scrapers.nbacom.nbac_play_by_play", "GetNbaComPlayByPlay"),
+    "nbac_player_boxscore": ("scrapers.nbacom.nbac_player_boxscore", "GetNbaComPlayerBoxscore"),
+    "nbac_roster": ("scrapers.nbacom.nbac_roster", "GetNbaTeamRoster"),
     
-    # NBA.com scrapers
-    "nbac_roster": ("scrapers.nbacom.nbac_roster", "GetNbaTeamRoster"),  # 🔧 Fixed
-    "nbac_schedule": ("scrapers.nbacom.nbac_current_schedule_v2_1", "GetDataNbaSeasonSchedule"),  # 🔧 Fixed
-    "nbac_injury_report": ("scrapers.nbacom.nbac_injury_report", "GetNbaComInjuryReport"),  # ➕ Add this
-    "nbac_play_by_play": ("scrapers.nbacom.nbac_play_by_play", "GetNbaPlayByPlayRawBackup"),  # ➕ Add this
-    "nbac_player_boxscore": ("scrapers.nbacom.nbac_player_boxscore", "GetNbaComPlayerBoxscore"),  # ➕ Add this
-    "nbac_player_list": ("scrapers.nbacom.nbac_player_list", "GetNbaComPlayerList"),  # ➕ Add this
+    # ESPN scrapers (3 total)
+    "espn_roster": ("scrapers.espn.espn_roster_api", "GetEspnTeamRosterAPI"),
+    "espn_scoreboard": ("scrapers.espn.espn_scoreboard_api", "GetEspnScoreboard"),
+    "espn_game_boxscore": ("scrapers.espn.espn_game_boxscore", "GetEspnBoxscore"),
 }
 
 def create_app():
@@ -68,7 +73,7 @@ def create_app():
         return jsonify({
             "status": "healthy",
             "service": "nba-scrapers",
-            "version": "1.0.0",
+            "version": "2.0.0",
             "deployment": "sophisticated-base-image",
             "available_scrapers": list(SCRAPER_REGISTRY.keys()),
             "timestamp": datetime.now(timezone.utc).isoformat()
@@ -193,4 +198,5 @@ if __name__ == "__main__":
     
     app = create_app()
     app.run(host=args.host, port=args.port, debug=args.debug)
-    
+    # Force rebuild Sun Jul 20 18:09:47 PDT 2025
+# FORCE REBUILD 1753060619

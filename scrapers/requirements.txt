@@ -22,3 +22,12 @@ slack_sdk==3.35.0
 # Google Protocol Buffers - REMOVED (use version from shared/requirements.txt)
 # proto-plus==1.26.1  # Already in shared
 # protobuf==6.31.1    # REMOVED - conflicts with google-cloud-bigquery
+flask==2.3.3
+beautifulsoup4>=4.12.0
+lxml>=4.9.0
+pandas>=2.0.0
+numpy>=1.24.0
+pydantic>=2.11.0
+httpx>=0.24.0
+pbpstats>=1.3.0
+zoneinfo; python_version<'3.9'

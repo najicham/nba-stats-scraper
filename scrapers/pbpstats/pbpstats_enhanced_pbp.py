@@ -2,29 +2,62 @@
 """
 PBPStats *enhanced* play‑by‑play scraper                   v1 - 2025‑06‑17
 --------------------------------------------------------------------------
-Quick‑start (local):
-    python -m scrapers.pbpstats.pbpstats_enhanced_pbp --gameId 0022400987
+Downloads *enhanced* play‑by‑play via the PBPStats library.
 
 Docs: https://pbpstats.readthedocs.io/en/latest/pbpstats.data_loader.data_nba.enhanced_pbp.html
+
+Usage examples
+--------------
+  # Via capture tool (recommended for data collection):
+  python tools/fixtures/capture.py pbpstats_enhanced_pbp \
+      --gameId 0022400987 \
+      --debug
+
+  # Direct CLI execution:
+  python scrapers/pbpstats/pbpstats_enhanced_pbp.py --gameId 0022400987 --debug
+
+  # Flask web service:
+  python scrapers/pbpstats/pbpstats_enhanced_pbp.py --serve --debug
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import os
+import sys
 from datetime import datetime, timezone
 from typing import Dict, List
 
-from pbpstats.client import Client
+# Support both module execution (python -m) and direct execution
+try:
+    # Module execution: python -m scrapers.pbpstats.pbpstats_enhanced_pbp
+    from ..scraper_base import DownloadType, ExportMode, ScraperBase
+    from ..scraper_flask_mixin import ScraperFlaskMixin
+    from ..scraper_flask_mixin import convert_existing_flask_scraper
+    from ..utils.exceptions import DownloadDataException
+except ImportError:
+    # Direct execution: python scrapers/pbpstats/pbpstats_enhanced_pbp.py
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+    from scrapers.scraper_base import DownloadType, ExportMode, ScraperBase
+    from scrapers.scraper_flask_mixin import ScraperFlaskMixin
+    from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
+    from scrapers.utils.exceptions import DownloadDataException
 
-from ..scraper_base import DownloadType, ExportMode, ScraperBase
-from ..utils.exceptions import DownloadDataException
+from pbpstats.client import Client
 
 logger = logging.getLogger("scraper_base")
 
 
-class GetEnhancedPbpPBPStats(ScraperBase):
+class GetEnhancedPbpPBPStats(ScraperBase, ScraperFlaskMixin):
     """Downloads *enhanced* play‑by‑play via the PBPStats library."""
+
+    # Flask Mixin Configuration
+    scraper_name = "pbpstats_enhanced_pbp"
+    required_params = ["gameId"]
+    optional_params = {
+        "debug": None,
+    }
 
     required_opts = ["gameId"]
 
@@ -67,6 +100,22 @@ class GetEnhancedPbpPBPStats(ScraperBase):
             "export_mode": ExportMode.DATA,
             "data_key": EVENTS_KEY,
             "groups": ["prod", "gcs"],
+        },
+        # Add capture group exporters
+        {
+            "type": "file",
+            "filename": "/tmp/raw_%(run_id)s.json",
+            "export_mode": ExportMode.DATA,
+            "data_key": RAW_KEY,
+            "groups": ["capture"],
+        },
+        {
+            "type": "file",
+            "filename": "/tmp/exp_%(run_id)s.json",
+            "export_mode": ExportMode.DATA,
+            "data_key": EVENTS_KEY,
+            "pretty_print": True,
+            "groups": ["capture"],
         },
     ]
 
@@ -125,32 +174,15 @@ class GetEnhancedPbpPBPStats(ScraperBase):
         return {"gameId": self.opts["gameId"], "events": len(self.events)}
 
 
-# ---------------------------------------------------------------------- #
-# Google Cloud Function entry
-# ---------------------------------------------------------------------- #
-def gcf_entry(request):  # type: ignore[valid-type]
-    gid = request.args.get("gameId")
-    if not gid:
-        return ("Missing gameId", 400)
+# --------------------------------------------------------------------------- #
+# MIXIN-BASED Flask and CLI entry points
+# --------------------------------------------------------------------------- #
 
-    ok = GetEnhancedPbpPBPStats().run(
-        {
-            "gameId": gid,
-            "group": request.args.get("group", "prod"),
-            "debug": request.args.get("debug", "0"),
-        }
-    )
-    return (("Enhanced PBP scrape failed", 500) if ok is False else ("Scrape ok", 200))
+# Use the mixin's utility to create the Flask app
+create_app = convert_existing_flask_scraper(GetEnhancedPbpPBPStats)
 
-
-# ---------------------------------------------------------------------- #
-# Local CLI
-# ---------------------------------------------------------------------- #
+# Use the mixin's main function generator
 if __name__ == "__main__":
-    import argparse
-
-    cli = argparse.ArgumentParser(description="Run PBPStats enhanced PBP scraper")
-    cli.add_argument("--gameId", required=True, help="e.g. 0022400987")
-    cli.add_argument("--group", default="test", help="dev / test / prod")
-    cli.add_argument("--debug", default="0", help="1/true to print cache path")
-    GetEnhancedPbpPBPStats().run(vars(cli.parse_args()))
+    main = GetEnhancedPbpPBPStats.create_cli_and_flask_main()
+    main()
+    

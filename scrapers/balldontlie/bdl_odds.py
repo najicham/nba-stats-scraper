@@ -1,10 +1,22 @@
 """
-BALLDONTLIE – Odds endpoint                                   v1.2 • 2025‑06‑24
+BALLDONTLIE - Odds endpoint                                   v1.2 - 2025-06-24
 -------------------------------------------------------------------------------
 Fetch betting odds either by calendar **date** or by **game_id**.
 
-    /odds?date=YYYY‑MM‑DD
+    /odds?date=YYYY-MM-DD
     /odds?game_id=123456
+
+Usage examples:
+  # Via capture tool (recommended for data collection):
+  python tools/fixtures/capture.py bdl_odds \
+      --date 2025-01-15 \
+      --debug
+
+  # Direct CLI execution:
+  python scrapers/balldontlie/bdl_odds.py --gameId 18444564 --debug
+
+  # Flask web service:
+  python scrapers/balldontlie/bdl_odds.py --serve --debug
 """
 
 from __future__ import annotations
@@ -12,30 +24,62 @@ from __future__ import annotations
 import datetime as _dt
 import logging
 import os
+import sys
 from typing import Any, Dict, List, Optional
 
-from ..scraper_base import DownloadType, ExportMode, ScraperBase
+# Support both module execution (python -m) and direct execution
+try:
+    # Module execution: python -m scrapers.balldontlie.bdl_odds
+    from ..scraper_base import DownloadType, ExportMode, ScraperBase
+    from ..scraper_flask_mixin import ScraperFlaskMixin
+    from ..scraper_flask_mixin import convert_existing_flask_scraper
+except ImportError:
+    # Direct execution: python scrapers/balldontlie/bdl_odds.py
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+    from scrapers.scraper_base import DownloadType, ExportMode, ScraperBase
+    from scrapers.scraper_flask_mixin import ScraperFlaskMixin
+    from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
 
 logger = logging.getLogger(__name__)
 
 # --------------------------------------------------------------------------- #
-# Scraper                                                                     #
+# Scraper (USING MIXIN)
 # --------------------------------------------------------------------------- #
-class BdlOddsScraper(ScraperBase):
+class BdlOddsScraper(ScraperBase, ScraperFlaskMixin):
     """Fetch odds rows, follow cursor pagination, merge pages."""
 
+    # Flask Mixin Configuration
+    scraper_name = "bdl_odds"
+    required_params = []  # No required parameters
+    optional_params = {
+        "gameId": None,  # Specific game ID (overrides date)
+        "date": None,    # Defaults to today if neither gameId nor date provided
+        "apiKey": None,  # Falls back to env var
+    }
+
+    # Original scraper config
     required_opts: List[str] = []
     download_type = DownloadType.JSON
     decode_download_data = True
 
+    # ------------------------------------------------------------------ #
+    # Exporters
+    # ------------------------------------------------------------------ #
     exporters = [
+        # GCS RAW for production
+        {
+            "type": "gcs",
+            "key": "balldontlie/odds/%(ident)s_%(run_id)s.raw.json",
+            "export_mode": ExportMode.RAW,
+            "groups": ["prod", "gcs"],
+        },
         # Normal artifact
         {
             "type": "file",
             "filename": "/tmp/bdl_odds_%(ident)s.json",
             "export_mode": ExportMode.DATA,
             "pretty_print": True,
-            "groups": ["dev", "test", "prod"],
+            "groups": ["dev", "test"],
         },
         # Capture RAW + EXP
         {
@@ -139,37 +183,14 @@ class BdlOddsScraper(ScraperBase):
 
 
 # --------------------------------------------------------------------------- #
-# Google Cloud Function entry                                                #
+# MIXIN-BASED Flask and CLI entry points (MUCH CLEANER!)
 # --------------------------------------------------------------------------- #
-def gcf_entry(request):  # type: ignore[valid-type]
-    opts = {
-        "gameId": request.args.get("gameId"),
-        "date": request.args.get("date"),
-        "apiKey": request.args.get("apiKey"),
-        "group": request.args.get("group", "prod"),
-        "runId": request.args.get("runId"),
-    }
-    BdlOddsScraper().run(opts)
-    ident = opts.get("gameId") or opts.get("date") or "today"
-    return f"BallDontLie odds scrape complete ({ident})", 200
 
+# Use the mixin's utility to create the Flask app
+create_app = convert_existing_flask_scraper(BdlOddsScraper)
 
-# --------------------------------------------------------------------------- #
-# CLI usage                                                                  #
-# --------------------------------------------------------------------------- #
+# Use the mixin's main function generator
 if __name__ == "__main__":
-    import argparse
-    from scrapers.utils.cli_utils import add_common_args
-
-    today = _dt.date.today().isoformat()
-
-    parser = argparse.ArgumentParser(description="Scrape BallDontLie /odds")
-    parser.add_argument("--gameId", help="NBA game ID (overrides --date)")
-    parser.add_argument("--date", default=today, help=f"YYYY-MM-DD (default {today})")
-    add_common_args(parser)  # --group --apiKey --runId --debug
-    args = parser.parse_args()
-
-    if args.debug:
-        logging.getLogger().setLevel(logging.DEBUG)
-
-    BdlOddsScraper().run(vars(args))
+    main = BdlOddsScraper.create_cli_and_flask_main()
+    main()
+    

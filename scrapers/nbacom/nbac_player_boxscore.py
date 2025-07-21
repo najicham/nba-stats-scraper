@@ -10,22 +10,59 @@ Features preserved from v1
 * Three exporters (two local files + one GCS), all using ExportMode.RAW
 * Proxy support for cloud IP blocks
 * Helper add_dash_to_season()
-* Cloud-Function entry point and local CLI
+* Flask/Cloud Run entry point and local CLI
+
+Usage examples
+--------------
+  # Via capture tool (recommended for data collection):
+  python tools/fixtures/capture.py nbac_player_boxscore \
+      --gamedate 20250115 \
+      --debug
+
+  # Direct CLI execution:
+  python scrapers/nbacom/nbac_player_boxscore.py --gamedate 20250115 --debug
+
+  # Flask web service:
+  python scrapers/nbacom/nbac_player_boxscore.py --serve --debug
 """
 
 from __future__ import annotations
 
 import logging
+import os
+import sys
 from datetime import datetime, timezone
 from typing import List
 
-from ..scraper_base import DownloadType, ExportMode, ScraperBase
-from ..utils.exceptions import DownloadDataException
+# Support both module execution (python -m) and direct execution
+try:
+    # Module execution: python -m scrapers.nbacom.nbac_player_boxscore
+    from ..scraper_base import DownloadType, ExportMode, ScraperBase
+    from ..scraper_flask_mixin import ScraperFlaskMixin
+    from ..scraper_flask_mixin import convert_existing_flask_scraper
+    from ..utils.exceptions import DownloadDataException
+except ImportError:
+    # Direct execution: python scrapers/nbacom/nbac_player_boxscore.py
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+    from scrapers.scraper_base import DownloadType, ExportMode, ScraperBase
+    from scrapers.scraper_flask_mixin import ScraperFlaskMixin
+    from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
+    from scrapers.utils.exceptions import DownloadDataException
 
 logger = logging.getLogger("scraper_base")
 
 
-class GetNbaComPlayerBoxscore(ScraperBase):
+class GetNbaComPlayerBoxscore(ScraperBase, ScraperFlaskMixin):
+    """Downloads per-player rows for a single game-date via leaguegamelog."""
+
+    # Flask Mixin Configuration
+    scraper_name = "nbac_player_boxscore"
+    required_params = ["gamedate"]
+    optional_params = {
+        "season": None,
+        "season_type": None,
+    }
+
     # ------------------------------------------------------------------ #
     # Config and exporters
     # ------------------------------------------------------------------ #
@@ -160,32 +197,15 @@ class GetNbaComPlayerBoxscore(ScraperBase):
             }
 
 
-# ---------------------------------------------------------------------- #
-# Google Cloud Function entry
-# ---------------------------------------------------------------------- #
-def gcf_entry(request):  # type: ignore[valid-type]
-    gamedate = request.args.get("gamedate")
-    if not gamedate:
-        return ("Missing query param 'gamedate'", 400)
+# --------------------------------------------------------------------------- #
+# MIXIN-BASED Flask and CLI entry points
+# --------------------------------------------------------------------------- #
 
-    opts = {"gamedate": gamedate, "group": request.args.get("group", "prod")}
-    ok = GetNbaComPlayerBoxscore().run(opts)
-    return (("Player boxscore scrape failed", 500) if ok is False else ("Scrape ok", 200))
+# Use the mixin's utility to create the Flask app
+create_app = convert_existing_flask_scraper(GetNbaComPlayerBoxscore)
 
-
-# ---------------------------------------------------------------------- #
-# Local CLI usage
-# ---------------------------------------------------------------------- #
+# Use the mixin's main function generator
 if __name__ == "__main__":
-    import argparse
-    from scrapers.utils.cli_utils import add_common_args
-
-    cli = argparse.ArgumentParser(description="NBA.com Player Boxscore Scraper")
-    cli.add_argument("--gamedate", required=True, help="YYYYMMDD or YYYY-MM-DD")
-    add_common_args(cli)  # This adds --group, --runId, --debug, etc.
-    args = cli.parse_args()
-
-    if args.debug:
-        logging.getLogger().setLevel(logging.DEBUG)
-
-    GetNbaComPlayerBoxscore().run(vars(args))
+    main = GetNbaComPlayerBoxscore.create_cli_and_flask_main()
+    main()
+    

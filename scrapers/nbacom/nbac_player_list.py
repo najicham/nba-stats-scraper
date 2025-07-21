@@ -5,23 +5,56 @@ NBA.com season player index scraper                      v2 - 2025-06-16
 Downloads the `playerindex` feed for a given season (defaults to the
 current season when none is supplied).
 
-python -m scrapers.nbacom.nbac_player_list --season 2024
+Usage examples
+--------------
+  # Via capture tool (recommended for data collection):
+  python tools/fixtures/capture.py nbac_player_list \
+      --season 2024 \
+      --debug
 
+  # Direct CLI execution:
+  python scrapers/nbacom/nbac_player_list.py --season 2024 --debug
+
+  # Flask web service:
+  python scrapers/nbacom/nbac_player_list.py --serve --debug
 """
 
 from __future__ import annotations
 
 import logging
+import os
+import sys
 from datetime import datetime, timezone
 from typing import List
 
-from ..scraper_base import DownloadType, ExportMode, ScraperBase
-from ..utils.exceptions import DownloadDataException
+# Support both module execution (python -m) and direct execution
+try:
+    # Module execution: python -m scrapers.nbacom.nbac_player_list
+    from ..scraper_base import DownloadType, ExportMode, ScraperBase
+    from ..scraper_flask_mixin import ScraperFlaskMixin
+    from ..scraper_flask_mixin import convert_existing_flask_scraper
+    from ..utils.exceptions import DownloadDataException
+except ImportError:
+    # Direct execution: python scrapers/nbacom/nbac_player_list.py
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+    from scrapers.scraper_base import DownloadType, ExportMode, ScraperBase
+    from scrapers.scraper_flask_mixin import ScraperFlaskMixin
+    from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
+    from scrapers.utils.exceptions import DownloadDataException
 
 logger = logging.getLogger("scraper_base")
 
 
-class GetNbaComPlayerList(ScraperBase):
+class GetNbaComPlayerList(ScraperBase, ScraperFlaskMixin):
+    """Downloads NBA.com player index for a given season."""
+
+    # Flask Mixin Configuration
+    scraper_name = "nbac_player_list"
+    required_params = []  # No required parameters (season defaults to current)
+    optional_params = {
+        "season": None,  # Defaults to current year if not provided
+    }
+
     # ------------------------------------------------------------------ #
     # Configuration (unchanged from v1 where possible)
     # ------------------------------------------------------------------ #
@@ -135,31 +168,15 @@ class GetNbaComPlayerList(ScraperBase):
         }
 
 
-# ---------------------------------------------------------------------- #
-# Google Cloud Function entry
-# ---------------------------------------------------------------------- #
-def gcf_entry(request):  # type: ignore[valid-type]
-    season = request.args.get("season", "")  # blank → helper fills current
-    group = request.args.get("group", "prod")
+# --------------------------------------------------------------------------- #
+# MIXIN-BASED Flask and CLI entry points
+# --------------------------------------------------------------------------- #
 
-    ok = GetNbaComPlayerList().run({"season": season, "group": group})
-    return (("Player list scrape failed", 500) if ok is False else ("Scrape ok", 200))
+# Use the mixin's utility to create the Flask app
+create_app = convert_existing_flask_scraper(GetNbaComPlayerList)
 
-
-# ---------------------------------------------------------------------- #
-# Local CLI usage
-# ---------------------------------------------------------------------- #
+# Use the mixin's main function generator
 if __name__ == "__main__":
-    import argparse
-    from scrapers.utils.cli_utils import add_common_args
-
-    cli = argparse.ArgumentParser(description="Run NBA.com PlayerList locally")
-    cli.add_argument("--season", default="", help="e.g. 2022 or blank for current season")
-    add_common_args(cli)  # This adds --group, --runId, --debug, etc.
-    args = cli.parse_args()
-
-    if args.debug:
-        import logging
-        logging.getLogger().setLevel(logging.DEBUG)
-
-    GetNbaComPlayerList().run(vars(args))
+    main = GetNbaComPlayerList.create_cli_and_flask_main()
+    main()
+    

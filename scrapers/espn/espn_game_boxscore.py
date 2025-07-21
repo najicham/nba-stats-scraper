@@ -1,13 +1,55 @@
+"""
+ESPN - Game Boxscore scraper                                v1.1 - 2025-06-24
+-------------------------------------------------------------------------------
+Scraper to extract NBA boxscore from ESPN game page.
+
+1) Attempts to parse embedded JSON data ("bxscr").
+   - If found (and not skipJson=1), we return that structure.
+2) Otherwise, parse the HTML table in a way that pairs:
+   - Left table (names) with Right table (stats).
+   - Produces the same 14-stat arrays ESPN typically shows in the boxscore.
+
+If ESPN includes multiple "Boxscore flex flex-column" blocks for the same 
+team (responsive duplicates), we skip the duplicates based on matching 
+player IDs.
+
+Usage examples:
+  # Via capture tool (recommended for data collection):
+  python tools/fixtures/capture.py espn_game_boxscore \
+      --gameId 401766123 \
+      --debug
+
+  # Direct CLI execution:
+  python scrapers/espn/espn_game_boxscore.py --gameId 401766123 --debug
+
+  # Flask web service:
+  python scrapers/espn/espn_game_boxscore.py --serve --debug
+"""
+
 import logging
 import json
 import re
+import os
+import sys
 from datetime import datetime, timezone
 
 # import pytz
 from bs4 import BeautifulSoup
 
-from ..scraper_base import ScraperBase, DownloadType, ExportMode
-from ..utils.exceptions import DownloadDataException
+# Support both module execution (python -m) and direct execution
+try:
+    # Module execution: python -m scrapers.espn.espn_game_boxscore
+    from ..scraper_base import ScraperBase, DownloadType, ExportMode
+    from ..scraper_flask_mixin import ScraperFlaskMixin
+    from ..scraper_flask_mixin import convert_existing_flask_scraper
+    from ..utils.exceptions import DownloadDataException
+except ImportError:
+    # Direct execution: python scrapers/espn/espn_game_boxscore.py
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+    from scrapers.scraper_base import ScraperBase, DownloadType, ExportMode
+    from scrapers.scraper_flask_mixin import ScraperFlaskMixin
+    from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
+    from scrapers.utils.exceptions import DownloadDataException
 
 # ---------------------------------------------------------------------------
 #  Assume we have a config file with a dictionary:
@@ -18,12 +60,19 @@ from ..utils.exceptions import DownloadDataException
 #    }
 #  So that alt="Indiana Pacers" => "IND" 
 # ---------------------------------------------------------------------------
-from config.espn_nba_team_abbr import TEAM_ABBR_MAP
+try:
+    from config.espn_nba_team_abbr import TEAM_ABBR_MAP
+except ImportError:
+    # Fallback if config not available
+    TEAM_ABBR_MAP = {}
 
 logger = logging.getLogger("scraper_base")
 
 
-class GetEspnBoxscore(ScraperBase):
+# --------------------------------------------------------------------------- #
+# Scraper (USING MIXIN)
+# --------------------------------------------------------------------------- #
+class GetEspnBoxscore(ScraperBase, ScraperFlaskMixin):
     """
     Scraper to extract NBA boxscore from ESPN game page.
 
@@ -33,25 +82,40 @@ class GetEspnBoxscore(ScraperBase):
        - Left table (names) with Right table (stats).
        - Produces the same 14-stat arrays ESPN typically shows in the boxscore.
 
-    If ESPN includes multiple “Boxscore flex flex-column” blocks for the same 
+    If ESPN includes multiple "Boxscore flex flex-column" blocks for the same 
     team (responsive duplicates), we skip the duplicates based on matching 
     player IDs.
-
-    Usage:
-      python -m scrapers.espn_game_boxscore --gameId 401766123 [--skipJson=1]
     """
 
+    # Flask Mixin Configuration
+    scraper_name = "espn_game_boxscore"
+    required_params = ["gameId"]  # gameId is required
+    optional_params = {
+        "skipJson": "0",  # Set to 1/true to skip embedded JSON and test HTML
+    }
+
+    # Original scraper config
     required_opts = ["gameId"]
     download_type = DownloadType.HTML
     decode_download_data = True
 
+    # ------------------------------------------------------------------ #
+    # Exporters
+    # ------------------------------------------------------------------ #
     exporters = [
+        # GCS RAW for production
+        {
+            "type": "gcs",
+            "key": "espn/game-boxscore/%(gameId)s_%(run_id)s.raw.html",
+            "export_mode": ExportMode.RAW,
+            "groups": ["prod", "gcs"],
+        },
         {
             "type": "file",
             "filename": "/tmp/boxscore2_%(gameId)s.json",
             "export_mode": ExportMode.DATA,
             "pretty_print": True,
-            "groups": ["dev", "test", "prod"]
+            "groups": ["dev", "test"]
         },
         {
             # NEW: raw HTML dump for fixture collection
@@ -62,7 +126,7 @@ class GetEspnBoxscore(ScraperBase):
         },
         {
             "type": "file",
-            # leave it in /tmp – the helper will move/gzip it for you
+            # leave it in /tmp – the helper will move/gzip it for you
             "filename": "/tmp/exp_%(gameId)s.json",
             "export_mode": ExportMode.DATA,      # the parsed result
             "pretty_print": True,                # easier to read
@@ -131,7 +195,7 @@ class GetEspnBoxscore(ScraperBase):
       Build the same structure the HTML fallback creates.
       When ESPN marks a player as DNP the JSON contains an *empty* stats list
       plus a reason in one of several keys (dnpRsn, didNotPlayReason, reason).
-      We normalise that into the single‑item stats list already produced by
+      We normalise that into the single-item stats list already produced by
       the HTML parser: ["DNP: <REASON>"].
       """
       result = {}
@@ -152,7 +216,7 @@ class GetEspnBoxscore(ScraperBase):
 
                 # --- DNP handling -------------------------------------------------------
                 dnp_reason = (
-                    a.get("dnpRsn")               # current key (2024‑)
+                    a.get("dnpRsn")               # current key (2024-)
                     or a.get("didNotPlayReason")  # older key
                     or a.get("reason")            # very old key
                 )
@@ -164,7 +228,7 @@ class GetEspnBoxscore(ScraperBase):
                     "type":       group_type,
                 }
                 if dnp_reason:
-                  # Remove any leading "DNP‑" / "DNP:" prefix for consistency
+                  # Remove any leading "DNP-" / "DNP:" prefix for consistency
                   clean = re.sub(r'^\s*DNP[\-:]\s*', '', dnp_reason, flags=re.I).upper()
                   record["stats"] = []
                   record["dnpReason"] = clean
@@ -344,8 +408,8 @@ class GetEspnBoxscore(ScraperBase):
             # Check for a DNP cell with colspan
             dnp_cell = tr.select_one("td[colspan]")
             if dnp_cell and "DNP" in dnp_cell.get_text(strip=True).upper():
-                raw = dnp_cell.get_text(strip=True)             # e.g.  DNP‑RIGHT ANKLE SPRAIN
-                # strip the leading “DNP‑” / “DNP:”  (case‑insensitive)
+                raw = dnp_cell.get_text(strip=True)             # e.g.  DNP-RIGHT ANKLE SPRAIN
+                # strip the leading "DNP-" / "DNP:"  (case-insensitive)
                 reason = re.sub(r'^DNP[\-:]\s*', '', raw, flags=re.I).upper()
                 stats_rows.append({"dnp": reason})              # special marker
                 continue
@@ -431,56 +495,15 @@ class GetEspnBoxscore(ScraperBase):
         }
 
 
-# -----------------------------------------------------------------------------
-# GCF entry point (optional)
-# -----------------------------------------------------------------------------
-def gcf_entry(request):
-    """
-    Google-Cloud-Function entry point for the ESPN-boxscore scraper.
+# --------------------------------------------------------------------------- #
+# MIXIN-BASED Flask and CLI entry points (MUCH CLEANER!)
+# --------------------------------------------------------------------------- #
 
-    Required query-string parameter
-      • gameId   - ESPN game ID, e.g. 401766123
+# Use the mixin's utility to create the Flask app
+create_app = convert_existing_flask_scraper(GetEspnBoxscore)
 
-    Optional parameters
-      • group       - controls exporter group; defaults to 'prod'
-      • skipJson    - '1' / 'true' skips the embedded-JSON path and
-                      forces HTML parsing (handy for testing)
-    """
-    gameId    = request.args.get("gameId")
-    group     = request.args.get("group", "prod")
-    skip_json = request.args.get("skipJson", "0")
-
-    if not gameId:
-        return ("Missing required parameter: gameId", 400)
-
-    opts = {
-        "gameId":   gameId,
-        "group":    group,
-        "skipJson": skip_json,
-    }
-
-    scraper = GetEspnBoxscore()
-    result  = scraper.run(opts)
-
-    return (
-        f"ESPN box-score run complete for gameId={gameId}. "
-        f"Result={result}",
-        200,
-    )
-
-
-# -----------------------------------------------------------------------------
-# CLI usage
-# -----------------------------------------------------------------------------
+# Use the mixin's main function generator
 if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--gameId", required=True, help="e.g. 401766123")
-    parser.add_argument("--group", default="test", help="dev, test, prod, etc.")
-    parser.add_argument("--skipJson", default="0",
-                        help="Set to 1/true to skip embedded JSON parse and test HTML.")
-    args = parser.parse_args()
-
-    scraper = GetEspnBoxscore()
-    scraper.run(vars(args))
+    main = GetEspnBoxscore.create_cli_and_flask_main()
+    main()
+    
