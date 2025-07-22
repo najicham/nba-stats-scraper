@@ -21,7 +21,7 @@ load_dotenv()  # ensures ODDS_API_KEY is loaded from your .env if present
         "oddsa_events",
         [
             "--sport", "basketball_nba",
-            "--apiKey", os.environ["ODDS_API_KEY"],  # KeyError if not set
+            "--api_key", os.environ["ODDS_API_KEY"],  # KeyError if not set
             "--group", "test"
         ],
         "/tmp/oddsapi_events.json",
@@ -31,7 +31,7 @@ load_dotenv()  # ensures ODDS_API_KEY is loaded from your .env if present
     (
         "oddsa_events_his",  # must match scrapers/odds_api_historical_events.py
         [
-            "--apiKey", os.environ["ODDS_API_KEY"],     # Use your real key
+            "--api_key", os.environ["ODDS_API_KEY"],     # Use your real key
             "--sport", "basketball_nba",
             "--date", "2025-05-10T00:00:00Z",           # Something in the future
             "--group", "test"

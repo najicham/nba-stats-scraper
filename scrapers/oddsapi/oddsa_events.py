@@ -9,7 +9,7 @@ Docs
 Endpoint
   GET /v4/sports/{sport}/events
 Query params
-  * apiKey (required - but we default to env ODDS_API_KEY)
+  * api_key (required - but we default to env ODDS_API_KEY)
   * commenceTimeFrom / commenceTimeTo (optional ISO timestamps)
   * dateFormat=iso|unix  (optional)
 
@@ -66,7 +66,7 @@ class GetOddsApiEvents(ScraperBase, ScraperFlaskMixin):
       • sport - e.g. basketball_nba
 
     Optional opts (all map 1-to-1 onto query params):
-      • apiKey  - falls back to env ODDS_API_KEY
+      • api_key  - falls back to env ODDS_API_KEY
       • commenceTimeFrom / commenceTimeTo
       • dateFormat
     """
@@ -75,13 +75,13 @@ class GetOddsApiEvents(ScraperBase, ScraperFlaskMixin):
     scraper_name = "oddsa_events"
     required_params = ["sport"]
     optional_params = {
-        "apiKey": None,  # Falls back to env ODDS_API_KEY
+        "api_key": None,  # Falls back to env ODDS_API_KEY
         "commenceTimeFrom": None,
         "commenceTimeTo": None,
         "dateFormat": None,
     }
 
-    required_opts: List[str] = ["sport"]  # apiKey via env if omitted
+    required_opts: List[str] = ["sport"]  # api_key via env if omitted
     proxy_enabled = False
     browser_enabled = False
 
@@ -125,10 +125,10 @@ class GetOddsApiEvents(ScraperBase, ScraperFlaskMixin):
     _API_ROOT_TMPL = "https://api.the-odds-api.com/v4/sports/{sport}/events"
 
     def set_url(self) -> None:
-        api_key = self.opts.get("apiKey") or os.getenv("ODDS_API_KEY")
+        api_key = self.opts.get("api_key") or os.getenv("ODDS_API_KEY")
         if not api_key:
             raise DownloadDataException(
-                "Missing apiKey and env var ODDS_API_KEY not set."
+                "Missing api_key and env var ODDS_API_KEY not set."
             )
 
         base = self._API_ROOT_TMPL.format(sport=self.opts["sport"])

@@ -141,7 +141,7 @@ Each scraper can be run **locally** or deployed as a **Google Cloud Function**. 
    or for an Odds API example:
 
    ```bash
-   python odds_api_historical_events.py --apiKey=MY_SECRET_KEY --date=2023-12-01T22:45:00Z
+   python odds_api_historical_events.py --api_key=MY_SECRET_KEY --date=2023-12-01T22:45:00Z
    ```
 
 3. **Logs** appear in the console. The final line includes `SCRAPER_STATS {...}` with JSON you can parse for daily summaries.
@@ -149,7 +149,7 @@ Each scraper can be run **locally** or deployed as a **Google Cloud Function**. 
 4. **Options**:
 
    * `--group=dev` or `--group=prod` typically determines which exporters run.
-   * Additional flags vary by scraper (e.g. `--gamedate`, `--apiKey`, etc.).
+   * Additional flags vary by scraper (e.g. `--gamedate`, `--api_key`, etc.).
 
 ---
 

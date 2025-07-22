@@ -55,7 +55,7 @@ class BdlTeams(ScraperBase, ScraperFlaskMixin):
     scraper_name = "bdl_teams"
     required_params = []  # No required parameters
     optional_params = {
-        "apiKey": None,  # Falls back to env var (optional for free tier)
+        "api_key": None,  # Falls back to env var (optional for free tier)
     }
 
     # Original scraper config
@@ -72,7 +72,7 @@ class BdlTeams(ScraperBase, ScraperFlaskMixin):
         {
             "type": "gcs",
             "key": GCSPathBuilder.get_path(GCS_PATH_KEY),
-            "export_mode": ExportMode.RAW,
+            "export_mode": ExportMode.DATA,
             "groups": ["prod", "gcs"],
         },
         # Normal dev / prod artifact
@@ -110,7 +110,7 @@ class BdlTeams(ScraperBase, ScraperFlaskMixin):
         logger.debug("Teams URL: %s", self.url)
 
     def set_headers(self) -> None:
-        api_key = self.opts.get("apiKey") or os.getenv("BDL_API_KEY")
+        api_key = self.opts.get("api_key") or os.getenv("BDL_API_KEY")
         hdrs = {
             "User-Agent": "scrape-bdl-teams/1.1 (+github.com/your-org)",
             "Accept": "application/json",

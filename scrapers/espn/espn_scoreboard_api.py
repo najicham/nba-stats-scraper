@@ -29,11 +29,11 @@ Improvements v2
 Usage examples:
   # Via capture tool (recommended for data collection):
   python tools/fixtures/capture.py espn_scoreboard_api \
-      --scoreDate 20250214 \
+      --gamedate 20250214 \
       --debug
 
   # Direct CLI execution:
-  python scrapers/espn/espn_scoreboard_api.py --scoreDate 20250214 --debug
+  python scrapers/espn/espn_scoreboard_api.py --gamedate 20250214 --debug
 
   # Flask web service:
   python scrapers/espn/espn_scoreboard_api.py --serve --debug
@@ -75,11 +75,11 @@ class GetEspnScoreboard(ScraperBase, ScraperFlaskMixin):
 
     # Flask Mixin Configuration
     scraper_name = "espn_scoreboard_api"
-    required_params = ["scoreDate"]  # scoreDate is required (YYYYMMDD format)
+    required_params = ["gamedate"]  # gamedate is required (YYYYMMDD format)
     optional_params = {}
 
     # Original scraper config
-    required_opts: List[str] = ["scoreDate"]
+    required_opts: List[str] = ["gamedate"]
     download_type: DownloadType = DownloadType.JSON
     decode_download_data: bool = True
     header_profile: str | None = "espn"
@@ -93,12 +93,12 @@ class GetEspnScoreboard(ScraperBase, ScraperFlaskMixin):
         {
             "type": "gcs",
             "key": GCSPathBuilder.get_path(GCS_PATH_KEY),
-            "export_mode": ExportMode.RAW,
+            "export_mode": ExportMode.DATA,
             "groups": ["prod", "gcs"],
         },
         {
             "type": "file",
-            "filename": "/tmp/espn_scoreboard_%(scoreDate)s.json",
+            "filename": "/tmp/espn_scoreboard_%(date)s.json",
             "export_mode": ExportMode.DATA,
             "pretty_print": True,
             "groups": ["dev", "test"],
@@ -106,14 +106,14 @@ class GetEspnScoreboard(ScraperBase, ScraperFlaskMixin):
         # ---------- raw JSON fixture (offline tests) ----------
         {
             "type": "file",
-            "filename": "/tmp/raw_%(run_id)s.json",  # FIXED: Use run_id instead of scoreDate
+            "filename": "/tmp/raw_%(run_id)s.json",  # FIXED: Use run_id instead of gamedate
             "export_mode": ExportMode.RAW,
             "groups": ["capture"],
         },
         # ---------- golden snapshot (parsed DATA) ----------
         {
             "type": "file",
-            "filename": "/tmp/exp_%(run_id)s.json",  # FIXED: Use run_id instead of scoreDate
+            "filename": "/tmp/exp_%(run_id)s.json",  # FIXED: Use run_id instead of gamedate
             "export_mode": ExportMode.DATA,
             "pretty_print": True,
             "groups": ["capture"],
@@ -125,7 +125,7 @@ class GetEspnScoreboard(ScraperBase, ScraperFlaskMixin):
     # ------------------------------------------------------------------ #
     def set_url(self) -> None:
         base = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"
-        self.url = f"{base}?dates={self.opts['scoreDate']}"
+        self.url = f"{base}?dates={self.opts['gamedate']}"
         logger.info("Resolved ESPN scoreboard URL: %s", self.url)
 
     # No set_headers needed - ScraperBase injects via header_profile
@@ -144,7 +144,7 @@ class GetEspnScoreboard(ScraperBase, ScraperFlaskMixin):
     # ------------------------------------------------------------------ #
     def transform_data(self) -> None:
         events: List[dict] = self.decoded_data.get("events", [])
-        logger.info("Found %d events for %s", len(events), self.opts["scoreDate"])
+        logger.info("Found %d events for %s", len(events), self.opts["gamedate"])
 
         games: List[Dict[str, Any]] = []
         for event in events:
@@ -177,7 +177,7 @@ class GetEspnScoreboard(ScraperBase, ScraperFlaskMixin):
 
         self.data = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
-            "scoreDate": self.opts["scoreDate"],
+            "gamedate": self.opts["gamedate"],
             "gameCount": len(games),
             "games": games,
         }
@@ -186,7 +186,7 @@ class GetEspnScoreboard(ScraperBase, ScraperFlaskMixin):
     # Stats line
     # ------------------------------------------------------------------ #
     def get_scraper_stats(self) -> dict:
-        return {"scoreDate": self.opts["scoreDate"], "gameCount": self.data.get("gameCount", 0)}
+        return {"gamedate": self.opts["gamedate"], "gameCount": self.data.get("gameCount", 0)}
 
 
 # --------------------------------------------------------------------------- #

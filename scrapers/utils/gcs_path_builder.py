@@ -58,7 +58,7 @@ class GCSPathBuilder:
         "nba_com_schedule": "nba-com/schedule/%(date)s/%(timestamp)s.json",
         "nba_com_schedule_cdn": "nba-com/schedule-cdn/%(date)s/%(timestamp)s.json", 
         "nba_com_scoreboard_v2": "nba-com/scoreboard-v2/%(date)s/%(timestamp)s.json",
-        "nba_com_injury_report": "nba-com/injury-report/%(date)s/report_%(date)s_%(hour)s/%(timestamp)s.json",
+        "nba_com_injury_report": "nba-com/injury-report/%(date)s/%(hour)s%(period)s/%(timestamp)s.json",
         "nba_com_play_by_play": "nba-com/play-by-play/%(date)s/game_%(game_id)s/%(timestamp)s.json",
         "nba_com_player_boxscore": "nba-com/player-boxscores/%(date)s/%(timestamp)s.json",
         "nba_com_team_roster": "nba-com/rosters/%(date)s/team_%(team_abbrev)s/%(timestamp)s.json", 
@@ -164,7 +164,8 @@ class GCSPathBuilder:
             "game_id": "12345",
             "event_id": "67890",
             "team_abbrev": "LAL",
-            "hour": "14"
+            "hour": "5",
+            "period": "PM"
         }
         
         # Merge sample_opts with defaults

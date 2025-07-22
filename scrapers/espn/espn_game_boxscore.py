@@ -110,7 +110,7 @@ class GetEspnBoxscore(ScraperBase, ScraperFlaskMixin):
         {
             "type": "gcs",
             "key": GCSPathBuilder.get_path(GCS_PATH_KEY),
-            "export_mode": ExportMode.RAW,
+            "export_mode": ExportMode.DATA,
             "groups": ["prod", "gcs"],
         },
         {

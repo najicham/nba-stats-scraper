@@ -400,7 +400,7 @@ Scrapers are organized by **business function** and **timing requirements** rath
 - **File**: `scrapers/nbacom/nbac_injury_report.py`
 - **Class**: `GetNbaComInjuryReport`
 - **Parameters**: `date`, `hour`
-- **Output Path**: `/nba-com/injury-report/{date}/report_{date}_{hour}/{timestamp}.json`
+- **Output Path**: `/nba-com/injury-report/{date}/{hour}{period}/{timestamp}.json`
 - **Schedule**: Every hour on game days, daily otherwise
 - **Purpose**: Official NBA injury report with game-specific availability
 - **API Details**: JSON format (converted from PDF), ~50-100 players per report

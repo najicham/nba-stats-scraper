@@ -11,7 +11,7 @@ regions    : us
 markets    : player\_points
 bookmakers : draftkings,fanduel
 group      : dev                # overridden by --group capture / prod
-apiKey     : env ODDS\_API\_KEY   # or --apiKey flag
+api_key     : env ODDS\_API\_KEY   # or --api_key flag
 
 ````
 
@@ -106,7 +106,7 @@ pytest -v tests/scrapers/oddsapi
 * `--regions`   default `us`
 * `--markets`   default `player_points`
 * `--bookmakers` default `draftkings,fanduel`
-* `--apiKey`    optional – falls back to `ODDS_API_KEY` env var
+* `--api_key`    optional – falls back to `ODDS_API_KEY` env var
 * `--group`     dev | capture | prod   (default `dev`)
 * `--run_id`     optional; `capture.py` auto‑supplies one
 * `--debug`     optional; bumps log level to DEBUG

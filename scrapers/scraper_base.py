@@ -429,9 +429,19 @@ class ScraperBase:
         if "date" not in self.opts:
             # Derive from existing parameters first
             if "gamedate" in self.opts:
-                self.opts["date"] = self.opts["gamedate"]
+                gamedate = self.opts["gamedate"]
+                if len(gamedate) == 8 and gamedate.isdigit():
+                    # Convert YYYYMMDD to YYYY-MM-DD for consistent paths
+                    self.opts["date"] = f"{gamedate[:4]}-{gamedate[4:6]}-{gamedate[6:8]}"
+                else:
+                    self.opts["date"] = gamedate  # Already has dashes
             elif "game_date" in self.opts:
-                self.opts["date"] = self.opts["game_date"]
+                game_date = self.opts["game_date"]
+                if len(game_date) == 8 and game_date.isdigit():
+                    # Convert YYYYMMDD to YYYY-MM-DD for consistent paths
+                    self.opts["date"] = f"{game_date[:4]}-{game_date[4:6]}-{game_date[6:8]}"
+                else:
+                    self.opts["date"] = game_date  # Already has dashes
             else:
                 # Use current Eastern date
                 try:

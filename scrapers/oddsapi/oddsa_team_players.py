@@ -12,13 +12,13 @@ Usage examples
   # Via capture tool (recommended for data collection):
   python tools/fixtures/capture.py oddsa_team_players \
       --sport basketball_nba \
-      --participantId team-1234 \
+      --participant_id team-1234 \
       --debug
 
   # Direct CLI execution:
   python scrapers/oddsapi/oddsa_team_players.py \
       --sport basketball_nba \
-      --participantId team-1234 \
+      --participant_id team-1234 \
       --debug
 
   # Flask web service:
@@ -60,20 +60,20 @@ class GetOddsApiTeamPlayers(ScraperBase, ScraperFlaskMixin):
     """
     Required opts:
       • sport          - e.g. basketball_nba
-      • participantId  - Odds-API team / participant key
+      • participant_id  - Odds-API team / participant key
 
     Optional opts:
-      • apiKey - falls back to env ODDS_API_KEY
+      • api_key - falls back to env ODDS_API_KEY
     """
 
     # Flask Mixin Configuration
     scraper_name = "oddsa_team_players"
-    required_params = ["sport", "participantId"]
+    required_params = ["sport", "participant_id"]
     optional_params = {
-        "apiKey": None,  # Falls back to env ODDS_API_KEY
+        "api_key": None,  # Falls back to env ODDS_API_KEY
     }
 
-    required_opts = ["sport", "participantId"]
+    required_opts = ["sport", "participant_id"]
     proxy_enabled = False
     browser_enabled = False
 
@@ -85,7 +85,7 @@ class GetOddsApiTeamPlayers(ScraperBase, ScraperFlaskMixin):
         {   # RAW for prod / archival
             "type": "gcs",
             # "key": (
-            #     "oddsapi/team-players/%(sport)s/%(participantId)s/"
+            #     "oddsapi/team-players/%(sport)s/%(participant_id)s/"
             #     "%(run_id)s.raw.json"
             # ),
             "key": GCSPathBuilder.get_path(GCS_PATH_KEY),
@@ -94,7 +94,7 @@ class GetOddsApiTeamPlayers(ScraperBase, ScraperFlaskMixin):
         },
         {   # Pretty JSON for dev & capture
             "type": "file",
-            "filename": "/tmp/oddsapi_team_players_%(participantId)s.json",
+            "filename": "/tmp/oddsapi_team_players_%(participant_id)s.json",
             "pretty_print": True,
             "export_mode": ExportMode.DATA,
             "groups": ["dev", "capture", "test"],
@@ -124,16 +124,16 @@ class GetOddsApiTeamPlayers(ScraperBase, ScraperFlaskMixin):
     )
 
     def set_url(self) -> None:
-        api_key = self.opts.get("apiKey") or os.getenv("ODDS_API_KEY")
+        api_key = self.opts.get("api_key") or os.getenv("ODDS_API_KEY")
         if not api_key:
             raise DownloadDataException(
-                "Missing apiKey and env var ODDS_API_KEY not set."
+                "Missing api_key and env var ODDS_API_KEY not set."
             )
 
         base = self._API_ROOT_TMPL.format(
             sport=self.opts["sport"],
             # Belt-and-suspenders: ensure any slashes in participantId are encoded
-            participantId=quote_plus(self.opts["participantId"]),
+            participantId=quote_plus(self.opts["participant_id"]),
         )
         self.url = f"{base}?{urlencode({'apiKey': api_key})}"
         logger.info("Odds-API Team-Players URL: %s", self.url)
@@ -177,14 +177,14 @@ class GetOddsApiTeamPlayers(ScraperBase, ScraperFlaskMixin):
 
         self.data = {
             "sport": self.opts["sport"],
-            "participantId": self.opts["participantId"],
+            "participantId": self.opts["participant_id"],
             "rowCount": len(players),
             "players": players,
         }
         logger.info(
             "Fetched %d players for participantId=%s",
             len(players),
-            self.opts["participantId"],
+            self.opts["participant_id"],
         )
 
     # ------------------------------------------------------------------ #
@@ -200,7 +200,7 @@ class GetOddsApiTeamPlayers(ScraperBase, ScraperFlaskMixin):
         return {
             "rowCount": self.data.get("rowCount", 0),
             "sport": self.opts.get("sport"),
-            "participantId": self.opts.get("participantId"),
+            "participantId": self.opts.get("participant_id"),
         }
 
 

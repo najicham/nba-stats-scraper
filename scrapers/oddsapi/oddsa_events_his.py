@@ -72,7 +72,7 @@ class GetOddsApiHistoricalEvents(ScraperBase, ScraperFlaskMixin):
       • date   - ISO-8601 timestamp to snap (The-Odds snapshots are every 5 min)
 
     Optional opts:
-      • apiKey - your Odds-API key (falls back to env var)
+      • api_key - your Odds-API key (falls back to env var)
       • commenceTimeFrom / commenceTimeTo - ISO filters on event commence_time
       • event_ids  - comma-sep or list[str]
       • dateFormat - 'iso' (default) or 'unix'
@@ -80,9 +80,9 @@ class GetOddsApiHistoricalEvents(ScraperBase, ScraperFlaskMixin):
 
     # Flask Mixin Configuration
     scraper_name = "odds_api_historical_events"
-    required_params = ["date"]  # apiKey handled via env var
+    required_params = ["date"]  # api_key handled via env var
     optional_params = {
-        "apiKey": None,  # Falls back to env var
+        "api_key": None,  # Falls back to env var
         "sport": "basketball_nba",
         "commenceTimeFrom": None,
         "commenceTimeTo": None,
@@ -151,9 +151,9 @@ class GetOddsApiHistoricalEvents(ScraperBase, ScraperFlaskMixin):
     def set_url(self) -> None:
         base = self._API_ROOT_TMPL.format(sport=self.opts["sport"])
 
-        api_key = self.opts.get("apiKey") or os.getenv("ODDS_API_KEY")
+        api_key = self.opts.get("api_key") or os.getenv("ODDS_API_KEY")
         if not api_key:
-            raise DownloadDataException("Missing apiKey and no ODDS_API_KEY env var found.")
+            raise DownloadDataException("Missing api_key and no ODDS_API_KEY env var found.")
 
         query: Dict[str, Any] = {
             "apiKey": api_key,

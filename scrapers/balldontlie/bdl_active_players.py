@@ -63,7 +63,7 @@ class BdlActivePlayersScraper(ScraperBase, ScraperFlaskMixin):
         "teamId": None,
         "playerId": None,
         "search": None,
-        "apiKey": None,  # Falls back to env var
+        "api_key": None,  # Falls back to env var
     }
 
     # Original scraper config
@@ -80,7 +80,7 @@ class BdlActivePlayersScraper(ScraperBase, ScraperFlaskMixin):
         {
             "type": "gcs",
             "key": GCSPathBuilder.get_path(GCS_PATH_KEY),
-            "export_mode": ExportMode.RAW,
+            "export_mode": ExportMode.DATA,
             "groups": ["prod", "gcs"],
         },
         # Normal dev / prod artifact (keyed by ident)
@@ -141,7 +141,7 @@ class BdlActivePlayersScraper(ScraperBase, ScraperFlaskMixin):
         logger.debug("Active‑players URL: %s", self.url)
 
     def set_headers(self) -> None:
-        api_key = self.opts.get("apiKey") or os.getenv("BDL_API_KEY")
+        api_key = self.opts.get("api_key") or os.getenv("BDL_API_KEY")
         self.headers = {
             "User-Agent": "scrape-bdl-active/1.1 (+github.com/your-org)",
             "Accept": "application/json",

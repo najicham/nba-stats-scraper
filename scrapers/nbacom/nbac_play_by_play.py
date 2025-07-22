@@ -54,7 +54,7 @@ class GetNbaComPlayByPlay(ScraperBase, ScraperFlaskMixin):
     scraper_name = "nbac_play_by_play"
     required_params = ["gameId"]
     optional_params = {
-        "apiKey": None,  # Falls back to env var if needed
+        "api_key": None,  # Falls back to env var if needed
     }
 
     # ------------------------------------------------------------------ #

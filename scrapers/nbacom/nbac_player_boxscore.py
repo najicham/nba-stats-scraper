@@ -81,13 +81,13 @@ class GetNbaComPlayerBoxscore(ScraperBase, ScraperFlaskMixin):
             "type": "gcs",
             #"key": "nbacom/player-boxscore/%(season)s/%(gamedate)s/%(time)s.json",
             "key": GCSPathBuilder.get_path(GCS_PATH_KEY),
-            "export_mode": ExportMode.RAW,
+            "export_mode": ExportMode.DATA,
             "groups": ["prod", "gcs"],
         },
         {
             "type": "file",
             "filename": "/tmp/getnbacomplayerboxscore2.json",
-            "export_mode": ExportMode.RAW,
+            "export_mode": ExportMode.DATA,
             "groups": ["test", "file"],
         },
         {

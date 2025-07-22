@@ -58,7 +58,7 @@ class BdlGameDetailScraper(ScraperBase, ScraperFlaskMixin):
     scraper_name = "bdl_game_detail"
     required_params = ["gameId"]  # gameId is required
     optional_params = {
-        "apiKey": None,  # Falls back to env var
+        "api_key": None,  # Falls back to env var
     }
 
     # Original scraper config
@@ -75,7 +75,7 @@ class BdlGameDetailScraper(ScraperBase, ScraperFlaskMixin):
         {
             "type": "gcs",
             "key": GCSPathBuilder.get_path(GCS_PATH_KEY),
-            "export_mode": ExportMode.RAW,
+            "export_mode": ExportMode.DATA,
             "groups": ["prod", "gcs"],
         },
         # Normal artifact
@@ -113,7 +113,7 @@ class BdlGameDetailScraper(ScraperBase, ScraperFlaskMixin):
         logger.debug("Game-detail URL: %s", self.url)
 
     def set_headers(self) -> None:
-        api_key = self.opts.get("apiKey") or os.getenv("BDL_API_KEY")
+        api_key = self.opts.get("api_key") or os.getenv("BDL_API_KEY")
         self.headers = {
             "User-Agent": "scrape-bdl-game-detail/1.1 (+github.com/your-org)",
             "Accept": "application/json",

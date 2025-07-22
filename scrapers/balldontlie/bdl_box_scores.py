@@ -56,7 +56,7 @@ class BdlBoxScoresScraper(ScraperBase, ScraperFlaskMixin):
     required_params = []  # No required parameters (defaults to yesterday)
     optional_params = {
         "date": None,  # Defaults to yesterday if not provided
-        "apiKey": None,  # Falls back to env var
+        "api_key": None,  # Falls back to env var
     }
 
     # Original scraper config
@@ -73,7 +73,7 @@ class BdlBoxScoresScraper(ScraperBase, ScraperFlaskMixin):
         {
             "type": "gcs",
             "key": GCSPathBuilder.get_path(GCS_PATH_KEY),
-            "export_mode": ExportMode.RAW,
+            "export_mode": ExportMode.DATA,
             "groups": ["prod", "gcs"],
         },
         # Normal artifact
@@ -120,7 +120,7 @@ class BdlBoxScoresScraper(ScraperBase, ScraperFlaskMixin):
         logger.debug("Box-scores URL: %s", self.url)
 
     def set_headers(self) -> None:
-        api_key = self.opts.get("apiKey") or os.getenv("BDL_API_KEY")
+        api_key = self.opts.get("api_key") or os.getenv("BDL_API_KEY")
         self.headers = {
             "User-Agent": "scrape-bdl-box-scores/1.1 (+github.com/your-org)",
             "Accept": "application/json",

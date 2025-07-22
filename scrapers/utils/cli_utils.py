@@ -18,7 +18,7 @@ def add_common_args(parser: argparse.ArgumentParser, *, want_api_key: bool = Fal
     Injects the shared flags **in a single call**.
 
         --group   dev | test | prod | capture
-        --apiKey  override $BDL_API_KEY (optional)
+        --api_key  override $BDL_API_KEY (optional)
         --run_id   externally-fixed run-id (optional, used by fixture capture)
         --debug   ask the scraper to be extra chatty (optional)
     """
@@ -29,7 +29,7 @@ def add_common_args(parser: argparse.ArgumentParser, *, want_api_key: bool = Fal
     parser.add_argument("--run_id",
                         help="external run-id (fixture capture sets this)")
     if want_api_key:
-        parser.add_argument("--apiKey",
+        parser.add_argument("--api_key",
                             help="override $BDL_API_KEY or other endpoint key")
         
 

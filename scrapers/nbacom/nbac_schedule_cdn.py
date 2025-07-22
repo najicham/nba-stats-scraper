@@ -62,8 +62,7 @@ class GetNbaComScheduleCdn(ScraperBase, ScraperFlaskMixin):
     scraper_name = "nbac_schedule_cdn"
     required_params = []  # No parameters needed for CDN static files
     optional_params = {
-        "apiKey": None,
-        "run_id": None,
+        "api_key": None,
     }
     
     required_opts = []  # No parameters needed for CDN static files
@@ -117,13 +116,6 @@ class GetNbaComScheduleCdn(ScraperBase, ScraperFlaskMixin):
             "groups": ["capture"],
         },
     ]
-    
-    def set_additional_opts(self) -> None:
-        super().set_additional_opts()
-        
-        """Set timestamp for exporters"""
-        self.opts["timestamp"] = datetime.now(timezone.utc).isoformat()
-        logger.info("Using NBA.com CDN static schedule endpoint")
     
     def set_url(self) -> None:
         """Set the CDN URL - no parameters needed"""

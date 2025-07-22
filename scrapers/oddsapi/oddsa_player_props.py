@@ -65,7 +65,7 @@ class GetOddsApiCurrentEventOdds(ScraperBase, ScraperFlaskMixin):
 
     Optional opts (map to query params):
       • sport       - e.g. basketball_nba (defaults to basketball_nba)
-      • apiKey      - env ODDS_API_KEY fallback
+      • api_key      - env ODDS_API_KEY fallback
       • markets     - comma-sep (player_points, totals, …) (defaults to player_points)
       • regions     - comma-sep (us, uk, eu, au) (defaults to us)
       • bookmakers  - comma-sep (defaults to draftkings,fanduel)
@@ -77,7 +77,7 @@ class GetOddsApiCurrentEventOdds(ScraperBase, ScraperFlaskMixin):
     scraper_name = "oddsa_player_props"
     required_params = ["event_id"]
     optional_params = {
-        "apiKey": None,  # Falls back to env ODDS_API_KEY
+        "api_key": None,  # Falls back to env ODDS_API_KEY
         "sport": None,  # Defaults to basketball_nba in set_additional_opts
         "markets": None,  # Defaults to player_points in set_additional_opts
         "regions": None,  # Defaults to us in set_additional_opts
@@ -144,10 +144,10 @@ class GetOddsApiCurrentEventOdds(ScraperBase, ScraperFlaskMixin):
     )
 
     def set_url(self) -> None:
-        api_key = self.opts.get("apiKey") or os.getenv("ODDS_API_KEY")
+        api_key = self.opts.get("api_key") or os.getenv("ODDS_API_KEY")
         if not api_key:
             raise DownloadDataException(
-                "Missing apiKey and env var ODDS_API_KEY not set."
+                "Missing api_key and env var ODDS_API_KEY not set."
             )
 
         base = self._API_ROOT_TMPL.format(

@@ -115,7 +115,7 @@ class BdlPlayerAveragesScraper(ScraperBase, ScraperFlaskMixin):
         "category": "general",  # general|clutch|defense|shooting
         "seasonType": "regular", # regular|playoffs|ist|playin
         "type": "base",         # stat grouping type
-        "apiKey": None,         # Falls back to env var
+        "api_key": None,         # Falls back to env var
     }
 
     # Original scraper config
@@ -166,7 +166,7 @@ class BdlPlayerAveragesScraper(ScraperBase, ScraperFlaskMixin):
         {
             "type": "gcs",
             "key": GCSPathBuilder.get_path(GCS_PATH_KEY),
-            "export_mode": ExportMode.RAW,
+            "export_mode": ExportMode.DATA,
             "groups": ["prod", "gcs"],
         },
         {
@@ -295,7 +295,7 @@ class BdlPlayerAveragesScraper(ScraperBase, ScraperFlaskMixin):
         )
 
     def set_headers(self) -> None:
-        api_key = self.opts.get("apiKey") or os.getenv("BDL_API_KEY")
+        api_key = self.opts.get("api_key") or os.getenv("BDL_API_KEY")
         self.headers = {
             "User-Agent": "scrape-bdl-player-avg/2.1",
             "Accept": "application/json",

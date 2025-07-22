@@ -56,7 +56,7 @@ class GetNbaComScoreboardV2(ScraperBase, ScraperFlaskMixin):
     scraper_name = "nbac_scoreboard_v2"
     required_params = ["scoreDate"]
     optional_params = {
-        "apiKey": None,
+        "api_key": None,
         "run_id": None,
     }
 

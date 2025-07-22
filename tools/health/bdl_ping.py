@@ -16,7 +16,7 @@ Usage
 python tools/health/bdl_ping.py
 
 # override key on CLI
-python tools/health/bdl_ping.py --apiKey=abc123
+python tools/health/bdl_ping.py --api_key=abc123
 """
 
 from __future__ import annotations
@@ -54,10 +54,10 @@ def extract_detail(resp: requests.Response) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser(add_help=False)
-    parser.add_argument("--apiKey", help="Override BDL_API_KEY env var")
+    parser.add_argument("--api_key", help="Override BDL_API_KEY env var")
     args = parser.parse_args()
 
-    api_key = args.apiKey or os.getenv("BDL_API_KEY")
+    api_key = args.api_key or os.getenv("BDL_API_KEY")
     try:
         resp = requests.get(PING_URL, headers=build_headers(api_key), timeout=8)
     except requests.RequestException as exc:

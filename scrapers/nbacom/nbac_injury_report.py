@@ -88,7 +88,7 @@ class GetNbaComInjuryReport(ScraperBase, ScraperFlaskMixin):
             "type": "gcs",
             #"key": "nbacom/injury-report/%(season)s/%(gamedate)s/%(hour)s%(period)s/%(time)s.pdf",
             "key": GCSPathBuilder.get_path(GCS_PATH_KEY),
-            "export_mode": ExportMode.RAW,
+            "export_mode": ExportMode.DATA,
             "groups": ["prod", "gcs"],
         },
         {
@@ -484,7 +484,7 @@ class GetNbaComInjuryReport(ScraperBase, ScraperFlaskMixin):
         # Reasonable range: 20-600 total records
         record_count = len(self.data)
         if record_count < 5:
-            raise DownloadDataException(f"Suspiciously low record count: {record_count} (expected 20-600)")
+            logger.warning(f"Low record count: {record_count} (typical range: 20-600). This may be normal for light game days or off-season.")
         elif record_count > 800:
             raise DownloadDataException(f"Suspiciously high record count: {record_count} (expected 20-600)")
         
@@ -492,8 +492,15 @@ class GetNbaComInjuryReport(ScraperBase, ScraperFlaskMixin):
         required_fields = ['date', 'gametime', 'matchup', 'team', 'player', 'status', 'reason']
         for i, record in enumerate(self.data):
             for field in required_fields:
-                if field not in record or not record[field]:
-                    raise DownloadDataException(f"Record {i}: Missing or empty required field '{field}': {record}")
+                if field not in record:
+                    raise DownloadDataException(f"Record {i}: Missing required field '{field}': {record}")
+                
+                # Allow empty reason for Available players (they're healthy)
+                if field == 'reason' and record.get('status') == 'Available':
+                    continue
+                    
+                if not record[field]:
+                    raise DownloadDataException(f"Record {i}: Empty required field '{field}': {record}")
         
         # 4. NBA TEAM VALIDATION
         valid_teams = {

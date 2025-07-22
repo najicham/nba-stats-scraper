@@ -66,7 +66,7 @@ Most scrapers also accept:
 | `--regions`    | `us`                        | Same.                                                  |
 | `--markets`    | `player_points`             | Same.                                                  |
 | `--bookmakers` | `draftkings,fanduel`        | Filter lines to the two biggest books.                 |
-| `--apiKey`     | not required – env fallback | Reads `ODDS_API_KEY` automatically.                    |
+| `--api_key`     | not required – env fallback | Reads `ODDS_API_KEY` automatically.                    |
 
 ---
 
