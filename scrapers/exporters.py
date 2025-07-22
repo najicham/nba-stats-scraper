@@ -28,30 +28,17 @@ def _convert_data_to_string(data, config):
 
 class GCSExporter(BaseExporter):
     """
-    Upload data to Google Cloud Storage (GCS) with smart bucket selection.
+    Upload scraped data to Google Cloud Storage (GCS).
     
-    Bucket Selection Logic:
-    1. If 'bucket' is specified in config, use that
-    2. If export_mode contains 'raw', use GCS_BUCKET_RAW
-    3. If export_mode contains 'data' or 'processed', use GCS_BUCKET_PROCESSED  
-    4. Default to GCS_BUCKET_RAW
+    Scrapers only produce raw data, so everything goes to the raw scraped data bucket.
     """
     def run(self, data, config, opts):
-        # 1) Smart bucket selection
+        # 1) Use explicit bucket from config, or default to raw scraped data bucket
         if "bucket" in config:
-            # Explicit bucket in config takes priority
             bucket_name = config["bucket"]
         else:
-            # Choose bucket based on export mode
-            export_mode = str(config.get("export_mode", "")).lower()
-            
-            if "raw" in export_mode:
-                bucket_name = os.environ.get("GCS_BUCKET_RAW", "nba-analytics-raw-data")
-            elif any(mode in export_mode for mode in ["data", "processed", "decoded"]):
-                bucket_name = os.environ.get("GCS_BUCKET_PROCESSED", "nba-analytics-processed-data")
-            else:
-                # Default to raw bucket
-                bucket_name = os.environ.get("GCS_BUCKET_RAW", "nba-analytics-raw-data")
+            # All scraped data goes to the raw bucket
+            bucket_name = os.environ.get("GCS_BUCKET_RAW", "nba-scraped-data")
 
         # 2) Build GCS path from config key + string formatting
         gcs_path = config.get("key", "default.json")
@@ -61,8 +48,7 @@ class GCSExporter(BaseExporter):
         # 3) Convert data to string
         payload = _convert_data_to_string(data, config)
 
-        # 4) Upload to GCS with a default content_type
-        #    If you want to override, you could do config.get("mime_type", "application/json")
+        # 4) Upload to GCS
         content_type = "application/json"
 
         client = storage.Client()
@@ -70,7 +56,7 @@ class GCSExporter(BaseExporter):
         blob = bucket.blob(gcs_path)
         blob.upload_from_string(payload, content_type=content_type)
 
-        print(f"[GCS Exporter] Uploaded to gs://{bucket_name}/{gcs_path} (mode: {config.get('export_mode', 'default')})")
+        print(f"[GCS Exporter] Uploaded to gs://{bucket_name}/{gcs_path}")
 
 class FileExporter(BaseExporter):
     """

@@ -418,10 +418,30 @@ class ScraperBase:
 
     def set_additional_opts(self):
         """
-        Hook: child scrapers that auto-derive e.g. 'season' from 'gamedate'
-        can do so here. By default, does nothing.
+        Add standard variables needed for GCS export paths.
+        Child scrapers override this and call super().set_additional_opts() first.
         """
-        pass
+        # Add UTC timestamp for unique filenames
+        if "timestamp" not in self.opts:
+            self.opts["timestamp"] = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+
+        # Add Eastern date if not provided as parameter
+        if "date" not in self.opts:
+            # Derive from existing parameters first
+            if "gamedate" in self.opts:
+                self.opts["date"] = self.opts["gamedate"]
+            elif "game_date" in self.opts:
+                self.opts["date"] = self.opts["game_date"]
+            else:
+                # Use current Eastern date
+                try:
+                    import pytz
+                    eastern = pytz.timezone('US/Eastern')
+                    eastern_now = datetime.now(eastern)
+                    self.opts["date"] = eastern_now.strftime("%Y-%m-%d")
+                except Exception:
+                    # Fallback to UTC date if timezone fails
+                    self.opts["date"] = datetime.utcnow().strftime("%Y-%m-%d")
 
     def validate_additional_opts(self):
         """

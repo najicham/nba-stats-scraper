@@ -36,12 +36,14 @@ try:
     from ..scraper_base import ScraperBase, ExportMode
     from ..scraper_flask_mixin import ScraperFlaskMixin
     from ..utils.exceptions import DownloadDataException
+    from ..utils.gcs_path_builder import GCSPathBuilder
 except ImportError:
     # Direct execution: python scrapers/oddsapi/oddsa_events_his.py
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
     from scrapers.scraper_base import ScraperBase, ExportMode
     from scrapers.scraper_flask_mixin import ScraperFlaskMixin
     from scrapers.utils.exceptions import DownloadDataException
+    from scrapers.utils.gcs_path_builder import GCSPathBuilder
 
 logger = logging.getLogger(__name__)
 
@@ -96,11 +98,12 @@ class GetOddsApiHistoricalEvents(ScraperBase, ScraperFlaskMixin):
     # ------------------------------------------------------------------ #
     # Exporters                                                          #
     # ------------------------------------------------------------------ #
+    GCS_PATH_KEY = "odds_api_events_history"
     exporters = [
         # RAW ⇒ automatically uses GCS_BUCKET_RAW
         {
             "type": "gcs",
-            "key": "oddsapi/historical-events/%(date)s_%(run_id)s.raw.json",
+            "key": GCSPathBuilder.get_path(GCS_PATH_KEY),
             "export_mode": ExportMode.RAW,
             "groups": ["prod", "gcs"],
         },

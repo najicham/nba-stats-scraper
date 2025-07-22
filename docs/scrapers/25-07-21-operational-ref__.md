@@ -12,6 +12,23 @@ For **strategic guidance** and **business logic**, see the main pipeline impleme
 
 ---
 
+## GCS Storage Configuration
+
+### **Bucket**: `nba-scraped-data`
+All scraped data is stored in the **raw scraped data bucket**: `gs://nba-scraped-data/`
+
+### **Directory Structure**
+```
+gs://nba-scraped-data/
+├── ball-dont-lie/           # Ball Don't Lie API data
+├── odds-api/                # Odds API data (business critical)
+├── espn/                    # ESPN data
+├── nba-com/                 # NBA.com data  
+└── big-data-ball/           # Enhanced analytics data
+```
+
+---
+
 ## Scraper Categories by Business Purpose
 
 ### **Overview**
@@ -182,7 +199,7 @@ Scrapers are organized by **business function** and **timing requirements** rath
 - **File**: `scrapers/balldontlie/bdl_games.py`
 - **Class**: `BdlGamesScraper`
 - **Parameters**: `start_date`, `end_date`
-- **Output Path**: `/raw-data/ball-dont-lie/games/{date}/{timestamp}.json`
+- **Output Path**: `/ball-dont-lie/games/{date}/{timestamp}.json`
 - **Schedule**: Daily at 8 AM, 12 PM, 6 PM ET
 - **Purpose**: NBA games with scores and team info
 - **API Details**: No pagination, ~15 games per response
@@ -193,8 +210,8 @@ Scrapers are organized by **business function** and **timing requirements** rath
 - **Class**: `BdlPlayerBoxScoresScraper`
 - **Parameters**: `start_date`, `end_date` OR `game_id`
 - **Output Path**: 
-  - By date: `/raw-data/ball-dont-lie/player-box-scores/{date}/{timestamp}.json`
-  - By game: `/raw-data/ball-dont-lie/player-box-scores/{date}/game_{id}/{timestamp}.json`
+  - By date: `/ball-dont-lie/player-box-scores/{date}/{timestamp}.json`
+  - By game: `/ball-dont-lie/player-box-scores/{date}/game_{id}/{timestamp}.json`
 - **Schedule**: Daily at 9 PM ET (after games complete)
 - **Purpose**: Individual player statistics for completed games
 - **API Details**: Paginated, ~25 players per response
@@ -204,7 +221,7 @@ Scrapers are organized by **business function** and **timing requirements** rath
 - **File**: `scrapers/balldontlie/bdl_box_scores.py`
 - **Class**: `BdlBoxScoresScraper`
 - **Parameters**: `date`
-- **Output Path**: `/raw-data/ball-dont-lie/boxscores/{date}/{timestamp}.json`
+- **Output Path**: `/ball-dont-lie/boxscores/{date}/{timestamp}.json`
 - **Schedule**: Daily at 9 PM ET (after games complete)
 - **Purpose**: Team boxscores with embedded player stats
 - **API Details**: Single response with all games for date
@@ -214,7 +231,7 @@ Scrapers are organized by **business function** and **timing requirements** rath
 - **File**: `scrapers/balldontlie/bdl_active_players.py`
 - **Class**: `BdlActivePlayersScraper`
 - **Parameters**: None
-- **Output Path**: `/raw-data/ball-dont-lie/active-players/{date}/{timestamp}.json`
+- **Output Path**: `/ball-dont-lie/active-players/{date}/{timestamp}.json`
 - **Schedule**: Daily for validation, every 4-6 hours during trade season
 - **Purpose**: Cross-validate NBA.com player data, detect team assignment discrepancies
 - **API Details**: **Paginated, 5-6 requests required**, ~100 players per page, ~500 total active players
@@ -225,7 +242,7 @@ Scrapers are organized by **business function** and **timing requirements** rath
 - **File**: `scrapers/balldontlie/bdl_injuries.py`
 - **Class**: `BdlInjuriesScraper`
 - **Parameters**: None
-- **Output Path**: `/raw-data/ball-dont-lie/injuries/{date}/{timestamp}.json`
+- **Output Path**: `/ball-dont-lie/injuries/{date}/{timestamp}.json`
 - **Schedule**: Every 2-4 hours, 8 AM - 8 PM ET
 - **Purpose**: Current league-wide injury status
 - **API Details**: Single response, all injured players
@@ -244,7 +261,7 @@ Scrapers are organized by **business function** and **timing requirements** rath
 - **File**: `scrapers/oddsapi/oddsa_events.py`
 - **Class**: `GetOddsApiEvents`
 - **Parameters**: None
-- **Output Path**: `/raw-data/odds-api/events/{date}/{timestamp}.json`
+- **Output Path**: `/odds-api/events/{date}/{timestamp}.json`
 - **Schedule**: Every 2-4 hours, 8 AM - 8 PM ET
 - **Purpose**: Current/upcoming NBA games for prop collection
 - **API Details**: Single response, ~5-15 events per day
@@ -254,7 +271,7 @@ Scrapers are organized by **business function** and **timing requirements** rath
 - **File**: `scrapers/oddsapi/oddsa_player_props.py`
 - **Class**: `GetOddsApiCurrentEventOdds`
 - **Parameters**: `event_id`
-- **Output Path**: `/raw-data/odds-api/player-props/{date}/event_{id}/{timestamp}.json`
+- **Output Path**: `/odds-api/player-props/{date}/event_{id}/{timestamp}.json`
 - **Schedule**: 30 minutes after Events API, then every 2-4 hours
 - **Purpose**: Player prop odds for FanDuel + DraftKings
 - **API Details**: Response per event, ~20-50 props per game
@@ -264,7 +281,7 @@ Scrapers are organized by **business function** and **timing requirements** rath
 - **File**: `scrapers/oddsapi/oddsa_events_his.py`
 - **Class**: `GetOddsApiHistoricalEvents`
 - **Parameters**: `date`
-- **Output Path**: `/raw-data/odds-api/events-history/{date}/{timestamp}.json`
+- **Output Path**: `/odds-api/events-history/{date}/{timestamp}.json`
 - **Schedule**: As needed for backfill
 - **Purpose**: Historical events for analysis
 - **API Details**: Single response per date
@@ -274,7 +291,7 @@ Scrapers are organized by **business function** and **timing requirements** rath
 - **File**: `scrapers/oddsapi/oddsa_player_props_his.py`
 - **Class**: `GetOddsApiHistoricalEventOdds`
 - **Parameters**: `event_id`
-- **Output Path**: `/raw-data/odds-api/player-props-history/{date}/event_{id}/{timestamp}.json`
+- **Output Path**: `/odds-api/player-props-history/{date}/event_{id}/{timestamp}.json`
 - **Schedule**: As needed for backfill
 - **Purpose**: Historical prop odds by event
 - **API Details**: Response per event
@@ -284,7 +301,7 @@ Scrapers are organized by **business function** and **timing requirements** rath
 - **File**: `scrapers/oddsapi/oddsa_team_players.py`
 - **Class**: `GetOddsApiTeamPlayers`
 - **Parameters**: None
-- **Output Path**: `/raw-data/odds-api/players/{date}/{timestamp}.json`
+- **Output Path**: `/odds-api/players/{date}/{timestamp}.json`
 - **Schedule**: Daily at 8 AM ET
 - **Purpose**: Players currently on teams (sportsbook perspective)
 - **API Details**: Single response, all active players
@@ -304,7 +321,7 @@ Scrapers are organized by **business function** and **timing requirements** rath
 - **Backup File**: `scrapers/espn/espn_roster.py` (GetEspnTeamRoster)
 - **Class**: `GetEspnTeamRosterAPI`
 - **Parameters**: `team_abbreviation`
-- **Output Path**: `/raw-data/espn/rosters/{date}/team_{abbrev}/{timestamp}.json`
+- **Output Path**: `/espn/rosters/{date}/team_{abbrev}/{timestamp}.json`
 - **Schedule**: Daily at 8 AM ET (all 30 teams)
 - **Purpose**: Detailed team rosters for trade validation
 - **API Details**: One request per team, ~15 players per team
@@ -314,7 +331,7 @@ Scrapers are organized by **business function** and **timing requirements** rath
 - **File**: `scrapers/espn/espn_scoreboard_api.py`
 - **Class**: `GetEspnScoreboard`
 - **Parameters**: `game_date`
-- **Output Path**: `/raw-data/espn/scoreboard/{date}/{timestamp}.json`
+- **Output Path**: `/espn/scoreboard/{date}/{timestamp}.json`
 - **Schedule**: Daily at 6 PM, 9 PM, 11 PM ET
 - **Purpose**: Game scores and status validation
 - **API Details**: Single response with all games for date
@@ -324,7 +341,7 @@ Scrapers are organized by **business function** and **timing requirements** rath
 - **File**: `scrapers/espn/espn_game_boxscore.py`
 - **Class**: `GetEspnBoxscore`
 - **Parameters**: `game_id`
-- **Output Path**: `/raw-data/espn/boxscores/{date}/game_{id}/{timestamp}.json`
+- **Output Path**: `/espn/boxscores/{date}/game_{id}/{timestamp}.json`
 - **Schedule**: After games complete (triggered by scoreboard)
 - **Purpose**: Detailed game boxscore with player stats
 - **API Details**: One request per completed game
@@ -343,7 +360,7 @@ Scrapers are organized by **business function** and **timing requirements** rath
 - **File**: `scrapers/nbacom/nbac_player_list.py`
 - **Class**: `GetNbaComPlayerList`
 - **Parameters**: None (current season auto-filtered)
-- **Output Path**: `/raw-data/nba-com/player-list/{date}/{timestamp}.json`
+- **Output Path**: `/nba-com/player-list/{date}/{timestamp}.json`
 - **Schedule**: Every 2-4 hours, 8 AM - 8 PM ET
 - **Purpose**: Official master player database for team assignments
 - **API Details**: Single response, ~500 active players, 293KB file
@@ -353,7 +370,7 @@ Scrapers are organized by **business function** and **timing requirements** rath
 - **File**: `scrapers/nbacom/nbac_current_schedule_v2_1.py`
 - **Class**: `GetDataNbaSeasonSchedule`
 - **Parameters**: None
-- **Output Path**: `/raw-data/nba-com/schedule/{date}/{timestamp}.json`
+- **Output Path**: `/nba-com/schedule/{date}/{timestamp}.json`
 - **Schedule**: Daily at 8 AM ET
 - **Purpose**: Comprehensive season schedule with detailed metadata
 - **API Details**: Single response, 17MB file with full season
@@ -363,7 +380,7 @@ Scrapers are organized by **business function** and **timing requirements** rath
 - **File**: `scrapers/nbacom/nbac_schedule_cdn.py`
 - **Class**: `GetNbaComScheduleCdn`
 - **Parameters**: None
-- **Output Path**: `/raw-data/nba-com/schedule-cdn/{date}/{timestamp}.json`
+- **Output Path**: `/nba-com/schedule-cdn/{date}/{timestamp}.json`
 - **Schedule**: Every 4 hours during game days
 - **Purpose**: Fast/light version of schedule for quick updates
 - **API Details**: Single response, smaller file size
@@ -373,7 +390,7 @@ Scrapers are organized by **business function** and **timing requirements** rath
 - **File**: `scrapers/nbacom/nbac_scoreboard_v2.py`
 - **Class**: `GetNbaComScoreboardV2`
 - **Parameters**: `scoreDate`
-- **Output Path**: `/raw-data/nba-com/scoreboard-v2/{date}/{timestamp}.json`
+- **Output Path**: `/nba-com/scoreboard-v2/{date}/{timestamp}.json`
 - **Schedule**: Daily at 6 PM, 9 PM, 11 PM ET
 - **Purpose**: Game scores with quarter-by-quarter data and team stats
 - **API Details**: Single response per date
@@ -383,7 +400,7 @@ Scrapers are organized by **business function** and **timing requirements** rath
 - **File**: `scrapers/nbacom/nbac_injury_report.py`
 - **Class**: `GetNbaComInjuryReport`
 - **Parameters**: `date`, `hour`
-- **Output Path**: `/raw-data/nba-com/injury-report/{date}/report_{date}_{hour}/{timestamp}.json`
+- **Output Path**: `/nba-com/injury-report/{date}/report_{date}_{hour}/{timestamp}.json`
 - **Schedule**: Every hour on game days, daily otherwise
 - **Purpose**: Official NBA injury report with game-specific availability
 - **API Details**: JSON format (converted from PDF), ~50-100 players per report
@@ -393,7 +410,7 @@ Scrapers are organized by **business function** and **timing requirements** rath
 - **File**: `scrapers/nbacom/nbac_play_by_play.py`
 - **Class**: `GetNbaComPlayByPlay`
 - **Parameters**: `gameId`
-- **Output Path**: `/raw-data/nba-com/play-by-play/{date}/game_{gameId}/{timestamp}.json`
+- **Output Path**: `/nba-com/play-by-play/{date}/game_{gameId}/{timestamp}.json`
 - **Schedule**: After games complete
 - **Purpose**: Detailed play-by-play with coordinates and timing
 - **API Details**: ~500-800 events per game, large JSON files
@@ -403,7 +420,7 @@ Scrapers are organized by **business function** and **timing requirements** rath
 - **File**: `scrapers/nbacom/nbac_player_boxscore.py`
 - **Class**: `GetNbaComPlayerBoxscore`
 - **Parameters**: `game_date`
-- **Output Path**: `/raw-data/nba-com/player-boxscores/{date}/{timestamp}.json`
+- **Output Path**: `/nba-com/player-boxscores/{date}/{timestamp}.json`
 - **Schedule**: Daily at 9 PM ET (after games complete)
 - **Purpose**: Official player stats with fantasy points and additional metrics
 - **API Details**: Array format mapped to headers, all players for date
@@ -413,7 +430,7 @@ Scrapers are organized by **business function** and **timing requirements** rath
 - **File**: `scrapers/nbacom/nbac_roster.py`
 - **Class**: `GetNbaTeamRoster`
 - **Parameters**: `team_abbreviation`
-- **Output Path**: `/raw-data/nba-com/rosters/{date}/team_{abbrev}/{timestamp}.json`
+- **Output Path**: `/nba-com/rosters/{date}/team_{abbrev}/{timestamp}.json`
 - **Schedule**: Daily at 8 AM ET (all 30 teams)
 - **Purpose**: Official current team roster (basic format)
 - **API Details**: One request per team, ~15-18 players per team
@@ -423,7 +440,7 @@ Scrapers are organized by **business function** and **timing requirements** rath
 - **File**: `scrapers/nbacom/nbac_player_movement.py`
 - **Class**: `GetNbaComPlayerMovement`
 - **Parameters**: `year`
-- **Output Path**: `/raw-data/nba-com/player-movement/{date}/{timestamp}.json`
+- **Output Path**: `/nba-com/player-movement/{date}/{timestamp}.json`
 - **Schedule**: Daily at 8 AM ET
 - **Purpose**: Complete transaction history (trades, signings, waivers, G-League)
 - **API Details**: 8,730+ records back to 2015, large file
@@ -444,7 +461,7 @@ Scrapers are organized by **business function** and **timing requirements** rath
 - **File Format**: CSV files
 - **Naming**: `[YYYY-MM-DD]-{game_id}-{away_team}@{home_team}.csv`
 - **Example**: `[2021-10-19]-0022100001-BKN@MIL.csv`
-- **Output Path**: `/raw-data/big-data-ball/play-by-play/{date}/game_{id}/{timestamp}.csv`
+- **Output Path**: `/big-data-ball/play-by-play/{date}/game_{id}/{timestamp}.csv`
 - **Schedule**: Check for new files 2 hours after game completion
 - **Purpose**: Enhanced play-by-play with lineup tracking and advanced coordinates
 - **API Details**: 40+ fields per event, ~500-800 events per game
@@ -513,7 +530,7 @@ max_instances: 3
 environment_variables:
   - BDL_API_KEY: "from Secret Manager"
   - ODDS_API_KEY: "from Secret Manager"
-  - GCS_BUCKET: "your-raw-data-bucket"
+  - GCS_BUCKET_RAW: "nba-scraped-data"
 ```
 
 ### **Heavy Scrapers (Special Configuration)**
@@ -621,7 +638,7 @@ scrapers/
 
 ### **GCS Directory Structure**
 ```
-/raw-data/
+gs://nba-scraped-data/
 ├── ball-dont-lie/        # BDL data
 ├── odds-api/             # Odds API data (business critical)
 ├── espn/                 # ESPN data
@@ -650,7 +667,7 @@ scrapers/
 
 ### **Key File Locations**
 - **Scrapers**: `/scrapers/{source}/{scraper_name}.py`
-- **Raw Data**: `/raw-data/{source}/{type}/{date}/`
+- **Raw Data**: `gs://nba-scraped-data/{source}/{type}/{date}/`
 - **Configs**: Environment variables in Cloud Run
 
 This operational reference provides all the practical details needed for day-to-day scraper management, deployment, and troubleshooting.
