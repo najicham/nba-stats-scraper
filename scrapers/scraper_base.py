@@ -164,7 +164,7 @@ class ScraperBase:
     
     max_retries_http = 3
     timeout_http = 20
-    no_retry_status_codes: list[int] = [404]
+    no_retry_status_codes: list[int] = [404, 422]
     max_retries_decode = 8
     
     # Header/profile defaults
@@ -394,8 +394,8 @@ class ScraperBase:
         self.proxy_url = opts.get("proxyUrl") or os.getenv("NBA_SCRAPER_PROXY")
 
         # ── NEW: allow caller to lock the run_id up‑front ───────────────────
-        if opts.get("runId"):
-            self.run_id = str(opts["runId"])
+        if opts.get("run_id"):
+            self.run_id = str(opts["run_id"])
 
         self.opts["run_id"] = self.run_id 
 

@@ -46,12 +46,12 @@ apiKey     : env ODDS\_API\_KEY   # or --apiKey flag
 ```bash
 # Current odds for a live / next game
 python -m scrapers.oddsapi.odds_api_current_event_odds \
-       --eventId 6f0b6f8d8cc9c5bc6375cdee \
+       --event_id 6f0b6f8d8cc9c5bc6375cdee \
        --debug
 
 # Historical odds snapshot for an old game
 python -m scrapers.oddsapi.odds_api_historical_event_odds \
-       --eventId 242c77a8d5890e18bab91773ad32fcb5 \
+       --event_id 242c77a8d5890e18bab91773ad32fcb5 \
        --date    2025-03-09T23:55:38Z \
        --debug
 ````
@@ -79,7 +79,7 @@ python tools/fixtures/capture.py oddsa_events_his \
 
 # Historical player‑points snapshot
 python tools/fixtures/capture.py oddsa_player_props_his \
-       --eventId 242c77a8d5890e18bab91773ad32fcb5 \
+       --event_id 242c77a8d5890e18bab91773ad32fcb5 \
        --date    2025-03-09T23:55:38Z \
        --debug
 ```
@@ -87,7 +87,7 @@ python tools/fixtures/capture.py oddsa_player_props_his \
 Capture adds:
 
 * `--group capture` → scraper writes `/tmp/raw_<runId>*` and `/tmp/exp_<runId>.json`
-* `--runId <uuid>`  → filenames & logs stay in sync
+* `--run_id <uuid>`  → filenames & logs stay in sync
 * `--debug` (if you passed `--debug`) → verbose output
 
 Files are auto‑copied to `tests/samples/<scraper>/`.
@@ -101,14 +101,14 @@ pytest -v tests/scrapers/oddsapi
 
 ## 4. Common CLI flags
 
-* `--eventId`   (required for both *event‑odds* scrapers)
+* `--event_id`   (required for both *event‑odds* scrapers)
 * `--date`      (required only for *historical* scrapers)
 * `--regions`   default `us`
 * `--markets`   default `player_points`
 * `--bookmakers` default `draftkings,fanduel`
 * `--apiKey`    optional – falls back to `ODDS_API_KEY` env var
 * `--group`     dev | capture | prod   (default `dev`)
-* `--runId`     optional; `capture.py` auto‑supplies one
+* `--run_id`     optional; `capture.py` auto‑supplies one
 * `--debug`     optional; bumps log level to DEBUG
 
 ---
@@ -122,8 +122,8 @@ pytest -v tests/scrapers/oddsapi
   – Check the file name vs. your import:
   `scrapers.oddsapi.odds_api_historical_event_odds` etc.
 
-* **`unrecognized arguments: --runId`**
-  – Add `--runId` / `--debug` to the scraper’s `argparse` block
+* **`unrecognized arguments: --run_id`**
+  – Add `--run_id` / `--debug` to the scraper’s `argparse` block
   or call `add_common_args(parser)` from `scrapers.utils.cli_utils`.
 
 * **Fixture copied but empty JSON**

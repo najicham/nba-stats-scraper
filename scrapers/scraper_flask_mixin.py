@@ -129,7 +129,7 @@ class ScraperFlaskMixin:
         # DEFAULT TO DEV GROUP FOR LOCAL TESTING (avoids GCS issues)
         common_params = {
             "group": params.get("group", "dev"),  # Changed from "prod" to "dev"
-            "runId": params.get("runId"),
+            "run_id": params.get("run_id"),
             "debug": bool(params.get("debug", False))
         }
         opts.update(common_params)
@@ -185,7 +185,7 @@ class ScraperFlaskMixin:
                 parser.add_argument("--host", default="0.0.0.0", help="Host for web server")
                 parser.add_argument("--debug", action="store_true", help="Verbose logging")
                 parser.add_argument("--group", default="dev", help="exporter group")
-                parser.add_argument("--runId", help="Optional correlation ID")
+                parser.add_argument("--run_id", help="Optional correlation ID")
                 
                 # Add scraper-specific required arguments
                 for param in cls.required_params:

@@ -63,7 +63,7 @@ class GetNbaComScheduleCdn(ScraperBase, ScraperFlaskMixin):
     required_params = []  # No parameters needed for CDN static files
     optional_params = {
         "apiKey": None,
-        "runId": None,
+        "run_id": None,
     }
     
     required_opts = []  # No parameters needed for CDN static files

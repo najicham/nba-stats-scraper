@@ -13,13 +13,13 @@ Usage examples
 --------------
   # Via capture tool (recommended for data collection):
   python tools/fixtures/capture.py oddsa_player_props \
-      --eventId 6f0b6f8d8cc9c5bc6375cdee \
+      --event_id 6f0b6f8d8cc9c5bc6375cdee \
       --markets player_points \
       --debug
 
   # Direct CLI execution:
   python scrapers/oddsapi/oddsa_player_props.py \
-      --eventId 6f0b6f8d8cc9c5bc6375cdee \
+      --event_id 6f0b6f8d8cc9c5bc6375cdee \
       --markets player_points \
       --debug
 
@@ -61,7 +61,7 @@ logger = logging.getLogger(__name__)
 class GetOddsApiCurrentEventOdds(ScraperBase, ScraperFlaskMixin):
     """
     Required opts:
-      • eventId  - Odds-API event ID
+      • event_id  - Odds-API event ID
 
     Optional opts (map to query params):
       • sport       - e.g. basketball_nba (defaults to basketball_nba)
@@ -75,7 +75,7 @@ class GetOddsApiCurrentEventOdds(ScraperBase, ScraperFlaskMixin):
 
     # Flask Mixin Configuration
     scraper_name = "oddsa_player_props"
-    required_params = ["eventId"]
+    required_params = ["event_id"]
     optional_params = {
         "apiKey": None,  # Falls back to env ODDS_API_KEY
         "sport": None,  # Defaults to basketball_nba in set_additional_opts
@@ -86,7 +86,7 @@ class GetOddsApiCurrentEventOdds(ScraperBase, ScraperFlaskMixin):
         "dateFormat": None,
     }
 
-    required_opts = ["eventId"]
+    required_opts = ["event_id"]
     proxy_enabled = False
     browser_enabled = False
 
@@ -98,7 +98,7 @@ class GetOddsApiCurrentEventOdds(ScraperBase, ScraperFlaskMixin):
         {   # RAW payload for prod / GCS archival
             "type": "gcs",
             # "key": (
-            #     "oddsapi/event-odds/current/%(sport)s/%(eventId)s/"
+            #     "oddsapi/event-odds/current/%(sport)s/%(event_id)s/"
             #     "%(run_id)s.raw.json"
             # ),
             "key": GCSPathBuilder.get_path(GCS_PATH_KEY),
@@ -107,7 +107,7 @@ class GetOddsApiCurrentEventOdds(ScraperBase, ScraperFlaskMixin):
         },
         {   # Pretty JSON for dev & capture
             "type": "file",
-            "filename": "/tmp/oddsapi_curr_event_odds_%(eventId)s.json",
+            "filename": "/tmp/oddsapi_curr_event_odds_%(event_id)s.json",
             "pretty_print": True,
             "export_mode": ExportMode.DATA,
             "groups": ["dev", "capture", "test"],
@@ -152,7 +152,7 @@ class GetOddsApiCurrentEventOdds(ScraperBase, ScraperFlaskMixin):
 
         base = self._API_ROOT_TMPL.format(
             sport=self.opts["sport"],
-            eventId=self.opts["eventId"],
+            eventId=self.opts["event_id"],
         )
 
         query: Dict[str, Any] = {
@@ -215,7 +215,7 @@ class GetOddsApiCurrentEventOdds(ScraperBase, ScraperFlaskMixin):
 
         self.data = {
             "sport": self.opts["sport"],
-            "eventId": self.opts["eventId"],
+            "eventId": self.opts["event_id"],
             "markets": self.opts.get("markets", "player_points"),
             "regions": self.opts.get("regions", "us"),
             "rowCount": row_count,
@@ -224,7 +224,7 @@ class GetOddsApiCurrentEventOdds(ScraperBase, ScraperFlaskMixin):
         logger.info(
             "Fetched %d bookmaker-market rows for event %s",
             row_count,
-            self.opts["eventId"],
+            self.opts["event_id"],
         )
 
     # ------------------------------------------------------------------ #
@@ -240,7 +240,7 @@ class GetOddsApiCurrentEventOdds(ScraperBase, ScraperFlaskMixin):
         return {
             "rowCount": self.data.get("rowCount", 0),
             "sport": self.opts.get("sport"),
-            "eventId": self.opts.get("eventId"),
+            "eventId": self.opts.get("event_id"),
             "markets": self.opts.get("markets"),
             "regions": self.opts.get("regions"),
         }

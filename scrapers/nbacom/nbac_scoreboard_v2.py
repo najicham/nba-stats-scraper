@@ -57,7 +57,7 @@ class GetNbaComScoreboardV2(ScraperBase, ScraperFlaskMixin):
     required_params = ["scoreDate"]
     optional_params = {
         "apiKey": None,
-        "runId": None,
+        "run_id": None,
     }
 
     # ------------------------------------------------------------------ #

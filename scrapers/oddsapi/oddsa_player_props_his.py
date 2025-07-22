@@ -10,13 +10,13 @@ Usage examples
 --------------
   # Via capture tool (recommended for data collection):
   python tools/fixtures/capture.py oddsa_player_props_his \
-      --eventId 6f0b6f8d8cc9c5bc6375cdee \
+      --event_id 6f0b6f8d8cc9c5bc6375cdee \
       --date 2025-06-10T00:00:00Z \
       --debug
 
   # Direct CLI execution:
   python scrapers/oddsapi/oddsa_player_props_his.py \
-      --eventId 6f0b6f8d8cc9c5bc6375cdee \
+      --event_id 6f0b6f8d8cc9c5bc6375cdee \
       --date 2025-06-10T00:00:00Z \
       --debug
 
@@ -75,7 +75,7 @@ def snap_iso_ts_to_five_minutes(iso_ts: str) -> str:
 class GetOddsApiHistoricalEventOdds(ScraperBase, ScraperFlaskMixin):
     """
     Required opts:
-      • eventId    - e.g. 6f0b6f8d8cc9…
+      • event_id    - e.g. 6f0b6f8d8cc9…
       • date       - snapshot timestamp (ISO-8601)
 
     Optional opts:
@@ -90,7 +90,7 @@ class GetOddsApiHistoricalEventOdds(ScraperBase, ScraperFlaskMixin):
 
     # Flask Mixin Configuration
     scraper_name = "oddsa_player_props_his"
-    required_params = ["eventId", "date"]
+    required_params = ["event_id", "date"]
     optional_params = {
         "apiKey": None,  # Falls back to env ODDS_API_KEY
         "sport": None,  # Defaults to basketball_nba in set_additional_opts
@@ -101,7 +101,7 @@ class GetOddsApiHistoricalEventOdds(ScraperBase, ScraperFlaskMixin):
         "dateFormat": None,
     }
 
-    required_opts = ["eventId", "date"]
+    required_opts = ["event_id", "date"]
     proxy_enabled = False
     browser_enabled = False
 
@@ -112,14 +112,14 @@ class GetOddsApiHistoricalEventOdds(ScraperBase, ScraperFlaskMixin):
     exporters = [
         {   # RAW payload for prod / GCS archival
             "type": "gcs",
-            #"key": "oddsapi/historical-event-odds/%(sport)s/%(eventId)s_%(date)s.raw.json",
+            #"key": "oddsapi/historical-event-odds/%(sport)s/%(event_id)s_%(date)s.raw.json",
             "key": GCSPathBuilder.get_path(GCS_PATH_KEY),
             "export_mode": ExportMode.RAW,
             "groups": ["prod", "gcs"],
         },
         {   # Pretty JSON for dev & capture
             "type": "file",
-            "filename": "/tmp/oddsapi_hist_event_odds_%(sport)s_%(eventId)s.json",
+            "filename": "/tmp/oddsapi_hist_event_odds_%(sport)s_%(event_id)s.json",
             "pretty_print": True,
             "export_mode": ExportMode.DATA,
             "groups": ["dev", "test"],
@@ -170,7 +170,7 @@ class GetOddsApiHistoricalEventOdds(ScraperBase, ScraperFlaskMixin):
 
         base = self._API_ROOT_TMPL.format(
             sport=self.opts["sport"],
-            eventId=self.opts["eventId"],
+            eventId=self.opts["event_id"],
         )
 
         query: Dict[str, Any] = {
@@ -228,7 +228,7 @@ class GetOddsApiHistoricalEventOdds(ScraperBase, ScraperFlaskMixin):
 
         self.data = {
             "sport": self.opts["sport"],
-            "eventId": self.opts["eventId"],
+            "eventId": self.opts["event_id"],
             "snapshot_timestamp": wrapper.get("timestamp"),
             "previous_snapshot": wrapper.get("previous_timestamp"),
             "next_snapshot": wrapper.get("next_timestamp"),
@@ -238,7 +238,7 @@ class GetOddsApiHistoricalEventOdds(ScraperBase, ScraperFlaskMixin):
             "eventOdds": event_odds,
         }
         logger.info(
-            "Fetched %d bookmaker-market rows for event %s", row_count, self.opts["eventId"]
+            "Fetched %d bookmaker-market rows for event %s", row_count, self.opts["event_id"]
         )
 
     # ------------------------------------------------------------------ #
@@ -254,7 +254,7 @@ class GetOddsApiHistoricalEventOdds(ScraperBase, ScraperFlaskMixin):
         return {
             "rowCount": self.data.get("rowCount", 0),
             "sport": self.opts.get("sport"),
-            "eventId": self.opts.get("eventId"),
+            "eventId": self.opts.get("event_id"),
             "markets": self.opts.get("markets"),
             "regions": self.opts.get("regions"),
             "snapshot": self.data.get("snapshot_timestamp"),

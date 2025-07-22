@@ -19,14 +19,14 @@ def add_common_args(parser: argparse.ArgumentParser, *, want_api_key: bool = Fal
 
         --group   dev | test | prod | capture
         --apiKey  override $BDL_API_KEY (optional)
-        --runId   externally-fixed run-id (optional, used by fixture capture)
+        --run_id   externally-fixed run-id (optional, used by fixture capture)
         --debug   ask the scraper to be extra chatty (optional)
     """
     parser.add_argument("--group", default="test",
                         help="exporter group: dev, test, prod, capture (default: test)")
     parser.add_argument("--debug", action="store_true",
                         help="enable verbose logging in the scraper")
-    parser.add_argument("--runId",
+    parser.add_argument("--run_id",
                         help="external run-id (fixture capture sets this)")
     if want_api_key:
         parser.add_argument("--apiKey",

@@ -61,7 +61,7 @@ class GetNbaComScheduleApi(ScraperBase, ScraperFlaskMixin):
     required_params = ["season"]
     optional_params = {
         "apiKey": None,
-        "runId": None,
+        "run_id": None,
     }
     
     required_opts = ["season"]

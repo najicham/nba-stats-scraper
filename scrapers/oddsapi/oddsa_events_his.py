@@ -74,7 +74,7 @@ class GetOddsApiHistoricalEvents(ScraperBase, ScraperFlaskMixin):
     Optional opts:
       • apiKey - your Odds-API key (falls back to env var)
       • commenceTimeFrom / commenceTimeTo - ISO filters on event commence_time
-      • eventIds  - comma-sep or list[str]
+      • event_ids  - comma-sep or list[str]
       • dateFormat - 'iso' (default) or 'unix'
     """
 
@@ -86,7 +86,7 @@ class GetOddsApiHistoricalEvents(ScraperBase, ScraperFlaskMixin):
         "sport": "basketball_nba",
         "commenceTimeFrom": None,
         "commenceTimeTo": None,
-        "eventIds": None,
+        "event_ids": None,
         "dateFormat": None
     }
 
@@ -160,7 +160,7 @@ class GetOddsApiHistoricalEvents(ScraperBase, ScraperFlaskMixin):
             "date": self.opts["date"],
             "commenceTimeFrom": self.opts.get("commenceTimeFrom"),
             "commenceTimeTo": self.opts.get("commenceTimeTo"),
-            "eventIds": self.opts.get("eventIds"),
+            "event_ids": self.opts.get("event_ids"),
             "dateFormat": self.opts.get("dateFormat"),
         }
         # scrub None values
