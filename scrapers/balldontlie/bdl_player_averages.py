@@ -39,6 +39,7 @@ try:
         NoHttpStatusCodeException,
         InvalidHttpStatusCodeException,
     )
+    from ..utils.gcs_path_builder import GCSPathBuilder
 except ImportError:
     # Direct execution: python scrapers/balldontlie/bdl_player_averages.py
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -49,6 +50,7 @@ except ImportError:
         NoHttpStatusCodeException,
         InvalidHttpStatusCodeException,
     )
+    from scrapers.utils.gcs_path_builder import GCSPathBuilder
 
 logger = logging.getLogger(__name__)
 
@@ -158,11 +160,12 @@ class BdlPlayerAveragesScraper(ScraperBase, ScraperFlaskMixin):
     # ------------------------------------------------------------------ #
     # Exporters                                                          #
     # ------------------------------------------------------------------ #
+    GCS_PATH_KEY = "bdl_player_averages"
     exporters = [
         # GCS RAW for production
         {
             "type": "gcs",
-            "key": "balldontlie/player-averages/%(ident)s_%(run_id)s.raw.json",
+            "key": GCSPathBuilder.get_path(GCS_PATH_KEY),
             "export_mode": ExportMode.RAW,
             "groups": ["prod", "gcs"],
         },
@@ -192,6 +195,7 @@ class BdlPlayerAveragesScraper(ScraperBase, ScraperFlaskMixin):
     # Option derivation                                                  #
     # ------------------------------------------------------------------ #
     def set_additional_opts(self) -> None:
+        super().set_additional_opts()
         # 1. required route & query params with defaults
         self.opts["category"] = (self.opts.get("category") or "general").lower()
         if self.opts["category"] not in _VALID_CATEGORIES:

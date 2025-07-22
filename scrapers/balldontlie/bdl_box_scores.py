@@ -34,12 +34,14 @@ try:
     from ..scraper_base import DownloadType, ExportMode, ScraperBase
     from ..scraper_flask_mixin import ScraperFlaskMixin
     from ..scraper_flask_mixin import convert_existing_flask_scraper
+    from ..utils.gcs_path_builder import GCSPathBuilder
 except ImportError:
     # Direct execution: python scrapers/balldontlie/bdl_box_scores.py
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
     from scrapers.scraper_base import DownloadType, ExportMode, ScraperBase
     from scrapers.scraper_flask_mixin import ScraperFlaskMixin
     from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
+    from scrapers.utils.gcs_path_builder import GCSPathBuilder
 
 logger = logging.getLogger(__name__)
 
@@ -65,11 +67,12 @@ class BdlBoxScoresScraper(ScraperBase, ScraperFlaskMixin):
     # ------------------------------------------------------------------ #
     # Exporters
     # ------------------------------------------------------------------ #
+    GCS_PATH_KEY = "bdl_box_scores"
     exporters = [
         # GCS RAW for production
         {
             "type": "gcs",
-            "key": "balldontlie/box-scores/%(date)s_%(run_id)s.raw.json",
+            "key": GCSPathBuilder.get_path(GCS_PATH_KEY),
             "export_mode": ExportMode.RAW,
             "groups": ["prod", "gcs"],
         },
@@ -101,6 +104,7 @@ class BdlBoxScoresScraper(ScraperBase, ScraperFlaskMixin):
     # Additional opts                                                    #
     # ------------------------------------------------------------------ #
     def set_additional_opts(self) -> None:
+        super().set_additional_opts()
         if not self.opts.get("date"):
             yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).date()
             self.opts["date"] = yesterday.isoformat()

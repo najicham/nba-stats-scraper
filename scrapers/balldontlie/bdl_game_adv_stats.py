@@ -38,6 +38,7 @@ try:
         NoHttpStatusCodeException,
         InvalidHttpStatusCodeException,
     )
+    from ..utils.gcs_path_builder import GCSPathBuilder
 except ImportError:
     # Direct execution: python scrapers/balldontlie/bdl_game_adv_stats.py
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -48,6 +49,7 @@ except ImportError:
         NoHttpStatusCodeException,
         InvalidHttpStatusCodeException,
     )
+    from scrapers.utils.gcs_path_builder import GCSPathBuilder
 
 logger = logging.getLogger(__name__)
 
@@ -132,11 +134,12 @@ class BdlGameAdvStatsScraper(ScraperBase, ScraperFlaskMixin):
     # ------------------------------------------------------------------ #
     # Exporters                                                          #
     # ------------------------------------------------------------------ #
+    GCS_PATH_KEY = "bdl_game_adv_stats"
     exporters = [
         # GCS RAW for production
         {
             "type": "gcs",
-            "key": "balldontlie/game-adv-stats/%(ident)s_%(run_id)s.raw.json",
+            "key": GCSPathBuilder.get_path(GCS_PATH_KEY),
             "export_mode": ExportMode.RAW,
             "groups": ["prod", "gcs"],
         },
@@ -166,6 +169,7 @@ class BdlGameAdvStatsScraper(ScraperBase, ScraperFlaskMixin):
     # Additional opts                                                    #
     # ------------------------------------------------------------------ #
     def set_additional_opts(self) -> None:
+        super().set_additional_opts()
         today = datetime.now(timezone.utc).date()
         self.opts["startDate"] = _coerce_date(
             self.opts.get("startDate"), today - timedelta(days=1)

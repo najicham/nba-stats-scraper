@@ -57,6 +57,7 @@ class GetNbaComGameScore(ScraperBase):
     # Additional options (season / time)
     # ------------------------------------------------------------------ #
     def set_additional_opts(self) -> None:
+        super().set_additional_opts()
         now = datetime.now(timezone.utc)
         self.opts["time"] = now.strftime("%H-%M-%S")
 

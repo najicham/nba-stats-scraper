@@ -132,6 +132,7 @@ class GetBettingProsNBAPlayerProps(DownloaderBase):
     
     
     def set_additional_opts(self):
+        super().set_additional_opts()
         # check future dates if empty
         if "check_future_days" in self.opts:
             future_days = 7

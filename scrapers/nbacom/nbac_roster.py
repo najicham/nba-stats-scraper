@@ -38,6 +38,7 @@ try:
     from ..scraper_flask_mixin import ScraperFlaskMixin
     from ..scraper_flask_mixin import convert_existing_flask_scraper
     from ..utils.exceptions import DownloadDataException
+    from ..utils.gcs_path_builder import GCSPathBuilder
 except ImportError:
     # Direct execution: python scrapers/nbacom/nbac_roster.py
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -45,6 +46,7 @@ except ImportError:
     from scrapers.scraper_flask_mixin import ScraperFlaskMixin
     from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
     from scrapers.utils.exceptions import DownloadDataException
+    from scrapers.utils.gcs_path_builder import GCSPathBuilder
 
 from shared.config.nba_teams import NBA_TEAMS
 
@@ -96,19 +98,21 @@ class GetNbaTeamRoster(ScraperBase, ScraperFlaskMixin):
     # master debug flag (can be overridden by opts['debug'])
     debug_enabled: bool = False
 
+    GCS_PATH_KEY = "nba_com_team_roster"
     exporters = [
+        {
+            "type": "gcs",
+            #"key": "nba/rosters/%(season)s/%(date)s/%(teamAbbr)s_%(time)s.json",
+            "key": GCSPathBuilder.get_path(GCS_PATH_KEY),
+            "export_mode": ExportMode.DATA,
+            "groups": ["prod", "gcs"],
+        },
         {
             "type": "file",
             "filename": "/tmp/nbacom_roster_%(teamAbbr)s_%(date)s.json",
             "export_mode": ExportMode.DATA,
             "pretty_print": True,
             "groups": ["dev", "test", "prod"],
-        },
-        {
-            "type": "gcs",
-            "key": "nba/rosters/%(season)s/%(date)s/%(teamAbbr)s_%(time)s.json",
-            "export_mode": ExportMode.DATA,
-            "groups": ["prod", "gcs"],
         },
         # ADD CAPTURE EXPORTERS for testing with capture.py
         {
@@ -128,6 +132,8 @@ class GetNbaTeamRoster(ScraperBase, ScraperFlaskMixin):
 
     # ------------------------------------------------------------ helpers
     def set_additional_opts(self) -> None:
+        super().set_additional_opts()
+        
         now = datetime.now(timezone.utc)
         self.opts["date"] = now.strftime("%Y-%m-%d")
         self.opts["time"] = now.strftime("%H-%M-%S")

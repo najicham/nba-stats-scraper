@@ -139,6 +139,7 @@ class GetOddsApiHistoricalEvents(ScraperBase, ScraperFlaskMixin):
         Round the supplied timestamp down to the nearest 5-minute snapshot
         (doc: snapshots are 5 min granularity after 2022-09-18).
         """
+        super().set_additional_opts()
         if self.opts.get("date"):
             self.opts["date"] = snap_iso_ts_to_five_minutes(self.opts["date"])
 

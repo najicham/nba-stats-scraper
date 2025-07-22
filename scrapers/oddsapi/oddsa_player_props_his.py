@@ -40,6 +40,7 @@ try:
     from ..scraper_flask_mixin import ScraperFlaskMixin
     from ..scraper_flask_mixin import convert_existing_flask_scraper
     from ..utils.exceptions import DownloadDataException
+    from ..utils.gcs_path_builder import GCSPathBuilder
 except ImportError:
     # Direct execution: python scrapers/oddsapi/oddsa_player_props_his.py
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -47,6 +48,7 @@ except ImportError:
     from scrapers.scraper_flask_mixin import ScraperFlaskMixin
     from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
     from scrapers.utils.exceptions import DownloadDataException
+    from scrapers.utils.gcs_path_builder import GCSPathBuilder
 
 logger = logging.getLogger(__name__)
 
@@ -106,10 +108,12 @@ class GetOddsApiHistoricalEventOdds(ScraperBase, ScraperFlaskMixin):
     # ------------------------------------------------------------------ #
     # Exporters                                                          #
     # ------------------------------------------------------------------ #
+    GCS_PATH_KEY = "odds_api_player_props_history"
     exporters = [
         {   # RAW payload for prod / GCS archival
             "type": "gcs",
-            "key": "oddsapi/historical-event-odds/%(sport)s/%(eventId)s_%(date)s.raw.json",
+            #"key": "oddsapi/historical-event-odds/%(sport)s/%(eventId)s_%(date)s.raw.json",
+            "key": GCSPathBuilder.get_path(GCS_PATH_KEY),
             "export_mode": ExportMode.RAW,
             "groups": ["prod", "gcs"],
         },
@@ -140,6 +144,7 @@ class GetOddsApiHistoricalEventOdds(ScraperBase, ScraperFlaskMixin):
     # Additional opts                                                    #
     # ------------------------------------------------------------------ #
     def set_additional_opts(self) -> None:
+        super().set_additional_opts()
         # Snap to valid snapshot boundary
         self.opts["date"] = snap_iso_ts_to_five_minutes(self.opts["date"])
         # ── season‑wide defaults ──────────────────────────────

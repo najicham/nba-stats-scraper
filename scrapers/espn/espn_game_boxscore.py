@@ -43,6 +43,7 @@ try:
     from ..scraper_flask_mixin import ScraperFlaskMixin
     from ..scraper_flask_mixin import convert_existing_flask_scraper
     from ..utils.exceptions import DownloadDataException
+    from ..utils.gcs_path_builder import GCSPathBuilder
 except ImportError:
     # Direct execution: python scrapers/espn/espn_game_boxscore.py
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -50,6 +51,7 @@ except ImportError:
     from scrapers.scraper_flask_mixin import ScraperFlaskMixin
     from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
     from scrapers.utils.exceptions import DownloadDataException
+    from scrapers.utils.gcs_path_builder import GCSPathBuilder
 
 # ---------------------------------------------------------------------------
 #  Assume we have a config file with a dictionary:
@@ -102,11 +104,12 @@ class GetEspnBoxscore(ScraperBase, ScraperFlaskMixin):
     # ------------------------------------------------------------------ #
     # Exporters
     # ------------------------------------------------------------------ #
+    GCS_PATH_KEY = "espn_boxscore"
     exporters = [
         # GCS RAW for production
         {
             "type": "gcs",
-            "key": "espn/game-boxscore/%(gameId)s_%(run_id)s.raw.html",
+            "key": GCSPathBuilder.get_path(GCS_PATH_KEY),
             "export_mode": ExportMode.RAW,
             "groups": ["prod", "gcs"],
         },

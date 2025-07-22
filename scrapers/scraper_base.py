@@ -443,6 +443,9 @@ class ScraperBase:
                     # Fallback to UTC date if timezone fails
                     self.opts["date"] = datetime.utcnow().strftime("%Y-%m-%d")
 
+        logger.debug("Added standard path variables: timestamp=%s, date=%s", 
+                self.opts.get("timestamp"), self.opts.get("date"))
+
     def validate_additional_opts(self):
         """
         Hook: child scrapers can validate newly-added opts. 

@@ -45,12 +45,14 @@ try:
     from ..scraper_base import DownloadType, ExportMode, ScraperBase
     from ..scraper_flask_mixin import ScraperFlaskMixin
     from ..scraper_flask_mixin import convert_existing_flask_scraper
+    from ..utils.gcs_path_builder import GCSPathBuilder
 except ImportError:
     # Direct execution: python scrapers/espn/espn_roster.py
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
     from scrapers.scraper_base import DownloadType, ExportMode, ScraperBase
     from scrapers.scraper_flask_mixin import ScraperFlaskMixin
     from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
+    from scrapers.utils.gcs_path_builder import GCSPathBuilder
 
 logger = logging.getLogger("scraper_base")
 
@@ -83,11 +85,12 @@ class GetEspnTeamRoster(ScraperBase, ScraperFlaskMixin):
     # ------------------------------------------------------------------ #
     # Exporters
     # ------------------------------------------------------------------ #
+    GCS_PATH_KEY = "espn_team_roster"
     exporters = [
         # GCS RAW for production
         {
             "type": "gcs",
-            "key": "espn/roster/%(teamAbbr)s_%(date)s_%(run_id)s.raw.html",
+            "key": GCSPathBuilder.get_path(GCS_PATH_KEY),
             "export_mode": ExportMode.RAW,
             "groups": ["prod", "gcs"],
         },
@@ -122,6 +125,7 @@ class GetEspnTeamRoster(ScraperBase, ScraperFlaskMixin):
     # Additional opts (date / season) helpers
     # ------------------------------------------------------------------ #
     def set_additional_opts(self) -> None:
+        super().set_additional_opts()
         now = datetime.now(timezone.utc)
         self.opts["date"] = now.strftime("%Y-%m-%d")
         self.opts["time"] = now.strftime("%H-%M-%S")

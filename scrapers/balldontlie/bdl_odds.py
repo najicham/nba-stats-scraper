@@ -33,12 +33,14 @@ try:
     from ..scraper_base import DownloadType, ExportMode, ScraperBase
     from ..scraper_flask_mixin import ScraperFlaskMixin
     from ..scraper_flask_mixin import convert_existing_flask_scraper
+    from ..utils.gcs_path_builder import GCSPathBuilder
 except ImportError:
     # Direct execution: python scrapers/balldontlie/bdl_odds.py
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
     from scrapers.scraper_base import DownloadType, ExportMode, ScraperBase
     from scrapers.scraper_flask_mixin import ScraperFlaskMixin
     from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
+    from scrapers.utils.gcs_path_builder import GCSPathBuilder
 
 logger = logging.getLogger(__name__)
 
@@ -65,11 +67,12 @@ class BdlOddsScraper(ScraperBase, ScraperFlaskMixin):
     # ------------------------------------------------------------------ #
     # Exporters
     # ------------------------------------------------------------------ #
+    GCS_PATH_KEY = "bdl_odds"
     exporters = [
         # GCS RAW for production
         {
             "type": "gcs",
-            "key": "balldontlie/odds/%(ident)s_%(run_id)s.raw.json",
+            "key": GCSPathBuilder.get_path(GCS_PATH_KEY),
             "export_mode": ExportMode.RAW,
             "groups": ["prod", "gcs"],
         },
@@ -101,6 +104,7 @@ class BdlOddsScraper(ScraperBase, ScraperFlaskMixin):
     # Option derivation                                                  #
     # ------------------------------------------------------------------ #
     def set_additional_opts(self) -> None:
+        super().set_additional_opts()
         today = _dt.date.today().isoformat()
         if self.opts.get("gameId"):
             self.opts["ident"] = f"game_{self.opts['gameId']}"

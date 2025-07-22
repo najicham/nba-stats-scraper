@@ -55,12 +55,14 @@ try:
     from ..scraper_base import DownloadType, ExportMode, ScraperBase
     from ..scraper_flask_mixin import ScraperFlaskMixin
     from ..scraper_flask_mixin import convert_existing_flask_scraper
+    from ..utils.gcs_path_builder import GCSPathBuilder
 except ImportError:
     # Direct execution: python scrapers/balldontlie/bdl_players.py
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
     from scrapers.scraper_base import DownloadType, ExportMode, ScraperBase
     from scrapers.scraper_flask_mixin import ScraperFlaskMixin
     from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
+    from scrapers.utils.gcs_path_builder import GCSPathBuilder
 
 logger = logging.getLogger(__name__)
 
@@ -94,11 +96,12 @@ class BdlPlayersScraper(ScraperBase, ScraperFlaskMixin):
     # ------------------------------------------------------------------ #
     # Exporters
     # ------------------------------------------------------------------ #
+    GCS_PATH_KEY = "bdl_players"
     exporters = [
         # GCS RAW for production
         {
             "type": "gcs",
-            "key": "balldontlie/players/%(ident)s_%(run_id)s.raw.json",
+            "key": GCSPathBuilder.get_path(GCS_PATH_KEY),
             "export_mode": ExportMode.RAW,
             "groups": ["prod", "gcs"],
         },
@@ -141,6 +144,7 @@ class BdlPlayersScraper(ScraperBase, ScraperFlaskMixin):
     # set_additional_opts                                                #
     # ------------------------------------------------------------------ #
     def set_additional_opts(self) -> None:
+        super().set_additional_opts()
         # Default perPage = 100, cap at 100
         per_page = int(self.opts.get("perPage") or 100)
         self.opts["perPage"] = min(max(per_page, 1), 100)

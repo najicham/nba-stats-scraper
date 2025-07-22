@@ -34,6 +34,7 @@ try:
     from ..scraper_flask_mixin import ScraperFlaskMixin
     from ..scraper_flask_mixin import convert_existing_flask_scraper
     from ..utils.exceptions import DownloadDataException
+    from ..utils.gcs_path_builder import GCSPathBuilder
 except ImportError:
     # Direct execution: python scrapers/nbacom/nbac_player_list.py
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -41,6 +42,7 @@ except ImportError:
     from scrapers.scraper_flask_mixin import ScraperFlaskMixin
     from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
     from scrapers.utils.exceptions import DownloadDataException
+    from scrapers.utils.gcs_path_builder import GCSPathBuilder
 
 logger = logging.getLogger("scraper_base")
 
@@ -65,20 +67,22 @@ class GetNbaComPlayerList(ScraperBase, ScraperFlaskMixin):
 
     additional_opts = ["nba_season_today"]  # same helper your code‑base already has
 
+    GCS_PATH_KEY = "nba_com_player_list"
     exporters = [
         {
             "type": "gcs",
-            "key": "nbacom/player-list/%(season)s/log/%(time)s.json",
+            #"key": "nbacom/player-list/%(season)s/log/%(time)s.json",
+            "key": GCSPathBuilder.get_path(GCS_PATH_KEY),
             "export_mode": ExportMode.RAW,
             "groups": ["prod", "s3", "gcs"],
         },
-        {
-            "type": "gcs",
-            "check_should_save": True,
-            "key": "nbacom/player-list/%(season)s/current/current.json",
-            "export_mode": ExportMode.RAW,
-            "groups": ["prod", "s3", "gcs"],
-        },
+        # {
+        #     "type": "gcs",
+        #     "check_should_save": True,
+        #     "key": "nbacom/player-list/%(season)s/current/current.json",
+        #     "export_mode": ExportMode.RAW,
+        #     "groups": ["prod", "s3", "gcs"],
+        # },
         {
             "type": "file",
             "filename": "/tmp/getnbacomplayerlist",
@@ -112,6 +116,7 @@ class GetNbaComPlayerList(ScraperBase, ScraperFlaskMixin):
     # Option helpers
     # ------------------------------------------------------------------ #
     def set_additional_opts(self) -> None:
+        super().set_additional_opts()
         # Default season → current calendar year
         if not self.opts.get("season"):
             self.opts["season"] = str(datetime.now(timezone.utc).year)

@@ -34,6 +34,7 @@ try:
     from ..scraper_flask_mixin import ScraperFlaskMixin
     from ..scraper_flask_mixin import convert_existing_flask_scraper
     from ..utils.exceptions import DownloadDataException
+    from ..utils.gcs_path_builder import GCSPathBuilder
 except ImportError:
     # Direct execution: python scrapers/nbacom/nbac_play_by_play.py
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -41,6 +42,7 @@ except ImportError:
     from scrapers.scraper_flask_mixin import ScraperFlaskMixin
     from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
     from scrapers.utils.exceptions import DownloadDataException
+    from scrapers.utils.gcs_path_builder import GCSPathBuilder
 
 logger = logging.getLogger("scraper_base")
 
@@ -63,20 +65,22 @@ class GetNbaComPlayByPlay(ScraperBase, ScraperFlaskMixin):
     decode_download_data: bool = True
     header_profile: str | None = "data"
 
+    GCS_PATH_KEY = "nba_com_play_by_play"
     exporters = [
+        {
+            "type": "gcs",
+            #"key": "nba/play-by-play/%(season)s/%(gameId)s.json",
+            "key": GCSPathBuilder.get_path(GCS_PATH_KEY),
+            "export_mode": ExportMode.DATA,
+            "groups": ["prod", "gcs"],
+        },
         {
             "type": "file",
             "filename": "/tmp/nbacom_play_by_play_%(gameId)s.json",
             "export_mode": ExportMode.DATA,
             "pretty_print": True,
             "groups": ["dev", "test", "prod"],
-        },
-        {
-            "type": "gcs",
-            "key": "nba/play-by-play/%(season)s/%(gameId)s.json",
-            "export_mode": ExportMode.DATA,
-            "groups": ["prod", "gcs"],
-        },
+        },        
         # ADD CAPTURE EXPORTERS for testing with capture.py
         {
             "type": "file",
@@ -97,6 +101,8 @@ class GetNbaComPlayByPlay(ScraperBase, ScraperFlaskMixin):
     # Additional opts helper (derive season)
     # ------------------------------------------------------------------ #
     def set_additional_opts(self) -> None:
+        super().set_additional_opts()
+        
         # Add timestamp for exports
         now = datetime.now(timezone.utc)
         self.opts["time"] = now.strftime("%H-%M-%S")

@@ -39,12 +39,14 @@ try:
     from ..scraper_base import DownloadType, ExportMode, ScraperBase
     from ..scraper_flask_mixin import ScraperFlaskMixin
     from ..scraper_flask_mixin import convert_existing_flask_scraper
+    from ..utils.gcs_path_builder import GCSPathBuilder
 except ImportError:
     # Direct execution: python scrapers/balldontlie/bdl_active_players.py
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
     from scrapers.scraper_base import DownloadType, ExportMode, ScraperBase
     from scrapers.scraper_flask_mixin import ScraperFlaskMixin
     from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
+    from scrapers.utils.gcs_path_builder import GCSPathBuilder
 
 logger = logging.getLogger(__name__)
 
@@ -72,11 +74,12 @@ class BdlActivePlayersScraper(ScraperBase, ScraperFlaskMixin):
     # ------------------------------------------------------------------ #
     # Exporters
     # ------------------------------------------------------------------ #
+    GCS_PATH_KEY = "bdl_active_players"
     exporters = [
         # GCS RAW for production
         {
             "type": "gcs",
-            "key": "balldontlie/active-players/%(ident)s_%(run_id)s.raw.json",
+            "key": GCSPathBuilder.get_path(GCS_PATH_KEY),
             "export_mode": ExportMode.RAW,
             "groups": ["prod", "gcs"],
         },
@@ -108,6 +111,7 @@ class BdlActivePlayersScraper(ScraperBase, ScraperFlaskMixin):
     # Additional opts – build concise identifier                         #
     # ------------------------------------------------------------------ #
     def set_additional_opts(self) -> None:
+        super().set_additional_opts()
         if self.opts.get("playerId"):
             self.opts["ident"] = f"player_{self.opts['playerId']}"
         elif self.opts.get("teamId"):

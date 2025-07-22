@@ -35,6 +35,7 @@ try:
     from ..scraper_flask_mixin import ScraperFlaskMixin
     from ..scraper_flask_mixin import convert_existing_flask_scraper
     from ..utils.exceptions import DownloadDataException
+    from ..utils.gcs_path_builder import GCSPathBuilder
 except ImportError:
     # Direct execution: python scrapers/nbacom/nbac_schedule_api.py
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -42,6 +43,7 @@ except ImportError:
     from scrapers.scraper_flask_mixin import ScraperFlaskMixin
     from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
     from scrapers.utils.exceptions import DownloadDataException
+    from scrapers.utils.gcs_path_builder import GCSPathBuilder
 
 logger = logging.getLogger("scraper_base")
 
@@ -70,7 +72,14 @@ class GetNbaComScheduleApi(ScraperBase, ScraperFlaskMixin):
     
     BASE_URL = "https://stats.nba.com/stats/scheduleleaguev2int"
     
+    GCS_PATH_KEY = "nba_com_schedule"
     exporters = [
+        {
+            "type": "gcs",
+            "key": GCSPathBuilder.get_path(GCS_PATH_KEY),
+            "export_mode": ExportMode.DATA,
+            "groups": ["prod", "gcs"],
+        },
         # Local development files
         {
             "type": "file",
@@ -104,6 +113,7 @@ class GetNbaComScheduleApi(ScraperBase, ScraperFlaskMixin):
     ]
     
     def set_additional_opts(self) -> None:
+        super().set_additional_opts()
         """Convert season to NBA format and set timestamp"""
         # Convert 4-digit year to NBA season format (e.g., 2025 -> 2025-26)
         season_year = int(self.opts["season"])

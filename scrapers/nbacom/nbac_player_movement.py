@@ -35,6 +35,7 @@ try:
     from ..scraper_flask_mixin import ScraperFlaskMixin
     from ..scraper_flask_mixin import convert_existing_flask_scraper
     from ..utils.exceptions import DownloadDataException
+    from ..utils.gcs_path_builder import GCSPathBuilder
 except ImportError:
     # Direct execution: python scrapers/nbacom/nbac_player_movement.py
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -42,6 +43,7 @@ except ImportError:
     from scrapers.scraper_flask_mixin import ScraperFlaskMixin
     from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
     from scrapers.utils.exceptions import DownloadDataException
+    from scrapers.utils.gcs_path_builder import GCSPathBuilder
 
 logger = logging.getLogger("scraper_base")
 
@@ -71,19 +73,21 @@ class GetNbaComPlayerMovement(ScraperBase, ScraperFlaskMixin):
     # Fixed URL (same as before)
     url = "https://stats.nba.com/js/data/playermovement/NBA_Player_Movement.json"
 
+    GCS_PATH_KEY = "nba_com_player_movement"
     exporters = [
         {
             "type": "gcs",
-            "key": "nbacom/player-movement/%(year)s/log/%(time)s.json",
+            #"key": "nbacom/player-movement/%(year)s/log/%(time)s.json",
+            "key": GCSPathBuilder.get_path(GCS_PATH_KEY),
             "export_mode": ExportMode.DATA,
             "groups": ["prod", "gcs"],
         },
-        {
-            "type": "gcs", 
-            "key": "nbacom/player-movement/%(year)s/current/current.json",
-            "export_mode": ExportMode.DATA,
-            "groups": ["prod", "gcs"],
-        },
+        # {
+        #     "type": "gcs", 
+        #     "key": "nbacom/player-movement/%(year)s/current/current.json",
+        #     "export_mode": ExportMode.DATA,
+        #     "groups": ["prod", "gcs"],
+        # },
         {
             "type": "file",
             "filename": "/tmp/nbacom_player_movement_%(year)s.json",
@@ -111,6 +115,7 @@ class GetNbaComPlayerMovement(ScraperBase, ScraperFlaskMixin):
     # Option helpers
     # ------------------------------------------------------------------ #
     def set_additional_opts(self) -> None:
+        super().set_additional_opts()
         if not self.opts.get("year"):
             self.opts["year"] = str(datetime.now(timezone.utc).year)
         # exporter timestamp

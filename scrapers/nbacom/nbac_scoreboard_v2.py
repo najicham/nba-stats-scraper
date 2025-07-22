@@ -36,6 +36,7 @@ try:
     from ..scraper_flask_mixin import ScraperFlaskMixin
     from ..scraper_flask_mixin import convert_existing_flask_scraper
     from ..utils.exceptions import DownloadDataException
+    from ..utils.gcs_path_builder import GCSPathBuilder
 except ImportError:
     # Direct execution: python scrapers/nbacom/nbac_scoreboard_v2.py
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -43,6 +44,7 @@ except ImportError:
     from scrapers.scraper_flask_mixin import ScraperFlaskMixin
     from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
     from scrapers.utils.exceptions import DownloadDataException
+    from scrapers.utils.gcs_path_builder import GCSPathBuilder
 
 logger = logging.getLogger("scraper_base")
 
@@ -70,7 +72,16 @@ class GetNbaComScoreboardV2(ScraperBase, ScraperFlaskMixin):
     # ------------------------------------------------------------------ #
     # Exporters - Updated to include capture group
     # ------------------------------------------------------------------ #
+    GCS_PATH_KEY = "nba_com_scoreboard_v2"
     exporters = [
+        # Production GCS export
+        {
+            "type": "gcs",
+            #"key": "nba/game_ids/%(scoreDate)s/game_ids_stats.json",
+            "key": GCSPathBuilder.get_path(GCS_PATH_KEY),
+            "export_mode": ExportMode.DATA,
+            "groups": ["prod", "gcs"],
+        },
         # Standard development export
         {
             "type": "file",
@@ -78,13 +89,6 @@ class GetNbaComScoreboardV2(ScraperBase, ScraperFlaskMixin):
             "export_mode": ExportMode.DATA,
             "pretty_print": True,
             "groups": ["dev", "test", "prod"],
-        },
-        # Production GCS export
-        {
-            "type": "gcs",
-            "key": "nba/game_ids/%(scoreDate)s/game_ids_stats.json",
-            "export_mode": ExportMode.DATA,
-            "groups": ["prod", "gcs"],
         },
         # Capture group exports (for capture.py)
         {
@@ -122,6 +126,7 @@ class GetNbaComScoreboardV2(ScraperBase, ScraperFlaskMixin):
         return f"{mm}/{dd}/{yyyy}"
 
     def set_additional_opts(self) -> None:
+        super().set_additional_opts()
         """Normalize scoreDate for exporters"""
         # Normalize date for exporters (remove dashes)
         self.opts["scoreDate"] = self._yyyy_mm_dd().replace("-", "")

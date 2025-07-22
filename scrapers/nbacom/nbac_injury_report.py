@@ -47,6 +47,7 @@ try:
     from ..scraper_flask_mixin import ScraperFlaskMixin
     from ..scraper_flask_mixin import convert_existing_flask_scraper
     from ..utils.exceptions import DownloadDataException, InvalidRegionDecodeException
+    from ..utils.gcs_path_builder import GCSPathBuilder
 except ImportError:
     # Direct execution: python scrapers/nbacom/nbac_injury_report.py
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -54,6 +55,7 @@ except ImportError:
     from scrapers.scraper_flask_mixin import ScraperFlaskMixin
     from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
     from scrapers.utils.exceptions import DownloadDataException, InvalidRegionDecodeException
+    from scrapers.utils.gcs_path_builder import GCSPathBuilder
 
 logger = logging.getLogger("scraper_base")
 
@@ -79,11 +81,13 @@ class GetNbaComInjuryReport(ScraperBase, ScraperFlaskMixin):
     # ------------------------------------------------------------------ #
     # Exporters
     # ------------------------------------------------------------------ #
+    GCS_PATH_KEY = "nba_com_injury_report"
     exporters = [
         # GCS RAW for production (PDF files)
         {
             "type": "gcs",
-            "key": "nbacom/injury-report/%(season)s/%(gamedate)s/%(hour)s%(period)s/%(time)s.pdf",
+            #"key": "nbacom/injury-report/%(season)s/%(gamedate)s/%(hour)s%(period)s/%(time)s.pdf",
+            "key": GCSPathBuilder.get_path(GCS_PATH_KEY),
             "export_mode": ExportMode.RAW,
             "groups": ["prod", "gcs"],
         },
@@ -114,6 +118,7 @@ class GetNbaComInjuryReport(ScraperBase, ScraperFlaskMixin):
     # Additional opts helper
     # ------------------------------------------------------------------ #
     def set_additional_opts(self) -> None:
+        super().set_additional_opts()
         now = datetime.now(timezone.utc)
         self.opts["time"] = now.strftime("%H-%M-%S")
         year = int(self.opts["gamedate"][0:4])

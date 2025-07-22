@@ -38,6 +38,7 @@ try:
     from ..scraper_flask_mixin import ScraperFlaskMixin
     from ..scraper_flask_mixin import convert_existing_flask_scraper
     from ..utils.exceptions import DownloadDataException
+    from ..utils.gcs_path_builder import GCSPathBuilder
 except ImportError:
     # Direct execution: python scrapers/nbacom/nbac_schedule_cdn.py
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -45,6 +46,7 @@ except ImportError:
     from scrapers.scraper_flask_mixin import ScraperFlaskMixin
     from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
     from scrapers.utils.exceptions import DownloadDataException
+    from scrapers.utils.gcs_path_builder import GCSPathBuilder
 
 logger = logging.getLogger("scraper_base")
 
@@ -76,7 +78,14 @@ class GetNbaComScheduleCdn(ScraperBase, ScraperFlaskMixin):
     # Backup URL (commented for future use)
     # BACKUP_URL = "https://cdn.nba.com/static/json/staticData/scheduleLeagueV2.json"
     
+    GCS_PATH_KEY = "nba_com_schedule_cdn"
     exporters = [
+        {
+            "type": "gcs",
+            "key": GCSPathBuilder.get_path(GCS_PATH_KEY),
+            "export_mode": ExportMode.DATA,
+            "groups": ["prod", "gcs"],
+        },
         # Local development files
         {
             "type": "file",
@@ -110,6 +119,8 @@ class GetNbaComScheduleCdn(ScraperBase, ScraperFlaskMixin):
     ]
     
     def set_additional_opts(self) -> None:
+        super().set_additional_opts()
+        
         """Set timestamp for exporters"""
         self.opts["timestamp"] = datetime.now(timezone.utc).isoformat()
         logger.info("Using NBA.com CDN static schedule endpoint")

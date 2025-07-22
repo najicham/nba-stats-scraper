@@ -40,6 +40,7 @@ try:
     from ..scraper_flask_mixin import ScraperFlaskMixin
     from ..scraper_flask_mixin import convert_existing_flask_scraper
     from ..utils.exceptions import DownloadDataException
+    from ..utils.gcs_path_builder import GCSPathBuilder
 except ImportError:
     # Direct execution: python scrapers/oddsapi/oddsa_team_players.py
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -47,6 +48,7 @@ except ImportError:
     from scrapers.scraper_flask_mixin import ScraperFlaskMixin
     from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
     from scrapers.utils.exceptions import DownloadDataException
+    from scrapers.utils.gcs_path_builder import GCSPathBuilder
 
 logger = logging.getLogger(__name__)
 
@@ -78,13 +80,15 @@ class GetOddsApiTeamPlayers(ScraperBase, ScraperFlaskMixin):
     # ------------------------------------------------------------------ #
     # Exporters                                                          #
     # ------------------------------------------------------------------ #
+    GCS_PATH_KEY = "odds_api_team_players"
     exporters = [
         {   # RAW for prod / archival
             "type": "gcs",
-            "key": (
-                "oddsapi/team-players/%(sport)s/%(participantId)s/"
-                "%(run_id)s.raw.json"
-            ),
+            # "key": (
+            #     "oddsapi/team-players/%(sport)s/%(participantId)s/"
+            #     "%(run_id)s.raw.json"
+            # ),
+            "key": GCSPathBuilder.get_path(GCS_PATH_KEY),
             "export_mode": ExportMode.RAW,
             "groups": ["prod", "gcs"],
         },

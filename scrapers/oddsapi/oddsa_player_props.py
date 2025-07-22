@@ -42,6 +42,7 @@ try:
     from ..scraper_flask_mixin import ScraperFlaskMixin
     from ..scraper_flask_mixin import convert_existing_flask_scraper
     from ..utils.exceptions import DownloadDataException
+    from ..utils.gcs_path_builder import GCSPathBuilder
 except ImportError:
     # Direct execution: python scrapers/oddsapi/oddsa_player_props.py
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -49,6 +50,7 @@ except ImportError:
     from scrapers.scraper_flask_mixin import ScraperFlaskMixin
     from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
     from scrapers.utils.exceptions import DownloadDataException
+    from scrapers.utils.gcs_path_builder import GCSPathBuilder
 
 logger = logging.getLogger(__name__)
 
@@ -91,13 +93,15 @@ class GetOddsApiCurrentEventOdds(ScraperBase, ScraperFlaskMixin):
     # ------------------------------------------------------------------ #
     # Exporters                                                          #
     # ------------------------------------------------------------------ #
+    GCS_PATH_KEY = "odds_api_player_props"
     exporters = [
         {   # RAW payload for prod / GCS archival
             "type": "gcs",
-            "key": (
-                "oddsapi/event-odds/current/%(sport)s/%(eventId)s/"
-                "%(run_id)s.raw.json"
-            ),
+            # "key": (
+            #     "oddsapi/event-odds/current/%(sport)s/%(eventId)s/"
+            #     "%(run_id)s.raw.json"
+            # ),
+            "key": GCSPathBuilder.get_path(GCS_PATH_KEY),
             "export_mode": ExportMode.RAW,
             "groups": ["prod", "gcs"],
         },
@@ -126,6 +130,7 @@ class GetOddsApiCurrentEventOdds(ScraperBase, ScraperFlaskMixin):
 
     def set_additional_opts(self) -> None:
         """Fill season-wide defaults for optional opts."""
+        super().set_additional_opts()
         self.opts.setdefault("sport", "basketball_nba")
         self.opts.setdefault("regions", "us")
         self.opts.setdefault("markets", "player_points")
