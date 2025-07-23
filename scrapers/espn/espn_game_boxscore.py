@@ -16,11 +16,11 @@ player IDs.
 Usage examples:
   # Via capture tool (recommended for data collection):
   python tools/fixtures/capture.py espn_game_boxscore \
-      --gameId 401766123 \
+      --game_id 401766123 \
       --debug
 
   # Direct CLI execution:
-  python scrapers/espn/espn_game_boxscore.py --gameId 401766123 --debug
+  python scrapers/espn/espn_game_boxscore.py --game_id 401766123 --debug
 
   # Flask web service:
   python scrapers/espn/espn_game_boxscore.py --serve --debug
@@ -63,7 +63,7 @@ except ImportError:
 #  So that alt="Indiana Pacers" => "IND" 
 # ---------------------------------------------------------------------------
 try:
-    from config.espn_nba_team_abbr import TEAM_ABBR_MAP
+    from shared.config.espn_nba_team_abbr import TEAM_ABBR_MAP
 except ImportError:
     # Fallback if config not available
     TEAM_ABBR_MAP = {}
@@ -91,13 +91,13 @@ class GetEspnBoxscore(ScraperBase, ScraperFlaskMixin):
 
     # Flask Mixin Configuration
     scraper_name = "espn_game_boxscore"
-    required_params = ["gameId"]  # gameId is required
+    required_params = ["game_id"]  # game_id is required
     optional_params = {
         "skipJson": "0",  # Set to 1/true to skip embedded JSON and test HTML
     }
 
     # Original scraper config
-    required_opts = ["gameId"]
+    required_opts = ["game_id"]
     download_type = DownloadType.HTML
     decode_download_data = True
 
@@ -115,7 +115,7 @@ class GetEspnBoxscore(ScraperBase, ScraperFlaskMixin):
         },
         {
             "type": "file",
-            "filename": "/tmp/boxscore2_%(gameId)s.json",
+            "filename": "/tmp/boxscore2_%(game_id)s.json",
             "export_mode": ExportMode.DATA,
             "pretty_print": True,
             "groups": ["dev", "test"]
@@ -123,14 +123,14 @@ class GetEspnBoxscore(ScraperBase, ScraperFlaskMixin):
         {
             # NEW: raw HTML dump for fixture collection
             "type": "file",
-            "filename": "/tmp/raw_%(gameId)s.html",
+            "filename": "/tmp/raw_%(game_id)s.html",
             "export_mode": ExportMode.RAW,   # untouched bytes
             "groups": ["capture"],           # fires only when you say --group capture
         },
         {
             "type": "file",
             # leave it in /tmp – the helper will move/gzip it for you
-            "filename": "/tmp/exp_%(gameId)s.json",
+            "filename": "/tmp/exp_%(game_id)s.json",
             "export_mode": ExportMode.DATA,      # the parsed result
             "pretty_print": True,                # easier to read
             "groups": ["golden", "capture"],                # fires only on --group golden
@@ -143,7 +143,7 @@ class GetEspnBoxscore(ScraperBase, ScraperFlaskMixin):
         self.skip_json = False  # Controlled by command-line arg --skipJson=1
 
     def set_url(self):
-        self.url = f"https://www.espn.com/nba/boxscore?gameId={self.opts['gameId']}"
+        self.url = f"https://www.espn.com/nba/boxscore?gameId={self.opts['game_id']}"
         logger.info(f"Resolved ESPN boxscore URL: {self.url}")
 
     def set_headers(self):
@@ -173,7 +173,7 @@ class GetEspnBoxscore(ScraperBase, ScraperFlaskMixin):
             self.data = self.scrape_html_boxscore(html)
 
         # Add top-level fields
-        self.data["gameId"] = self.opts["gameId"]
+        self.data["game_id"] = self.opts["game_id"]
         self.data["timestamp"] = datetime.now(timezone.utc).isoformat() # datetime.utcnow().replace(tzinfo=pytz.UTC).isoformat()
 
     # -------------------------------------------------------------------------
@@ -492,7 +492,7 @@ class GetEspnBoxscore(ScraperBase, ScraperFlaskMixin):
                 if isinstance(v, list):
                     total_players += len(v)
         return {
-            "gameId": self.opts["gameId"],
+            "game_id": self.opts["game_id"],
             "playerCount": total_players,
             "skipJson": self.skip_json,
         }

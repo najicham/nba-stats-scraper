@@ -3,7 +3,7 @@
 tools/fixtures/capture.py
 -------------------------
 
-Capture RAW + “golden” EXP fixtures for *any* scraper that supports the
+Capture RAW + "golden" EXP fixtures for *any* scraper that supports the
 `group=capture` exporters.
 
 The scraper must write:
@@ -45,7 +45,7 @@ sys.path.insert(0, str(ROOT))                               # ensure root on sys
 SAMPLES = ROOT / "tests" / "samples"
 TMP_DIR = pathlib.Path("/tmp")
 
-SIZE_CAP = 200_000                # gzip if fixture > 200 kB (changed from 100 kB)
+SIZE_CAP = 200_000                # gzip if fixture > 200 kB (changed from 100 kB)
 RAW_FMT = "raw_{run}.html"        # extension can be .html, .json, …
 EXP_FMT = "exp_{run}.json"
 
@@ -105,7 +105,7 @@ def run_scraper(module_path: str, run_id: str, extra_args: list[str], debug: boo
     """Invoke the scraper as ``python -m <module_path> …``."""
     cmd = ["python", "-m", module_path,
            "--group", "capture",
-           "--runId", run_id]
+           "--run_id", run_id]  # FIXED: Changed from --runId to --run_id
     if debug:
         cmd.append("--debug")
     cmd += extra_args
@@ -122,7 +122,7 @@ def maybe_gzip(src: pathlib.Path) -> pathlib.Path:
     gz_path = src.with_suffix(src.suffix + ".gz")
     with src.open("rb") as fin, gzip.open(gz_path, "wb", compresslevel=9) as fout:
         shutil.copyfileobj(fin, fout)
-    print(f"  gzipped → {gz_path.name} ({gz_path.stat().st_size:,} B)")
+    print(f"  gzipped → {gz_path.name} ({gz_path.stat().st_size:,} B)")
     return gz_path
 
 
@@ -133,7 +133,7 @@ def promote(scraper_name: str, src: pathlib.Path) -> None:
     dest = dest_dir / src.name
     shutil.copy2(src, dest)
     rel = dest.relative_to(ROOT)
-    print(f"  copied  → {rel} ({dest.stat().st_size:,} B)")
+    print(f"  copied  → {rel} ({dest.stat().st_size:,} B)")
 
 
 # --------------------------------------------------------------------------- #
@@ -166,7 +166,7 @@ def main_one(scraper_name: str,
     if exp_file.exists():
         promote(scraper_name, maybe_gzip(exp_file))
     else:
-        print(f"  (no {exp_file.name} found – raw only)")
+        print(f"  (no {exp_file.name} found – raw only)")
 
 
 # --------------------------------------------------------------------------- #
@@ -203,3 +203,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+    

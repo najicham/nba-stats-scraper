@@ -1,0 +1,19 @@
+{
+  "date": "2025-06-22",
+  "teams_filter": null,
+  "processed_at": "2025-07-23T03:59:04.824956+00:00",
+  "count": 1,
+  "games": [
+    {
+      "file_id": "1kAXcvezicVCMNDTAY3Byovev3yqF_KvE",
+      "file_name": "[2025-06-22]-0042400407-IND@OKC.csv",
+      "size_bytes": 174127,
+      "modified": "2025-06-23T06:58:05.000Z",
+      "game_id": "0042400407",
+      "date": "2025-06-22",
+      "teams": "IND@OKC",
+      "away_team": "IND",
+      "home_team": "OKC"
+    }
+  ]
+}

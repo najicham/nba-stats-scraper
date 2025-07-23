@@ -49,7 +49,7 @@ class GCSPathBuilder:
         "odds_api_team_players": "odds-api/players/%(date)s/%(timestamp)s.json",
         
         # ESPN Scrapers
-        "espn_team_roster": "espn/rosters/%(date)s/team_%(team_abbrev)s/%(timestamp)s.json",
+        "espn_team_roster": "espn/rosters/%(date)s/team_%(team_abbr)s/%(timestamp)s.json",
         "espn_scoreboard": "espn/scoreboard/%(date)s/%(timestamp)s.json", 
         "espn_boxscore": "espn/boxscores/%(date)s/game_%(game_id)s/%(timestamp)s.json",
         
@@ -61,11 +61,12 @@ class GCSPathBuilder:
         "nba_com_injury_report": "nba-com/injury-report/%(date)s/%(hour)s%(period)s/%(timestamp)s.json",
         "nba_com_play_by_play": "nba-com/play-by-play/%(date)s/game_%(game_id)s/%(timestamp)s.json",
         "nba_com_player_boxscore": "nba-com/player-boxscores/%(date)s/%(timestamp)s.json",
-        "nba_com_team_roster": "nba-com/rosters/%(date)s/team_%(team_abbrev)s/%(timestamp)s.json", 
+        "nba_com_team_roster": "nba-com/rosters/%(date)s/team_%(team_abbr)s/%(timestamp)s.json", 
         "nba_com_player_movement": "nba-com/player-movement/%(date)s/%(timestamp)s.json",
         
         # Big Data Ball
-        "big_data_ball_play_by_play": "big-data-ball/play-by-play/%(date)s/game_%(game_id)s/%(timestamp)s.csv",
+        # "big_data_ball_play_by_play": "big-data-ball/play-by-play/%(date)s/game_%(game_id)s/%(timestamp)s.csv",
+        "bigdataball_pbp": "big-data-ball/enhanced-pbp/%(date)s/%(timestamp)s.json",
     }
     
 
@@ -163,7 +164,7 @@ class GCSPathBuilder:
             "timestamp": "20250721_140000", 
             "game_id": "12345",
             "event_id": "67890",
-            "team_abbrev": "LAL",
+            "team_abbr": "LAL",
             "hour": "5",
             "period": "PM"
         }
@@ -198,7 +199,7 @@ if __name__ == "__main__":
     print("\n2. Path Previews:")
     print(f"Odds Events Preview: {GCSPathBuilder.preview_path('odds_api_events')}")
     print(f"Player Props Preview: {GCSPathBuilder.preview_path('odds_api_player_props', event_id='abc123')}")
-    print(f"Team Roster Preview: {GCSPathBuilder.preview_path('espn_team_roster', team_abbrev='GSW')}")
+    print(f"Team Roster Preview: {GCSPathBuilder.preview_path('espn_team_roster', team_abbr='GSW')}")
     
     # Test with custom opts
     print("\n3. With Custom Options:")

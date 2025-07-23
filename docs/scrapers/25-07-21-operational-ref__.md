@@ -320,8 +320,8 @@ Scrapers are organized by **business function** and **timing requirements** rath
 - **File**: `scrapers/espn/espn_roster_api.py`
 - **Backup File**: `scrapers/espn/espn_roster.py` (GetEspnTeamRoster)
 - **Class**: `GetEspnTeamRosterAPI`
-- **Parameters**: `team_abbreviation`
-- **Output Path**: `/espn/rosters/{date}/team_{abbrev}/{timestamp}.json`
+- **Parameters**: `team_abbr`
+- **Output Path**: `/espn/rosters/{date}/{team_abbr}/{timestamp}.json`
 - **Schedule**: Daily at 8 AM ET (all 30 teams)
 - **Purpose**: Detailed team rosters for trade validation
 - **API Details**: One request per team, ~15 players per team
@@ -429,8 +429,8 @@ Scrapers are organized by **business function** and **timing requirements** rath
 ### GetNbaTeamRoster
 - **File**: `scrapers/nbacom/nbac_roster.py`
 - **Class**: `GetNbaTeamRoster`
-- **Parameters**: `team_abbreviation`
-- **Output Path**: `/nba-com/rosters/{date}/team_{abbrev}/{timestamp}.json`
+- **Parameters**: `team_abbr`
+- **Output Path**: `/nba-com/rosters/{date}/{team_abbr}/{timestamp}.json`
 - **Schedule**: Daily at 8 AM ET (all 30 teams)
 - **Purpose**: Official current team roster (basic format)
 - **API Details**: One request per team, ~15-18 players per team

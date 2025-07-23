@@ -9,11 +9,11 @@ Usage examples
 --------------
   # Via capture tool (recommended for data collection):
   python tools/fixtures/capture.py nbac_roster \
-      --teamAbbr GSW \
+      --team_abbr GSW \
       --debug
 
   # Direct CLI execution:
-  python scrapers/nbacom/nbac_roster.py --teamAbbr GSW --debug
+  python scrapers/nbacom/nbac_roster.py --team_abbr GSW --debug
 
   # Flask web service:
   python scrapers/nbacom/nbac_roster.py --serve --debug
@@ -85,31 +85,28 @@ class GetNbaTeamRoster(ScraperBase, ScraperFlaskMixin):
 
     # Flask Mixin Configuration
     scraper_name = "nbac_roster"
-    required_params = ["teamAbbr"]
-    optional_params = {
-        "debug": None,  # Special debug parameter for extra functionality
-    }
+    required_params = ["team_abbr"]  # Updated to snake_case
+    optional_params = {}  # Removed debug parameter conflict
 
-    required_opts = ["teamAbbr"]
+    required_opts = ["team_abbr"]  # Updated to snake_case
     header_profile: str | None = "data"
     download_type: DownloadType = DownloadType.HTML
     decode_download_data: bool = True
 
-    # master debug flag (can be overridden by opts['debug'])
+    # master debug flag (can be overridden by opts['debug'] from base framework)
     debug_enabled: bool = False
 
     GCS_PATH_KEY = "nba_com_team_roster"
     exporters = [
         {
             "type": "gcs",
-            #"key": "nba/rosters/%(season)s/%(date)s/%(teamAbbr)s_%(time)s.json",
             "key": GCSPathBuilder.get_path(GCS_PATH_KEY),
             "export_mode": ExportMode.DATA,
             "groups": ["prod", "gcs"],
         },
         {
             "type": "file",
-            "filename": "/tmp/nbacom_roster_%(teamAbbr)s_%(date)s.json",
+            "filename": "/tmp/nbacom_roster_%(team_abbr)s_%(date)s.json",  # Updated parameter name
             "export_mode": ExportMode.DATA,
             "pretty_print": True,
             "groups": ["dev", "test", "prod"],
@@ -139,22 +136,21 @@ class GetNbaTeamRoster(ScraperBase, ScraperFlaskMixin):
         self.opts["time"] = now.strftime("%H-%M-%S")
         self.opts.setdefault("season", f"{now.year}-{(now.year + 1) % 100:02d}")
 
-        # interpret --debug flag (truthy → enable debug helpers)
-        dbg = str(self.opts.get("debug", "0")).lower()
-        self.debug_enabled = dbg in {"1", "true", "yes"}
+        # Use debug flag from base framework (comes from --debug CLI arg)
+        self.debug_enabled = self.opts.get("debug", False)
 
     def _team_cfg(self) -> dict:
         for t in NBA_TEAMS:
-            if t["abbr"].lower() == self.opts["teamAbbr"].lower():
+            if t["abbr"].lower() == self.opts["team_abbr"].lower():  # Updated parameter name
                 return t
-        raise DownloadDataException(f"Unknown teamAbbr: {self.opts['teamAbbr']}")
+        raise DownloadDataException(f"Unknown team_abbr: {self.opts['team_abbr']}")  # Updated parameter name
 
     # ------------------------------------------------------------ URL
     def set_url(self) -> None:
         cfg = self._team_cfg()
         self.opts["teamId"] = cfg["teamId"]
         self.url = f"https://www.nba.com/team/{cfg['teamId']}/{cfg['slug']}/roster"
-        logger.info("Roster URL: %s", self.url)
+        logger.info("Roster URL for %s: %s", self.opts["team_abbr"], self.url)
 
     # ------------------------------------------------------------ validation
     def validate_download_data(self) -> None:
@@ -215,8 +211,8 @@ class GetNbaTeamRoster(ScraperBase, ScraperFlaskMixin):
             logger.warning(f"Unusual position formats found: {invalid_positions[:3]}")
         
         # 5. TEAM CONSISTENCY CHECK
-        team_abbr = self.data.get('teamAbbr', '').upper()
-        expected_abbr = self.opts.get('teamAbbr', '').upper()
+        team_abbr = self.data.get('team_abbr', '').upper()  # Updated parameter name
+        expected_abbr = self.opts.get('team_abbr', '').upper()  # Updated parameter name
         if team_abbr != expected_abbr:
             logger.warning(f"Team abbreviation mismatch: expected {expected_abbr}, got {team_abbr}")
         
@@ -268,13 +264,13 @@ class GetNbaTeamRoster(ScraperBase, ScraperFlaskMixin):
 
         self.data = {
             "metadata": {
-                "teamAbbr": self.opts["teamAbbr"],
+                "team_abbr": self.opts["team_abbr"],  # Updated parameter name
                 "teamId": self.opts["teamId"],
                 "season": self.opts["season"],
                 "fetchedUtc": datetime.now(timezone.utc).isoformat(),
                 "playerCount": len(players),
             },
-            "teamAbbr": self.opts["teamAbbr"],
+            "team_abbr": self.opts["team_abbr"],  # Updated parameter name
             "teamId": self.opts["teamId"],
             "season": self.opts["season"],
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -282,7 +278,7 @@ class GetNbaTeamRoster(ScraperBase, ScraperFlaskMixin):
             "players": players,
         }
 
-        logger.info("Found %d players for %s", len(players), self.opts["teamAbbr"])
+        logger.info("Found %d players for %s", len(players), self.opts["team_abbr"])
         
         # Add production validation
         self.validate_roster_data()
@@ -296,7 +292,7 @@ class GetNbaTeamRoster(ScraperBase, ScraperFlaskMixin):
     # ------------------------------------------------------------ stats
     def get_scraper_stats(self) -> dict:
         return {
-            "teamAbbr": self.opts["teamAbbr"],
+            "team_abbr": self.opts["team_abbr"],  # Updated parameter name
             "teamId": self.opts.get("teamId"),
             "players": self.data.get("playerCount", 0),
         }
@@ -337,7 +333,7 @@ class GetNbaTeamRoster(ScraperBase, ScraperFlaskMixin):
         fb_dir = "/tmp/fallback_json"
         os.makedirs(fb_dir, exist_ok=True)
         filename = (
-            f"roster_fallback_{self.opts.get('teamAbbr','NA')}_"
+            f"roster_fallback_{self.opts.get('team_abbr','NA')}_"  # Updated parameter name
             f"{self.opts.get('date','NA')}_{self.opts.get('time','NA')}_{reason}.json"
         )
         path = os.path.join(fb_dir, filename)
