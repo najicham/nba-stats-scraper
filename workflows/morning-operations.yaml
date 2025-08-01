@@ -1,0 +1,242 @@
+# workflows/morning-operations.yaml
+# NBA Morning Operations Workflow - Daily setup and roster management
+# Runs daily at 8 AM PT to prepare for the day's activities
+# Focuses on roster updates, schedule data, and foundation information
+
+main:
+  params: [args]
+  steps:
+    - init:
+        assign:
+          - current_timestamp: ${sys.now()}
+          - workflow_start: ${sys.now()}
+
+    - log_workflow_start:
+        call: sys.log
+        args:
+          text: "Starting NBA Morning Operations Workflow"
+          severity: INFO
+
+    # PHASE 1: Daily roster and team updates
+    - daily_roster_updates:
+        try:
+          parallel:
+            exception_policy: continueAll
+            branches:
+              - nba_rosters:
+                  steps:
+                    - call_nba_rosters:
+                        call: run_scraper
+                        args:
+                          scraper_name: "nba-roster"
+                          scraper_class: "GetNbaComRoster" 
+                          endpoint: "nbac_roster"
+                          timeout: 600
+                          critical: true
+                        result: nba_roster_result
+
+              - espn_rosters:
+                  steps:
+                    - call_espn_rosters:
+                        call: run_scraper
+                        args:
+                          scraper_name: "espn-roster-api"
+                          scraper_class: "EspnRosterApiScraper"
+                          endpoint: "espn_roster_api"
+                          timeout: 600
+                          critical: false
+                        result: espn_roster_result
+
+              - player_movement:
+                  steps:
+                    - call_player_movement:
+                        call: run_scraper
+                        args:
+                          scraper_name: "nba-player-movement"
+                          scraper_class: "GetNbaComPlayerMovement"
+                          endpoint: "nbac_player_movement"
+                          timeout: 300
+                          critical: false
+                        result: movement_result
+        except:
+          as: e
+          steps:
+            - log_roster_error:
+                call: sys.log
+                args:
+                  text: "Daily roster updates had errors"
+                  severity: WARNING
+
+    # PHASE 2: Schedule and game information
+    - schedule_updates:
+        try:
+          parallel:
+            exception_policy: continueAll
+            branches:
+              - nba_schedule:
+                  steps:
+                    - call_nba_schedule:
+                        call: run_scraper
+                        args:
+                          scraper_name: "nba-schedule-api"
+                          scraper_class: "GetNbaComScheduleApi"
+                          endpoint: "nbac_schedule_api"
+                          timeout: 300
+                          critical: true
+                        result: schedule_result
+
+              - current_standings:
+                  steps:
+                    - call_bdl_standings:
+                        call: run_scraper
+                        args:
+                          scraper_name: "bdl-standings"
+                          scraper_class: "BdlStandingsScraper"
+                          endpoint: "bdl_standings"
+                          timeout: 300
+                          critical: false
+                        result: standings_result
+        except:
+          as: e
+          steps:
+            - log_schedule_error:
+                call: sys.log
+                args:
+                  text: "Schedule updates had errors"
+                  severity: WARNING
+
+    # PHASE 3: Foundation player data
+    - foundation_player_data:
+        try:
+          parallel:
+            exception_policy: continueAll
+            branches:
+              - player_list_refresh:
+                  steps:
+                    - call_player_list:
+                        call: run_scraper
+                        args:
+                          scraper_name: "nba-player-list"
+                          scraper_class: "GetNbaComPlayerList"
+                          endpoint: "nbac_player_list"
+                          timeout: 300
+                          critical: true
+                        result: player_list_result
+
+              - injury_report_morning:
+                  steps:
+                    - call_injury_report:
+                        call: run_scraper
+                        args:
+                          scraper_name: "nba-injury-report"
+                          scraper_class: "GetNbaComInjuryReport"
+                          endpoint: "nbac_injury_report"
+                          timeout: 300
+                          critical: true
+                        result: injury_result
+
+              - bdl_players_refresh:
+                  steps:
+                    - call_bdl_players:
+                        call: run_scraper
+                        args:
+                          scraper_name: "bdl-active-players"
+                          scraper_class: "BdlActivePlayersScraper"
+                          endpoint: "bdl_active_players"
+                          timeout: 300
+                          critical: false
+                        result: bdl_players_result
+        except:
+          as: e
+          steps:
+            - log_foundation_error:
+                call: sys.log
+                args:
+                  text: "Foundation player data updates had errors"
+                  severity: WARNING
+
+    # SUCCESS PATH
+    - workflow_success:
+        assign:
+          - workflow_end: ${sys.now()}
+          - total_duration: ${workflow_end - workflow_start}
+
+    - log_workflow_success:
+        call: sys.log
+        args:
+          text: "NBA Morning Operations Workflow completed successfully"
+          severity: INFO
+
+    - return_success:
+        return:
+          status: "SUCCESS"
+          message: "Morning operations completed successfully"
+          duration_seconds: ${total_duration}
+          rosters_updated: true
+          schedule_updated: true
+          foundation_data_refreshed: true
+          timestamp: ${current_timestamp}
+
+# Reusable subworkflow for running individual scrapers
+run_scraper:
+  params: [scraper_name, scraper_class, endpoint, timeout, critical]
+  steps:
+    - log_start:
+        call: sys.log
+        args:
+          text: "Starting scraper"
+          severity: INFO
+
+    - call_scraper:
+        try:
+          call: http.post
+          args:
+            url: "https://nba-scrapers-756957797294.us-west2.run.app/scrape"
+            query:
+              scraper: ${endpoint}
+            timeout: ${timeout}
+            headers:
+              Content-Type: "application/json"
+          result: scraper_response
+        except:
+          as: e
+          steps:
+            - log_failure:
+                call: sys.log
+                args:
+                  text: "Scraper failed"
+                  severity: ERROR
+            - return_failure:
+                return:
+                  status: "failure"
+                  scraper_name: ${scraper_name}
+                  error: ${e.message}
+                  timestamp: ${sys.now()}
+
+    - check_response:
+        switch:
+          - condition: ${scraper_response.code >= 200 AND scraper_response.code < 300}
+            next: log_success
+          - condition: true
+            next: return_http_failure
+
+    - return_http_failure:
+        return:
+          status: "failure"
+          scraper_name: ${scraper_name}
+          http_code: ${scraper_response.code}
+          timestamp: ${sys.now()}
+
+    - log_success:
+        call: sys.log
+        args:
+          text: "Scraper completed successfully"
+          severity: INFO
+
+    - return_success:
+        return:
+          status: "success"
+          scraper_name: ${scraper_name}
+          http_code: ${scraper_response.code}
+          timestamp: ${sys.now()}
+          
