@@ -1,7 +1,8 @@
 # workflows/morning-operations.yaml
-# NBA Morning Operations Workflow - Daily setup and roster management
+# NBA Morning Operations Workflow - Daily setup and roster management + overnight recovery
 # Runs daily at 8 AM PT to prepare for the day's activities
-# Focuses on roster updates, schedule data, and foundation information
+# Focuses on roster updates, schedule data, foundation information, and Enhanced PBP recovery
+# VERSION: 2.0 - Added Enhanced PBP recovery and status tracking
 
 main:
   params: [args]
@@ -10,6 +11,7 @@ main:
         assign:
           - current_timestamp: ${sys.now()}
           - workflow_start: ${sys.now()}
+          - execution_id: ${sys.get_env("GOOGLE_CLOUD_WORKFLOW_EXECUTION_ID")}
 
     - log_workflow_start:
         call: sys.log
@@ -155,11 +157,60 @@ main:
                   text: "Foundation player data updates had errors"
                   severity: WARNING
 
+    # PHASE 4: Enhanced PBP Recovery (yesterday's games)
+    - enhanced_pbp_recovery:
+        try:
+          steps:
+            - call_enhanced_pbp:
+                call: run_scraper
+                args:
+                  scraper_name: "pbp-enhanced-pbp"
+                  scraper_class: "PbpStatsEnhancedPbpScraper"
+                  endpoint: "pbp_enhanced_pbp"
+                  timeout: 600
+                  critical: false
+                result: enhanced_pbp_result
+        except:
+          as: e
+          steps:
+            - log_pbp_error:
+                call: sys.log
+                args:
+                  text: "Enhanced PBP recovery had errors - non-critical"
+                  severity: WARNING
+            - assign_pbp_failure:
+                assign:
+                  - enhanced_pbp_result:
+                      status: "failure"
+                      error: ${e.message}
+                      scraper_name: "pbp-enhanced-pbp"
+                      timestamp: ${sys.now()}
+
     # SUCCESS PATH
     - workflow_success:
         assign:
           - workflow_end: ${sys.now()}
           - total_duration: ${workflow_end - workflow_start}
+
+    - write_status_success:
+        call: write_status_to_gcs
+        args:
+          workflow_name: "morning-operations"
+          execution_id: ${execution_id}
+          execution_time: ${current_timestamp}
+          workflow_start: ${workflow_start}
+          total_duration: ${total_duration}
+          scrapers:
+            nbac_roster: ${nba_roster_result}
+            espn_roster_api: ${espn_roster_result}
+            nbac_player_movement: ${movement_result}
+            nbac_schedule_api: ${schedule_result}
+            bdl_standings: ${standings_result}
+            nbac_player_list: ${player_list_result}
+            nbac_injury_report: ${injury_result}
+            bdl_active_players: ${bdl_players_result}
+            pbp_enhanced_pbp: ${enhanced_pbp_result}
+          status: "SUCCESS"
 
     - log_workflow_success:
         call: sys.log
@@ -175,6 +226,8 @@ main:
           rosters_updated: true
           schedule_updated: true
           foundation_data_refreshed: true
+          enhanced_pbp_attempted: true
+          enhanced_pbp_status: ${enhanced_pbp_result.status}
           timestamp: ${current_timestamp}
 
 # Reusable subworkflow for running individual scrapers
@@ -239,4 +292,63 @@ run_scraper:
           scraper_name: ${scraper_name}
           http_code: ${scraper_response.code}
           timestamp: ${sys.now()}
+
+# Subworkflow for writing status to GCS
+write_status_to_gcs:
+  params: [workflow_name, execution_id, execution_time, workflow_start, scrapers, status, total_duration, dependencies]
+  steps:
+    - calculate_duration:
+        assign:
+          - actual_duration: ${default(total_duration, sys.now() - workflow_start)}
+          - current_time: ${sys.now()}
+          - date_string: ${text.split(text.split(string(current_time), "T")[0], "-")}
+          - year: ${date_string[0]}
+          - month: ${date_string[1]} 
+          - day: ${date_string[2]}
+          - hour_min: ${text.replace_all(text.split(string(current_time), "T")[1], ":", "h")}
+          - time_part: ${text.split(hour_min, ".")[0]}
+
+    - build_status_object:
+        assign:
+          - status_data:
+              workflow: ${workflow_name}
+              execution_id: ${execution_id}
+              execution_time: ${execution_time}
+              total_duration: ${actual_duration}
+              status: ${status}
+              scrapers: ${scrapers}
+              dependencies: ${default(dependencies, {})}
+
+    - create_gcs_path:
+        assign:
+          - bucket_name: "nba-props-status"
+          - file_path: ${"workflow-status/" + year + "-" + month + "-" + day + "/" + workflow_name + "-" + time_part + ".json"}
+          - gcs_url: ${"gs://" + bucket_name + "/" + file_path}
+
+    - write_to_gcs:
+        try:
+          call: http.post
+          args:
+            url: ${"https://storage.googleapis.com/upload/storage/v1/b/" + bucket_name + "/o"}
+            query:
+              uploadType: "media"
+              name: ${file_path}
+            headers:
+              Content-Type: "application/json"
+              Authorization: ${"Bearer " + sys.get_env("GOOGLE_CLOUD_ACCESS_TOKEN")}
+            body: ${json.encode(status_data)}
+        except:
+          as: e
+          steps:
+            - log_gcs_failure:
+                call: sys.log
+                args:
+                  text: "Failed to write status to GCS"
+                  severity: WARNING
+
+    - log_status_written:
+        call: sys.log
+        args:
+          text: ${"Status written to GCS: " + gcs_url}
+          severity: INFO
           

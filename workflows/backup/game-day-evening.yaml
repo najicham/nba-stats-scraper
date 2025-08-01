@@ -2,6 +2,7 @@
 # NBA Game Day Evening Workflow - Real-time game monitoring
 # Runs at 6 PM, 9 PM, and 11 PM PT on game days
 # Focuses on live scores, boxscores, and game updates
+# FIXED: ESPN Scoreboard → ESPN Boxscore dependency
 
 main:
   params: [args]
@@ -17,24 +18,12 @@ main:
           text: "Starting NBA Game Day Evening Workflow"
           severity: INFO
 
-    # PHASE 1: Live game monitoring (parallel execution)
-    - live_game_monitoring:
+    # PHASE 1: Live scoreboards (parallel - no dependencies)
+    - live_scoreboards:
         try:
           parallel:
             exception_policy: continueAll
             branches:
-              - espn_scoreboard:
-                  steps:
-                    - call_espn_scoreboard:
-                        call: run_scraper
-                        args:
-                          scraper_name: "espn-scoreboard"
-                          scraper_class: "EspnScoreboardApiScraper"
-                          endpoint: "espn_scoreboard_api"
-                          timeout: 300
-                          critical: true
-                        result: espn_scoreboard_result
-
               - nba_scoreboard:
                   steps:
                     - call_nba_scoreboard:
@@ -58,22 +47,8 @@ main:
                           timeout: 300
                           critical: false
                         result: bdl_live_result
-        except:
-          as: e
-          steps:
-            - log_monitoring_error:
-                call: sys.log
-                args:
-                  text: "Live game monitoring had errors"
-                  severity: WARNING
 
-    # PHASE 2: Enhanced data collection
-    - enhanced_data_collection:
-        try:
-          parallel:
-            exception_policy: continueAll
-            branches:
-              - player_boxscores:
+              - bdl_box_scores:
                   steps:
                     - call_bdl_box_scores:
                         call: run_scraper
@@ -84,26 +59,76 @@ main:
                           timeout: 600
                           critical: false
                         result: bdl_box_scores_result
-
-              - espn_boxscores:
-                  steps:
-                    - call_espn_game_boxscore:
-                        call: run_scraper
-                        args:
-                          scraper_name: "espn-game-boxscore"
-                          scraper_class: "EspnGameBoxscoreApiScraper"
-                          endpoint: "espn_game_boxscore"
-                          timeout: 600
-                          critical: false
-                        result: espn_boxscore_result
         except:
           as: e
           steps:
-            - log_enhanced_error:
+            - log_scoreboard_error:
                 call: sys.log
                 args:
-                  text: "Enhanced data collection had errors"
+                  text: "Live scoreboard collection had errors"
                   severity: WARNING
+
+    # PHASE 2: ESPN Game IDs first (DEPENDENCY)
+    - get_espn_game_ids:
+        try:
+          steps:
+            - call_espn_scoreboard:
+                call: run_scraper
+                args:
+                  scraper_name: "espn-scoreboard"
+                  scraper_class: "EspnScoreboardApiScraper"
+                  endpoint: "espn_scoreboard_api"
+                  timeout: 300
+                  critical: true
+                result: espn_scoreboard_result
+        except:
+          as: e
+          steps:
+            - log_espn_scoreboard_error:
+                call: sys.log
+                args:
+                  text: "ESPN Scoreboard failed - skipping ESPN boxscores"
+                  severity: WARNING
+            - assign_empty_espn_result:
+                assign:
+                  - espn_scoreboard_result:
+                      status: "failure"
+                      error: ${e.message}
+                next: workflow_success
+
+    # PHASE 3: ESPN Boxscores (only if Phase 2 succeeded)
+    - check_espn_scoreboard_success:
+        switch:
+          - condition: ${espn_scoreboard_result.status == "success"}
+            next: get_espn_boxscores
+          - condition: true
+            next: workflow_success
+
+    - get_espn_boxscores:
+        try:
+          steps:
+            - call_espn_game_boxscore:
+                call: run_scraper
+                args:
+                  scraper_name: "espn-game-boxscore"
+                  scraper_class: "EspnGameBoxscoreApiScraper"
+                  endpoint: "espn_game_boxscore"
+                  timeout: 600
+                  critical: false
+                result: espn_boxscore_result
+        except:
+          as: e
+          steps:
+            - log_espn_boxscore_error:
+                call: sys.log
+                args:
+                  text: "ESPN Game Boxscore failed"
+                  severity: WARNING
+            - assign_empty_boxscore_result:
+                assign:
+                  - espn_boxscore_result:
+                      status: "failure"
+                      error: ${e.message}
 
     # SUCCESS PATH
     - workflow_success:
@@ -114,16 +139,16 @@ main:
     - log_workflow_success:
         call: sys.log
         args:
-          text: "NBA Game Day Evening Workflow completed successfully"
+          text: "NBA Game Day Evening Workflow completed"
           severity: INFO
 
     - return_success:
         return:
           status: "SUCCESS"
-          message: "Game day monitoring completed successfully"
+          message: "Game day monitoring completed"
           duration_seconds: ${total_duration}
           scoreboards_attempted: true
-          enhanced_data_attempted: true
+          espn_chain_completed: ${espn_scoreboard_result.status == "success"}
           timestamp: ${current_timestamp}
 
 # Reusable subworkflow for running individual scrapers

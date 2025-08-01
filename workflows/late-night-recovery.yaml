@@ -1,7 +1,8 @@
-# workflows/post-game-analysis.yaml
-# NBA Post-Game Analysis Workflow - Deep game analysis and historical data
-# Runs daily at 9 PM PT to capture completed games and detailed stats
-# Focuses on comprehensive boxscores, player stats, and historical analysis
+# workflows/late-night-recovery.yaml
+# NBA Late Night Recovery Workflow - Enhanced PBP collection + comprehensive retry
+# Runs daily at 2 AM PT to collect Enhanced PBP (available 2+ hours after games)
+# Also retries all post-game scrapers using Option 1 approach (run everything)
+# VERSION: 1.0 - New workflow for recovery strategy
 
 main:
   params: [args]
@@ -10,58 +11,50 @@ main:
         assign:
           - current_timestamp: ${sys.now()}
           - workflow_start: ${sys.now()}
+          - execution_id: ${sys.get_env("GOOGLE_CLOUD_WORKFLOW_EXECUTION_ID")}
 
     - log_workflow_start:
         call: sys.log
         args:
-          text: "Starting NBA Post-Game Analysis Workflow"
+          text: "Starting NBA Late Night Recovery Workflow"
           severity: INFO
 
-    # PHASE 1: Final scoreboards and game completion status
-    - final_game_status:
+    # PHASE 1: Enhanced PBP Collection (primary purpose - definitely available by 2AM)
+    - enhanced_pbp_collection:
         try:
-          parallel:
-            exception_policy: continueAll
-            branches:
-              - final_scoreboards:
-                  steps:
-                    - call_espn_scoreboard:
-                        call: run_scraper
-                        args:
-                          scraper_name: "espn-scoreboard"
-                          scraper_class: "EspnScoreboardApiScraper"
-                          endpoint: "espn_scoreboard_api"
-                          timeout: 300
-                          critical: true
-                        result: espn_scoreboard_result
-
-              - nba_final_scores:
-                  steps:
-                    - call_nba_scoreboard:
-                        call: run_scraper
-                        args:
-                          scraper_name: "nba-scoreboard"
-                          scraper_class: "GetNbaComScoreboardV2"
-                          endpoint: "nbac_scoreboard_v2"
-                          timeout: 300
-                          critical: true
-                        result: nba_scoreboard_result
+          steps:
+            - call_enhanced_pbp:
+                call: run_scraper
+                args:
+                  scraper_name: "pbp-enhanced-pbp"
+                  scraper_class: "PbpStatsEnhancedPbpScraper"
+                  endpoint: "pbp_enhanced_pbp"
+                  timeout: 600
+                  critical: false
+                result: enhanced_pbp_result
         except:
           as: e
           steps:
-            - log_scoreboard_error:
+            - log_pbp_error:
                 call: sys.log
                 args:
-                  text: "Final scoreboard collection had errors"
+                  text: "Enhanced PBP collection failed - will retry at 6AM"
                   severity: WARNING
+            - assign_pbp_failure:
+                assign:
+                  - enhanced_pbp_result:
+                      status: "failure"
+                      error: ${e.message}
+                      scraper_name: "pbp-enhanced-pbp"
+                      timestamp: ${sys.now()}
 
-    # PHASE 2: Detailed player and game statistics
-    - detailed_statistics:
+    # PHASE 2: Post-Game Data Recovery (retry all post-game scrapers)
+    - post_game_data_recovery:
         try:
           parallel:
             exception_policy: continueAll
             branches:
-              - ball_dont_lie_stats:
+              - bdl_box_scores_recovery:
                   steps:
                     - call_bdl_box_scores:
                         call: run_scraper
@@ -73,7 +66,7 @@ main:
                           critical: false
                         result: bdl_box_scores_result
 
-              - bdl_player_stats:
+              - bdl_player_stats_recovery:
                   steps:
                     - call_bdl_player_box_scores:
                         call: run_scraper
@@ -85,33 +78,7 @@ main:
                           critical: false
                         result: bdl_player_box_result
 
-              - espn_detailed_boxscores:
-                  steps:
-                    - call_espn_game_boxscore:
-                        call: run_scraper
-                        args:
-                          scraper_name: "espn-game-boxscore"
-                          scraper_class: "EspnGameBoxscoreApiScraper"
-                          endpoint: "espn_game_boxscore"
-                          timeout: 600
-                          critical: false
-                        result: espn_boxscore_result
-        except:
-          as: e
-          steps:
-            - log_stats_error:
-                call: sys.log
-                args:
-                  text: "Detailed statistics collection had errors"
-                  severity: WARNING
-
-    # PHASE 3: Historical and advanced analytics (if available)
-    - advanced_analytics:
-        try:
-          parallel:
-            exception_policy: continueAll
-            branches:
-              - player_averages:
+              - player_averages_recovery:
                   steps:
                     - call_bdl_player_averages:
                         call: run_scraper
@@ -123,7 +90,7 @@ main:
                           critical: false
                         result: bdl_averages_result
 
-              - game_advanced_stats:
+              - advanced_stats_recovery:
                   steps:
                     - call_bdl_game_adv_stats:
                         call: run_scraper
@@ -134,29 +101,17 @@ main:
                           timeout: 300
                           critical: false
                         result: bdl_adv_stats_result
-
-              - pbp_enhanced_stats:
-                  steps:
-                    - call_pbp_enhanced:
-                        call: run_scraper
-                        args:
-                          scraper_name: "pbp-enhanced-pbp"
-                          scraper_class: "PbpStatsEnhancedPbpScraper"
-                          endpoint: "pbp_enhanced_pbp"
-                          timeout: 600
-                          critical: false
-                        result: pbp_enhanced_result
         except:
           as: e
           steps:
-            - log_analytics_error:
+            - log_post_game_error:
                 call: sys.log
                 args:
-                  text: "Advanced analytics collection had errors"
+                  text: "Post-game data recovery had errors - non-critical"
                   severity: WARNING
 
-    # PHASE 4: Injury and roster updates (end of day)
-    - end_of_day_updates:
+    # PHASE 3: Status Updates Recovery (injury reports and player movement)
+    - status_updates_recovery:
         try:
           parallel:
             exception_policy: continueAll
@@ -173,7 +128,7 @@ main:
                           critical: false
                         result: injury_result
 
-              - player_movement:
+              - player_movement_updates:
                   steps:
                     - call_player_movement:
                         call: run_scraper
@@ -187,10 +142,10 @@ main:
         except:
           as: e
           steps:
-            - log_updates_error:
+            - log_status_updates_error:
                 call: sys.log
                 args:
-                  text: "End of day updates had errors"
+                  text: "Status updates recovery had errors - non-critical"
                   severity: WARNING
 
     # SUCCESS PATH
@@ -199,20 +154,39 @@ main:
           - workflow_end: ${sys.now()}
           - total_duration: ${workflow_end - workflow_start}
 
+    - write_status_success:
+        call: write_status_to_gcs
+        args:
+          workflow_name: "late-night-recovery"
+          execution_id: ${execution_id}
+          execution_time: ${current_timestamp}
+          workflow_start: ${workflow_start}
+          total_duration: ${total_duration}
+          scrapers:
+            pbp_enhanced_pbp: ${enhanced_pbp_result}
+            bdl_box_scores: ${bdl_box_scores_result}
+            bdl_player_box_scores: ${bdl_player_box_result}
+            bdl_player_averages: ${bdl_averages_result}
+            bdl_game_adv_stats: ${bdl_adv_stats_result}
+            nbac_injury_report: ${injury_result}
+            nbac_player_movement: ${movement_result}
+          recovery_strategy: "Option 1 - Run all relevant scrapers"
+          status: "SUCCESS"
+
     - log_workflow_success:
         call: sys.log
         args:
-          text: "NBA Post-Game Analysis Workflow completed successfully"
+          text: "NBA Late Night Recovery Workflow completed successfully"
           severity: INFO
 
     - return_success:
         return:
           status: "SUCCESS"
-          message: "Post-game analysis completed successfully"
+          message: "Late night recovery completed successfully"
           duration_seconds: ${total_duration}
-          scoreboards_attempted: true
-          statistics_collected: true
-          advanced_analytics_attempted: true
+          enhanced_pbp_status: ${enhanced_pbp_result.status}
+          post_game_recovery_attempted: true
+          status_updates_attempted: true
           timestamp: ${current_timestamp}
 
 # Reusable subworkflow for running individual scrapers
@@ -277,4 +251,64 @@ run_scraper:
           scraper_name: ${scraper_name}
           http_code: ${scraper_response.code}
           timestamp: ${sys.now()}
+
+# Subworkflow for writing status to GCS
+write_status_to_gcs:
+  params: [workflow_name, execution_id, execution_time, workflow_start, scrapers, status, total_duration, dependencies, recovery_strategy]
+  steps:
+    - calculate_duration:
+        assign:
+          - actual_duration: ${default(total_duration, sys.now() - workflow_start)}
+          - current_time: ${sys.now()}
+          - date_string: ${text.split(text.split(string(current_time), "T")[0], "-")}
+          - year: ${date_string[0]}
+          - month: ${date_string[1]} 
+          - day: ${date_string[2]}
+          - hour_min: ${text.replace_all(text.split(string(current_time), "T")[1], ":", "h")}
+          - time_part: ${text.split(hour_min, ".")[0]}
+
+    - build_status_object:
+        assign:
+          - status_data:
+              workflow: ${workflow_name}
+              execution_id: ${execution_id}
+              execution_time: ${execution_time}
+              total_duration: ${actual_duration}
+              status: ${status}
+              scrapers: ${scrapers}
+              dependencies: ${default(dependencies, {})}
+              recovery_strategy: ${default(recovery_strategy, "Standard execution")}
+
+    - create_gcs_path:
+        assign:
+          - bucket_name: "nba-props-status"
+          - file_path: ${"workflow-status/" + year + "-" + month + "-" + day + "/" + workflow_name + "-" + time_part + ".json"}
+          - gcs_url: ${"gs://" + bucket_name + "/" + file_path}
+
+    - write_to_gcs:
+        try:
+          call: http.post
+          args:
+            url: ${"https://storage.googleapis.com/upload/storage/v1/b/" + bucket_name + "/o"}
+            query:
+              uploadType: "media"
+              name: ${file_path}
+            headers:
+              Content-Type: "application/json"
+              Authorization: ${"Bearer " + sys.get_env("GOOGLE_CLOUD_ACCESS_TOKEN")}
+            body: ${json.encode(status_data)}
+        except:
+          as: e
+          steps:
+            - log_gcs_failure:
+                call: sys.log
+                args:
+                  text: "Failed to write status to GCS"
+                  severity: WARNING
+
+    - log_status_written:
+        call: sys.log
+        args:
+          text: ${"Status written to GCS: " + gcs_url}
+          severity: INFO
           

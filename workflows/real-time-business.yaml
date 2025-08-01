@@ -2,6 +2,7 @@
 # NBA Real-Time Business Workflow - CRITICAL for prop betting revenue
 # Handles Events -> Props dependency and core business operations
 # Runs every 2 hours from 8 AM - 8 PM PT
+# VERSION: 2.0 - Added status tracking to GCS
 
 main:
   params: [args]
@@ -10,6 +11,7 @@ main:
         assign:
           - current_timestamp: ${sys.now()}
           - workflow_start: ${sys.now()}
+          - execution_id: ${sys.get_env("GOOGLE_CLOUD_WORKFLOW_EXECUTION_ID")}
 
     - log_workflow_start:
         call: sys.log
@@ -38,6 +40,23 @@ main:
                 args:
                   text: "CRITICAL: Events API failed - Props betting revenue BLOCKED"
                   severity: ERROR
+            - assign_failed_events:
+                assign:
+                  - events_result:
+                      status: "failure"
+                      error: ${e.message}
+                      scraper_name: "odds-events"
+                      timestamp: ${sys.now()}
+            - write_status_events_failure:
+                call: write_status_to_gcs
+                args:
+                  workflow_name: "real-time-business"
+                  execution_id: ${execution_id}
+                  execution_time: ${current_timestamp}
+                  workflow_start: ${workflow_start}
+                  scrapers:
+                    oddsa_events: ${events_result}
+                  status: "CRITICAL_FAILURE"
             - return_events_failure:
                 return:
                   status: "CRITICAL_FAILURE"
@@ -142,6 +161,27 @@ main:
                 args:
                   text: "CRITICAL: Props API failed - Revenue generation BLOCKED"
                   severity: ERROR
+            - assign_failed_props:
+                assign:
+                  - props_result:
+                      status: "failure"
+                      error: ${e.message}
+                      scraper_name: "odds-player-props"
+                      timestamp: ${sys.now()}
+            - write_status_props_failure:
+                call: write_status_to_gcs
+                args:
+                  workflow_name: "real-time-business"
+                  execution_id: ${execution_id}
+                  execution_time: ${current_timestamp}
+                  workflow_start: ${workflow_start}
+                  scrapers:
+                    oddsa_events: ${events_result}
+                    oddsa_player_props: ${props_result}
+                    nbac_player_list: ${player_list_result}
+                    nbac_injury_report: ${injury_result}
+                    bdl_active_players: ${bdl_players_result}
+                  status: "CRITICAL_FAILURE"
             - return_props_failure:
                 return:
                   status: "CRITICAL_FAILURE"
@@ -158,6 +198,8 @@ main:
           - props_result:
               status: "skipped"
               message: "Skipped due to events failure"
+              scraper_name: "odds-player-props"
+              timestamp: ${sys.now()}
 
     - log_props_skipped:
         call: sys.log
@@ -171,6 +213,24 @@ main:
         assign:
           - workflow_end: ${sys.now()}
           - total_duration: ${workflow_end - workflow_start}
+
+    - write_status_success:
+        call: write_status_to_gcs
+        args:
+          workflow_name: "real-time-business"
+          execution_id: ${execution_id}
+          execution_time: ${current_timestamp}
+          workflow_start: ${workflow_start}
+          total_duration: ${total_duration}
+          scrapers:
+            oddsa_events: ${events_result}
+            oddsa_player_props: ${props_result}
+            nbac_player_list: ${player_list_result}
+            nbac_injury_report: ${injury_result}
+            bdl_active_players: ${bdl_players_result}
+          dependencies:
+            "oddsa_events → oddsa_player_props": "success"
+          status: "SUCCESS"
 
     - log_workflow_success:
         call: sys.log
@@ -192,6 +252,24 @@ main:
         assign:
           - workflow_end: ${sys.now()}
           - total_duration: ${workflow_end - workflow_start}
+
+    - write_status_partial_failure:
+        call: write_status_to_gcs
+        args:
+          workflow_name: "real-time-business"
+          execution_id: ${execution_id}
+          execution_time: ${current_timestamp}
+          workflow_start: ${workflow_start}
+          total_duration: ${total_duration}
+          scrapers:
+            oddsa_events: ${events_result}
+            oddsa_player_props: ${props_result}
+            nbac_player_list: ${player_list_result}
+            nbac_injury_report: ${injury_result}
+            bdl_active_players: ${bdl_players_result}
+          dependencies:
+            "oddsa_events → oddsa_player_props": "blocked_by_failure"
+          status: "PARTIAL_FAILURE"
 
     - log_workflow_partial_failure:
         call: sys.log
@@ -270,4 +348,63 @@ run_scraper:
           scraper_name: ${scraper_name}
           http_code: ${scraper_response.code}
           timestamp: ${sys.now()}
+
+# Subworkflow for writing status to GCS
+write_status_to_gcs:
+  params: [workflow_name, execution_id, execution_time, workflow_start, scrapers, status, total_duration, dependencies]
+  steps:
+    - calculate_duration:
+        assign:
+          - actual_duration: ${default(total_duration, sys.now() - workflow_start)}
+          - current_time: ${sys.now()}
+          - date_string: ${text.split(text.split(string(current_time), "T")[0], "-")}
+          - year: ${date_string[0]}
+          - month: ${date_string[1]} 
+          - day: ${date_string[2]}
+          - hour_min: ${text.replace_all(text.split(string(current_time), "T")[1], ":", "h")}
+          - time_part: ${text.split(hour_min, ".")[0]}
+
+    - build_status_object:
+        assign:
+          - status_data:
+              workflow: ${workflow_name}
+              execution_id: ${execution_id}
+              execution_time: ${execution_time}
+              total_duration: ${actual_duration}
+              status: ${status}
+              scrapers: ${scrapers}
+              dependencies: ${default(dependencies, {})}
+
+    - create_gcs_path:
+        assign:
+          - bucket_name: "nba-props-status"
+          - file_path: ${"workflow-status/" + year + "-" + month + "-" + day + "/" + workflow_name + "-" + time_part + ".json"}
+          - gcs_url: ${"gs://" + bucket_name + "/" + file_path}
+
+    - write_to_gcs:
+        try:
+          call: http.post
+          args:
+            url: ${"https://storage.googleapis.com/upload/storage/v1/b/" + bucket_name + "/o"}
+            query:
+              uploadType: "media"
+              name: ${file_path}
+            headers:
+              Content-Type: "application/json"
+              Authorization: ${"Bearer " + sys.get_env("GOOGLE_CLOUD_ACCESS_TOKEN")}
+            body: ${json.encode(status_data)}
+        except:
+          as: e
+          steps:
+            - log_gcs_failure:
+                call: sys.log
+                args:
+                  text: "Failed to write status to GCS"
+                  severity: WARNING
+
+    - log_status_written:
+        call: sys.log
+        args:
+          text: ${"Status written to GCS: " + gcs_url}
+          severity: INFO
           

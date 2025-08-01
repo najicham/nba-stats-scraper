@@ -1,0 +1,344 @@
+# workflows/early-morning-final-check.yaml
+# NBA Early Morning Final Check Workflow - Last chance recovery before business day
+# Runs daily at 6 AM PT as final safety net for Enhanced PBP and critical game data
+# Includes ESPN dependency chain and comprehensive final sweep
+# VERSION: 1.0 - New workflow for final recovery opportunity
+
+main:
+  params: [args]
+  steps:
+    - init:
+        assign:
+          - current_timestamp: ${sys.now()}
+          - workflow_start: ${sys.now()}
+          - execution_id: ${sys.get_env("GOOGLE_CLOUD_WORKFLOW_EXECUTION_ID")}
+
+    - log_workflow_start:
+        call: sys.log
+        args:
+          text: "Starting NBA Early Morning Final Check Workflow"
+          severity: INFO
+
+    # PHASE 1: Enhanced PBP Final Attempt (last chance before business day)
+    - enhanced_pbp_final_attempt:
+        try:
+          steps:
+            - call_enhanced_pbp_final:
+                call: run_scraper
+                args:
+                  scraper_name: "pbp-enhanced-pbp-final"
+                  scraper_class: "PbpStatsEnhancedPbpScraper"
+                  endpoint: "pbp_enhanced_pbp"
+                  timeout: 600
+                  critical: false
+                result: enhanced_pbp_final_result
+        except:
+          as: e
+          steps:
+            - log_pbp_final_error:
+                call: sys.log
+                args:
+                  text: "Enhanced PBP final attempt failed - will be picked up by Morning Operations"
+                  severity: WARNING
+            - assign_pbp_final_failure:
+                assign:
+                  - enhanced_pbp_final_result:
+                      status: "failure"
+                      error: ${e.message}
+                      scraper_name: "pbp-enhanced-pbp-final"
+                      timestamp: ${sys.now()}
+
+    # PHASE 2: ESPN Dependency Chain (Sequential: Scoreboard → Boxscore)
+    - espn_dependency_chain:
+        try:
+          steps:
+            - call_espn_scoreboard:
+                call: run_scraper
+                args:
+                  scraper_name: "espn-scoreboard"
+                  scraper_class: "EspnScoreboardApiScraper"
+                  endpoint: "espn_scoreboard_api"
+                  timeout: 300
+                  critical: false
+                result: espn_scoreboard_result
+        except:
+          as: e
+          steps:
+            - log_espn_scoreboard_error:
+                call: sys.log
+                args:
+                  text: "ESPN Scoreboard failed - skipping ESPN boxscores"
+                  severity: WARNING
+            - assign_empty_espn_result:
+                assign:
+                  - espn_scoreboard_result:
+                      status: "failure"
+                      error: ${e.message}
+                      scraper_name: "espn-scoreboard"
+                      timestamp: ${sys.now()}
+
+    # Check ESPN Scoreboard success before proceeding to Boxscore
+    - check_espn_scoreboard_success:
+        switch:
+          - condition: ${espn_scoreboard_result.status == "success"}
+            next: espn_boxscore_final
+          - condition: true
+            next: critical_game_data_final
+
+    - espn_boxscore_final:
+        try:
+          steps:
+            - call_espn_game_boxscore:
+                call: run_scraper
+                args:
+                  scraper_name: "espn-game-boxscore"
+                  scraper_class: "EspnGameBoxscoreApiScraper"
+                  endpoint: "espn_game_boxscore"
+                  timeout: 600
+                  critical: false
+                result: espn_boxscore_result
+        except:
+          as: e
+          steps:
+            - log_espn_boxscore_error:
+                call: sys.log
+                args:
+                  text: "ESPN Game Boxscore failed in final check"
+                  severity: WARNING
+            - assign_empty_boxscore_result:
+                assign:
+                  - espn_boxscore_result:
+                      status: "failure"
+                      error: ${e.message}
+                      scraper_name: "espn-game-boxscore"
+                      timestamp: ${sys.now()}
+
+    # PHASE 3: Critical Game Data Final Sweep (parallel)
+    - critical_game_data_final:
+        try:
+          parallel:
+            exception_policy: continueAll
+            branches:
+              - bdl_box_scores_final:
+                  steps:
+                    - call_bdl_box_scores:
+                        call: run_scraper
+                        args:
+                          scraper_name: "bdl-box-scores-final"
+                          scraper_class: "BdlBoxScoresScraper"
+                          endpoint: "bdl_box_scores"
+                          timeout: 600
+                          critical: false
+                        result: bdl_box_scores_final_result
+
+              - bdl_player_stats_final:
+                  steps:
+                    - call_bdl_player_box_scores:
+                        call: run_scraper
+                        args:
+                          scraper_name: "bdl-player-box-scores-final"
+                          scraper_class: "BdlPlayerBoxScoresScraper"
+                          endpoint: "bdl_player_box_scores"
+                          timeout: 600
+                          critical: false
+                        result: bdl_player_box_final_result
+
+              - player_averages_final:
+                  steps:
+                    - call_bdl_player_averages:
+                        call: run_scraper
+                        args:
+                          scraper_name: "bdl-player-averages-final"
+                          scraper_class: "BdlPlayerAveragesScraper"
+                          endpoint: "bdl_player_averages"
+                          timeout: 300
+                          critical: false
+                        result: bdl_averages_final_result
+
+              - advanced_stats_final:
+                  steps:
+                    - call_bdl_game_adv_stats:
+                        call: run_scraper
+                        args:
+                          scraper_name: "bdl-game-adv-stats-final"
+                          scraper_class: "BdlGameAdvStatsScraper"
+                          endpoint: "bdl_game_adv_stats"
+                          timeout: 300
+                          critical: false
+                        result: bdl_adv_stats_final_result
+        except:
+          as: e
+          steps:
+            - log_critical_data_error:
+                call: sys.log
+                args:
+                  text: "Critical game data final sweep had errors - non-critical"
+                  severity: WARNING
+
+    # SUCCESS PATH (always succeeds - best effort workflow)
+    - workflow_success:
+        assign:
+          - workflow_end: ${sys.now()}
+          - total_duration: ${workflow_end - workflow_start}
+
+    - write_status_success:
+        call: write_status_to_gcs
+        args:
+          workflow_name: "early-morning-final-check"
+          execution_id: ${execution_id}
+          execution_time: ${current_timestamp}
+          workflow_start: ${workflow_start}
+          total_duration: ${total_duration}
+          scrapers:
+            pbp_enhanced_pbp: ${enhanced_pbp_final_result}
+            espn_scoreboard_api: ${espn_scoreboard_result}
+            espn_game_boxscore: ${default(espn_boxscore_result, {"status": "skipped", "message": "ESPN Scoreboard failed"})}
+            bdl_box_scores: ${bdl_box_scores_final_result}
+            bdl_player_box_scores: ${bdl_player_box_final_result}
+            bdl_player_averages: ${bdl_averages_final_result}
+            bdl_game_adv_stats: ${bdl_adv_stats_final_result}
+          dependencies:
+            "espn_scoreboard_api → espn_game_boxscore": ${espn_scoreboard_result.status == "success" ? "success" : "blocked_by_failure"}
+          recovery_strategy: "Final check - last chance before business day"
+          status: "SUCCESS"
+
+    - log_workflow_success:
+        call: sys.log
+        args:
+          text: "NBA Early Morning Final Check Workflow completed successfully"
+          severity: INFO
+
+    - return_success:
+        return:
+          status: "SUCCESS"
+          message: "Early morning final check completed - best effort"
+          duration_seconds: ${total_duration}
+          enhanced_pbp_final_status: ${enhanced_pbp_final_result.status}
+          espn_chain_completed: ${espn_scoreboard_result.status == "success"}
+          critical_data_attempted: true
+          recovery_window: "final_before_business_day"
+          timestamp: ${current_timestamp}
+
+# Reusable subworkflow for running individual scrapers
+run_scraper:
+  params: [scraper_name, scraper_class, endpoint, timeout, critical]
+  steps:
+    - log_start:
+        call: sys.log
+        args:
+          text: "Starting scraper"
+          severity: INFO
+
+    - call_scraper:
+        try:
+          call: http.post
+          args:
+            url: "https://nba-scrapers-756957797294.us-west2.run.app/scrape"
+            query:
+              scraper: ${endpoint}
+            timeout: ${timeout}
+            headers:
+              Content-Type: "application/json"
+          result: scraper_response
+        except:
+          as: e
+          steps:
+            - log_failure:
+                call: sys.log
+                args:
+                  text: "Scraper failed"
+                  severity: ERROR
+            - return_failure:
+                return:
+                  status: "failure"
+                  scraper_name: ${scraper_name}
+                  error: ${e.message}
+                  timestamp: ${sys.now()}
+
+    - check_response:
+        switch:
+          - condition: ${scraper_response.code >= 200 AND scraper_response.code < 300}
+            next: log_success
+          - condition: true
+            next: return_http_failure
+
+    - return_http_failure:
+        return:
+          status: "failure"
+          scraper_name: ${scraper_name}
+          http_code: ${scraper_response.code}
+          timestamp: ${sys.now()}
+
+    - log_success:
+        call: sys.log
+        args:
+          text: "Scraper completed successfully"
+          severity: INFO
+
+    - return_success:
+        return:
+          status: "success"
+          scraper_name: ${scraper_name}
+          http_code: ${scraper_response.code}
+          timestamp: ${sys.now()}
+
+# Subworkflow for writing status to GCS
+write_status_to_gcs:
+  params: [workflow_name, execution_id, execution_time, workflow_start, scrapers, status, total_duration, dependencies, recovery_strategy]
+  steps:
+    - calculate_duration:
+        assign:
+          - actual_duration: ${default(total_duration, sys.now() - workflow_start)}
+          - current_time: ${sys.now()}
+          - date_string: ${text.split(text.split(string(current_time), "T")[0], "-")}
+          - year: ${date_string[0]}
+          - month: ${date_string[1]} 
+          - day: ${date_string[2]}
+          - hour_min: ${text.replace_all(text.split(string(current_time), "T")[1], ":", "h")}
+          - time_part: ${text.split(hour_min, ".")[0]}
+
+    - build_status_object:
+        assign:
+          - status_data:
+              workflow: ${workflow_name}
+              execution_id: ${execution_id}
+              execution_time: ${execution_time}
+              total_duration: ${actual_duration}
+              status: ${status}
+              scrapers: ${scrapers}
+              dependencies: ${default(dependencies, {})}
+              recovery_strategy: ${default(recovery_strategy, "Standard execution")}
+
+    - create_gcs_path:
+        assign:
+          - bucket_name: "nba-props-status"
+          - file_path: ${"workflow-status/" + year + "-" + month + "-" + day + "/" + workflow_name + "-" + time_part + ".json"}
+          - gcs_url: ${"gs://" + bucket_name + "/" + file_path}
+
+    - write_to_gcs:
+        try:
+          call: http.post
+          args:
+            url: ${"https://storage.googleapis.com/upload/storage/v1/b/" + bucket_name + "/o"}
+            query:
+              uploadType: "media"
+              name: ${file_path}
+            headers:
+              Content-Type: "application/json"
+              Authorization: ${"Bearer " + sys.get_env("GOOGLE_CLOUD_ACCESS_TOKEN")}
+            body: ${json.encode(status_data)}
+        except:
+          as: e
+          steps:
+            - log_gcs_failure:
+                call: sys.log
+                args:
+                  text: "Failed to write status to GCS"
+                  severity: WARNING
+
+    - log_status_written:
+        call: sys.log
+        args:
+          text: ${"Status written to GCS: " + gcs_url}
+          severity: INFO
+          
