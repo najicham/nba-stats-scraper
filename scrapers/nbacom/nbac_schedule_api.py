@@ -61,7 +61,6 @@ class GetNbaComScheduleApi(ScraperBase, ScraperFlaskMixin):
     required_params = ["season"]
     optional_params = {
         "api_key": None,
-        "run_id": None,
     }
     
     required_opts = ["season"]
@@ -132,7 +131,7 @@ class GetNbaComScheduleApi(ScraperBase, ScraperFlaskMixin):
             "GameSubType": "",
             "LeagueID": "00",  # NBA league ID
             "Season": self.opts["season_nba_format"],
-            "SeasonType": "Regular Season"
+            # "SeasonType": "Regular Season"
         }
         
         # Build query string
@@ -171,6 +170,20 @@ class GetNbaComScheduleApi(ScraperBase, ScraperFlaskMixin):
         """Transform NBA.com API response into structured data"""
         league_schedule = self.decoded_data["leagueSchedule"]
         meta = self.decoded_data.get("meta", {})
+
+        actual_season = league_schedule.get('seasonYear') or self.opts.get('season_nba_format')
+        if actual_season:
+            # If seasonYear is just a year (like "2025"), convert to NBA format
+            if actual_season.isdigit() and len(actual_season) == 4:
+                season_year = int(actual_season)
+                next_year = (season_year + 1) % 100
+                self.opts['actual_season_nba_format'] = f"{season_year}-{next_year:02d}"
+            else:
+                # Already in NBA format (like "2025-26")
+                self.opts['actual_season_nba_format'] = actual_season
+        else:
+            # Fallback to the season we computed in set_additional_opts
+            self.opts['actual_season_nba_format'] = self.opts['season_nba_format']
         
         game_dates = league_schedule.get("gameDates", [])
         
@@ -181,6 +194,20 @@ class GetNbaComScheduleApi(ScraperBase, ScraperFlaskMixin):
             games = game_date_obj.get("games", [])
             
             for game in games:
+                # Remove broadcaster data to keep files lean
+                if 'broadcasters' in game:
+                    del game['broadcasters']
+                if 'tickets' in game:
+                    del game['tickets']
+                if 'links' in game:
+                    del game['links']
+                if 'promotions' in game:
+                    del game['promotions']
+                if 'seriesText' in game:
+                    del game['seriesText']
+                if 'pointsLeaders' in game:
+                    del game['pointsLeaders']
+                
                 # Add the game date to each game for easier processing
                 game_with_date = {
                     **game,

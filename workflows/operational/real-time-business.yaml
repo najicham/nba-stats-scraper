@@ -1,8 +1,8 @@
-# workflows/real-time-business.yaml
+# workflows/operational/real-time-business.yaml
 # NBA Real-Time Business Workflow - CRITICAL for prop betting revenue
 # Handles Events -> Props dependency and core business operations
-# Runs every 2 hours from 8 AM - 8 PM PT
-# VERSION: 2.0 - Added status tracking to GCS
+# Runs every 2 hours from 8 AM - 8 PM PT (7 cycles daily)
+# VERSION: 3.0 - Complete 6 scrapers per workflows reference
 
 main:
   params: [args]
@@ -16,7 +16,7 @@ main:
     - log_workflow_start:
         call: sys.log
         args:
-          text: "Starting NBA Real-Time Business Workflow"
+          text: "Starting NBA Real-Time Business Workflow (6 scrapers)"
           severity: INFO
 
     # PHASE 1: Get betting events first (CRITICAL - required for props)
@@ -46,6 +46,7 @@ main:
                       status: "failure"
                       error: ${e.message}
                       scraper_name: "odds-events"
+                      scraper_class: "GetOddsApiEvents"
                       timestamp: ${sys.now()}
             - write_status_events_failure:
                 call: write_status_to_gcs
@@ -57,6 +58,9 @@ main:
                   scrapers:
                     oddsa_events: ${events_result}
                   status: "CRITICAL_FAILURE"
+                  total_duration: ${sys.now() - workflow_start}
+                  dependencies: "Events API failure blocks Props collection"
+                  collection_strategy: "Every 2 hours, 8 AM - 8 PM PT"
             - return_events_failure:
                 return:
                   status: "CRITICAL_FAILURE"
@@ -65,7 +69,7 @@ main:
                   impact: "Props betting revenue blocked"
                   timestamp: ${current_timestamp}
 
-    # PHASE 2: Foundation scrapers (parallel)
+    # PHASE 2: Foundation scrapers (parallel - no dependencies)
     - foundation_scrapers:
         try:
           parallel:
@@ -83,7 +87,7 @@ main:
                           critical: true
                         result: player_list_result
 
-              - injury_status:
+              - primary_injury_status:
                   steps:
                     - call_injury_report:
                         call: run_scraper
@@ -94,6 +98,18 @@ main:
                           timeout: 300
                           critical: true
                         result: injury_result
+
+              - backup_injury_status:
+                  steps:
+                    - call_bdl_injuries:
+                        call: run_scraper
+                        args:
+                          scraper_name: "bdl-injuries"
+                          scraper_class: "BdlInjuriesScraper"
+                          endpoint: "bdl_injuries"
+                          timeout: 300
+                          critical: false
+                        result: bdl_injuries_result
 
               - player_validation:
                   steps:
@@ -112,13 +128,13 @@ main:
             - log_foundation_error:
                 call: sys.log
                 args:
-                  text: "Foundation scrapers had errors"
+                  text: "Foundation scrapers had errors - continuing to props"
                   severity: WARNING
 
     - log_foundation_complete:
         call: sys.log
         args:
-          text: "Foundation scrapers completed"
+          text: "Foundation scrapers completed (4/4)"
           severity: INFO
 
     # PHASE 3: Check Events success before proceeding to Props
@@ -167,6 +183,7 @@ main:
                       status: "failure"
                       error: ${e.message}
                       scraper_name: "odds-player-props"
+                      scraper_class: "GetOddsApiCurrentEventOdds"
                       timestamp: ${sys.now()}
             - write_status_props_failure:
                 call: write_status_to_gcs
@@ -175,12 +192,16 @@ main:
                   execution_id: ${execution_id}
                   execution_time: ${current_timestamp}
                   workflow_start: ${workflow_start}
+                  total_duration: ${sys.now() - workflow_start}
+                  dependencies: "Props API failure after successful Events"
+                  collection_strategy: "Every 2 hours, 8 AM - 8 PM PT"
                   scrapers:
                     oddsa_events: ${events_result}
                     oddsa_player_props: ${props_result}
-                    nbac_player_list: ${player_list_result}
-                    nbac_injury_report: ${injury_result}
-                    bdl_active_players: ${bdl_players_result}
+                    nbac_player_list: ${default(player_list_result.status, "not_run")}
+                    nbac_injury_report: ${default(injury_result.status, "not_run")}
+                    bdl_injuries: ${default(bdl_injuries_result.status, "not_run")}
+                    bdl_active_players: ${default(bdl_players_result.status, "not_run")}
                   status: "CRITICAL_FAILURE"
             - return_props_failure:
                 return:
@@ -199,6 +220,7 @@ main:
               status: "skipped"
               message: "Skipped due to events failure"
               scraper_name: "odds-player-props"
+              scraper_class: "GetOddsApiCurrentEventOdds"
               timestamp: ${sys.now()}
 
     - log_props_skipped:
@@ -225,17 +247,18 @@ main:
           scrapers:
             oddsa_events: ${events_result}
             oddsa_player_props: ${props_result}
-            nbac_player_list: ${player_list_result}
-            nbac_injury_report: ${injury_result}
-            bdl_active_players: ${bdl_players_result}
-          dependencies:
-            "oddsa_events → oddsa_player_props": "success"
+            nbac_player_list: ${default(player_list_result.status, "not_run")}
+            nbac_injury_report: ${default(injury_result.status, "not_run")}
+            bdl_injuries: ${default(bdl_injuries_result.status, "not_run")}
+            bdl_active_players: ${default(bdl_players_result.status, "not_run")}
+          dependencies: "oddsa_events → oddsa_player_props (success)"
+          collection_strategy: "Every 2 hours, 8 AM - 8 PM PT"
           status: "SUCCESS"
 
     - log_workflow_success:
         call: sys.log
         args:
-          text: "NBA Real-Time Business Workflow completed successfully"
+          text: "NBA Real-Time Business Workflow completed successfully (6/6 scrapers)"
           severity: INFO
 
     - return_success:
@@ -243,8 +266,10 @@ main:
           status: "SUCCESS"
           message: "All core business operations completed successfully"
           duration_seconds: ${total_duration}
+          scrapers_attempted: 6
           events_status: ${events_result.status}
           props_status: ${props_result.status}
+          foundation_completed: true
           timestamp: ${current_timestamp}
 
     # PARTIAL FAILURE PATH
@@ -264,11 +289,12 @@ main:
           scrapers:
             oddsa_events: ${events_result}
             oddsa_player_props: ${props_result}
-            nbac_player_list: ${player_list_result}
-            nbac_injury_report: ${injury_result}
-            bdl_active_players: ${bdl_players_result}
-          dependencies:
-            "oddsa_events → oddsa_player_props": "blocked_by_failure"
+            nbac_player_list: ${default(player_list_result.status, "not_run")}
+            nbac_injury_report: ${default(injury_result.status, "not_run")}
+            bdl_injuries: ${default(bdl_injuries_result.status, "not_run")}
+            bdl_active_players: ${default(bdl_players_result.status, "not_run")}
+          dependencies: "oddsa_events → oddsa_player_props (blocked by failure)"
+          collection_strategy: "Every 2 hours, 8 AM - 8 PM PT"
           status: "PARTIAL_FAILURE"
 
     - log_workflow_partial_failure:
@@ -282,8 +308,10 @@ main:
           status: "PARTIAL_FAILURE"
           message: "Foundation scrapers completed but Props API skipped"
           duration_seconds: ${total_duration}
+          scrapers_attempted: 5
           events_status: ${events_result.status}
           props_status: "skipped"
+          foundation_completed: true
           timestamp: ${current_timestamp}
 
 # Reusable subworkflow for running individual scrapers
@@ -293,7 +321,7 @@ run_scraper:
     - log_start:
         call: sys.log
         args:
-          text: "Starting scraper"
+          text: ${"Starting scraper: " + scraper_name + " (" + scraper_class + ")"}
           severity: INFO
 
     - call_scraper:
@@ -313,12 +341,13 @@ run_scraper:
             - log_failure:
                 call: sys.log
                 args:
-                  text: "Scraper failed"
+                  text: ${"Scraper failed: " + scraper_name + " - " + e.message}
                   severity: ERROR
             - return_failure:
                 return:
                   status: "failure"
                   scraper_name: ${scraper_name}
+                  scraper_class: ${scraper_class}
                   error: ${e.message}
                   timestamp: ${sys.now()}
 
@@ -333,36 +362,36 @@ run_scraper:
         return:
           status: "failure"
           scraper_name: ${scraper_name}
+          scraper_class: ${scraper_class}
           http_code: ${scraper_response.code}
           timestamp: ${sys.now()}
 
     - log_success:
         call: sys.log
         args:
-          text: "Scraper completed successfully"
+          text: ${"Scraper completed successfully: " + scraper_name}
           severity: INFO
 
     - return_success:
         return:
           status: "success"
           scraper_name: ${scraper_name}
+          scraper_class: ${scraper_class}
           http_code: ${scraper_response.code}
           timestamp: ${sys.now()}
 
 # Subworkflow for writing status to GCS
 write_status_to_gcs:
-  params: [workflow_name, execution_id, execution_time, workflow_start, scrapers, status, total_duration, dependencies]
+  params: [workflow_name, execution_id, execution_time, workflow_start, scrapers, status, total_duration, dependencies, collection_strategy]
   steps:
     - calculate_duration:
         assign:
           - actual_duration: ${default(total_duration, sys.now() - workflow_start)}
           - current_time: ${sys.now()}
-          - date_string: ${text.split(text.split(string(current_time), "T")[0], "-")}
-          - year: ${date_string[0]}
-          - month: ${date_string[1]} 
-          - day: ${date_string[2]}
-          - hour_min: ${text.replace_all(text.split(string(current_time), "T")[1], ":", "h")}
-          - time_part: ${text.split(hour_min, ".")[0]}
+          - bucket_name: "nba-props-status"
+          - simple_filename: ${workflow_name + "-" + execution_id}
+          - file_path: ${"workflow-status/" + simple_filename + ".json"}
+          - gcs_url: ${"gs://" + bucket_name + "/" + file_path}
 
     - build_status_object:
         assign:
@@ -373,13 +402,8 @@ write_status_to_gcs:
               total_duration: ${actual_duration}
               status: ${status}
               scrapers: ${scrapers}
-              dependencies: ${default(dependencies, {})}
-
-    - create_gcs_path:
-        assign:
-          - bucket_name: "nba-props-status"
-          - file_path: ${"workflow-status/" + year + "-" + month + "-" + day + "/" + workflow_name + "-" + time_part + ".json"}
-          - gcs_url: ${"gs://" + bucket_name + "/" + file_path}
+              dependencies: ${default(dependencies, null)}
+              collection_strategy: ${default(collection_strategy, "Standard execution")}
 
     - write_to_gcs:
         try:
@@ -399,7 +423,7 @@ write_status_to_gcs:
             - log_gcs_failure:
                 call: sys.log
                 args:
-                  text: "Failed to write status to GCS"
+                  text: ${"Failed to write status to GCS: " + e.message}
                   severity: WARNING
 
     - log_status_written:
@@ -407,4 +431,3 @@ write_status_to_gcs:
         args:
           text: ${"Status written to GCS: " + gcs_url}
           severity: INFO
-          

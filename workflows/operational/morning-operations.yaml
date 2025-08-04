@@ -1,8 +1,8 @@
 # workflows/morning-operations.yaml
-# NBA Morning Operations Workflow - Daily setup and roster management + overnight recovery
+# NBA Morning Operations Workflow - Daily setup and foundation data collection
 # Runs daily at 8 AM PT to prepare for the day's activities
-# Focuses on roster updates, schedule data, foundation information, and Enhanced PBP recovery
-# VERSION: 2.0 - Added Enhanced PBP recovery and status tracking
+# Focuses on player intelligence, schedule monitoring, and foundation information
+# VERSION: 3.0 - Streamlined to match optimized workflow reference
 
 main:
   params: [args]
@@ -19,36 +19,12 @@ main:
           text: "Starting NBA Morning Operations Workflow"
           severity: INFO
 
-    # PHASE 1: Daily roster and team updates
-    - daily_roster_updates:
+    # PHASE 1: Player Movement + Schedule Monitoring
+    - player_movement_and_schedule:
         try:
           parallel:
             exception_policy: continueAll
             branches:
-              - nba_rosters:
-                  steps:
-                    - call_nba_rosters:
-                        call: run_scraper
-                        args:
-                          scraper_name: "nba-roster"
-                          scraper_class: "GetNbaComRoster" 
-                          endpoint: "nbac_roster"
-                          timeout: 600
-                          critical: true
-                        result: nba_roster_result
-
-              - espn_rosters:
-                  steps:
-                    - call_espn_rosters:
-                        call: run_scraper
-                        args:
-                          scraper_name: "espn-roster-api"
-                          scraper_class: "EspnRosterApiScraper"
-                          endpoint: "espn_roster_api"
-                          timeout: 600
-                          critical: false
-                        result: espn_roster_result
-
               - player_movement:
                   steps:
                     - call_player_movement:
@@ -60,24 +36,10 @@ main:
                           timeout: 300
                           critical: false
                         result: movement_result
-        except:
-          as: e
-          steps:
-            - log_roster_error:
-                call: sys.log
-                args:
-                  text: "Daily roster updates had errors"
-                  severity: WARNING
 
-    # PHASE 2: Schedule and game information
-    - schedule_updates:
-        try:
-          parallel:
-            exception_policy: continueAll
-            branches:
-              - nba_schedule:
+              - nba_schedule_api:
                   steps:
-                    - call_nba_schedule:
+                    - call_nba_schedule_api:
                         call: run_scraper
                         args:
                           scraper_name: "nba-schedule-api"
@@ -85,35 +47,35 @@ main:
                           endpoint: "nbac_schedule_api"
                           timeout: 300
                           critical: true
-                        result: schedule_result
+                        result: schedule_api_result
 
-              - current_standings:
+              - nba_schedule_cdn:
                   steps:
-                    - call_bdl_standings:
+                    - call_nba_schedule_cdn:
                         call: run_scraper
                         args:
-                          scraper_name: "bdl-standings"
-                          scraper_class: "BdlStandingsScraper"
-                          endpoint: "bdl_standings"
+                          scraper_name: "nba-schedule-cdn-backup"
+                          scraper_class: "GetNbaComScheduleCdn"
+                          endpoint: "nbac_schedule_cdn"
                           timeout: 300
                           critical: false
-                        result: standings_result
+                        result: schedule_cdn_result
         except:
           as: e
           steps:
-            - log_schedule_error:
+            - log_movement_schedule_error:
                 call: sys.log
                 args:
-                  text: "Schedule updates had errors"
+                  text: "Player movement and schedule updates had errors"
                   severity: WARNING
 
-    # PHASE 3: Foundation player data
-    - foundation_player_data:
+    # PHASE 2: Foundation Player Intelligence (Primary + Backup Sources)
+    - foundation_player_intelligence:
         try:
           parallel:
             exception_policy: continueAll
             branches:
-              - player_list_refresh:
+              - player_list_primary:
                   steps:
                     - call_player_list:
                         call: run_scraper
@@ -125,7 +87,7 @@ main:
                           critical: true
                         result: player_list_result
 
-              - injury_report_morning:
+              - injury_report_primary:
                   steps:
                     - call_injury_report:
                         call: run_scraper
@@ -137,7 +99,19 @@ main:
                           critical: true
                         result: injury_result
 
-              - bdl_players_refresh:
+              - injury_report_backup:
+                  steps:
+                    - call_bdl_injuries:
+                        call: run_scraper
+                        args:
+                          scraper_name: "bdl-injuries-backup"
+                          scraper_class: "BdlInjuriesScraper"
+                          endpoint: "bdl_injuries"
+                          timeout: 300
+                          critical: false
+                        result: bdl_injuries_result
+
+              - bdl_players_validation:
                   steps:
                     - call_bdl_players:
                         call: run_scraper
@@ -154,36 +128,36 @@ main:
             - log_foundation_error:
                 call: sys.log
                 args:
-                  text: "Foundation player data updates had errors"
+                  text: "Foundation player intelligence had errors"
                   severity: WARNING
 
-    # PHASE 4: Enhanced PBP Recovery (yesterday's games)
-    - enhanced_pbp_recovery:
+    # PHASE 3: League Context
+    - league_context:
         try:
           steps:
-            - call_enhanced_pbp:
+            - call_bdl_standings:
                 call: run_scraper
                 args:
-                  scraper_name: "pbp-enhanced-pbp"
-                  scraper_class: "PbpStatsEnhancedPbpScraper"
-                  endpoint: "pbp_enhanced_pbp"
-                  timeout: 600
+                  scraper_name: "bdl-standings"
+                  scraper_class: "BdlStandingsScraper"
+                  endpoint: "bdl_standings"
+                  timeout: 300
                   critical: false
-                result: enhanced_pbp_result
+                result: standings_result
         except:
           as: e
           steps:
-            - log_pbp_error:
+            - log_league_context_error:
                 call: sys.log
                 args:
-                  text: "Enhanced PBP recovery had errors - non-critical"
+                  text: "League context collection had errors - non-critical"
                   severity: WARNING
-            - assign_pbp_failure:
+            - assign_standings_failure:
                 assign:
-                  - enhanced_pbp_result:
+                  - standings_result:
                       status: "failure"
                       error: ${e.message}
-                      scraper_name: "pbp-enhanced-pbp"
+                      scraper_name: "bdl-standings"
                       timestamp: ${sys.now()}
 
     # SUCCESS PATH
@@ -201,15 +175,16 @@ main:
           workflow_start: ${workflow_start}
           total_duration: ${total_duration}
           scrapers:
-            nbac_roster: ${nba_roster_result}
-            espn_roster_api: ${espn_roster_result}
             nbac_player_movement: ${movement_result}
-            nbac_schedule_api: ${schedule_result}
-            bdl_standings: ${standings_result}
+            nbac_schedule_api: ${schedule_api_result}
+            nbac_schedule_cdn: ${schedule_cdn_result}
             nbac_player_list: ${player_list_result}
             nbac_injury_report: ${injury_result}
+            bdl_injuries: ${bdl_injuries_result}
             bdl_active_players: ${bdl_players_result}
-            pbp_enhanced_pbp: ${enhanced_pbp_result}
+            bdl_standings: ${standings_result}
+          dependencies: {}
+          monitoring_strategy: "Schedule API vs CDN, NBA.com vs BDL injuries"
           status: "SUCCESS"
 
     - log_workflow_success:
@@ -223,11 +198,15 @@ main:
           status: "SUCCESS"
           message: "Morning operations completed successfully"
           duration_seconds: ${total_duration}
-          rosters_updated: true
-          schedule_updated: true
+          player_movement_updated: true
+          schedule_monitoring_active: true
+          schedule_api_status: ${schedule_api_result.status}
+          schedule_cdn_status: ${schedule_cdn_result.status}
           foundation_data_refreshed: true
-          enhanced_pbp_attempted: true
-          enhanced_pbp_status: ${enhanced_pbp_result.status}
+          injury_monitoring_active: true
+          injury_primary_status: ${injury_result.status}
+          injury_backup_status: ${bdl_injuries_result.status}
+          league_context_updated: true
           timestamp: ${current_timestamp}
 
 # Reusable subworkflow for running individual scrapers
@@ -295,18 +274,16 @@ run_scraper:
 
 # Subworkflow for writing status to GCS
 write_status_to_gcs:
-  params: [workflow_name, execution_id, execution_time, workflow_start, scrapers, status, total_duration, dependencies]
+  params: [workflow_name, execution_id, execution_time, workflow_start, scrapers, status, total_duration, dependencies, monitoring_strategy]
   steps:
     - calculate_duration:
         assign:
           - actual_duration: ${default(total_duration, sys.now() - workflow_start)}
           - current_time: ${sys.now()}
-          - date_string: ${text.split(text.split(string(current_time), "T")[0], "-")}
-          - year: ${date_string[0]}
-          - month: ${date_string[1]} 
-          - day: ${date_string[2]}
-          - hour_min: ${text.replace_all(text.split(string(current_time), "T")[1], ":", "h")}
-          - time_part: ${text.split(hour_min, ".")[0]}
+          - bucket_name: "nba-props-status"
+          - simple_filename: ${workflow_name + "-" + execution_id}
+          - file_path: ${"workflow-status/" + simple_filename + ".json"}
+          - gcs_url: ${"gs://" + bucket_name + "/" + file_path}
 
     - build_status_object:
         assign:
@@ -317,13 +294,8 @@ write_status_to_gcs:
               total_duration: ${actual_duration}
               status: ${status}
               scrapers: ${scrapers}
-              dependencies: ${default(dependencies, {})}
-
-    - create_gcs_path:
-        assign:
-          - bucket_name: "nba-props-status"
-          - file_path: ${"workflow-status/" + year + "-" + month + "-" + day + "/" + workflow_name + "-" + time_part + ".json"}
-          - gcs_url: ${"gs://" + bucket_name + "/" + file_path}
+              dependencies: ${default(dependencies, null)}
+              monitoring_strategy: ${default(monitoring_strategy, "Standard execution")}
 
     - write_to_gcs:
         try:
@@ -349,6 +321,5 @@ write_status_to_gcs:
     - log_status_written:
         call: sys.log
         args:
-          text: ${"Status written to GCS: " + gcs_url}
+          text: "Status written to GCS"
           severity: INFO
-          

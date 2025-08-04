@@ -1,0 +1,296 @@
+# workflows/backfill/collect-nba-historical-schedules.yaml
+# Purpose: Collect NBA.com schedules for 2021-22 through 2024-25 seasons
+# Ultra-simple version to avoid YAML complexity
+
+main:
+  steps:
+    - init:
+        assign:
+          - current_timestamp: ${sys.now()}
+          - workflow_start: ${sys.now()}
+          - execution_id: ${sys.get_env("GOOGLE_CLOUD_WORKFLOW_EXECUTION_ID")}
+          - cloud_run_url: "https://nba-scrapers-756957797294.us-west2.run.app"
+          - successful_seasons: 0
+          - total_games_collected: 0
+          
+    - log_start:
+        call: sys.log
+        args:
+          text: "Starting NBA historical schedule collection via Cloud Run"
+          severity: INFO
+
+    - collect_2021_season:
+        try:
+          call: http.post
+          args:
+            url: ${cloud_run_url + "/scrape"}
+            headers:
+              Content-Type: "application/json"
+            body:
+              scraper: "nbac_schedule_api"
+              season: 2021
+              group: "prod"
+            timeout: 180
+          result: response_2021
+        except:
+          as: e
+          assign:
+            - response_2021:
+                code: 500
+        
+    - process_2021_season:
+        switch:
+          - condition: ${response_2021.code == 200}
+            steps:
+              - check_2021_success:
+                  switch:
+                    - condition: ${response_2021.body.status == "success"}
+                      steps:
+                        - record_2021_success:
+                            assign:
+                              - successful_seasons: ${successful_seasons + 1}
+                              - total_games_collected: ${total_games_collected + response_2021.body.data_summary.game_count}
+                        - log_2021_success:
+                            call: sys.log
+                            args:
+                              text: "2021-22 season collected successfully"
+                              severity: INFO
+                    - condition: true
+                      steps:
+                        - log_2021_failure:
+                            call: sys.log
+                            args:
+                              text: "2021-22 season collection failed"
+                              severity: WARNING
+          - condition: true
+            steps:
+              - log_2021_http_failure:
+                  call: sys.log
+                  args:
+                    text: "2021-22 season HTTP request failed"
+                    severity: WARNING
+
+    - collect_2022_season:
+        try:
+          call: http.post
+          args:
+            url: ${cloud_run_url + "/scrape"}
+            headers:
+              Content-Type: "application/json"
+            body:
+              scraper: "nbac_schedule_api"
+              season: 2022
+              group: "prod"
+            timeout: 180
+          result: response_2022
+        except:
+          as: e
+          assign:
+            - response_2022:
+                code: 500
+        
+    - process_2022_season:
+        switch:
+          - condition: ${response_2022.code == 200}
+            steps:
+              - check_2022_success:
+                  switch:
+                    - condition: ${response_2022.body.status == "success"}
+                      steps:
+                        - record_2022_success:
+                            assign:
+                              - successful_seasons: ${successful_seasons + 1}
+                              - total_games_collected: ${total_games_collected + response_2022.body.data_summary.game_count}
+                        - log_2022_success:
+                            call: sys.log
+                            args:
+                              text: "2022-23 season collected successfully"
+                              severity: INFO
+                    - condition: true
+                      steps:
+                        - log_2022_failure:
+                            call: sys.log
+                            args:
+                              text: "2022-23 season collection failed"
+                              severity: WARNING
+          - condition: true
+            steps:
+              - log_2022_http_failure:
+                  call: sys.log
+                  args:
+                    text: "2022-23 season HTTP request failed"
+                    severity: WARNING
+
+    - collect_2023_season:
+        try:
+          call: http.post
+          args:
+            url: ${cloud_run_url + "/scrape"}
+            headers:
+              Content-Type: "application/json"
+            body:
+              scraper: "nbac_schedule_api"
+              season: 2023
+              group: "prod"
+            timeout: 180
+          result: response_2023
+        except:
+          as: e
+          assign:
+            - response_2023:
+                code: 500
+        
+    - process_2023_season:
+        switch:
+          - condition: ${response_2023.code == 200}
+            steps:
+              - check_2023_success:
+                  switch:
+                    - condition: ${response_2023.body.status == "success"}
+                      steps:
+                        - record_2023_success:
+                            assign:
+                              - successful_seasons: ${successful_seasons + 1}
+                              - total_games_collected: ${total_games_collected + response_2023.body.data_summary.game_count}
+                        - log_2023_success:
+                            call: sys.log
+                            args:
+                              text: "2023-24 season collected successfully"
+                              severity: INFO
+                    - condition: true
+                      steps:
+                        - log_2023_failure:
+                            call: sys.log
+                            args:
+                              text: "2023-24 season collection failed"
+                              severity: WARNING
+          - condition: true
+            steps:
+              - log_2023_http_failure:
+                  call: sys.log
+                  args:
+                    text: "2023-24 season HTTP request failed"
+                    severity: WARNING
+
+    - collect_2024_season:
+        try:
+          call: http.post
+          args:
+            url: ${cloud_run_url + "/scrape"}
+            headers:
+              Content-Type: "application/json"
+            body:
+              scraper: "nbac_schedule_api"
+              season: 2024
+              group: "prod"
+            timeout: 180
+          result: response_2024
+        except:
+          as: e
+          assign:
+            - response_2024:
+                code: 500
+        
+    - process_2024_season:
+        switch:
+          - condition: ${response_2024.code == 200}
+            steps:
+              - check_2024_success:
+                  switch:
+                    - condition: ${response_2024.body.status == "success"}
+                      steps:
+                        - record_2024_success:
+                            assign:
+                              - successful_seasons: ${successful_seasons + 1}
+                              - total_games_collected: ${total_games_collected + response_2024.body.data_summary.game_count}
+                        - log_2024_success:
+                            call: sys.log
+                            args:
+                              text: "2024-25 season collected successfully"
+                              severity: INFO
+                    - condition: true
+                      steps:
+                        - log_2024_failure:
+                            call: sys.log
+                            args:
+                              text: "2024-25 season collection failed"
+                              severity: WARNING
+          - condition: true
+            steps:
+              - log_2024_http_failure:
+                  call: sys.log
+                  args:
+                    text: "2024-25 season HTTP request failed"
+                    severity: WARNING
+        
+    - calculate_final_status:
+        assign:
+          - workflow_end: ${sys.now()}
+          - total_duration: ${workflow_end - workflow_start}
+        
+    - set_overall_status:
+        switch:
+          - condition: ${successful_seasons == 0}
+            assign:
+              - overall_status: "FAILURE"
+          - condition: ${successful_seasons == 4}
+            assign:
+              - overall_status: "SUCCESS"
+          - condition: true
+            assign:
+              - overall_status: "PARTIAL_SUCCESS"
+              
+    - write_status_to_gcs:
+        try:
+          steps:
+            - prepare_status_data:
+                assign:
+                  - bucket_name: "nba-props-status"
+                  - file_path: ${"workflow-status/collect-nba-historical-schedules-" + execution_id + ".json"}
+                  - status_data:
+                      workflow: "collect-nba-historical-schedules"
+                      execution_id: ${execution_id}
+                      execution_time: ${current_timestamp}
+                      total_duration: ${total_duration}
+                      status: ${overall_status}
+                      backfill_summary:
+                        seasons_requested: 4
+                        seasons_successful: ${successful_seasons}
+                        total_games_collected: ${total_games_collected}
+                        
+            - write_to_gcs_native:
+                call: googleapis.storage.v1.objects.insert
+                args:
+                  bucket: ${bucket_name}
+                  name: ${file_path}
+                  uploadType: "media"
+                  body: ${json.encode(status_data)}
+                  
+            - log_status_written:
+                call: sys.log
+                args:
+                  text: "Status written to GCS successfully"
+                  severity: INFO
+        except:
+          as: e
+          steps:
+            - log_gcs_failure:
+                call: sys.log
+                args:
+                  text: "Failed to write status to GCS"
+                  severity: WARNING
+            
+    - final_log:
+        call: sys.log
+        args:
+          text: "Historical schedule collection complete"
+          severity: INFO
+          
+    - return_summary:
+        return:
+          status: ${overall_status}
+          seasons_requested: 4
+          seasons_successful: ${successful_seasons}
+          total_games_collected: ${total_games_collected}
+          duration_seconds: ${total_duration}
+          timestamp: ${current_timestamp}

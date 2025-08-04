@@ -41,7 +41,8 @@ SCRAPER_REGISTRY = {
     "bdl_active_players": ("scrapers.balldontlie.bdl_active_players", "BdlActivePlayersScraper"),
     "bdl_injuries": ("scrapers.balldontlie.bdl_injuries", "BdlInjuriesScraper"),
     
-    # NBA.com scrapers (9 total)
+    # NBA.com scrapers (10 total)
+    "nbac_schedule_api": ("scrapers.nbacom.nbac_schedule_api", "GetNbaComScheduleApi"),
     "nbac_player_list": ("scrapers.nbacom.nbac_player_list", "GetNbaComPlayerList"),
     "nbac_player_movement": ("scrapers.nbacom.nbac_player_movement", "GetNbaComPlayerMovement"),
     "nbac_schedule": ("scrapers.nbacom.nbac_current_schedule_v2_1", "GetDataNbaSeasonSchedule"),

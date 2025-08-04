@@ -1,9 +1,8 @@
-# workflows/post-game-collection.yaml
-# NBA Post-Game Collection Workflow - Game data collection after games complete
-# Runs at 8 PM PT (early games) and 11 PM PT (late games + retries)
-# Same workflow triggered by 2 different schedulers
-# Focuses on core game data collection, not advanced analysis
-# VERSION: 1.0 - Replaces post-game-analysis.yaml with simpler, focused approach
+# workflows/early-morning-final-check.yaml
+# NBA Early Morning Final Check Workflow - Last chance recovery before business day
+# Runs daily at 5 AM PT as final safety net for Enhanced PBP and critical game data
+# Includes ESPN dependency chain and comprehensive final sweep
+# VERSION: 2.0 - Updated to match optimized workflow reference
 
 main:
   params: [args]
@@ -17,56 +16,97 @@ main:
     - log_workflow_start:
         call: sys.log
         args:
-          text: "Starting NBA Post-Game Collection Workflow"
+          text: "Starting NBA Early Morning Final Check Workflow"
           severity: INFO
 
-    # PHASE 1: Independent Scoreboards (parallel - no dependencies)
-    - independent_scoreboards:
+    # PHASE 1: Enhanced Play-by-Play Final Attempt (BigDataBall + NBA.com backup)
+    - enhanced_pbp_final_attempt:
         try:
           parallel:
             exception_policy: continueAll
             branches:
-              - nba_official_scoreboard:
+              - bigdataball_pbp_final:
                   steps:
-                    - call_nba_scoreboard:
+                    - call_bigdataball_pbp:
                         call: run_scraper
                         args:
-                          scraper_name: "nba-scoreboard"
-                          scraper_class: "GetNbaComScoreboardV2"
-                          endpoint: "nbac_scoreboard_v2"
-                          timeout: 300
+                          scraper_name: "bigdataball-pbp-final"
+                          scraper_class: "BigDataBallPbpScraper"
+                          endpoint: "bigdataball_pbp"
+                          timeout: 600
                           critical: false
-                        result: nba_scoreboard_result
+                        result: bigdataball_pbp_result
 
-              - bdl_live_scores:
+              - nbacom_pbp_backup:
                   steps:
-                    - call_bdl_live_scores:
+                    - call_nbacom_pbp:
                         call: run_scraper
                         args:
-                          scraper_name: "bdl-live-box-scores"
-                          scraper_class: "BdlLiveBoxScoresScraper"
-                          endpoint: "bdl_live_box_scores"
-                          timeout: 300
+                          scraper_name: "nbacom-pbp-backup"
+                          scraper_class: "GetNbaComPlayByPlay"
+                          endpoint: "nbac_play_by_play"
+                          timeout: 600
                           critical: false
-                        result: bdl_live_result
+                        result: nbacom_pbp_result
         except:
           as: e
           steps:
-            - log_scoreboard_error:
+            - log_pbp_final_error:
                 call: sys.log
                 args:
-                  text: "Independent scoreboards had errors - non-critical"
+                  text: "Enhanced PBP final attempt had errors - will be picked up by Morning Operations"
                   severity: WARNING
+            - assign_pbp_final_failure:
+                assign:
+                  - bigdataball_pbp_result:
+                      status: "failure"
+                      error: ${e.message}
+                      scraper_name: "bigdataball-pbp-final"
+                      timestamp: ${sys.now()}
+                  - nbacom_pbp_result:
+                      status: "failure"
+                      error: ${e.message}
+                      scraper_name: "nbacom-pbp-backup"
+                      timestamp: ${sys.now()}
 
-    # PHASE 2: ESPN Dependency Chain (Sequential: Scoreboard → Boxscore)
-    - espn_scoreboard_first:
+    # PHASE 2: Core Game Data Final Sweep
+    - core_game_data_final:
+        try:
+          steps:
+            - call_bdl_box_scores:
+                call: run_scraper
+                args:
+                  scraper_name: "bdl-box-scores-final"
+                  scraper_class: "BdlBoxScoresScraper"
+                  endpoint: "bdl_box_scores"
+                  timeout: 600
+                  critical: false
+                result: bdl_box_scores_final_result
+        except:
+          as: e
+          steps:
+            - log_core_data_error:
+                call: sys.log
+                args:
+                  text: "Core game data final sweep had errors - non-critical"
+                  severity: WARNING
+            - assign_core_data_failure:
+                assign:
+                  - bdl_box_scores_final_result:
+                      status: "failure"
+                      error: ${e.message}
+                      scraper_name: "bdl-box-scores-final"
+                      timestamp: ${sys.now()}
+
+    # PHASE 3: ESPN Dependency Chain (Sequential: Scoreboard → Boxscore) - BACKUP ONLY
+    - espn_dependency_chain:
         try:
           steps:
             - call_espn_scoreboard:
                 call: run_scraper
                 args:
-                  scraper_name: "espn-scoreboard"
-                  scraper_class: "EspnScoreboardApiScraper"
+                  scraper_name: "espn-scoreboard-backup"
+                  scraper_class: "GetEspnScoreboard"
                   endpoint: "espn_scoreboard_api"
                   timeout: 300
                   critical: false
@@ -77,32 +117,32 @@ main:
             - log_espn_scoreboard_error:
                 call: sys.log
                 args:
-                  text: "ESPN Scoreboard failed - skipping ESPN boxscores"
+                  text: "ESPN Scoreboard backup failed - skipping ESPN boxscores"
                   severity: WARNING
             - assign_empty_espn_result:
                 assign:
                   - espn_scoreboard_result:
                       status: "failure"
                       error: ${e.message}
-                      scraper_name: "espn-scoreboard"
+                      scraper_name: "espn-scoreboard-backup"
                       timestamp: ${sys.now()}
 
     # Check ESPN Scoreboard success before proceeding to Boxscore
     - check_espn_scoreboard_success:
         switch:
           - condition: ${espn_scoreboard_result.status == "success"}
-            next: espn_boxscore_second
+            next: espn_boxscore_final
           - condition: true
-            next: core_game_statistics
+            next: workflow_success
 
-    - espn_boxscore_second:
+    - espn_boxscore_final:
         try:
           steps:
             - call_espn_game_boxscore:
                 call: run_scraper
                 args:
-                  scraper_name: "espn-game-boxscore"
-                  scraper_class: "EspnGameBoxscoreApiScraper"
+                  scraper_name: "espn-game-boxscore-backup"
+                  scraper_class: "GetEspnBoxscore"
                   endpoint: "espn_game_boxscore"
                   timeout: 600
                   critical: false
@@ -113,77 +153,15 @@ main:
             - log_espn_boxscore_error:
                 call: sys.log
                 args:
-                  text: "ESPN Game Boxscore failed"
+                  text: "ESPN Game Boxscore backup failed in final check"
                   severity: WARNING
             - assign_empty_boxscore_result:
                 assign:
                   - espn_boxscore_result:
                       status: "failure"
                       error: ${e.message}
-                      scraper_name: "espn-game-boxscore"
+                      scraper_name: "espn-game-boxscore-backup"
                       timestamp: ${sys.now()}
-
-    # PHASE 3: Core Game Statistics (parallel - post-game data)
-    - core_game_statistics:
-        try:
-          parallel:
-            exception_policy: continueAll
-            branches:
-              - bdl_box_scores:
-                  steps:
-                    - call_bdl_box_scores:
-                        call: run_scraper
-                        args:
-                          scraper_name: "bdl-box-scores"
-                          scraper_class: "BdlBoxScoresScraper"
-                          endpoint: "bdl_box_scores"
-                          timeout: 600
-                          critical: false
-                        result: bdl_box_scores_result
-
-              - bdl_player_stats:
-                  steps:
-                    - call_bdl_player_box_scores:
-                        call: run_scraper
-                        args:
-                          scraper_name: "bdl-player-box-scores"
-                          scraper_class: "BdlPlayerBoxScoresScraper"
-                          endpoint: "bdl_player_box_scores"
-                          timeout: 600
-                          critical: false
-                        result: bdl_player_box_result
-
-              - player_averages:
-                  steps:
-                    - call_bdl_player_averages:
-                        call: run_scraper
-                        args:
-                          scraper_name: "bdl-player-averages"
-                          scraper_class: "BdlPlayerAveragesScraper"
-                          endpoint: "bdl_player_averages"
-                          timeout: 300
-                          critical: false
-                        result: bdl_averages_result
-
-              - advanced_game_stats:
-                  steps:
-                    - call_bdl_game_adv_stats:
-                        call: run_scraper
-                        args:
-                          scraper_name: "bdl-game-adv-stats"
-                          scraper_class: "BdlGameAdvStatsScraper"
-                          endpoint: "bdl_game_adv_stats"
-                          timeout: 300
-                          critical: false
-                        result: bdl_adv_stats_result
-        except:
-          as: e
-          steps:
-            - log_stats_error:
-                call: sys.log
-                args:
-                  text: "Core game statistics collection had errors - non-critical"
-                  severity: WARNING
 
     # SUCCESS PATH (always succeeds - best effort workflow)
     - workflow_success:
@@ -194,40 +172,38 @@ main:
     - write_status_success:
         call: write_status_to_gcs
         args:
-          workflow_name: "post-game-collection"
+          workflow_name: "early-morning-final-check"
           execution_id: ${execution_id}
           execution_time: ${current_timestamp}
           workflow_start: ${workflow_start}
           total_duration: ${total_duration}
           scrapers:
-            nbac_scoreboard_v2: ${nba_scoreboard_result}
-            bdl_live_box_scores: ${bdl_live_result}
+            bigdataball_pbp: ${bigdataball_pbp_result}
+            nbac_play_by_play: ${nbacom_pbp_result}
+            bdl_box_scores: ${bdl_box_scores_final_result}
             espn_scoreboard_api: ${espn_scoreboard_result}
-            espn_game_boxscore: ${default(espn_boxscore_result, {"status": "skipped", "message": "ESPN Scoreboard failed"})}
-            bdl_box_scores: ${bdl_box_scores_result}
-            bdl_player_box_scores: ${bdl_player_box_result}
-            bdl_player_averages: ${bdl_averages_result}
-            bdl_game_adv_stats: ${bdl_adv_stats_result}
+            espn_game_boxscore: ${default(espn_boxscore_result, null)}
           dependencies:
-            "espn_scoreboard_api → espn_game_boxscore": ${espn_scoreboard_result.status == "success" ? "success" : "blocked_by_failure"}
-          collection_strategy: "8PM early games, 11PM late games + retries"
+            "espn_scoreboard_api → espn_game_boxscore": "dependency_chain_attempted"
+          recovery_strategy: "Final check - last chance before business day (5 AM PT)"
           status: "SUCCESS"
 
     - log_workflow_success:
         call: sys.log
         args:
-          text: "NBA Post-Game Collection Workflow completed successfully"
+          text: "NBA Early Morning Final Check Workflow completed successfully"
           severity: INFO
 
     - return_success:
         return:
           status: "SUCCESS"
-          message: "Post-game collection completed successfully"
+          message: "Early morning final check completed - best effort (5 AM PT)"
           duration_seconds: ${total_duration}
-          scoreboards_attempted: true
-          espn_chain_completed: ${espn_scoreboard_result.status == "success"}
-          core_statistics_attempted: true
-          collection_window: "post_game_data"
+          bigdataball_pbp_status: ${bigdataball_pbp_result.status}
+          nbacom_pbp_backup_status: ${nbacom_pbp_result.status}
+          espn_chain_attempted: true
+          core_data_attempted: true
+          recovery_window: "final_before_business_day"
           timestamp: ${current_timestamp}
 
 # Reusable subworkflow for running individual scrapers
@@ -295,18 +271,11 @@ run_scraper:
 
 # Subworkflow for writing status to GCS
 write_status_to_gcs:
-  params: [workflow_name, execution_id, execution_time, workflow_start, scrapers, status, total_duration, dependencies, collection_strategy]
+  params: [workflow_name, execution_id, execution_time, workflow_start, scrapers, status, total_duration, dependencies, recovery_strategy]
   steps:
     - calculate_duration:
         assign:
           - actual_duration: ${default(total_duration, sys.now() - workflow_start)}
-          - current_time: ${sys.now()}
-          - date_string: ${text.split(text.split(string(current_time), "T")[0], "-")}
-          - year: ${date_string[0]}
-          - month: ${date_string[1]} 
-          - day: ${date_string[2]]
-          - hour_min: ${text.replace_all(text.split(string(current_time), "T")[1], ":", "h")}
-          - time_part: ${text.split(hour_min, ".")[0]}
 
     - build_status_object:
         assign:
@@ -317,13 +286,13 @@ write_status_to_gcs:
               total_duration: ${actual_duration}
               status: ${status}
               scrapers: ${scrapers}
-              dependencies: ${default(dependencies, {})}
-              collection_strategy: ${default(collection_strategy, "Standard execution")}
+              dependencies: ${default(dependencies, null)}
+              recovery_strategy: ${default(recovery_strategy, "Standard execution")}
 
     - create_gcs_path:
         assign:
           - bucket_name: "nba-props-status"
-          - file_path: ${"workflow-status/" + year + "-" + month + "-" + day + "/" + workflow_name + "-" + time_part + ".json"}
+          - file_path: ${"workflow-status/" + workflow_name + "-" + execution_id + ".json"}
           - gcs_url: ${"gs://" + bucket_name + "/" + file_path}
 
     - write_to_gcs:
@@ -350,5 +319,5 @@ write_status_to_gcs:
     - log_status_written:
         call: sys.log
         args:
-          text: ${"Status written to GCS: " + gcs_url}
+          text: "Status written to GCS"
           severity: INFO

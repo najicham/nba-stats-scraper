@@ -180,6 +180,29 @@ class GetNbaComScheduleCdn(ScraperBase, ScraperFlaskMixin):
             season_year = "Unknown"
             league_id = "00"
             logger.warning("Using fallback data transformation")
+
+        # Extract actual season for path building
+        if season_year and season_year != "Unknown":
+            if season_year.isdigit() and len(season_year) == 4:
+                # Convert year to NBA format (e.g., "2025" -> "2025-26")
+                season_int = int(season_year)
+                next_year = (season_int + 1) % 100
+                self.opts['actual_season_nba_format'] = f"{season_int}-{next_year:02d}"
+            else:
+                # Already in NBA format or other format
+                self.opts['actual_season_nba_format'] = season_year
+        else:
+            # Fallback - use current season logic
+            from datetime import datetime
+            current_year = datetime.now().year
+            # NBA season typically starts in October, so if we're past October, it's current_year-next_year season
+            if datetime.now().month >= 10:
+                next_year = (current_year + 1) % 100
+                self.opts['actual_season_nba_format'] = f"{current_year}-{next_year:02d}"
+            else:
+                # Before October, we're in the previous season
+                prev_year = current_year - 1
+                self.opts['actual_season_nba_format'] = f"{prev_year}-{current_year % 100:02d}"
         
         # Flatten all games from all dates
         all_games = []

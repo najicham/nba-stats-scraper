@@ -55,8 +55,8 @@ class GCSPathBuilder:
         
         # NBA.com Scrapers
         "nba_com_player_list": "nba-com/player-list/%(date)s/%(timestamp)s.json",
-        "nba_com_schedule": "nba-com/schedule/%(date)s/%(timestamp)s.json",
-        "nba_com_schedule_cdn": "nba-com/schedule-cdn/%(date)s/%(timestamp)s.json", 
+        "nba_com_schedule": "nba-com/schedule/%(actual_season_nba_format)s/%(timestamp)s.json",
+        "nba_com_schedule_cdn": "nba-com/schedule-cdn/%(actual_season_nba_format)s/%(timestamp)s.json",
         "nba_com_scoreboard_v2": "nba-com/scoreboard-v2/%(date)s/%(timestamp)s.json",
         "nba_com_injury_report": "nba-com/injury-report/%(date)s/%(hour)s%(period)s/%(timestamp)s.json",
         "nba_com_play_by_play": "nba-com/play-by-play/%(date)s/game_%(game_id)s/%(timestamp)s.json",
@@ -66,7 +66,7 @@ class GCSPathBuilder:
         
         # Big Data Ball
         # "big_data_ball_play_by_play": "big-data-ball/play-by-play/%(date)s/game_%(game_id)s/%(timestamp)s.csv",
-        "bigdataball_pbp": "big-data-ball/enhanced-pbp/%(date)s/%(timestamp)s.json",
+        "bigdataball_pbp": "big-data-ball/%(nba_season)s/%(date)s/game_%(game_id)s/%(filename)s.csv",
     }
     
 

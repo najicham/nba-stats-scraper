@@ -78,7 +78,7 @@ class BigDataBallPbpScraper(ScraperBase, ScraperFlaskMixin):
         # GCS export for production
         {
             "type": "gcs",
-            "key": "big-data-ball/games/%(date)s/%(game_id)s.json",
+            "key": GCSPathBuilder.get_path("bigdataball_pbp"),  # Use the centralized path
             "export_mode": ExportMode.DATA,
             "groups": ["prod"],
         },
@@ -414,6 +414,15 @@ class BigDataBallPbpScraper(ScraperBase, ScraperFlaskMixin):
         if game_id and game_id != 'unknown':
             self.opts['game_id'] = game_id
 
+        # Extract NBA season for path substitution
+        game_date = game_info.get('date', '')
+        if game_date:
+            self.opts['nba_season'] = self.derive_nba_season_from_date(game_date)
+            logger.info("Derived NBA season %s from date %s", self.opts['nba_season'], game_date)
+        else:
+            self.opts['nba_season'] = 'unknown'
+            logger.warning("No game date available for season derivation")
+
         self.data = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "source": "bigdataball",
@@ -429,6 +438,35 @@ class BigDataBallPbpScraper(ScraperBase, ScraperFlaskMixin):
         
         logger.info("Transformed %d play-by-play records for game %s", 
                    len(plays), game_id)
+        
+    def derive_nba_season_from_date(date_str: str) -> str:
+        """
+        Convert a date string to NBA season format.
+        
+        Args:
+            date_str: Date in format YYYY-MM-DD (e.g., "2021-10-19")
+            
+        Returns:
+            NBA season format (e.g., "2021-22")
+            
+        NBA seasons start in October, so:
+        - 2021-10-19 → 2021-22 season
+        - 2022-03-15 → 2021-22 season  
+        """
+        try:
+            year = int(date_str[:4])
+            month = int(date_str[5:7])
+            
+            # NBA season starts in October
+            if month >= 10:
+                # October-December: start of new season
+                return f"{year}-{(year+1) % 100:02d}"
+            else:
+                # January-September: continuation of previous season
+                return f"{year-1}-{year % 100:02d}"
+        except (ValueError, IndexError):
+            logger.warning(f"Could not parse date for season: {date_str}")
+            return "unknown"
 
     # ------------------------------------------------------------------ #
     # Stats                                                              #
