@@ -64,12 +64,17 @@ class GCSPathBuilder:
         "nba_com_team_roster": "nba-com/rosters/%(date)s/team_%(team_abbr)s/%(timestamp)s.json", 
         "nba_com_player_movement": "nba-com/player-movement/%(date)s/%(timestamp)s.json",
         
+        # NBA.com Gamebooks (Phase 2)
+        "nba_com_gamebooks_pdf_raw": "nba-com/gamebooks-pdf/%(date)s/game_%(clean_game_code)s/%(timestamp)s.pdf",
+        "nba_com_gamebooks_pdf_data": "nba-com/gamebooks-data/%(date)s/game_%(clean_game_code)s/%(timestamp)s.json",
+
+        "br_season_roster": "basketball-ref/season-rosters/%(season)s/%(teamAbbr)s.json",
+        
         # Big Data Ball
         # "big_data_ball_play_by_play": "big-data-ball/play-by-play/%(date)s/game_%(game_id)s/%(timestamp)s.csv",
         "bigdataball_pbp": "big-data-ball/%(nba_season)s/%(date)s/game_%(game_id)s/%(filename)s.csv",
     }
     
-
     
     @classmethod
     def get_path(cls, template_key: str, **kwargs) -> str:

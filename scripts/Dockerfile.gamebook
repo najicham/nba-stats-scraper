@@ -1,0 +1,21 @@
+# FILE: scripts/Dockerfile.gamebook
+# 
+# Lightweight container for NBA Gamebook Backfill Cloud Run Job
+# Only includes what's needed for the 6-hour batch processing job
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install minimal dependencies for the job
+RUN pip install --no-cache-dir requests
+
+# Copy the job script
+COPY scripts/gamebook_backfill_job.py .
+
+# Set environment variables
+ENV PYTHONUNBUFFERED=1
+
+# Run the backfill job
+# Service URL will be passed via environment variable
+CMD python gamebook_backfill_job.py --service-url ${SCRAPER_SERVICE_URL}

@@ -40,6 +40,9 @@ SCRAPER_REGISTRY = {
     "bdl_player_box_scores": ("scrapers.balldontlie.bdl_player_box_scores", "BdlPlayerBoxScoresScraper"),
     "bdl_active_players": ("scrapers.balldontlie.bdl_active_players", "BdlActivePlayersScraper"),
     "bdl_injuries": ("scrapers.balldontlie.bdl_injuries", "BdlInjuriesScraper"),
+
+    # Basketball Reference scrapers (1 total)
+    "br_season_roster": ("scrapers.basketball_ref.br_season_roster", "BasketballRefSeasonRoster"),
     
     # NBA.com scrapers (10 total)
     "nbac_schedule_api": ("scrapers.nbacom.nbac_schedule_api", "GetNbaComScheduleApi"),
@@ -52,6 +55,7 @@ SCRAPER_REGISTRY = {
     "nbac_play_by_play": ("scrapers.nbacom.nbac_play_by_play", "GetNbaComPlayByPlay"),
     "nbac_player_boxscore": ("scrapers.nbacom.nbac_player_boxscore", "GetNbaComPlayerBoxscore"),
     "nbac_roster": ("scrapers.nbacom.nbac_roster", "GetNbaTeamRoster"),
+    "nbac_gamebook_pdf": ("scrapers.nbacom.nbac_gamebook_pdf", "GetNbaComGamebookPdf"),
     
     # ESPN scrapers (3 total)
     "espn_roster": ("scrapers.espn.espn_roster_api", "GetEspnTeamRosterAPI"),

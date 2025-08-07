@@ -32,3 +32,9 @@ NBA_TEAMS = [
     { "teamId": "1610612762", "abbr": "UTA", "slug": "jazz" },
     { "teamId": "1610612764", "abbr": "WAS", "slug": "wizards" }
 ]
+
+BASKETBALL_REF_TEAMS = [
+    "ATL", "BOS", "BRK", "CHO", "CHI", "CLE", "DAL", "DEN", "DET", "GSW",
+    "HOU", "IND", "LAC", "LAL", "MEM", "MIA", "MIL", "MIN", "NOP", "NYK", 
+    "OKC", "ORL", "PHI", "PHO", "POR", "SAC", "SAS", "TOR", "UTA", "WAS"
+]
