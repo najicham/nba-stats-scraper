@@ -143,6 +143,7 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
         self.opts["teams_part"] = teams_part
         self.opts["matchup"] = f"{self.opts['away_team']}@{self.opts['home_team']}"
         self.opts["clean_game_code"] = game_code.replace("/", "_")  # For filenames
+        self.opts["clean_game_code_dashes"] = game_code.replace("/", "-")  # "20211003-BKNLAL"
         
         # Set defaults
         self.opts["version"] = self.opts.get("version", "short")
@@ -295,14 +296,18 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
             
             logger.debug("Line %d: %s", i, line[:100])  # DEBUG level
             
-            # Detect team sections
-            if 'VISITOR:' in line and 'Memphis' in line:
-                current_team = "Memphis Grizzlies"
-                logger.debug("Found visitor team: %s", current_team)  # DEBUG level
+            # Detect team sections  
+            if 'VISITOR:' in line:
+                team_match = re.search(r'VISITOR:\s*(.+?)\s*\(', line)
+                if team_match:
+                    current_team = team_match.group(1)
+                    logger.debug("Found visitor team: %s", current_team)  # DEBUG level
                 continue
-            elif 'HOME:' in line and ('Cleveland' in line or 'CAVALIERS' in line):
-                current_team = "Cleveland Cavaliers"
-                logger.debug("Found home team: %s", current_team)  # DEBUG level
+            elif 'HOME:' in line:
+                team_match = re.search(r'HOME:\s*(.+?)\s*\(', line)
+                if team_match:
+                    current_team = team_match.group(1)
+                    logger.debug("Found home team: %s", current_team)  # DEBUG level
                 continue
             
             # Look for NWT players (did not play - game specific)
@@ -427,15 +432,18 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
         inactive_list = []
         
         try:
-            # Example: "Inactive: Grizzlies - Bane (Injury/Illness - Lumbar; Disc Bulge), Goodwin (G League - Two-Way), ..."
             logger.debug("Processing inactive line: %s", line)
             
-            # Determine team from the line
-            team = None
-            if 'Grizzlies' in line:
-                team = "Memphis Grizzlies"
-            elif 'Cavaliers' in line or 'CAVALIERS' in line:
-                team = "Cleveland Cavaliers"
+            # Generic team extraction from "Inactive: [TEAM] - [PLAYERS]" format
+            team_match = re.search(r'Inactive:\s*([^-]+?)\s*-', line)
+            if not team_match:
+                logger.warning("Could not extract team from inactive line: %s", line)
+                return inactive_list
+                
+            team_name = team_match.group(1).strip()
+            
+            # Map team abbreviations/names to full names if needed
+            team = self._normalize_team_name(team_name)
             
             if not team:
                 logger.warning("Could not determine team from inactive line: %s", line)

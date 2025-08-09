@@ -70,9 +70,13 @@ class GetNbaComScheduleApi(ScraperBase, ScraperFlaskMixin):
     proxy_enabled = True      # stats.nba.com may need proxy
     
     BASE_URL = "https://stats.nba.com/stats/scheduleleaguev2int"
-    
+
+    # Add these constants near the top of the class
     GCS_PATH_KEY = "nba_com_schedule"
+    METADATA_GCS_PATH_KEY = "nba_com_schedule_metadata"
+
     exporters = [
+        # ========== SCHEDULE DATA EXPORTERS ==========
         {
             "type": "gcs",
             "key": GCSPathBuilder.get_path(GCS_PATH_KEY),
@@ -106,6 +110,33 @@ class GetNbaComScheduleApi(ScraperBase, ScraperFlaskMixin):
             "type": "file",
             "filename": "/tmp/exp_%(run_id)s.json",
             "export_mode": ExportMode.DECODED,
+            "pretty_print": True,
+            "groups": ["capture"],
+        },
+        
+        # ========== METADATA EXPORTERS ==========
+        {
+            "type": "gcs",
+            "key": GCSPathBuilder.get_path(METADATA_GCS_PATH_KEY),
+            "export_mode": ExportMode.DATA,
+            "data_key": "metadata",  # Export self.metadata instead of self.data
+            "groups": ["prod", "gcs"],
+        },
+        # Local metadata files for development
+        {
+            "type": "file",
+            "filename": "/tmp/nba_schedule_metadata_%(season)s.json",
+            "export_mode": ExportMode.DATA,
+            "data_key": "metadata",
+            "pretty_print": True,
+            "groups": ["dev", "test"],
+        },
+        # Capture group metadata
+        {
+            "type": "file",
+            "filename": "/tmp/metadata_%(run_id)s.json",
+            "export_mode": ExportMode.DATA,
+            "data_key": "metadata",
             "pretty_print": True,
             "groups": ["capture"],
         },
@@ -167,7 +198,7 @@ class GetNbaComScheduleApi(ScraperBase, ScraperFlaskMixin):
         logger.info("Validation passed: %d game dates found", len(game_dates))
 
     def transform_data(self) -> None:
-        """Transform NBA.com API response into structured data"""
+        """Transform NBA.com API response into structured data and generate metadata"""
         league_schedule = self.decoded_data["leagueSchedule"]
         meta = self.decoded_data.get("meta", {})
 
@@ -217,8 +248,12 @@ class GetNbaComScheduleApi(ScraperBase, ScraperFlaskMixin):
                 all_games.append(game_with_date)
         
         # Sort games by date and game sequence
-        all_games.sort(key=lambda x: (x.get("gameDate", ""), x.get("gameSequence", 0)))
+        all_games.sort(key=lambda x: (x.get("gameDateEst", ""), x.get("gameSequence", 0)))
         
+        # Generate season metadata
+        metadata = self._generate_season_metadata(all_games)
+        
+        # Store both schedule data and metadata
         self.data = {
             "season": self.opts["season"],
             "season_nba_format": self.opts["season_nba_format"],
@@ -229,11 +264,162 @@ class GetNbaComScheduleApi(ScraperBase, ScraperFlaskMixin):
             "game_count": len(all_games),
             "date_count": len(game_dates),
             "games": all_games,
-            "gameDates": game_dates  # Keep original structure too
+            "gameDates": game_dates,  # Keep original structure too
+            "metadata": metadata  # Store metadata here for the exporter
         }
         
         logger.info("Processed %d games across %d dates for %s season", 
                 len(all_games), len(game_dates), self.opts["season_nba_format"])
+        logger.info("Generated metadata: %d total games, %d backfill eligible", 
+                metadata["total_games"], metadata["backfill"]["total_games"])
+
+    def _generate_season_metadata(self, all_games: list) -> dict:
+        """Generate comprehensive season metadata for monitoring and analysis"""
+        
+        # Initialize counters with completion status tracking
+        regular_season = {"total": 0, "completed": 0, "live": 0, "scheduled": 0}
+        playoffs = {"total": 0, "completed": 0, "live": 0, "scheduled": 0}
+        allstar = {"total": 0, "completed": 0, "live": 0, "scheduled": 0}
+        preseason = {"total": 0, "completed": 0, "live": 0, "scheduled": 0}
+        
+        filtered_stats = {
+            "allstar_games": 0,
+            "invalid_team_codes": 0,
+            "invalid_team_examples": []
+        }
+        
+        backfill_games = 0
+        
+        for game in all_games:
+            week_name = game.get("weekName", "").lower()
+            game_label = game.get("gameLabel", "").lower()
+            game_status = game.get("gameStatus", 1)  # 1=scheduled, 2=live, 3=final
+            
+            # Categorize by game type based on NBA.com fields
+            if "all-star" in week_name or any(term in game_label for term in ["all-star", "rising stars"]):
+                allstar["total"] += 1
+                if game_status == 3:
+                    allstar["completed"] += 1
+                elif game_status == 2:
+                    allstar["live"] += 1
+                else:
+                    allstar["scheduled"] += 1
+                filtered_stats["allstar_games"] += 1
+                
+            elif any(term in game_label for term in ["play-in", "first round", "conf", "finals"]) and "all-star" not in game_label:
+                # Playoff games: Play-In, First Round, Conference Semifinals/Finals, NBA Finals
+                playoffs["total"] += 1
+                if game_status == 3:
+                    playoffs["completed"] += 1
+                    if self._should_include_in_backfill(game):
+                        backfill_games += 1
+                elif game_status == 2:
+                    playoffs["live"] += 1
+                else:
+                    playoffs["scheduled"] += 1
+                        
+            elif week_name.startswith("week"):
+                # Regular season games have weekName like "Week 1", "Week 2", etc.
+                regular_season["total"] += 1
+                if game_status == 3:
+                    regular_season["completed"] += 1
+                    if self._should_include_in_backfill(game):
+                        backfill_games += 1
+                elif game_status == 2:
+                    regular_season["live"] += 1
+                else:
+                    regular_season["scheduled"] += 1
+                        
+            else:
+                # Games with empty weekName and gameLabel are likely preseason
+                preseason["total"] += 1
+                if game_status == 3:
+                    preseason["completed"] += 1
+                elif game_status == 2:
+                    preseason["live"] += 1
+                else:
+                    preseason["scheduled"] += 1
+                    # Note: We typically don't include preseason in backfill
+            
+            # Check for invalid team codes
+            away_team = game.get("awayTeam", {}).get("teamTricode", "")
+            home_team = game.get("homeTeam", {}).get("teamTricode", "")
+            
+            if len(away_team) != 3 or len(home_team) != 3 or not away_team.isalpha() or not home_team.isalpha():
+                filtered_stats["invalid_team_codes"] += 1
+                if len(filtered_stats["invalid_team_examples"]) < 3:
+                    filtered_stats["invalid_team_examples"].append({
+                        "game_code": game.get("gameCode", "unknown"),
+                        "away_team": away_team,
+                        "home_team": home_team
+                    })
+        
+        total_games = (regular_season["total"] + playoffs["total"] + 
+                    allstar["total"] + preseason["total"])
+        
+        total_completed = (regular_season["completed"] + playoffs["completed"] + 
+                        allstar["completed"] + preseason["completed"])
+        
+        total_remaining = (regular_season["scheduled"] + playoffs["scheduled"] + 
+                        allstar["scheduled"] + preseason["scheduled"])
+        
+        # Calculate season progress
+        season_completion_pct = (total_completed / total_games * 100) if total_games > 0 else 0
+        
+        # Estimate remaining backfill games (scheduled regular season + playoffs)
+        estimated_remaining_backfill = regular_season["scheduled"] + playoffs["scheduled"]
+        
+        return {
+            "season": self.opts["actual_season_nba_format"],
+            "scraped_at": self.opts["timestamp"],
+            "total_games": total_games,
+            "regular_season": regular_season,
+            "playoffs": playoffs,
+            "allstar": allstar,
+            "preseason": preseason,
+            "season_progress": {
+                "completion_percentage": round(season_completion_pct, 1),
+                "total_completed": total_completed,
+                "total_remaining": total_remaining,
+                "estimated_final_backfill": backfill_games + estimated_remaining_backfill
+            },
+            "backfill": {
+                "total_games": backfill_games,
+                "estimated_remaining": estimated_remaining_backfill,
+                "description": "Regular season + playoffs, completed games only, excluding All-Star and invalid teams"
+            },
+            "filtered": filtered_stats
+        }
+
+    def _should_include_in_backfill(self, game: dict) -> bool:
+        """Determine if a game should be included in backfill count for monitoring"""
+        
+        # Exclude All-Star games
+        week_name = game.get("weekName", "").lower()
+        game_label = game.get("gameLabel", "").lower()
+        
+        if "all-star" in week_name or any(term in game_label for term in ["all-star", "rising stars"]):
+            return False
+        
+        # Exclude games with invalid team codes
+        away_team = game.get("awayTeam", {}).get("teamTricode", "")
+        home_team = game.get("homeTeam", {}).get("teamTricode", "")
+        
+        if (len(away_team) != 3 or len(home_team) != 3 or 
+            not away_team.isalpha() or not home_team.isalpha()):
+            return False
+        
+        # Only include completed games (status 3 = final)
+        if game.get("gameStatus", 1) != 3:
+            return False
+        
+        # Include regular season and playoff games
+        if (week_name.startswith("week") or 
+            any(term in game_label for term in ["play-in", "first round", "conf", "finals"]) and "all-star" not in game_label):
+            return True
+        
+        # Exclude preseason games (empty weekName and gameLabel)
+        return False
     
     def get_scraper_stats(self) -> dict:
         """Return scraper statistics"""

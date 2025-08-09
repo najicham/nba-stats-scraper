@@ -18,10 +18,6 @@ echo "Job Name: $JOB_NAME"
 echo "Region: $REGION"
 echo "Project: $PROJECT_ID"
 echo "Service URL: $SERVICE_URL"
-echo "Job Name: $JOB_NAME"
-echo "Region: $REGION"
-echo "Project: $PROJECT_ID"
-echo "Service URL: $SERVICE_URL"
 echo ""
 
 # Verify required files exist
@@ -63,8 +59,18 @@ rm ./Dockerfile
 
 # Deploy the Cloud Run Job using the built image
 echo ""
-echo "Creating Cloud Run Job..."
 
+# 🔧 FIX: Delete existing job and create new one (simpler than YAML replace)
+if gcloud run jobs describe $JOB_NAME --region=$REGION --project=$PROJECT_ID &>/dev/null; then
+    echo "📝 Job exists - deleting and recreating with new image..."
+    gcloud run jobs delete $JOB_NAME \
+        --region=$REGION \
+        --project=$PROJECT_ID \
+        --quiet
+    echo "   ✅ Old job deleted"
+fi
+
+echo "🆕 Creating job with updated image..."
 gcloud run jobs create $JOB_NAME \
     --image=$IMAGE_NAME \
     --region=$REGION \
