@@ -43,6 +43,7 @@ try:
     from ..scraper_flask_mixin import convert_existing_flask_scraper
     from ..utils.exceptions import DownloadDataException
     from ..utils.gcs_path_builder import GCSPathBuilder
+    from ..utils.nba_team_mapper import build_event_teams_suffix
 except ImportError:
     # Direct execution: python scrapers/oddsapi/oddsa_player_props.py
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -51,6 +52,7 @@ except ImportError:
     from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
     from scrapers.utils.exceptions import DownloadDataException
     from scrapers.utils.gcs_path_builder import GCSPathBuilder
+    from scrapers.utils.nba_team_mapper import build_event_teams_suffix
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +73,7 @@ class GetOddsApiCurrentEventOdds(ScraperBase, ScraperFlaskMixin):
       • bookmakers  - comma-sep (defaults to draftkings,fanduel)
       • oddsFormat  - american | decimal | fractional
       • dateFormat  - iso | unix
+      • teams       - team suffix (e.g., LALDET) - if provided, skips team extraction
     """
 
     # Flask Mixin Configuration
@@ -84,6 +87,7 @@ class GetOddsApiCurrentEventOdds(ScraperBase, ScraperFlaskMixin):
         "bookmakers": None,  # Defaults to draftkings,fanduel in set_additional_opts
         "oddsFormat": None,
         "dateFormat": None,
+        "teams": None,  # Team suffix for GCS path (optional)
     }
 
     required_opts = ["event_id"]
@@ -97,10 +101,6 @@ class GetOddsApiCurrentEventOdds(ScraperBase, ScraperFlaskMixin):
     exporters = [
         {   # RAW payload for prod / GCS archival
             "type": "gcs",
-            # "key": (
-            #     "oddsapi/event-odds/current/%(sport)s/%(event_id)s/"
-            #     "%(run_id)s.raw.json"
-            # ),
             "key": GCSPathBuilder.get_path(GCS_PATH_KEY),
             "export_mode": ExportMode.RAW,
             "groups": ["prod", "gcs"],
@@ -201,10 +201,13 @@ class GetOddsApiCurrentEventOdds(ScraperBase, ScraperFlaskMixin):
         if not self.decoded_data:
             row_count = 0
             bookmakers: List[Dict[str, Any]] = []
+            event_data = {}
         elif isinstance(self.decoded_data, list):
             # Some sports return [event] list
-            bookmakers = self.decoded_data[0].get("bookmakers", []) if self.decoded_data else []
+            event_data = self.decoded_data[0] if self.decoded_data else {}
+            bookmakers = event_data.get("bookmakers", [])
         else:  # dict
+            event_data = self.decoded_data
             bookmakers = self.decoded_data.get("bookmakers", [])
 
         # Count bookmaker × market rows
@@ -212,6 +215,12 @@ class GetOddsApiCurrentEventOdds(ScraperBase, ScraperFlaskMixin):
         for bm in bookmakers:
             for mk in bm.get("markets", []):
                 row_count += len(mk.get("outcomes", [])) or 1
+
+        # Extract team information and build teams suffix for GCS path
+        teams_suffix = self._extract_teams_suffix(event_data)
+        if teams_suffix:
+            self.opts["teams"] = teams_suffix
+            logger.debug("Built teams suffix for GCS path: %s", teams_suffix)
 
         self.data = {
             "sport": self.opts["sport"],
@@ -226,6 +235,63 @@ class GetOddsApiCurrentEventOdds(ScraperBase, ScraperFlaskMixin):
             row_count,
             self.opts["event_id"],
         )
+
+    def _extract_teams_suffix(self, event_data: Dict[str, Any]) -> str:
+        """
+        Extract team information from current event odds data and build teams suffix.
+        
+        The current event odds endpoint returns event data including team names.
+        We use this to build the teams suffix for enhanced GCS paths.
+        
+        Args:
+            event_data: Event data from API response
+            
+        Returns:
+            Teams suffix (e.g., "LALDET") or empty string if teams not found
+        """
+        # Check if teams suffix was provided directly (from job/external source)
+        if self.opts.get("teams"):
+            return self.opts["teams"]
+        
+        try:
+            # The current event odds API response includes team information
+            # Look for team names in various possible field names
+            away_team = (event_data.get("away_team") or 
+                        event_data.get("awayTeam") or
+                        event_data.get("away") or
+                        event_data.get("visitor_team", ""))
+                        
+            home_team = (event_data.get("home_team") or 
+                        event_data.get("homeTeam") or
+                        event_data.get("home", ""))
+            
+            # Some APIs nest team info under team objects
+            if not away_team or not home_team:
+                away_team_obj = event_data.get("away_team_obj", {}) or event_data.get("awayTeam_obj", {})
+                home_team_obj = event_data.get("home_team_obj", {}) or event_data.get("homeTeam_obj", {})
+                
+                if away_team_obj:
+                    away_team = away_team_obj.get("name", away_team_obj.get("title", ""))
+                if home_team_obj:
+                    home_team = home_team_obj.get("name", home_team_obj.get("title", ""))
+            
+            if away_team and home_team:
+                # Build teams suffix using the utility
+                teams_suffix = build_event_teams_suffix({
+                    "away_team": away_team,
+                    "home_team": home_team
+                })
+                logger.debug("Extracted teams from current API response: %s @ %s -> %s", 
+                           away_team, home_team, teams_suffix)
+                return teams_suffix
+            else:
+                logger.warning("Could not extract team information from current event odds data")
+                logger.debug("Event data keys: %s", list(event_data.keys()) if event_data else [])
+                return ""
+                
+        except Exception as e:
+            logger.warning("Error extracting teams suffix: %s", e)
+            return ""
 
     # ------------------------------------------------------------------ #
     # Conditional save                                                   #
@@ -243,6 +309,7 @@ class GetOddsApiCurrentEventOdds(ScraperBase, ScraperFlaskMixin):
             "eventId": self.opts.get("event_id"),
             "markets": self.opts.get("markets"),
             "regions": self.opts.get("regions"),
+            "teams": self.opts.get("teams", ""),  # Include teams suffix in stats
         }
 
 
@@ -257,4 +324,3 @@ create_app = convert_existing_flask_scraper(GetOddsApiCurrentEventOdds)
 if __name__ == "__main__":
     main = GetOddsApiCurrentEventOdds.create_cli_and_flask_main()
     main()
-    

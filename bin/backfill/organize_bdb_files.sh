@@ -1,4 +1,5 @@
 #!/bin/bash
+# bin/backfill/organize_bdb_files.sh
 # Big Data Ball File Organizer for NBA Backfill
 # Extracts zip files and organizes into GCS-ready structure
 

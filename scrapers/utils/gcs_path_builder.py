@@ -41,11 +41,11 @@ class GCSPathBuilder:
         "bdl_active_players": "ball-dont-lie/active-players/%(date)s/%(timestamp)s.json",
         "bdl_injuries": "ball-dont-lie/injuries/%(date)s/%(timestamp)s.json",
         
-        # Odds API Scrapers  
+        # Odds API Scrapers
         "odds_api_events": "odds-api/events/%(date)s/%(timestamp)s.json",
-        "odds_api_player_props": "odds-api/player-props/%(date)s/event_%(event_id)s/%(timestamp)s.json",
+        "odds_api_player_props": "odds-api/player-props/%(date)s/%(event_id)s-%(teams)s/%(timestamp)s.json",
         "odds_api_events_history": "odds-api/events-history/%(date)s/%(timestamp)s.json", 
-        "odds_api_player_props_history": "odds-api/player-props-history/%(date)s/event_%(event_id)s/%(timestamp)s.json",
+        "odds_api_player_props_history": "odds-api/player-props-history/%(date)s/%(event_id)s-%(teams)s/%(timestamp)s.json",
         "odds_api_team_players": "odds-api/players/%(date)s/%(timestamp)s.json",
         
         # ESPN Scrapers

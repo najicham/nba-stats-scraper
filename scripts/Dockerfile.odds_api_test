@@ -1,0 +1,20 @@
+# FILE: scripts/Dockerfile.odds_api_test
+# 
+# Lightweight container for Odds API Single-Day Test Cloud Run Job
+# Based on the proven gamebook Dockerfile pattern
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install minimal dependencies for the job
+RUN pip install --no-cache-dir requests google-cloud-storage
+
+# Copy the job script
+COPY scripts/odds_api_single_day_test_job.py .
+
+# Set environment variables
+ENV PYTHONUNBUFFERED=1
+
+# Direct entrypoint - script will read SCRAPER_SERVICE_URL from environment
+ENTRYPOINT ["python", "odds_api_single_day_test_job.py"]
