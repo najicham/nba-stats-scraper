@@ -11,13 +11,15 @@ Usage examples
   # Via capture tool (recommended for data collection):
   python tools/fixtures/capture.py oddsa_player_props_his \
       --event_id 6f0b6f8d8cc9c5bc6375cdee \
-      --date 2025-06-10T00:00:00Z \
+      --game_date 2024-04-10 \
+      --snapshot_timestamp 2024-04-11T04:00:00Z \
       --debug
 
   # Direct CLI execution:
   python scrapers/oddsapi/oddsa_player_props_his.py \
       --event_id 6f0b6f8d8cc9c5bc6375cdee \
-      --date 2025-06-10T00:00:00Z \
+      --game_date 2024-04-10 \
+      --snapshot_timestamp 2024-04-11T04:00:00Z \
       --debug
 
   # Flask web service:
@@ -77,8 +79,9 @@ def snap_iso_ts_to_five_minutes(iso_ts: str) -> str:
 class GetOddsApiHistoricalEventOdds(ScraperBase, ScraperFlaskMixin):
     """
     Required opts:
-      • event_id    - e.g. 6f0b6f8d8cc9…
-      • date       - snapshot timestamp (ISO-8601)
+      • event_id           - e.g. 6f0b6f8d8cc9c5bc6375cdee
+      • game_date          - Eastern date for GCS directory (e.g., "2024-04-10")
+      • snapshot_timestamp - UTC timestamp for API snapshot (e.g., "2024-04-11T04:00:00Z")
 
     Optional opts:
       • sport      - e.g. basketball_nba (defaults to basketball_nba)
@@ -93,7 +96,7 @@ class GetOddsApiHistoricalEventOdds(ScraperBase, ScraperFlaskMixin):
 
     # Flask Mixin Configuration
     scraper_name = "oddsa_player_props_his"
-    required_params = ["event_id", "date"]
+    required_params = ["event_id", "game_date", "snapshot_timestamp"]
     optional_params = {
         "api_key": None,  # Falls back to env ODDS_API_KEY
         "sport": None,  # Defaults to basketball_nba in set_additional_opts
@@ -105,7 +108,7 @@ class GetOddsApiHistoricalEventOdds(ScraperBase, ScraperFlaskMixin):
         "teams": None,  # Team suffix for GCS path (optional)
     }
 
-    required_opts = ["event_id", "date"]
+    required_opts = ["event_id", "game_date", "snapshot_timestamp"]
     proxy_enabled = False
     browser_enabled = False
 
@@ -147,9 +150,12 @@ class GetOddsApiHistoricalEventOdds(ScraperBase, ScraperFlaskMixin):
     # Additional opts                                                    #
     # ------------------------------------------------------------------ #
     def set_additional_opts(self) -> None:
-        super().set_additional_opts()
-        # Snap to valid snapshot boundary
-        self.opts["date"] = snap_iso_ts_to_five_minutes(self.opts["date"])
+        super().set_additional_opts()  # Base class handles game_date → date conversion
+        
+        # Snap timestamp to valid 5-minute boundary for API
+        if self.opts.get("snapshot_timestamp"):
+            self.opts["snapshot_timestamp"] = snap_iso_ts_to_five_minutes(self.opts["snapshot_timestamp"])
+        
         # ── season‑wide defaults ──────────────────────────────
         self.opts.setdefault("sport", "basketball_nba")
         self.opts.setdefault("regions", "us")
@@ -178,7 +184,7 @@ class GetOddsApiHistoricalEventOdds(ScraperBase, ScraperFlaskMixin):
 
         query: Dict[str, Any] = {
             "apiKey": api_key,
-            "date": self.opts["date"],
+            "date": self.opts["snapshot_timestamp"],  # Use snapshot_timestamp for API
             "regions": self.opts["regions"],
             "markets": self.opts["markets"],
             "bookmakers": self.opts["bookmakers"],
@@ -234,6 +240,13 @@ class GetOddsApiHistoricalEventOdds(ScraperBase, ScraperFlaskMixin):
         if teams_suffix:
             self.opts["teams"] = teams_suffix
             logger.debug("Built teams suffix for GCS path: %s", teams_suffix)
+
+        # Extract snap time for filename
+        if self.opts.get("snapshot_timestamp"):
+            snapshot_time = self.opts["snapshot_timestamp"]  # "2024-04-11T04:00:00Z"
+            snap_hour = snapshot_time.split('T')[1][:4]      # "0400"
+            self.opts["snap"] = snap_hour                    # For GCS path template
+            logger.debug("Extracted snap time for filename: %s", snap_hour)
 
         self.data = {
             "sport": self.opts["sport"],
@@ -324,6 +337,7 @@ class GetOddsApiHistoricalEventOdds(ScraperBase, ScraperFlaskMixin):
             "regions": self.opts.get("regions"),
             "snapshot": self.data.get("snapshot_timestamp"),
             "teams": self.opts.get("teams", ""),  # Include teams suffix in stats
+            "snap": self.opts.get("snap", ""),    # Include snap time in stats
         }
 
 

@@ -67,7 +67,8 @@ gcloud run deploy $SERVICE_NAME \
     --allow-unauthenticated \
     --port=8080 \
     --memory=1Gi \
-    --cpu=1
+    --cpu=1 \
+    --set-secrets="ODDS_API_KEY=ODDS_API_KEY:latest,BDL_API_KEY=BDL_API_KEY:latest"
 
 DEPLOY_STATUS=$?
 DEPLOY_PHASE_END=$(date +%s)

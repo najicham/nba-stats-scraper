@@ -11,11 +11,11 @@ Usage examples:
   # Via capture tool (recommended for data collection):
   python tools/fixtures/capture.py oddsa_events_his \
       --sport basketball_nba \
-      --date 2025-03-10T00:00:00Z \
+      --game_date 2025-03-10T00:00:00Z \
       --debug
 
   # Direct CLI execution:
-  python scrapers/oddsapi/oddsa_events_his.py --sport basketball_nba --date 2025-03-10T00:00:00Z --debug
+  python scrapers/oddsapi/oddsa_events_his.py --sport basketball_nba --game_date 2025-03-10T00:00:00Z --debug
 
   # Flask web service:
   python scrapers/oddsapi/oddsa_events_his.py --serve --debug
@@ -80,7 +80,7 @@ class GetOddsApiHistoricalEvents(ScraperBase, ScraperFlaskMixin):
 
     # Flask Mixin Configuration
     scraper_name = "odds_api_historical_events"
-    required_params = ["date"]  # api_key handled via env var
+    required_params = ["game_date"]  # api_key handled via env var
     optional_params = {
         "api_key": None,  # Falls back to env var
         "sport": "basketball_nba",
@@ -91,7 +91,7 @@ class GetOddsApiHistoricalEvents(ScraperBase, ScraperFlaskMixin):
     }
 
     # Original scraper config
-    required_opts = ["sport", "date"]
+    required_opts = ["sport", "game_date"]
     proxy_enabled = False
     browser_enabled = False
 
@@ -140,8 +140,8 @@ class GetOddsApiHistoricalEvents(ScraperBase, ScraperFlaskMixin):
         (doc: snapshots are 5 min granularity after 2022-09-18).
         """
         super().set_additional_opts()
-        if self.opts.get("date"):
-            self.opts["date"] = snap_iso_ts_to_five_minutes(self.opts["date"])
+        if self.opts.get("game_date"):
+            self.opts["game_date"] = snap_iso_ts_to_five_minutes(self.opts["game_date"])
 
     # ------------------------------------------------------------------ #
     # URL & headers                                                      #
@@ -157,7 +157,7 @@ class GetOddsApiHistoricalEvents(ScraperBase, ScraperFlaskMixin):
 
         query: Dict[str, Any] = {
             "apiKey": api_key,
-            "date": self.opts["date"],
+            "date": self.opts["game_date"],
             "commenceTimeFrom": self.opts.get("commenceTimeFrom"),
             "commenceTimeTo": self.opts.get("commenceTimeTo"),
             "event_ids": self.opts.get("event_ids"),

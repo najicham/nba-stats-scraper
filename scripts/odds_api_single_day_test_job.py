@@ -104,7 +104,7 @@ class OddsApiSingleDayTestJob:
             if dry_run:
                 logger.info("🔍 DRY RUN - Would call events API for %s", self.test_date)
                 # Mock response for dry run
-                mock_events_info = [
+                events_info = [
                     {
                         "event_id": f"mock_event_{i}",
                         "teams_suffix": f"TEA{i}TEB{i}",
@@ -113,7 +113,7 @@ class OddsApiSingleDayTestJob:
                     }
                     for i in range(1, 9)  # 8 mock games
                 ]
-                logger.info("🔍 DRY RUN - Mock events found: %d", len(mock_events_info))
+                logger.info("🔍 DRY RUN - Mock events found: %d", len(events_info))
             else:
                 events_info = self._get_events_for_date()
             
@@ -186,7 +186,7 @@ class OddsApiSingleDayTestJob:
                 json={
                     "scraper": "oddsa_events_his",
                     "sport": self.sport,
-                    "date": self.test_date,
+                    "game_date": self.test_date,
                     "group": "prod"
                 },
                 timeout=60
@@ -305,7 +305,7 @@ class OddsApiSingleDayTestJob:
                 json={
                     "scraper": "oddsa_player_props_his",
                     "event_id": event_id,
-                    "date": self.test_date,
+                    "game_date": self.test_date,
                     "sport": self.sport,
                     "teams": teams_suffix,  # Pass teams suffix for GCS path building
                     "group": "prod"

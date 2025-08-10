@@ -14,12 +14,14 @@ Usage examples
   # Via capture tool (recommended for data collection):
   python tools/fixtures/capture.py oddsa_player_props \
       --event_id 6f0b6f8d8cc9c5bc6375cdee \
+      --game_date 2025-11-04
       --markets player_points \
       --debug
 
   # Direct CLI execution:
   python scrapers/oddsapi/oddsa_player_props.py \
       --event_id 6f0b6f8d8cc9c5bc6375cdee \
+      --game_date 2025-11-04
       --markets player_points \
       --debug
 
@@ -32,6 +34,7 @@ from __future__ import annotations
 import os
 import logging
 import sys
+from datetime import datetime, timezone
 from urllib.parse import urlencode
 from typing import Any, Dict, List
 
@@ -66,8 +69,9 @@ class GetOddsApiCurrentEventOdds(ScraperBase, ScraperFlaskMixin):
       • event_id  - Odds-API event ID
 
     Optional opts (map to query params):
+      • game_date   - Eastern date for GCS directory (defaults to current Eastern date)
       • sport       - e.g. basketball_nba (defaults to basketball_nba)
-      • api_key      - env ODDS_API_KEY fallback
+      • api_key     - env ODDS_API_KEY fallback
       • markets     - comma-sep (player_points, totals, …) (defaults to player_points)
       • regions     - comma-sep (us, uk, eu, au) (defaults to us)
       • bookmakers  - comma-sep (defaults to draftkings,fanduel)
@@ -78,7 +82,7 @@ class GetOddsApiCurrentEventOdds(ScraperBase, ScraperFlaskMixin):
 
     # Flask Mixin Configuration
     scraper_name = "oddsa_player_props"
-    required_params = ["event_id"]
+    required_params = ["event_id", "game_date"]
     optional_params = {
         "api_key": None,  # Falls back to env ODDS_API_KEY
         "sport": None,  # Defaults to basketball_nba in set_additional_opts
@@ -90,7 +94,7 @@ class GetOddsApiCurrentEventOdds(ScraperBase, ScraperFlaskMixin):
         "teams": None,  # Team suffix for GCS path (optional)
     }
 
-    required_opts = ["event_id"]
+    required_opts = ["event_id", "game_date"]
     proxy_enabled = False
     browser_enabled = False
 
@@ -130,7 +134,8 @@ class GetOddsApiCurrentEventOdds(ScraperBase, ScraperFlaskMixin):
 
     def set_additional_opts(self) -> None:
         """Fill season-wide defaults for optional opts."""
-        super().set_additional_opts()
+        super().set_additional_opts()  # Base class handles game_date → date conversion
+        
         self.opts.setdefault("sport", "basketball_nba")
         self.opts.setdefault("regions", "us")
         self.opts.setdefault("markets", "player_points")
@@ -222,6 +227,12 @@ class GetOddsApiCurrentEventOdds(ScraperBase, ScraperFlaskMixin):
             self.opts["teams"] = teams_suffix
             logger.debug("Built teams suffix for GCS path: %s", teams_suffix)
 
+        # Extract current time as snap time for filename consistency
+        current_utc = datetime.now(timezone.utc)
+        snap_hour = current_utc.strftime("%H%M")  # e.g., "1430" for 14:30 UTC
+        self.opts["snap"] = snap_hour
+        logger.debug("Current UTC time for snap: %s", snap_hour)
+
         self.data = {
             "sport": self.opts["sport"],
             "eventId": self.opts["event_id"],
@@ -310,6 +321,7 @@ class GetOddsApiCurrentEventOdds(ScraperBase, ScraperFlaskMixin):
             "markets": self.opts.get("markets"),
             "regions": self.opts.get("regions"),
             "teams": self.opts.get("teams", ""),  # Include teams suffix in stats
+            "snap": self.opts.get("snap", ""),    # Include snap time in stats
         }
 
 
