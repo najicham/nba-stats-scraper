@@ -122,6 +122,7 @@ class GetOddsApiHistoricalEventOdds(ScraperBase, ScraperFlaskMixin):
             "key": GCSPathBuilder.get_path(GCS_PATH_KEY),
             "export_mode": ExportMode.RAW,
             "groups": ["prod", "gcs"],
+            "check_should_save": True,  # Enable conditional save
         },
         {   # Pretty JSON for dev & capture
             "type": "file",
@@ -154,13 +155,28 @@ class GetOddsApiHistoricalEventOdds(ScraperBase, ScraperFlaskMixin):
         
         # Snap timestamp to valid 5-minute boundary for API
         if self.opts.get("snapshot_timestamp"):
-            self.opts["snapshot_timestamp"] = snap_iso_ts_to_five_minutes(self.opts["snapshot_timestamp"])
+            original_timestamp = self.opts["snapshot_timestamp"]
+            self.opts["snapshot_timestamp"] = snap_iso_ts_to_five_minutes(original_timestamp)
+            if original_timestamp != self.opts["snapshot_timestamp"]:
+                logger.debug("Snapped timestamp %s → %s", original_timestamp, self.opts["snapshot_timestamp"])
         
-        # ── season‑wide defaults ──────────────────────────────
-        self.opts.setdefault("sport", "basketball_nba")
-        self.opts.setdefault("regions", "us")
-        self.opts.setdefault("markets", "player_points")
-        self.opts.setdefault("bookmakers", "draftkings,fanduel")
+        # Extract snap time for filename (moved from transform_data for early availability)
+        if self.opts.get("snapshot_timestamp"):
+            snapshot_time = self.opts["snapshot_timestamp"]  # "2024-04-11T04:00:00Z"
+            time_part = snapshot_time.split('T')[1]          # "04:00:00Z"
+            snap_hour = time_part[:2] + time_part[3:5]       # "04" + "00" = "0400"
+            self.opts["snap"] = snap_hour                    # For GCS path template
+            logger.debug("Extracted snap time for filename: %s", snap_hour)
+        
+        # ── season‑wide defaults (FIXED: handle None values) ──────────────────────────────
+        if not self.opts.get("sport"):
+            self.opts["sport"] = "basketball_nba"
+        if not self.opts.get("regions"):
+            self.opts["regions"] = "us"
+        if not self.opts.get("markets"):
+            self.opts["markets"] = "player_points"
+        if not self.opts.get("bookmakers"):
+            self.opts["bookmakers"] = "draftkings,fanduel"
 
     # ------------------------------------------------------------------ #
     # URL & headers                                                      #
@@ -193,7 +209,7 @@ class GetOddsApiHistoricalEventOdds(ScraperBase, ScraperFlaskMixin):
         }
         query = {k: v for k, v in query.items() if v is not None}
         self.url = f"{base}?{urlencode(query, doseq=True)}"
-        logger.info("Odds-API Historical Event Odds URL: %s", self.url)
+        logger.info("Odds-API Historical Event Odds URL: %s", self.url.replace(api_key, "***"))
 
     def set_headers(self) -> None:
         self.headers = {"Accept": "application/json"}
@@ -204,6 +220,7 @@ class GetOddsApiHistoricalEventOdds(ScraperBase, ScraperFlaskMixin):
     def check_download_status(self) -> None:
         """
         200 and 204 are "okay" for this endpoint.
+        204 means no odds data available for that snapshot.
         """
         if self.raw_response.status_code in (200, 204):
             return
@@ -215,7 +232,20 @@ class GetOddsApiHistoricalEventOdds(ScraperBase, ScraperFlaskMixin):
     def validate_download_data(self) -> None:
         """
         Expect wrapper dict with 'data' object.
+        Handle 204 (empty) responses gracefully.
         """
+        # Handle 204 responses (empty snapshot)
+        if self.raw_response.status_code == 204:
+            logger.info("204 response - no odds data available for snapshot %s", 
+                       self.opts.get("snapshot_timestamp"))
+            # Create empty response structure for consistency
+            self.decoded_data = {
+                "data": {},
+                "timestamp": self.opts.get("snapshot_timestamp"),
+                "message": "No odds data available for this snapshot"
+            }
+            return
+
         if isinstance(self.decoded_data, dict) and "message" in self.decoded_data:
             raise DownloadDataException(f"API error: {self.decoded_data['message']}")
 
@@ -241,12 +271,14 @@ class GetOddsApiHistoricalEventOdds(ScraperBase, ScraperFlaskMixin):
             self.opts["teams"] = teams_suffix
             logger.debug("Built teams suffix for GCS path: %s", teams_suffix)
 
-        # Extract snap time for filename
-        if self.opts.get("snapshot_timestamp"):
+        # Snap time should already be extracted in set_additional_opts()
+        # If not already set, extract it here as fallback
+        if not self.opts.get("snap") and self.opts.get("snapshot_timestamp"):
             snapshot_time = self.opts["snapshot_timestamp"]  # "2024-04-11T04:00:00Z"
-            snap_hour = snapshot_time.split('T')[1][:4]      # "0400"
+            time_part = snapshot_time.split('T')[1]          # "04:00:00Z"
+            snap_hour = time_part[:2] + time_part[3:5]       # "04" + "00" = "0400"
             self.opts["snap"] = snap_hour                    # For GCS path template
-            logger.debug("Extracted snap time for filename: %s", snap_hour)
+            logger.debug("Extracted snap time for filename (fallback): %s", snap_hour)
 
         self.data = {
             "sport": self.opts["sport"],
@@ -260,7 +292,7 @@ class GetOddsApiHistoricalEventOdds(ScraperBase, ScraperFlaskMixin):
             "eventOdds": event_odds,
         }
         logger.info(
-            "Fetched %d bookmaker-market rows for event %s", row_count, self.opts["event_id"]
+            "Fetched %d bookmaker-market rows for event %s", row_count, self.opts["event_id"][:12] + "..."
         )
 
     def _extract_teams_suffix(self, event_odds: Dict[str, Any]) -> str:
@@ -278,6 +310,7 @@ class GetOddsApiHistoricalEventOdds(ScraperBase, ScraperFlaskMixin):
         """
         # Check if teams suffix was provided directly (from job/external source)
         if self.opts.get("teams"):
+            logger.debug("Using provided teams suffix: %s", self.opts["teams"])
             return self.opts["teams"]
         
         try:
@@ -311,19 +344,31 @@ class GetOddsApiHistoricalEventOdds(ScraperBase, ScraperFlaskMixin):
                            away_team, home_team, teams_suffix)
                 return teams_suffix
             else:
-                logger.warning("Could not extract team information from event odds data")
+                logger.warning("Could not extract team information from event odds data for event %s", 
+                             self.opts.get("event_id", "unknown")[:12] + "...")
                 logger.debug("Event odds keys: %s", list(event_odds.keys()))
                 return ""
                 
         except Exception as e:
-            logger.warning("Error extracting teams suffix: %s", e)
+            logger.warning("Error extracting teams suffix for event %s: %s", 
+                         self.opts.get("event_id", "unknown")[:12] + "...", e)
             return ""
 
     # ------------------------------------------------------------------ #
     # Conditional save                                                   #
     # ------------------------------------------------------------------ #
     def should_save_data(self) -> bool:
-        return bool(self.data.get("rowCount"))
+        """
+        Only save if we have meaningful data.
+        Skip empty 204 responses to avoid cluttering GCS.
+        """
+        # For 204 responses, don't save empty data
+        if self.raw_response and self.raw_response.status_code == 204:
+            logger.info("Skipping save for 204 empty response")
+            return False
+            
+        # Save if we have any rows of data
+        return bool(self.data.get("rowCount", 0) > 0)
 
     # ------------------------------------------------------------------ #
     # Stats line                                                         #
@@ -332,12 +377,13 @@ class GetOddsApiHistoricalEventOdds(ScraperBase, ScraperFlaskMixin):
         return {
             "rowCount": self.data.get("rowCount", 0),
             "sport": self.opts.get("sport"),
-            "eventId": self.opts.get("event_id"),
+            "eventId": self.opts.get("event_id", "")[:12] + "..." if self.opts.get("event_id") else "",
             "markets": self.opts.get("markets"),
             "regions": self.opts.get("regions"),
             "snapshot": self.data.get("snapshot_timestamp"),
             "teams": self.opts.get("teams", ""),  # Include teams suffix in stats
             "snap": self.opts.get("snap", ""),    # Include snap time in stats
+            "status_code": self.raw_response.status_code if self.raw_response else "unknown",
         }
 
 
