@@ -1,5 +1,5 @@
 #!/bin/bash
-# BettingPros Historical Backfill Monitor
+# Clean BettingPros Historical Backfill Monitor
 # Usage: ./bp_backfill_monitor.sh [command] [options]
 
 set -e
@@ -10,9 +10,9 @@ REGION="us-west2"
 JOB_NAME="nba-bp-backfill"
 GCS_EVENTS_PATH="gs://nba-scraped-data/bettingpros/events"
 GCS_PROPS_PATH="gs://nba-scraped-data/bettingpros/player-props/points"
-BASELINE_DIRS=0  # Set this after first run or use --baseline flag
-TARGET_DIRS_PER_SEASON=85  # ~80-100 dates per season
-TOTAL_SEASONS=3  # 2021, 2022, 2023
+BASELINE_DIRS=0
+TARGET_DIRS_PER_SEASON=85
+TOTAL_SEASONS=3
 TARGET_DIRS_TOTAL=$((TARGET_DIRS_PER_SEASON * TOTAL_SEASONS))
 
 # Colors using tput (macOS compatible)
@@ -59,42 +59,28 @@ print_header() {
 }
 
 get_execution_status() {
-    local exec_data
-    exec_data=$(gcloud run jobs executions list \
+    # Check for recent activity (simple approach)
+    local recent_activity
+    recent_activity=$(gcloud logging read \
+        "resource.type=cloud_run_job AND resource.labels.job_name=$JOB_NAME" \
+        --limit=1 \
+        --format="value(timestamp)" \
+        --project="$PROJECT" \
+        --freshness=5m 2>/dev/null | head -1)
+    
+    # Get most recent execution name
+    local exec_name
+    exec_name=$(gcloud run jobs executions list \
         --job="$JOB_NAME" \
         --region="$REGION" \
         --limit=1 \
-        --format="value(metadata.name,status.runningCount,status.succeededCount,status.failedCount)" \
-        2>/dev/null || echo "")
+        --format="value(metadata.name)" \
+        2>/dev/null | head -1)
     
-    if [[ -n "$exec_data" ]]; then
-        local exec_name=$(echo "$exec_data" | cut -f1)
-        local running_count=$(echo "$exec_data" | cut -f2)
-        local succeeded_count=$(echo "$exec_data" | cut -f3)
-        local failed_count=$(echo "$exec_data" | cut -f4)
-        
-        # Check for recent activity to distinguish active vs truly failed
-        local recent_activity
-        recent_activity=$(gcloud logging read \
-            "resource.type=cloud_run_job AND resource.labels.job_name=$JOB_NAME" \
-            --limit=1 \
-            --format="value(timestamp)" \
-            --project="$PROJECT" \
-            --freshness=10m 2>/dev/null | head -1)
-        
-        if [[ "$running_count" -gt 0 ]]; then
-            printf "${GREEN}RUNNING${NC} ($exec_name)"
-        elif [[ "$failed_count" -gt 0 ]]; then
-            if [[ -n "$recent_activity" ]]; then
-                printf "${GREEN}ACTIVE${NC} ($exec_name) ${YELLOW}[continuing despite errors]${NC}"
-            else
-                printf "${RED}FAILED${NC} ($exec_name)"
-            fi
-        elif [[ "$succeeded_count" -gt 0 ]]; then
-            printf "${BLUE}COMPLETED${NC} ($exec_name)"
-        else
-            printf "${YELLOW}PENDING${NC} ($exec_name)"
-        fi
+    if [[ -n "$recent_activity" && -n "$exec_name" ]]; then
+        printf "${GREEN}RUNNING${NC} ($exec_name)"
+    elif [[ -n "$exec_name" ]]; then
+        printf "${BLUE}COMPLETED${NC} ($exec_name)"
     else
         printf "${RED}NO EXECUTIONS${NC}"
     fi
@@ -107,25 +93,7 @@ get_directory_count() {
 }
 
 get_current_season() {
-    # Try to detect season from recent logs (expand search to catch any date mentions)
-    local recent_date_log
-    recent_date_log=$(gcloud logging read \
-        "resource.type=cloud_run_job AND resource.labels.job_name=$JOB_NAME AND textPayload:(\"Processing date\" OR \"Successfully processed\" OR \"bp_events success\" OR \"bp_player_props success\")" \
-        --limit=3 \
-        --format="value(textPayload)" \
-        --project="$PROJECT" \
-        --freshness=4h 2>/dev/null)
-    
-    if [[ -n "$recent_date_log" ]]; then
-        # Extract year from date like "2021-10-19"
-        local year=$(echo "$recent_date_log" | grep -o '20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]' | head -1 | cut -d- -f1)
-        if [[ -n "$year" && "$year" != "2025" ]]; then
-            echo "$year"
-            return
-        fi
-    fi
-    
-    # Fallback: check most recent directory
+    # Extract year from most recent directory
     local recent_dir
     recent_dir=$(gcloud storage ls "$GCS_PROPS_PATH/" 2>/dev/null | sort | tail -1)
     if [[ -n "$recent_dir" ]]; then
@@ -136,18 +104,6 @@ get_current_season() {
             return
         fi
     fi
-    
-    # Last fallback: check events directory
-    recent_dir=$(gcloud storage ls "$GCS_EVENTS_PATH/" 2>/dev/null | sort | tail -1)
-    if [[ -n "$recent_dir" ]]; then
-        local date_name=$(basename "$recent_dir" | sed 's|/$||')
-        local year=$(echo "$date_name" | cut -d- -f1 2>/dev/null || echo "")
-        if [[ "$year" =~ ^20[0-9][0-9]$ ]]; then
-            echo "$year"
-            return
-        fi
-    fi
-    
     echo "unknown"
 }
 
@@ -161,7 +117,7 @@ get_progress_info() {
     if [[ $new_dirs -gt 0 ]]; then
         progress_percent=$((new_dirs * 100 / TARGET_DIRS_TOTAL))
         
-        # Calculate season-specific progress if we know the season
+        # Calculate season-specific progress
         if [[ "$current_season" != "unknown" ]]; then
             season_progress_percent=$((new_dirs * 100 / TARGET_DIRS_PER_SEASON))
         fi
@@ -180,10 +136,7 @@ get_latest_activity() {
 }
 
 validate_data_consistency() {
-    # Quick check: compare events vs player-props directories
-    local events_count
-    local props_count
-    
+    local events_count props_count
     events_count=$(gcloud storage ls "$GCS_EVENTS_PATH/" 2>/dev/null | wc -l | tr -d ' ' || echo "0")
     props_count=$(gcloud storage ls "$GCS_PROPS_PATH/" 2>/dev/null | wc -l | tr -d ' ' || echo "0")
     
@@ -228,6 +181,33 @@ cmd_quick() {
             printf " (${PURPLE}$season_progress%%${NC} of $current_season season, ${PURPLE}$progress_percent%%${NC} total)\n"
         else
             printf " (${PURPLE}$progress_percent%%${NC} of total target)\n"
+        fi
+        
+        # Add quick timing info
+        local elapsed_seconds
+        elapsed_seconds=$(get_execution_timing)
+        if [[ $elapsed_seconds -gt 0 ]]; then
+            local elapsed_formatted
+            elapsed_formatted=$(format_duration "$elapsed_seconds")
+            printf "⏰ Elapsed: ${CYAN}$elapsed_formatted${NC}"
+            
+            # Quick ETA calculation
+            local remaining_total=$((TARGET_DIRS_TOTAL - new_dirs))
+            if [[ $remaining_total -gt 0 ]]; then
+                local eta_seconds
+                if command -v bc >/dev/null 2>&1; then
+                    eta_seconds=$(echo "scale=0; $remaining_total * $elapsed_seconds / $new_dirs" | bc 2>/dev/null || echo "0")
+                else
+                    eta_seconds=$((remaining_total * elapsed_seconds / new_dirs))
+                fi
+                
+                if [[ $eta_seconds -gt 0 ]]; then
+                    local eta_formatted
+                    eta_formatted=$(format_duration "$eta_seconds")
+                    printf ", ETA: ${YELLOW}$eta_formatted${NC}"
+                fi
+            fi
+            printf "\n"
         fi
     else
         printf "⚠️  No new directories yet\n"
@@ -304,39 +284,30 @@ cmd_watch() {
     printf "${CYAN}Refresh: 15 seconds${NC}\n"
     printf "${YELLOW}Press Ctrl+C to stop...${NC}\n\n"
     
-    # Give user a moment to read the startup message
     sleep 2
-    
     local update_count=0
     
     while true; do
         update_count=$((update_count + 1))
         
         if [[ $update_count -gt 1 ]]; then
-            # Move cursor to top and show refresh indicator
             printf "\033[H"
             printf "${YELLOW}${BOLD}🔄 Refreshing data...${NC}$(printf '%*s' 50 '')\n"
             sleep 0.5
-            
-            # Move cursor back to top for actual content
             printf "\033[H"
         else
             clear
         fi
         
-        # Show header with update info
         printf "${CYAN}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
         printf "${CYAN}${BOLD}📊 BETTINGPROS LIVE MONITOR${NC}\n"
         printf "${CYAN}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
         printf "${BLUE}Update #$update_count - $(date)${NC}\n"
         printf "${BLUE}Job: $JOB_NAME${NC}\n\n"
         
-        # Show current status
         cmd_quick
         
-        # Clear any remaining lines from previous output
         printf "\033[K\n\033[K\n\033[K\n"
-        
         printf "${YELLOW}⏱️  Next update in 15 seconds... (Ctrl+C to stop)${NC}\n"
         sleep 15
     done
@@ -359,6 +330,59 @@ cmd_logs() {
         echo "$logs" | sed 's/^/  /'
     else
         printf "  ${YELLOW}No recent logs found${NC}\n"
+    fi
+}
+
+get_execution_timing() {
+    # Get the most recent execution start time
+    local exec_start_time
+    exec_start_time=$(gcloud run jobs executions list \
+        --job="$JOB_NAME" \
+        --region="$REGION" \
+        --limit=1 \
+        --format="value(status.startTime)" \
+        2>/dev/null | head -1)
+    
+    if [[ -n "$exec_start_time" ]]; then
+        # Strip microseconds for easier parsing: 2025-08-13T01:32:44.077400Z -> 2025-08-13T01:32:44Z
+        local clean_time
+        clean_time=$(echo "$exec_start_time" | sed 's/\.[0-9]*Z/Z/')
+        
+        local start_epoch=""
+        
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            # macOS date parsing
+            start_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$clean_time" +%s 2>/dev/null || echo "")
+        else
+            # Linux date parsing
+            start_epoch=$(date -d "$clean_time" +%s 2>/dev/null || echo "")
+        fi
+        
+        if [[ -n "$start_epoch" && "$start_epoch" != "0" ]]; then
+            local current_epoch
+            current_epoch=$(date +%s)
+            local elapsed_seconds=$((current_epoch - start_epoch))
+            
+            echo "$elapsed_seconds"
+            return
+        fi
+    fi
+    
+    echo "0"
+}
+
+format_duration() {
+    local seconds="$1"
+    if [[ $seconds -lt 60 ]]; then
+        echo "${seconds}s"
+    elif [[ $seconds -lt 3600 ]]; then
+        local minutes=$((seconds / 60))
+        local secs=$((seconds % 60))
+        printf "%dm %ds" "$minutes" "$secs"
+    else
+        local hours=$((seconds / 3600))
+        local minutes=$(((seconds % 3600) / 60))
+        printf "%dh %dm" "$hours" "$minutes"
     fi
 }
 
@@ -386,22 +410,44 @@ cmd_progress() {
     local progress_percent=$(echo "$progress_info" | cut -d: -f2)
     local season_progress=$(echo "$progress_info" | cut -d: -f3)
     
+    # Timing calculations
+    local elapsed_seconds
+    elapsed_seconds=$(get_execution_timing)
+    local elapsed_formatted
+    elapsed_formatted=$(format_duration "$elapsed_seconds")
+    
     if [[ $new_dirs -gt 0 ]]; then
         printf "🆕 New Collections: ${GREEN}+$new_dirs${NC} dates\n"
+        printf "📈 Total Progress: ${PURPLE}$progress_percent%%${NC}\n"
         
-        if [[ "$current_season" != "unknown" && $season_progress -gt 0 ]]; then
-            printf "📈 Season Progress: ${PURPLE}$season_progress%%${NC} ($current_season)\n"
-            local remaining_season=$((TARGET_DIRS_PER_SEASON - new_dirs))
-            if [[ $remaining_season -gt 0 ]]; then
-                printf "📅 Remaining in Season: ${YELLOW}~$remaining_season${NC} dates\n"
+        local remaining_total=$((TARGET_DIRS_TOTAL - new_dirs))
+        printf "📅 Estimated Remaining: ${YELLOW}~$remaining_total${NC} dates\n"
+        
+        # Time calculations
+        if [[ $elapsed_seconds -gt 0 && $new_dirs -gt 0 ]]; then
+            printf "⏰ Time Elapsed: ${CYAN}$elapsed_formatted${NC}\n"
+            
+            # Calculate ETA (simple arithmetic, fallback if bc not available)
+            if command -v bc >/dev/null 2>&1; then
+                local rate_per_second
+                rate_per_second=$(echo "scale=6; $new_dirs / $elapsed_seconds" | bc 2>/dev/null || echo "0")
+                
+                if [[ $(echo "$rate_per_second > 0" | bc 2>/dev/null || echo "0") -eq 1 ]]; then
+                    local eta_seconds
+                    eta_seconds=$(echo "scale=0; $remaining_total / $rate_per_second" | bc 2>/dev/null || echo "0")
+                    local eta_formatted
+                    eta_formatted=$(format_duration "$eta_seconds")
+                    printf "🎯 Estimated Completion: ${YELLOW}$eta_formatted${NC}\n"
+                fi
             else
-                printf "✅ Season Complete! Ready for next season.\n"
+                # Fallback calculation without bc
+                local eta_seconds=$((remaining_total * elapsed_seconds / new_dirs))
+                local eta_formatted
+                eta_formatted=$(format_duration "$eta_seconds")
+                printf "🎯 Estimated Completion: ${YELLOW}~$eta_formatted${NC}\n"
             fi
         fi
-        
-        printf "📈 Total Progress: ${PURPLE}$progress_percent%%${NC}\n"
-        local remaining_total=$((TARGET_DIRS_TOTAL - new_dirs))
-        printf "📅 Estimated Remaining: ${YELLOW}~$remaining_total${NC} dates\n\n"
+        printf "\n"
     else
         printf "🚨 No new data collected yet\n\n"
     fi
@@ -416,7 +462,6 @@ cmd_progress() {
     
     if [[ -n "$recent_dirs" ]]; then
         echo "$recent_dirs" | while read -r dir; do
-            # Extract just the date from the path like: 2021-10-19
             local date_name=$(basename "$dir" | sed 's|/$||')
             if [[ -n "$date_name" ]]; then
                 printf "  📅 ${GREEN}%s${NC}\n" "$date_name"
@@ -427,91 +472,12 @@ cmd_progress() {
     fi
 }
 
-cmd_validate() {
-    print_header
-    
-    printf "${BOLD}🔍 COMPREHENSIVE DATA VALIDATION:${NC}\n\n"
-    
-    # Count both paths
-    local events_count props_count
-    events_count=$(gcloud storage ls "$GCS_EVENTS_PATH/" 2>/dev/null | wc -l | tr -d ' ' || echo "0")
-    props_count=$(gcloud storage ls "$GCS_PROPS_PATH/" 2>/dev/null | wc -l | tr -d ' ' || echo "0")
-    
-    printf "📊 Directory Counts:\n"
-    printf "  Events: ${GREEN}$events_count${NC}\n"
-    printf "  Player Props: ${GREEN}$props_count${NC}\n\n"
-    
-    printf "🔄 Consistency Check: "
-    validate_data_consistency
-    printf "\n\n"
-    
-    # Find mismatched dates
-    if [[ "$events_count" -ne "$props_count" ]]; then
-        printf "${BOLD}📋 MISMATCHED DATES:${NC}\n"
-        
-        # Get date lists
-        local events_dates props_dates
-        events_dates=$(gcloud storage ls "$GCS_EVENTS_PATH/" 2>/dev/null | xargs -I {} basename {} | sort || echo "")
-        props_dates=$(gcloud storage ls "$GCS_PROPS_PATH/" 2>/dev/null | xargs -I {} basename {} | sort || echo "")
-        
-        # Find events without props
-        if [[ -n "$events_dates" ]]; then
-            local missing_props
-            missing_props=$(comm -23 <(echo "$events_dates") <(echo "$props_dates") 2>/dev/null || echo "")
-            if [[ -n "$missing_props" ]]; then
-                printf "  ${YELLOW}Events without Props:${NC}\n"
-                echo "$missing_props" | sed 's/^/    ❌ /'
-                printf "\n"
-            fi
-        fi
-        
-        # Find props without events
-        if [[ -n "$props_dates" ]]; then
-            local missing_events
-            missing_events=$(comm -13 <(echo "$events_dates") <(echo "$props_dates") 2>/dev/null || echo "")
-            if [[ -n "$missing_events" ]]; then
-                printf "  ${YELLOW}Props without Events:${NC}\n"
-                echo "$missing_events" | sed 's/^/    ❌ /'
-                printf "\n"
-            fi
-        fi
-    else
-        printf "✅ All dates have both events and player props data!\n\n"
-    fi
-    
-    # Show recent processing success rate
-    printf "${BOLD}📈 RECENT SUCCESS RATE:${NC}\n"
-    local success_logs error_logs
-    success_logs=$(gcloud logging read \
-        "resource.type=cloud_run_job AND resource.labels.job_name=$JOB_NAME AND textPayload:(\"completed successfully\" OR \"Successfully processed\")" \
-        --limit=20 \
-        --format="value(textPayload)" \
-        --project="$PROJECT" \
-        --freshness=4h 2>/dev/null | wc -l | tr -d ' ')
-    
-    error_logs=$(gcloud logging read \
-        "resource.type=cloud_run_job AND resource.labels.job_name=$JOB_NAME AND textPayload:(\"failed\" OR \"Error\")" \
-        --limit=20 \
-        --format="value(textPayload)" \
-        --project="$PROJECT" \
-        --freshness=4h 2>/dev/null | wc -l | tr -d ' ')
-    
-    local total_logs=$((success_logs + error_logs))
-    if [[ $total_logs -gt 0 ]]; then
-        local success_rate=$((success_logs * 100 / total_logs))
-        printf "  Success Rate: ${GREEN}$success_rate%%${NC} ($success_logs success, $error_logs errors)\n"
-    else
-        printf "  ${YELLOW}No recent processing logs found${NC}\n"
-    fi
-}
-
 show_usage() {
     printf "Usage: $0 [command] [options]\n\n"
     printf "Commands:\n"
     printf "  quick       - Fast status check (default)\n"
     printf "  status      - Comprehensive overview\n"
     printf "  progress    - Detailed progress analysis\n"
-    printf "  validate    - Data consistency validation\n"
     printf "  watch       - Continuous monitoring (15s updates)\n"
     printf "  logs [N]    - Show last N log entries\n"
     printf "\n"
@@ -522,10 +488,8 @@ show_usage() {
     printf "Examples:\n"
     printf "  $0 quick                 # Quick status\n"
     printf "  $0 watch                 # Continuous monitoring\n"
-    printf "  $0 validate              # Check data consistency\n"
     printf "  $0 logs 20               # Show 20 recent logs\n"
     printf "  $0 status --baseline=5   # Status with custom baseline\n"
-    printf "  $0 progress --no-color   # Progress without colors\n"
 }
 
 # Main command handling
@@ -538,9 +502,6 @@ case "$COMMAND" in
         ;;
     "progress")
         cmd_progress
-        ;;
-    "validate")
-        cmd_validate
         ;;
     "watch")
         cmd_watch
