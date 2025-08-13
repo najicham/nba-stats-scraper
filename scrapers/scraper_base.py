@@ -82,6 +82,7 @@ from .utils.nba_header_utils import (
     _ua,
     cdn_nba_headers,
     stats_api_headers,
+    bettingpros_headers,
 )
 
 ##############################################################################
@@ -485,6 +486,7 @@ class ScraperBase:
             "espn":  lambda: {"User-Agent": _ua()},
             "nbacdn": cdn_nba_headers,
             "statsapi": stats_api_headers,
+            "bettingpros": bettingpros_headers,
         }
         if self.header_profile in profile_map:
             fn = profile_map[self.header_profile]

@@ -72,8 +72,13 @@ class GCSPathBuilder:
         "nba_com_gamebooks_pdf_raw": "nba-com/gamebooks-pdf/%(date)s/%(clean_game_code_dashes)s/%(timestamp)s.pdf",
         "nba_com_gamebooks_pdf_data": "nba-com/gamebooks-data/%(date)s/%(clean_game_code_dashes)s/%(timestamp)s.json",
 
+        # Basketball Reference
         "br_season_roster": "basketball-ref/season-rosters/%(season)s/%(teamAbbr)s.json",
         
+        # BettingPros Scrapers
+        "bettingpros_events": "bettingpros/events/%(date)s/%(timestamp)s.json",
+        "bettingpros_player_props": "bettingpros/player-props/%(market_type)s/%(date)s/%(timestamp)s.json",
+
         # Big Data Ball
         # "big_data_ball_play_by_play": "big-data-ball/play-by-play/%(date)s/game_%(game_id)s/%(timestamp)s.csv",
         "bigdataball_pbp": "big-data-ball/%(nba_season)s/%(date)s/game_%(game_id)s/%(filename)s.csv",

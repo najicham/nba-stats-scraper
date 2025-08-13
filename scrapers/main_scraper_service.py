@@ -26,6 +26,8 @@ from flask import Flask, request, jsonify
 from dotenv import load_dotenv
 
 # Import all scraper classes - FIXED for root deployment
+# Updated SCRAPER_REGISTRY section for main_scraper_service.py
+
 SCRAPER_REGISTRY = {
     # Odds API scrapers (5 total)
     "oddsa_events_his": ("scrapers.oddsapi.oddsa_events_his", "GetOddsApiHistoricalEvents"),
@@ -40,6 +42,10 @@ SCRAPER_REGISTRY = {
     "bdl_player_box_scores": ("scrapers.balldontlie.bdl_player_box_scores", "BdlPlayerBoxScoresScraper"),
     "bdl_active_players": ("scrapers.balldontlie.bdl_active_players", "BdlActivePlayersScraper"),
     "bdl_injuries": ("scrapers.balldontlie.bdl_injuries", "BdlInjuriesScraper"),
+    
+    # BettingPros scrapers (2 total)
+    "bp_events": ("scrapers.bettingpros.bp_events", "BettingProsEvents"),
+    "bp_player_props": ("scrapers.bettingpros.bp_player_props", "BettingProsPlayerProps"),
 
     # Basketball Reference scrapers (1 total)
     "br_season_roster": ("scrapers.basketball_ref.br_season_roster", "BasketballRefSeasonRoster"),

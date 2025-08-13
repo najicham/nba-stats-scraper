@@ -1,0 +1,32 @@
+# FILE: scripts/Dockerfile.bp_backfill
+# 
+# Dockerfile for BettingPros Historical Backfill Cloud Run Job
+# Builds a job container that downloads 3 seasons of historical prop data
+
+FROM python:3.11-slim
+
+# Set working directory
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install common Python dependencies (adjust based on your setup)
+RUN pip install --no-cache-dir \
+    requests \
+    google-cloud-storage \
+    google-cloud-logging \
+    flask \
+    python-dotenv
+
+# Copy the job script
+COPY scripts/bp_backfill_job.py ./scripts/
+
+# Set environment variables
+ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
+
+# Default command runs the backfill job
+CMD ["python", "scripts/bp_backfill_job.py"]

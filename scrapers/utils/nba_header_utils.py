@@ -103,3 +103,27 @@ def core_api_headers() -> dict:
         "Accept": "application/json",
     }
     return deepcopy(base)
+
+def bettingpros_headers() -> dict:
+    """
+    Headers for BettingPros API endpoints.
+    Based on observed browser patterns for api.bettingpros.com requests.
+    """
+    base = {
+        "User-Agent": _ua(),
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Cache-Control": "no-cache",
+        "Origin": "https://www.bettingpros.com",
+        "Pragma": "no-cache",
+        "Referer": "https://www.bettingpros.com/nba/odds/player-props/points/",
+        "Sec-Ch-Ua": '"Chromium";v="97", " Not;A Brand";v="99"',
+        "Sec-Ch-Ua-Mobile": "?0",
+        "Sec-Ch-Ua-Platform": "Linux",
+        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Site": "same-site",
+        "X-Api-Key": "CHi8Hy5CEE4khd46XNYL23dCFX96oUdw6qOt1Dnh",
+    }
+    return deepcopy(base)
