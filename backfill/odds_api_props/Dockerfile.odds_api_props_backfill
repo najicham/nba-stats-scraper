@@ -1,4 +1,4 @@
-# FILE: scripts/Dockerfile.odds_api_season_backfill
+# FILE: backfill/odds_api_props/Dockerfile.odds_api_props_backfill
 # Dockerfile for Odds API Season Backfill Cloud Run Job
 # Optimized for long-running historical data collection across multiple seasons
 FROM python:3.11-slim
@@ -22,7 +22,7 @@ COPY scrapers/__init__.py ./scrapers/
 COPY scrapers/utils/ ./scrapers/utils/
 
 # Copy the job script - NEW: Season backfill script
-COPY scripts/odds_api_season_backfill_job.py ./odds_api_season_backfill_job.py
+COPY backfill/odds_api_props/odds_api_props_backfill_job.py ./odds_api_props_backfill_job.py
 
 # Set environment variables
 ENV PYTHONPATH=/app
@@ -38,7 +38,7 @@ RUN chown -R appuser:appuser /app
 USER appuser
 
 # Set the entrypoint - NEW: Season backfill script
-ENTRYPOINT ["python", "odds_api_season_backfill_job.py"]
+ENTRYPOINT ["python", "odds_api_props_backfill_job.py"]
 
 # Default arguments (can be overridden)
 CMD ["--help"]

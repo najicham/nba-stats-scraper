@@ -1,6 +1,7 @@
 #!/bin/bash
+# File: bin/backfill/bp_props_monitor.sh
 # Clean BettingPros Historical Backfill Monitor
-# Usage: ./bp_backfill_monitor.sh [command] [options]
+# Usage: ./bin/backfill/bp_props_monitor.sh [command] [options]
 
 set -e
 

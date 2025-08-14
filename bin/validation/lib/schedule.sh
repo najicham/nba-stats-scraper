@@ -8,6 +8,10 @@ date_to_season() {
     local year=$(echo "$date" | cut -d'-' -f1)
     local month=$(echo "$date" | cut -d'-' -f2)
     
+    # Strip leading zeros
+    year=$((10#$year))
+    month=$((10#$month))
+    
     # NBA season runs Oct-Jun, so:
     # Oct-Dec = current year season (e.g., 2021-10 = 2021-22 season)  
     # Jan-Jun = previous year season (e.g., 2022-01 = 2021-22 season)
@@ -56,12 +60,21 @@ get_schedule_for_season() {
 get_game_type_for_date() {
     local date="$1"
     
-    # Simple preseason logic based on date (primary method)
+    # Enhanced preseason logic based on date (primary method)
     local month=$(echo "$date" | cut -d'-' -f2)
     local day=$(echo "$date" | cut -d'-' -f3)
+    local year=$(echo "$date" | cut -d'-' -f1)
     
-    # October 1-15 is typically preseason
-    if [[ "$month" == "10" && "$day" -le "15" ]]; then
+    # Strip leading zeros to avoid octal interpretation issues
+    # Using 10# prefix forces base-10 interpretation
+    month=$((10#$month))
+    day=$((10#$day))
+    year=$((10#$year))
+    
+    # NBA 2021-22 season: Preseason Oct 4-15, Regular season starts Oct 19
+    # NBA 2022-23 season: Preseason Oct 1-14, Regular season starts Oct 18
+    # Generally: October 1-18 is preseason for most seasons
+    if [[ $month -eq 10 && $day -le 18 ]]; then
         echo "preseason"
         return 0
     fi
@@ -72,7 +85,7 @@ get_game_type_for_date() {
     
     if [[ -z "$schedule_file" || ! -f "$schedule_file" ]]; then
         # Fall back to date-based logic
-        if [[ "$month" == "10" && "$day" -le "20" ]]; then
+        if [[ $month -eq 10 && $day -le 20 ]]; then
             echo "preseason"
         else
             echo "regular"

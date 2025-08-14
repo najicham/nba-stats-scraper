@@ -1,31 +1,32 @@
 #!/bin/bash
-# File: bin/monitoring/gamebook_backfill_monitor.sh
-# Purpose: OPTIMIZED monitoring for NBA Gamebook backfill process  
-# Usage: ./gamebook_backfill_monitor.sh [command] [options]
+# File: bin/backfill/br_rosters_monitor.sh
+# Purpose: OPTIMIZED monitoring for Basketball Reference roster backfill process  
+# Usage: ./bin/backfill/br_rosters_monitor.sh [command] [options]
 # Updated: August 2025 - Performance optimized with caching and timeouts
 
 set -e
 
 PROJECT="nba-props-platform"
 REGION="us-west2"
-JOB_NAME="nba-gamebook-backfill"
+JOB_NAME="nba-br-rosters-backfill"
 
 # Performance settings
 TIMEOUT_SHORT=15  # For quick operations
 TIMEOUT_LONG=30   # For heavy operations
-CACHE_DIR="/tmp/nba_monitor_cache"
+CACHE_DIR="/tmp/nba_br_rosters_monitor_cache"
 CACHE_TTL=300     # 5 minutes cache
 
-# Fallback total games (only used if metadata reading fails)
-FALLBACK_TOTAL_GAMES=5583
+# Expected totals for Basketball Reference rosters (30 teams × 4 seasons)
+EXPECTED_TOTAL_FILES=120
 
 # GCS bucket paths
-GCS_DATA_PATH="gs://nba-scraped-data/nba-com/gamebooks-data"
-GCS_PDF_PATH="gs://nba-scraped-data/nba-com/gamebooks-pdf"
-GCS_METADATA_PATH="gs://nba-scraped-data/nba-com/schedule-metadata"
+GCS_DATA_PATH="gs://nba-analytics-raw-data/raw/basketball_reference/season_rosters"
 
 # Seasons to include in backfill monitoring
 SEASONS_TO_MONITOR=("2021-22" "2022-23" "2023-24" "2024-25")
+
+# NBA teams (Basketball Reference abbreviations)
+BR_TEAMS=("ATL" "BOS" "BRK" "CHO" "CHI" "CLE" "DAL" "DEN" "DET" "GSW" "HOU" "IND" "LAC" "LAL" "MEM" "MIA" "MIL" "MIN" "NOP" "NYK" "OKC" "ORL" "PHI" "PHO" "POR" "SAC" "SAS" "TOR" "UTA" "WAS")
 
 # Colors
 RED='\033[0;31m'
@@ -41,7 +42,7 @@ mkdir -p "$CACHE_DIR"
 
 print_header() {
     echo -e "${CYAN}================================================${NC}"
-    echo -e "${CYAN}🏀 NBA GAMEBOOK BACKFILL MONITOR (OPTIMIZED)${NC}"
+    echo -e "${CYAN}🏀 BASKETBALL REFERENCE ROSTER MONITOR${NC}"
     echo -e "${CYAN}================================================${NC}"
     echo -e "Time: $(date)"
     echo ""
@@ -87,11 +88,9 @@ gcs_operation_safe() {
     fi
 }
 
-# OPTIMIZED: Fast file counting using directory sampling
-count_gcs_files_fast() {
-    local base_path="$1"
-    local file_extension="$2"
-    local cache_key="count_${file_extension}_$(echo "$base_path" | sed 's/[^a-zA-Z0-9]/_/g')"
+# OPTIMIZED: Fast roster file counting
+count_roster_files_fast() {
+    local cache_key="roster_count"
     
     # Try cached count first
     local cached_count=$(gcs_operation_safe "echo 'cached'" "$cache_key" 2>/dev/null)
@@ -100,150 +99,82 @@ count_gcs_files_fast() {
         return 0
     fi
     
-    echo -e "  ${BLUE}🔍 Sampling directories for file count...${NC}" >&2
+    echo -e "  ${BLUE}🔍 Counting roster files...${NC}" >&2
     
-    # Strategy 1: Count date directories and estimate
-    local date_dirs=""
-    if date_dirs=$(timeout $TIMEOUT_SHORT gcloud storage ls "$base_path/" 2>/dev/null); then
-        local total_dates=$(echo "$date_dirs" | wc -l | tr -d ' ')
+    # Count JSON files directly (should be fast for rosters)
+    local roster_files=""
+    if roster_files=$(timeout $TIMEOUT_LONG gcloud storage ls "$GCS_DATA_PATH/**/*.json" 2>/dev/null); then
+        local total_count=$(echo "$roster_files" | wc -l | tr -d ' ')
         
-        if [[ $total_dates -gt 0 ]]; then
-            # Sample recent dates to estimate files per date
-            local sample_dates=$(echo "$date_dirs" | tail -10)
-            local sample_count=0
-            local sample_size=0
-            
-            while IFS= read -r date_dir && [[ $sample_size -lt 3 ]]; do
-                if [[ -n "$date_dir" ]]; then
-                    local date_files=""
-                    if date_files=$(timeout $TIMEOUT_SHORT gcloud storage ls "${date_dir}**/*.$file_extension" 2>/dev/null); then
-                        local date_count=$(echo "$date_files" | wc -l | tr -d ' ')
-                        sample_count=$((sample_count + date_count))
-                        sample_size=$((sample_size + 1))
-                    fi
-                fi
-            done <<< "$sample_dates"
-            
-            if [[ $sample_size -gt 0 ]]; then
-                # Estimate total files
-                local avg_per_date=$((sample_count / sample_size))
-                local estimated_total=$((avg_per_date * total_dates))
-                
-                echo -e "  ${GREEN}📊 Estimated from sampling: ~$estimated_total files${NC}" >&2
-                echo "$estimated_total" > "$CACHE_DIR/${cache_key}.cache"
-                date +%s > "$CACHE_DIR/${cache_key}.time"
-                echo "$estimated_total"
-                return 0
-            fi
-        fi
+        echo -e "  ${GREEN}📊 Found: $total_count roster files${NC}" >&2
+        echo "$total_count" > "$CACHE_DIR/${cache_key}.cache"
+        date +%s > "$CACHE_DIR/${cache_key}.time"
+        echo "$total_count"
+        return 0
     fi
     
-    echo -e "  ${YELLOW}⚠️  Sampling failed, using fallback estimate${NC}" >&2
-    # Fallback estimation based on known totals
-    if [[ "$file_extension" == "json" ]]; then
-        echo "7200"  # Approximate based on summary
-    else
-        echo "7200"
+    echo -e "  ${YELLOW}⚠️  Direct count failed, estimating...${NC}" >&2
+    
+    # Fallback: Count season directories and estimate
+    local season_dirs=""
+    if season_dirs=$(timeout $TIMEOUT_SHORT gcloud storage ls "$GCS_DATA_PATH/" 2>/dev/null); then
+        local season_count=$(echo "$season_dirs" | wc -l | tr -d ' ')
+        local estimated_total=$((season_count * 30))  # 30 teams per season
+        
+        echo -e "  ${CYAN}📊 Estimated: $estimated_total files (${season_count} seasons × 30 teams)${NC}" >&2
+        echo "$estimated_total"
+        return 0
     fi
+    
+    echo -e "  ${YELLOW}⚠️  Using fallback estimate${NC}" >&2
+    echo "0"
 }
 
-# OPTIMIZED: Fast metadata reading with caching and timeout
-calculate_dual_totals_from_metadata_fast() {
-    local cache_key="metadata_totals"
-    local cache_file="$CACHE_DIR/${cache_key}.cache"
-    local cache_time_file="$CACHE_DIR/${cache_key}.time"
+# OPTIMIZED: Fast progress calculation for rosters
+calculate_roster_progress_fast() {
+    echo -e "${BLUE}📊 Roster Progress Analysis:${NC}"
     
-    # Check cache validity directly (avoid syntax errors)
-    if [[ -f "$cache_file" && -f "$cache_time_file" ]]; then
-        local cache_time=$(cat "$cache_time_file" 2>/dev/null || echo "0")
-        local current_time=$(date +%s)
-        local age=$((current_time - cache_time))
-        
-        if [[ $age -lt $CACHE_TTL ]]; then
-            cat "$cache_file"
-            return 0
-        fi
-    fi
+    local file_count=$(count_roster_files_fast)
     
-    echo -e "${BLUE}📊 Reading season metadata (cached for 5min)...${NC}"
-    
-    local backfill_total=0
-    local comprehensive_total=0
-    local successful_seasons=0
-    
-    for season in "${SEASONS_TO_MONITOR[@]}"; do
-        # Quick metadata check with timeout
-        local metadata_files=""
-        if metadata_files=$(timeout $TIMEOUT_SHORT gcloud storage ls "${GCS_METADATA_PATH}/${season}/*.json" 2>/dev/null | head -1); then
-            if [[ -n "$metadata_files" ]]; then
-                local temp_file="/tmp/metadata_${season}_$$"
-                if timeout $TIMEOUT_SHORT gcloud storage cp "$metadata_files" "$temp_file" 2>/dev/null; then
-                    local backfill_games=$(jq -r '.backfill.total_games // 0' "$temp_file" 2>/dev/null || echo "0")
-                    local season_total=$(jq -r '.total_games // 0' "$temp_file" 2>/dev/null || echo "0")
-                    
-                    if [[ "$backfill_games" -gt 0 && "$season_total" -gt 0 ]]; then
-                        backfill_total=$((backfill_total + backfill_games))
-                        comprehensive_total=$((comprehensive_total + season_total))
-                        successful_seasons=$((successful_seasons + 1))
-                        echo -e "  ✅ ${season}: Core ${GREEN}${backfill_games}${NC}, Total ${CYAN}${season_total}${NC}"
-                    fi
-                    rm -f "$temp_file"
-                fi
-            fi
-        fi
-    done
-    
-    # Handle fallback
-    if [[ $successful_seasons -eq 0 ]]; then
-        echo -e "  ${RED}⚠️  No metadata available, using estimates${NC}"
-        backfill_total=5281
-        comprehensive_total=7500
-    else
-        echo -e "  ${GREEN}✅ Loaded $successful_seasons seasons${NC}"
-    fi
-    
-    local result="$backfill_total,$comprehensive_total,0,0,0,0"
-    echo "$result" > "$CACHE_DIR/${cache_key}.cache"
-    date +%s > "$CACHE_DIR/${cache_key}.time"
-    echo "$result"
-}
-
-# OPTIMIZED: Fast progress calculation
-calculate_gcs_progress_fast() {
-    echo -e "${BLUE}📊 Progress Analysis (Fast Mode):${NC}"
-    
-    # Get totals from metadata (cached)
-    local totals_line=$(calculate_dual_totals_from_metadata_fast 2>/dev/null | tail -1)
-    IFS=',' read -r CORE_TOTAL COMPREHENSIVE_TOTAL _ _ _ _ <<< "$totals_line"
-    
-    echo ""
-    
-    # Get file counts (cached/estimated)
-    local json_count=$(count_gcs_files_fast "$GCS_DATA_PATH" "json")
-    local pdf_count=$(count_gcs_files_fast "$GCS_PDF_PATH" "pdf")
-    
-    if [[ "$json_count" -gt 0 ]]; then
-        # Calculate progress percentages
-        local core_pct=$((json_count * 100 / CORE_TOTAL))
-        local comp_pct=$((json_count * 100 / COMPREHENSIVE_TOTAL))
-        local core_remaining=$((CORE_TOTAL - json_count))
-        local comp_remaining=$((COMPREHENSIVE_TOTAL - json_count))
-        
-        echo -e "${PURPLE}🎯 CORE BACKFILL PROGRESS (Props):${NC}"
-        if [[ $core_pct -gt 100 ]]; then
-            echo -e "  📄 JSON files: ${GREEN}$json_count${NC} / $CORE_TOTAL (${GREEN}COMPLETE + ${core_pct}%${NC}) ✅"
-            echo -e "  ${GREEN}✨ Core backfill COMPLETE!${NC}"
-        else
-            echo -e "  📄 JSON files: ${GREEN}$json_count${NC} / $CORE_TOTAL (${YELLOW}$core_pct%${NC}) - $core_remaining remaining"
-        fi
+    if [[ "$file_count" -gt 0 ]]; then
+        # Calculate progress percentage
+        local progress_pct=$((file_count * 100 / EXPECTED_TOTAL_FILES))
+        local remaining=$((EXPECTED_TOTAL_FILES - file_count))
         
         echo ""
-        echo -e "${CYAN}📊 COMPREHENSIVE PROGRESS (All):${NC}"
-        echo -e "  📄 Total files: ${GREEN}$json_count${NC} / $COMPREHENSIVE_TOTAL (${CYAN}$comp_pct%${NC}) - $comp_remaining remaining"
+        echo -e "${PURPLE}🎯 ROSTER COLLECTION PROGRESS:${NC}"
+        
+        if [[ $progress_pct -ge 100 ]]; then
+            echo -e "  📄 Roster files: ${GREEN}$file_count${NC} / $EXPECTED_TOTAL_FILES (${GREEN}COMPLETE${NC}) ✅"
+            echo -e "  ${GREEN}✨ Roster backfill COMPLETE!${NC}"
+        else
+            echo -e "  📄 Roster files: ${GREEN}$file_count${NC} / $EXPECTED_TOTAL_FILES (${YELLOW}$progress_pct%${NC}) - $remaining remaining"
+        fi
+        
+        # Break down by season if possible
+        echo ""
+        echo -e "${CYAN}📊 Season Breakdown:${NC}"
+        for season in "${SEASONS_TO_MONITOR[@]}"; do
+            local season_files=""
+            if season_files=$(timeout $TIMEOUT_SHORT gcloud storage ls "$GCS_DATA_PATH/$season/*.json" 2>/dev/null); then
+                local season_count=$(echo "$season_files" | wc -l | tr -d ' ')
+                local season_pct=$((season_count * 100 / 30))  # 30 teams per season
+                
+                if [[ $season_count -eq 30 ]]; then
+                    echo -e "  ${season}: ${GREEN}$season_count/30${NC} (${GREEN}COMPLETE${NC}) ✅"
+                elif [[ $season_count -gt 0 ]]; then
+                    echo -e "  ${season}: ${YELLOW}$season_count/30${NC} (${YELLOW}$season_pct%${NC})"
+                else
+                    echo -e "  ${season}: ${RED}0/30${NC} (${RED}0%${NC})"
+                fi
+            else
+                echo -e "  ${season}: ${YELLOW}? (timeout)${NC}"
+            fi
+        done
         
         # Calculate ETA if running
         local running_exec=$(find_running_execution)
-        if [[ -n "$running_exec" && $comp_remaining -gt 0 ]]; then
+        if [[ -n "$running_exec" && $remaining -gt 0 ]]; then
             local start_time=$(timeout $TIMEOUT_SHORT gcloud run jobs executions describe "$running_exec" \
                 --region=$REGION \
                 --format="value(metadata.creationTimestamp)" 2>/dev/null)
@@ -253,15 +184,15 @@ calculate_gcs_progress_fast() {
                 local current_epoch=$(date +%s)
                 local elapsed_seconds=$((current_epoch - start_epoch))
                 
-                if [[ $elapsed_seconds -gt 0 && $json_count -gt 0 ]]; then
-                    local rate=$(echo "scale=1; $json_count * 3600 / $elapsed_seconds" | bc -l 2>/dev/null || echo "0")
-                    local eta_hours=$(echo "scale=1; $comp_remaining / $rate" | bc -l 2>/dev/null || echo "0")
-                    echo -e "  ⏱️  Rate: ${CYAN}$rate games/hour${NC}, ETA: ${PURPLE}$eta_hours hours${NC}"
+                if [[ $elapsed_seconds -gt 0 && $file_count -gt 0 ]]; then
+                    local rate=$(echo "scale=1; $file_count * 3600 / $elapsed_seconds" | bc -l 2>/dev/null || echo "0")
+                    local eta_hours=$(echo "scale=1; $remaining / $rate" | bc -l 2>/dev/null || echo "0")
+                    echo -e "  ⏱️  Rate: ${CYAN}$rate files/hour${NC}, ETA: ${PURPLE}$eta_hours hours${NC}"
                 fi
             fi
         fi
     else
-        echo -e "  ${YELLOW}No files found yet${NC}"
+        echo -e "  ${YELLOW}No roster files found yet${NC}"
     fi
 }
 
@@ -326,22 +257,17 @@ cmd_quick_optimized() {
     fi
     
     # Get fresh progress and cache it
-    local totals_line=$(calculate_dual_totals_from_metadata_fast 2>/dev/null | tail -1)
-    IFS=',' read -r CORE_TOTAL COMPREHENSIVE_TOTAL _ _ _ _ <<< "$totals_line"
-    
-    local json_count=$(count_gcs_files_fast "$GCS_DATA_PATH" "json")
-    if [[ "$json_count" -gt 0 && "$CORE_TOTAL" -gt 0 ]]; then
-        local core_pct=$((json_count * 100 / CORE_TOTAL))
-        local comp_pct=$((json_count * 100 / COMPREHENSIVE_TOTAL))
+    local file_count=$(count_roster_files_fast)
+    if [[ "$file_count" -gt 0 ]]; then
+        local progress_pct=$((file_count * 100 / EXPECTED_TOTAL_FILES))
         
-        local progress_info="Core Progress: $json_count / $CORE_TOTAL games ($core_pct% complete)
-Total Progress: $json_count / $COMPREHENSIVE_TOTAL games ($comp_pct% complete)"
+        local progress_info="Roster Progress: $file_count / $EXPECTED_TOTAL_FILES files ($progress_pct% complete)"
         
         echo "$progress_info"
         echo "$progress_info" > "$cache_file"
         date +%s > "$cache_time_file"
     else
-        echo "Progress: Data not available yet"
+        echo "Progress: No roster files found yet"
     fi
     
     # Show latest activity (quick check)
@@ -364,7 +290,7 @@ cmd_clear_cache() {
     echo -e "${GREEN}✅ Cache cleared${NC}"
 }
 
-# NEW: Job management commands
+# Job management commands
 cmd_cancel_stuck() {
     echo -e "${BLUE}🔍 Checking for stuck jobs...${NC}"
     
@@ -393,7 +319,7 @@ cmd_cancel_stuck() {
 }
 
 cmd_restart_job() {
-    echo -e "${BLUE}🔄 Restarting NBA gamebook backfill job...${NC}"
+    echo -e "${BLUE}🔄 Restarting Basketball Reference roster backfill job...${NC}"
     
     # Check if there's a running job first
     local execution_check=$(find_running_execution)
@@ -420,13 +346,13 @@ cmd_restart_job() {
     echo -e "${BLUE}🚀 Starting new execution...${NC}"
     if gcloud run jobs execute $JOB_NAME --region=$REGION; then
         echo -e "${GREEN}✅ Job started successfully${NC}"
-        echo -e "${BLUE}💡 Monitor with: ./bin/monitoring/gamebook_backfill_monitor.sh watch${NC}"
+        echo -e "${BLUE}💡 Monitor with: ./bin/backfill/br_rosters_monitor.sh watch${NC}"
     else
         echo -e "${RED}❌ Failed to start job${NC}"
     fi
 }
 
-# Keep existing functions that are already optimized
+# Keep existing utility functions
 parse_iso_timestamp() {
     local iso_time="$1"
     
@@ -486,13 +412,13 @@ find_running_execution() {
                     
                     # Check if genuinely running
                     if [[ "$status" != "Succeeded" && "$status" != "Completed" && "$status" != "Failed" ]]; then
-                        # Additional check: if job has been running > 20 hours, it's likely stuck
+                        # Additional check: if job has been running > 5 hours, it's likely stuck (rosters should be much faster)
                         if [[ -n "$creation_time" ]]; then
                             local start_epoch=$(parse_iso_timestamp "$creation_time")
                             local current_epoch=$(date +%s)
                             local elapsed_hours=$(( (current_epoch - start_epoch) / 3600 ))
                             
-                            if [[ $elapsed_hours -gt 20 ]]; then
+                            if [[ $elapsed_hours -gt 5 ]]; then
                                 echo "STUCK:$exec_name:$elapsed_hours"
                                 return 0
                             fi
@@ -629,62 +555,59 @@ check_activity_health() {
     fi
 }
 
-# OPTIMIZED: Light validation that doesn't scan everything
+# Light validation specific to rosters
 cmd_validate_light() {
     local count=${1:-3}
     
     print_header
-    echo -e "${BLUE}🔍 Light Data Validation (last $count files):${NC}"
+    echo -e "${BLUE}🔍 Light Roster Validation (last $count seasons):${NC}"
     echo ""
     
-    # Get just a few recent date directories
-    local recent_date_dirs=""
-    if recent_date_dirs=$(timeout $TIMEOUT_SHORT gcloud storage ls "$GCS_DATA_PATH/" | tail -3 2>/dev/null); then
-        
-        local validated=0
-        local good_files=0
-        
-        while IFS= read -r date_dir && [[ $validated -lt $count ]]; do
-            if [[ -n "$date_dir" ]]; then
-                # Get one file from this date
-                local sample_file=""
-                if sample_file=$(timeout $TIMEOUT_SHORT gcloud storage ls "${date_dir}*/*.json" | head -1 2>/dev/null); then
-                    
-                    validated=$((validated + 1))
-                    local date_name=$(basename "$date_dir")
-                    echo -e "${BLUE}[$validated/$count]${NC} Sample from $date_name:"
-                    
-                    # Quick validation
-                    local temp_file="/tmp/validate_sample_$$"
-                    if timeout $TIMEOUT_SHORT gcloud storage cp "$sample_file" "$temp_file" 2>/dev/null; then
-                        if jq empty "$temp_file" 2>/dev/null; then
-                            local active=$(jq -r '.active_count // 0' "$temp_file" 2>/dev/null || echo "0")
-                            if [[ "$active" -gt 15 ]]; then
-                                echo -e "  ${GREEN}✅ GOOD${NC} - Active players: ${GREEN}$active${NC}"
-                                good_files=$((good_files + 1))
-                            else
-                                echo -e "  ${YELLOW}⚠️  LOW${NC} - Active players: ${YELLOW}$active${NC}"
-                            fi
-                        else
-                            echo -e "  ${RED}❌ Invalid JSON${NC}"
-                        fi
-                        rm -f "$temp_file"
-                    else
-                        echo -e "  ${RED}❌ Download failed${NC}"
-                    fi
-                fi
-            fi
-        done <<< "$recent_date_dirs"
-        
-        echo ""
-        echo -e "${CYAN}📊 Light Validation Summary:${NC}"
-        echo -e "  ${GREEN}✅ Good files: $good_files / $validated${NC}"
-        
-        if [[ $good_files -eq $validated && $good_files -gt 0 ]]; then
-            echo -e "  ${GREEN}🎉 Validation passed - parser working correctly${NC}"
+    local validated=0
+    local good_files=0
+    
+    # Check recent seasons
+    for season in "${SEASONS_TO_MONITOR[@]}" ; do
+        if [[ $validated -ge $count ]]; then
+            break
         fi
-    else
-        echo -e "${RED}❌ Failed to list date directories${NC}"
+        
+        # Get one sample file from this season
+        local sample_file=""
+        if sample_file=$(timeout $TIMEOUT_SHORT gcloud storage ls "$GCS_DATA_PATH/$season/*.json" | head -1 2>/dev/null); then
+            
+            validated=$((validated + 1))
+            echo -e "${BLUE}[$validated/$count]${NC} Sample from $season:"
+            
+            # Quick validation
+            local temp_file="/tmp/validate_roster_$$"
+            if timeout $TIMEOUT_SHORT gcloud storage cp "$sample_file" "$temp_file" 2>/dev/null; then
+                if jq empty "$temp_file" 2>/dev/null; then
+                    local players=$(jq -r '.players | length // 0' "$temp_file" 2>/dev/null || echo "0")
+                    if [[ "$players" -gt 10 ]]; then
+                        echo -e "  ${GREEN}✅ GOOD${NC} - Players: ${GREEN}$players${NC}"
+                        good_files=$((good_files + 1))
+                    else
+                        echo -e "  ${YELLOW}⚠️  LOW${NC} - Players: ${YELLOW}$players${NC}"
+                    fi
+                else
+                    echo -e "  ${RED}❌ Invalid JSON${NC}"
+                fi
+                rm -f "$temp_file"
+            else
+                echo -e "  ${RED}❌ Download failed${NC}"
+            fi
+        else
+            echo -e "${BLUE}[$validated/$count]${NC} $season: ${YELLOW}No files found${NC}"
+        fi
+    done
+    
+    echo ""
+    echo -e "${CYAN}📊 Light Validation Summary:${NC}"
+    echo -e "  ${GREEN}✅ Good files: $good_files / $validated${NC}"
+    
+    if [[ $good_files -eq $validated && $good_files -gt 0 ]]; then
+        echo -e "  ${GREEN}🎉 Validation passed - roster data looks good${NC}"
     fi
 }
 
@@ -711,7 +634,7 @@ cmd_status() {
 
 cmd_progress() {
     print_header
-    calculate_gcs_progress_fast
+    calculate_roster_progress_fast
 }
 
 cmd_watch() {
@@ -749,7 +672,7 @@ show_usage_optimized() {
     echo "  clear-cache    - Clear all cached data"
     echo ""
     echo "Job Management:"
-    echo "  cancel-stuck   - Find and cancel stuck jobs (>20h runtime)"
+    echo "  cancel-stuck   - Find and cancel stuck jobs (>5h runtime)"
     echo "  restart        - Restart the backfill job (cancels current if needed)"
     echo ""
     echo "Standard Commands:"
@@ -759,7 +682,7 @@ show_usage_optimized() {
     echo "Performance Notes:"
     echo "  - All GCS operations have timeouts ($TIMEOUT_SHORT-${TIMEOUT_LONG}s)"
     echo "  - Progress data cached for ${CACHE_TTL}s"
-    echo "  - File counts estimated via sampling"
+    echo "  - Expected total: ${EXPECTED_TOTAL_FILES} files (30 teams × 4 seasons)"
     echo "  - Use 'clear-cache' if data seems stale"
 }
 

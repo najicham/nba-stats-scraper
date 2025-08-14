@@ -1,5 +1,5 @@
 #!/bin/bash
-# File: bin/monitoring/validate_bp_data.sh
+# File: bin/validation/validate_bp_props.sh
 # Purpose: Main script for NBA BettingPros data validation
 # Modular design - imports functionality from lib/ directory
 
@@ -35,6 +35,9 @@ main() {
         "dates")
             shift  # Remove 'dates' command
             cmd_dates "$@"
+            ;;
+        "seasons")
+            cmd_seasons
             ;;
         "debug")
             cmd_debug_schedule "${2:-2021-10-03}"

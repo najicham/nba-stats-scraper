@@ -1,19 +1,22 @@
 #!/bin/bash
-# FILE: bin/deployment/deploy_odds_api_season_backfill_job.sh
+# FILE: backfill/br_rosters/deploy_br_rosters_backfill.sh
 # 
-# Deploys NBA Odds API Season Backfill as Cloud Run Job
-# This job runs for hours, collects historical props data for entire seasons, then terminates
+# ⚠️  UNTESTED - Created automatically based on odds_api_props pattern
+# ⚠️  May require testing and adjustments before production use
+#
+# Deploys NBA Basketball Reference Roster Backfill as Cloud Run Job
+# This job collects historical roster data for all teams across multiple seasons, then terminates
 
 set -e  # Exit on any error
 
 # Configuration
-JOB_NAME="nba-odds-api-season-backfill"
+JOB_NAME="nba-br-rosters-backfill"
 REGION="us-west2"
 PROJECT_ID="nba-props-platform"
 SERVICE_URL="https://nba-scrapers-756957797294.us-west2.run.app"
 
-echo "🎯 Deploying NBA Odds API Season Backfill Job"
-echo "=============================================="
+echo "🎯 Deploying NBA Basketball Reference Roster Backfill Job"
+echo "========================================================"
 echo "Job Name: $JOB_NAME"
 echo "Region: $REGION"
 echo "Project: $PROJECT_ID"
@@ -21,14 +24,14 @@ echo "Service URL: $SERVICE_URL"
 echo ""
 
 # Verify required files exist
-if [[ ! -f "scripts/Dockerfile.odds_api_season_backfill" ]]; then
-    echo "❌ Error: scripts/Dockerfile.odds_api_season_backfill not found"
+if [[ ! -f "backfill/br_rosters/Dockerfile.br_rosters_backfill" ]]; then
+    echo "❌ Error: backfill/br_rosters/Dockerfile.br_rosters_backfill not found"
     echo "   Make sure you're running from project root"
     exit 1
 fi
 
-if [[ ! -f "scripts/odds_api_season_backfill_job.py" ]]; then
-    echo "❌ Error: scripts/odds_api_season_backfill_job.py not found"
+if [[ ! -f "backfill/br_rosters/br_rosters_backfill_job.py" ]]; then
+    echo "❌ Error: backfill/br_rosters/br_rosters_backfill_job.py not found"
     echo "   Make sure the job script exists"
     exit 1
 fi
@@ -36,7 +39,7 @@ fi
 echo "✅ Required files found"
 
 # Build and push the image first (using same pattern as service deployment)
-IMAGE_NAME="gcr.io/$PROJECT_ID/nba-odds-api-season-backfill"
+IMAGE_NAME="gcr.io/$PROJECT_ID/nba-br-rosters-backfill"
 echo ""
 echo "Building image (this may take 2-3 minutes)..."
 
@@ -47,7 +50,7 @@ if [ -f "Dockerfile" ]; then
 fi
 
 # Copy Dockerfile to root (same pattern as deploy_scrapers_simple.sh)
-cp scripts/Dockerfile.odds_api_season_backfill ./Dockerfile
+cp backfill/br_rosters/Dockerfile.br_rosters_backfill ./Dockerfile
 
 gcloud builds submit \
     --tag=$IMAGE_NAME \
@@ -75,8 +78,8 @@ gcloud run jobs create $JOB_NAME \
     --image=$IMAGE_NAME \
     --region=$REGION \
     --project=$PROJECT_ID \
-    --task-timeout=8h \
-    --memory=2Gi \
+    --task-timeout=2h \
+    --memory=1Gi \
     --cpu=1 \
     --max-retries=1 \
     --tasks=1 \
@@ -86,24 +89,30 @@ gcloud run jobs create $JOB_NAME \
 echo ""
 echo "✅ Job deployed successfully!"
 echo ""
-echo "🚀 To start the season backfill (safe to close laptop after this):"
+echo "🚀 To start the roster backfill (should complete in ~30-60 minutes):"
 echo "   gcloud run jobs execute $JOB_NAME --region=$REGION"
 echo ""
-echo "🧪 For testing with dry run:"
-echo "   gcloud run jobs execute $JOB_NAME --args=\"--dry-run --seasons=2023 --limit=5\" --region=$REGION"
+echo "🧪 For testing with specific teams:"
+echo "   gcloud run jobs execute $JOB_NAME --args=\"--teams=LAL,GSW --seasons=2024 --debug\" --region=$REGION"
+echo ""
+echo "🧪 For testing single season:"
+echo "   gcloud run jobs execute $JOB_NAME --args=\"--seasons=2024 --all-teams --group=dev\" --region=$REGION"
 echo ""
 echo "📊 To monitor progress:"
 echo "   Cloud Console: https://console.cloud.google.com/run/jobs/details/$REGION/$JOB_NAME"
 echo "   Logs: gcloud logs read --filter=\"resource.labels.job_name=$JOB_NAME\" --limit=50"
-echo "   Monitor script: ./bin/monitoring/odds_api_backfill_monitor.sh quick"
+echo "   Monitor script: ./bin/backfill/br_rosters_monitor.sh quick"
 echo ""
 echo "⏸️  To stop if needed:"
 echo "   gcloud run jobs cancel $JOB_NAME --region=$REGION"
 echo ""
 echo "🔄 To update and redeploy:"
-echo "   ./bin/deployment/deploy_odds_api_season_backfill_job.sh"
+echo "   ./backfill/br_rosters/deploy_br_rosters_backfill.sh"
 echo ""
 echo "🎯 Next steps:"
-echo "   1. Test: $JOB_NAME --args=\"--dry-run --seasons=2023 --limit=5\""
-echo "   2. Single season: $JOB_NAME --args=\"--seasons=2023\""
-echo "   3. Full backfill: $JOB_NAME --args=\"--seasons=2021,2022,2023,2024\""
+echo "   1. Test single team: $JOB_NAME --args=\"--teams=LAL --seasons=2024 --debug\""
+echo "   2. Test single season: $JOB_NAME --args=\"--seasons=2024 --all-teams\""
+echo "   3. Full backfill: $JOB_NAME --args=\"--seasons=2022,2023,2024,2025 --all-teams --group=prod\""
+echo ""
+echo "📋 Expected outcome: 120 roster files (30 teams × 4 seasons)"
+echo "🕐 Expected duration: 30-60 minutes (with 3.5s delays between requests)"

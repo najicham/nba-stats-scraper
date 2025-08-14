@@ -1,4 +1,4 @@
-# FILE: scripts/Dockerfile.gamebook
+# FILE: backfill/nbac_gamebook/Dockerfile.nbac_gamebook_backfill
 # 
 # Lightweight container for NBA Gamebook Backfill Cloud Run Job
 # Simplified - no wrapper script needed
@@ -11,10 +11,10 @@ WORKDIR /app
 RUN pip install --no-cache-dir requests google-cloud-storage
 
 # Copy the job script
-COPY scripts/gamebook_backfill_job.py .
+COPY backfill/nbac_gamebook/nbac_gamebook_backfill_job.py .
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 
 # Direct entrypoint - script will read SCRAPER_SERVICE_URL from environment
-ENTRYPOINT ["python", "gamebook_backfill_job.py"]
+ENTRYPOINT ["python", "nbac_gamebook_backfill_job.py"]

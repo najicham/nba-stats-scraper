@@ -1,4 +1,4 @@
-# FILE: scripts/Dockerfile.bp_backfill
+# FILE: backfill/bp_props/Dockerfile.bp_props_backfill
 # 
 # Dockerfile for BettingPros Historical Backfill Cloud Run Job
 # Builds a job container that downloads 3 seasons of historical prop data
@@ -22,11 +22,11 @@ RUN pip install --no-cache-dir \
     python-dotenv
 
 # Copy the job script
-COPY scripts/bp_backfill_job.py ./scripts/
+COPY backfill/bp_props/bp_props_backfill_job.py ./bp_props_backfill_job.py
 
 # Set environment variables
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 
 # Default command runs the backfill job
-CMD ["python", "scripts/bp_backfill_job.py"]
+ENTRYPOINT ["python", "bp_props_backfill_job.py"]

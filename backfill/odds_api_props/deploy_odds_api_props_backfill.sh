@@ -1,19 +1,19 @@
 #!/bin/bash
-# FILE: bin/deployment/deploy_bp_backfill_job.sh
+# FILE: backfill/odds_api_props/deploy_odds_api_props_backfill.sh
 # 
-# Deploys BettingPros Historical Backfill as Cloud Run Job
-# This job runs for ~4-6 hours, downloads historical prop data from 3 seasons, then terminates
+# Deploys NBA Odds API Season Backfill as Cloud Run Job
+# This job runs for hours, collects historical props data for entire seasons, then terminates
 
 set -e  # Exit on any error
 
 # Configuration
-JOB_NAME="nba-bp-backfill"
+JOB_NAME="nba-odds-api-season-backfill"
 REGION="us-west2"
 PROJECT_ID="nba-props-platform"
-SERVICE_URL="https://nba-scrapers-f7p3g7f6ya-wl.a.run.app"
+SERVICE_URL="https://nba-scrapers-756957797294.us-west2.run.app"
 
-echo "🏀 Deploying BettingPros Historical Backfill Job"
-echo "==============================================="
+echo "🎯 Deploying NBA Odds API Season Backfill Job"
+echo "=============================================="
 echo "Job Name: $JOB_NAME"
 echo "Region: $REGION"
 echo "Project: $PROJECT_ID"
@@ -21,14 +21,14 @@ echo "Service URL: $SERVICE_URL"
 echo ""
 
 # Verify required files exist
-if [[ ! -f "scripts/Dockerfile.bp_backfill" ]]; then
-    echo "❌ Error: scripts/Dockerfile.bp_backfill not found"
+if [[ ! -f "backfill/odds_api_props/Dockerfile.odds_api_props_backfill" ]]; then
+    echo "❌ Error: backfill/odds_api_props/Dockerfile.odds_api_props_backfill not found"
     echo "   Make sure you're running from project root"
     exit 1
 fi
 
-if [[ ! -f "scripts/bp_backfill_job.py" ]]; then
-    echo "❌ Error: scripts/bp_backfill_job.py not found"
+if [[ ! -f "backfill/odds_api_props/odds_api_props_backfill_job.py" ]]; then
+    echo "❌ Error: backfill/odds_api_props/odds_api_props_backfill_job.py not found"
     echo "   Make sure the job script exists"
     exit 1
 fi
@@ -36,7 +36,7 @@ fi
 echo "✅ Required files found"
 
 # Build and push the image first (using same pattern as service deployment)
-IMAGE_NAME="gcr.io/$PROJECT_ID/nba-bp-backfill"
+IMAGE_NAME="gcr.io/$PROJECT_ID/nba-odds-api-season-backfill"
 echo ""
 echo "Building image (this may take 2-3 minutes)..."
 
@@ -47,7 +47,7 @@ if [ -f "Dockerfile" ]; then
 fi
 
 # Copy Dockerfile to root (same pattern as deploy_scrapers_simple.sh)
-cp scripts/Dockerfile.bp_backfill ./Dockerfile
+cp backfill/odds_api_props/Dockerfile.odds_api_props_backfill ./Dockerfile
 
 gcloud builds submit \
     --tag=$IMAGE_NAME \
@@ -60,7 +60,7 @@ rm ./Dockerfile
 # Deploy the Cloud Run Job using the built image
 echo ""
 
-# Delete existing job and create new one (simpler than YAML replace)
+# 🔧 FIX: Delete existing job and create new one (simpler than YAML replace)
 if gcloud run jobs describe $JOB_NAME --region=$REGION --project=$PROJECT_ID &>/dev/null; then
     echo "📝 Job exists - deleting and recreating with new image..."
     gcloud run jobs delete $JOB_NAME \
@@ -75,7 +75,7 @@ gcloud run jobs create $JOB_NAME \
     --image=$IMAGE_NAME \
     --region=$REGION \
     --project=$PROJECT_ID \
-    --task-timeout=7h \
+    --task-timeout=8h \
     --memory=2Gi \
     --cpu=1 \
     --max-retries=1 \
@@ -86,27 +86,24 @@ gcloud run jobs create $JOB_NAME \
 echo ""
 echo "✅ Job deployed successfully!"
 echo ""
-echo "🚀 To start the historical backfill (3 seasons: 2021-22, 2022-23, 2023-24):"
+echo "🚀 To start the season backfill (safe to close laptop after this):"
 echo "   gcloud run jobs execute $JOB_NAME --region=$REGION"
 echo ""
-echo "🧪 To test with single season (2021-22):"
-echo "   gcloud run jobs execute $JOB_NAME --region=$REGION \\"
-echo "     --args=\"--seasons=2021 --limit=10\""
-echo ""
-echo "🔍 To dry run (see what would be processed):"
-echo "   gcloud run jobs execute $JOB_NAME --region=$REGION \\"
-echo "     --args=\"--dry-run --seasons=2021\""
+echo "🧪 For testing with dry run:"
+echo "   gcloud run jobs execute $JOB_NAME --args=\"--dry-run --seasons=2023 --limit=5\" --region=$REGION"
 echo ""
 echo "📊 To monitor progress:"
 echo "   Cloud Console: https://console.cloud.google.com/run/jobs/details/$REGION/$JOB_NAME"
 echo "   Logs: gcloud logs read --filter=\"resource.labels.job_name=$JOB_NAME\" --limit=50"
+echo "   Monitor script: ./bin/backfill/odds_api_props_monitor.sh quick"
 echo ""
 echo "⏸️  To stop if needed:"
 echo "   gcloud run jobs cancel $JOB_NAME --region=$REGION"
 echo ""
 echo "🔄 To update and redeploy:"
-echo "   ./bin/deployment/deploy_bp_backfill_job.sh"
+echo "   ./backfill/odds_api_props/deploy_odds_api_props_backfill.sh"
 echo ""
-echo "📁 Data will be stored in:"
-echo "   Events: gs://nba-scraped-data/bettingpros/events/{date}/"
-echo "   Props: gs://nba-scraped-data/bettingpros/player-props/points/{date}/"
+echo "🎯 Next steps:"
+echo "   1. Test: $JOB_NAME --args=\"--dry-run --seasons=2023 --limit=5\""
+echo "   2. Single season: $JOB_NAME --args=\"--seasons=2023\""
+echo "   3. Full backfill: $JOB_NAME --args=\"--seasons=2021,2022,2023,2024\""

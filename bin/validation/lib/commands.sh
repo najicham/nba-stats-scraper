@@ -234,10 +234,27 @@ cmd_debug_schedule() {
     local season=$(date_to_season "$date")
     echo -e "Season: $season"
     
+    # Test the simple date-based logic first
+    local month=$(echo "$date" | cut -d'-' -f2)
+    local day=$(echo "$date" | cut -d'-' -f3)
+    
+    # Strip leading zeros
+    month=$((10#$month))
+    day=$((10#$day))
+    
+    echo -e "Month: $month, Day: $day"
+    
+    if [[ $month -eq 10 && $day -le 18 ]]; then
+        echo -e "${GREEN}✅ Date-based logic: PRESEASON${NC}"
+    else
+        echo -e "${YELLOW}⚠️ Date-based logic: NOT PRESEASON${NC}"
+    fi
+    
     # Get schedule file
     local schedule_file=$(get_schedule_for_season "$season")
     if [[ -z "$schedule_file" || ! -f "$schedule_file" ]]; then
         echo -e "${RED}❌ No schedule file found for season $season${NC}"
+        echo -e "Game type result: $(get_game_type_for_date "$date")"
         return 1
     fi
     
@@ -258,12 +275,137 @@ cmd_debug_schedule() {
         return 1
     fi
     
-    # Show structure
-    echo -e "JSON structure:"
-    jq -r 'keys[]' "$schedule_file" 2>/dev/null | head -10
+    # Convert date for schedule lookup
+    local date_mm_dd_yyyy=""
+    if command -v gdate >/dev/null 2>&1; then
+        date_mm_dd_yyyy=$(gdate -d "$date" "+%m/%d/%Y" 2>/dev/null)
+    elif [[ "$OSTYPE" == "darwin"* ]]; then
+        date_mm_dd_yyyy=$(date -j -f "%Y-%m-%d" "$date" "+%m/%d/%Y" 2>/dev/null)
+    else
+        date_mm_dd_yyyy=$(date -d "$date" "+%m/%d/%Y" 2>/dev/null)
+    fi
     
-    # Test game type detection
-    echo -e "Game type for $date: $(get_game_type_for_date "$date")"
+    echo -e "Looking for date: $date_mm_dd_yyyy"
+    
+    # Search for this date in schedule
+    local found_games=$(jq -r --arg target_date "$date_mm_dd_yyyy" '
+        .gameDates[] | select(.gameDate | startswith($target_date)) | .games | length
+    ' "$schedule_file" 2>/dev/null)
+    
+    if [[ -n "$found_games" && "$found_games" != "null" ]]; then
+        echo -e "Found $found_games games for $date_mm_dd_yyyy"
+        
+        # Show detailed game info
+        echo -e "Game details:"
+        jq -r --arg target_date "$date_mm_dd_yyyy" '
+            .gameDates[] | select(.gameDate | startswith($target_date)) | .games[] | 
+            "  Week: \(.weekNumber // "null") | WeekName: \(.weekName // "null") | Label: \(.gameLabel // "null") | SubLabel: \(.gameSubLabel // "null")"
+        ' "$schedule_file" 2>/dev/null | head -5
+        
+        # Show raw game object for debugging
+        echo -e "Raw game data (first game):"
+        jq -r --arg target_date "$date_mm_dd_yyyy" '
+            .gameDates[] | select(.gameDate | startswith($target_date)) | .games[0]
+        ' "$schedule_file" 2>/dev/null
+    else
+        echo -e "No games found for $date_mm_dd_yyyy"
+    fi
+    
+    # Test final game type detection
+    echo -e ""
+    echo -e "Final game type result: ${CYAN}$(get_game_type_for_date "$date")${NC}"
+}
+
+cmd_seasons() {
+    print_header
+    echo -e "${BLUE}📅 Season Coverage Analysis${NC}"
+    echo ""
+    
+    echo -e "1. Scanning all available dates..."
+    
+    # Get all dates from events directory
+    local all_dates=$(timeout 60 gcloud storage ls "$BUCKET/$BP_EVENTS_PATH/" 2>/dev/null | \
+        grep -E "[0-9]{4}-[0-9]{2}-[0-9]{2}" | \
+        xargs -I {} basename {} | sort)
+    
+    if [[ -z "$all_dates" ]]; then
+        echo -e "${RED}❌ No dates found${NC}"
+        return 1
+    fi
+    
+    local total_dates=$(echo "$all_dates" | wc -l | tr -d ' ')
+    echo -e "   Found $total_dates total dates"
+    
+    # Group by season
+    local seasons_file="/tmp/seasons_analysis_$.txt"
+    rm -f "$seasons_file"
+    
+    echo -e "2. Grouping by NBA season..."
+    while IFS= read -r date; do
+        if [[ -n "$date" ]]; then
+            local season=$(date_to_season "$date")
+            echo "$season|$date" >> "$seasons_file"
+        fi
+    done <<< "$all_dates"
+    
+    # Analyze each season
+    echo -e "3. Season-by-season analysis:"
+    echo ""
+    
+    local seasons=($(cut -d'|' -f1 "$seasons_file" | sort -u))
+    
+    for season in "${seasons[@]}"; do
+        echo -e "${CYAN}🏀 NBA $season Season:${NC}"
+        
+        # Get dates for this season
+        local season_dates=($(grep "^$season|" "$seasons_file" | cut -d'|' -f2 | sort))
+        local season_count=${#season_dates[@]}
+        
+        # Get first and last dates
+        local first_date=${season_dates[0]}
+        local last_date=${season_dates[$((season_count-1))]}
+        
+        echo -e "   📊 Total dates: ${GREEN}$season_count${NC}"
+        echo -e "   📅 Range: $first_date → $last_date"
+        
+        # Check events vs props coverage for this season
+        local events_count=0
+        local props_count=0
+        local sample_dates=("${season_dates[@]:0:10}")  # Check first 10 dates
+        
+        for date in "${sample_dates[@]}"; do
+            if timeout 10 gcloud storage ls "$BUCKET/$BP_EVENTS_PATH/$date/" >/dev/null 2>&1; then
+                events_count=$((events_count + 1))
+            fi
+            if timeout 10 gcloud storage ls "$BUCKET/$BP_PROPS_PATH/$date/" >/dev/null 2>&1; then
+                props_count=$((props_count + 1))
+            fi
+        done
+        
+        local sample_size=${#sample_dates[@]}
+        local events_pct=$((events_count * 100 / sample_size))
+        local props_pct=$((props_count * 100 / sample_size))
+        
+        echo -e "   📈 Sample coverage (first $sample_size dates):"
+        echo -e "      Events: ${GREEN}$events_pct%${NC} | Props: ${GREEN}$props_pct%${NC}"
+        
+        # Identify potential issues
+        if [[ $props_pct -lt $events_pct ]]; then
+            local missing_props=$((events_count - props_count))
+            echo -e "      ${YELLOW}⚠️ $missing_props dates have events but missing props${NC}"
+        fi
+        
+        echo ""
+    done
+    
+    # Overall stats
+    echo -e "${CYAN}📋 Overall Coverage:${NC}"
+    echo -e "   Seasons with data: ${GREEN}${#seasons[@]}${NC}"
+    echo -e "   Total dates: ${GREEN}$total_dates${NC}"
+    echo -e "   Date range: ${GREEN}$(echo "$all_dates" | head -1)${NC} → ${GREEN}$(echo "$all_dates" | tail -1)${NC}"
+    
+    # Clean up
+    rm -f "$seasons_file"
 }
 
 cmd_summary() {

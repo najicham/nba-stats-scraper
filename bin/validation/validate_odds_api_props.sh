@@ -1,5 +1,5 @@
 #!/bin/bash
-# File: bin/monitoring/validate_odds_api_data.sh
+# File: bin/validation/validate_odds_api_props.sh
 # Purpose: Validate NBA Player Props data from Odds API
 
 set -e

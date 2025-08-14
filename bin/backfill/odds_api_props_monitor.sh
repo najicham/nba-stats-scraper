@@ -1,6 +1,7 @@
 #!/bin/bash
+# File: bin/backfill/odds_api_props_monitor.sh
 # Clean NBA Odds API Backfill Monitor
-# Usage: ./odds_api_monitor.sh [command] [options]
+# Usage: ./bin/backfill/odds_api_props_monitor.sh [command] [options]
 
 set -e
 

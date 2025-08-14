@@ -1,5 +1,5 @@
 #!/bin/bash
-# FILE: bin/deployment/deploy_gamebook_job.sh
+# FILE: backfill/nbac_gamebook/deploy_nbac_gamebook_backfill.sh
 # 
 # Deploys NBA Gamebook Backfill as Cloud Run Job
 # This job runs for ~6 hours, downloads 5,583 PDFs, then terminates
@@ -21,14 +21,14 @@ echo "Service URL: $SERVICE_URL"
 echo ""
 
 # Verify required files exist
-if [[ ! -f "scripts/Dockerfile.gamebook" ]]; then
-    echo "❌ Error: scripts/Dockerfile.gamebook not found"
+if [[ ! -f "backfill/nbac_gamebook/Dockerfile.nbac_gamebook_backfill" ]]; then
+    echo "❌ Error: backfill/nbac_gamebook/Dockerfile.nbac_gamebook_backfill not found"
     echo "   Make sure you're running from project root"
     exit 1
 fi
 
-if [[ ! -f "scripts/gamebook_backfill_job.py" ]]; then
-    echo "❌ Error: scripts/gamebook_backfill_job.py not found"
+if [[ ! -f "backfill/nbac_gamebook/nbac_gamebook_backfill_job.py" ]]; then
+    echo "❌ Error: backfill/nbac_gamebook/nbac_gamebook_backfill_job.py not found"
     echo "   Make sure the job script exists"
     exit 1
 fi
@@ -47,7 +47,7 @@ if [ -f "Dockerfile" ]; then
 fi
 
 # Copy Dockerfile to root (same pattern as deploy_scrapers_simple.sh)
-cp scripts/Dockerfile.gamebook ./Dockerfile
+cp backfill/nbac_gamebook/Dockerfile.nbac_gamebook_backfill ./Dockerfile
 
 gcloud builds submit \
     --tag=$IMAGE_NAME \
@@ -97,4 +97,4 @@ echo "⏸️  To stop if needed:"
 echo "   gcloud run jobs cancel $JOB_NAME --region=$REGION"
 echo ""
 echo "🔄 To update and redeploy:"
-echo "   ./bin/deploy_gamebook_job.sh"
+echo "   ./backfill/nbac_gamebook/deploy_nbac_gamebook_backfill.sh"

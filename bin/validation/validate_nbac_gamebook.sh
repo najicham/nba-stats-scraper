@@ -1,5 +1,5 @@
 #!/bin/bash
-# File: bin/monitoring/validate_gcs_season_targeted.sh  
+# File: bin/validation/validate_nbac_gamebook.sh  
 # Purpose: Season-targeted validator that samples random dates for efficiency
 
 set -e

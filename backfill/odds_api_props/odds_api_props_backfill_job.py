@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# FILE: scripts/odds_api_season_backfill_job.py
+# FILE: backfill/odds_api_props/odds_api_props_backfill_job.py
 
 """
 NBA Odds API Season Backfill Cloud Run Job - COMPLETE VERSION WITH REAL SCHEDULE LOGIC
@@ -18,7 +18,7 @@ This script:
 
 Usage:
   # Deploy as Cloud Run Job:
-  ./bin/deployment/deploy_odds_api_season_backfill_job.sh
+  ./backfill/odds_api_props/deploy_odds_api_props_backfill.sh
 
   # Dry run (see dates without API calls):
   gcloud run jobs execute nba-odds-api-season-backfill \
@@ -52,8 +52,8 @@ from google.cloud import storage
 try:
     from scrapers.utils.nba_team_mapper import build_event_teams_suffix
 except ImportError:
-    # Fallback for direct execution - add parent directories to path
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+    # Fallback for direct execution - add parent directories to path (updated for new location)
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
     from scrapers.utils.nba_team_mapper import build_event_teams_suffix
 
 # Configure logging for Cloud Run
