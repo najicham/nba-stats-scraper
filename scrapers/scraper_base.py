@@ -167,6 +167,9 @@ class ScraperBase:
     timeout_http = 20
     no_retry_status_codes: list[int] = [404, 422]
     max_retries_decode = 8
+
+    # NEW: Add this single property
+    treat_max_retries_as_success: list[int] = []  # Status codes to treat as success after max retries
     
     # Header/profile defaults
     header_profile: str | None = None          # "stats" | "data" | "core" | "espn"
@@ -497,53 +500,90 @@ class ScraperBase:
     ##########################################################################
     # Download & Decode (Enhanced with Sentry)
     ##########################################################################
+    # Complete download_and_decode method for scraper_base.py
     def download_and_decode(self):
         """
-        Download with loop‑based retry (avoids recursive stack growth).
-        Enhanced with Sentry span tracking.
+        Download with loop-based retry (avoids recursive stack growth).
+        Enhanced with Sentry span tracking and "no data success" support.
         """
         with sentry_sdk.start_span(op="http.request", description="Scraper API call") as span:
             span.set_tag("http.url", getattr(self, 'url', 'unknown'))
             span.set_tag("scraper.retry_count", self.download_retry_count)
             
             try:
-                while True:
-                    try:
-                        self.set_http_downloader()
-                        self.start_download()
-                        self.check_download_status()
-                        if self.decode_download_data:
-                            self.decode_download_content()
-                        break  # success
+                # Wrap the retry loop to catch max retries exception
+                try:
+                    while True:
+                        try:
+                            self.set_http_downloader()
+                            self.start_download()
+                            self.check_download_status()
+                            if self.decode_download_data:
+                                self.decode_download_content()
+                            break  # success
+                            
+                        except (
+                            ValueError,
+                            InvalidRegionDecodeException,
+                            NoHttpStatusCodeException,
+                            RetryInvalidHttpStatusCodeException,
+                            ReadTimeout,
+                        ) as err:
+                            self.increment_retry_count()
+                            self.sleep_before_retry()
+                            logger.warning("[Retry %s] after %s: %s", self.download_retry_count, type(err).__name__, err)
+
+                        except InvalidHttpStatusCodeException:
+                            raise
+
+                        # Failsafe: stop if we somehow fell out of the retry bucket
+                        # if self.download_retry_count >= self.max_retries_decode:
+                        #     raise DownloadDecodeMaxRetryException(
+                        #         f"Reached max retries ({self.max_retries_decode}) without success."
+                        #     )
+
+                except DownloadDecodeMaxRetryException as e:
+                    print(f"🔍 DEBUG: Caught DownloadDecodeMaxRetryException: {e}")
+                    
+                    # SIMPLE FIX: If scraper has the property, treat as success
+                    if hasattr(self, 'treat_max_retries_as_success') and getattr(self, 'treat_max_retries_as_success', []):
+                        print(f"🔍 DEBUG: Scraper configured for 'no data' success - treating as success")
+                        logger.info("✅ Treating max retries as 'no data available' success")
                         
-                    except (
-                        ValueError,
-                        InvalidRegionDecodeException,
-                        NoHttpStatusCodeException,
-                        RetryInvalidHttpStatusCodeException,
-                        ReadTimeout,
-                    ) as err:
-                        self.increment_retry_count()
-                        self.sleep_before_retry()
-                        logger.warning("[Retry %s] after %s: %s", self.download_retry_count, type(err).__name__, err)
-
-                    except InvalidHttpStatusCodeException:
+                        # Set up successful "no data" response
+                        self.data = []
+                        self.decoded_data = []
+                        
+                        # ADD THIS FLAG to skip validation:
+                        self._no_data_success = True
+                        
+                        # Enhanced Sentry tracking for "no data" success
+                        span.set_tag("http.status_code", 403)
+                        span.set_tag("scraper.result", "no_data_available")
+                        span.set_data("response.size", 0)
+                        
+                        return  # Success exit with no data
+                    else:
+                        print(f"🔍 DEBUG: Normal scraper - re-raising exception")
+                        # Re-raise for normal max retry failures
                         raise
-
-                    # Failsafe: stop if we somehow fell out of the retry bucket
-                    if self.download_retry_count >= self.max_retries_decode:
-                        raise DownloadDecodeMaxRetryException(
-                            f"Reached max retries ({self.max_retries_decode}) without success."
-                        )
 
                 # Track successful request
                 span.set_tag("http.status_code", self.raw_response.status_code)
+                span.set_tag("scraper.result", "data_found")
                 span.set_data("response.size", len(self.raw_response.content))
                 
             except Exception as e:
                 # Track failed requests
                 span.set_tag("http.status_code", getattr(self.raw_response, 'status_code', 'unknown'))
                 span.set_tag("error.type", type(e).__name__)
+                
+                # Add result classification for better monitoring
+                if isinstance(e, DownloadDecodeMaxRetryException):
+                    span.set_tag("scraper.result", "max_retries_failed")
+                else:
+                    span.set_tag("scraper.result", "error")
+                
                 raise
 
     def set_http_downloader(self):
@@ -770,14 +810,30 @@ class ScraperBase:
     ##########################################################################
     def increment_retry_count(self):
         """
-        Increments self.download_retry_count; raise if we exceed max_retries_decode.
+        Enhanced: Check for "no data" success cases before raising max retry exception.
         """
         if self.download_retry_count < self.max_retries_decode:
             self.download_retry_count += 1
         else:
-            raise DownloadDecodeMaxRetryException(
-                f"Max decode/download retries reached: {self.max_retries_decode}"
-            )
+            # BEFORE raising exception, check if this should be "no data" success
+            if (hasattr(self, 'treat_max_retries_as_success') and
+                hasattr(self, 'raw_response') and 
+                self.raw_response and 
+                self.raw_response.status_code in getattr(self, 'treat_max_retries_as_success', [])):
+                
+                logger.info("✅ Treating max retries (status %d) as 'no data available' success", 
+                        self.raw_response.status_code)
+                
+                # Raise a special exception that the download loop can catch
+                from .utils.exceptions import NoDataAvailableSuccess  # You'll need to create this
+                raise NoDataAvailableSuccess(
+                    f"No data available (HTTP {self.raw_response.status_code}) - treating as success"
+                )
+            else:
+                # Normal max retry behavior
+                raise DownloadDecodeMaxRetryException(
+                    f"Max decode/download retries reached: {self.max_retries_decode}"
+                )
 
     def sleep_before_retry(self):
         """
@@ -794,9 +850,15 @@ class ScraperBase:
     ##########################################################################
     def validate_download_data(self):
         """
-        Child classes override. 
-        E.g., check if 'scoreboard' in self.decoded_data, etc.
+        Enhanced to skip validation for "no data" success cases.
+        Child classes override. E.g., check if 'scoreboard' in self.decoded_data, etc.
         """
+        # NEW: Skip validation if this is a "no data" success case
+        if hasattr(self, '_no_data_success') and self._no_data_success:
+            logger.info("✅ Skipping validation for 'no data' success case")
+            return
+        
+        # EXISTING validation logic:
         if not self.decoded_data:
             raise DownloadDataException("Downloaded data is empty or None.")
 

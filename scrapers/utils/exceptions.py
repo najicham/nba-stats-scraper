@@ -109,3 +109,7 @@ class ReporterException(Exception):
     """
     Possibly unused.
     """
+
+class NoDataAvailableSuccess(Exception):
+    """Special exception indicating "no data available" should be treated as success."""
+    pass

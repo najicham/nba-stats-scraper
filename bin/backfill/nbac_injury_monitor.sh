@@ -658,15 +658,27 @@ show_execution_status() {
     fi
 }
 
+# Fix for the check_activity_health() function in nbac_injury_monitor.sh
 check_activity_health() {
     echo -e "${BLUE}🏥 Activity Health:${NC}"
     
     local recent_logs=""
     if recent_logs=$(get_recent_logs 10 | cut -f2 2>/dev/null); then
         if [[ -n "$recent_logs" ]]; then
+            # FIX: Clean the variables and ensure they're single numbers
             local recent_downloads=$(echo "$recent_logs" | grep -c "✅ Downloaded" 2>/dev/null || echo "0")
             local recent_no_reports=$(echo "$recent_logs" | grep -c "No report" 2>/dev/null || echo "0")
             local recent_errors=$(echo "$recent_logs" | grep -c -E "(❌|ERROR)" 2>/dev/null || echo "0")
+            
+            # CRITICAL FIX: Clean variables to ensure they're single numbers
+            recent_downloads=$(echo "$recent_downloads" | tail -1 | tr -d '\n' | sed 's/[^0-9]//g')
+            recent_no_reports=$(echo "$recent_no_reports" | tail -1 | tr -d '\n' | sed 's/[^0-9]//g')
+            recent_errors=$(echo "$recent_errors" | tail -1 | tr -d '\n' | sed 's/[^0-9]//g')
+            
+            # Set defaults if empty
+            recent_downloads=${recent_downloads:-0}
+            recent_no_reports=${recent_no_reports:-0}
+            recent_errors=${recent_errors:-0}
             
             echo -e "  Recent activity (last 10 logs):"
             echo -e "    Downloads: ${GREEN}$recent_downloads${NC}"
@@ -720,6 +732,68 @@ cmd_logs() {
     fi
 }
 
+cmd_tail_logs() {
+    echo -e "${GREEN}Watching injury backfill logs in real-time (Ctrl+C to stop)...${NC}"
+    gcloud logging tail "resource.type=cloud_run_job AND resource.labels.job_name=nba-injury-backfill" \
+        --location=$REGION \
+        --format="value(timestamp,textPayload)" \
+        2>/dev/null | while read line; do
+            # Color code the output based on content
+            if echo "$line" | grep -q "✅"; then
+                echo -e "${GREEN}$line${NC}"
+            elif echo "$line" | grep -q "❌\|ERROR"; then
+                echo -e "${RED}$line${NC}"
+            elif echo "$line" | grep -q "⏰\|TIMEOUT"; then
+                echo -e "${YELLOW}$line${NC}"
+            else
+                echo "$line"
+            fi
+        done
+}
+
+# 2. Add success rate trending over time
+track_success_rate_trend() {
+    # Store hourly success rates in cache for trending
+    local hour_key=$(date +"%Y%m%d_%H")
+    local trend_file="$CACHE_DIR/success_trend.log"
+    
+    # Calculate current success rate and append to trend file
+    local recent_logs=$(get_recent_logs 20 | cut -f2 2>/dev/null)
+    if [[ -n "$recent_logs" ]]; then
+        local downloads=$(echo "$recent_logs" | grep -c "✅ Downloaded" 2>/dev/null || echo "0")
+        local no_reports=$(echo "$recent_logs" | grep -c "No report" 2>/dev/null || echo "0")
+        local errors=$(echo "$recent_logs" | grep -c -E "(❌|ERROR)" 2>/dev/null || echo "0")
+        local total=$((downloads + no_reports + errors))
+        
+        if [[ $total -gt 0 ]]; then
+            local success_rate=$(( (downloads + no_reports) * 100 / total ))
+            echo "$hour_key,$success_rate,$downloads,$no_reports,$errors" >> "$trend_file"
+        fi
+    fi
+}
+
+# 3. Add an alert mode for when success rate drops
+cmd_health_check() {
+    # This could be called by monitoring systems
+    local recent_logs=$(get_recent_logs 20 | cut -f2 2>/dev/null)
+    if [[ -n "$recent_logs" ]]; then
+        local downloads=$(echo "$recent_logs" | grep -c "✅ Downloaded" 2>/dev/null || echo "0")
+        local errors=$(echo "$recent_logs" | grep -c -E "(❌|ERROR)" 2>/dev/null || echo "0")
+        local total=$(echo "$recent_logs" | wc -l)
+        
+        if [[ $total -gt 5 && $errors -gt $((total / 2)) ]]; then
+            echo "UNHEALTHY: High error rate ($errors/$total)"
+            exit 1
+        else
+            echo "HEALTHY: Error rate acceptable ($errors/$total)"
+            exit 0
+        fi
+    else
+        echo "UNKNOWN: No recent logs"
+        exit 2
+    fi
+}
+
 show_usage() {
     echo "Usage: $0 [command]"
     echo ""
@@ -739,6 +813,10 @@ show_usage() {
     echo "  - Injury reports use 30-minute interval strategy"
     echo "  - Expected success rate: ~30% (reports not always available)"
     echo "  - Pattern analysis helps optimize future collection"
+    echo "Advanced Commands:"
+    echo "  tail           - Watch logs in real-time with color coding"
+    echo "  health         - Health check for monitoring systems (exit codes)"
+    echo "  trend          - Show success rate trends over time"
 }
 
 # Main command handling
@@ -769,6 +847,16 @@ case "${1:-quick}" in
         ;;
     "help"|"-h"|"--help")
         show_usage
+        ;;
+    "tail"|"tail-logs")
+        cmd_tail_logs
+        ;;
+    "health")
+        cmd_health_check
+        ;;
+    "trend")
+        track_success_rate_trend
+        show_success_trend
         ;;
     *)
         echo "Unknown command: $1"
