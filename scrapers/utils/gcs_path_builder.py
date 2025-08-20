@@ -58,7 +58,7 @@ class GCSPathBuilder:
         "nba_com_schedule": "nba-com/schedule/%(actual_season_nba_format)s/%(timestamp)s.json",
         "nba_com_schedule_cdn": "nba-com/schedule-cdn/%(actual_season_nba_format)s/%(timestamp)s.json",
         "nba_com_scoreboard_v2": "nba-com/scoreboard-v2/%(date)s/%(timestamp)s.json",
-        "nba_com_injury_report": "nba-com/injury-report/%(date)s/%(hour)s%(period)s/%(timestamp)s.json",
+        "nba_com_injury_report": "nba-com/injury-report/%(date)s/%(hour24)s/%(timestamp)s.json",
         "nba_com_play_by_play": "nba-com/play-by-play/%(date)s/game-%(game_id)s/%(timestamp)s.json",
         "nba_com_player_boxscore": "nba-com/player-boxscores/%(date)s/%(timestamp)s.json",
         "nba_com_team_roster": "nba-com/rosters/%(date)s/team_%(team_abbr)s/%(timestamp)s.json", 

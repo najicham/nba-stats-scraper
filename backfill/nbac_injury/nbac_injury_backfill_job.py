@@ -57,11 +57,12 @@ logger = logging.getLogger(__name__)
 class NbaInjuryBackfillJob:
     """Cloud Run Job for downloading NBA injury report PDFs using 30-minute interval strategy."""
     
-    def __init__(self, scraper_service_url: str, seasons: List[int] = None, bucket_name: str = "nba-scraped-data", limit: Optional[int] = None):
+    def __init__(self, scraper_service_url: str, seasons: List[int] = None, bucket_name: str = "nba-scraped-data", limit: Optional[int] = None, start_date: str = None):
         self.scraper_service_url = scraper_service_url.rstrip('/')
         self.seasons = seasons or [2021, 2022, 2023, 2024]  # Default: all 4 seasons
         self.bucket_name = bucket_name
         self.limit = limit
+        self.start_date = start_date
         
         # Initialize GCS client
         self.storage_client = storage.Client()
@@ -80,17 +81,17 @@ class NbaInjuryBackfillJob:
         self.RATE_LIMIT_DELAY = 4.0
         
         # 30-minute intervals (48 per day)
-        self.INTERVALS_PER_DAY = 48
-        self.MINUTES_PER_INTERVAL = 30
+        self.INTERVALS_PER_DAY = 24  # Changed from 48
+        self.MINUTES_PER_INTERVAL = 60  # Changed from 30
         
         logger.info("🏥 NBA Injury Reports Backfill Job initialized")
         logger.info("Scraper service: %s", self.scraper_service_url)
         logger.info("Seasons: %s", self.seasons)
         logger.info("GCS bucket: %s", self.bucket_name)
-        logger.info("Strategy: 30-minute intervals (%d per day)", self.INTERVALS_PER_DAY)
+        logger.info("Strategy: hourly intervals (%d per day) for backfill efficiency", self.INTERVALS_PER_DAY)
         if self.limit:
             logger.info("Limit: %d intervals (for testing)", self.limit)
-        
+    
     def run(self, dry_run: bool = False):
         """Execute the complete backfill job."""
         start_time = datetime.now()
@@ -105,39 +106,49 @@ class NbaInjuryBackfillJob:
             
             # 2. Generate all interval requests
             all_intervals = self._generate_all_intervals(all_game_dates)
-            self.total_intervals = len(all_intervals)
             
-            if self.total_intervals == 0:
+            if len(all_intervals) == 0:
                 logger.error("❌ No intervals generated! Check schedule files and date parsing.")
                 return
             
-            # Apply limit if specified
-            if self.limit and self.limit > 0:
-                original_count = len(all_intervals)
-                all_intervals = all_intervals[:self.limit]
-                self.total_intervals = len(all_intervals)
-                logger.info(f"🔢 Limited to first {self.limit} intervals (out of {original_count} total)")
-            
-            estimated_hours = (self.total_intervals * self.RATE_LIMIT_DELAY) / 3600
-            logger.info("Total intervals to process: %d", self.total_intervals)
+            # 3. Setup and logging
+            estimated_hours = (len(all_intervals) * self.RATE_LIMIT_DELAY) / 3600
+            logger.info("Total intervals available: %d", len(all_intervals))
             logger.info("Unique game dates: %d", len(all_game_dates))
+            if self.limit:
+                logger.info("Processing limit: %d intervals (will skip existing files)", self.limit)
             logger.info("Estimated duration: %.1f hours", estimated_hours)
-            
+
             if dry_run:
-                logger.info("🔍 DRY RUN - Would process %d intervals across %d dates", 
-                           self.total_intervals, len(all_game_dates))
+                display_count = min(len(all_intervals), self.limit or len(all_intervals))
+                logger.info("🔍 DRY RUN - Would process up to %d intervals across %d dates", 
+                        display_count, len(all_game_dates))
                 self._show_sample_intervals(all_intervals[:20])
                 return
-            
-            # 3. Process each interval
+
+            # 4. Process each interval with smart limit handling
+            processed_count = 0  # Count only intervals we actually process
+            self.total_intervals = len(all_intervals)  # Keep track of total for logging
+
             for i, interval in enumerate(all_intervals, 1):
                 try:
                     # Check if already exists (resume logic)
                     if self._interval_already_processed(interval):
                         self.skipped_intervals.append(interval)
                         logger.debug("[%d/%d] ⏭️  Skipping %s (already exists)", 
-                                   i, self.total_intervals, self._format_interval(interval))
+                                i, self.total_intervals, self._format_interval(interval))
                         continue
+                    
+                    # Check if we've hit our processing limit
+                    if self.limit and processed_count >= self.limit:
+                        logger.info("🔢 Reached processing limit of %d intervals", self.limit)
+                        logger.info("📊 Processed %d, Skipped %d, Remaining %d", 
+                                processed_count, len(self.skipped_intervals), 
+                                len(all_intervals) - i + 1)
+                        break
+                    
+                    # This interval will be processed - count it
+                    processed_count += 1
                     
                     # Download via Cloud Run service
                     result = self._download_injury_report(interval)
@@ -155,8 +166,8 @@ class NbaInjuryBackfillJob:
                         self._record_pattern_data(interval, "failed")
                     
                     # Progress update every 100 intervals
-                    if i % 100 == 0:
-                        self._log_progress(i, start_time)
+                    if processed_count % 100 == 0:
+                        self._log_progress(processed_count, start_time)
                     
                     # Rate limiting (4 seconds between requests)
                     time.sleep(self.RATE_LIMIT_DELAY)
@@ -176,7 +187,7 @@ class NbaInjuryBackfillJob:
         except Exception as e:
             logger.error("Backfill job failed: %s", e, exc_info=True)
             raise
-    
+
     def _collect_all_game_dates(self) -> List[str]:
         """Collect all unique game dates from GCS schedule files."""
         logger.info("📊 Collecting game dates from GCS schedule files...")
@@ -206,6 +217,10 @@ class NbaInjuryBackfillJob:
         if sorted_dates:
             logger.info(f"Date range: {sorted_dates[0]} to {sorted_dates[-1]}")
         
+        if self.start_date:
+            sorted_dates = [d for d in sorted_dates if d >= self.start_date]
+            logger.info(f"🎯 Filtered to dates >= {self.start_date}: {len(sorted_dates)} dates")
+
         return sorted_dates
     
     def _read_schedule_from_gcs(self, season_year: int) -> Dict[str, Any]:
@@ -278,19 +293,14 @@ class NbaInjuryBackfillJob:
         return None
     
     def _generate_all_intervals(self, game_dates: List[str]) -> List[Dict]:
-        """Generate all 30-minute intervals for all game dates."""
-        logger.info("🕐 Generating 30-minute intervals for %d dates...", len(game_dates))
+        """Generate hourly intervals only for backfill efficiency."""
+        logger.info("🕐 Generating hourly intervals for %d dates...", len(game_dates))
         
         all_intervals = []
         
         for date_str in game_dates:
-            # Generate 48 intervals for this date (every 30 minutes from 12:00 AM to 11:30 PM)
-            for interval_num in range(self.INTERVALS_PER_DAY):
-                # Calculate hour and period
-                total_minutes = interval_num * self.MINUTES_PER_INTERVAL
-                hour_24 = total_minutes // 60
-                minute = total_minutes % 60
-                
+            # Generate 24 intervals for this date (every hour from 12:00 AM to 11:00 PM)
+            for hour_24 in range(24):
                 # Convert to 12-hour format for NBA.com API
                 if hour_24 == 0:
                     hour_12 = 12
@@ -305,43 +315,49 @@ class NbaInjuryBackfillJob:
                     hour_12 = hour_24 - 12
                     period = "PM"
                 
-                # Only process on exact 30-minute marks (minute == 0 or minute == 30)
-                if minute not in [0, 30]:
-                    continue
-                
                 interval = {
                     "date": date_str,
                     "date_formatted": date_str,  # YYYY-MM-DD
                     "gamedate": date_str.replace("-", ""),  # YYYYMMDD for scraper
-                    "hour": str(hour_12),
-                    "period": period,
-                    "interval_num": interval_num,
-                    "time_24h": f"{hour_24:02d}:{minute:02d}",
-                    "time_12h": f"{hour_12}:{minute:02d} {period}",
+                    "hour": str(hour_12),        # "3", "12", etc.
+                    "period": period,            # "AM", "PM"
+                    "hour24": f"{hour_24:02d}",  # "00", "05", "17", etc. (for GCS path)
+                    "interval_num": hour_24,     # 0-23
+                    "time_24h": f"{hour_24:02d}:00",      # "15:00"
+                    "time_12h": f"{hour_12}:00 {period}",  # "3:00 PM"
                 }
+                # REMOVED: "minute": "00" - no longer needed
                 
                 all_intervals.append(interval)
         
-        logger.info(f"Generated {len(all_intervals)} total intervals")
+        logger.info(f"Generated {len(all_intervals)} hourly intervals")
         return all_intervals
     
     def _interval_already_processed(self, interval: Dict) -> bool:
-        """Check if interval report already exists in GCS (resume logic)."""
+        """Check if interval report already exists in GCS (resume logic with backward compatibility)."""
         try:
             date_str = interval["date_formatted"]
-            hour = interval["hour"].zfill(2)
+            hour_12 = interval["hour"].zfill(2)
             period = interval["period"]
+            hour_24 = interval["hour24"]  # New format
             
-            # Check for either PDF or JSON files in the expected path
+            # Check multiple path patterns for backward compatibility
             prefix_patterns = [
-                f"nba-com/injury-report/{date_str}/{hour}{period}/",
-                f"nba-com/injury-reports/{date_str}/{hour}{period}/",  # Alternative path
+                # NEW path format (hour24 only)
+                f"nba-com/injury-report/{date_str}/{hour_24}/",
+                
+                # OLD path formats (for backward compatibility)
+                f"nba-com/injury-report/{date_str}/{hour_12}{period}/",
+                f"nba-com/injury-reports/{date_str}/{hour_12}{period}/",  # Alternative spelling
+                
+                # LEGACY path formats (if any other variations existed)
+                f"nba-com/injury-report/{date_str}/{hour_12}-{period}/",
             ]
             
             for prefix in prefix_patterns:
                 blobs = list(self.bucket.list_blobs(prefix=prefix, max_results=1))
                 if blobs:
-                    logger.debug(f"Found existing files for interval {self._format_interval(interval)}")
+                    logger.debug(f"Found existing files for interval {self._format_interval(interval)} at path: {prefix}")
                     return True
             
             return False
@@ -349,6 +365,42 @@ class NbaInjuryBackfillJob:
         except Exception as e:
             logger.debug(f"Error checking if interval {interval} exists: {e}")
             return False  # If we can't check, assume it doesn't exist
+
+    # Alternative approach: Check by date folder first, then look for any time-based subfolders
+    def _interval_already_processed_alternative(self, interval: Dict) -> bool:
+        """Alternative: Check if ANY files exist for this date/hour combination."""
+        try:
+            date_str = interval["date_formatted"]
+            hour_12 = int(interval["hour"])
+            period = interval["period"]
+            hour_24 = int(interval["hour24"])
+            
+            # List all subfolders for this date
+            date_prefix = f"nba-com/injury-report/{date_str}/"
+            date_blobs = self.bucket.list_blobs(prefix=date_prefix, delimiter="/")
+            
+            # Extract folder names (time slots)
+            existing_folders = []
+            for page in date_blobs.pages:
+                existing_folders.extend([blob.name.split('/')[-2] for blob in page.prefixes])
+            
+            # Check if this hour exists in any format
+            possible_folder_names = [
+                f"{hour_24:02d}",           # New: "05"
+                f"{hour_12}{period}",       # Old: "5AM" 
+                f"{hour_12:02d}{period}",   # Old: "05AM"
+            ]
+            
+            for folder_name in possible_folder_names:
+                if folder_name in existing_folders:
+                    logger.debug(f"Found existing folder for {self._format_interval(interval)}: {folder_name}")
+                    return True
+            
+            return False
+            
+        except Exception as e:
+            logger.debug(f"Error checking if interval {interval} exists: {e}")
+            return False
     
     def _download_injury_report(self, interval: Dict) -> str:
         """Download single injury report via Cloud Run service."""
@@ -492,8 +544,12 @@ class NbaInjuryBackfillJob:
         dates_with_reports = sum(1 for date, intervals in self.pattern_data.items() 
                                if any(result == "success" for result in intervals.values()))
         total_dates = len(self.pattern_data)
-        
-        logger.info(f"Dates with reports: {dates_with_reports}/{total_dates} ({(dates_with_reports/total_dates)*100:.1f}%)")
+
+        if total_dates > 0:
+            logger.info(f"Dates with reports: {dates_with_reports}/{total_dates} ({(dates_with_reports/total_dates)*100:.1f}%)")
+        else:
+            logger.info("Dates with reports: 0/0 (no dates processed - all intervals were skipped)")
+            logger.info("💡 All intervals skipped due to existing files. Consider using --start-date or higher --limit")
         
         logger.info("🎯 Recommendations for future real-time collection:")
         if successful_times:
@@ -516,6 +572,8 @@ def main():
                        help="Just show what would be processed (no downloads)")
     parser.add_argument("--limit", type=int, default=None,
                        help="Limit number of intervals to process (for testing)")
+    parser.add_argument("--start-date", 
+                   help="Start date (YYYY-MM-DD) to resume from (default: start from beginning)")
     
     args = parser.parse_args()
     

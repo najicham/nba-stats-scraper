@@ -137,16 +137,19 @@ class BigDataBallDiscoveryScraper(ScraperBase, ScraperFlaskMixin):
                 os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
             )
             
-            if not service_account_key_path:
-                raise ValueError("No service account key path provided. Set BIGDATABALL_SERVICE_ACCOUNT_KEY_PATH or GOOGLE_APPLICATION_CREDENTIALS environment variable.")
+            if service_account_key_path and os.path.exists(service_account_key_path):
+                # Use explicit key file if provided
+                credentials = service_account.Credentials.from_service_account_file(
+                    service_account_key_path, 
+                    scopes=self.SCOPES
+                )
+                self.step_info("drive_init", f"Using service account key: {service_account_key_path}")
+            else:
+                # Use default credentials (for Cloud Run with service account)
+                from google.auth import default
+                credentials, _ = default(scopes=self.SCOPES)
+                self.step_info("drive_init", "Using default credentials (Cloud Run service account)")
             
-            if not os.path.exists(service_account_key_path):
-                raise ValueError(f"Service account key file not found: {service_account_key_path}")
-
-            credentials = service_account.Credentials.from_service_account_file(
-                service_account_key_path, 
-                scopes=self.SCOPES
-            )
             self.drive_service = build('drive', 'v3', credentials=credentials)
             self.step_info("drive_init", "Successfully initialized Google Drive service")
             
@@ -332,7 +335,8 @@ class BigDataBallDiscoveryScraper(ScraperBase, ScraperFlaskMixin):
             "totalGames": results.get("count", 0),
             "date": self.opts["date"],
             "teams_filter": self.opts.get("teams"),
-            "source": "bigdataball"
+            "source": "bigdataball",
+            "games": results.get("games", [])
         }
 
 

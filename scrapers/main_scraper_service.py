@@ -50,6 +50,10 @@ SCRAPER_REGISTRY = {
     # Basketball Reference scrapers (1 total)
     "br_season_roster": ("scrapers.basketball_ref.br_season_roster", "BasketballRefSeasonRoster"),
     
+    # BigDataBall scrapers (2 total)
+    "bigdataball_discovery": ("scrapers.bigdataball.bigdataball_discovery", "BigDataBallDiscoveryScraper"),
+    "bigdataball_pbp": ("scrapers.bigdataball.bigdataball_pbp", "BigDataBallPbpScraper"),
+    
     # NBA.com scrapers (10 total)
     "nbac_schedule_api": ("scrapers.nbacom.nbac_schedule_api", "GetNbaComScheduleApi"),
     "nbac_player_list": ("scrapers.nbacom.nbac_player_list", "GetNbaComPlayerList"),

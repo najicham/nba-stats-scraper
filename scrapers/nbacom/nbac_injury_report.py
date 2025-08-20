@@ -132,10 +132,31 @@ class GetNbaComInjuryReport(ScraperBase, ScraperFlaskMixin):
         self.opts["time"] = now.strftime("%H-%M-%S")
         year = int(self.opts["gamedate"][0:4])
         self.opts["season"] = f"{year}-{(year + 1) % 100:02d}"
+        
+        # SIMPLIFIED: Calculate hour24 only (no minute needed)
+        hour_12 = int(self.opts["hour"])
+        period = self.opts["period"].upper()
+        
+        # Convert 12-hour to 24-hour format
+        if period == "AM":
+            if hour_12 == 12:
+                hour_24 = 0  # 12 AM = 00:00 (midnight)
+            else:
+                hour_24 = hour_12  # 1 AM = 01:00, etc.
+        else:  # PM
+            if hour_12 == 12:
+                hour_24 = 12  # 12 PM = 12:00 (noon)
+            else:
+                hour_24 = hour_12 + 12  # 1 PM = 13:00, etc.
+        
+        self.opts["hour24"] = f"{hour_24:02d}"  # "00", "05", "17", etc.
+        
+        logger.debug("Set hour24=%s for GCS path (from %s %s)", 
+                    self.opts["hour24"], self.opts["hour"], period)
 
     # ------------------------------------------------------------------ #
     # Option validation
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------ #    
     def validate_opts(self) -> None:
         super().validate_opts()
         try:

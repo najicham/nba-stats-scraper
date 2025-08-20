@@ -163,16 +163,19 @@ class BigDataBallPbpScraper(ScraperBase, ScraperFlaskMixin):
                 os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
             )
             
-            if not service_account_key_path:
-                raise ValueError("No service account key path provided. Set BIGDATABALL_SERVICE_ACCOUNT_KEY_PATH or GOOGLE_APPLICATION_CREDENTIALS environment variable.")
+            if service_account_key_path and os.path.exists(service_account_key_path):
+                # Use explicit key file if provided
+                credentials = service_account.Credentials.from_service_account_file(
+                    service_account_key_path, 
+                    scopes=self.SCOPES
+                )
+                self.step_info("drive_init", f"Using service account key: {service_account_key_path}")
+            else:
+                # Use default credentials (for Cloud Run with service account)
+                from google.auth import default
+                credentials, _ = default(scopes=self.SCOPES)
+                self.step_info("drive_init", "Using default credentials (Cloud Run service account)")
             
-            if not os.path.exists(service_account_key_path):
-                raise ValueError(f"Service account key file not found: {service_account_key_path}")
-
-            credentials = service_account.Credentials.from_service_account_file(
-                service_account_key_path, 
-                scopes=self.SCOPES
-            )
             self.drive_service = build('drive', 'v3', credentials=credentials)
             self.step_info("drive_init", "Successfully initialized Google Drive service")
             
@@ -404,7 +407,7 @@ class BigDataBallPbpScraper(ScraperBase, ScraperFlaskMixin):
             try:
                 plays.sort(key=lambda x: (
                     x.get('period', 0),
-                    x.get('elapsed', 0)  # Use elapsed time for sorting
+                    x.get('elapsed', 0)
                 ))
             except (TypeError, KeyError):
                 logger.warning("Could not sort plays by expected keys")
@@ -414,14 +417,26 @@ class BigDataBallPbpScraper(ScraperBase, ScraperFlaskMixin):
         if game_id and game_id != 'unknown':
             self.opts['game_id'] = game_id
 
-        # Extract NBA season for path substitution
+        # Extract game date and derive season
         game_date = game_info.get('date', '')
         if game_date:
+            self.opts['date'] = game_date  # ← ADD THIS LINE
             self.opts['nba_season'] = self.derive_nba_season_from_date(game_date)
             logger.info("Derived NBA season %s from date %s", self.opts['nba_season'], game_date)
         else:
+            self.opts['date'] = datetime.now().strftime('%Y-%m-%d')  # ← ADD THIS LINE
             self.opts['nba_season'] = 'unknown'
             logger.warning("No game date available for season derivation")
+        
+        # ← ADD THESE LINES TO SET FILENAME
+        # Extract filename from the downloaded file
+        original_filename = self.decoded_data.get("file_name", "")
+        if original_filename:
+            # Remove .csv extension if present
+            self.opts['filename'] = original_filename.replace('.csv', '')
+        else:
+            # Fallback filename based on game info
+            self.opts['filename'] = f"[{self.opts['date']}]-{game_id}-{game_info.get('away_team', 'UNK')}@{game_info.get('home_team', 'UNK')}"
 
         self.data = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -437,9 +452,9 @@ class BigDataBallPbpScraper(ScraperBase, ScraperFlaskMixin):
         }
         
         logger.info("Transformed %d play-by-play records for game %s", 
-                   len(plays), game_id)
+                len(plays), game_id)
         
-    def derive_nba_season_from_date(date_str: str) -> str:
+    def derive_nba_season_from_date(self, date_str: str) -> str:
         """
         Convert a date string to NBA season format.
         

@@ -3,6 +3,8 @@
 bdl_ping.py - lightweight Ball-Dont-Lie liveness + API-key check
 ----------------------------------------------------------------
 Exit codes
+from dotenv import load_dotenv
+load_dotenv()
 ----------
 0  OK           - HTTP 200
 1  Service down - 5xx (infrastructure)
