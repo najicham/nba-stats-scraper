@@ -123,6 +123,7 @@ class BdlPlayerAveragesScraper(ScraperBase, ScraperFlaskMixin):
     download_type = DownloadType.JSON
     decode_download_data = True
     no_retry_status_codes = ScraperBase.no_retry_status_codes + [503]
+    proxy_enabled: bool = False
 
     # ------------------------------------------------------------------ #
     # Retry: exclude 503 so we fail fast with context                    #

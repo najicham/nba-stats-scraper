@@ -61,6 +61,7 @@ class BdlLiveBoxScoresScraper(ScraperBase, ScraperFlaskMixin):
     required_opts: List[str] = []
     download_type = DownloadType.JSON
     decode_download_data = True
+    proxy_enabled: bool = False
 
     # ------------------------------------------------------------------ #
     # Exporters

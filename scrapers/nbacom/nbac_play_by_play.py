@@ -2,18 +2,18 @@
 """
 NBA.com Play-by-Play scraper                            v2 - 2025-06-16
 -----------------------------------------------------------------------
-Downloads the official play-by-play feed from data.nba.com for a given gameId.
+Downloads the official play-by-play feed from data.nba.com for a given game_id.
 This is NBA.com's primary play-by-play data source.
 
 Usage examples
 --------------
   # Via capture tool (recommended for data collection):
   python tools/fixtures/capture.py nbac_play_by_play \
-      --gameId 0022400987 \
+      --game_id 0022400987 \
       --debug
 
   # Direct CLI execution:
-  python scrapers/nbacom/nbac_play_by_play.py --gameId 0022400987 --debug
+  python scrapers/nbacom/nbac_play_by_play.py --game_id 0022400987 --debug
 
   # Flask web service:
   python scrapers/nbacom/nbac_play_by_play.py --serve --debug
@@ -52,7 +52,7 @@ class GetNbaComPlayByPlay(ScraperBase, ScraperFlaskMixin):
 
     # Flask Mixin Configuration
     scraper_name = "nbac_play_by_play"
-    required_params = ["gameId"]
+    required_params = ["game_id", "gamedate"]
     optional_params = {
         "api_key": None,  # Falls back to env var if needed
     }
@@ -60,7 +60,7 @@ class GetNbaComPlayByPlay(ScraperBase, ScraperFlaskMixin):
     # ------------------------------------------------------------------ #
     # Configuration
     # ------------------------------------------------------------------ #
-    required_opts = ["gameId"]
+    required_opts = ["game_id", "gamedate"]
     download_type: DownloadType = DownloadType.JSON
     decode_download_data: bool = True
     header_profile: str | None = "data"
@@ -69,14 +69,14 @@ class GetNbaComPlayByPlay(ScraperBase, ScraperFlaskMixin):
     exporters = [
         {
             "type": "gcs",
-            #"key": "nba/play-by-play/%(season)s/%(gameId)s.json",
+            #"key": "nba/play-by-play/%(season)s/%(game_id)s.json",
             "key": GCSPathBuilder.get_path(GCS_PATH_KEY),
             "export_mode": ExportMode.DATA,
             "groups": ["prod", "gcs"],
         },
         {
             "type": "file",
-            "filename": "/tmp/nbacom_play_by_play_%(gameId)s.json",
+            "filename": "/tmp/nbacom_play_by_play_%(game_id)s.json",
             "export_mode": ExportMode.DATA,
             "pretty_print": True,
             "groups": ["dev", "test", "prod"],
@@ -107,19 +107,19 @@ class GetNbaComPlayByPlay(ScraperBase, ScraperFlaskMixin):
         now = datetime.now(timezone.utc)
         self.opts["time"] = now.strftime("%H-%M-%S")
         
-        # Derive season from gameId (e.g., "0022400987" -> "2024-25")
-        gid = self.opts["gameId"]
+        # Derive season from game_id (e.g., "0022400987" -> "2024-25")
+        gid = self.opts["game_id"]
         try:
             yr_prefix = 2000 + int(gid[3:5])
             self.opts["season"] = f"{yr_prefix}-{(yr_prefix + 1) % 100:02d}"
         except (ValueError, IndexError):
-            raise DownloadDataException("Invalid gameId format for season derivation")
+            raise DownloadDataException("Invalid game_id format for season derivation")
 
     # ------------------------------------------------------------------ #
     # URL builder
     # ------------------------------------------------------------------ #
     def set_url(self) -> None:
-        gid = self.opts["gameId"]
+        gid = self.opts["game_id"]
         self.url = (
             f"https://cdn.nba.com/static/json/liveData/playbyplay/"
             f"playbyplay_{gid}.json"
@@ -182,7 +182,7 @@ class GetNbaComPlayByPlay(ScraperBase, ScraperFlaskMixin):
         
         # 4. GAME ID CONSISTENCY
         game_id_from_data = game.get('gameId', '')
-        expected_game_id = self.opts['gameId']
+        expected_game_id = self.opts['game_id']
         if game_id_from_data != expected_game_id:
             logger.warning(f"Game ID mismatch: expected {expected_game_id}, got {game_id_from_data}")
         
@@ -197,7 +197,7 @@ class GetNbaComPlayByPlay(ScraperBase, ScraperFlaskMixin):
 
         self.data: Dict[str, Any] = {
             "metadata": {
-                "gameId": self.opts["gameId"],
+                "game_id": self.opts["game_id"],
                 "season": self.opts["season"],
                 "fetchedUtc": ts,
                 "eventCount": len(actions),
@@ -221,7 +221,8 @@ class GetNbaComPlayByPlay(ScraperBase, ScraperFlaskMixin):
     # ------------------------------------------------------------------ #
     def get_scraper_stats(self) -> dict:
         return {
-            "gameId": self.opts["gameId"],
+            "game_id": self.opts["game_id"],
+            "game_date": self.opts.get("date"),
             "season": self.opts["season"],
             "events": self.data.get("metadata", {}).get("eventCount", 0),
         }

@@ -63,16 +63,16 @@ class BdlStandingsScraper(ScraperBase, ScraperFlaskMixin):
 
     # Flask Mixin Configuration
     scraper_name = "bdl_standings"
-    required_params = []  # No required parameters
+    required_params = ["season"]  # No required parameters
     optional_params = {
-        "season": None,    # Defaults to current NBA season
         "api_key": None,    # Falls back to env var
     }
 
     # Original scraper config
-    required_opts: List[str] = []
+    required_opts: List[str] = ["season"]
     download_type = DownloadType.JSON
     decode_download_data = True
+    proxy_enabled: bool = False
 
     # ------------------------------------------------------------------ #
     # Exporters
@@ -116,7 +116,11 @@ class BdlStandingsScraper(ScraperBase, ScraperFlaskMixin):
     # ------------------------------------------------------------------ #
     def set_additional_opts(self) -> None:
         super().set_additional_opts()
-        self.opts["season"] = int(self.opts.get("season") or _current_nba_season())
+        season_year = int(self.opts.get("season") or _current_nba_season())
+        self.opts["season"] = season_year
+        # Simple formatting - no complex derivation needed
+        self.opts["season_formatted"] = f"{season_year}-{str(season_year + 1)[-2:]}"
+        self.opts["date"] = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
     # ------------------------------------------------------------------ #
     # URL & headers                                                      #

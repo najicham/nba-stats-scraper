@@ -62,6 +62,7 @@ class BdlTeams(ScraperBase, ScraperFlaskMixin):
     download_type = DownloadType.JSON
     decode_download_data = True
     required_opts: List[str] = []  # no CLI options required
+    proxy_enabled: bool = False
 
     # ------------------------------------------------------------------ #
     # Exporters

@@ -42,6 +42,7 @@ SCRAPER_REGISTRY = {
     "bdl_player_box_scores": ("scrapers.balldontlie.bdl_player_box_scores", "BdlPlayerBoxScoresScraper"),
     "bdl_active_players": ("scrapers.balldontlie.bdl_active_players", "BdlActivePlayersScraper"),
     "bdl_injuries": ("scrapers.balldontlie.bdl_injuries", "BdlInjuriesScraper"),
+    "bdl_standings": ("scrapers.balldontlie.bdl_standings", "BdlStandingsScraper"),
     
     # BettingPros scrapers (2 total)
     "bp_events": ("scrapers.bettingpros.bp_events", "BettingProsEvents"),

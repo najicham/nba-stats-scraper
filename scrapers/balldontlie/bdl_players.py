@@ -92,6 +92,7 @@ class BdlPlayersScraper(ScraperBase, ScraperFlaskMixin):
     download_type = DownloadType.JSON
     decode_download_data = True
     required_opts: List[str] = []
+    proxy_enabled: bool = False
 
     # ------------------------------------------------------------------ #
     # Exporters

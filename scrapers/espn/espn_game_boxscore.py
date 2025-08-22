@@ -91,13 +91,13 @@ class GetEspnBoxscore(ScraperBase, ScraperFlaskMixin):
 
     # Flask Mixin Configuration
     scraper_name = "espn_game_boxscore"
-    required_params = ["game_id"]  # game_id is required
+    required_params = ["game_id", "gamedate"]  # game_id is required
     optional_params = {
         "skipJson": "0",  # Set to 1/true to skip embedded JSON and test HTML
     }
 
     # Original scraper config
-    required_opts = ["game_id"]
+    required_opts = ["game_id", "gamedate"]
     download_type = DownloadType.HTML
     decode_download_data = True
 
@@ -493,6 +493,7 @@ class GetEspnBoxscore(ScraperBase, ScraperFlaskMixin):
                     total_players += len(v)
         return {
             "game_id": self.opts["game_id"],
+            "game_date": self.opts.get("date"),
             "playerCount": total_players,
             "skipJson": self.skip_json,
         }

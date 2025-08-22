@@ -100,6 +100,7 @@ class BdlGameAdvStatsScraper(ScraperBase, ScraperFlaskMixin):
     download_type = DownloadType.JSON
     decode_download_data = True
     required_opts: List[str] = []
+    proxy_enabled: bool = False
 
     # HTTP retry / error handling --------------------------------------
     no_retry_status_codes = ScraperBase.no_retry_status_codes + [401, 403, 429, 503]

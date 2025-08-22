@@ -10,11 +10,11 @@ Usage examples
 --------------
   # Via capture tool (recommended for data collection):
   python tools/fixtures/capture.py nbac_scoreboard_v2 \
-      --scoreDate 20250120 \
+      --gamedate 20250120 \
       --debug
 
   # Direct CLI execution:
-  python scrapers/nbacom/nbac_scoreboard_v2.py --scoreDate 20250120 --debug
+  python scrapers/nbacom/nbac_scoreboard_v2.py --gamedate 20250120 --debug
 
   # Flask web service:
   python scrapers/nbacom/nbac_scoreboard_v2.py --serve --debug
@@ -54,7 +54,7 @@ class GetNbaComScoreboardV2(ScraperBase, ScraperFlaskMixin):
 
     # Flask Mixin Configuration
     scraper_name = "nbac_scoreboard_v2"
-    required_params = ["scoreDate"]
+    required_params = ["gamedate"]
     optional_params = {
         "api_key": None,
         "run_id": None,
@@ -63,7 +63,7 @@ class GetNbaComScoreboardV2(ScraperBase, ScraperFlaskMixin):
     # ------------------------------------------------------------------ #
     # Config - Updated to match other scrapers
     # ------------------------------------------------------------------ #
-    required_opts = ["scoreDate"]  # YYYYMMDD or YYYY-MM-DD
+    required_opts = ["gamedate"]  # YYYYMMDD or YYYY-MM-DD
     download_type = DownloadType.JSON
     decode_download_data = True
     header_profile = "stats"  # Use standard NBA stats headers
@@ -77,7 +77,7 @@ class GetNbaComScoreboardV2(ScraperBase, ScraperFlaskMixin):
         # Production GCS export
         {
             "type": "gcs",
-            #"key": "nba/game_ids/%(scoreDate)s/game_ids_stats.json",
+            #"key": "nba/game_ids/%(gamedate)s/game_ids_stats.json",
             "key": GCSPathBuilder.get_path(GCS_PATH_KEY),
             "export_mode": ExportMode.DATA,
             "groups": ["prod", "gcs"],
@@ -85,7 +85,7 @@ class GetNbaComScoreboardV2(ScraperBase, ScraperFlaskMixin):
         # Standard development export
         {
             "type": "file",
-            "filename": "/tmp/nba_game_ids_stats_%(scoreDate)s.json",
+            "filename": "/tmp/nba_game_ids_stats_%(gamedate)s.json",
             "export_mode": ExportMode.DATA,
             "pretty_print": True,
             "groups": ["dev", "test", "prod"],
@@ -113,23 +113,23 @@ class GetNbaComScoreboardV2(ScraperBase, ScraperFlaskMixin):
     BASE_V2 = "https://stats.nba.com/stats/scoreboardV2"
 
     def _yyyy_mm_dd(self) -> str:
-        """Convert scoreDate to YYYY-MM-DD format"""
-        raw = self.opts["scoreDate"].replace("-", "")
+        """Convert gamedate to YYYY-MM-DD format"""
+        raw = self.opts["gamedate"].replace("-", "")
         if len(raw) != 8 or not raw.isdigit():
-            raise DownloadDataException("scoreDate must be YYYYMMDD or YYYY‑MM‑DD")
+            raise DownloadDataException("gamedate must be YYYYMMDD or YYYY‑MM‑DD")
         return f"{raw[0:4]}-{raw[4:6]}-{raw[6:8]}"
 
     def _mm_dd_yyyy(self) -> str:
-        """Convert scoreDate to MM/DD/YYYY format for NBA.com"""
+        """Convert gamedate to MM/DD/YYYY format for NBA.com"""
         ymd = self._yyyy_mm_dd()
         yyyy, mm, dd = ymd.split("-")
         return f"{mm}/{dd}/{yyyy}"
 
     def set_additional_opts(self) -> None:
         super().set_additional_opts()
-        """Normalize scoreDate for exporters"""
+        """Normalize gamedate for exporters"""
         # Normalize date for exporters (remove dashes)
-        self.opts["scoreDate"] = self._yyyy_mm_dd().replace("-", "")
+        self.opts["gamedate"] = self._yyyy_mm_dd().replace("-", "")
 
     def download_and_decode(self) -> None:
         """Download using V2 endpoint with proper proxy handling"""
@@ -342,7 +342,7 @@ class GetNbaComScoreboardV2(ScraperBase, ScraperFlaskMixin):
             raise DownloadDataException("Games is not a list")
             
         if not games:
-            logger.warning("No games on %s (possible off‑day).", self.opts["scoreDate"])
+            logger.warning("No games on %s (possible off‑day).", self.opts["gamedate"])
         else:
             logger.info("Validation passed: %d games found", len(games))
 
@@ -389,13 +389,13 @@ class GetNbaComScoreboardV2(ScraperBase, ScraperFlaskMixin):
 
         self.data = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
-            "scoreDate": self.opts["scoreDate"],
+            "gamedate": self.opts["gamedate"],
             "gameCount": len(parsed_games),
             "games": parsed_games,
             "source": "nba_scoreboard_v2_enriched"
         }
         
-        logger.info("Processed %d enriched games for %s", len(parsed_games), self.opts["scoreDate"])
+        logger.info("Processed %d enriched games for %s", len(parsed_games), self.opts["gamedate"])
 
     def _extract_rich_game_data(self, v2_data: dict) -> List[Dict[str, Any]]:
         """Extract rich game data from original V2 response"""
@@ -496,7 +496,7 @@ class GetNbaComScoreboardV2(ScraperBase, ScraperFlaskMixin):
     def get_scraper_stats(self) -> dict:
         """Return scraper statistics"""
         return {
-            "scoreDate": self.opts["scoreDate"], 
+            "gamedate": self.opts["gamedate"], 
             "gameCount": self.data.get("gameCount", 0),
             "source": "nba_scoreboard_v2_only"
         }
