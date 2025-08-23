@@ -1,19 +1,23 @@
 """
-NBA.com Gamebook PDF scraper                            v1.1 – 2025‑08‑23
+NBA.com Gamebook PDF scraper - Enhanced with GCS source support        v1.2 - 2025-08-23
 ---------------------------------------------------------------------------
-* Downloads and parses NBA gamebook PDFs 
+* Downloads and parses NBA gamebook PDFs from NBA.com OR reads from GCS
 * AUTO-DERIVES date and teams from game_code (single source of truth!)
 * Extracts box scores AND DNP reasons (critical for prop betting)
 * PRODUCTION-READY with comprehensive issue tracking and monitoring
+* NEW: Supports reading existing PDFs from GCS for fast re-parsing
 
 Usage examples
 --------------
-  # Via capture tool (recommended):
-  python tools/fixtures/capture.py nbac_gamebook_pdf \
-      --game_code "20240410/MEMCLE" --debug
-
-  # Direct CLI execution:
+  # Download from NBA.com (default behavior - unchanged):
   python scrapers/nbacom/nbac_gamebook_pdf.py --game_code "20240410/MEMCLE" --debug
+
+  # Read existing PDF from GCS (new capability):
+  python scrapers/nbacom/nbac_gamebook_pdf.py --game_code "20240410/MEMCLE" --pdf_source "gcs" --debug
+
+  # Via capture tool:
+  python tools/fixtures/capture.py nbac_gamebook_pdf \
+      --game_code "20240410/MEMCLE" --pdf_source "gcs" --debug
 """
 
 import logging
@@ -54,6 +58,8 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
     required_params = ["game_code"]  # Just 1 required! Everything else auto-derived
     optional_params = {
         "version": "short",     # "short" (.pdf) or "full" (_book.pdf)
+        "pdf_source": "download", # NEW: "download" (from NBA.com) or "gcs" (from GCS)
+        "bucket_name": "nba-scraped-data", # NEW: GCS bucket name when pdf_source="gcs"
         "date": None,           # Auto-derived from game_code (can override)
         "away_team": None,      # Auto-derived from game_code (can override)
         "home_team": None,      # Auto-derived from game_code (can override)
@@ -77,14 +83,15 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
             "type": "gcs",
             "key": GCSPathBuilder.get_path("nba_com_gamebooks_pdf_raw"),
             "export_mode": ExportMode.RAW,
-            "groups": ["prod", "s3", "gcs"],  # Added "s3" group like working scrapers
+            "groups": ["prod", "s3", "gcs", "reparse_from_nba"],  # NEW: reparse_from_nba group
+            "condition": "pdf_source_download",  # NEW: conditional export
         },
         # Save parsed data to GCS
         {
             "type": "gcs", 
             "key": GCSPathBuilder.get_path("nba_com_gamebooks_pdf_data"),
             "export_mode": ExportMode.DATA,
-            "groups": ["prod", "s3", "gcs"],  # Added "s3" group like working scrapers
+            "groups": ["prod", "s3", "gcs", "reparse_from_gcs"],  # NEW: reparse_from_gcs group
         },
         # Development exports
         {
@@ -100,6 +107,7 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
             "filename": "/tmp/raw_%(run_id)s.pdf",
             "export_mode": ExportMode.RAW,
             "groups": ["capture"],
+            "condition": "pdf_source_download",  # NEW: only export raw PDF when downloading
         },
         {
             "type": "file",
@@ -120,6 +128,9 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
             "unknown_player_categories": [],
             "warnings": []
         }
+
+        # NEW: GCS client for reading PDFs from storage
+        self.gcs_client = None
 
     # ------------------------------------------------------------------ #
     # AUTO-DERIVE everything from game_code
@@ -157,18 +168,30 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
         self.opts["clean_game_code"] = game_code.replace("/", "_")  # For filenames
         self.opts["clean_game_code_dashes"] = game_code.replace("/", "-")  # "20211003-BKNLAL"
         
-        # Set defaults
+        # Set defaults for NEW parameters
+        self.opts["pdf_source"] = self.opts.get("pdf_source", "download")
+        self.opts["bucket_name"] = self.opts.get("bucket_name", "nba-scraped-data")
         self.opts["version"] = self.opts.get("version", "short")
         
-        # Log to verify correct date is being used
-        logger.info("Using game date: %s (derived from game_code: %s)", 
-                   self.opts["date"], game_code)
+        # Initialize GCS client if needed
+        if self.opts["pdf_source"] == "gcs":
+            self.gcs_client = storage.Client()
+        
+        # Log to verify correct configuration
+        logger.info("Using game date: %s, pdf_source: %s (game_code: %s)", 
+                   self.opts["date"], self.opts["pdf_source"], game_code)
 
     # ------------------------------------------------------------------ #
     # URL construction
     # ------------------------------------------------------------------ #
     def set_url(self) -> None:
-        """Construct PDF URL from game_code."""
+        """Construct PDF URL from game_code - only needed when pdf_source='download'."""
+        if self.opts["pdf_source"] == "gcs":
+            # Don't need a URL when reading from GCS
+            self.url = None
+            logger.info("PDF source is GCS - skipping URL construction")
+            return
+            
         date_part = self.opts["date_part"]
         teams_part = self.opts["teams_part"]
         version = self.opts["version"]
@@ -195,6 +218,146 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
         game_code = self.opts["game_code"]
         if not re.match(r'^\d{8}/[A-Z]{6}$', game_code):
             raise DownloadDataException("game_code must be in format YYYYMMDD/TEAMTEAM")
+        
+        # Validate pdf_source
+        pdf_source = self.opts.get("pdf_source", "download")
+        if pdf_source not in ["download", "gcs"]:
+            raise DownloadDataException("pdf_source must be 'download' or 'gcs'")
+        
+    # ------------------------------------------------------------------ #
+    # ENHANCED Download Methods - Support GCS source
+    # ------------------------------------------------------------------ #
+    def download_and_decode(self):
+        """
+        Enhanced download method that supports both NBA.com and GCS sources.
+        Routing logic based on pdf_source parameter.
+        """
+        if self.opts["pdf_source"] == "gcs":
+            # NEW: Read PDF from GCS instead of downloading
+            self._download_pdf_from_gcs()
+        else:
+            # EXISTING: Download from NBA.com (unchanged behavior)
+            super().download_and_decode()
+    
+    def _download_pdf_from_gcs(self) -> None:
+        """
+        NEW METHOD: Read PDF from GCS bucket instead of downloading from NBA.com.
+        Simulates the HTTP download by populating self.raw_response.content.
+        """
+        try:
+            logger.info("Reading PDF from GCS bucket: %s", self.opts["bucket_name"])
+            
+            # Construct GCS path based on expected structure from original scraper
+            gcs_pdf_path = self._construct_gcs_pdf_path()
+            
+            # Find the PDF in GCS
+            pdf_blob = self._find_pdf_blob(gcs_pdf_path)
+            if not pdf_blob:
+                raise DownloadDataException(f"PDF not found in GCS path: {gcs_pdf_path}")
+            
+            # Download PDF content from GCS
+            pdf_content = pdf_blob.download_as_bytes()
+            logger.info("Successfully read PDF from GCS: %s (%d bytes)", pdf_blob.name, len(pdf_content))
+            
+            # Create a mock response object that mimics requests.Response
+            # This allows existing parsing logic to work unchanged
+            class MockResponse:
+                def __init__(self, content):
+                    self.content = content
+                    self.status_code = 200
+                    self.text = "PDF from GCS"
+                    
+            self.raw_response = MockResponse(pdf_content)
+            
+            # Call the existing decode logic (this is where all the battle-tested parsing happens)
+            if self.decode_download_data:
+                self.decode_download_content()
+            
+            logger.info("✅ Successfully processed PDF from GCS")
+            
+        except Exception as e:
+            logger.error("Failed to read PDF from GCS: %s", e)
+            raise DownloadDataException(f"GCS PDF reading failed: {e}") from e
+
+    def _construct_gcs_pdf_path(self) -> str:
+        """
+        Construct the expected GCS path where the PDF should be stored.
+        Based on the original scraper's export path structure.
+        """
+        date = self.opts["date"]  # "2024-04-10"
+        clean_game_code = self.opts["clean_game_code"]  # "20240410_MEMCLE"
+        
+        # Expected path: nbac-com/gamebooks-pdf/2024-04-10/
+        return f"nbac-com/gamebooks-pdf/{date}/"
+
+    def _find_pdf_blob(self, gcs_path_prefix: str) -> Optional[Any]:
+        """
+        Find the PDF blob in GCS that matches our game_code.
+        Handles timestamped filenames from the original scraper.
+        """
+        bucket = self.gcs_client.bucket(self.opts["bucket_name"])
+        
+        # List all blobs with the date prefix
+        blobs = bucket.list_blobs(prefix=gcs_path_prefix)
+        
+        clean_game_code = self.opts["clean_game_code"]  # "20240410_MEMCLE"
+        
+        # Find PDF that matches our game code
+        for blob in blobs:
+            if blob.name.endswith('.pdf') and clean_game_code in blob.name:
+                logger.debug("Found matching PDF: %s", blob.name)
+                return blob
+        
+        # If exact match not found, try with different game code formats
+        game_code_variants = [
+            self.opts["clean_game_code"],  # "20240410_MEMCLE"
+            self.opts["clean_game_code_dashes"],  # "20240410-MEMCLE"
+            f"{self.opts['date_part']}{self.opts['teams_part']}",  # "20240410MEMCLE"
+        ]
+        
+        blobs = bucket.list_blobs(prefix=gcs_path_prefix)  # Re-list since iterator is consumed
+        for blob in blobs:
+            if blob.name.endswith('.pdf'):
+                for variant in game_code_variants:
+                    if variant in blob.name:
+                        logger.debug("Found PDF with variant match: %s (variant: %s)", blob.name, variant)
+                        return blob
+        
+        return None
+
+    # ------------------------------------------------------------------ #
+    # ENHANCED Export Control - Skip PDF export when reading from GCS
+    # ------------------------------------------------------------------ #
+    def export_data(self):
+        """
+        Enhanced export method that respects conditional exports.
+        Filters exporters based on conditions when pdf_source="gcs".
+        """
+        # Filter exporters based on conditions
+        effective_exporters = []
+        
+        for config in self.exporters:
+            # Check condition
+            condition = config.get("condition")
+            
+            if condition == "pdf_source_download" and self.opts["pdf_source"] != "download":
+                # Skip PDF export when reading from GCS (since PDF already exists there)
+                logger.debug("Skipping PDF export (condition: %s, pdf_source: %s)", 
+                           condition, self.opts["pdf_source"])
+                continue
+            
+            effective_exporters.append(config)
+        
+        # Temporarily replace exporters for this run
+        original_exporters = self.exporters
+        self.exporters = effective_exporters
+        
+        try:
+            # Call original export logic
+            super().export_data()
+        finally:
+            # Restore original exporters
+            self.exporters = original_exporters
 
     # ------------------------------------------------------------------ #
     # Issue Tracking Utilities
@@ -214,7 +377,7 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
     # PDF Parsing
     # ------------------------------------------------------------------ #
     def decode_download_content(self) -> None:
-        """Parse PDF content using pdfplumber."""
+        """Parse PDF content using pdfplumber - UNCHANGED from v1.1"""
         content = self.raw_response.content
 
         # Basic PDF validation
@@ -223,7 +386,7 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
         if b"%PDF" not in content[:1024]:
             raise InvalidRegionDecodeException("Response is not a PDF.")
 
-        logger.info("PDF Content size: %d bytes", len(content))
+        logger.info("PDF Content size: %d bytes (source: %s)", len(content), self.opts["pdf_source"])
 
         # Initialize data structures with corrected categories
         active_players = []
@@ -237,7 +400,8 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
             "away_team": self.opts["away_team"],
             "home_team": self.opts["home_team"],
             "pdf_version": self.opts["version"],
-            "pdf_url": self.url,
+            "pdf_source": self.opts["pdf_source"],  # NEW: track source
+            "pdf_url": self.url if self.opts["pdf_source"] == "download" else None,
         }
 
         # Extract text using pdfplumber
@@ -307,11 +471,11 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
         
         # Log summary with issue count for monitoring
         if total_issues > 0:
-            logger.warning("Parsed PDF with %d parsing issues: %d active, %d DNP, %d inactive players", 
-                          total_issues, len(active_players), len(dnp_players), len(inactive_players))
+            logger.warning("Parsed PDF with %d parsing issues: %d active, %d DNP, %d inactive players (source: %s)", 
+                          total_issues, len(active_players), len(dnp_players), len(inactive_players), self.opts["pdf_source"])
         else:
-            logger.info("Parsed PDF successfully: %d active, %d DNP, %d inactive players", 
-                       len(active_players), len(dnp_players), len(inactive_players))
+            logger.info("Parsed PDF successfully: %d active, %d DNP, %d inactive players (source: %s)", 
+                       len(active_players), len(dnp_players), len(inactive_players), self.opts["pdf_source"])
 
     def _normalize_team_name(self, team_name: str) -> str:
         """Normalize team name from inactive line to full team name."""
@@ -1039,6 +1203,7 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
             "game_code": self.opts["game_code"],
             "matchup": self.opts["matchup"],
             "pdf_version": self.opts["version"],
+            "pdf_source": self.opts["pdf_source"],
             "arena": self.data.get("arena", "unknown"),
             "attendance": self.data.get("attendance", 0),
             "total_players": self.data.get("total_players", 0),
@@ -1051,6 +1216,7 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
             "parsing_issues_count": total_issues,
             "has_parsing_issues": total_issues > 0,
         }
+
 
 
 # --------------------------------------------------------------------------- #
