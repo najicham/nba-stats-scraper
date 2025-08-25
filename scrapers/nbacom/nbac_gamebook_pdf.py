@@ -29,6 +29,7 @@ from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
 
 import pdfplumber
+# from google.cloud import storage  # Import moved to lazy initialization
 
 # Support both module execution (python -m) and direct execution
 try:
@@ -53,16 +54,16 @@ logger = logging.getLogger("scraper_base")
 class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
     """Downloads and parses NBA gamebook PDF - AUTO-DERIVES everything from game_code."""
 
-    # Flask Mixin Configuration
+    # Flask Mixin Configuration - ENHANCED with pdf_source parameter
     scraper_name = "nbac_gamebook_pdf"
-    required_params = ["game_code"]  # Just 1 required! Everything else auto-derived
+    required_params = ["game_code"]
     optional_params = {
-        "version": "short",     # "short" (.pdf) or "full" (_book.pdf)
-        "pdf_source": "download", # NEW: "download" (from NBA.com) or "gcs" (from GCS)
+        "version": "short",
+        "pdf_source": "download",  # NEW: "download" (from NBA.com) or "gcs" (from GCS)
         "bucket_name": "nba-scraped-data", # NEW: GCS bucket name when pdf_source="gcs"
-        "date": None,           # Auto-derived from game_code (can override)
-        "away_team": None,      # Auto-derived from game_code (can override)
-        "home_team": None,      # Auto-derived from game_code (can override)
+        "date": None,
+        "away_team": None,
+        "home_team": None,
     }
 
     # ------------------------------------------------------------------ #
@@ -78,7 +79,7 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
     # Exporters - Save BOTH PDF and parsed data
     # ------------------------------------------------------------------ #
     exporters = [
-        # Save original PDF to GCS
+        # Save original PDF to GCS (skip when pdf_source="gcs" since PDF already exists)
         {
             "type": "gcs",
             "key": GCSPathBuilder.get_path("nba_com_gamebooks_pdf_raw"),
@@ -86,7 +87,7 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
             "groups": ["prod", "s3", "gcs", "reparse_from_nba"],  # NEW: reparse_from_nba group
             "condition": "pdf_source_download",  # NEW: conditional export
         },
-        # Save parsed data to GCS
+        # Always save parsed data to GCS
         {
             "type": "gcs", 
             "key": GCSPathBuilder.get_path("nba_com_gamebooks_pdf_data"),
@@ -172,14 +173,38 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
         self.opts["pdf_source"] = self.opts.get("pdf_source", "download")
         self.opts["bucket_name"] = self.opts.get("bucket_name", "nba-scraped-data")
         self.opts["version"] = self.opts.get("version", "short")
-        
-        # Initialize GCS client if needed
+
         if self.opts["pdf_source"] == "gcs":
-            self.gcs_client = storage.Client()
+            # Enable GCS download instead of HTTP
+            self.gcs_enabled = True
+            self.proxy_enabled = False  # Disable proxy for GCS
+            self.gcs_bucket = self.opts["bucket_name"]
+            self.gcs_path = self._construct_gcs_path()
+            logger.info("Configured for GCS: bucket=%s, path=%s", 
+                    self.gcs_bucket, self.gcs_path)
+        else:
+            # Use existing HTTP download
+            self.gcs_enabled = False
+            self.proxy_enabled = True
+            logger.info("Configured for HTTP download")
+        
+        # GCS client will be initialized lazily when needed
+        self.gcs_client = None
         
         # Log to verify correct configuration
         logger.info("Using game date: %s, pdf_source: %s (game_code: %s)", 
                    self.opts["date"], self.opts["pdf_source"], game_code)
+        
+    def _construct_gcs_path(self) -> str:
+        """
+        Construct GCS path based on actual structure.
+        Returns a pattern that can be used to find the PDF.
+        """
+        date = self.opts["date"]  # "2021-10-03"
+        clean_game_code_dashes = self.opts["clean_game_code_dashes"]  # "20211003-BKNLAL"
+        
+        # Pattern: nba-com/gamebooks-pdf/2021-10-03/20211003-BKNLAL/
+        return f"nba-com/gamebooks-pdf/{date}/{clean_game_code_dashes}/"
 
     # ------------------------------------------------------------------ #
     # URL construction
@@ -247,8 +272,20 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
         try:
             logger.info("Reading PDF from GCS bucket: %s", self.opts["bucket_name"])
             
+            # Lazy initialization of GCS client with error handling
+            if not self.gcs_client:
+                try:
+                    from google.cloud import storage
+                    self.gcs_client = storage.Client()
+                    logger.info("✅ GCS client initialized successfully")
+                except ImportError as e:
+                    raise DownloadDataException("google-cloud-storage not available in scraper service") from e
+                except Exception as e:
+                    raise DownloadDataException(f"Failed to initialize GCS client: {e}") from e
+            
             # Construct GCS path based on expected structure from original scraper
             gcs_pdf_path = self._construct_gcs_pdf_path()
+            logger.info("Looking for PDF in GCS path: %s", gcs_pdf_path)
             
             # Find the PDF in GCS
             pdf_blob = self._find_pdf_blob(gcs_pdf_path)
@@ -282,13 +319,13 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
     def _construct_gcs_pdf_path(self) -> str:
         """
         Construct the expected GCS path where the PDF should be stored.
-        Based on the original scraper's export path structure.
+        Based on actual structure: nba-com/gamebooks-pdf/2021-10-19/20211019-BKNMIL/
         """
         date = self.opts["date"]  # "2024-04-10"
-        clean_game_code = self.opts["clean_game_code"]  # "20240410_MEMCLE"
+        clean_game_code_dashes = self.opts["clean_game_code_dashes"]  # "20240410-MEMCLE"
         
-        # Expected path: nbac-com/gamebooks-pdf/2024-04-10/
-        return f"nbac-com/gamebooks-pdf/{date}/"
+        # Expected path: nba-com/gamebooks-pdf/2024-04-10/20240410-MEMCLE/
+        return f"nba-com/gamebooks-pdf/{date}/{clean_game_code_dashes}/"
 
     def _find_pdf_blob(self, gcs_path_prefix: str) -> Optional[Any]:
         """
@@ -297,32 +334,19 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
         """
         bucket = self.gcs_client.bucket(self.opts["bucket_name"])
         
-        # List all blobs with the date prefix
+        # List all blobs with the path prefix  
         blobs = bucket.list_blobs(prefix=gcs_path_prefix)
         
-        clean_game_code = self.opts["clean_game_code"]  # "20240410_MEMCLE"
+        # Primary matching - use the dash format since that's what we found in GCS
+        clean_game_code_dashes = self.opts["clean_game_code_dashes"]  # "20240410-MEMCLE"
         
-        # Find PDF that matches our game code
-        for blob in blobs:
-            if blob.name.endswith('.pdf') and clean_game_code in blob.name:
-                logger.debug("Found matching PDF: %s", blob.name)
-                return blob
-        
-        # If exact match not found, try with different game code formats
-        game_code_variants = [
-            self.opts["clean_game_code"],  # "20240410_MEMCLE"
-            self.opts["clean_game_code_dashes"],  # "20240410-MEMCLE"
-            f"{self.opts['date_part']}{self.opts['teams_part']}",  # "20240410MEMCLE"
-        ]
-        
-        blobs = bucket.list_blobs(prefix=gcs_path_prefix)  # Re-list since iterator is consumed
+        # Find PDF that matches our game code (should be in the directory already)
         for blob in blobs:
             if blob.name.endswith('.pdf'):
-                for variant in game_code_variants:
-                    if variant in blob.name:
-                        logger.debug("Found PDF with variant match: %s (variant: %s)", blob.name, variant)
-                        return blob
+                logger.debug("Found PDF in path: %s", blob.name)
+                return blob  # Since we're looking in the specific game directory, any PDF should work
         
+        logger.debug("No PDFs found in path: %s", gcs_path_prefix)
         return None
 
     # ------------------------------------------------------------------ #
@@ -1203,7 +1227,7 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
             "game_code": self.opts["game_code"],
             "matchup": self.opts["matchup"],
             "pdf_version": self.opts["version"],
-            "pdf_source": self.opts["pdf_source"],
+            "pdf_source": self.opts["pdf_source"],  # NEW: track source
             "arena": self.data.get("arena", "unknown"),
             "attendance": self.data.get("attendance", 0),
             "total_players": self.data.get("total_players", 0),

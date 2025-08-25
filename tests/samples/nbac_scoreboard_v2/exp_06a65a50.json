@@ -1,0 +1,710 @@
+{
+  "scoreboard": {
+    "games": [
+      {
+        "gameId": "0022400561",
+        "homeTeam": {
+          "teamTricode": "PHI",
+          "teamName": "76ers",
+          "teamCity": "Philadelphia",
+          "winsLosses": "15-24",
+          "points": 119,
+          "quarters": {
+            "q1": 21,
+            "q2": 26,
+            "q3": 38,
+            "q4": 24,
+            "ot1": 10,
+            "ot2": 0
+          },
+          "stats": {
+            "fgPct": 0.5,
+            "ftPct": 1.0,
+            "fg3Pct": 0.371,
+            "assists": 27,
+            "rebounds": 35,
+            "turnovers": 12
+          }
+        },
+        "awayTeam": {
+          "teamTricode": "NYK",
+          "teamName": "Knicks",
+          "teamCity": "New York",
+          "winsLosses": "27-15",
+          "points": 125,
+          "quarters": {
+            "q1": 30,
+            "q2": 30,
+            "q3": 25,
+            "q4": 24,
+            "ot1": 16,
+            "ot2": 0
+          },
+          "stats": {
+            "fgPct": 0.535,
+            "ftPct": 0.708,
+            "fg3Pct": 0.432,
+            "assists": 28,
+            "rebounds": 45,
+            "turnovers": 13
+          }
+        },
+        "gameStatus": 3,
+        "gameStatusText": "Final",
+        "gameEt": "2025-01-15T00:00:00",
+        "gameCode": "20250115/NYKPHI",
+        "gameSequence": 1,
+        "season": "2024",
+        "arenaName": "Wells Fargo Center",
+        "broadcasts": {
+          "national": "ESPN",
+          "home": "NBCSP",
+          "away": "MSG"
+        },
+        "livePeriod": 5,
+        "livePcTime": "     ",
+        "livePeriodTimeBcast": "Q5       - ESPN"
+      },
+      {
+        "gameId": "0022400562",
+        "homeTeam": {
+          "teamTricode": "TOR",
+          "teamName": "Raptors",
+          "teamCity": "Toronto",
+          "winsLosses": "10-31",
+          "points": 110,
+          "quarters": {
+            "q1": 25,
+            "q2": 30,
+            "q3": 33,
+            "q4": 22,
+            "ot1": 0,
+            "ot2": 0
+          },
+          "stats": {
+            "fgPct": 0.506,
+            "ftPct": 0.6,
+            "fg3Pct": 0.324,
+            "assists": 35,
+            "rebounds": 56,
+            "turnovers": 10
+          }
+        },
+        "awayTeam": {
+          "teamTricode": "BOS",
+          "teamName": "Celtics",
+          "teamCity": "Boston",
+          "winsLosses": "28-12",
+          "points": 97,
+          "quarters": {
+            "q1": 29,
+            "q2": 24,
+            "q3": 29,
+            "q4": 15,
+            "ot1": 0,
+            "ot2": 0
+          },
+          "stats": {
+            "fgPct": 0.396,
+            "ftPct": 0.5,
+            "fg3Pct": 0.348,
+            "assists": 24,
+            "rebounds": 45,
+            "turnovers": 9
+          }
+        },
+        "gameStatus": 3,
+        "gameStatusText": "Final",
+        "gameEt": "2025-01-15T00:00:00",
+        "gameCode": "20250115/BOSTOR",
+        "gameSequence": 2,
+        "season": "2024",
+        "arenaName": "Scotiabank Arena",
+        "broadcasts": {
+          "national": null,
+          "home": "SN",
+          "away": "NBCSB"
+        },
+        "livePeriod": 4,
+        "livePcTime": "     ",
+        "livePeriodTimeBcast": "Q4       - "
+      },
+      {
+        "gameId": "0022400563",
+        "homeTeam": {
+          "teamTricode": "CHI",
+          "teamName": "Bulls",
+          "teamCity": "Chicago",
+          "winsLosses": "18-23",
+          "points": 94,
+          "quarters": {
+            "q1": 25,
+            "q2": 22,
+            "q3": 31,
+            "q4": 16,
+            "ot1": 0,
+            "ot2": 0
+          },
+          "stats": {
+            "fgPct": 0.443,
+            "ftPct": 1.0,
+            "fg3Pct": 0.222,
+            "assists": 23,
+            "rebounds": 53,
+            "turnovers": 20
+          }
+        },
+        "awayTeam": {
+          "teamTricode": "ATL",
+          "teamName": "Hawks",
+          "teamCity": "Atlanta",
+          "winsLosses": "21-19",
+          "points": 110,
+          "quarters": {
+            "q1": 27,
+            "q2": 34,
+            "q3": 25,
+            "q4": 24,
+            "ot1": 0,
+            "ot2": 0
+          },
+          "stats": {
+            "fgPct": 0.41,
+            "ftPct": 0.682,
+            "fg3Pct": 0.302,
+            "assists": 28,
+            "rebounds": 51,
+            "turnovers": 9
+          }
+        },
+        "gameStatus": 3,
+        "gameStatusText": "Final",
+        "gameEt": "2025-01-15T00:00:00",
+        "gameCode": "20250115/ATLCHI",
+        "gameSequence": 3,
+        "season": "2024",
+        "arenaName": "United Center",
+        "broadcasts": {
+          "national": null,
+          "home": "CHSN",
+          "away": "FDSNSE-ATL"
+        },
+        "livePeriod": 4,
+        "livePcTime": "     ",
+        "livePeriodTimeBcast": "Q4       - "
+      },
+      {
+        "gameId": "0022400564",
+        "homeTeam": {
+          "teamTricode": "MIL",
+          "teamName": "Bucks",
+          "teamCity": "Milwaukee",
+          "winsLosses": "22-17",
+          "points": 122,
+          "quarters": {
+            "q1": 34,
+            "q2": 28,
+            "q3": 30,
+            "q4": 30,
+            "ot1": 0,
+            "ot2": 0
+          },
+          "stats": {
+            "fgPct": 0.625,
+            "ftPct": 0.714,
+            "fg3Pct": 0.583,
+            "assists": 24,
+            "rebounds": 49,
+            "turnovers": 21
+          }
+        },
+        "awayTeam": {
+          "teamTricode": "ORL",
+          "teamName": "Magic",
+          "teamCity": "Orlando",
+          "winsLosses": "23-19",
+          "points": 93,
+          "quarters": {
+            "q1": 16,
+            "q2": 25,
+            "q3": 27,
+            "q4": 25,
+            "ot1": 0,
+            "ot2": 0
+          },
+          "stats": {
+            "fgPct": 0.347,
+            "ftPct": 0.714,
+            "fg3Pct": 0.261,
+            "assists": 24,
+            "rebounds": 32,
+            "turnovers": 13
+          }
+        },
+        "gameStatus": 3,
+        "gameStatusText": "Final",
+        "gameEt": "2025-01-15T00:00:00",
+        "gameCode": "20250115/ORLMIL",
+        "gameSequence": 4,
+        "season": "2024",
+        "arenaName": "Fiserv Forum",
+        "broadcasts": {
+          "national": null,
+          "home": "FDSNWI",
+          "away": "FDSNFL"
+        },
+        "livePeriod": 4,
+        "livePcTime": "     ",
+        "livePeriodTimeBcast": "Q4       - "
+      },
+      {
+        "gameId": "0022400566",
+        "homeTeam": {
+          "teamTricode": "NOP",
+          "teamName": "Pelicans",
+          "teamCity": "New Orleans",
+          "winsLosses": "10-32",
+          "points": 119,
+          "quarters": {
+            "q1": 33,
+            "q2": 30,
+            "q3": 24,
+            "q4": 32,
+            "ot1": 0,
+            "ot2": 0
+          },
+          "stats": {
+            "fgPct": 0.443,
+            "ftPct": 0.833,
+            "fg3Pct": 0.333,
+            "assists": 24,
+            "rebounds": 49,
+            "turnovers": 10
+          }
+        },
+        "awayTeam": {
+          "teamTricode": "DAL",
+          "teamName": "Mavericks",
+          "teamCity": "Dallas",
+          "winsLosses": "22-19",
+          "points": 116,
+          "quarters": {
+            "q1": 27,
+            "q2": 34,
+            "q3": 30,
+            "q4": 25,
+            "ot1": 0,
+            "ot2": 0
+          },
+          "stats": {
+            "fgPct": 0.478,
+            "ftPct": 0.72,
+            "fg3Pct": 0.343,
+            "assists": 27,
+            "rebounds": 45,
+            "turnovers": 15
+          }
+        },
+        "gameStatus": 3,
+        "gameStatusText": "Final",
+        "gameEt": "2025-01-15T00:00:00",
+        "gameCode": "20250115/DALNOP",
+        "gameSequence": 5,
+        "season": "2024",
+        "arenaName": "Smoothie King Center",
+        "broadcasts": {
+          "national": null,
+          "home": "GCSEN",
+          "away": "KFAA"
+        },
+        "livePeriod": 4,
+        "livePcTime": "     ",
+        "livePeriodTimeBcast": "Q4       - "
+      },
+      {
+        "gameId": "0022400567",
+        "homeTeam": {
+          "teamTricode": "SAS",
+          "teamName": "Spurs",
+          "teamCity": "San Antonio",
+          "winsLosses": "19-20",
+          "points": 115,
+          "quarters": {
+            "q1": 30,
+            "q2": 33,
+            "q3": 25,
+            "q4": 27,
+            "ot1": 0,
+            "ot2": 0
+          },
+          "stats": {
+            "fgPct": 0.449,
+            "ftPct": 0.704,
+            "fg3Pct": 0.372,
+            "assists": 22,
+            "rebounds": 44,
+            "turnovers": 11
+          }
+        },
+        "awayTeam": {
+          "teamTricode": "MEM",
+          "teamName": "Grizzlies",
+          "teamCity": "Memphis",
+          "winsLosses": "26-15",
+          "points": 129,
+          "quarters": {
+            "q1": 28,
+            "q2": 23,
+            "q3": 43,
+            "q4": 35,
+            "ot1": 0,
+            "ot2": 0
+          },
+          "stats": {
+            "fgPct": 0.495,
+            "ftPct": 0.647,
+            "fg3Pct": 0.421,
+            "assists": 28,
+            "rebounds": 52,
+            "turnovers": 8
+          }
+        },
+        "gameStatus": 3,
+        "gameStatusText": "Final",
+        "gameEt": "2025-01-15T00:00:00",
+        "gameCode": "20250115/MEMSAS",
+        "gameSequence": 6,
+        "season": "2024",
+        "arenaName": "Frost Bank Center",
+        "broadcasts": {
+          "national": null,
+          "home": "FDSNSW",
+          "away": "FDSNSE-MEM"
+        },
+        "livePeriod": 4,
+        "livePcTime": "     ",
+        "livePeriodTimeBcast": "Q4       - "
+      },
+      {
+        "gameId": "0022400568",
+        "homeTeam": {
+          "teamTricode": "DEN",
+          "teamName": "Nuggets",
+          "teamCity": "Denver",
+          "winsLosses": "24-16",
+          "points": 108,
+          "quarters": {
+            "q1": 23,
+            "q2": 25,
+            "q3": 33,
+            "q4": 27,
+            "ot1": 0,
+            "ot2": 0
+          },
+          "stats": {
+            "fgPct": 0.533,
+            "ftPct": 0.667,
+            "fg3Pct": 0.483,
+            "assists": 22,
+            "rebounds": 36,
+            "turnovers": 18
+          }
+        },
+        "awayTeam": {
+          "teamTricode": "HOU",
+          "teamName": "Rockets",
+          "teamCity": "Houston",
+          "winsLosses": "27-12",
+          "points": 128,
+          "quarters": {
+            "q1": 28,
+            "q2": 41,
+            "q3": 33,
+            "q4": 26,
+            "ot1": 0,
+            "ot2": 0
+          },
+          "stats": {
+            "fgPct": 0.521,
+            "ftPct": 0.765,
+            "fg3Pct": 0.447,
+            "assists": 28,
+            "rebounds": 40,
+            "turnovers": 8
+          }
+        },
+        "gameStatus": 3,
+        "gameStatusText": "Final",
+        "gameEt": "2025-01-15T00:00:00",
+        "gameCode": "20250115/HOUDEN",
+        "gameSequence": 7,
+        "season": "2024",
+        "arenaName": "Ball Arena",
+        "broadcasts": {
+          "national": null,
+          "home": "ALT",
+          "away": "SCHN"
+        },
+        "livePeriod": 4,
+        "livePcTime": "     ",
+        "livePeriodTimeBcast": "Q4       - "
+      },
+      {
+        "gameId": "0022400569",
+        "homeTeam": {
+          "teamTricode": "UTA",
+          "teamName": "Jazz",
+          "teamCity": "Utah",
+          "winsLosses": "10-29",
+          "points": 112,
+          "quarters": {
+            "q1": 33,
+            "q2": 29,
+            "q3": 25,
+            "q4": 25,
+            "ot1": 0,
+            "ot2": 0
+          },
+          "stats": {
+            "fgPct": 0.462,
+            "ftPct": 0.588,
+            "fg3Pct": 0.372,
+            "assists": 30,
+            "rebounds": 36,
+            "turnovers": 10
+          }
+        },
+        "awayTeam": {
+          "teamTricode": "CHA",
+          "teamName": "Hornets",
+          "teamCity": "Charlotte",
+          "winsLosses": "9-28",
+          "points": 117,
+          "quarters": {
+            "q1": 26,
+            "q2": 29,
+            "q3": 25,
+            "q4": 37,
+            "ot1": 0,
+            "ot2": 0
+          },
+          "stats": {
+            "fgPct": 0.529,
+            "ftPct": 0.714,
+            "fg3Pct": 0.308,
+            "assists": 27,
+            "rebounds": 45,
+            "turnovers": 18
+          }
+        },
+        "gameStatus": 3,
+        "gameStatusText": "Final",
+        "gameEt": "2025-01-15T00:00:00",
+        "gameCode": "20250115/CHAUTA",
+        "gameSequence": 8,
+        "season": "2024",
+        "arenaName": "Delta Center",
+        "broadcasts": {
+          "national": null,
+          "home": "KJZZ",
+          "away": "FDSNSE-CHA"
+        },
+        "livePeriod": 4,
+        "livePcTime": "     ",
+        "livePeriodTimeBcast": "Q4       - "
+      },
+      {
+        "gameId": "0022400565",
+        "homeTeam": {
+          "teamTricode": "MIN",
+          "teamName": "Timberwolves",
+          "teamCity": "Minnesota",
+          "winsLosses": "21-19",
+          "points": 115,
+          "quarters": {
+            "q1": 12,
+            "q2": 30,
+            "q3": 36,
+            "q4": 37,
+            "ot1": 0,
+            "ot2": 0
+          },
+          "stats": {
+            "fgPct": 0.442,
+            "ftPct": 0.759,
+            "fg3Pct": 0.459,
+            "assists": 21,
+            "rebounds": 41,
+            "turnovers": 9
+          }
+        },
+        "awayTeam": {
+          "teamTricode": "GSW",
+          "teamName": "Warriors",
+          "teamCity": "Golden State",
+          "winsLosses": "20-20",
+          "points": 116,
+          "quarters": {
+            "q1": 34,
+            "q2": 21,
+            "q3": 32,
+            "q4": 29,
+            "ot1": 0,
+            "ot2": 0
+          },
+          "stats": {
+            "fgPct": 0.488,
+            "ftPct": 0.857,
+            "fg3Pct": 0.5,
+            "assists": 26,
+            "rebounds": 45,
+            "turnovers": 12
+          }
+        },
+        "gameStatus": 3,
+        "gameStatusText": "Final",
+        "gameEt": "2025-01-15T00:00:00",
+        "gameCode": "20250115/GSWMIN",
+        "gameSequence": 9,
+        "season": "2024",
+        "arenaName": "Target Center",
+        "broadcasts": {
+          "national": "ESPN",
+          "home": "FDSNNO",
+          "away": "NBCSBA"
+        },
+        "livePeriod": 4,
+        "livePcTime": "     ",
+        "livePeriodTimeBcast": "Q4       - ESPN"
+      },
+      {
+        "gameId": "0022400570",
+        "homeTeam": {
+          "teamTricode": "LAL",
+          "teamName": "Lakers",
+          "teamCity": "Los Angeles",
+          "winsLosses": "21-17",
+          "points": 117,
+          "quarters": {
+            "q1": 34,
+            "q2": 20,
+            "q3": 29,
+            "q4": 34,
+            "ot1": 0,
+            "ot2": 0
+          },
+          "stats": {
+            "fgPct": 0.522,
+            "ftPct": 0.714,
+            "fg3Pct": 0.382,
+            "assists": 33,
+            "rebounds": 34,
+            "turnovers": 6
+          }
+        },
+        "awayTeam": {
+          "teamTricode": "MIA",
+          "teamName": "Heat",
+          "teamCity": "Miami",
+          "winsLosses": "20-19",
+          "points": 108,
+          "quarters": {
+            "q1": 38,
+            "q2": 28,
+            "q3": 19,
+            "q4": 23,
+            "ot1": 0,
+            "ot2": 0
+          },
+          "stats": {
+            "fgPct": 0.534,
+            "ftPct": 0.933,
+            "fg3Pct": 0.444,
+            "assists": 25,
+            "rebounds": 37,
+            "turnovers": 19
+          }
+        },
+        "gameStatus": 3,
+        "gameStatusText": "Final",
+        "gameEt": "2025-01-15T00:00:00",
+        "gameCode": "20250115/MIALAL",
+        "gameSequence": 10,
+        "season": "2024",
+        "arenaName": "Crypto.com Arena",
+        "broadcasts": {
+          "national": null,
+          "home": "SPECSN",
+          "away": "FDSNSU"
+        },
+        "livePeriod": 4,
+        "livePcTime": "     ",
+        "livePeriodTimeBcast": "Q4       - "
+      },
+      {
+        "gameId": "0022400571",
+        "homeTeam": {
+          "teamTricode": "LAC",
+          "teamName": "Clippers",
+          "teamCity": "LA",
+          "winsLosses": "22-17",
+          "points": 126,
+          "quarters": {
+            "q1": 21,
+            "q2": 37,
+            "q3": 44,
+            "q4": 24,
+            "ot1": 0,
+            "ot2": 0
+          },
+          "stats": {
+            "fgPct": 0.544,
+            "ftPct": 0.933,
+            "fg3Pct": 0.375,
+            "assists": 26,
+            "rebounds": 46,
+            "turnovers": 14
+          }
+        },
+        "awayTeam": {
+          "teamTricode": "BKN",
+          "teamName": "Nets",
+          "teamCity": "Brooklyn",
+          "winsLosses": "14-27",
+          "points": 67,
+          "quarters": {
+            "q1": 21,
+            "q2": 14,
+            "q3": 16,
+            "q4": 16,
+            "ot1": 0,
+            "ot2": 0
+          },
+          "stats": {
+            "fgPct": 0.301,
+            "ftPct": 0.545,
+            "fg3Pct": 0.179,
+            "assists": 15,
+            "rebounds": 39,
+            "turnovers": 20
+          }
+        },
+        "gameStatus": 3,
+        "gameStatusText": "Final",
+        "gameEt": "2025-01-15T00:00:00",
+        "gameCode": "20250115/BKNLAC",
+        "gameSequence": 11,
+        "season": "2024",
+        "arenaName": "Intuit Dome",
+        "broadcasts": {
+          "national": null,
+          "home": "FDSNSC",
+          "away": "YES"
+        },
+        "livePeriod": 4,
+        "livePcTime": "     ",
+        "livePeriodTimeBcast": "Q4       - "
+      }
+    ]
+  }
+}

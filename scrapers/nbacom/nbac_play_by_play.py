@@ -8,8 +8,9 @@ This is NBA.com's primary play-by-play data source.
 Usage examples
 --------------
   # Via capture tool (recommended for data collection):
-  python tools/fixtures/capture.py nbac_play_by_play \
-      --game_id 0022400987 \
+   python tools/fixtures/capture.py nbac_play_by_play \
+      --game_id 0022400561 \
+      --gamedate 20250115
       --debug
 
   # Direct CLI execution:

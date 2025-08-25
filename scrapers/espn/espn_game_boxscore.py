@@ -115,25 +115,24 @@ class GetEspnBoxscore(ScraperBase, ScraperFlaskMixin):
         },
         {
             "type": "file",
-            "filename": "/tmp/boxscore2_%(game_id)s.json",
+            "filename": "/tmp/boxscore2_%(game_id)s.json",  # ← Keep game_id for dev/test
             "export_mode": ExportMode.DATA,
             "pretty_print": True,
             "groups": ["dev", "test"]
         },
+        # FIXED: Use run_id for capture group exporters
         {
-            # NEW: raw HTML dump for fixture collection
             "type": "file",
-            "filename": "/tmp/raw_%(game_id)s.html",
-            "export_mode": ExportMode.RAW,   # untouched bytes
-            "groups": ["capture"],           # fires only when you say --group capture
+            "filename": "/tmp/raw_%(run_id)s.html",  # ← CHANGED: game_id → run_id
+            "export_mode": ExportMode.RAW,
+            "groups": ["capture"],
         },
         {
             "type": "file",
-            # leave it in /tmp – the helper will move/gzip it for you
-            "filename": "/tmp/exp_%(game_id)s.json",
-            "export_mode": ExportMode.DATA,      # the parsed result
-            "pretty_print": True,                # easier to read
-            "groups": ["golden", "capture"],                # fires only on --group golden
+            "filename": "/tmp/exp_%(run_id)s.json",  # ← CHANGED: game_id → run_id
+            "export_mode": ExportMode.DATA,
+            "pretty_print": True,
+            "groups": ["capture"],  # ← REMOVED "golden" from groups
         },
     ]
 
@@ -153,6 +152,7 @@ class GetEspnBoxscore(ScraperBase, ScraperFlaskMixin):
         if not self.decoded_data:
             raise DownloadDataException("No HTML returned from ESPN boxscore page.")
 
+    # In scrapers/espn/espn_game_boxscore.py
     def transform_data(self):
         self.step_info("transform", "Parsing ESPN boxscore HTML")
         html = self.decoded_data
@@ -167,14 +167,60 @@ class GetEspnBoxscore(ScraperBase, ScraperFlaskMixin):
 
         if embedded_data:
             logger.info("[✔] Found embedded 'bxscr' JSON -> parse_boxscore_json()")
-            self.data = self.parse_boxscore_json(embedded_data)
+            team_data = self.parse_boxscore_json(embedded_data)
         else:
             logger.warning("No embedded JSON found (or skipJson=1). Falling back to HTML.")
-            self.data = self.scrape_html_boxscore(html)
+            team_data = self.scrape_html_boxscore(html)
 
-        # Add top-level fields
-        self.data["game_id"] = self.opts["game_id"]
-        self.data["timestamp"] = datetime.now(timezone.utc).isoformat() # datetime.utcnow().replace(tzinfo=pytz.UTC).isoformat()
+        # Convert team-based structure to player-based structure
+        player_structure = self._convert_to_player_structure(team_data)
+        
+        # BETTER: Build final structure with metadata first
+        self.data = {
+            # Metadata/identifiers first (best practice)
+            "game_id": self.opts["game_id"],
+            "gamedate": self.opts["gamedate"],
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            
+            # Main data content
+            "teams": player_structure["teams"],
+            "playerCount": player_structure["playerCount"], 
+            "players": player_structure["players"]  # Large array last
+        }
+
+    def _convert_to_player_structure(self, team_data):
+        """Convert team-keyed data to player-centric structure"""
+        players = []
+        teams = {}
+        total_players = 0  # Simple counter instead of complex object
+        
+        # Get team list for home/away assignment (first team = away, second = home by convention)
+        team_list = list(team_data.keys())
+        
+        for idx, (team_abbr, team_players) in enumerate(team_data.items()):
+            # Skip non-team keys
+            if not isinstance(team_players, list):
+                continue
+                
+            # Assign home/away (ESPN convention: first team = away, second = home)
+            team_type = "away" if idx == 0 else "home"
+            teams[team_type] = team_abbr
+            
+            for player in team_players:
+                # Add team information to each player
+                player_with_team = {
+                    **player,  # Copy all existing player data (keeps original field names)
+                    "team": team_abbr,
+                    "teamType": team_type
+                }
+                players.append(player_with_team)
+                total_players += 1  # Just increment the simple counter
+        
+        return {
+            "players": players,
+            "teams": teams,
+            "playerCount": total_players  # CHANGED: Simple number instead of object
+        }
 
     # -------------------------------------------------------------------------
     # 1) Attempt: embedded JSON
@@ -486,16 +532,17 @@ class GetEspnBoxscore(ScraperBase, ScraperFlaskMixin):
     # Stats for final log line
     # -------------------------------------------------------------------------
     def get_scraper_stats(self):
-        total_players = 0
-        if isinstance(self.data, dict):
-            for k, v in self.data.items():
-                if isinstance(v, list):
-                    total_players += len(v)
+        if isinstance(self.data, dict) and "playerCount" in self.data:
+            total_players = self.data["playerCount"]  # Now it's just a number
+        else:
+            total_players = 0
+            
         return {
             "game_id": self.opts["game_id"],
-            "game_date": self.opts.get("date"),
-            "playerCount": total_players,
+            "gamedate": self.opts.get("gamedate"),
+            "playerCount": total_players,  # Simple number
             "skipJson": self.skip_json,
+            "teams": self.data.get("teams", {}) if isinstance(self.data, dict) else {}
         }
 
 

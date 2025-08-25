@@ -6,61 +6,65 @@ class BaseExporter:
     def run(self, data, config, opts):
         raise NotImplementedError("Exporter must implement 'run' method.")
 
-def _convert_data_to_string(data, config):
+def _prepare_data_for_export(data, config):
     """
-    Convert 'data' (dict, list, bytes, or str) to a UTF-8 string.
-    If data is dict/list and 'pretty_print' is True, use indentation.
+    Prepare data for export. Returns (payload, is_binary) tuple.
+    Binary data is preserved as-is, JSON data is serialized.
     """
-    indent = None
-    if config.get("pretty_print"):
-        # you could also read an integer from config.get("indent") if you want custom levels
-        indent = 2
-
-    if isinstance(data, (dict, list)):
-        # Return JSON with optional indentation
-        return json.dumps(data, indent=indent)
-    elif isinstance(data, bytes):
-        # Attempt to decode bytes to a UTF-8 string
-        return data.decode("utf-8", errors="ignore")
+    if isinstance(data, bytes):
+        # Binary data (PDFs, images, etc) - return as-is
+        return data, True
+    elif isinstance(data, (dict, list)):
+        # JSON data - serialize it
+        indent = 2 if config.get("pretty_print") else None
+        return json.dumps(data, indent=indent), False
     else:
-        # E.g., if already a string
-        return str(data)
+        # String data
+        return str(data), False
 
 class GCSExporter(BaseExporter):
     """
     Upload scraped data to Google Cloud Storage (GCS).
-    
-    Scrapers only produce raw data, so everything goes to the raw scraped data bucket.
+    Handles both binary (PDF) and text (JSON) data correctly.
     """
     def run(self, data, config, opts):
         # 1) Use explicit bucket from config, or default to raw scraped data bucket
-        if "bucket" in config:
-            bucket_name = config["bucket"]
-        else:
-            # All scraped data goes to the raw bucket
-            bucket_name = os.environ.get("GCS_BUCKET_RAW", "nba-scraped-data")
+        bucket_name = config.get("bucket", os.environ.get("GCS_BUCKET_RAW", "nba-scraped-data"))
 
         # 2) Build GCS path from config key + string formatting
         gcs_path = config.get("key", "default.json")
         if "%(" in gcs_path:
             gcs_path = gcs_path % opts
 
-        # 3) Convert data to string
-        payload = _convert_data_to_string(data, config)
+        # 3) Prepare data (preserves binary, serializes JSON)
+        payload, is_binary = _prepare_data_for_export(data, config)
+        
+        # 4) Set appropriate content type
+        if is_binary and gcs_path.endswith('.pdf'):
+            content_type = "application/pdf"
+        elif is_binary:
+            content_type = "application/octet-stream"
+        else:
+            content_type = "application/json"
 
-        # 4) Upload to GCS
-        content_type = "application/json"
-
+        # 5) Upload to GCS
         client = storage.Client()
         bucket = client.bucket(bucket_name)
         blob = bucket.blob(gcs_path)
-        blob.upload_from_string(payload, content_type=content_type)
+        
+        if is_binary:
+            # Upload binary data directly
+            blob.upload_from_string(payload, content_type=content_type)
+        else:
+            # Upload text data as UTF-8 encoded bytes
+            blob.upload_from_string(payload.encode('utf-8'), content_type=content_type)
 
         print(f"[GCS Exporter] Uploaded to gs://{bucket_name}/{gcs_path}")
 
 class FileExporter(BaseExporter):
     """
     Write data to a local file.
+    Handles both binary (PDF) and text (JSON) data correctly.
     """
     def run(self, data, config, opts):
         # 1) Determine filename
@@ -68,12 +72,19 @@ class FileExporter(BaseExporter):
         if "%(" in filename:
             filename = filename % opts
 
-        # 2) Convert data to string
-        payload = _convert_data_to_string(data, config)
+        # 2) Prepare data (preserves binary, serializes JSON)
+        payload, is_binary = _prepare_data_for_export(data, config)
 
-        # 3) Write to file
-        with open(filename, "w", encoding="utf-8") as f:
-            f.write(payload)
+        # 3) Write to file with appropriate mode
+        if is_binary:
+            # Write binary data in binary mode
+            with open(filename, "wb") as f:
+                f.write(payload)
+        else:
+            # Write text data in text mode
+            with open(filename, "w", encoding="utf-8") as f:
+                f.write(payload)
+                
         print(f"[File Exporter] Wrote to {filename}")
 
 class PrintExporter(BaseExporter):
@@ -81,18 +92,14 @@ class PrintExporter(BaseExporter):
     Print data to the console (useful for debug).
     """
     def run(self, data, config, opts):
-        # 1) Convert data to string
-        payload = _convert_data_to_string(data, config)
+        payload, is_binary = _prepare_data_for_export(data, config)
+        
+        if is_binary:
+            print(f"[Binary data: {len(payload)} bytes]")
+        else:
+            print(payload)
 
-        # 2) Print to console
-        print(payload)
-
-# If you have Slack or other exporters, define them similarly:
-# class SlackExporter(BaseExporter):
-#     def run(self, data, config, opts):
-#         ...
-
-# Finally, define a registry that maps "type" -> Exporter Class
+# Registry that maps "type" -> Exporter Class
 EXPORTER_REGISTRY = {
     "gcs": GCSExporter,
     "file": FileExporter,

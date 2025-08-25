@@ -188,6 +188,11 @@ class ScraperBase:
     # If set True, will store partial data on exception
     save_data_on_error = True
 
+    # ---- NEW: GCS support flags -----------------
+    gcs_enabled = False          # subclasses set True if needed
+    gcs_bucket: str | None = None
+    gcs_path: str | None = None
+
     def __init__(self):
         """
         Initialize instance variables. 
@@ -619,17 +624,96 @@ class ScraperBase:
 
     def start_download(self):
         """
-        Choose download path:
+        Enhanced download path chooser with GCS support:
+          • gcs_enabled      → Read from GCS bucket
           • browser_enabled  → Playwright cookie harvest + requests
           • proxy_enabled    → rotate proxies
           • otherwise        → plain requests
         """
-        if self.browser_enabled:
+        if self.gcs_enabled:
+            self.download_from_gcs()
+        elif self.browser_enabled:
             self.download_via_browser()
         elif self.proxy_enabled:
             self.download_data_with_proxy()
         else:
             self.download_data()
+
+    def download_from_gcs(self) -> None:
+        """
+        GCS download path - reads file from GCS bucket instead of HTTP.
+        Creates a mock response that works with existing decode logic.
+        """
+        try:
+            # Lazy import to avoid dependency issues
+            from google.cloud import storage
+        except ImportError as e:
+            raise DownloadDataException("google-cloud-storage not available - install with pip install google-cloud-storage") from e
+        
+        self.step_info("gcs_download", "Reading from GCS bucket", 
+                       extra={"bucket": self.gcs_bucket, "path": self.gcs_path})
+        
+        try:
+            # Initialize GCS client
+            client = storage.Client()
+            bucket = client.bucket(self.gcs_bucket)
+            
+            # Find the blob (either exact path or search pattern)
+            blob = self._find_gcs_blob(bucket, self.gcs_path)
+            if not blob:
+                raise DownloadDataException(f"File not found in GCS: {self.gcs_bucket}/{self.gcs_path}")
+            
+            # Download content
+            content = blob.download_as_bytes()
+            self.step_info("gcs_download", "Successfully read from GCS", 
+                          extra={"blob_name": blob.name, "size_bytes": len(content)})
+            
+            # Create mock response object that works with existing decode logic
+            class MockResponse:
+                def __init__(self, content):
+                    self.content = content
+                    self.status_code = 200
+                    self.text = content.decode('utf-8', errors='ignore') if self.download_type == DownloadType.HTML else "Binary content from GCS"
+                    
+            self.raw_response = MockResponse(content)
+            
+        except Exception as e:
+            raise DownloadDataException(f"GCS download failed: {e}") from e
+        
+    def _find_gcs_blob(self, bucket, path_pattern):
+        """
+        Find GCS blob - supports exact paths or pattern matching.
+        Subclasses can override for custom blob finding logic.
+        """
+        # Try exact path first
+        blob = bucket.blob(path_pattern)
+        if blob.exists():
+            return blob
+        
+        # Try pattern matching (for cases like finding latest timestamp)
+        if '*' in path_pattern or '{' in path_pattern:
+            # This is a pattern, list blobs and find match
+            prefix = path_pattern.split('*')[0].split('{')[0]  # Get prefix before wildcards
+            blobs = bucket.list_blobs(prefix=prefix)
+            
+            for blob in blobs:
+                if self._blob_matches_pattern(blob.name, path_pattern):
+                    return blob
+        
+        return None
+    
+    def _blob_matches_pattern(self, blob_name, pattern):
+        """
+        Basic pattern matching for GCS blobs.
+        Subclasses can override for more sophisticated matching.
+        """
+        # Simple wildcard support
+        if '*' in pattern:
+            import fnmatch
+            return fnmatch.fnmatch(blob_name, pattern)
+        
+        # Simple substring match
+        return pattern in blob_name
 
 # ------------------------------------------------------------------ #
     # Playwright helper – runs **headless only** when browser_enabled == True
