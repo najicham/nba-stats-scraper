@@ -1,102 +1,153 @@
+#!/usr/bin/env python3
 """
-processors/utils/name_utils.py
-Name normalization utilities for processors.
-Matches the scraper's name normalization patterns.
+File: processors/utils/name_utils.py
+
+Utility functions for player name normalization.
+Used across multiple processors for consistent name handling.
 """
 
 import re
 import unicodedata
-from difflib import SequenceMatcher
+from typing import Optional
 
 
-def normalize_name(full_name: str) -> str:
+def normalize_name(name: str) -> Optional[str]:
     """
-    Normalize player name for consistent lookups.
-    Matches the scraper's normalization logic.
+    Normalize a player name for consistent matching.
     
-    'LeBron James' -> 'lebronjames'
-    'P.J. Tucker' -> 'pjtucker'
-    'De'Aaron Fox' -> 'dearonfox'
+    Args:
+        name: Player name to normalize
+        
+    Returns:
+        Normalized name in lowercase without spaces or special characters
+        
+    Examples:
+        "LeBron James" -> "lebronjames"
+        "D'Angelo Russell" -> "dangelorussell"
+        "P.J. Tucker" -> "pjtucker"
+        "Nikola Jokić" -> "nikolajokic"
     """
-    if not full_name:
-        return ""
+    if not name:
+        return None
     
     # Convert to lowercase
-    normalized = full_name.lower()
+    normalized = name.lower()
     
-    # Remove all non-alphanumeric characters
+    # Remove accents and special characters
+    normalized = ''.join(
+        c for c in unicodedata.normalize('NFD', normalized)
+        if unicodedata.category(c) != 'Mn'
+    )
+    
+    # Remove apostrophes, periods, hyphens, and other punctuation
+    normalized = re.sub(r"['\.\-\s]+", '', normalized)
+    
+    # Remove any remaining non-alphanumeric characters
     normalized = re.sub(r'[^a-z0-9]', '', normalized)
     
     return normalized
 
 
-def clean_unicode_text(text: str) -> str:
-    """
-    Clean Unicode text - matches scraper's implementation.
-    Converts accented characters to ASCII equivalents.
-    
-    Examples:
-    - "Dāvis Bertāns" → "Davis Bertans"
-    - "Nikola Jokić" → "Nikola Jokic"
-    """
-    if not text:
-        return ""
-    
-    try:
-        # Normalize Unicode to decomposed form
-        normalized = unicodedata.normalize('NFD', text)
-        
-        # Remove combining characters (accents)
-        ascii_text = ''.join(
-            char for char in normalized 
-            if unicodedata.category(char) != 'Mn'
-        )
-        
-        # Ensure valid ASCII
-        ascii_text = ascii_text.encode('ascii', 'ignore').decode('ascii')
-        
-        # Clean up spaces
-        ascii_text = ' '.join(ascii_text.split())
-        
-        return ascii_text
-        
-    except Exception:
-        # Fallback to simple ASCII conversion
-        try:
-            return text.encode('ascii', 'ignore').decode('ascii')
-        except:
-            return text
-
-
 def calculate_similarity(name1: str, name2: str) -> float:
     """
-    Calculate similarity between two names.
-    Returns float between 0 and 1.
+    Calculate similarity score between two names.
+    
+    Args:
+        name1: First name
+        name2: Second name
+        
+    Returns:
+        Similarity score between 0 and 1
     """
     if not name1 or not name2:
         return 0.0
     
-    return SequenceMatcher(None, name1, name2).ratio()
+    # Normalize both names
+    norm1 = normalize_name(name1)
+    norm2 = normalize_name(name2)
+    
+    if norm1 == norm2:
+        return 1.0
+    
+    # Calculate Levenshtein distance ratio
+    # This is a simple implementation - could be replaced with more sophisticated algorithm
+    longer = max(len(norm1), len(norm2))
+    if longer == 0:
+        return 1.0
+        
+    distance = levenshtein_distance(norm1, norm2)
+    return (longer - distance) / longer
 
 
-def find_fuzzy_match(lookup_name: str, candidates: list, threshold: float = 0.85):
+def levenshtein_distance(s1: str, s2: str) -> int:
     """
-    Find fuzzy match for a name in a list of candidates.
-    Returns best match if above threshold, else None.
+    Calculate the Levenshtein distance between two strings.
+    
+    Args:
+        s1: First string
+        s2: Second string
+        
+    Returns:
+        The minimum number of single-character edits required
     """
-    best_match = None
-    best_score = 0
+    if len(s1) < len(s2):
+        return levenshtein_distance(s2, s1)
     
-    for candidate in candidates:
-        score = calculate_similarity(lookup_name, candidate)
-        if score > threshold and score > best_score:
-            best_match = candidate
-            best_score = score
+    if len(s2) == 0:
+        return len(s1)
     
-    if best_match:
-        return {
-            "match": best_match,
-            "score": best_score
-        }
+    previous_row = range(len(s2) + 1)
+    for i, c1 in enumerate(s1):
+        current_row = [i + 1]
+        for j, c2 in enumerate(s2):
+            # j+1 instead of j since previous_row and current_row are one character longer than s2
+            insertions = previous_row[j + 1] + 1
+            deletions = current_row[j] + 1
+            substitutions = previous_row[j] + (c1 != c2)
+            current_row.append(min(insertions, deletions, substitutions))
+        previous_row = current_row
     
-    return None
+    return previous_row[-1]
+
+
+def parse_full_name(full_name: str) -> dict:
+    """
+    Parse a full name into components.
+    
+    Args:
+        full_name: Full player name
+        
+    Returns:
+        Dictionary with 'first', 'last', and optional 'suffix' keys
+        
+    Examples:
+        "LeBron James" -> {'first': 'LeBron', 'last': 'James'}
+        "Gary Payton II" -> {'first': 'Gary', 'last': 'Payton', 'suffix': 'II'}
+    """
+    if not full_name:
+        return {}
+    
+    # Handle suffixes (Jr., III, etc.)
+    suffix_pattern = r'\s+(Jr\.?|Sr\.?|I{1,3}|IV|V)$'
+    suffix_match = re.search(suffix_pattern, full_name, re.IGNORECASE)
+    
+    suffix = None
+    if suffix_match:
+        suffix = suffix_match.group(1)
+        full_name = full_name[:suffix_match.start()]
+    
+    # Split name
+    parts = full_name.strip().split()
+    
+    result = {}
+    if len(parts) >= 2:
+        result['first'] = parts[0]
+        result['last'] = ' '.join(parts[1:])  # Handle multi-word last names
+    elif len(parts) == 1:
+        result['first'] = parts[0]
+        result['last'] = ''
+    
+    if suffix:
+        result['suffix'] = suffix
+    
+    return result

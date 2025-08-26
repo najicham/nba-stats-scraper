@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 import base64
 
 # Import processors
-from basketball_ref.br_roster_processor import BasketballRefRosterProcessor
+from processors.basketball_ref.br_roster_processor import BasketballRefRosterProcessor
 # from balldontlie.bdl_boxscore_processor import BdlBoxscoreProcessor
 # from nbacom.nbac_schedule_processor import NbacScheduleProcessor
 
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 # Processor registry
 PROCESSOR_REGISTRY = {
-    'basketball_reference/season_rosters': BasketballRefRosterProcessor,
+    'basketball-ref/season-rosters': BasketballRefRosterProcessor,
     # 'ball-dont-lie/boxscores': BdlBoxscoreProcessor,
     # 'nba-com/schedule': NbacScheduleProcessor,
 }
@@ -123,7 +123,7 @@ def extract_opts_from_path(file_path: str) -> dict:
     """
     opts = {}
     
-    if 'basketball_reference/season_rosters' in file_path:
+    if 'basketball-ref/season-rosters' in file_path:
         # Extract season and team
         parts = file_path.split('/')
         season_str = parts[-2]  # "2023-24"
