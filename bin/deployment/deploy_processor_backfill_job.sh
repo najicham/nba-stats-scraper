@@ -94,7 +94,7 @@ for var in "${required_vars[@]}"; do
 done
 
 # Default values
-REGION="${REGION:-us-central1}"
+REGION="${REGION:-us-west2}"
 PROJECT_ID="${PROJECT_ID:-nba-props-platform}"
 
 echo "🏀 Deploying Processor Backfill Job: $JOB_NAME"
@@ -120,19 +120,14 @@ fi
 
 echo "✅ Required files found"
 
-# Extract job name from script path for Docker build arg
-# processor_backfill/odds_api_props/odds_api_props_backfill_job.py -> odds_api_props
-DOCKER_JOB_NAME=$(basename $(dirname "$JOB_SCRIPT"))
-
-# Build the job image using processor Dockerfile
-IMAGE_NAME="gcr.io/$PROJECT_ID/${JOB_NAME}-backfill"
+# Build the job image using processor Dockerfile (matching scraper pattern)
+IMAGE_NAME="gcr.io/$PROJECT_ID/$JOB_NAME"
 echo ""
 echo "🏗️ Building job image..."
 echo "   Using: docker/processor.Dockerfile"
-echo "   Job name: $DOCKER_JOB_NAME"
-echo "   Job type: processor_backfill"
+echo "   Job script: $JOB_SCRIPT"
 
-# Build with correct arguments for existing Dockerfile structure
+# Build with correct arguments matching the new Dockerfile
 gcloud builds submit . \
     --config=<(cat <<EOF
 steps:
@@ -140,8 +135,8 @@ steps:
   args: [
     'build',
     '-f', 'docker/processor.Dockerfile',
-    '--build-arg', 'JOB_TYPE=processor_backfill',
-    '--build-arg', 'JOB_NAME=$DOCKER_JOB_NAME',
+    '--build-arg', 'JOB_SCRIPT=$JOB_SCRIPT',
+    '--build-arg', 'JOB_NAME=$JOB_NAME',
     '-t', '$IMAGE_NAME',
     '.'
   ]
@@ -157,41 +152,50 @@ EOF
 
 echo "✅ Image built and pushed successfully"
 
-# Delete existing job and create new one
-echo ""
-if gcloud run jobs describe "$CLOUD_RUN_JOB_NAME" --region="$REGION" --project="$PROJECT_ID" &>/dev/null; then
-    echo "📝 Job exists - deleting and recreating..."
-    gcloud run jobs delete "$CLOUD_RUN_JOB_NAME" \
-        --region="$REGION" \
-        --project="$PROJECT_ID" \
-        --quiet
-    echo "   ✅ Old job deleted"
-fi
-
-echo "🆕 Creating Cloud Run job..."
-
 # Build environment variables string
 ENV_VARS="GCP_PROJECT_ID=$PROJECT_ID"
 ENV_VARS="$ENV_VARS,BUCKET_NAME=${BUCKET_NAME:-nba-scraped-data}"
 ENV_VARS="$ENV_VARS,MAX_WORKERS=${MAX_WORKERS:-4}"
 ENV_VARS="$ENV_VARS,BATCH_SIZE=${BATCH_SIZE:-100}"
-ENV_VARS="$ENV_VARS,START_DATE=${START_DATE}"
-ENV_VARS="$ENV_VARS,END_DATE=${END_DATE}"
+if [[ -n "${START_DATE}" ]]; then
+    ENV_VARS="$ENV_VARS,START_DATE=${START_DATE}"
+fi
+if [[ -n "${END_DATE}" ]]; then
+    ENV_VARS="$ENV_VARS,END_DATE=${END_DATE}"
+fi
 
-# Create the job with the full name including -backfill suffix
-CLOUD_RUN_JOB_NAME="${JOB_NAME}-backfill"
+# Use JOB_NAME directly (it already has hyphens from config)
+CLOUD_RUN_JOB_NAME="$JOB_NAME"
 
-gcloud run jobs create "$CLOUD_RUN_JOB_NAME" \
-    --image="$IMAGE_NAME" \
-    --region="$REGION" \
-    --project="$PROJECT_ID" \
-    --task-timeout="$TASK_TIMEOUT" \
-    --memory="$MEMORY" \
-    --cpu="$CPU" \
-    --max-retries=1 \
-    --tasks=1 \
-    --set-env-vars="$ENV_VARS" \
-    --quiet
+echo ""
+# Check if job exists and create or update accordingly
+if gcloud run jobs describe "$CLOUD_RUN_JOB_NAME" --region="$REGION" --project="$PROJECT_ID" &>/dev/null; then
+    echo "📝 Updating existing job..."
+    gcloud run jobs update "$CLOUD_RUN_JOB_NAME" \
+        --image="$IMAGE_NAME" \
+        --region="$REGION" \
+        --project="$PROJECT_ID" \
+        --task-timeout="$TASK_TIMEOUT" \
+        --memory="$MEMORY" \
+        --cpu="$CPU" \
+        --max-retries=1 \
+        --tasks=1 \
+        --set-env-vars="$ENV_VARS" \
+        --quiet
+else
+    echo "🆕 Creating new job..."
+    gcloud run jobs create "$CLOUD_RUN_JOB_NAME" \
+        --image="$IMAGE_NAME" \
+        --region="$REGION" \
+        --project="$PROJECT_ID" \
+        --task-timeout="$TASK_TIMEOUT" \
+        --memory="$MEMORY" \
+        --cpu="$CPU" \
+        --max-retries=1 \
+        --tasks=1 \
+        --set-env-vars="$ENV_VARS" \
+        --quiet
+fi
 
 echo ""
 echo "✅ Job deployed successfully!"
@@ -203,7 +207,7 @@ echo "🚀 To start the full backfill:"
 echo "   gcloud run jobs execute $CLOUD_RUN_JOB_NAME --region=$REGION"
 echo ""
 echo "📊 To monitor progress:"
-echo "   ./bin/processor_backfill/${JOB_NAME}_backfill_monitor.sh"
+echo "   ./bin/processor_backfill/${JOB_NAME//-/_}_monitor.sh"
 echo ""
 echo "🎯 Next time, deploy even faster:"
 echo "   $0 $(basename "$(dirname "$CONFIG_FILE")")"

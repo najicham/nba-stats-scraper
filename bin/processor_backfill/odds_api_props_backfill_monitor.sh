@@ -8,7 +8,7 @@ set -e
 
 # Configuration
 PROJECT_ID=${GCP_PROJECT_ID:-"nba-props-platform"}
-REGION=${REGION:-"us-central1"}
+REGION=${REGION:-"us-west2"}
 JOB_NAME="odds-api-props-backfill"
 
 # Colors for output

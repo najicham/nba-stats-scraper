@@ -116,14 +116,16 @@ class OddsApiSeasonBackfillJob:
         self.failed_dates = []
         self.skipped_dates = []
         
-        # Rate limiting (1.5 seconds per API call - conservative for Odds API)
-        self.RATE_LIMIT_DELAY = 1.5
+        # Rate limiting (1.0 seconds per API call - conservative for Odds API)
+        self.RATE_LIMIT_DELAY = 1.0
         
         # Props collection strategy
         self.props_strategy = "conservative"  # 2h before game start
         
         # OPTIMIZATION: Cache events data per date to avoid repeated API calls
         self.events_cache = {}
+
+        self.PROPS_START_DATE = datetime.strptime("2023-05-03", "%Y-%m-%d").date()
         
         logger.info("🎯 NBA Odds API Season Backfill Job initialized")
         logger.info("Scraper service: %s", self.scraper_service_url)
@@ -246,15 +248,26 @@ class OddsApiSeasonBackfillJob:
             except Exception as e:
                 logger.error(f"Error processing season {season}: {e}")
                 continue
-        
-        # Sort by date
+
+        # Sort by date (existing code)
         all_game_dates.sort(key=lambda x: x['date'])
+        
+        # Filter out dates before props data availability
+        original_count = len(all_game_dates)
+        all_game_dates = [
+            date_info for date_info in all_game_dates 
+            if datetime.strptime(date_info['date'], "%Y-%m-%d").date() >= self.PROPS_START_DATE
+        ]
+        
+        if original_count != len(all_game_dates):
+            filtered_count = original_count - len(all_game_dates)
+            logger.info(f"🗓️  Filtered out {filtered_count} dates before {self.PROPS_START_DATE} (props not available)")
         
         # Apply limit if specified
         if self.limit and self.limit > 0:
-            original_count = len(all_game_dates)
+            filtered_count = len(all_game_dates)
             all_game_dates = all_game_dates[:self.limit]
-            logger.info(f"🔢 Limited to first {self.limit} dates (out of {original_count} total)")
+            logger.info(f"🔢 Limited to first {self.limit} dates (out of {filtered_count} total)")
         
         logger.info(f"🎯 Total game dates to process: {len(all_game_dates)}")
         return all_game_dates
@@ -335,7 +348,7 @@ class OddsApiSeasonBackfillJob:
         return None
     
     def _extract_game_info(self, game: Dict, date_str: str) -> Optional[Dict[str, Any]]:
-        """Extract game information for props collection with filtering (same logic as gamebooks)."""
+        """Extract game information for props collection with filtering (ENHANCED with detailed logging)."""
         try:
             game_code = game.get('gameCode', '')
             
@@ -343,39 +356,64 @@ class OddsApiSeasonBackfillJob:
                 logger.debug(f"Invalid game code: {game_code}")
                 return None
             
-            # Filter out All-Star games and special events (same as gamebooks)
-            week_name = game.get('weekName', '')
-            week_number = game.get('weekNumber', -1)
+            # Extract basic game info early for logging
             game_label = game.get('gameLabel', '')
             game_sub_label = game.get('gameSubLabel', '')
+            week_name = game.get('weekName', '')
+            week_number = game.get('weekNumber', -1)
+            game_status = game.get('gameStatus', 0)
             
-            if week_number == 0:
-                logger.info(f"⏭️  Skipping preseason game {game_code}")
-                return None
-        
-            if (week_name == "All-Star" or 
-                game_label or 
-                game_sub_label):
-                logger.info(f"⏭️  Skipping All-Star/Special event {game_code}: {game_label or 'All-Star weekend'}")
-                return None
-
-            # Extract teams
+            # Extract teams early for logging
             away_team = game.get('awayTeam', {}).get('teamTricode', '')
             home_team = game.get('homeTeam', {}).get('teamTricode', '')
             
+            # Log all labeled games for verification
+            if game_label or game_sub_label:
+                logger.info(f"Found labeled game {game_code}: '{game_label}' / '{game_sub_label}' ({away_team}@{home_team}, status={game_status})")
+            
+            # 1. Filter out preseason games (week 0) BUT NOT playoff games
+            if week_number == 0:
+                # Check if this is actually a playoff game (has playoff labels)
+                playoff_indicators = ['Play-In', 'First Round', 'Conf. Semifinals', 'Conf. Finals', 'NBA Finals']
+                is_playoff_game = any(indicator in (game_label or '') for indicator in playoff_indicators)
+                
+                if not is_playoff_game:
+                    logger.info(f"[FILTER] Preseason game {game_code} (week=0, no playoff labels)")
+                    return None
+                else:
+                    logger.info(f"[KEEP] Playoff game with week=0: {game_code} '{game_label}'")
+            
+            # 2. Filter out All-Star week games
+            if week_name == "All-Star":
+                logger.info(f"[FILTER] All-Star week game {game_code}")
+                return None
+            
+            # 3. Classify game type for detailed logging
+            game_type = self._classify_game_type(game_label, game_sub_label)
+            logger.debug(f"Game {game_code} classified as: {game_type}")
+            
+            # 4. Filter specific All-Star special events (but allow playoffs)
+            if game_type == "all_star_special":
+                logger.info(f"[FILTER] All-Star special event {game_code}: '{game_label}' / '{game_sub_label}'")
+                return None
+            
+            # 5. Validate teams
             if not away_team or not home_team:
-                logger.debug(f"Missing team info for game: {game_code}")
+                logger.debug(f"[FILTER] Missing team info for game: {game_code}")
                 return None
             
-            # Validate NBA team codes (same as gamebooks)
             valid_nba_teams = set(self.NBA_TEAM_CODE_TO_FULL_NAME.keys())
-            
             if away_team not in valid_nba_teams or home_team not in valid_nba_teams:
-                logger.info(f"⏭️  Skipping game with invalid team codes {game_code}: {away_team} vs {home_team}")
+                logger.info(f"[FILTER] Invalid team codes {game_code}: {away_team} vs {home_team}")
                 return None
             
-            # Only include completed games for historical props collection
-            game_status = game.get('gameStatus', 0)
+            # 6. Log inclusion with game type
+            if game_type == "playoff":
+                logger.info(f"[INCLUDE] Playoff game {game_code}: '{game_label}' ({away_team}@{home_team})")
+            elif game_type == "play_in":
+                logger.info(f"[INCLUDE] Play-in game {game_code}: '{game_label}' ({away_team}@{home_team})")
+            else:
+                logger.debug(f"[INCLUDE] Regular season game {game_code} ({away_team}@{home_team})")
             
             return {
                 "date": date_str,
@@ -386,11 +424,68 @@ class OddsApiSeasonBackfillJob:
                 "matchup": f"{away_team}@{home_team}",
                 "game_status": game_status,
                 "completed": game_status == 3,
-                "commence_time": game.get('gameDateTimeUTC', ''),  # For timestamp calculation
+                "commence_time": game.get('gameDateTimeUTC', ''),
+                "game_label": game_label,
+                "game_sub_label": game_sub_label,
+                "game_type": game_type,  # Include for analytics
             }
         except Exception as e:
             logger.warning(f"Error processing game {game.get('gameCode', 'unknown')}: {e}")
             return None
+
+    def _classify_game_type(self, game_label: str, game_sub_label: str) -> str:
+        """Classify game type based on labels for filtering and analytics."""
+        
+        # Normalize labels for comparison
+        label = (game_label or '').strip()
+        sub_label = (game_sub_label or '').strip()
+        combined = f"{label} {sub_label}".strip()
+        
+        # All-Star special events (filter out)
+        all_star_events = [
+            'Rising Stars Semifinal',
+            'Rising Stars Final', 
+            'All-Star Game',
+            'Celebrity Game',
+            'Skills Challenge', 
+            'Three-Point Contest',
+            'Slam Dunk Contest'
+        ]
+        
+        for event in all_star_events:
+            if event in label or event in sub_label:
+                return "all_star_special"
+        
+        # Play-in games (include)
+        if 'Play-In' in label:
+            return "play_in"
+        
+        # Playoff rounds (include)  
+        playoff_indicators = [
+            'First Round',
+            'Conf. Semifinals', 
+            'Conf. Finals',
+            'NBA Finals'
+        ]
+        
+        for indicator in playoff_indicators:
+            if indicator in label:
+                return "playoff"
+        
+        # Special regular season games (include but note)
+        special_regular_events = [
+            'Emirates NBA Cup',
+            'NBA Mexico City Game',
+            'NBA Paris Game',
+            'NBA London Game'
+        ]
+        
+        for event in special_regular_events:
+            if event in combined:
+                return "special_regular"
+        
+        # Default: regular season
+        return "regular_season"
     
     def _date_already_processed(self, game_date: str) -> bool:
         """Check if props data already exists for this date (resume logic)."""
