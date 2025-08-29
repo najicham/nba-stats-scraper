@@ -61,7 +61,6 @@ class GCSPathBuilder:
         "nba_com_schedule": "nba-com/schedule/%(actual_season_nba_format)s/%(timestamp)s.json",
         "nba_com_schedule_cdn": "nba-com/schedule-cdn/%(actual_season_nba_format)s/%(timestamp)s.json",
         "nba_com_scoreboard_v2": "nba-com/scoreboard-v2/%(date)s/%(timestamp)s.json",
-        "nba_com_injury_report": "nba-com/injury-report/%(date)s/%(hour24)s/%(timestamp)s.json",
         "nba_com_play_by_play": "nba-com/play-by-play/%(date)s/game-%(game_id)s/%(timestamp)s.json",
         "nba_com_player_boxscore": "nba-com/player-boxscores/%(date)s/%(timestamp)s.json",
         "nba_com_team_roster": "nba-com/rosters/%(date)s/team_%(team_abbr)s/%(timestamp)s.json", 
@@ -70,6 +69,10 @@ class GCSPathBuilder:
         "nba_com_schedule": "nba-com/schedule/%(actual_season_nba_format)s/%(timestamp)s.json",
         "nba_com_schedule_metadata": "nba-com/schedule-metadata/%(actual_season_nba_format)s/%(timestamp)s.json",
         "nba_com_schedule_cdn": "nba-com/schedule-cdn/%(actual_season_nba_format)s/%(timestamp)s.json",
+
+        # NBA.com Injury Reports (Phase 2 - dual storage)
+        "nba_com_injury_report_pdf_raw": "nba-com/injury-report-pdf/%(date)s/%(hour24)s/%(timestamp)s.pdf",
+        "nba_com_injury_report_data": "nba-com/injury-report-data/%(date)s/%(hour24)s/%(timestamp)s.json",
         
         # NBA.com Gamebooks (Phase 2)
         "nba_com_gamebooks_pdf_raw": "nba-com/gamebooks-pdf/%(date)s/%(clean_game_code_dashes)s/%(timestamp)s.pdf",

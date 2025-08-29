@@ -1,0 +1,176 @@
+{
+  "metadata": {
+    "gamedate": "20240104",
+    "hour": "12",
+    "period": "PM",
+    "hour24": "12",
+    "season": "2024-25",
+    "scrape_time": "00-14-38",
+    "run_id": "f4391904"
+  },
+  "parsing_stats": {
+    "total_records": 14,
+    "overall_confidence": 0.97,
+    "status_counts": {
+      "Out": 10,
+      "Questionable": 2,
+      "Doubtful": 1,
+      "Probable": 1,
+      "Available": 0
+    },
+    "confidence_distribution": {
+      "90%": 7,
+      "100%": 7
+    },
+    "parsing_stats": {
+      "total_lines": 50,
+      "player_lines": 14,
+      "merged_multiline": 1,
+      "unparsed_count": 0,
+      "confidence_distribution": {}
+    },
+    "unparsed_lines_sample": []
+  },
+  "records": [
+    {
+      "date": "01/04/2024",
+      "gametime": "07:30 (ET)",
+      "matchup": "MIL@SAS",
+      "team": "SAS",
+      "player": "Barlow, Dominick",
+      "status": "Questionable",
+      "reason": "G League - Two-Way",
+      "confidence": 0.9
+    },
+    {
+      "date": "01/04/2024",
+      "gametime": "07:30 (ET)",
+      "matchup": "MIL@SAS",
+      "team": "SAS",
+      "player": "Bassey, Charles",
+      "status": "Out",
+      "reason": "Injury/Illness - Left Acl; Tear",
+      "confidence": 1.0
+    },
+    {
+      "date": "01/04/2024",
+      "gametime": "07:30 (ET)",
+      "matchup": "MIL@SAS",
+      "team": "SAS",
+      "player": "Branham, Malaki",
+      "status": "Doubtful",
+      "reason": "Injury/Illness - Right Ankle; Sprain",
+      "confidence": 1.0
+    },
+    {
+      "date": "01/04/2024",
+      "gametime": "07:30 (ET)",
+      "matchup": "MIL@SAS",
+      "team": "SAS",
+      "player": "Cissoko, Sidy",
+      "status": "Out",
+      "reason": "G League - On Assignment",
+      "confidence": 0.9
+    },
+    {
+      "date": "01/04/2024",
+      "gametime": "07:30 (ET)",
+      "matchup": "MIL@SAS",
+      "team": "SAS",
+      "player": "Collins, Zach",
+      "status": "Out",
+      "reason": "Injury/Illness - Right Ankle; Sprain",
+      "confidence": 1.0
+    },
+    {
+      "date": "01/04/2024",
+      "gametime": "07:30 (ET)",
+      "matchup": "MIL@SAS",
+      "team": "SAS",
+      "player": "Diakite, Mamadi",
+      "status": "Questionable",
+      "reason": "G League - Two-Way",
+      "confidence": 0.9
+    },
+    {
+      "date": "01/04/2024",
+      "gametime": "07:30 (ET)",
+      "matchup": "MIL@SAS",
+      "team": "SAS",
+      "player": "Duke Jr., David",
+      "status": "Out",
+      "reason": "G League - Two-Way",
+      "confidence": 0.9
+    },
+    {
+      "date": "01/04/2024",
+      "gametime": "07:30 (ET)",
+      "matchup": "MIL@SAS",
+      "team": "SAS",
+      "player": "McDermott, Doug",
+      "status": "Out",
+      "reason": "Injury/Illness - Right Forearm; Contusion",
+      "confidence": 1.0
+    },
+    {
+      "date": "01/04/2024",
+      "gametime": "10:00 (ET)",
+      "matchup": "DEN@GSW",
+      "team": "DEN",
+      "player": "Cancar, Vlatko",
+      "status": "Out",
+      "reason": "Injury/Illness - Left Knee; Surgery",
+      "confidence": 1.0
+    },
+    {
+      "date": "01/04/2024",
+      "gametime": "10:00 (ET)",
+      "matchup": "DEN@GSW",
+      "team": "DEN",
+      "player": "Jackson, Reggie",
+      "status": "Probable",
+      "reason": "Injury/Illness - Left Calf; Tightness",
+      "confidence": 1.0
+    },
+    {
+      "date": "01/04/2024",
+      "gametime": "10:00 (ET)",
+      "matchup": "DEN@GSW",
+      "team": "DEN",
+      "player": "Pickett, Jalen",
+      "status": "Out",
+      "reason": "G League - On Assignment",
+      "confidence": 0.9
+    },
+    {
+      "date": "01/04/2024",
+      "gametime": "10:00 (ET)",
+      "matchup": "DEN@GSW",
+      "team": "DEN",
+      "player": "Tyson, Hunter",
+      "status": "Out",
+      "reason": "G League - On Assignment",
+      "confidence": 0.9
+    },
+    {
+      "date": "01/04/2024",
+      "gametime": "10:00 (ET)",
+      "matchup": "DEN@GSW",
+      "team": "GSW",
+      "player": "Green, Draymond",
+      "status": "Out",
+      "reason": "League Suspension",
+      "confidence": 0.9
+    },
+    {
+      "date": "01/04/2024",
+      "gametime": "10:00 (ET)",
+      "matchup": "DEN@GSW",
+      "team": "GSW",
+      "player": "Payton II, Gary",
+      "status": "Out",
+      "reason": "Injury/Illness - Left Hamstring; Strain",
+      "confidence": 1.0
+    }
+  ]
+}

@@ -2,15 +2,21 @@
 # FILE: backfill/nbac_gamebook/nbac_gamebook_backfill_job.py
 
 """
-NBA Gamebook Backfill Cloud Run Job - COMPLETE VERSION WITH REAL SCHEDULE LOGIC
-================================================================================
+NBA Gamebook Backfill Cloud Run Job - FIXED VERSION WITH ENHANCED FILTERING
+===========================================================================
 
-Long-running batch job that downloads all 5,581 NBA Gamebook PDFs.
+Long-running batch job that downloads all NBA Gamebook PDFs with CORRECT playoff filtering.
 Designed to run completely in the cloud - no local machine needed.
 
+FIXED ISSUES:
+- ✅ Playoff games now included (enhanced weekNumber=0 filtering)
+- ✅ Specific All-Star event filtering (not blanket gameLabel filtering)
+- ✅ Proper game classification system
+- ✅ Resume logic to skip already processed games
+
 This script:
-1. Reads actual NBA schedule files from GCS (NO MORE PLACEHOLDER DATA!)
-2. Extracts completed games from 4 seasons (2021-22 through 2024-25)
+1. Reads actual NBA schedule files from GCS with ENHANCED filtering
+2. Extracts completed games from 4 seasons INCLUDING PLAYOFFS
 3. Makes HTTP requests to your Cloud Run scraper service
 4. Downloads PDFs with resume logic (skips existing)
 5. Runs for ~6 hours with 4-second rate limiting
@@ -18,20 +24,26 @@ This script:
 
 Usage:
   # Deploy as Cloud Run Job:
-  ./backfill/nbac_gamebook/deploy_nbac_gamebook_backfill.sh
+  ./bin/deployment/deploy_backfill_job.sh nbac-gamebook
 
   # Dry run (see game counts without downloading):
   gcloud run jobs execute nba-gamebook-backfill \
-    --args="--service-url=https://nba-scrapers-f7p3g7f6ya-wl.a.run.app --dry-run --seasons=2023" \
+    --args="^|^--seasons=2023|--limit=100|--dry-run" \
     --region=us-west2
 
-  # Single season test (2023-24 = 1,396 games):
+  # Single season test (2023-24 with playoffs):
   gcloud run jobs execute nba-gamebook-backfill \
-    --args="--service-url=https://nba-scrapers-f7p3g7f6ya-wl.a.run.app --seasons=2023" \
+    --args="^|^--seasons=2023" \
     --region=us-west2
 
-  # Full 4-season backfill (5,581 games):
+  # Full 4-season backfill (including all playoffs):
   gcloud run jobs execute nba-gamebook-backfill \
+    --args="^|^--seasons=2021,2022,2023,2024" \
+    --region=us-west2
+
+  # Resume from specific date (skip already processed):
+  gcloud run jobs execute nba-gamebook-backfill \
+    --args="^|^--start-date=2023-04-15" \
     --region=us-west2
 """
 
@@ -56,13 +68,16 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 class NbaGamebookBackfillJob:
-    """Cloud Run Job for downloading all NBA Gamebook PDFs using REAL schedule data."""
+    """Cloud Run Job for downloading all NBA Gamebook PDFs with ENHANCED filtering."""
     
-    def __init__(self, scraper_service_url: str, seasons: List[int] = None, bucket_name: str = "nba-scraped-data", limit: Optional[int] = None):
+    def __init__(self, scraper_service_url: str, seasons: List[int] = None, bucket_name: str = "nba-scraped-data", 
+                 limit: Optional[int] = None, start_date: Optional[str] = None, end_date: Optional[str] = None):
         self.scraper_service_url = scraper_service_url.rstrip('/')
         self.seasons = seasons or [2021, 2022, 2023, 2024]  # Default: all 4 seasons
         self.bucket_name = bucket_name
         self.limit = limit
+        self.start_date = start_date
+        self.end_date = end_date
         
         # Initialize GCS client
         self.storage_client = storage.Client()
@@ -77,10 +92,14 @@ class NbaGamebookBackfillJob:
         # Rate limiting (4 seconds per request - NBA.com requirement)
         self.RATE_LIMIT_DELAY = 4.0
         
-        logger.info("🏀 NBA Gamebook Backfill Job initialized")
+        logger.info("🏀 NBA Gamebook Backfill Job initialized (ENHANCED FILTERING)")
         logger.info("Scraper service: %s", self.scraper_service_url)
         logger.info("Seasons: %s", self.seasons)
         logger.info("GCS bucket: %s", self.bucket_name)
+        if self.start_date:
+            logger.info("Start date filter: %s", self.start_date)
+        if self.end_date:
+            logger.info("End date filter: %s", self.end_date)
         if self.limit:
             logger.info("Limit: %d games (for testing)", self.limit)
         
@@ -88,12 +107,12 @@ class NbaGamebookBackfillJob:
         """Execute the complete backfill job."""
         start_time = datetime.now()
         
-        logger.info("🏀 Starting NBA Gamebook PDF Backfill Job")
+        logger.info("🏀 Starting NBA Gamebook PDF Backfill Job (FIXED VERSION)")
         if dry_run:
             logger.info("🔍 DRY RUN MODE - No downloads will be performed")
         
         try:
-            # 1. Collect all game codes from schedule files (REAL DATA - NO MORE PLACEHOLDER!)
+            # 1. Collect all game codes from schedule files (ENHANCED FILTERING!)
             all_games = self._collect_all_games()
             self.total_games = len(all_games)
             
@@ -104,6 +123,9 @@ class NbaGamebookBackfillJob:
             estimated_hours = (self.total_games * self.RATE_LIMIT_DELAY) / 3600
             logger.info("Total completed games found: %d", self.total_games)
             logger.info("Estimated duration: %.1f hours", estimated_hours)
+            
+            # Show game type breakdown
+            self._log_game_type_breakdown(all_games)
             
             if dry_run:
                 logger.info("🔍 DRY RUN - Would process %d games", self.total_games)
@@ -154,26 +176,46 @@ class NbaGamebookBackfillJob:
             raise
     
     def _collect_all_games(self) -> List[str]:
-        """Collect all completed game codes from GCS schedule files - REAL DATA!"""
-        logger.info("📊 Collecting game codes from GCS schedule files...")
+        """Collect all completed game codes from GCS schedule files with ENHANCED filtering."""
+        logger.info("📊 Collecting game codes from GCS schedule files (ENHANCED FILTERING)...")
         
         all_game_codes = []
+        game_type_counts = {}
         
         for season in self.seasons:
             try:
                 logger.info(f"Processing season {season} ({season}-{(season+1)%100:02d})...")
                 
-                # Read schedule for this season using REAL schedule parsing
+                # Read schedule for this season
                 schedule_data = self._read_schedule_from_gcs(season)
                 
-                # Extract all games from schedule using PROVEN logic
+                # Extract all games from schedule with ENHANCED filtering
                 games = self._extract_all_games_from_schedule(schedule_data)
                 
-                # Filter to completed games only (gameStatus == 3)
-                completed_games = [g for g in games if g.get('completed', False)]
+                # Filter to completed games only and apply date filters
+                completed_games = []
+                for g in games:
+                    if not g.get('completed', False):
+                        continue
+                    
+                    # Apply date range filters if specified
+                    if self.start_date and g['date'] < self.start_date:
+                        continue
+                    if self.end_date and g['date'] > self.end_date:
+                        continue
+                    
+                    completed_games.append(g)
                 
-                # Extract game codes
-                season_codes = [g['game_code'] for g in completed_games if g.get('game_code')]
+                # Extract game codes and track types
+                season_codes = []
+                for g in completed_games:
+                    if g.get('game_code'):
+                        season_codes.append(g['game_code'])
+                        
+                        # Track game types for reporting
+                        game_type = g.get('game_type', 'unknown')
+                        game_type_counts[game_type] = game_type_counts.get(game_type, 0) + 1
+                
                 all_game_codes.extend(season_codes)
                 
                 logger.info(f"Season {season}: {len(completed_games)} completed games")
@@ -188,8 +230,19 @@ class NbaGamebookBackfillJob:
             all_game_codes = all_game_codes[:self.limit]
             logger.info(f"🔢 Limited to first {self.limit} games (out of {original_count} total)")
         
+        # Log game type breakdown
+        logger.info("🎯 Game type breakdown:")
+        for game_type, count in sorted(game_type_counts.items()):
+            logger.info(f"  {game_type}: {count} games")
+        
         logger.info(f"🎯 Total completed games to process: {len(all_game_codes)}")
         return all_game_codes
+    
+    def _log_game_type_breakdown(self, all_games: List[str]):
+        """Log breakdown of game types being processed."""
+        # This is just game codes, so we can't show type breakdown here
+        # The breakdown was already logged in _collect_all_games
+        pass
     
     def _read_schedule_from_gcs(self, season_year: int) -> Dict[str, Any]:
         """Read NBA schedule JSON from GCS for a specific season."""
@@ -214,10 +267,10 @@ class NbaGamebookBackfillJob:
         return schedule_data
     
     def _extract_all_games_from_schedule(self, schedule_data: Dict) -> List[Dict]:
-        """Extract all games from schedule JSON using PROVEN parsing logic."""
+        """Extract all games from schedule JSON using ENHANCED filtering logic."""
         games = []
         
-        # Use the CORRECT path discovered in analysis: 'gameDates' (top-level)
+        # Use the CORRECT path: 'gameDates' (top-level)
         schedule_games = schedule_data.get('gameDates', [])
         
         if not schedule_games:
@@ -268,7 +321,7 @@ class NbaGamebookBackfillJob:
         return None
     
     def _extract_game_info(self, game: Dict, date_str: str) -> Optional[Dict[str, Any]]:
-        """Extract game information for gamebook collection with All-Star filtering."""
+        """Extract game information with ENHANCED filtering logic (FIXED VERSION)."""
         try:
             game_code = game.get('gameCode', '')
             
@@ -276,29 +329,52 @@ class NbaGamebookBackfillJob:
                 logger.debug(f"Invalid game code: {game_code}")
                 return None
             
-            # NEW: Filter out All-Star games and special events BEFORE processing
-            week_name = game.get('weekName', '')
+            # Extract basic game info for logging
             game_label = game.get('gameLabel', '')
             game_sub_label = game.get('gameSubLabel', '')
+            week_name = game.get('weekName', '')
+            week_number = game.get('weekNumber', -1)
+            game_status = game.get('gameStatus', 0)
             
-            # Check for All-Star indicators
-            if (week_name == "All-Star" or 
-                game_label or  # Any non-empty gameLabel indicates special event
-                game_sub_label):  # Any non-empty gameSubLabel indicates special event
-                
-                logger.info(f"⏭️  Skipping All-Star/Special event {game_code}: {game_label or 'All-Star weekend'}")
-                return None
-            
-            # Extract teams
+            # Extract teams early for logging
             away_team = game.get('awayTeam', {}).get('teamTricode', '')
             home_team = game.get('homeTeam', {}).get('teamTricode', '')
             
-            if not away_team or not home_team:
-                logger.debug(f"Missing team info for game: {game_code}")
+            # Log all labeled games for verification
+            if game_label or game_sub_label:
+                logger.debug(f"Found labeled game {game_code}: '{game_label}' / '{game_sub_label}' ({away_team}@{home_team}, status={game_status})")
+            
+            # 1. ENHANCED preseason filter (handles weekNumber=0 issue)
+            if week_number == 0:
+                # Check if this is actually a playoff game (has playoff labels)
+                playoff_indicators = ['Play-In', 'First Round', 'Conf. Semifinals', 'Conf. Finals', 'NBA Finals']
+                is_playoff_game = any(indicator in (game_label or '') for indicator in playoff_indicators)
+                
+                if not is_playoff_game:
+                    logger.debug(f"[FILTER] Preseason game {game_code} (week=0, no playoff labels)")
+                    return None
+                else:
+                    logger.info(f"[KEEP] Playoff game with week=0: {game_code} '{game_label}'")
+            
+            # 2. Filter All-Star week games  
+            if week_name == "All-Star":
+                logger.debug(f"[FILTER] All-Star week game {game_code}")
                 return None
             
-            # NEW: Additional validation - check for suspicious team codes
-            # Real NBA team codes are 3 letters and match known teams
+            # 3. Classify game type for detailed logging
+            game_type = self._classify_game_type(game_label, game_sub_label)
+            
+            # 4. Filter SPECIFIC All-Star special events (but allow playoffs!)
+            if game_type == "all_star_special":
+                logger.debug(f"[FILTER] All-Star special event {game_code}: '{game_label}' / '{game_sub_label}'")
+                return None
+            
+            # 5. Validate teams
+            if not away_team or not home_team:
+                logger.debug(f"[FILTER] Missing team info for game: {game_code}")
+                return None
+            
+            # Validate team codes against known NBA teams
             valid_nba_teams = {
                 'ATL', 'BOS', 'BKN', 'CHA', 'CHI', 'CLE', 'DAL', 'DEN', 'DET', 'GSW',
                 'HOU', 'IND', 'LAC', 'LAL', 'MEM', 'MIA', 'MIL', 'MIN', 'NOP', 'NYK',
@@ -306,12 +382,18 @@ class NbaGamebookBackfillJob:
             }
             
             if away_team not in valid_nba_teams or home_team not in valid_nba_teams:
-                logger.info(f"⏭️  Skipping game with invalid team codes {game_code}: {away_team} vs {home_team}")
+                logger.debug(f"[FILTER] Invalid team codes {game_code}: {away_team} vs {home_team}")
                 return None
             
-            # Only include completed games (gameStatus = 3) for backfill
-            game_status = game.get('gameStatus', 0)
+            # 6. Log inclusion with game type
+            if game_type == "playoff":
+                logger.info(f"[INCLUDE] Playoff game {game_code}: '{game_label}' ({away_team}@{home_team})")
+            elif game_type == "play_in":
+                logger.info(f"[INCLUDE] Play-in game {game_code}: '{game_label}' ({away_team}@{home_team})")
+            else:
+                logger.debug(f"[INCLUDE] {game_type.replace('_', ' ').title()} game {game_code} ({away_team}@{home_team})")
             
+            # Only include completed games (gameStatus = 3) for backfill
             return {
                 "date": date_str,
                 "game_code": game_code,
@@ -321,20 +403,74 @@ class NbaGamebookBackfillJob:
                 "matchup": f"{away_team}@{home_team}",
                 "game_status": game_status,
                 "completed": game_status == 3,  # Only process completed games
-                "week_name": week_name,  # Include for debugging
+                "game_type": game_type,  # Include for analytics
                 "game_label": game_label,  # Include for debugging
             }
         except Exception as e:
             logger.warning(f"Error processing game {game.get('gameCode', 'unknown')}: {e}")
             return None
     
+    def _classify_game_type(self, game_label: str, game_sub_label: str) -> str:
+        """Classify game type based on labels for filtering and analytics."""
+        
+        # Normalize labels for comparison
+        label = (game_label or '').strip()
+        sub_label = (game_sub_label or '').strip()
+        combined = f"{label} {sub_label}".strip()
+        
+        # All-Star special events (filter out)
+        all_star_events = [
+            'Rising Stars Semifinal',
+            'Rising Stars Final', 
+            'All-Star Game',
+            'Celebrity Game',
+            'Skills Challenge', 
+            'Three-Point Contest',
+            'Slam Dunk Contest'
+        ]
+        
+        for event in all_star_events:
+            if event in label or event in sub_label:
+                return "all_star_special"
+        
+        # Play-in games (include)
+        if 'Play-In' in label:
+            return "play_in"
+        
+        # Playoff rounds (include)  
+        playoff_indicators = [
+            'First Round',
+            'Conf. Semifinals', 
+            'Conf. Finals',
+            'NBA Finals'
+        ]
+        
+        for indicator in playoff_indicators:
+            if indicator in label:
+                return "playoff"
+        
+        # Special regular season games (include but note)
+        special_regular_events = [
+            'Emirates NBA Cup',
+            'NBA Mexico City Game',
+            'NBA Paris Game',
+            'NBA London Game'
+        ]
+        
+        for event in special_regular_events:
+            if event in combined:
+                return "special_regular"
+        
+        # Default: regular season
+        return "regular_season"
+    
     def _game_already_processed(self, game_code: str) -> bool:
         """Check if game PDF already exists in GCS (resume logic)."""
         try:
             # Construct GCS path based on game_code
-            # Format: gs://nba-scraped-data/nba-com/gamebooks-pdf/{date}/game_{clean_code}/
+            # Format: gs://nba-scraped-data/nba-com/gamebooks-pdf/{date}/{clean_code}/
             date_part = game_code.split('/')[0]  # Extract YYYYMMDD
-            clean_code = game_code.replace('/', '_')  # YYYYMMDD_TEAMTEAM
+            clean_code = game_code.replace('/', '-')  # YYYYMMDD-TEAMTEAM (matches actual GCS structure)
             
             # Convert YYYYMMDD to YYYY-MM-DD for path
             year = date_part[:4]
@@ -342,8 +478,8 @@ class NbaGamebookBackfillJob:
             day = date_part[6:8]
             date_formatted = f"{year}-{month}-{day}"
             
-            # Check if directory exists with any files
-            prefix = f"nba-com/gamebooks-pdf/{date_formatted}/game_{clean_code}/"
+            # Check if directory exists with any files (matches actual structure: 20211020-BOSNYK/)
+            prefix = f"nba-com/gamebooks-pdf/{date_formatted}/{clean_code}/"
             
             blobs = list(self.bucket.list_blobs(prefix=prefix, max_results=1))
             
@@ -405,7 +541,7 @@ class NbaGamebookBackfillJob:
         duration = datetime.now() - start_time
         
         logger.info("="*60)
-        logger.info("🏀 NBA GAMEBOOK BACKFILL COMPLETE")
+        logger.info("🏀 NBA GAMEBOOK BACKFILL COMPLETE (ENHANCED VERSION)")
         logger.info("="*60)
         logger.info("Total games: %d", self.total_games)
         logger.info("Downloaded: %d", self.processed_games) 
@@ -427,10 +563,8 @@ class NbaGamebookBackfillJob:
         logger.info("   - Start processor development")
 
 
-# Replace the main() function in backfill/nbac_gamebook/nbac_gamebook_backfill_job.py with this:
-
 def main():
-    parser = argparse.ArgumentParser(description="NBA Gamebook PDF Backfill Job")
+    parser = argparse.ArgumentParser(description="NBA Gamebook PDF Backfill Job (ENHANCED)")
     parser.add_argument("--service-url", 
                        help="Cloud Run scraper service URL (or set SCRAPER_SERVICE_URL env var)")
     parser.add_argument("--seasons", default="2021,2022,2023,2024",
@@ -441,6 +575,10 @@ def main():
                        help="Just show what would be processed (no downloads)")
     parser.add_argument("--limit", type=int, default=None,
                        help="Limit number of games to process (for testing)")
+    parser.add_argument("--start-date", type=str, default=None,
+                       help="Start date filter (YYYY-MM-DD) - skip games before this date")
+    parser.add_argument("--end-date", type=str, default=None,
+                       help="End date filter (YYYY-MM-DD) - skip games after this date")
     
     args = parser.parse_args()
     
@@ -453,12 +591,32 @@ def main():
     # Parse seasons list
     seasons = [int(s.strip()) for s in args.seasons.split(",")]
     
+    # Validate date filters
+    start_date = args.start_date
+    end_date = args.end_date
+    
+    if start_date:
+        try:
+            datetime.strptime(start_date, "%Y-%m-%d")
+        except ValueError:
+            logger.error("ERROR: --start-date must be in YYYY-MM-DD format")
+            sys.exit(1)
+    
+    if end_date:
+        try:
+            datetime.strptime(end_date, "%Y-%m-%d")
+        except ValueError:
+            logger.error("ERROR: --end-date must be in YYYY-MM-DD format")
+            sys.exit(1)
+    
     # Create and run job
     job = NbaGamebookBackfillJob(
         scraper_service_url=service_url,
         seasons=seasons,
         bucket_name=args.bucket,
-        limit=args.limit
+        limit=args.limit,
+        start_date=start_date,
+        end_date=end_date
     )
     
     job.run(dry_run=args.dry_run)

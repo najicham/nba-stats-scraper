@@ -1,0 +1,690 @@
+#!/usr/bin/env python3
+"""
+NBA Injury Report Parser with Multi-line Injury Merge
+
+Handles multi-line injuries by pre-processing text to merge split injury 
+information before main parsing. Uses reliable detection pattern:
+- Line 1: "Injury/Illness - Body Part;" (incomplete, ends with semicolon)
+- Line 2: "Player, Name Status" 
+- Line 3: "Medical Term" (continuation)
+
+Usage:
+    python multiline_injury_parser.py /tmp/debug_injury_report_text_*.txt
+"""
+
+import re
+import json
+import sys
+import argparse
+from typing import List, Dict, Any, Optional
+from dataclasses import dataclass
+
+
+@dataclass
+class PlayerRecord:
+    date: str
+    gametime: str
+    matchup: str
+    team: str
+    player: str
+    status: str
+    reason: str
+    confidence: float
+
+
+@dataclass
+class GameSection:
+    date: str
+    gametime: str
+    matchup: str
+    start_line: int
+    end_line: int
+
+
+class MultilineInjuryParser:
+    
+    TEAM_MAPPINGS = {
+        'Atlanta Hawks': 'ATL', 'Boston Celtics': 'BOS', 'Brooklyn Nets': 'BKN',
+        'Charlotte Hornets': 'CHA', 'Chicago Bulls': 'CHI', 'Cleveland Cavaliers': 'CLE',
+        'Dallas Mavericks': 'DAL', 'Denver Nuggets': 'DEN', 'Detroit Pistons': 'DET',
+        'Golden State Warriors': 'GSW', 'Houston Rockets': 'HOU', 'Indiana Pacers': 'IND',
+        'LA Clippers': 'LAC', 'Los Angeles Lakers': 'LAL', 'Memphis Grizzlies': 'MEM',
+        'Miami Heat': 'MIA', 'Milwaukee Bucks': 'MIL', 'Minnesota Timberwolves': 'MIN',
+        'New Orleans Pelicans': 'NOP', 'New York Knicks': 'NYK', 'Oklahoma City Thunder': 'OKC',
+        'Orlando Magic': 'ORL', 'Philadelphia 76ers': 'PHI', 'Phoenix Suns': 'PHX',
+        'Portland Trail Blazers': 'POR', 'Sacramento Kings': 'SAC', 'San Antonio Spurs': 'SAS',
+        'Toronto Raptors': 'TOR', 'Utah Jazz': 'UTA', 'Washington Wizards': 'WAS'
+    }
+    
+    def parse_text_file(self, file_path: str) -> List[Dict[str, Any]]:
+        print(f"Reading text from: {file_path}")
+        
+        with open(file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        text_content = content
+        if "=== PARSED RECORDS" in content:
+            text_content = content.split("=== PARSED RECORDS")[0]
+        
+        print(f"Text content length: {len(text_content)} characters")
+        
+        # PRE-PROCESS: Merge multi-line injuries before main parsing
+        print(f"PRE-PROCESS: Detecting and merging multi-line injuries...")
+        merged_text = self._merge_multiline_injuries(text_content)
+        
+        records = self._parse_text(merged_text)
+        print(f"\nParsing complete: {len(records)} records found")
+        return [self._record_to_dict(r) for r in records]
+    
+    def _merge_multiline_injuries(self, text: str) -> str:
+      """Pre-process text to merge multi-line injuries using enhanced detection."""
+      lines = text.split('\n')
+      merged_lines = []
+      merge_count = 0
+      i = 0
+      
+      while i < len(lines):
+          line = lines[i].strip()
+          
+          # ENHANCED DETECTION: Look for "Injury/Illness" with semicolon (incomplete patterns)
+          is_incomplete_injury = (
+              line.startswith('Injury/Illness') and 
+              ';' in line and 
+              (line.endswith(';') or self._looks_like_incomplete_injury_line(line))
+          )
+          
+          if is_incomplete_injury:
+              print(f"  DETECTED: Incomplete injury line: '{line}'")
+              
+              # Check if next line has a player using status-based detection
+              if i + 1 < len(lines):
+                  next_line = lines[i + 1].strip()
+                  
+                  # Use enhanced status-based detection
+                  player_name, status, remainder = self._find_player_with_status(next_line)
+                  
+                  if player_name and status:
+                      print(f"  DETECTED: Player line: '{player_name} {status}' with remainder: '{remainder}'")
+                      
+                      # Check for 3-line case (Marcus Smart style)
+                      if remainder and self._looks_like_medical_continuation(remainder):
+                          # Case: Player line contains injury start after status
+                          if i + 2 < len(lines):
+                              continuation_line = lines[i + 2].strip()
+                              
+                              if (continuation_line and 
+                                  self._looks_like_medical_continuation(continuation_line) and
+                                  not self._is_definitive_player_line(continuation_line)):
+                                  
+                                  print(f"  DETECTED: Final continuation line: '{continuation_line}'")
+                                  
+                                  # MERGE 3-line: injury + remainder + continuation
+                                  complete_injury = f"{line} {remainder} {continuation_line}"
+                                  merged_player_line = f"{player_name} {status} {complete_injury}"
+                                  
+                                  print(f"  MERGED (3-line): '{merged_player_line}'")
+                                  merged_lines.append(merged_player_line)
+                                  merge_count += 1
+                                  i += 3
+                                  continue
+                          
+                          # Handle 2-line case where remainder IS the continuation
+                          complete_injury = f"{line} {remainder}"
+                          merged_player_line = f"{player_name} {status} {complete_injury}"
+                          
+                          print(f"  MERGED (2-line with remainder): '{merged_player_line}'")
+                          merged_lines.append(merged_player_line)
+                          merge_count += 1
+                          i += 2
+                          continue
+                      
+                      # Standard 2-line case: check for continuation on next line
+                      elif i + 2 < len(lines):
+                          continuation_line = lines[i + 2].strip()
+                          
+                          if (continuation_line and 
+                              self._looks_like_medical_continuation(continuation_line) and
+                              not self._is_definitive_player_line(continuation_line)):
+                              
+                              print(f"  DETECTED: Continuation line: '{continuation_line}'")
+                              
+                              # MERGE standard 2-line: Create complete injury and add to player line
+                              complete_injury = f"{line} {continuation_line}"
+                              merged_player_line = f"{player_name} {status} {complete_injury}"
+                              
+                              print(f"  MERGED (standard): '{merged_player_line}'")
+                              merged_lines.append(merged_player_line)
+                              merge_count += 1
+                              i += 3  # Skip all three processed lines
+                              continue
+                          else:
+                              print(f"  SKIPPED: Invalid continuation: '{continuation_line}'")
+                      
+                      # No merge possible, add player line as-is
+                      merged_lines.append(next_line)
+                      i += 2
+                      continue
+                  else:
+                      # Try fallback to original player detection
+                      player_info = self._extract_player_from_line(next_line)
+                      
+                      if player_info:
+                          print(f"  DETECTED: Player line (fallback): '{next_line}'")
+                          
+                          # Check if line after player has medical continuation
+                          if i + 2 < len(lines):
+                              continuation_line = lines[i + 2].strip()
+                              
+                              if (continuation_line and 
+                                  self._looks_like_medical_continuation(continuation_line) and
+                                  not self._extract_player_from_line(continuation_line) and
+                                  not self._extract_team_from_line(continuation_line)):
+                                  
+                                  print(f"  DETECTED: Continuation line: '{continuation_line}'")
+                                  
+                                  # MERGE: Create complete injury and add to player line
+                                  complete_injury = f"{line} {continuation_line}"
+                                  merged_player_line = f"{next_line} {complete_injury}"
+                                  
+                                  print(f"  MERGED: '{merged_player_line}'")
+                                  
+                                  merged_lines.append(merged_player_line)
+                                  merge_count += 1
+                                  i += 3  # Skip all three processed lines
+                                  continue
+                              else:
+                                  print(f"  SKIPPED: Invalid continuation: '{continuation_line}'")
+                          else:
+                              print(f"  SKIPPED: No continuation line available")
+                      else:
+                          print(f"  SKIPPED: Next line not a player: '{next_line}'")
+              else:
+                  print(f"  SKIPPED: No next line available")
+          
+          # If no merge occurred, keep original line
+          merged_lines.append(lines[i])
+          i += 1
+      
+      print(f"PRE-PROCESS: Merged {merge_count} multi-line injuries")
+      return '\n'.join(merged_lines)
+    
+    def _find_player_with_status(self, line: str) -> tuple:
+      """Find player name and status in line using status as anchor."""
+      status_words = ['Available', 'Probable', 'Questionable', 'Doubtful', 'Out']
+      
+      for status in status_words:
+          if status in line:
+              # Find status position
+              status_pos = line.find(status)
+              before_status = line[:status_pos].strip()
+              after_status = line[status_pos + len(status):].strip()
+              
+              # Check if before_status looks like "LastName, FirstName" or similar
+              # Allow for suffixes like Jr., III, etc.
+              if re.match(r'^[A-Z][a-z\'\-\s]+,\s+[A-Z][a-z\'\-\s]+(?:\s+(?:Jr\.|Sr\.|II|III|IV))?$', before_status):
+                  return before_status, status, after_status
+      
+      return None, None, ""
+
+    def _is_definitive_player_line(self, line: str) -> bool:
+        """Check if line definitely contains a player using status anchor."""
+        player, status, remainder = self._find_player_with_status(line)
+        return player is not None
+
+    def _looks_like_incomplete_injury_line(self, line: str) -> bool:
+      """Check if injury line looks incomplete even if it doesn't end with semicolon."""
+      # NEW: Detect lines ending with "/" (like Maxey case)
+      if line.strip().endswith('/'):
+          return True
+          
+      # Patterns that suggest incomplete injury descriptions
+      incomplete_patterns = [
+          r'Injury/Illness - [^;]+; \w+$',  # "Injury/Illness - Left Knee; Trochlea"
+          r'Injury/Illness - [^;]+; [A-Z][a-z]+$',  # Ends with single capitalized word
+          r'Injury/Illness - [^;]+; [A-Z][a-z]+ [A-Z][a-z]+$'  # Ends with two capitalized words
+      ]
+      
+      return any(re.match(pattern, line) for pattern in incomplete_patterns)
+    
+    def _parse_text(self, text: str) -> List[PlayerRecord]:
+        """Main parsing logic (preserved from working version)."""
+        lines = [line.strip() for line in text.split('\n') if line.strip()]
+        print(f"Processing {len(lines)} non-empty lines")
+        
+        game_sections = self._identify_game_sections(lines)
+        print(f"Identified {len(game_sections)} game sections")
+        
+        all_records = []
+        for game in game_sections:
+            records = self._parse_game_section(game, lines)
+            all_records.extend(records)
+            print(f"Game {game.matchup}: {len(records)} players")
+        
+        return all_records
+    
+    def _identify_game_sections(self, lines: List[str]) -> List[GameSection]:
+        """Identify game sections with date/time/matchup propagation."""
+        sections = []
+        current_game = None
+        current_date = ""
+        current_gametime = ""
+        
+        for i, line in enumerate(lines):
+            game_info = self._extract_game_info(line)
+            
+            if game_info:
+                if current_game:
+                    current_game.end_line = i
+                    sections.append(current_game)
+                
+                if 'date' in game_info:
+                    current_date = game_info['date']
+                if 'gametime' in game_info:
+                    current_gametime = game_info['gametime']
+                
+                current_game = GameSection(
+                    date=current_date,
+                    gametime=current_gametime,
+                    matchup=game_info.get('matchup', ''),
+                    start_line=i,
+                    end_line=len(lines)
+                )
+        
+        if current_game:
+            sections.append(current_game)
+        
+        return sections
+    
+    def _extract_game_info(self, line: str) -> Optional[Dict[str, str]]:
+        """Extract game date/time/matchup information."""
+        info = {}
+        
+        date_match = re.search(r'(\d{2}/\d{2}/\d{4})', line)
+        if date_match:
+            info['date'] = date_match.group(1)
+        
+        time_match = re.search(r'(\d{1,2}:\d{2}\s*\(ET\))', line)
+        if time_match:
+            info['gametime'] = time_match.group(1)
+        
+        matchup_match = re.search(r'([A-Z]{3}@[A-Z]{3})', line)
+        if matchup_match:
+            info['matchup'] = matchup_match.group(1)
+        
+        return info if info else None
+    
+    def _parse_game_section(self, game: GameSection, all_lines: List[str]) -> List[PlayerRecord]:
+        """Parse individual game section for players."""
+        section_lines = all_lines[game.start_line:game.end_line]
+        records = []
+        current_team = ''
+        
+        for i, line in enumerate(section_lines):
+            team_code = self._extract_team_from_line(line)
+            if team_code:
+                current_team = team_code
+                print(f"  Team context: {current_team}")
+            
+            player_info = self._extract_player_from_line(line)
+            if player_info:
+                reason = self._find_player_reason(section_lines, i, player_info)
+                
+                record = PlayerRecord(
+                    date=game.date,
+                    gametime=game.gametime,
+                    matchup=game.matchup,
+                    team=current_team or 'UNKNOWN',
+                    player=player_info['name'],
+                    status=player_info['status'],
+                    reason=reason,
+                    confidence=self._calculate_confidence(reason)
+                )
+                
+                records.append(record)
+                print(f"    Player: {record.player} ({record.team}) - {record.reason}")
+        
+        return records
+    
+    def _find_player_reason(self, section_lines: List[str], player_line_idx: int, player_info: Dict[str, str]) -> str:
+        """Find player injury reason using established logic."""
+        reason_parts = []
+        
+        # Check current line for inline reason
+        current_line = section_lines[player_line_idx]
+        inline_reason = self._extract_inline_reason(current_line, player_info['status'])
+        if inline_reason:
+            print(f"    INLINE: '{inline_reason}'")
+            reason_parts.append(inline_reason)
+            
+            if self._reason_looks_incomplete(inline_reason):
+                completion = self._find_reason_completion(section_lines, player_line_idx, inline_reason)
+                if completion:
+                    reason_parts.append(completion)
+                    print(f"    COMPLETION: '{completion}'")
+        
+        # Check previous line
+        if not reason_parts and player_line_idx > 0:
+            prev_line = section_lines[player_line_idx - 1].strip()
+            if self._looks_like_standalone_reason(prev_line):
+                print(f"    PREV: '{prev_line}'")
+                reason_parts.append(prev_line)
+        
+        # Forward search
+        if not reason_parts:
+            forward_reason = self._find_forward_reason_conservative(section_lines, player_line_idx)
+            if forward_reason:
+                print(f"    FORWARD: '{forward_reason}'")
+                reason_parts.append(forward_reason)
+        
+        # Emergency fallback
+        if not reason_parts:
+            emergency_reason = self._emergency_reason_fallback(section_lines, player_line_idx, player_info)
+            if emergency_reason:
+                print(f"    EMERGENCY: '{emergency_reason}'")
+                reason_parts.append(emergency_reason)
+        
+        # Combine and clean
+        if reason_parts:
+            combined = ' '.join(reason_parts)
+            print(f"    COMBINED: '{combined}'")
+            cleaned = self._clean_reason(combined)
+            print(f"    CLEANED: '{cleaned}'")
+            return cleaned
+        
+        return ''
+    
+    def _extract_team_from_line(self, line: str) -> Optional[str]:
+        """Extract team code from line."""
+        line_lower = line.lower()
+        for team_name, team_code in self.TEAM_MAPPINGS.items():
+            if team_name.lower() in line_lower:
+                if not any(skip in line for skip in ['Page', 'Report', 'NOT YET']):
+                    return team_code
+        return None
+    
+    def _extract_player_from_line(self, line: str) -> Optional[Dict[str, str]]:
+        """Extract player name and status from line."""
+        patterns = [
+            r'([A-Z][A-Za-z\'\-\.]+),\s*([A-Z]\.?[A-Z]\.?)\s+(Out|Questionable|Doubtful|Probable|Available)',
+            r'([A-Z][A-Za-z\'\-\.]+\s+(?:Jr\.|Sr\.|II|III|IV)),\s*([A-Z][A-Za-z\-\']+)\s+(Out|Questionable|Doubtful|Probable|Available)',
+            r'([A-Z][A-Za-z\'\-\.]+),\s*([A-Z][A-Za-z\-\']+)\s+(Out|Questionable|Doubtful|Probable|Available)',
+            r'([A-Z][A-Za-z\'\-\.]+),([A-Z][A-Za-z\-\']+)\s+(Out|Questionable|Doubtful|Probable|Available)',
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, line)
+            if match:
+                first_part = self._clean_player_name_part(match.group(1).strip())
+                second_part = self._clean_player_name_part(match.group(2).strip())
+                status = match.group(3).strip()
+                
+                if first_part and second_part:
+                    return {'name': f"{first_part}, {second_part}", 'status': status}
+        return None
+    
+    def _clean_player_name_part(self, name_part: str) -> str:
+        """Clean player name parts."""
+        for team_name in self.TEAM_MAPPINGS.keys():
+            if team_name in name_part:
+                name_part = name_part.replace(team_name, '').strip()
+        for team_code in self.TEAM_MAPPINGS.values():
+            if team_code in name_part:
+                name_part = name_part.replace(team_code, '').strip()
+        return name_part
+    
+    def _extract_inline_reason(self, line: str, status: str) -> str:
+        """Extract injury reason from same line as player."""
+        pattern = f'{re.escape(status)}\\s+(.+?)(?:\\s+(?:Out|Questionable|Doubtful|Probable|Available)|$)'
+        match = re.search(pattern, line)
+        if match:
+            potential_reason = match.group(1).strip()
+            if not re.search(r'[A-Z][a-z]+,\s*[A-Z]', potential_reason):
+                return potential_reason
+        return ''
+    
+    def _reason_looks_incomplete(self, reason: str) -> bool:
+        """Check if reason needs completion."""
+        if not reason:
+            return False
+        incomplete_patterns = [
+            r'Bilateral Low Back;?$', r'Left 1st toe;?$', r'Bilateral Leg;?$',
+            r'Illness;?$', r'Left Knee; Partial$', r'Left Tibia; Non-?$',
+            r'Right Achilles Tendon;?$', r'Injury/Illness - [^;]+;$'
+        ]
+        return any(re.search(pattern, reason) for pattern in incomplete_patterns)
+    
+    def _find_reason_completion(self, section_lines: List[str], player_line_idx: int, incomplete_reason: str) -> str:
+        """Find completion for incomplete reasons."""
+        search_limit = min(len(section_lines), player_line_idx + 4)
+        
+        for i in range(player_line_idx + 1, search_limit):
+            line = section_lines[i].strip()
+            if not line:
+                continue
+            
+            if self._extract_player_from_line(line) or self._extract_team_from_line(line):
+                break
+            if 'NOT YET SUBMITTED' in line or 'Page' in line:
+                break
+            
+            if self._looks_like_reason_completion(line, incomplete_reason):
+                return line
+        return ''
+    
+    def _looks_like_reason_completion(self, line: str, incomplete_reason: str) -> bool:
+        """Check if line completes incomplete reason."""
+        line_lower = line.lower()
+        completion_terms = ['spasms', 'fracture', 'cramp', 'issue', 'meniscectomy', 
+                           'rupture', 'rehab', 'displaced', 'protocol', 'repair']
+        return any(term in line_lower for term in completion_terms)
+    
+    def _looks_like_standalone_reason(self, line: str) -> bool:
+        """Check if line is standalone reason."""
+        reason_starters = ['Injury/Illness', 'G League', 'Personal Reasons',
+                          'League Suspension', 'Concussion Protocol', 'Not With Team']
+        return any(line.startswith(starter) for starter in reason_starters)
+    
+    def _find_forward_reason_conservative(self, section_lines: List[str], player_line_idx: int) -> str:
+        """Conservative forward search."""
+        search_limit = min(len(section_lines), player_line_idx + 3)
+        
+        for i in range(player_line_idx + 1, search_limit):
+            line = section_lines[i].strip()
+            if not line:
+                continue
+            
+            if self._extract_player_from_line(line) or self._extract_team_from_line(line):
+                break
+            if any(stop in line for stop in ['NOT YET SUBMITTED', 'Page', 'Report']):
+                break
+            
+            if self._looks_like_standalone_reason(line):
+                return line
+        return ''
+    
+    def _emergency_reason_fallback(self, section_lines: List[str], player_line_idx: int, player_info: Dict[str, str]) -> str:
+        """Emergency fallback for game-time lines."""
+        current_line = section_lines[player_line_idx]
+        has_game_time = re.search(r'\d{1,2}:\d{2}\s*\(ET\)', current_line)
+        
+        if not has_game_time:
+            return ''
+        
+        print(f"    EMERGENCY: Game-time line detected for {player_info['name']}")
+        
+        reason_parts = []
+        
+        # Check previous line
+        if player_line_idx > 0:
+            prev_line = section_lines[player_line_idx - 1].strip()
+            print(f"    EMERGENCY: Checking prev line: '{prev_line}'")
+            if prev_line.startswith('Injury/Illness'):
+                reason_parts.append(prev_line)
+        
+        # Check next line
+        if player_line_idx + 1 < len(section_lines):
+            next_line = section_lines[player_line_idx + 1].strip()
+            print(f"    EMERGENCY: Checking next line: '{next_line}'")
+            
+            is_medical = self._looks_like_medical_continuation(next_line)
+            if is_medical and not self._extract_player_from_line(next_line):
+                print(f"    EMERGENCY: Found continuation in next line")
+                reason_parts.append(next_line)
+        
+        if reason_parts:
+            combined = ' '.join(reason_parts)
+            print(f"    EMERGENCY: Combined parts: '{combined}'")
+            return combined
+        
+        return ''
+    
+    def _looks_like_medical_continuation(self, line: str) -> bool:
+      """Check if line looks like medical continuation."""
+      if not line or len(line.split()) > 6:  # Increased from 4 to 6 words
+          return False
+      
+      medical_terms = [
+          # Original terms
+          'rupture', 'rehab', 'spasms', 'fracture', 'cramp', 'issue',
+          'strain', 'sprain', 'contusion', 'soreness', 'protocol', 'repair',
+          
+          # Missing terms from test results
+          'inflammation', 'tightness', 'management', 'compression',
+          'tendinopathy', 'surgery', 'tear', 'bruise', 'bursitis',
+          
+          # Additional common terms
+          'avulsion', 'impingement', 'laceration', 'thrombosis',
+          'cartilage', 'meniscus', 'ligament', 'tendon',
+
+          # Edge case terms from latest test
+          'recovery', 'reaction', 'rotator', 'cuff', 'labrum',
+          
+          # Terms to fix current parsing failures
+          'chronic', 'acute', 'bone', 'acl', 'finger', 'joint',
+          'muscle', 'nerve', 'mcl', 'lcl',
+          
+          'chondromalacia', 'dislocation',
+      ]
+      
+      line_lower = line.lower()
+      return any(term in line_lower for term in medical_terms)
+    
+    def _clean_reason(self, reason: str) -> str:
+        """Clean and normalize injury reason."""
+        if not reason:
+            return ''
+        
+        reason = reason.strip()
+        
+        # Remove status words
+        status_words = ['Out', 'Questionable', 'Doubtful', 'Probable', 'Available']
+        for status in status_words:
+            if reason.startswith(status + ' '):
+                reason = reason[len(status):].strip()
+        
+        # Truncation fixes
+        truncation_fixes = {
+            r'\bSpams\b': 'Spasms',
+            r'\bNon-?\s*$': 'Non-displaced Fracture',
+            r'\bPartial\s*$': 'Partial Meniscectomy', 
+            r'\bMuscle\s*$': 'Muscle cramp',
+            r'\bRespiratory\s*$': 'Respiratory issue',
+            r'Left 1st toe\s*$': 'Left 1st toe fracture',
+            r'\bTendon\s*$': 'Tendon Repair',
+            r'\bConcussion\s*$': 'Concussion Protocol'
+        }
+        
+        for pattern, replacement in truncation_fixes.items():
+            reason = re.sub(pattern, replacement, reason)
+        
+        # Clean spacing
+        reason = re.sub(r'\s+', ' ', reason)
+        reason = re.sub(r';\s*;', ';', reason)
+        reason = reason.strip(' .,;-/')
+        
+        # Add prefix if needed
+        medical_terms = ['Strain', 'Sprain', 'Surgery', 'Fracture', 'Tear', 'Soreness', 'Contusion']
+        non_injury_prefixes = ['G League', 'Personal Reasons', 'League Suspension', 'Concussion Protocol']
+        
+        has_prefix = (reason.startswith('Injury/Illness') or 
+                     any(reason.startswith(prefix) for prefix in non_injury_prefixes))
+        has_medical = any(term.lower() in reason.lower() for term in medical_terms)
+        
+        if not has_prefix and has_medical and reason:
+            reason = 'Injury/Illness - ' + reason
+        
+        return reason.strip()
+    
+    def _calculate_confidence(self, reason: str) -> float:
+        """Calculate confidence score."""
+        if not reason:
+            return 0.5
+        confidence = 1.0
+        if len(reason) < 10:
+            confidence -= 0.2
+        return max(0.0, min(1.0, round(confidence, 1)))
+    
+    def _record_to_dict(self, record: PlayerRecord) -> Dict[str, Any]:
+        """Convert record to dictionary."""
+        return {
+            'date': record.date,
+            'gametime': record.gametime,
+            'matchup': record.matchup,
+            'team': record.team,
+            'player': record.player,
+            'status': record.status,
+            'reason': record.reason,
+            'confidence': record.confidence
+        }
+
+
+def main():
+    """Main function."""
+    parser = argparse.ArgumentParser(description='NBA injury parser with multi-line merge')
+    parser.add_argument('file_path', help='Path to debug text file')
+    parser.add_argument('--output', '-o', help='Output JSON file path')
+    
+    args = parser.parse_args()
+    
+    try:
+        injury_parser = MultilineInjuryParser()
+        records = injury_parser.parse_text_file(args.file_path)
+        
+        if args.output:
+            with open(args.output, 'w') as f:
+                json.dump(records, f, indent=2)
+            print(f"Results saved to: {args.output}")
+        else:
+            print(json.dumps(records, indent=2))
+        
+        # Summary
+        print(f"\nSummary:")
+        print(f"Total records: {len(records)}")
+        
+        teams = set(r['team'] for r in records if r['team'] != 'UNKNOWN')
+        print(f"Teams found: {len(teams)} - {sorted(teams)}")
+        
+        with_times = [r for r in records if r['gametime']]
+        print(f"Records with game times: {len(with_times)}/{len(records)} ({len(with_times)/len(records)*100:.1f}%)")
+        
+        with_reasons = [r for r in records if r['reason']]
+        print(f"Records with reasons: {len(with_reasons)}/{len(records)} ({len(with_reasons)/len(records)*100:.1f}%)")
+        
+        # Check for specific improvements
+        clark = [r for r in records if 'Clark, Jaylen' in r['player']]
+        if clark:
+            print(f"Clark, Jaylen result: {clark[0]['reason']}")
+        
+        lavine = [r for r in records if 'LaVine, Zach' in r['player']]
+        if lavine:
+            print(f"LaVine, Zach result: {lavine[0]['reason']}")
+    
+    except Exception as e:
+        print(f"Error: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+
+
+if __name__ == '__main__':
+    main()

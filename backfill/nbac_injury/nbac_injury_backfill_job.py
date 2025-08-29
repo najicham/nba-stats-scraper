@@ -334,24 +334,20 @@ class NbaInjuryBackfillJob:
         return all_intervals
     
     def _interval_already_processed(self, interval: Dict) -> bool:
-        """Check if interval report already exists in GCS (resume logic with backward compatibility)."""
+        """Check if interval report already exists in GCS (resume logic)."""
         try:
             date_str = interval["date_formatted"]
-            hour_12 = interval["hour"].zfill(2)
-            period = interval["period"]
-            hour_24 = interval["hour24"]  # New format
+            hour_24 = interval["hour24"]
             
-            # Check multiple path patterns for backward compatibility
+            # Check NEW path patterns where files are actually saved
             prefix_patterns = [
-                # NEW path format (hour24 only)
+                # NEW PDF path
+                f"nba-com/injury-report-pdf/{date_str}/{hour_24}/",
+                # NEW data path
+                f"nba-com/injury-report-data/{date_str}/{hour_24}/",
+                
+                # LEGACY paths (for backward compatibility)
                 f"nba-com/injury-report/{date_str}/{hour_24}/",
-                
-                # OLD path formats (for backward compatibility)
-                f"nba-com/injury-report/{date_str}/{hour_12}{period}/",
-                f"nba-com/injury-reports/{date_str}/{hour_12}{period}/",  # Alternative spelling
-                
-                # LEGACY path formats (if any other variations existed)
-                f"nba-com/injury-report/{date_str}/{hour_12}-{period}/",
             ]
             
             for prefix in prefix_patterns:
@@ -364,7 +360,7 @@ class NbaInjuryBackfillJob:
             
         except Exception as e:
             logger.debug(f"Error checking if interval {interval} exists: {e}")
-            return False  # If we can't check, assume it doesn't exist
+            return False
 
     # Alternative approach: Check by date folder first, then look for any time-based subfolders
     def _interval_already_processed_alternative(self, interval: Dict) -> bool:

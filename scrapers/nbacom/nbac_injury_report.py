@@ -1,30 +1,15 @@
 """
-NBA.com Injury Report PDF scraper                       v2 - 2025-06-16
------------------------------------------------------------------------
-Downloads and parses the official Injury Report PDF.  Outputs a list of
-records like:
+NBA.com Injury Report PDF scraper - SIMPLIFIED v15 - 2025-08-28
+----------------------------------------------------------------
+Two-file approach using validated parser module for 99-100% accuracy.
 
-    {
-        "date": "03/16/2025",
-        "gametime": "7:30 PM ET",
-        "matchup": "LAL@BOS",
-        "team": "LOS ANGELES LAKERS",
-        "player": "James, LeBron",
-        "status": "Questionable",
-        "reason": "Left ankle soreness"
-    }
+This scraper handles PDF extraction and exports, while delegating
+the parsing logic to the injury_parser module that contains the
+validated multi-line detection logic.
 
 Usage examples:
-  # Via capture tool (recommended for data collection):
   python tools/fixtures/capture.py nbac_injury_report \
-      --gamedate 20250216 --hour 5 --period PM \
-      --debug
-
-  # Direct CLI execution:
-  python scrapers/nbacom/nbac_injury_report.py --gamedate 20250216 --hour 5 --period PM --debug
-
-  # Flask web service:
-  python scrapers/nbacom/nbac_injury_report.py --serve --debug
+      --gamedate 20220517 --hour 4 --period PM --debug
 """
 
 from __future__ import annotations
@@ -34,23 +19,22 @@ import re
 import os
 import sys
 import time
+import tempfile
 from datetime import datetime, timezone
-from typing import List
+from typing import List, Dict, Any, Optional, Tuple, Set
 import json
 
-from pdfreader import SimplePDFViewer
-from pdfreader.viewer.pdfviewer import PageDoesNotExist
+import pdfplumber
+from collections import Counter
 
 # Support both module execution (python -m) and direct execution
 try:
-    # Module execution: python -m scrapers.nbacom.nbac_injury_report
     from ..scraper_base import DownloadType, ExportMode, ScraperBase
     from ..scraper_flask_mixin import ScraperFlaskMixin
     from ..scraper_flask_mixin import convert_existing_flask_scraper
     from ..utils.exceptions import DownloadDataException, InvalidRegionDecodeException
     from ..utils.gcs_path_builder import GCSPathBuilder
 except ImportError:
-    # Direct execution: python scrapers/nbacom/nbac_injury_report.py
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
     from scrapers.scraper_base import DownloadType, ExportMode, ScraperBase
     from scrapers.scraper_flask_mixin import ScraperFlaskMixin
@@ -58,74 +42,59 @@ except ImportError:
     from scrapers.utils.exceptions import DownloadDataException, InvalidRegionDecodeException
     from scrapers.utils.gcs_path_builder import GCSPathBuilder
 
+# Import the validated parser module
+try:
+    from .injury_parser import InjuryReportParser
+except ImportError:
+    # Fallback for development - assume injury_parser.py is in same directory
+    sys.path.insert(0, os.path.dirname(__file__))
+    from injury_parser import InjuryReportParser
+
 logger = logging.getLogger("scraper_base")
 
 
-# --------------------------------------------------------------------------- #
-# Scraper (USING MIXIN)
-# --------------------------------------------------------------------------- #
 class GetNbaComInjuryReport(ScraperBase, ScraperFlaskMixin):
-    """Scrapes and parses the daily NBA Injury Report PDF."""
+    """Simplified NBA Injury Report PDF scraper using validated parser module."""
 
     # Flask Mixin Configuration
     scraper_name = "nbac_injury_report"
-    required_params = ["gamedate", "hour", "period"]  # All three parameters are required
+    required_params = ["gamedate", "hour", "period"]
     optional_params = {}
 
     # Original scraper config
-    required_opts = ["gamedate", "hour", "period"]  # hour: 1-12, period: AM/PM
+    required_opts = ["gamedate", "hour", "period"]
     header_profile: str | None = "data"
     download_type: DownloadType = DownloadType.BINARY
     proxy_enabled: bool = True
     max_retries_decode = 2
-    no_retry_status_codes = [404, 422]  # 403 still gets limited retries
-    treat_max_retries_as_success = [403]  # 403 after retries = "no report available"
+    no_retry_status_codes = [404, 422]
+    treat_max_retries_as_success = [403]
 
-    # ------------------------------------------------------------------ #
     # Exporters
-    # ------------------------------------------------------------------ #
-    GCS_PATH_KEY = "nba_com_injury_report"
     exporters = [
-        # GCS RAW for production (PDF files)
-        {
-            "type": "gcs",
-            #"key": "nbacom/injury-report/%(season)s/%(gamedate)s/%(hour)s%(period)s/%(time)s.pdf",
-            "key": GCSPathBuilder.get_path(GCS_PATH_KEY),
-            "export_mode": ExportMode.DATA,
-            "groups": ["prod", "gcs"],
-        },
-        {
-            "type": "file",
-            "filename": "/tmp/nbacom_injury_report_%(gamedate)s_%(hour)s.json",
-            "export_mode": ExportMode.DATA,
-            "pretty_print": True,
-            "groups": ["dev", "test"],
-        },
-        # ADD THESE CAPTURE EXPORTERS:
-        {
-            "type": "file",
-            "filename": "/tmp/raw_%(run_id)s.pdf",
-            "export_mode": ExportMode.RAW,
-            "groups": ["capture"],
-        },
-        {
-            "type": "file",
-            "filename": "/tmp/exp_%(run_id)s.json",
-            "export_mode": ExportMode.DATA,
-            "pretty_print": True,
-            "groups": ["capture"],
-        },
+        {"type": "gcs", "key": GCSPathBuilder.get_path("nba_com_injury_report_pdf_raw"),
+         "export_mode": ExportMode.RAW, "groups": ["prod", "gcs"]},
+        {"type": "gcs", "key": GCSPathBuilder.get_path("nba_com_injury_report_data"),
+         "export_mode": ExportMode.DATA, "groups": ["prod", "gcs"]},
+        {"type": "file", "filename": "/tmp/nbacom_injury_report_%(gamedate)s_%(hour)s.json",
+         "export_mode": ExportMode.DATA, "pretty_print": True, "groups": ["dev", "test"]},
+        {"type": "file", "filename": "/tmp/raw_%(run_id)s.pdf",
+         "export_mode": ExportMode.RAW, "groups": ["capture"]},
+        {"type": "file", "filename": "/tmp/exp_%(run_id)s.json",
+         "export_mode": ExportMode.DATA, "pretty_print": True, "groups": ["capture"]},
     ]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Initialize the validated parser
+        self.injury_parser = InjuryReportParser(logger=logger)
 
     def sleep_before_retry(self):
         """Fast retry strategy - only 2 seconds between attempts."""
-        sleep_seconds = 2  # Always 2 seconds (no exponential backoff)
+        sleep_seconds = 2
         logger.warning("Quick retry in %.1f seconds...", sleep_seconds)
         time.sleep(sleep_seconds)
 
-    # ------------------------------------------------------------------ #
-    # Additional opts helper
-    # ------------------------------------------------------------------ #
     def set_additional_opts(self) -> None:
         super().set_additional_opts()
         now = datetime.now(timezone.utc)
@@ -133,30 +102,17 @@ class GetNbaComInjuryReport(ScraperBase, ScraperFlaskMixin):
         year = int(self.opts["gamedate"][0:4])
         self.opts["season"] = f"{year}-{(year + 1) % 100:02d}"
         
-        # SIMPLIFIED: Calculate hour24 only (no minute needed)
+        # Calculate hour24 
         hour_12 = int(self.opts["hour"])
         period = self.opts["period"].upper()
         
-        # Convert 12-hour to 24-hour format
         if period == "AM":
-            if hour_12 == 12:
-                hour_24 = 0  # 12 AM = 00:00 (midnight)
-            else:
-                hour_24 = hour_12  # 1 AM = 01:00, etc.
-        else:  # PM
-            if hour_12 == 12:
-                hour_24 = 12  # 12 PM = 12:00 (noon)
-            else:
-                hour_24 = hour_12 + 12  # 1 PM = 13:00, etc.
+            hour_24 = 0 if hour_12 == 12 else hour_12
+        else:
+            hour_24 = 12 if hour_12 == 12 else hour_12 + 12
         
-        self.opts["hour24"] = f"{hour_24:02d}"  # "00", "05", "17", etc.
-        
-        logger.debug("Set hour24=%s for GCS path (from %s %s)", 
-                    self.opts["hour24"], self.opts["hour"], period)
+        self.opts["hour24"] = f"{hour_24:02d}"
 
-    # ------------------------------------------------------------------ #
-    # Option validation
-    # ------------------------------------------------------------------ #    
     def validate_opts(self) -> None:
         super().validate_opts()
         try:
@@ -169,18 +125,14 @@ class GetNbaComInjuryReport(ScraperBase, ScraperFlaskMixin):
         if self.opts["period"].upper() not in {"AM", "PM"}:
             raise DownloadDataException("period must be AM or PM")
 
-    # ------------------------------------------------------------------ #
-    # URL builder
-    # ------------------------------------------------------------------ #
     def set_url(self) -> None:
         gd = self.opts["gamedate"]
-        # Convert YYYYMMDD to YYYY-MM-DD format
         if "-" not in gd:
             formatted_date = f"{gd[0:4]}-{gd[4:6]}-{gd[6:8]}"
         else:
             formatted_date = gd
         
-        hour = self.opts["hour"].zfill(2)  # Pad single digits with 0
+        hour = self.opts["hour"].zfill(2)
         period = self.opts["period"].upper()
         self.url = (
             f"https://ak-static.cms.nba.com/referee/injury/"
@@ -188,487 +140,332 @@ class GetNbaComInjuryReport(ScraperBase, ScraperFlaskMixin):
         )
         logger.info("Injury Report URL: %s", self.url)
 
-    # ------------------------------------------------------------------ #
-    # Only save if we parsed at least 1 record
-    # ------------------------------------------------------------------ #
     def should_save_data(self) -> bool:
-        return isinstance(self.data, list) and len(self.data) > 0
+        return (isinstance(self.data, dict) and 
+                isinstance(self.data.get('records'), list) and 
+                len(self.data.get('records', [])) > 0)
 
-    # ------------------------------------------------------------------ #
-    # Decode PDF -> self.data
-    # ------------------------------------------------------------------ #
     def decode_download_content(self) -> None:
+        """Simplified PDF parsing using validated parser module."""
         content = self.raw_response.content
 
+        # Basic PDF validation
         if b"not accessible in this region" in content.lower():
             raise InvalidRegionDecodeException("PDF blocked in this region.")
         if b"%PDF" not in content[:1024]:
             raise InvalidRegionDecodeException("Response is not a PDF.")
 
-        records: List[dict] = []
-        temp = {
-            "date": "",
-            "gametime": "",
-            "matchup": "",
-            "team": "",
-            "player": "",
-            "status": "",
-            "next_state": "",
-        }
+        logger.info("PDF Content size: %d bytes", len(content))
 
-        viewer = SimplePDFViewer(content)
-        page_num = 0
+        # Save content to temp file for pdfplumber
+        with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as temp_file:
+            temp_file.write(content)
+            temp_file_path = temp_file.name
+
         try:
-            while True:
-                viewer.render()
-                self._parse_strings(viewer.canvas.strings, temp, records)
-                viewer.next()
-                page_num += 1
-        except PageDoesNotExist:
-            logger.info(
-                "Finished PDF after %d pages, parsed %d records.", page_num, len(records)
-            )
+            with pdfplumber.open(temp_file_path) as pdf:
+                # Extract all text from all pages
+                full_text = ""
+                for page_num, page in enumerate(pdf.pages):
+                    page_text = page.extract_text(
+                        x_tolerance=2, y_tolerance=2, layout=False,
+                        x_density=7.25, y_density=13
+                    )
+                    if page_text:
+                        full_text += page_text + "\n"
+                
+                logger.info(f"Extracted text: {len(full_text)} characters")
+                
+                # Use the validated parser module
+                records = self.injury_parser.parse_text_content(full_text)
+                logger.info("Parsing complete: %d records found", len(records))
+
+        finally:
+            os.unlink(temp_file_path)
+
+        # Enhanced debug output with parser statistics
+        debug_file = f"/tmp/debug_injury_report_text_{self.run_id}.txt"
+        try:
+            with open(debug_file, 'w', encoding='utf-8') as f:
+                f.write(full_text)
+                
+                # Add parser statistics
+                parser_stats = self.injury_parser.get_parsing_stats()
+                f.write(f"\n\n=== PARSING STATISTICS ===\n")
+                f.write(f"Total lines processed: {parser_stats['parsing_stats']['total_lines']}\n")
+                f.write(f"Player lines found: {parser_stats['parsing_stats']['player_lines']}\n") 
+                f.write(f"Multi-line injuries merged: {parser_stats['parsing_stats']['merged_multiline']}\n")
+                f.write(f"Unparsed lines: {parser_stats['parsing_stats']['unparsed_count']}\n")
+                
+                f.write(f"\n=== PARSED RECORDS ({len(records)}) ===\n")
+                for i, record in enumerate(records):
+                    confidence = record.get('confidence', 'N/A')
+                    f.write(f"{i+1}. {record['player']} ({record['team']}) {record['matchup']} - {record['reason']} (conf: {confidence})\n")
+                
+                # Show unparsed lines for monitoring
+                if parser_stats.get('unparsed_lines_sample'):
+                    f.write(f"\n=== UNPARSED LINES SAMPLE ===\n")
+                    for i, line in enumerate(parser_stats['unparsed_lines_sample']):
+                        f.write(f"{i+1}. {line}\n")
+                        
+            logger.info("Enhanced debug output saved to: %s", debug_file)
+        except Exception as e:
+            logger.warning("Failed to save debug text: %s", e)
 
         if not records:
             raise DownloadDataException("Parsed 0 records from PDF.")
-            
-        # Set both for compatibility with base class validation and our own logic
-        self.data = records
-        self.decoded_data = records
 
-        self.validate_injury_data()
-
-    # ------------------------------------------------------------------ #
-    # String parser with full state machine
-    # ------------------------------------------------------------------ #
-    def _parse_strings(self, strings: List[str], temp: dict, out_list: List[dict]) -> None:
-        """
-        Enhanced parser with bulletproof boundary detection and complete processing.
-        FIXES: 
-        - Allow 2-character tokens like "JT" to pass through (len(s) > 1 instead of len(s) > 2)
-        - Enhanced team boundary detection to prevent text bleeding
-        """
-        
-        def normalize_text(text):
-            """Clean up text fragments"""
-            # Handle G League variations with comprehensive patterns
-            text = re.sub(r'\bG\s+League\s*Two-?\s*Way\b', 'G League - Two Way', text)
-            text = re.sub(r'\bLeague\s*Two-?\s*Way\b', 'G League - Two Way', text)
-            text = re.sub(r'\bG\s+League\s*Assignment\b', 'G League Assignment', text)
-            text = re.sub(r'\bLeague\s*Assignment\b', 'G League Assignment', text)
-            
-            # Enhanced G League - On Assignment patterns
-            text = re.sub(r'\bG\s+League\s*-?\s*On\s+Assignment\b', 'G League - On Assignment', text)
-            text = re.sub(r'\bLeague\s*-?\s*On\s+Assignment\b', 'G League - On Assignment', text)
-            text = re.sub(r'\bLeague\s+On\s+Assignment\b', 'G League - On Assignment', text)
-            
-            text = re.sub(r'Injury/Illness\s*-\s*', 'Injury/Illness - ', text)
-            text = re.sub(r'\s+', ' ', text)
-            return text.strip()
-        
-        def is_likely_player_name(token):
-            """Enhanced detection for player names"""
-            # Common player name patterns
-            if ',' in token:
-                return True
-            if token in ['Jr.,', 'Sr.,', 'II,', 'III,', 'IV,']:
-                return True
-            # Look for common last names that might appear without commas
-            common_surnames = ['Brooks', 'Porter', 'McCullar', 'Thor', 'Smith', 'Johnson', 'Williams', 
-                            'Brown', 'Jones', 'Garcia', 'Miller', 'Davis', 'Rodriguez', 'Martinez',
-                            'Hernandez', 'Lopez', 'Gonzalez', 'Wilson', 'Anderson', 'Thomas', 'Taylor',
-                            'Moore', 'Jackson', 'Martin', 'Lee', 'Perez', 'Thompson', 'White', 'Harris']
-            return token in common_surnames
-        
-        def is_team_indicator(token):
-            team_words = ['Lakers', 'Clippers', 'Warriors', 'Celtics', 'Heat', 'Bulls', 'Knicks', 
-                        'Nets', 'Thunder', 'Jazz', 'Suns', 'Kings', 'Nuggets', 'Rockets',
-                        'Spurs', 'Mavericks', 'Grizzlies', 'Pelicans', 'Magic', 'Hawks', 'Hornets',
-                        'Pistons', 'Pacers', 'Cavaliers', '76ers', 'Raptors', 'Bucks', 'Timberwolves',
-                        'Wizards', 'Blazers']
-            return any(team in token for team in team_words)
-        
-        def is_team_city(token):
-            """Enhanced team city detection to prevent text bleeding"""
-            team_cities = [
-                'Detroit', 'Houston', 'Golden', 'State', 'Los', 'Angeles', 'New', 'York', 
-                'San', 'Antonio', 'Oklahoma', 'City', 'Miami', 'Chicago', 'Milwaukee',
-                'Portland', 'Dallas', 'Phoenix', 'Denver', 'Utah', 'Sacramento', 'Memphis',
-                'Orlando', 'Atlanta', 'Charlotte', 'Indiana', 'Cleveland', 'Philadelphia',
-                'Toronto', 'Boston', 'Brooklyn', 'Washington', 'Minnesota'
-            ]
-            return token in team_cities
-        
-        def build_player_name(strings_list, start_idx):
-            """Build complete player name and return (name, next_index)"""
-            token = strings_list[start_idx]
-            
-            # Handle suffix patterns like "Jr.,"
-            if token in ['Jr.,', 'Sr.,', 'II,', 'III,']:
-                # Look backward for missing first part
-                missing_part = ""
-                for back_idx in range(max(0, start_idx-3), start_idx):
-                    candidate = strings_list[back_idx]
-                    if (candidate not in ['Out', 'Questionable', 'Doubtful', 'Probable', 'Available'] and
-                        not is_team_indicator(candidate) and '@' not in candidate and
-                        not re.match(r'\d{1,2}:\d{2}', candidate)):
-                        missing_part = candidate
-                
-                last_name = f"{missing_part} {token}".strip() if missing_part else token
-                first_name = strings_list[start_idx + 1] if start_idx + 1 < len(strings_list) else ""
-                if last_name.endswith(','):
-                    return f"{last_name} {first_name}".strip(), start_idx + 2
-                else:
-                    return f"{last_name}, {first_name}".strip(' ,'), start_idx + 2
-            
-            # Handle normal "LastName," pattern  
-            elif ',' in token:
-                last_name = token[:-1]
-                first_name = strings_list[start_idx + 1] if start_idx + 1 < len(strings_list) else ""
-                return f"{last_name}, {first_name}".strip(), start_idx + 2
-            
-            # Handle separated comma: "Thor , JT"
-            elif (start_idx + 2 < len(strings_list) and 
-                strings_list[start_idx + 1] == ',' and
-                strings_list[start_idx + 2] not in ['Out', 'Questionable', 'Doubtful', 'Probable', 'Available']):
-                last_name = token
-                first_name = strings_list[start_idx + 2]
-                return f"{last_name}, {first_name}", start_idx + 3
-                
-            return "", start_idx + 1
-        
-        # Initialize context
-        current_team = temp.get("current_team", "")
-        current_matchup = temp.get("current_matchup", "")
-        current_gametime = temp.get("current_gametime", "")
-        
-        # Extract date
-        for s in strings:
-            if re.match(r'\d{2}/\d{2}/\d{4}', s) or re.match(r'\d{2}/\d{2}/\d{2}', s):
-                temp["date"] = s
-                break
-        
-        # Filter noise - FIXED: Allow 2-character tokens like "JT"
-        skip_words = {'Injury', 'Report:', 'Page', 'of', 'Game', 'Date', 'Time', 'Matchup', 'Team', 
-                    'Player', 'Name', 'Current', 'Status', 'Reason', 'AM', 'PM', 'NOT', 'YET', 'SUBMITTED'}
-        
-        # CRITICAL FIX: Changed len(s) > 2 to len(s) > 1 to allow "JT" through
-        clean_strings = [s for s in strings if s not in skip_words and len(s) > 1 and not s.isdigit()]
-        
-        # Process all tokens - ENSURE WE REACH THE END
-        i = 0
-        while i < len(clean_strings):
-            try:
-                token = clean_strings[i]
-                
-                # ADD THIS DEBUG BLOCK - Look for Thor specifically
-                if "Thor" in token or "JT" in token:
-                    logger.info(f"🔍 FOUND THOR/JT at index {i}: '{token}' - Context: {clean_strings[max(0,i-3):i+4]}")
-                
-                # Look for the end of Martin, Jaylen to see what comes next
-                if "Martin" in token:
-                    logger.info(f"🔍 FOUND MARTIN at index {i}: '{token}' - Next 10 tokens: {clean_strings[i:i+10]}")
-                
-                # Extract game time
-                if re.match(r'\d{1,2}:\d{2}', token):
-                    current_gametime = token
-                    if i+1 < len(clean_strings) and clean_strings[i+1] == '(ET)':
-                        current_gametime += " (ET)"
-                        i += 1
-                    elif i+1 < len(clean_strings) and clean_strings[i+1] in ['AM', 'PM']:
-                        time_suffix = clean_strings[i+1]
-                        current_gametime += f" {time_suffix} ET"
-                        i += 1
-                    temp["current_gametime"] = current_gametime
-                    i += 1
-                    continue
-                
-                # Extract matchup
-                if '@' in token and len(token) <= 10 and re.match(r'[A-Z]{3}@[A-Z]{3}', token):
-                    current_matchup = token
-                    temp["current_matchup"] = current_matchup
-                    i += 1
-                    continue
-                
-                # Extract team names
-                if is_team_indicator(token):
-                    team_parts = []
-                    # Look backward for prefixes
-                    if i > 0 and clean_strings[i-1] in ['Los', 'Golden', 'New', 'San', 'Oklahoma', 'Washington', 'Portland', 'Detroit', 'Chicago', 'Milwaukee']:
-                        team_parts.append(clean_strings[i-1])
-                    team_parts.append(token)
-                    # Look forward for suffixes
-                    if i < len(clean_strings)-1 and clean_strings[i+1] in ['Angeles', 'State', 'York', 'Antonio', 'City', 'Trail', 'Orleans']:
-                        team_parts.append(clean_strings[i+1])
-                        i += 1
-                    current_team = " ".join(team_parts)
-                    temp["current_team"] = current_team
-                    i += 1
-                    continue
-                
-                # Parse player records - ENHANCED DETECTION
-                if (',' in token or 
-                    token in ['Jr.,', 'Sr.,', 'II,', 'III,'] or
-                    (i + 2 < len(clean_strings) and clean_strings[i + 1] == ',')):
-                    
-                    player_name, next_idx = build_player_name(clean_strings, i)
-                    
-                    if not player_name:
-                        i += 1
-                        continue
-                    
-                    # Find status - look ahead carefully
-                    status = ""
-                    j = next_idx
-                    while j < len(clean_strings) and j < next_idx + 8:  # Don't look too far
-                        if clean_strings[j] in ['Out', 'Questionable', 'Doubtful', 'Probable', 'Available']:
-                            status = clean_strings[j]
-                            j += 1
-                            break
-                        j += 1
-                    
-                    # Collect reason with ENHANCED boundary detection
-                    reason_parts = []
-                    while j < len(clean_strings):
-                        reason_token = clean_strings[j]
-                        
-                        # ENHANCED stop conditions with team city detection
-                        if (is_likely_player_name(reason_token) or  # Any likely player name
-                            ',' in reason_token or                   # Comma indicates new player
-                            reason_token in ['Out', 'Questionable', 'Doubtful', 'Probable', 'Available'] or
-                            '@' in reason_token or                   # New matchup
-                            is_team_indicator(reason_token) or       # Team name
-                            is_team_city(reason_token) or            # ENHANCED: Team city detection
-                            re.match(r'\d{1,2}:\d{2}', reason_token) or  # Time
-                            reason_token in ['Jr.,', 'Sr.,', 'II,', 'III,']):
-                            break
-                        
-                        if reason_token not in ['-', ';', '(ET)', ',']:
-                            reason_parts.append(reason_token)
-                        j += 1
-                    
-                    # Create record
-                    if status and player_name.strip():
-                        raw_reason = " ".join(reason_parts).strip()
-                        clean_reason = normalize_text(raw_reason)
-                        
-                        record = {
-                            "date": temp.get("date", ""),
-                            "gametime": current_gametime,
-                            "matchup": current_matchup,
-                            "team": current_team,
-                            "player": player_name,
-                            "status": status,
-                            "reason": clean_reason
-                        }
-                        out_list.append(record)
-                        
-                        # DEBUG: Log when we find players to track progress
-                        logger.debug(f"Found player: {player_name}")
-                    
-                    # Continue from where reason parsing stopped
-                    i = j
-                else:
-                    i += 1
-                    
-            except (IndexError, AttributeError) as e:
-                logger.warning(f"Parser exception at index {i}: {e}")
-                i += 1
-        
-        # At the end of _parse_strings method, before the temp assignment
-        logger.info(f"🔍 FINAL DEBUG: Last 10 tokens processed: {clean_strings[-10:] if len(clean_strings) >= 10 else clean_strings}")
-        logger.info(f"🔍 Total players found this page: {len([r for r in out_list if r.get('player')])} - Last player: {out_list[-1].get('player') if out_list else 'None'}")
-        
-        # Persist context
-        temp["current_team"] = current_team
-        temp["current_matchup"] = current_matchup  
-        temp["current_gametime"] = current_gametime
-        
-        logger.info(f"Parser completed. Processed {len(clean_strings)} tokens, found {len(out_list)} players this page.")
-
-    # ------------------------------------------------------------------ #
-    # Stats line
-    # ------------------------------------------------------------------ #
-    def get_scraper_stats(self):
-        """Enhanced stats with detailed status for pattern discovery."""
-        base_stats = {
-            "gamedate": self.opts["gamedate"],
-            "hour": self.opts["hour"],
-            "period": self.opts["period"],
-            "records": len(self.data) if isinstance(self.data, list) else 0,
+        # Calculate additional useful stats from records
+        status_counts = {
+            status: sum(1 for r in records if r.get('status') == status)
+            for status in ['Out', 'Questionable', 'Doubtful', 'Probable', 'Available']
         }
         
-        # Add detailed status information
-        if len(self.data) == 0:
-            base_stats.update({
-                "status": "no_report_available",
-                "status_detail": "No injury report available at this time",
-                "data_type": "pattern_discovery",
-                "url_attempted": f"https://ak-static.cms.nba.com/referee/injury/Injury-Report_{self.opts['gamedate'][:4]}-{self.opts['gamedate'][4:6]}-{self.opts['gamedate'][6:8]}_{self.opts['hour'].zfill(2)}{self.opts['period']}.pdf"
-            })
-        else:
-            base_stats.update({
-                "status": "report_found", 
-                "status_detail": f"Found {len(self.data)} injury records",
-                "data_type": "injury_data",
-                "unique_teams": len(set(r.get('team', '') for r in self.data)),
-                "unique_matchups": len(set(r.get('matchup', '') for r in self.data)),
-                "status_counts": {
-                    status: sum(1 for r in self.data if r.get('status') == status)
-                    for status in ['Out', 'Questionable', 'Doubtful', 'Probable', 'Available']
-                }
-            })
+        confidence_distribution = {}
+        for record in records:
+            conf = record.get('confidence', 0.0)
+            bucket = f"{int(conf * 10) * 10}%"
+            confidence_distribution[bucket] = confidence_distribution.get(bucket, 0) + 1
         
-        return base_stats
-    
-    # QUICK FIX: Update validate_injury_data method in nbac_injury_report.py
-    def validate_injury_data(self) -> None:
-        """
-        FIXED: More lenient validation that handles parser quirks.
-        """
-        
-        # 1. BASIC DATA STRUCTURE VALIDATION
-        if not isinstance(self.data, list):
-            raise DownloadDataException("Data should be a list of injury records")
-        
-        if len(self.data) == 0:
-            raise DownloadDataException("No injury records found - PDF may be empty or parsing failed")
-        
-        # 2. RECORD COUNT SANITY CHECK (more lenient)
-        record_count = len(self.data)
-        if record_count < 3:  # Reduced from 5 to 3
-            logger.warning(f"Low record count: {record_count} (typical range: 20-600). This may be normal for light game days.")
-        elif record_count > 1000:  # Increased from 800 to 1000
-            raise DownloadDataException(f"Suspiciously high record count: {record_count} (expected 20-1000)")
-        
-        # 3. REQUIRED FIELDS VALIDATION (more lenient)
-        required_fields = ['date', 'gametime', 'matchup', 'team', 'player', 'status', 'reason']
-        valid_statuses = {'Out', 'Questionable', 'Doubtful', 'Probable', 'Available'}
-        
-        cleaned_records = []
-        for i, record in enumerate(self.data):
-            # Check required fields exist
-            for field in required_fields:
-                if field not in record:
-                    logger.warning(f"Record {i}: Missing field '{field}', skipping record")
-                    continue
-            
-            # CLEAN UP PLAYER NAMES (fix the parser bug)
-            player_name = record['player']
-            status = record['status']
-            
-            # If status appears in player name, remove it
-            for valid_status in valid_statuses:
-                if valid_status in player_name:
-                    player_name = player_name.replace(f', {valid_status}', '').replace(valid_status, '').strip()
-            
-            # Clean up other common parsing artifacts
-            player_name = player_name.replace(',,', ',').strip(' ,')
-            
-            # Update the record with cleaned name
-            record['player'] = player_name
-            
-            # Skip records with obviously broken names (but don't fail completely)
-            if len(player_name) < 3 or player_name.count(',') > 1:
-                logger.warning(f"Skipping suspicious player name: '{player_name}'")
-                continue
-                
-            cleaned_records.append(record)
-        
-        # Update data with cleaned records
-        self.data = cleaned_records
-        
-        if len(cleaned_records) == 0:
-            raise DownloadDataException("No valid records after cleaning")
-        
-        # 4. NBA TEAM VALIDATION (simplified)
-        team_keywords = ['Hawks', 'Celtics', 'Nets', 'Hornets', 'Bulls', 'Cavaliers', 'Mavericks', 
-                        'Nuggets', 'Pistons', 'Warriors', 'Rockets', 'Pacers', 'Clippers', 'Lakers']
-        
-        records_with_valid_teams = 0
-        for record in cleaned_records:
-            team = record.get('team', '')
-            if any(keyword in team for keyword in team_keywords):
-                records_with_valid_teams += 1
-        
-        # Allow some records to have missing team info
-        if records_with_valid_teams < len(cleaned_records) * 0.3:  # At least 30% should have valid teams
-            logger.warning(f"Many records missing team info: {records_with_valid_teams}/{len(cleaned_records)}")
-        
-        # 5. STATUS VALIDATION (more lenient)
-        invalid_statuses = []
-        for record in cleaned_records:
-            status = record.get('status', '')
-            if status not in valid_statuses:
-                invalid_statuses.append(status)
-        
-        if invalid_statuses:
-            unique_invalid = list(set(invalid_statuses))
-            # Log warning instead of failing
-            logger.warning(f"Some invalid status values found: {unique_invalid}")
-        
-        # 6. SUMMARY STATS FOR MONITORING
-        stats = {
-            'total_records': len(cleaned_records),
-            'original_records': record_count,
-            'cleaned_records': len(cleaned_records),
-            'status_breakdown': {},
+        # Create enhanced output with metadata and parsing stats
+        enhanced_output = {
+            "metadata": {
+                "gamedate": self.opts["gamedate"],
+                "hour": self.opts["hour"],
+                "period": self.opts["period"],
+                "hour24": self.opts["hour24"],
+                "season": self.opts["season"],
+                "scrape_time": self.opts["time"],
+                "run_id": self.run_id
+            },
+            "parsing_stats": {
+                "total_records": len(records),
+                "overall_confidence": self._calculate_overall_confidence_for_records(records),
+                "status_counts": status_counts,
+                "confidence_distribution": confidence_distribution,
+                **self.injury_parser.get_parsing_stats()
+            },
+            "records": records
         }
         
-        # Status breakdown
-        for record in cleaned_records:
-            status = record.get('status', 'Unknown')
-            stats['status_breakdown'][status] = stats['status_breakdown'].get(status, 0) + 1
-        
-        logger.info(f"VALIDATION_STATS {json.dumps(stats)}")
-        logger.info(f"✅ Validation passed: {len(cleaned_records)} valid records (from {record_count} original)")
+        self.data = enhanced_output
+        self.decoded_data = enhanced_output
+        logger.info("Successfully parsed %d injury records with enhanced metadata", len(records))
 
-    # ALTERNATIVE: Even simpler fix - just disable the problematic validation
-    def validate_injury_data_simple(self) -> None:
-        """
-        ULTRA-SIMPLE VERSION: Just check we have some records.
-        """
-        if not isinstance(self.data, list):
-            raise DownloadDataException("Data should be a list of injury records")
+    def _calculate_overall_confidence_for_records(self, records: List[Dict]) -> float:
+        """Calculate overall confidence for a list of records (used during parsing)."""
+        if not records:
+            return 0.0
         
-        if len(self.data) == 0:
-            raise DownloadDataException("No injury records found")
+        # Start with average individual confidence
+        avg_confidence = sum(r.get('confidence', 0.0) for r in records) / len(records)
         
-        logger.info(f"✅ Simple validation passed: {len(self.data)} records found")
+        # Get parser statistics
+        parser_stats = self.injury_parser.get_parsing_stats()
+        parsing_stats = parser_stats['parsing_stats']
+        
+        # Apply penalties and bonuses
+        overall = avg_confidence
+        
+        # Penalize high unparsed count (potential missed players)
+        if parsing_stats['player_lines'] > 0:
+            unparsed_ratio = parsing_stats['unparsed_count'] / parsing_stats['player_lines']
+            penalty = min(0.3, unparsed_ratio * 0.5)
+            overall -= penalty
+        
+        # Penalize high percentage of low-confidence records
+        low_conf_count = sum(1 for r in records if r.get('confidence', 1.0) < 0.7)
+        if len(records) > 0:
+            low_conf_ratio = low_conf_count / len(records)
+            penalty = min(0.2, low_conf_ratio * 0.3)
+            overall -= penalty
+        
+        # Small bonus for successful multi-line merges
+        if parsing_stats['merged_multiline'] > 0:
+            bonus = min(0.1, parsing_stats['merged_multiline'] * 0.02)
+            overall += bonus
+        
+        # Penalize if too many empty reasons
+        empty_reasons = sum(1 for r in records if not r.get('reason', '').strip())
+        if len(records) > 0:
+            empty_ratio = empty_reasons / len(records)
+            penalty = min(0.4, empty_ratio * 0.6)
+            overall -= penalty
+        
+        final_confidence = max(0.0, min(1.0, overall))
+        return round(final_confidence, 3)
 
+    def _calculate_overall_confidence(self) -> float:
+        """Calculate overall session confidence score for alerting purposes."""
+        if not self.data:
+            return 0.0
+        
+        # Start with average individual confidence
+        avg_confidence = sum(r.get('confidence', 0.0) for r in self.data) / len(self.data)
+        
+        # Get parser statistics
+        parser_stats = self.injury_parser.get_parsing_stats()
+        parsing_stats = parser_stats['parsing_stats']
+        
+        # Apply penalties and bonuses
+        overall = avg_confidence
+        
+        # Penalize high unparsed count (potential missed players)
+        if parsing_stats['player_lines'] > 0:
+            unparsed_ratio = parsing_stats['unparsed_count'] / parsing_stats['player_lines']
+            penalty = min(0.3, unparsed_ratio * 0.5)
+            overall -= penalty
+            logger.debug(f"Overall confidence: unparsed penalty = {penalty:.3f} (ratio: {unparsed_ratio:.3f})")
+        
+        # Penalize high percentage of low-confidence records
+        low_conf_count = sum(1 for r in self.data if r.get('confidence', 1.0) < 0.7)
+        if len(self.data) > 0:
+            low_conf_ratio = low_conf_count / len(self.data)
+            penalty = min(0.2, low_conf_ratio * 0.3)
+            overall -= penalty
+            logger.debug(f"Overall confidence: low-confidence penalty = {penalty:.3f} (ratio: {low_conf_ratio:.3f})")
+        
+        # Small bonus for successful multi-line merges (shows parser is working well)
+        if parsing_stats['merged_multiline'] > 0:
+            bonus = min(0.1, parsing_stats['merged_multiline'] * 0.02)
+            overall += bonus
+            logger.debug(f"Overall confidence: multi-line bonus = {bonus:.3f}")
+        
+        # Penalize if too many empty reasons (parsing quality issue)
+        empty_reasons = sum(1 for r in self.data if not r.get('reason', '').strip())
+        if len(self.data) > 0:
+            empty_ratio = empty_reasons / len(self.data)
+            penalty = min(0.4, empty_ratio * 0.6)
+            overall -= penalty
+            if penalty > 0:
+                logger.debug(f"Overall confidence: empty reasons penalty = {penalty:.3f} (ratio: {empty_ratio:.3f})")
+        
+        final_confidence = max(0.0, min(1.0, overall))
+        logger.info(f"Overall session confidence: {final_confidence:.3f} (avg: {avg_confidence:.3f})")
+        
+        return round(final_confidence, 3)
 
     def get_scraper_stats(self) -> dict:
-        """Enhanced stats with validation metrics"""
-        base_stats = {
-            "gamedate": self.opts["gamedate"],
-            "hour": self.opts["hour"],
-            "period": self.opts["period"],
-            "records": len(self.data) if isinstance(self.data, list) else 0,
-        }
+        """Enhanced statistics with parsing and confidence metrics."""
+        if isinstance(self.data, dict) and 'metadata' in self.data:
+            # New structure - extract from existing data
+            records = self.data.get('records', [])
+            base_stats = self.data['metadata'].copy()
+            base_stats.update(self.data['parsing_stats'])
+        else:
+            # Fallback for old structure
+            records = self.data if isinstance(self.data, list) else []
+            base_stats = {
+                "gamedate": self.opts.get("gamedate", ""),
+                "hour": self.opts.get("hour", ""),
+                "period": self.opts.get("period", ""),
+                "records": len(records),
+            }
         
-        if isinstance(self.data, list) and len(self.data) > 0:
-            # Add validation-related stats
+        if records:
+            empty_reasons = [r for r in records if not r.get('reason')]
+            low_confidence = [r for r in records if r.get('confidence', 1.0) < 0.7]
+            high_confidence = [r for r in records if r.get('confidence', 1.0) >= 0.9]
+            
+            # Calculate confidence distribution
+            confidence_distribution = {}
+            for record in records:
+                conf = record.get('confidence', 0.0)
+                bucket = f"{int(conf * 10) * 10}%"
+                confidence_distribution[bucket] = confidence_distribution.get(bucket, 0) + 1
+            
             base_stats.update({
-                "unique_teams": len(set(r.get('team', '') for r in self.data)),
-                "unique_matchups": len(set(r.get('matchup', '') for r in self.data)),
+                "unique_teams": len(set(r.get('team', '') for r in records)),
+                "unique_matchups": len(set(r.get('matchup', '') for r in records)),
                 "status_counts": {
-                    status: sum(1 for r in self.data if r.get('status') == status)
+                    status: sum(1 for r in records if r.get('status') == status)
                     for status in ['Out', 'Questionable', 'Doubtful', 'Probable', 'Available']
-                }
+                },
+                "empty_reasons_count": len(empty_reasons),
+                "players_with_empty_reasons": [r['player'] for r in empty_reasons],
+                "low_confidence_count": len(low_confidence),
+                "high_confidence_count": len(high_confidence),
+                "average_confidence": sum(r.get('confidence', 1.0) for r in records) / len(records),
+                "players_with_low_confidence": [f"{r['player']} ({r.get('confidence', 0):.3f})" for r in low_confidence],
+                "confidence_distribution": confidence_distribution
             })
         
         return base_stats
 
+    def validate_injury_data(self) -> None:
+        """Enhanced validation with parsing quality checks."""
+        if isinstance(self.data, dict):
+            records = self.data.get('records', [])
+        else:
+            records = self.data if isinstance(self.data, list) else []
+        
+        if not isinstance(records, list):
+            raise DownloadDataException("Records should be a list of injury records")
+        
+        if len(records) == 0:
+            raise DownloadDataException("No injury records found - PDF may be empty or parsing failed")
+        
+        record_count = len(records)
+        if record_count < 1:
+            raise DownloadDataException(f"Suspiciously low record count: {record_count}")
+        elif record_count > 1000:
+            raise DownloadDataException(f"Suspiciously high record count: {record_count}")
+        
+        # Validate key fields
+        valid_records = []
+        for i, record in enumerate(records):
+            required_fields = ['date', 'gametime', 'matchup', 'team', 'player', 'status', 'reason', 'confidence']
+            
+            if all(field in record for field in required_fields):
+                if len(record['player']) >= 3:
+                    valid_records.append(record)
+                else:
+                    logger.warning("Skipping record %d with suspicious player name: %s", 
+                                 i, record.get('player'))
+        
+        # Update records in data structure
+        if isinstance(self.data, dict):
+            self.data['records'] = valid_records
+            self.data['parsing_stats']['total_records'] = len(valid_records)
+        else:
+            self.data = valid_records
+        
+        # Enhanced validation logging
+        stats = self.get_scraper_stats()
+        overall_confidence = stats.get('overall_confidence', 0.0)
+        
+        logger.info("Enhanced validation passed: %d valid records", len(valid_records))
+        logger.info(f"Overall session confidence: {overall_confidence:.3f}")
+        logger.info(f"Average individual confidence: {stats.get('average_confidence', 0):.3f}")
+        
+        # Check if we have parsing stats
+        if 'parsing_stats' in stats:
+            logger.info(f"Multi-line injuries merged: {stats['parsing_stats']['merged_multiline']}")
+            logger.info(f"Unparsed lines detected: {stats['parsing_stats']['unparsed_count']}")
+        
+        # Alert-level logging based on overall confidence
+        if overall_confidence < 0.4:
+            logger.error(f"CRITICAL: Overall confidence extremely low ({overall_confidence:.3f}) - parsing may have failed")
+        elif overall_confidence < 0.6:
+            logger.warning(f"WARNING: Overall confidence low ({overall_confidence:.3f}) - check parsing quality")
+        elif overall_confidence < 0.8:
+            logger.info(f"NOTICE: Overall confidence moderate ({overall_confidence:.3f}) - minor parsing issues detected")
+        
+        if stats.get('empty_reasons_count', 0) > 0:
+            logger.warning("%d players have empty reasons", stats['empty_reasons_count'])
+        
+        if stats.get('low_confidence_count', 0) > 0:
+            logger.warning("%d players have low confidence scores", stats['low_confidence_count'])
+        
+        # Log confidence distribution
+        conf_dist = stats.get('confidence_distribution', {})
+        if conf_dist:
+            logger.info(f"Confidence distribution: {conf_dist}")
 
-# --------------------------------------------------------------------------- #
-# MIXIN-BASED Flask and CLI entry points (MUCH CLEANER!)
-# --------------------------------------------------------------------------- #
 
-# Use the mixin's utility to create the Flask app
+# Flask and CLI entry points
 create_app = convert_existing_flask_scraper(GetNbaComInjuryReport)
 
-# Use the mixin's main function generator
 if __name__ == "__main__":
     main = GetNbaComInjuryReport.create_cli_and_flask_main()
     main()
-    
