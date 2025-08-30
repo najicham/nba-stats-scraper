@@ -4,11 +4,12 @@ File: processors/nbacom/nbac_gamebook_processor.py
 
 Process NBA.com gamebook data (box scores with DNP/inactive players) for BigQuery storage.
 Resolves inactive player names using Basketball Reference rosters.
+Updated with aggressive team name normalization to handle all case/formatting variations.
 """
 
 import json
 import logging
-import os
+import re
 from datetime import datetime
 from typing import Dict, List, Tuple, Optional
 from collections import defaultdict
@@ -26,320 +27,361 @@ class NbacGamebookProcessor(ProcessorBase):
         self.processing_strategy = 'MERGE_UPDATE'
         self.br_roster_cache = {}  # Cache for Basketball Reference rosters
         self.bq_client = bigquery.Client()
-        self.project_id = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
+        self.project_id = self.bq_client.project
+    
+    def log_quality_issue(self, issue_type: str, severity: str, identifier: str, details: Dict):
+        """Log data quality issues for review."""
+        # For now, just log to console. Could write to BigQuery quality table later
+        logger.warning(f"Quality issue [{severity}] {issue_type}: {identifier} - {details}")
         
     def load_br_rosters_for_season(self, season_year: int) -> None:
         """Cache Basketball Reference rosters for a season to resolve inactive player names."""
         if season_year in self.br_roster_cache:
             return
             
+        query = f"""
+        SELECT DISTINCT
+            team_abbrev,
+            player_last_name,
+            player_full_name,
+            player_lookup
+        FROM `nba_raw.br_rosters_current`
+        WHERE season_year = {season_year}
+        """
+        
         try:
-            query = f"""
-            SELECT 
-                team_abbrev,
-                player_last_name,
-                player_full_name,
-                player_lookup
-            FROM `{self.project_id}.nba_raw.br_rosters_current`
-            WHERE season_year = {season_year}
-            """
-            
             results = self.bq_client.query(query).to_dataframe()
             
             # Build lookup: {(team, last_name): [list of players]}
             roster_lookup = defaultdict(list)
             for _, row in results.iterrows():
-                key = (row['team_abbrev'], row['player_last_name'])
+                key = (row['team_abbrev'], row['player_last_name'].lower())
                 roster_lookup[key].append({
                     'full_name': row['player_full_name'],
                     'lookup': row['player_lookup']
                 })
             
             self.br_roster_cache[season_year] = roster_lookup
-            logger.info(f"Cached {len(results)} roster entries for season {season_year}")
-            
+            logger.info(f"Loaded {len(results)} roster entries for {season_year} season")
         except Exception as e:
-            logger.warning(f"Could not load BR rosters for season {season_year}: {e}")
+            logger.warning(f"Could not load BR rosters for {season_year}: {e}")
             self.br_roster_cache[season_year] = {}
     
-    def extract_opts_from_path(self, file_path: str) -> Dict:
-        """Extract metadata from file path.
-        Path formats: 
-        - nba-com/gamebooks-data/2021-10-19/20211019-BKNMIL/timestamp.json
-        - nba-com/gamebooks-data/2021-10-19/20211019-BKNMIL
+    def resolve_inactive_player(self, last_name: str, team_abbr: str, season_year: int) -> Tuple[str, str, str]:
         """
-        try:
-            parts = file_path.rstrip('/').split('/')
-            
-            # Handle different path depths
-            if len(parts) >= 4:  # Has game code
-                date_str = parts[2]  # "2021-10-19"
-                game_code = parts[3]  # "20211019-BKNMIL"
-                
-                # Extract teams from game code
-                game_parts = game_code.split('-')
-                if len(game_parts) >= 2:
-                    date_compact = game_parts[0]  # "20211019"
-                    teams = game_parts[1]  # "BKNMIL"
-                    
-                    away_team = teams[:3] if len(teams) >= 6 else 'UNK'
-                    home_team = teams[3:6] if len(teams) >= 6 else 'UNK'
-                else:
-                    # Fallback if format is unexpected
-                    date_compact = date_str.replace('-', '')
-                    away_team = 'UNK'
-                    home_team = 'UNK'
-            else:
-                # Fallback for unexpected structure
-                date_str = parts[-2] if len(parts) >= 3 else '2021-01-01'
-                date_compact = date_str.replace('-', '')
-                away_team = 'UNK'
-                home_team = 'UNK'
-            
-            # Determine season year (Oct-Dec is current year, Jan-Sep is previous year)
-            date_obj = datetime.strptime(date_str, '%Y-%m-%d')
-            season_year = date_obj.year if date_obj.month >= 10 else date_obj.year - 1
-            
-            return {
-                'game_date': date_str,
-                'game_id': f"{date_compact}_{away_team}_{home_team}",
-                'away_team_abbr': away_team,
-                'home_team_abbr': home_team,
-                'season_year': season_year,
-                'source_file_path': file_path
-            }
-        except Exception as e:
-            logger.error(f"Error parsing path {file_path}: {e}")
-            return {}
-    
-    def normalize_player_name(self, name: str) -> str:
-        """Create normalized player lookup key."""
-        if not name:
-            return ''
-        # Remove punctuation and spaces, lowercase
-        return ''.join(c.lower() for c in name if c.isalnum())
-    
-    def get_team_abbrev(self, team_name: str) -> str:
-        """Extract team abbreviation from full team name.
-        This is a placeholder - actual mapping may be needed.
-        """
-        # NBA.com usually includes team names like "Brooklyn Nets"
-        # For now, we'll extract from the game context
-        # In production, use a proper team mapping
-        return team_name[:3].upper() if team_name else 'UNK'
-    
-    def resolve_inactive_player(self, last_name: str, team_abbr: str, season_year: int) -> Tuple[str, str]:
-        """Resolve inactive player's full name using BR rosters.
-        Returns: (full_name, resolution_status)
+        Resolve last name to full name using BR rosters.
+        Returns: (resolved_name, lookup_name, resolution_status)
         """
         self.load_br_rosters_for_season(season_year)
         
         roster_lookup = self.br_roster_cache.get(season_year, {})
-        matches = roster_lookup.get((team_abbr, last_name), [])
+        matches = roster_lookup.get((team_abbr, last_name.lower()), [])
         
         if len(matches) == 1:
-            return matches[0]['full_name'], 'resolved'
+            # Perfect match
+            return (
+                matches[0]['full_name'], 
+                matches[0]['lookup'],
+                'resolved'
+            )
         elif len(matches) > 1:
             # Multiple players with same last name on team
-            logger.warning(f"Multiple players named {last_name} on {team_abbr}")
-            return last_name, 'multiple_matches'
+            self.log_quality_issue(
+                issue_type='multiple_name_matches',
+                severity='warning',
+                identifier=f"{team_abbr}_{last_name}_{season_year}",
+                details={
+                    'last_name': last_name,
+                    'team': team_abbr,
+                    'matches': [m['full_name'] for m in matches]
+                }
+            )
+            # Keep original, generate lookup from last name
+            return (
+                last_name,
+                last_name.lower().replace(' ', '').replace('-', '').replace("'", ''),
+                'multiple_matches'
+            )
         else:
-            # No match found - possibly traded or roster not updated
-            logger.debug(f"Could not resolve {last_name} on {team_abbr}")
-            return last_name, 'not_found'
+            # No match found
+            self.log_quality_issue(
+                issue_type='name_not_found',
+                severity='info',
+                identifier=f"{team_abbr}_{last_name}_{season_year}",
+                details={'last_name': last_name, 'team': team_abbr}
+            )
+            # Keep original, generate lookup from last name
+            return (
+                last_name,
+                last_name.lower().replace(' ', '').replace('-', '').replace("'", ''),
+                'not_found'
+            )
+    
+    def normalize_name(self, name: str) -> str:
+        """Create normalized lookup key from name."""
+        return name.lower().replace(' ', '').replace('-', '').replace("'", '')
+    
+    def normalize_team_name(self, team_name: str) -> str:
+        """Aggressively normalize team name for consistent mapping."""
+        if not team_name:
+            return ""
+        
+        # Convert to lowercase and strip whitespace
+        normalized = team_name.lower().strip()
+        
+        # Handle known aliases first (before aggressive normalization)
+        normalized = normalized.replace("la clippers", "los angeles clippers")
+        normalized = normalized.replace("la lakers", "los angeles lakers")
+        
+        # Aggressive normalization: remove all non-alphanumeric characters
+        normalized = re.sub(r'[^a-z0-9]', '', normalized)
+        
+        return normalized
+    
+    def extract_game_info(self, file_path: str, data: Dict) -> Dict:
+        """Extract game metadata from file path and data."""
+        # Path format: nba-com/gamebooks-data/2021-10-19/20211019-BKNMIL/20250827_234400.json
+        path_parts = file_path.split('/')
+        date_str = path_parts[-3]  # 2021-10-19
+        game_code = path_parts[-2]  # 20211019-BKNMIL
+        
+        # Parse game code
+        date_part = game_code[:8]  # 20211019
+        teams_part = game_code[9:]  # BKNMIL
+        
+        # Extract teams (first 3 chars = away, last 3 = home)
+        away_team = teams_part[:3] if len(teams_part) >= 6 else None
+        home_team = teams_part[3:6] if len(teams_part) >= 6 else None
+        
+        # Build game_id in standard format
+        game_id = f"{date_part}_{away_team}_{home_team}" if away_team and home_team else game_code
+        
+        # Extract season year (Oct-Dec = current year, Jan-Jun = previous year)
+        game_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+        month = game_date.month
+        season_year = game_date.year if month >= 10 else game_date.year - 1
+        
+        return {
+            'game_id': game_id,
+            'game_code': data.get('game_code', game_code),
+            'game_date': game_date,
+            'season_year': season_year,
+            'home_team_abbr': home_team,
+            'away_team_abbr': away_team
+        }
+    
+    def validate_data(self, data: Dict) -> List[str]:
+        """Validate the gamebook JSON structure."""
+        errors = []
+        
+        # Check for required fields
+        if 'game_code' not in data:
+            errors.append("Missing 'game_code' field")
+        
+        # Check for at least one player array
+        player_arrays = ['active_players', 'dnp_players', 'inactive_players']
+        if not any(arr in data for arr in player_arrays):
+            errors.append(f"No player arrays found. Expected at least one of: {player_arrays}")
+        
+        return errors
     
     def convert_minutes(self, minutes_str: str) -> Optional[float]:
-        """Convert minutes string "30:15" to decimal 30.25."""
-        if not minutes_str or minutes_str == 'None':
+        """Convert minutes string (MM:SS) to decimal."""
+        if not minutes_str or minutes_str == '-':
             return None
         try:
             parts = minutes_str.split(':')
             if len(parts) == 2:
                 return float(parts[0]) + float(parts[1]) / 60
-        except:
-            return None
+        except (ValueError, AttributeError):
+            pass
         return None
     
-    def validate_data(self, data: Dict) -> List[str]:
-        """Validate the gamebook data structure."""
-        errors = []
+    def get_team_abbreviation(self, team_name: str) -> Optional[str]:
+        """Map full team name to 3-letter abbreviation using aggressive normalization."""
         
-        if not data:
-            errors.append("Empty data")
-            return errors
+        # Normalized mapping table - all keys are aggressively normalized
+        team_mapping = {
+            # Eastern Conference
+            'atlantahawks': 'ATL',
+            'bostonceltics': 'BOS',
+            'brooklynnets': 'BKN',
+            'charlottehornets': 'CHA',
+            'chicagobulls': 'CHI',
+            'clevelandcavaliers': 'CLE',
+            'detroitpistons': 'DET',
+            'indianapacers': 'IND',
+            'miamiheat': 'MIA',
+            'milwaukeebucks': 'MIL',
+            'newyorkknicks': 'NYK',
+            'orlandomagic': 'ORL',
+            'philadelphia76ers': 'PHI',
+            'torontoraptors': 'TOR',
+            'washingtonwizards': 'WAS',
             
-        if 'game_code' not in data:
-            errors.append("Missing game_code")
+            # Western Conference
+            'dallasmavericks': 'DAL',
+            'denvernuggets': 'DEN',
+            'goldenstatewarriors': 'GSW',
+            'houstonrockets': 'HOU',
+            'losangelesclippers': 'LAC',  # handles LA Clippers -> Los Angeles Clippers
+            'losangeleslakers': 'LAL',   # handles LA Lakers -> Los Angeles Lakers
+            'memphisgrizzlies': 'MEM',
+            'minnesotatimberwolves': 'MIN',
+            'neworleanspelicans': 'NOP',
+            'oklahomacitythunder': 'OKC',
+            'phoenixsuns': 'PHX',
+            'portlandtrailblazers': 'POR',
+            'sacramentokings': 'SAC',
+            'sanantoniospurs': 'SAS',
+            'utahjazz': 'UTA'
+        }
         
-        # At least one of these arrays should exist
-        if not any(key in data for key in ['active_players', 'dnp_players', 'inactive_players']):
-            errors.append("No player arrays found")
+        normalized_input = self.normalize_team_name(team_name)
+        result = team_mapping.get(normalized_input)
         
-        return errors
+        # Log unmapped teams for debugging
+        if not result and team_name:
+            logger.warning(f"Unmapped team: '{team_name}' -> normalized: '{normalized_input}'")
+        
+        return result
+    
+    def process_active_player(self, player: Dict, game_info: Dict) -> Dict:
+        """Process an active player with stats."""
+        stats = player.get('stats', {})
+        
+        # Determine team abbreviation
+        team_abbr = None
+        if player.get('team'):
+            # Map full team name to abbreviation using aggressive normalization
+            team_abbr = self.get_team_abbreviation(player['team'])
+        
+        return {
+            'game_id': game_info['game_id'],
+            'game_code': game_info['game_code'],
+            'game_date': game_info['game_date'].isoformat() if hasattr(game_info['game_date'], 'isoformat') else game_info['game_date'],
+            'season_year': game_info['season_year'],
+            'home_team_abbr': game_info['home_team_abbr'],
+            'away_team_abbr': game_info['away_team_abbr'],
+            'player_name': player.get('name'),
+            'player_name_original': player.get('name'),
+            'player_lookup': self.normalize_name(player.get('name', '')),
+            'team_abbr': team_abbr,
+            'player_status': 'active',
+            'dnp_reason': None,
+            'name_resolution_status': 'original',
+            # Stats
+            'minutes': stats.get('minutes'),
+            'minutes_decimal': self.convert_minutes(stats.get('minutes')),
+            'points': stats.get('points'),
+            'field_goals_made': stats.get('field_goals_made'),
+            'field_goals_attempted': stats.get('field_goals_attempted'),
+            'field_goal_percentage': stats.get('field_goal_percentage'),
+            'three_pointers_made': stats.get('three_pointers_made'),
+            'three_pointers_attempted': stats.get('three_pointers_attempted'),
+            'three_point_percentage': stats.get('three_point_percentage'),
+            'free_throws_made': stats.get('free_throws_made'),
+            'free_throws_attempted': stats.get('free_throws_attempted'),
+            'free_throw_percentage': stats.get('free_throw_percentage'),
+            'offensive_rebounds': stats.get('offensive_rebounds'),
+            'defensive_rebounds': stats.get('defensive_rebounds'),
+            'total_rebounds': stats.get('rebounds_total', stats.get('rebounds')),
+            'assists': stats.get('assists'),
+            'steals': stats.get('steals'),
+            'blocks': stats.get('blocks'),
+            'turnovers': stats.get('turnovers'),
+            'personal_fouls': stats.get('fouls', stats.get('personal_fouls')),
+            'plus_minus': stats.get('plus_minus'),
+            'source_file_path': None  # Will be set by transform_data
+        }
+    
+    def process_inactive_player(self, player: Dict, game_info: Dict, status: str) -> Dict:
+        """Process a DNP or inactive player."""
+        # Determine team abbreviation
+        team_abbr = None
+        if player.get('team'):
+            team_abbr = self.get_team_abbreviation(player['team'])
+        
+        # For inactive players, try to resolve full name
+        player_name = player.get('name', '')
+        player_lookup = self.normalize_name(player_name)
+        resolution_status = 'original'
+        
+        if status == 'inactive' and player_name and not ' ' in player_name:
+            # Likely just a last name, try to resolve
+            if team_abbr:
+                resolved_name, resolved_lookup, resolution_status = self.resolve_inactive_player(
+                    player_name, team_abbr, game_info['season_year']
+                )
+                player_lookup = resolved_lookup
+                if resolution_status == 'resolved':
+                    player_name = resolved_name
+        
+        return {
+            'game_id': game_info['game_id'],
+            'game_code': game_info['game_code'],
+            'game_date': game_info['game_date'].isoformat() if hasattr(game_info['game_date'], 'isoformat') else game_info['game_date'],
+            'season_year': game_info['season_year'],
+            'home_team_abbr': game_info['home_team_abbr'],
+            'away_team_abbr': game_info['away_team_abbr'],
+            'player_name': player_name,
+            'player_name_original': player.get('name'),
+            'player_lookup': player_lookup,
+            'team_abbr': team_abbr,
+            'player_status': status,
+            'dnp_reason': player.get('dnp_reason') or player.get('reason'),
+            'name_resolution_status': resolution_status,
+            # All stats are NULL for inactive players
+            'minutes': None,
+            'minutes_decimal': None,
+            'points': None,
+            'field_goals_made': None,
+            'field_goals_attempted': None,
+            'field_goal_percentage': None,
+            'three_pointers_made': None,
+            'three_pointers_attempted': None,
+            'three_point_percentage': None,
+            'free_throws_made': None,
+            'free_throws_attempted': None,
+            'free_throw_percentage': None,
+            'offensive_rebounds': None,
+            'defensive_rebounds': None,
+            'total_rebounds': None,
+            'assists': None,
+            'steals': None,
+            'blocks': None,
+            'turnovers': None,
+            'personal_fouls': None,
+            'plus_minus': None,
+            'source_file_path': None  # Will be set by transform_data
+        }
     
     def transform_data(self, raw_data: Dict, file_path: str) -> List[Dict]:
         """Transform gamebook data to BigQuery rows."""
         rows = []
-        opts = self.extract_opts_from_path(file_path)
         
-        if not opts:
-            logger.error(f"Could not extract metadata from path: {file_path}")
-            return rows
-        
-        game_code = raw_data.get('game_code', '')
+        # Extract game information
+        game_info = self.extract_game_info(file_path, raw_data)
         
         # Process active players
         for player in raw_data.get('active_players', []):
-            stats = player.get('stats', {})
-            team_name = player.get('team', '')
-            
-            # Determine which team this player is on
-            # This is simplified - in production, use proper team resolution
-            team_abbr = self.get_team_abbrev(team_name)
-            
-            row = {
-                'game_id': opts['game_id'],
-                'game_code': game_code,
-                'game_date': opts['game_date'],
-                'season_year': opts['season_year'],
-                'home_team_abbr': opts['home_team_abbr'],
-                'away_team_abbr': opts['away_team_abbr'],
-                'player_name': player.get('name', ''),
-                'player_name_original': player.get('name', ''),
-                'player_lookup': self.normalize_player_name(player.get('name', '')),
-                'team_name': team_name,
-                'team_abbr': team_abbr,
-                'player_status': 'active',
-                'dnp_reason': None,
-                'name_resolution_status': None,
-                # Stats
-                'minutes': stats.get('minutes'),
-                'minutes_decimal': self.convert_minutes(stats.get('minutes')),
-                'points': stats.get('points'),
-                'field_goals_made': stats.get('field_goals_made'),
-                'field_goals_attempted': stats.get('field_goals_attempted'),
-                'field_goal_percentage': stats.get('field_goal_percentage'),
-                'three_pointers_made': stats.get('three_pointers_made'),
-                'three_pointers_attempted': stats.get('three_pointers_attempted'),
-                'three_point_percentage': stats.get('three_point_percentage'),
-                'free_throws_made': stats.get('free_throws_made'),
-                'free_throws_attempted': stats.get('free_throws_attempted'),
-                'free_throw_percentage': stats.get('free_throw_percentage'),
-                'offensive_rebounds': stats.get('offensive_rebounds'),
-                'defensive_rebounds': stats.get('defensive_rebounds'),
-                'total_rebounds': stats.get('total_rebounds'),
-                'assists': stats.get('assists'),
-                'steals': stats.get('steals'),
-                'blocks': stats.get('blocks'),
-                'turnovers': stats.get('turnovers'),
-                'personal_fouls': stats.get('personal_fouls'),
-                'plus_minus': stats.get('plus_minus'),
-                'source_file_path': opts['source_file_path'],
-                'processed_at': datetime.utcnow().isoformat()
-            }
+            row = self.process_active_player(player, game_info)
+            row['source_file_path'] = file_path
             rows.append(row)
         
         # Process DNP players
         for player in raw_data.get('dnp_players', []):
-            row = {
-                'game_id': opts['game_id'],
-                'game_code': game_code,
-                'game_date': opts['game_date'],
-                'season_year': opts['season_year'],
-                'home_team_abbr': opts['home_team_abbr'],
-                'away_team_abbr': opts['away_team_abbr'],
-                'player_name': player.get('name', ''),
-                'player_name_original': player.get('name', ''),
-                'player_lookup': self.normalize_player_name(player.get('name', '')),
-                'team_name': player.get('team', ''),
-                'team_abbr': self.get_team_abbrev(player.get('team', '')),
-                'player_status': 'dnp',
-                'dnp_reason': player.get('dnp_reason', ''),
-                'name_resolution_status': None,
-                # All stats NULL for DNP
-                'minutes': None,
-                'minutes_decimal': None,
-                'points': None,
-                'field_goals_made': None,
-                'field_goals_attempted': None,
-                'field_goal_percentage': None,
-                'three_pointers_made': None,
-                'three_pointers_attempted': None,
-                'three_point_percentage': None,
-                'free_throws_made': None,
-                'free_throws_attempted': None,
-                'free_throw_percentage': None,
-                'offensive_rebounds': None,
-                'defensive_rebounds': None,
-                'total_rebounds': None,
-                'assists': None,
-                'steals': None,
-                'blocks': None,
-                'turnovers': None,
-                'personal_fouls': None,
-                'plus_minus': None,
-                'source_file_path': opts['source_file_path'],
-                'processed_at': datetime.utcnow().isoformat()
-            }
+            row = self.process_inactive_player(player, game_info, 'dnp')
+            row['source_file_path'] = file_path
             rows.append(row)
         
-        # Process inactive players with name resolution
+        # Process inactive players
         for player in raw_data.get('inactive_players', []):
-            original_name = player.get('name', '')
-            team_name = player.get('team', '')
-            team_abbr = self.get_team_abbrev(team_name)
-            
-            # Try to resolve full name if only last name provided
-            if ' ' not in original_name:  # Likely just a last name
-                resolved_name, resolution_status = self.resolve_inactive_player(
-                    original_name, team_abbr, opts['season_year']
-                )
-            else:
-                resolved_name = original_name
-                resolution_status = None
-            
-            row = {
-                'game_id': opts['game_id'],
-                'game_code': game_code,
-                'game_date': opts['game_date'],
-                'season_year': opts['season_year'],
-                'home_team_abbr': opts['home_team_abbr'],
-                'away_team_abbr': opts['away_team_abbr'],
-                'player_name': resolved_name,
-                'player_name_original': original_name,
-                'player_lookup': self.normalize_player_name(resolved_name),
-                'team_name': team_name,
-                'team_abbr': team_abbr,
-                'player_status': 'inactive',
-                'dnp_reason': player.get('reason', ''),
-                'name_resolution_status': resolution_status,
-                # All stats NULL for inactive
-                'minutes': None,
-                'minutes_decimal': None,
-                'points': None,
-                'field_goals_made': None,
-                'field_goals_attempted': None,
-                'field_goal_percentage': None,
-                'three_pointers_made': None,
-                'three_pointers_attempted': None,
-                'three_point_percentage': None,
-                'free_throws_made': None,
-                'free_throws_attempted': None,
-                'free_throw_percentage': None,
-                'offensive_rebounds': None,
-                'defensive_rebounds': None,
-                'total_rebounds': None,
-                'assists': None,
-                'steals': None,
-                'blocks': None,
-                'turnovers': None,
-                'personal_fouls': None,
-                'plus_minus': None,
-                'source_file_path': opts['source_file_path'],
-                'processed_at': datetime.utcnow().isoformat()
-            }
+            row = self.process_inactive_player(player, game_info, 'inactive')
+            row['source_file_path'] = file_path
             rows.append(row)
         
+        logger.info(f"Processed {len(rows)} players from {file_path}")
         return rows
     
     def load_data(self, rows: List[Dict], **kwargs) -> Dict:
@@ -351,29 +393,25 @@ class NbacGamebookProcessor(ProcessorBase):
         errors = []
         
         try:
-            # For MERGE_UPDATE, we'll delete existing game data and insert new
-            if rows:
+            if self.processing_strategy == 'MERGE_UPDATE':
+                # For MERGE_UPDATE, we'll delete existing game data first
                 game_id = rows[0]['game_id']
-                
-                # Delete existing data for this game
                 delete_query = f"""
                 DELETE FROM `{table_id}`
                 WHERE game_id = '{game_id}'
                 """
                 self.bq_client.query(delete_query).result()
-                
-                # Insert new data
-                result = self.bq_client.insert_rows_json(table_id, rows)
-                if result:
-                    errors.extend([str(err) for err in result])
-                    
+                logger.info(f"Deleted existing data for game {game_id}")
+            
+            # Insert new rows
+            result = self.bq_client.insert_rows_json(table_id, rows)
+            if result:
+                errors.extend([str(e) for e in result])
         except Exception as e:
             errors.append(str(e))
-            logger.error(f"Error loading data: {e}")
+            logger.error(f"Failed to load data: {e}")
         
         return {
-            'rows_processed': len(rows),
-            'errors': errors,
-            'status': 'success' if not errors else 'error'
+            'rows_processed': len(rows) if not errors else 0,
+            'errors': errors
         }
-    

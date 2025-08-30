@@ -12,6 +12,10 @@ import base64
 
 # Import processors
 from processors.basketball_ref.br_roster_processor import BasketballRefRosterProcessor
+from processors.oddsapi.odds_api_props_processor import OddsApiPropsProcessor
+from processors.nbacom.nbac_gamebook_processor import NbacGamebookProcessor
+from processors.nbacom.nbac_player_list_processor import NbacPlayerListProcessor
+
 # from balldontlie.bdl_boxscore_processor import BdlBoxscoreProcessor
 # from nbacom.nbac_schedule_processor import NbacScheduleProcessor
 
@@ -22,8 +26,9 @@ logger = logging.getLogger(__name__)
 # Processor registry
 PROCESSOR_REGISTRY = {
     'basketball-ref/season-rosters': BasketballRefRosterProcessor,
-    # 'ball-dont-lie/boxscores': BdlBoxscoreProcessor,
-    # 'nba-com/schedule': NbacScheduleProcessor,
+    'odds-api/player-props': OddsApiPropsProcessor,
+    'nba-com/gamebooks-data': NbacGamebookProcessor,
+    'nba-com/player-list': NbacPlayerListProcessor,
 }
 
 

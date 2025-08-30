@@ -16,17 +16,16 @@ CREATE TABLE IF NOT EXISTS `nba_raw.nbac_gamebook_player_stats` (
   player_name          STRING,              -- Full name (resolved for inactive)
   player_name_original STRING,              -- As appears in source
   player_lookup        STRING,              -- Normalized: "kevindurant"
-  team_name            STRING,              -- Full team name from source
-  team_abbr            STRING,              -- Three-letter code
+  team_abbr            STRING,              -- Three-letter code for player's team
   
   -- Player status
   player_status        STRING,              -- "active", "dnp", "inactive"
-  dnp_reason           STRING,              -- DNP or injury reason
-  name_resolution_status STRING,            -- "resolved", "multiple_matches", "not_found"
+  dnp_reason           STRING,              -- Full DNP or injury reason text
+  name_resolution_status STRING,            -- "resolved", "multiple_matches", "not_found", "original"
   
   -- Stats (NULL for non-active players)
-  minutes              STRING,              -- Original format "30:15"
-  minutes_decimal      FLOAT64,             -- Converted: 30.25
+  minutes              STRING,              -- "30:15" format
+  minutes_decimal      FLOAT64,             -- 30.25
   points               INT64,
   field_goals_made     INT64,
   field_goals_attempted INT64,
@@ -54,12 +53,9 @@ CREATE TABLE IF NOT EXISTS `nba_raw.nbac_gamebook_player_stats` (
 PARTITION BY game_date
 CLUSTER BY player_lookup, game_date, player_status
 OPTIONS(
-  description = "NBA.com gamebook data including active players, DNP, and inactive players with resolved names",
-  labels = [("source", "nbacom"), ("type", "gamebook")]
+  description = "NBA.com gamebook data with player stats and availability status",
+  labels = [("source", "nbacom"), ("type", "gamebooks")]
 );
-
--- Create indexes for common queries
--- Note: BigQuery doesn't support traditional indexes, but clustering helps
 
 -- View for active players only (commonly used for prop validation)
 CREATE OR REPLACE VIEW `nba_raw.nbac_gamebook_active_players` AS
@@ -93,17 +89,17 @@ WHERE player_status = 'active';
 -- View for name resolution issues (for data quality monitoring)
 CREATE OR REPLACE VIEW `nba_raw.nbac_gamebook_name_issues` AS
 SELECT 
-  game_date,
-  team_abbr,
   player_name_original,
-  player_name,
+  team_abbr,
   name_resolution_status,
-  dnp_reason,
-  COUNT(*) as occurrences
+  COUNT(*) as occurrences,
+  MAX(game_date) as most_recent_game,
+  MIN(game_date) as first_game,
+  STRING_AGG(DISTINCT dnp_reason LIMIT 3) as sample_reasons
 FROM `nba_raw.nbac_gamebook_player_stats`
 WHERE player_status = 'inactive'
   AND name_resolution_status IN ('multiple_matches', 'not_found')
-GROUP BY 1,2,3,4,5,6
+GROUP BY player_name_original, team_abbr, name_resolution_status
 ORDER BY occurrences DESC;
 
 -- Example query: Validate prop outcomes

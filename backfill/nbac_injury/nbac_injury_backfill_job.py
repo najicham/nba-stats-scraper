@@ -347,7 +347,7 @@ class NbaInjuryBackfillJob:
                 f"nba-com/injury-report-data/{date_str}/{hour_24}/",
                 
                 # LEGACY paths (for backward compatibility)
-                f"nba-com/injury-report/{date_str}/{hour_24}/",
+                # f"nba-com/injury-report/{date_str}/{hour_24}/",
             ]
             
             for prefix in prefix_patterns:
