@@ -14,13 +14,26 @@ from datetime import datetime
 from typing import Dict, List, Tuple, Optional
 from collections import defaultdict
 from google.cloud import bigquery
-from processors.processor_base import ProcessorBase
+
+# Support both module execution and direct execution
+try:
+    # Module execution: python -m processors.nbacom.nbac_gamebook_processor
+    from ..processor_base import ProcessorBase
+except ImportError:
+    # Direct execution: python processors/nbacom/nbac_gamebook_processor.py
+    import sys
+    import os
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+    from processors.processor_base import ProcessorBase
+
+# Simple team mapper import now that shared/utils/__init__.py is clean
+from shared.utils.nba_team_mapper import get_nba_tricode, get_nba_tricode_fuzzy
 
 logger = logging.getLogger(__name__)
 
+
 class NbacGamebookProcessor(ProcessorBase):
     """Process NBA.com gamebook data including active, DNP, and inactive players."""
-    
     def __init__(self):
         super().__init__()
         self.table_name = 'nba_raw.nbac_gamebook_player_stats'
@@ -67,55 +80,121 @@ class NbacGamebookProcessor(ProcessorBase):
             logger.warning(f"Could not load BR rosters for {season_year}: {e}")
             self.br_roster_cache[season_year] = {}
     
-    def resolve_inactive_player(self, last_name: str, team_abbr: str, season_year: int) -> Tuple[str, str, str]:
-        """
-        Resolve last name to full name using BR rosters.
-        Returns: (resolved_name, lookup_name, resolution_status)
-        """
-        self.load_br_rosters_for_season(season_year)
+    def resolve_inactive_player_enhanced(self, last_name: str, team_abbr: str, season_year: int) -> Dict:
+        """Enhanced name resolution with database integration."""
+        resolution_id = f"{team_abbr}_{last_name}_{season_year}"
         
-        roster_lookup = self.br_roster_cache.get(season_year, {})
-        matches = roster_lookup.get((team_abbr, last_name.lower()), [])
-        
-        if len(matches) == 1:
-            # Perfect match
-            return (
-                matches[0]['full_name'], 
-                matches[0]['lookup'],
-                'resolved'
-            )
-        elif len(matches) > 1:
-            # Multiple players with same last name on team
-            self.log_quality_issue(
-                issue_type='multiple_name_matches',
-                severity='warning',
-                identifier=f"{team_abbr}_{last_name}_{season_year}",
-                details={
-                    'last_name': last_name,
-                    'team': team_abbr,
-                    'matches': [m['full_name'] for m in matches]
+        # Check if resolution already exists
+        existing_resolution = self.get_existing_resolution(resolution_id)
+        if existing_resolution:
+            if existing_resolution['resolution_status'] == 'validated':
+                return {
+                    'name': existing_resolution['resolved_name'] or last_name,
+                    'lookup': existing_resolution['resolved_lookup'] or self.normalize_name(last_name),
+                    'status': 'validated',
+                    'confidence': existing_resolution['confidence_score'],
+                    'resolution_id': resolution_id,
+                    'method': existing_resolution['resolution_method']
                 }
-            )
-            # Keep original, generate lookup from last name
-            return (
-                last_name,
-                last_name.lower().replace(' ', '').replace('-', '').replace("'", ''),
-                'multiple_matches'
-            )
+        
+        # Perform new resolution
+        roster_matches = self.get_roster_matches(last_name, team_abbr, season_year)
+        
+        if len(roster_matches) == 1:
+            # Auto-resolve with high confidence
+            resolved_name = roster_matches[0]['full_name']
+            resolved_lookup = roster_matches[0]['lookup']
+            
+            self.create_resolution_record({
+                'resolution_id': resolution_id,
+                'team_abbr': team_abbr,
+                'original_name': last_name,
+                'season_year': season_year,
+                'resolved_name': resolved_name,
+                'resolved_lookup': resolved_lookup,
+                'resolution_method': 'auto_exact',
+                'resolution_status': 'validated',
+                'confidence_score': 1.0,
+                'possible_matches': json.dumps(roster_matches)
+            })
+            
+            return {
+                'name': resolved_name,
+                'lookup': resolved_lookup,
+                'status': 'validated',
+                'confidence': 1.0,
+                'resolution_id': resolution_id,
+                'method': 'auto_exact'
+            }
+        
+        elif len(roster_matches) > 1:
+            # Multiple matches - needs manual review
+            self.create_resolution_record({
+                'resolution_id': resolution_id,
+                'team_abbr': team_abbr,
+                'original_name': last_name,
+                'season_year': season_year,
+                'resolved_name': None,
+                'resolved_lookup': None,
+                'resolution_method': 'auto_fuzzy',
+                'resolution_status': 'pending',
+                'confidence_score': 0.6,
+                'possible_matches': json.dumps(roster_matches),
+                'context_notes': f"Multiple matches found: {[m['full_name'] for m in roster_matches]}"
+            })
+            
+            return {
+                'name': last_name,  # Use original until resolved
+                'lookup': self.normalize_name(last_name),
+                'status': 'multiple_matches',
+                'confidence': 0.6,
+                'resolution_id': resolution_id,
+                'method': 'pending_review'
+            }
+        
         else:
-            # No match found
-            self.log_quality_issue(
-                issue_type='name_not_found',
-                severity='info',
-                identifier=f"{team_abbr}_{last_name}_{season_year}",
-                details={'last_name': last_name, 'team': team_abbr}
-            )
-            # Keep original, generate lookup from last name
-            return (
-                last_name,
-                last_name.lower().replace(' ', '').replace('-', '').replace("'", ''),
-                'not_found'
-            )
+            # No matches found
+            self.create_resolution_record({
+                'resolution_id': resolution_id,
+                'team_abbr': team_abbr,
+                'original_name': last_name,
+                'season_year': season_year,
+                'resolved_name': None,
+                'resolved_lookup': None,
+                'resolution_method': 'not_found',
+                'resolution_status': 'pending',
+                'confidence_score': 0.0,
+                'possible_matches': json.dumps([]),
+                'context_notes': f"No roster match found for {last_name} on {team_abbr}"
+            })
+            
+            return {
+                'name': last_name,
+                'lookup': self.normalize_name(last_name),
+                'status': 'not_found',
+                'confidence': 0.0,
+                'resolution_id': resolution_id,
+                'method': 'not_found'
+            }
+        
+    def get_existing_resolution(self, resolution_id: str) -> Optional[Dict]:
+        """Check if resolution already exists in database."""
+        query = """
+        SELECT * FROM `nba-props-platform.nba_raw.player_name_resolutions`
+        WHERE resolution_id = @resolution_id
+        """
+        # Execute query and return result
+
+    def create_resolution_record(self, resolution_data: Dict):
+        """Insert new resolution record into database."""
+        # Insert into player_name_resolutions table
+        # Update games_affected count
+        # Set first_seen_date and last_seen_date
+
+    def update_resolution_games_count(self, resolution_id: str):
+        """Update the count of games affected by this resolution."""
+        # Count games using this resolution_id
+        # Update games_affected field
     
     def normalize_name(self, name: str) -> str:
         """Create normalized lookup key from name."""
@@ -198,53 +277,23 @@ class NbacGamebookProcessor(ProcessorBase):
         return None
     
     def get_team_abbreviation(self, team_name: str) -> Optional[str]:
-        """Map full team name to 3-letter abbreviation using aggressive normalization."""
+        """Map team name to NBA tricode using shared utility."""
+        if not team_name:
+            return None
         
-        # Normalized mapping table - all keys are aggressively normalized
-        team_mapping = {
-            # Eastern Conference
-            'atlantahawks': 'ATL',
-            'bostonceltics': 'BOS',
-            'brooklynnets': 'BKN',
-            'charlottehornets': 'CHA',
-            'chicagobulls': 'CHI',
-            'clevelandcavaliers': 'CLE',
-            'detroitpistons': 'DET',
-            'indianapacers': 'IND',
-            'miamiheat': 'MIA',
-            'milwaukeebucks': 'MIL',
-            'newyorkknicks': 'NYK',
-            'orlandomagic': 'ORL',
-            'philadelphia76ers': 'PHI',
-            'torontoraptors': 'TOR',
-            'washingtonwizards': 'WAS',
-            
-            # Western Conference
-            'dallasmavericks': 'DAL',
-            'denvernuggets': 'DEN',
-            'goldenstatewarriors': 'GSW',
-            'houstonrockets': 'HOU',
-            'losangelesclippers': 'LAC',  # handles LA Clippers -> Los Angeles Clippers
-            'losangeleslakers': 'LAL',   # handles LA Lakers -> Los Angeles Lakers
-            'memphisgrizzlies': 'MEM',
-            'minnesotatimberwolves': 'MIN',
-            'neworleanspelicans': 'NOP',
-            'oklahomacitythunder': 'OKC',
-            'phoenixsuns': 'PHX',
-            'portlandtrailblazers': 'POR',
-            'sacramentokings': 'SAC',
-            'sanantoniospurs': 'SAS',
-            'utahjazz': 'UTA'
-        }
+        # Try exact match first (fast)
+        result = get_nba_tricode(team_name)
+        if result:
+            return result
         
-        normalized_input = self.normalize_team_name(team_name)
-        result = team_mapping.get(normalized_input)
+        # Try fuzzy match (robust)
+        result = get_nba_tricode_fuzzy(team_name, min_confidence=80)
+        if result:
+            return result
         
-        # Log unmapped teams for debugging
-        if not result and team_name:
-            logger.warning(f"Unmapped team: '{team_name}' -> normalized: '{normalized_input}'")
-        
-        return result
+        # Log unmapped for debugging
+        logger.warning(f"Could not map team name: '{team_name}'")
+        return None
     
     def process_active_player(self, player: Dict, game_info: Dict) -> Dict:
         """Process an active player with stats."""
@@ -306,6 +355,8 @@ class NbacGamebookProcessor(ProcessorBase):
         player_name = player.get('name', '')
         player_lookup = self.normalize_name(player_name)
         resolution_status = 'original'
+        confidence = None
+        method = None
         
         if status == 'inactive' and player_name and not ' ' in player_name:
             # Likely just a last name, try to resolve
@@ -316,6 +367,14 @@ class NbacGamebookProcessor(ProcessorBase):
                 player_lookup = resolved_lookup
                 if resolution_status == 'resolved':
                     player_name = resolved_name
+                    confidence = 1.0
+                    method = 'auto_exact'
+                elif resolution_status == 'multiple_matches':
+                    confidence = 0.6
+                    method = 'pending_review'
+                elif resolution_status == 'not_found':
+                    confidence = 0.0
+                    method = 'not_found'
         
         return {
             'game_id': game_info['game_id'],
@@ -353,6 +412,12 @@ class NbacGamebookProcessor(ProcessorBase):
             'turnovers': None,
             'personal_fouls': None,
             'plus_minus': None,
+
+            'name_resolution_confidence': confidence,
+            'name_resolution_method': method,
+            'resolution_id': None,  # Keep simple for now
+            'name_last_validated': None,
+
             'source_file_path': None  # Will be set by transform_data
         }
     

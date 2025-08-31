@@ -15,6 +15,11 @@ from processors.basketball_ref.br_roster_processor import BasketballRefRosterPro
 from processors.oddsapi.odds_api_props_processor import OddsApiPropsProcessor
 from processors.nbacom.nbac_gamebook_processor import NbacGamebookProcessor
 from processors.nbacom.nbac_player_list_processor import NbacPlayerListProcessor
+from processors.balldontlie.bdl_standings_processor import BdlStandingsProcessor
+from processors.balldontlie.bdl_injuries_processor import BdlInjuriesProcessor
+from processors.balldontlie.bdl_boxscores_processor import BdlBoxscoresProcessor
+from processors.balldontlie.bdl_active_players_processor import BdlActivePlayersProcessor  # ADD THIS LINE
+
 
 # from balldontlie.bdl_boxscore_processor import BdlBoxscoreProcessor
 # from nbacom.nbac_schedule_processor import NbacScheduleProcessor
@@ -29,6 +34,10 @@ PROCESSOR_REGISTRY = {
     'odds-api/player-props': OddsApiPropsProcessor,
     'nba-com/gamebooks-data': NbacGamebookProcessor,
     'nba-com/player-list': NbacPlayerListProcessor,
+    'ball-dont-lie/standings': BdlStandingsProcessor,
+    'ball-dont-lie/injuries': BdlInjuriesProcessor,
+    'ball-dont-lie/boxscores': BdlBoxscoresProcessor,
+    'ball-dont-lie/active-players': BdlActivePlayersProcessor,  # ADD THIS LINE
 }
 
 
@@ -124,7 +133,12 @@ def process_pubsub():
 def extract_opts_from_path(file_path: str) -> dict:
     """
     Extract processing options from file path.
-    Example: basketball_reference/season_rosters/2023-24/LAL.json
+    Examples:
+    - basketball_reference/season_rosters/2023-24/LAL.json
+    - ball-dont-lie/standings/2024-25/2025-01-15/timestamp.json
+    - ball-dont-lie/injuries/2025-01-15/timestamp.json
+    - ball-dont-lie/boxscores/2021-12-04/timestamp.json
+    - ball-dont-lie/active-players/2025-01-15/timestamp.json  # NEW
     """
     opts = {}
     
@@ -138,9 +152,83 @@ def extract_opts_from_path(file_path: str) -> dict:
         opts['season_year'] = season_year
         opts['team_abbrev'] = team_abbrev
         
-    # Add extractors for other file types as needed
-    # elif 'ball-dont-lie/boxscores' in file_path:
-    #     ...
+    elif 'ball-dont-lie/standings' in file_path:
+        # Extract date from path: ball-dont-lie/standings/2024-25/2025-01-15/timestamp.json
+        parts = file_path.split('/')
+        date_str = parts[-2]  # "2025-01-15"
+        season_formatted = parts[-3]  # "2024-25"
+        
+        # Parse date
+        try:
+            from datetime import datetime
+            date_obj = datetime.strptime(date_str, '%Y-%m-%d').date()
+            opts['date_recorded'] = date_obj
+        except ValueError:
+            logger.warning(f"Could not parse date from path: {date_str}")
+        
+        # Parse season year from formatted string
+        try:
+            season_year = int(season_formatted.split('-')[0])  # 2024
+            opts['season_year'] = season_year
+        except ValueError:
+            logger.warning(f"Could not parse season from path: {season_formatted}")
+    
+    elif 'ball-dont-lie/injuries' in file_path:
+        # Extract date from path: ball-dont-lie/injuries/2025-01-15/timestamp.json
+        parts = file_path.split('/')
+        date_str = parts[-2]  # "2025-01-15"
+        
+        # Parse scrape date
+        try:
+            from datetime import datetime
+            scrape_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+            opts['scrape_date'] = scrape_date
+            
+            # Calculate season year (Oct-Sept NBA season)
+            season_year = scrape_date.year if scrape_date.month >= 10 else scrape_date.year - 1
+            opts['season_year'] = season_year
+            
+        except ValueError:
+            logger.warning(f"Could not parse date from injuries path: {date_str}")
+    
+    elif 'ball-dont-lie/boxscores' in file_path:
+        # Extract date from path: ball-dont-lie/boxscores/2021-12-04/timestamp.json
+        parts = file_path.split('/')
+        if len(parts) >= 4:
+            date_str = parts[-2]  # "2021-12-04"
+            
+            # Parse game date
+            try:
+                from datetime import datetime
+                game_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+                opts['game_date'] = game_date
+                
+                # Calculate season year (Oct-Sept NBA season)
+                season_year = game_date.year if game_date.month >= 10 else game_date.year - 1
+                opts['season_year'] = season_year
+                
+            except ValueError:
+                logger.warning(f"Could not parse date from boxscores path: {date_str}")
+    
+    # ADD THIS NEW CASE FOR ACTIVE PLAYERS
+    elif 'ball-dont-lie/active-players' in file_path:
+        # Extract date from path: ball-dont-lie/active-players/2025-01-15/timestamp.json
+        parts = file_path.split('/')
+        if len(parts) >= 4:
+            date_str = parts[-2]  # "2025-01-15"
+            
+            # Parse collection date
+            try:
+                from datetime import datetime
+                collection_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+                opts['collection_date'] = collection_date
+                
+                # Calculate season year (Oct-Sept NBA season)
+                season_year = collection_date.year if collection_date.month >= 10 else collection_date.year - 1
+                opts['season_year'] = season_year
+                
+            except ValueError:
+                logger.warning(f"Could not parse date from active-players path: {date_str}")
     
     return opts
 

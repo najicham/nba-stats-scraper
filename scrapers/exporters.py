@@ -1,6 +1,8 @@
 import json
 import os
 from google.cloud import storage
+import google.auth
+from google.auth.exceptions import DefaultCredentialsError
 
 class BaseExporter:
     def run(self, data, config, opts):
@@ -26,6 +28,7 @@ class GCSExporter(BaseExporter):
     """
     Upload scraped data to Google Cloud Storage (GCS).
     Handles both binary (PDF) and text (JSON) data correctly.
+    Enhanced with proper authentication handling.
     """
     def run(self, data, config, opts):
         # 1) Use explicit bucket from config, or default to raw scraped data bucket
@@ -47,8 +50,8 @@ class GCSExporter(BaseExporter):
         else:
             content_type = "application/json"
 
-        # 5) Upload to GCS
-        client = storage.Client()
+        # 5) ENHANCED: Create GCS client with proper authentication handling
+        client = self._create_gcs_client()
         bucket = client.bucket(bucket_name)
         blob = bucket.blob(gcs_path)
         
@@ -60,6 +63,54 @@ class GCSExporter(BaseExporter):
             blob.upload_from_string(payload.encode('utf-8'), content_type=content_type)
 
         print(f"[GCS Exporter] Uploaded to gs://{bucket_name}/{gcs_path}")
+
+    def _create_gcs_client(self):
+        """
+        Create GCS client with robust authentication handling.
+        
+        Priority order:
+        1. GOOGLE_APPLICATION_CREDENTIALS environment variable (service account)
+        2. Application Default Credentials (gcloud auth application-default login)
+        3. Service account file in current directory
+        4. Fail with helpful error message
+        """
+        try:
+            # Try 1: Use environment variable or application default credentials
+            if not os.getenv("GOOGLE_APPLICATION_CREDENTIALS"):
+                # No explicit service account, try application default credentials
+                credentials, project = google.auth.default()
+                return storage.Client(credentials=credentials, project=project)
+            else:
+                # Service account path is set, use it
+                return storage.Client()
+                
+        except DefaultCredentialsError:
+            # Try 2: Look for service account file in current directory
+            service_account_files = [
+                "./service-account-dev.json",
+                "./service-account-prod.json", 
+                "./service-account.json"
+            ]
+            
+            for sa_file in service_account_files:
+                if os.path.exists(sa_file):
+                    print(f"[GCS Exporter] Using service account: {sa_file}")
+                    return storage.Client.from_service_account_json(sa_file)
+            
+            # Try 3: Check for application default credentials file
+            adc_path = os.path.expanduser("~/.config/gcloud/application_default_credentials.json")
+            if os.path.exists(adc_path):
+                print(f"[GCS Exporter] Using application default credentials: {adc_path}")
+                os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = adc_path
+                return storage.Client()
+            
+            # All methods failed
+            raise Exception(
+                "GCS authentication failed. Please run one of:\n"
+                "  1. gcloud auth application-default login\n"
+                "  2. Place service account JSON file in current directory\n"
+                "  3. Set GOOGLE_APPLICATION_CREDENTIALS environment variable"
+            )
 
 class FileExporter(BaseExporter):
     """

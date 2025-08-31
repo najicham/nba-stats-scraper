@@ -127,6 +127,7 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
             "unbalanced_parentheses": [],
             "failed_stat_lines": [],
             "unknown_player_categories": [],
+            "parsing_failure": [],  # ADD THIS LINE
             "warnings": []
         }
 
@@ -565,83 +566,6 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
         # This ensures the function doesn't fail even for unknown teams
         logger.debug("No team mapping found for '%s', using as-is", team_name)
         return team_name
-    
-    def _parse_clean_text(self, text: str, active_players: List[Dict], 
-                         dnp_players: List[Dict], inactive_players: List[Dict], game_info: Dict) -> None:
-        """Parse clean extracted text from pdfplumber."""
-        
-        logger.info("Parsing clean text (%d chars)", len(text))
-        
-        # Extract game metadata from the top of the PDF
-        self._extract_game_metadata(text, game_info)
-        
-        lines = text.split('\n')
-        current_team = None
-        
-        for i, line in enumerate(lines):
-            line = line.strip()
-            if not line:
-                continue
-            
-            logger.debug("Line %d: %s", i, line[:100])  # DEBUG level
-            
-            # Detect team sections  
-            if 'VISITOR:' in line:
-                team_match = re.search(r'VISITOR:\s*(.+?)\s*\(', line)
-                if team_match:
-                    current_team = team_match.group(1)
-                    logger.debug("Found visitor team: %s", current_team)  # DEBUG level
-                continue
-            elif 'HOME:' in line:
-                team_match = re.search(r'HOME:\s*(.+?)\s*\(', line)
-                if team_match:
-                    current_team = team_match.group(1)
-                    logger.debug("Found home team: %s", current_team)  # DEBUG level
-                continue
-            
-            # Look for NWT players (did not play - game specific)
-            if ' NWT - ' in line:
-                player = self._extract_nwt_from_clean_line(line, current_team)
-                if player:
-                    dnp_players.append(player)
-                    logger.debug("Found NWT player: %s - %s", player['name'], player['dnp_reason'])  # DEBUG level
-            
-            # Look for DNP players (did not play - game specific)  
-            elif ' DNP - ' in line:
-                player = self._extract_dnp_from_clean_line(line, current_team)
-                if player:
-                    dnp_players.append(player)
-                    logger.debug("Found DNP player: %s - %s", player['name'], player['dnp_reason'])  # DEBUG level
-            
-            # Look for DND players (did not dress - injury/illness specific)  
-            elif ' DND - ' in line:
-                player = self._extract_dnd_from_clean_line(line, current_team)
-                if player:
-                    dnp_players.append(player)
-                    logger.debug("Found DND player: %s - %s", player['name'], player['dnp_reason'])  # DEBUG level
-            
-            # Look for active players (lines with minutes like "35:42")
-            elif re.search(r'\d{1,2}:\d{2}', line) and current_team:
-                player = self._extract_active_from_clean_line(line, current_team)
-                if player:
-                    active_players.append(player)
-                    logger.debug("Found active player: %s (%s pts, %s min)",  # DEBUG level
-                               player['name'], player.get('stats', {}).get('points', 0), 
-                               player.get('stats', {}).get('minutes', '0:00'))
-            
-            # Look for inactive player sections (truly inactive)
-            elif line.startswith('Inactive:'):
-                inactive_list = self._extract_inactive_players_from_line(line, lines, i)
-                inactive_players.extend(inactive_list)
-                for player in inactive_list:
-                    logger.debug("Found inactive player: %s - %s (%s)",  # DEBUG level
-                               player['name'], player['reason'], player['team'])
-
-        # Single summary INFO log instead of individual player logs
-        logger.info("Parsed game %s: %d active, %d DNP, %d inactive players (total: %d)", 
-                   game_info.get('game_code', 'unknown'),
-                   len(active_players), len(dnp_players), len(inactive_players),
-                   len(active_players) + len(dnp_players) + len(inactive_players))
         
     def _extract_dnd_from_clean_line(self, line: str, team: str) -> Optional[Dict]:
         """Extract DND (Did Not Dress) player from clean line like '23 Mitchell Robinson DND - Injury/Illness - Back; Sore lower'"""
@@ -1215,6 +1139,288 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
             return round(made / attempted, 3) if attempted > 0 else 0.0
         except (ZeroDivisionError, TypeError):
             return 0.0
+        
+    def _detect_special_venue_game(self, text: str, game_info: Dict) -> Dict[str, bool]:
+        """
+        Detect if this is a special venue game and what type.
+        Returns flags for different types of special games.
+        """
+        arena = game_info.get("arena", "").lower()
+        city = game_info.get("city", "").lower() 
+        
+        # Neutral site venues (neither team's home court)
+        neutral_venues = [
+            "t-mobile arena",  # Las Vegas
+            "accor arena",     # Paris  
+            "o2 arena",        # London
+            "arena cdmx",      # Mexico City
+            "saitama super arena",  # Tokyo
+            "etihad arena",    # Abu Dhabi
+        ]
+        
+        # Relocated home games (team playing at alternate venue)
+        relocated_patterns = [
+            ("moody center", "austin"),  # San Antonio games in Austin
+            ("honda center", "anaheim"), # Potential LA team relocations
+        ]
+        
+        is_neutral_site = any(venue in arena for venue in neutral_venues)
+        is_relocated_home = any(venue in arena and location in city 
+                            for venue, location in relocated_patterns)
+        is_international = city in ["paris", "london", "tokyo", "mexico city", "abu dhabi"]
+        
+        # Check if standard parsing labels exist
+        has_standard_labels = "HOME:" in text and "VISITOR:" in text
+        
+        return {
+            "is_special_venue": is_neutral_site or is_relocated_home or is_international,
+            "is_neutral_site": is_neutral_site,
+            "is_relocated_home": is_relocated_home, 
+            "is_international": is_international,
+            "has_standard_labels": has_standard_labels,
+            "needs_fallback_parsing": not has_standard_labels
+        }
+
+    def _parse_clean_text(self, text: str, active_players: List[Dict], 
+                        dnp_players: List[Dict], inactive_players: List[Dict], game_info: Dict) -> None:
+        """Enhanced parsing with neutral site support."""
+        
+        logger.info("Parsing clean text (%d chars)", len(text))
+        
+        # Extract game metadata from the top of the PDF
+        self._extract_game_metadata(text, game_info)
+        
+        # ENHANCED: Detect special venue games and set flags
+        venue_flags = self._detect_special_venue_game(text, game_info)
+        game_info.update(venue_flags)
+        
+        # ENHANCED: Choose parsing strategy based on venue type
+        if venue_flags["needs_fallback_parsing"]:
+            logger.warning("Standard HOME/VISITOR labels missing - using fallback parsing for %s", 
+                        self.opts["game_code"])
+            self._parse_special_venue_format(text, active_players, dnp_players, inactive_players, game_info)
+        else:
+            logger.info("Using standard parsing format for %s", self.opts["game_code"])
+            self._parse_standard_format(text, active_players, dnp_players, inactive_players, game_info)
+
+    def _parse_standard_format(self, text: str, active_players: List[Dict], 
+                            dnp_players: List[Dict], inactive_players: List[Dict], game_info: Dict) -> None:
+        """Original parsing logic for standard games."""
+        lines = text.split('\n')
+        current_team = None
+        
+        for i, line in enumerate(lines):
+            line = line.strip()
+            if not line:
+                continue
+            
+            # Standard team detection
+            if 'VISITOR:' in line:
+                team_match = re.search(r'VISITOR:\s*(.+?)\s*\(', line)
+                if team_match:
+                    current_team = team_match.group(1)
+                    logger.debug("Found visitor team: %s", current_team)
+                continue
+            elif 'HOME:' in line:
+                team_match = re.search(r'HOME:\s*(.+?)\s*\(', line)
+                if team_match:
+                    current_team = team_match.group(1)
+                    logger.debug("Found home team: %s", current_team)
+                continue
+            
+            # Continue with existing parsing logic...
+            self._parse_player_line(line, current_team, active_players, dnp_players, inactive_players, lines, i)
+
+    def _parse_special_venue_format(self, text: str, active_players: List[Dict], 
+                               dnp_players: List[Dict], inactive_players: List[Dict], game_info: Dict) -> None:
+        """Fallback parsing for neutral site/international games without HOME/VISITOR labels."""
+        
+        lines = text.split('\n')
+        
+        away_team_abbr = self.opts["away_team"]  # "ATL"
+        home_team_abbr = self.opts["home_team"]   # "MIL"
+        
+        current_team = None
+        current_team_abbr = None
+        
+        for i, line in enumerate(lines):
+            line = line.strip()
+            if not line:
+                continue
+                
+            # Detect team sections by team name with record
+            team_section = self._detect_team_section_fallback(line, {}, away_team_abbr, home_team_abbr)
+            if team_section:
+                current_team = team_section["team_name"]
+                current_team_abbr = team_section["abbr"] 
+                logger.debug("Found %s team section: %s (%s)", team_section["type"], current_team, current_team_abbr)
+                continue
+            
+            # Parse player lines with team context
+            if current_team:
+                self._parse_player_line(line, current_team, active_players, dnp_players, inactive_players, lines, i)
+        
+        # Log results
+        logger.info("Special venue parsing complete: %d active, %d DNP, %d inactive players", 
+                len(active_players), len(dnp_players), len(inactive_players))
+        
+        # Warning (not error) if no active players found
+        if len(active_players) == 0:
+            logger.warning("No active players found in special venue game %s - may need manual review", 
+                        self.opts["game_code"])
+            # Don't crash - just log the issue
+            if hasattr(self, 'parsing_issues') and 'parsing_failure' in self.parsing_issues:
+                self._log_parsing_issue("parsing_failure", 
+                                    game_code=self.opts["game_code"],
+                                    venue_type="special_venue", 
+                                    arena=game_info.get("arena"),
+                                    total_dnp=len(dnp_players),
+                                    total_inactive=len(inactive_players))
+
+    def _detect_team_sections_by_order(self, text: str, away_abbr: str, home_abbr: str) -> Dict:
+        """
+        Detect team sections in special venue games.
+        Look for patterns that indicate team sections without HOME/VISITOR labels.
+        """
+        # Look for team full names or abbreviations in specific patterns
+        team_patterns = [
+            # Pattern: Team name followed by record in parentheses
+            rf"({away_abbr}|{home_abbr})\s*\(\d+-\d+\)",
+            # Pattern: Full team names 
+            r"(Hawks|Bucks|Suns|Pacers|Warriors|Lakers)",  # Add more as needed
+        ]
+        
+        sections = {"away": None, "home": None}
+        
+        # This is a simplified version - you'd want to make this more robust
+        # by actually parsing the team names and positions in the PDF
+        
+        return sections
+
+    def _normalize_team_name(self, team_name: str) -> str:
+        """Normalize team name for comparison by removing spaces, lowercasing, and removing punctuation."""
+        return re.sub(r'[^a-z]', '', team_name.lower())
+
+    def _detect_team_section_fallback(self, line: str, team_sections: Dict, 
+                                    away_abbr: str, home_abbr: str) -> Optional[Dict]:
+        """
+        Detect team sections without HOME/VISITOR labels.
+        Look for team names with records like "Atlanta Hawks (14-13)"
+        """
+        
+        # Pattern: Team name followed by record in parentheses
+        team_record_pattern = r'^([A-Z][A-Za-z\s]+)\s+\((\d+-\d+)\)$'
+        match = re.match(team_record_pattern, line.strip())
+        
+        if match:
+            team_full_name = match.group(1).strip()
+            normalized_pdf_name = self._normalize_team_name(team_full_name)
+            
+            # Clean team name lookup (only one version of each)
+            team_name_to_abbr = {
+                # Eastern Conference
+                "Atlanta Hawks": "ATL",
+                "Boston Celtics": "BOS", 
+                "Brooklyn Nets": "BKN",
+                "Charlotte Hornets": "CHA",
+                "Chicago Bulls": "CHI",
+                "Cleveland Cavaliers": "CLE",
+                "Detroit Pistons": "DET",
+                "Indiana Pacers": "IND", 
+                "Miami Heat": "MIA",
+                "Milwaukee Bucks": "MIL",
+                "New York Knicks": "NYK",
+                "Orlando Magic": "ORL",
+                "Philadelphia 76ers": "PHI",
+                "Toronto Raptors": "TOR",
+                "Washington Wizards": "WAS",
+                
+                # Western Conference  
+                "Dallas Mavericks": "DAL",
+                "Denver Nuggets": "DEN",
+                "Golden State Warriors": "GSW",
+                "Houston Rockets": "HOU",
+                "Los Angeles Clippers": "LAC", 
+                "Los Angeles Lakers": "LAL",
+                "Memphis Grizzlies": "MEM",
+                "Minnesota Timberwolves": "MIN",
+                "New Orleans Pelicans": "NOP", 
+                "Oklahoma City Thunder": "OKC",
+                "Phoenix Suns": "PHX",
+                "Portland Trail Blazers": "POR",
+                "Sacramento Kings": "SAC",
+                "San Antonio Spurs": "SAS",
+                "Utah Jazz": "UTA"
+            }
+            
+            # Find matching team by normalized comparison
+            team_abbr = None
+            matched_team_name = None
+            
+            for lookup_name, abbr in team_name_to_abbr.items():
+                normalized_lookup = self._normalize_team_name(lookup_name)
+                if normalized_pdf_name == normalized_lookup:
+                    team_abbr = abbr
+                    matched_team_name = lookup_name
+                    break
+            
+            if team_abbr:
+                # Determine if this is away or home team based on game_code
+                if team_abbr == away_abbr:
+                    return {"type": "away", "team_name": matched_team_name, "abbr": team_abbr}
+                elif team_abbr == home_abbr:
+                    return {"type": "home", "team_name": matched_team_name, "abbr": team_abbr}
+                else:
+                    logger.debug("Found team %s (%s) but doesn't match game teams %s vs %s", 
+                            matched_team_name, team_abbr, away_abbr, home_abbr)
+            else:
+                logger.debug("Unknown team name: %s (normalized: %s)", team_full_name, normalized_pdf_name)
+        
+        return None
+
+    def _parse_player_line(self, line: str, current_team: str, active_players: List[Dict], 
+                        dnp_players: List[Dict], inactive_players: List[Dict], 
+                        all_lines: List[str], line_idx: int) -> None:
+        """Consolidated player line parsing logic."""
+        
+        # NWT players
+        if ' NWT - ' in line:
+            player = self._extract_nwt_from_clean_line(line, current_team)
+            if player:
+                dnp_players.append(player)
+                logger.debug("Found NWT player: %s - %s", player['name'], player['dnp_reason'])
+        
+        # DNP players
+        elif ' DNP - ' in line:
+            player = self._extract_dnp_from_clean_line(line, current_team)
+            if player:
+                dnp_players.append(player)
+                logger.debug("Found DNP player: %s - %s", player['name'], player['dnp_reason'])
+        
+        # DND players
+        elif ' DND - ' in line:
+            player = self._extract_dnd_from_clean_line(line, current_team)
+            if player:
+                dnp_players.append(player)
+                logger.debug("Found DND player: %s - %s", player['name'], player['dnp_reason'])
+        
+        # Active players (lines with minutes like "35:42")
+        elif re.search(r'\d{1,2}:\d{2}', line) and current_team:
+            player = self._extract_active_from_clean_line(line, current_team)
+            if player:
+                active_players.append(player)
+                logger.debug("Found active player: %s (%s pts, %s min)",
+                        player['name'], player.get('stats', {}).get('points', 0), 
+                        player.get('stats', {}).get('minutes', '0:00'))
+        
+        # Inactive player sections
+        elif line.startswith('Inactive:'):
+            inactive_list = self._extract_inactive_players_from_line(line, all_lines, line_idx)
+            inactive_players.extend(inactive_list)
+            for player in inactive_list:
+                logger.debug("Found inactive player: %s - %s (%s)",
+                        player['name'], player['reason'], player['team'])
+
     
     # ------------------------------------------------------------------ #
     # Stats
