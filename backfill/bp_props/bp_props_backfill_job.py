@@ -18,6 +18,8 @@ This script:
 5. Runs for ~4-6 hours with conservative rate limiting
 6. Auto-terminates when complete
 
+🆕 NEW: --playoffs-only mode for targeted playoff data collection
+
 Usage:
   # Deploy as Cloud Run Job:
   ./backfill/bp_props/deploy_bp_props_backfill.sh
@@ -25,6 +27,11 @@ Usage:
   # Dry run (see date counts without downloading):
   gcloud run jobs execute nba-bp-backfill \
     --args="--service-url=https://nba-scrapers-f7p3g7f6ya-wl.a.run.app --dry-run --seasons=2021" \
+    --region=us-west2
+
+  # 🏆 PLAYOFFS ONLY - Process just playoff games (much faster!):
+  gcloud run jobs execute nba-bp-backfill \
+    --args="--service-url=https://nba-scrapers-f7p3g7f6ya-wl.a.run.app --seasons=2022,2023 --playoffs-only" \
     --region=us-west2
 
   # Single season test (2021-22):
@@ -44,7 +51,7 @@ import requests
 import sys
 import time
 from datetime import datetime, timezone, date
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Set
 import argparse
 
 # Google Cloud Storage for reading schedules and checking existing files
@@ -60,11 +67,14 @@ logger = logging.getLogger(__name__)
 class BettingProsBackfillJob:
     """Cloud Run Job for downloading historical BettingPros NBA prop data using NBA game dates."""
     
-    def __init__(self, scraper_service_url: str, seasons: List[int] = None, bucket_name: str = "nba-scraped-data", limit: Optional[int] = None):
+    def __init__(self, scraper_service_url: str, seasons: List[int] = None, 
+                 bucket_name: str = "nba-scraped-data", limit: Optional[int] = None, 
+                 playoffs_only: bool = False):
         self.scraper_service_url = scraper_service_url.rstrip('/')
         self.seasons = seasons or [2021, 2022, 2023]  # Default: 3 seasons (2021-22, 2022-23, 2023-24)
         self.bucket_name = bucket_name
         self.limit = limit
+        self.playoffs_only = playoffs_only  # 🆕 NEW: Only process playoff games
         
         # Initialize GCS client
         self.storage_client = storage.Client()
@@ -82,6 +92,8 @@ class BettingProsBackfillJob:
         logger.info("🏀 BettingPros Historical Backfill Job initialized")
         logger.info("Scraper service: %s", self.scraper_service_url)
         logger.info("Seasons: %s", self.seasons)
+        if self.playoffs_only:
+            logger.info("🏆 PLAYOFFS ONLY MODE - Filtering to playoff games only")
         logger.info("GCS bucket: %s", self.bucket_name)
         if self.limit:
             logger.info("Limit: %d dates (for testing)", self.limit)
@@ -104,12 +116,13 @@ class BettingProsBackfillJob:
                 return
             
             estimated_hours = (self.total_dates * 2 * self.RATE_LIMIT_DELAY) / 3600  # 2 scrapers per date
-            logger.info("Total NBA game dates found: %d", self.total_dates)
+            mode_description = "playoff dates" if self.playoffs_only else "game dates"
+            logger.info("Total NBA %s found: %d", mode_description, self.total_dates)
             logger.info("Total scraper calls: %d (2 per date)", self.total_dates * 2)
             logger.info("Estimated duration: %.1f hours", estimated_hours)
             
             if dry_run:
-                logger.info("🔍 DRY RUN - Would process %d game dates", self.total_dates)
+                logger.info("🔍 DRY RUN - Would process %d %s", self.total_dates, mode_description)
                 logger.info("Sample dates (first 10):")
                 for i, game_date in enumerate(all_game_dates[:10], 1):
                     logger.info("  %d. %s", i, game_date)
@@ -154,7 +167,7 @@ class BettingProsBackfillJob:
             raise
     
     def _collect_all_game_dates(self) -> List[str]:
-        """Collect all NBA game dates from GCS schedule files."""
+        """Collect all NBA game dates from GCS schedule files - with optional playoff filtering."""
         logger.info("📊 Collecting NBA game dates from GCS schedule files...")
         
         all_game_dates = set()  # Use set to avoid duplicates
@@ -171,6 +184,12 @@ class BettingProsBackfillJob:
                 
                 # Filter to completed games only (gameStatus == 3)
                 completed_games = [g for g in games if g.get('completed', False)]
+                
+                # 🆕 NEW: Apply playoff filtering if requested
+                if self.playoffs_only:
+                    playoff_games = [g for g in completed_games if self._is_playoff_game_info(g)]
+                    logger.info(f"Season {season}: {len(playoff_games)} playoff games (out of {len(completed_games)} total)")
+                    completed_games = playoff_games
                 
                 # Extract unique game dates
                 season_dates = set()
@@ -195,8 +214,35 @@ class BettingProsBackfillJob:
             sorted_dates = sorted_dates[:self.limit]
             logger.info(f"🔢 Limited to first {self.limit} dates (out of {original_count} total)")
         
-        logger.info(f"🎯 Total unique game dates to process: {len(sorted_dates)}")
+        mode_description = "playoff dates" if self.playoffs_only else "game dates"
+        logger.info(f"🎯 Total unique {mode_description} to process: {len(sorted_dates)}")
         return sorted_dates
+    
+    def _is_playoff_game_info(self, game_info: Dict) -> bool:
+        """🆕 Check if a game info dict represents a playoff or play-in game."""
+        try:
+            game_label = game_info.get('game_label', '')
+            
+            # Playoff indicators from NBA.com schedule filtering documentation
+            playoff_indicators = [
+                'Play-In',           # Play-in tournament
+                'First Round',       # First round playoffs
+                'Conf. Semifinals',  # Conference semifinals  
+                'Conf. Finals',      # Conference finals
+                'NBA Finals'         # NBA Finals
+            ]
+            
+            # Check if any playoff indicator is in the game label
+            is_playoff = any(indicator in game_label for indicator in playoff_indicators)
+            
+            if is_playoff:
+                logger.debug(f"✅ Playoff game found: {game_label}")
+            
+            return is_playoff
+            
+        except Exception as e:
+            logger.debug(f"Error checking playoff status: {e}")
+            return False
     
     def _read_schedule_from_gcs(self, season_year: int) -> Dict[str, Any]:
         """Read NBA schedule JSON from GCS for a specific season."""
@@ -275,7 +321,7 @@ class BettingProsBackfillJob:
         return None
     
     def _extract_game_info(self, game: Dict, date_str: str) -> Optional[Dict[str, Any]]:
-        """Extract game information with All-Star filtering."""
+        """✅ FIXED: Extract game information with proper All-Star filtering - INCLUDES playoffs."""
         try:
             game_code = game.get('gameCode', '')
             
@@ -283,18 +329,42 @@ class BettingProsBackfillJob:
                 logger.debug(f"Invalid game code: {game_code}")
                 return None
             
-            # Filter out All-Star games and special events
+            # Extract filtering fields
             week_name = game.get('weekName', '')
             game_label = game.get('gameLabel', '')
             game_sub_label = game.get('gameSubLabel', '')
             
-            # Check for All-Star indicators
-            if (week_name == "All-Star" or 
-                game_label or  # Any non-empty gameLabel indicates special event
-                game_sub_label):  # Any non-empty gameSubLabel indicates special event
-                
-                logger.debug(f"⏭️  Skipping All-Star/Special event {game_code}: {game_label or 'All-Star weekend'}")
+            # Filter 1: All-Star week games (definitive exclusion)
+            if week_name == "All-Star":
+                logger.debug(f"⏭️  Filtering All-Star week game {game_code}")
                 return None
+            
+            # Filter 2: Specific All-Star special events (even outside All-Star week)
+            all_star_events = [
+                'Rising Stars', 'All-Star Game', 'Celebrity Game', 
+                'Skills Challenge', 'Three-Point Contest', 'Slam Dunk Contest'
+            ]
+            
+            for event in all_star_events:
+                if event in game_label or event in game_sub_label:
+                    logger.debug(f"⏭️  Filtering All-Star special event {game_code}: {game_label}")
+                    return None
+            
+            # Filter 3: Enhanced preseason detection (handles weekNumber=0 playoff issue)
+            week_number = game.get('weekNumber', -1)
+            if week_number == 0:
+                # For older seasons, playoff games also have weekNumber=0
+                # Check if this is actually a playoff game before filtering
+                playoff_indicators = ['Play-In', 'First Round', 'Conf. Semifinals', 'Conf. Finals', 'NBA Finals']
+                is_playoff_game = any(indicator in game_label for indicator in playoff_indicators)
+                
+                if not is_playoff_game:
+                    # This is likely a preseason game
+                    logger.debug(f"⏭️  Filtering preseason game {game_code} (weekNumber=0, no playoff indicators)")
+                    return None
+                else:
+                    # This is a playoff game with weekNumber=0 (keep it!)
+                    logger.debug(f"✅  Keeping playoff game with weekNumber=0: {game_code} '{game_label}'")
             
             # Extract teams
             away_team = game.get('awayTeam', {}).get('teamTricode', '')
@@ -318,6 +388,16 @@ class BettingProsBackfillJob:
             # Only include completed games (gameStatus = 3) for backfill
             game_status = game.get('gameStatus', 0)
             
+            # Filter 4: Explicit preseason detection by game type
+            game_type = game.get('gameType', 0)
+            if game_type == 1:  # Pre-season games typically have gameType = 1
+                logger.debug(f"⏭️  Filtering preseason game {game_code} (gameType {game_type})")
+                return None
+            
+            # If we made it here, include the game
+            if game_label:
+                logger.debug(f"✅  Including game with label: {game_code} '{game_label}'")
+            
             return {
                 "date": date_str,
                 "game_code": game_code,
@@ -328,7 +408,7 @@ class BettingProsBackfillJob:
                 "game_status": game_status,
                 "completed": game_status == 3,  # Only process completed games
                 "week_name": week_name,  # Include for debugging
-                "game_label": game_label,  # Include for debugging
+                "game_label": game_label,  # Include for debugging and playoff filtering
             }
         except Exception as e:
             logger.warning(f"Error processing game {game.get('gameCode', 'unknown')}: {e}")
@@ -439,11 +519,14 @@ class BettingProsBackfillJob:
     def _print_final_summary(self, start_time: datetime):
         """Print final job summary."""
         duration = datetime.now() - start_time
+        mode_description = "playoff dates" if self.playoffs_only else "dates"
         
         logger.info("="*60)
         logger.info("🏀 BETTINGPROS HISTORICAL BACKFILL COMPLETE")
+        if self.playoffs_only:
+            logger.info("🏆 PLAYOFFS ONLY MODE")
         logger.info("="*60)
-        logger.info("Total dates: %d", self.total_dates)
+        logger.info("Total %s: %d", mode_description, self.total_dates)
         logger.info("Processed: %d", self.processed_dates) 
         logger.info("Skipped: %d", len(self.skipped_dates))
         logger.info("Failed: %d", len(self.failed_dates))
@@ -475,6 +558,8 @@ def main():
                        help="Just show what would be processed (no downloads)")
     parser.add_argument("--limit", type=int, default=None,
                        help="Limit number of dates to process (for testing)")
+    parser.add_argument("--playoffs-only", action="store_true",
+                       help="🏆 Only process playoff and play-in games (skip regular season)")
     
     args = parser.parse_args()
     
@@ -487,12 +572,13 @@ def main():
     # Parse seasons list
     seasons = [int(s.strip()) for s in args.seasons.split(",")]
     
-    # Create and run job
+    # Create and run job with new playoffs_only parameter
     job = BettingProsBackfillJob(
         scraper_service_url=service_url,
         seasons=seasons,
         bucket_name=args.bucket,
-        limit=args.limit
+        limit=args.limit,
+        playoffs_only=args.playoffs_only  # 🆕 NEW PARAMETER
     )
     
     job.run(dry_run=args.dry_run)

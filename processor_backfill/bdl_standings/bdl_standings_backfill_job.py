@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-# processor_backfill/bdl_standings/bdl_standings_backfill_job.py
 import os
 import sys
 import argparse
+import json
 import logging
 from datetime import datetime, date, timedelta
 from typing import List
@@ -84,7 +84,7 @@ class BdlStandingsBackfill:
                 return {'success': False, 'error': f'File not found: {file_path}'}
             
             content = blob.download_as_text()
-            raw_data = self.processor.json_loads(content)
+            raw_data = json.loads(content)
             
             # Validate data
             validation_errors = self.processor.validate_data(raw_data)

@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# processors/balldontlie/bdl_standings_processor.py
 import json
 import logging
 import re
@@ -13,6 +12,8 @@ class BdlStandingsProcessor(ProcessorBase):
         super().__init__()
         self.table_name = 'nba_raw.bdl_standings'
         self.processing_strategy = 'MERGE_UPDATE'
+        self.project_id = 'nba-props-platform'
+        self.bq_client = bigquery.Client(project=self.project_id)
         
     def parse_record_string(self, record_str: str) -> Tuple[int, int]:
         """Parse '41-11' format into (wins, losses) tuple."""
@@ -106,7 +107,7 @@ class BdlStandingsProcessor(ProcessorBase):
                 # Core identifiers
                 'season_year': season_year,
                 'season_display': self.calculate_season_display(season_year),
-                'date_recorded': date_recorded,
+                'date_recorded': date_recorded.isoformat(),  # Convert date to string
                 'team_id': team_data.get('id'),
                 'team_abbr': team_data.get('abbreviation'),
                 'team_city': team_data.get('city'),
@@ -144,10 +145,10 @@ class BdlStandingsProcessor(ProcessorBase):
                 'road_losses': road_losses,
                 
                 # Processing metadata
-                'scrape_timestamp': datetime.fromisoformat(scrape_timestamp.replace('Z', '+00:00')) if scrape_timestamp else None,
+                'scrape_timestamp': datetime.fromisoformat(scrape_timestamp.replace('Z', '+00:00')).isoformat() if scrape_timestamp else None,
                 'source_file_path': file_path,
-                'created_at': datetime.utcnow(),
-                'processed_at': datetime.utcnow()
+                'created_at': datetime.utcnow().isoformat(),
+                'processed_at': datetime.utcnow().isoformat()
             }
             
             rows.append(row)
@@ -179,7 +180,7 @@ class BdlStandingsProcessor(ProcessorBase):
             
             # Update created_at for existing records (set to current time for new records)
             for row in rows:
-                row['processed_at'] = datetime.utcnow()
+                row['processed_at'] = datetime.utcnow().isoformat()
             
             # Insert new data
             result = self.bq_client.insert_rows_json(table_id, rows)

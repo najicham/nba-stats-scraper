@@ -11,6 +11,7 @@ Provides backup/validation source for NBA.com injury reports.
 import json
 import logging
 import re
+import os
 from datetime import datetime, date
 from typing import Dict, List, Optional
 from google.cloud import bigquery
@@ -21,6 +22,7 @@ logger = logging.getLogger(__name__)
 class BdlInjuriesProcessor(ProcessorBase):
     def __init__(self):
         super().__init__()
+        self.bq_client = bigquery.Client()
         self.table_name = 'nba_raw.bdl_injuries'
         self.processing_strategy = 'APPEND_ALWAYS'  # Track intraday changes
         
@@ -226,13 +228,10 @@ class BdlInjuriesProcessor(ProcessorBase):
         """Validate Ball Don't Lie injuries JSON structure."""
         errors = []
         
-        if 'data' not in data:
-            errors.append("Missing 'data' array")
-            return errors
-        
-        if not isinstance(data['data'], list):
-            errors.append("'data' field is not an array")
-            return errors
+        if 'injuries' not in data:
+            errors.append("Missing 'injuries' array")
+        if not isinstance(data['injuries'], list):
+            errors.append("'injuries' field is not an array")
         
         return errors
 
@@ -252,7 +251,7 @@ class BdlInjuriesProcessor(ProcessorBase):
         # Current NBA season
         season_year = scrape_date.year if scrape_date.month >= 10 else scrape_date.year - 1
         
-        for injury_record in raw_data['data']:
+        for injury_record in raw_data['injuries']:
             player = injury_record.get('player', {})
             
             # Extract player info
@@ -330,7 +329,7 @@ class BdlInjuriesProcessor(ProcessorBase):
         if not rows:
             return {'rows_processed': 0, 'errors': []}
         
-        table_id = f"{self.project_id}.{self.table_name}"
+        table_id = f"{os.environ['GCP_PROJECT_ID']}.{self.table_name}"
         errors = []
         
         try:

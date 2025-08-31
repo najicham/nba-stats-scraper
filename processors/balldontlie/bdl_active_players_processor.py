@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-import json, logging, re
+import json, logging, re, os
 from typing import Dict, List, Optional
 from datetime import datetime
 from google.cloud import bigquery
 from processors.processor_base import ProcessorBase
-from processors.utils.name_utils import normalize_player_name
+from processors.utils.name_utils import normalize_name
 
 class BdlActivePlayersProcessor(ProcessorBase):
     def __init__(self):
@@ -12,12 +12,48 @@ class BdlActivePlayersProcessor(ProcessorBase):
         self.table_name = 'nba_raw.bdl_active_players_current'
         self.processing_strategy = 'MERGE_UPDATE'  # Current-state data
         
+        # Initialize BigQuery client explicitly
+        self.bq_client = bigquery.Client()
+        # Set project ID from environment or BigQuery client
+        self.project_id = os.environ.get('GCP_PROJECT_ID', self.bq_client.project)
+        
         # Load NBA.com player data for validation
         self.nba_com_players = self._load_nba_com_players()
+    
+    def parse_json(self, json_content: str, file_path: str) -> Dict:
+        """Parse Ball Don't Lie Active Players JSON."""
+        try:
+            data = json.loads(json_content)
+            
+            # Convert Ball Don't Lie format to expected format
+            if 'activePlayers' in data:
+                return {
+                    'data': data['activePlayers'],  # Convert activePlayers -> data
+                    'metadata': {
+                        'ident': data.get('ident'),
+                        'timestamp': data.get('timestamp'),
+                        'playerCount': data.get('playerCount'),
+                        'source_file': file_path
+                    }
+                }
+            else:
+                logging.error(f"No 'activePlayers' field found in {file_path}")
+                return None
+                
+        except json.JSONDecodeError as e:
+            logging.error(f"JSON decode error in {file_path}: {e}")
+            return None
+        except Exception as e:
+            logging.error(f"Error parsing JSON from {file_path}: {e}")
+            return None
     
     def _load_nba_com_players(self) -> Dict[str, Dict]:
         """Load current NBA.com player data for validation."""
         try:
+            if not self.bq_client:
+                logging.error("BigQuery client not initialized")
+                return {}
+                
             query = """
             SELECT player_lookup, player_full_name, team_abbr, player_id
             FROM `nba-props-platform.nba_raw.nbac_player_list_current`
@@ -32,6 +68,7 @@ class BdlActivePlayersProcessor(ProcessorBase):
                     'team_abbr': row.team_abbr,
                     'player_id': row.player_id
                 }
+            logging.info(f"Loaded {len(players)} NBA.com players for validation")
             return players
         except Exception as e:
             logging.warning(f"Could not load NBA.com players for validation: {e}")
@@ -118,7 +155,7 @@ class BdlActivePlayersProcessor(ProcessorBase):
             first_name = player_data.get('first_name', '').strip()
             last_name = player_data.get('last_name', '').strip()
             player_full_name = f"{first_name} {last_name}".strip()
-            player_lookup = normalize_player_name(player_full_name)
+            player_lookup = normalize_name(player_full_name)
             
             # Team info
             team_info = player_data.get('team', {})
@@ -164,12 +201,12 @@ class BdlActivePlayersProcessor(ProcessorBase):
                 'validation_status': validation_result['status'],
                 'validation_details': validation_result['details'],
                 'nba_com_team_abbr': validation_result['nba_com_team'],
-                'validation_last_check': datetime.utcnow(),
+                'validation_last_check': datetime.utcnow().isoformat(),
                 
                 # Processing metadata
-                'last_seen_date': datetime.utcnow().date(),
+                'last_seen_date': datetime.utcnow().date().isoformat(),
                 'source_file_path': file_path,
-                'processed_at': datetime.utcnow()
+                'processed_at': datetime.utcnow().isoformat()
             }
             
             rows.append(row)
@@ -205,4 +242,3 @@ class BdlActivePlayersProcessor(ProcessorBase):
         logging.info(f"Validation summary: {total_issues}/{len(rows)} players have validation issues")
         
         return {'rows_processed': len(rows) if not errors else 0, 'errors': errors}
-    

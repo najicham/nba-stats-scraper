@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
 # processor_backfill/bdl_active_players/bdl_active_players_backfill_job.py
+"""
+IMPORTANT: Cloud Run args syntax - Use custom delimiter syntax:
+✅ gcloud run jobs execute bdl-active-players-processor-backfill --args="^|^--start-date=2025-08-30|--end-date=2025-08-30" --region=us-west2
+❌ --args="--start-date 2025-08-30 --end-date 2025-08-30"  # FAILS
+"""
 import os, sys, argparse, logging
 from datetime import datetime, date, timedelta
 from typing import List

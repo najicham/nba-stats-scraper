@@ -2,10 +2,11 @@
 # processors/balldontlie/bdl_boxscores_processor.py
 
 import json
+import os
 import logging
 import re
 from typing import Dict, List, Optional
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from google.cloud import bigquery
 from processors.processor_base import ProcessorBase
 
@@ -14,6 +15,8 @@ logger = logging.getLogger(__name__)
 class BdlBoxscoresProcessor(ProcessorBase):
     def __init__(self):
         super().__init__()
+        self.project_id = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
+        self.bq_client = bigquery.Client(project=self.project_id)
         self.table_name = 'nba_raw.bdl_player_boxscores'
         self.processing_strategy = 'MERGE_UPDATE'
         
@@ -100,6 +103,7 @@ class BdlBoxscoresProcessor(ProcessorBase):
                 continue
                 
             game_date = datetime.strptime(game_date_str, '%Y-%m-%d').date()
+            game_date_str = game_date.strftime('%Y-%m-%d')
             season_year = self.extract_season_year(game_date_str, game.get('season'))
             
             # Extract team information
@@ -125,7 +129,7 @@ class BdlBoxscoresProcessor(ProcessorBase):
                 # Create player row
                 row = self.create_player_row(
                     game_id=game_id,
-                    game_date=game_date,
+                    game_date=game_date_str,
                     season_year=season_year,
                     game_status=game.get('status', ''),
                     period=game.get('period'),
@@ -151,7 +155,7 @@ class BdlBoxscoresProcessor(ProcessorBase):
                 # Create player row
                 row = self.create_player_row(
                     game_id=game_id,
-                    game_date=game_date,
+                    game_date=game_date_str,
                     season_year=season_year,
                     game_status=game.get('status', ''),
                     period=game.get('period'),
@@ -242,8 +246,8 @@ class BdlBoxscoresProcessor(ProcessorBase):
                 
                 # Processing metadata
                 'source_file_path': kwargs['file_path'],
-                'created_at': datetime.utcnow(),
-                'processed_at': datetime.utcnow()
+                'created_at': datetime.now(timezone.utc).isoformat(),
+                'processed_at': datetime.now(timezone.utc).isoformat()
             }
             
             return row
@@ -266,8 +270,11 @@ class BdlBoxscoresProcessor(ProcessorBase):
                 game_ids = set(row['game_id'] for row in rows)
                 
                 for game_id in game_ids:
-                    # Delete existing data for this game
-                    delete_query = f"DELETE FROM `{table_id}` WHERE game_id = '{game_id}'"
+                    # Get the game_date for this game_id (all rows with same game_id have same date)
+                    game_date = next(row['game_date'] for row in rows if row['game_id'] == game_id)
+                    
+                    # Delete existing data for this game (WITH PARTITION FILTER)
+                    delete_query = f"DELETE FROM `{table_id}` WHERE game_id = '{game_id}' AND game_date = '{game_date}'"
                     self.bq_client.query(delete_query).result()
                     logger.info(f"Deleted existing data for game {game_id}")
             

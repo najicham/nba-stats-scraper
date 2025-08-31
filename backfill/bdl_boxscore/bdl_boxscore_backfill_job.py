@@ -16,6 +16,8 @@ This script:
 5. Runs for ~15-20 minutes with 0.1s rate limiting (600 req/min = very fast!)
 6. Auto-terminates when complete
 
+🆕 NEW: --playoffs-only mode for targeted playoff data collection
+
 Usage:
   # Deploy as Cloud Run Job:
   ./backfill/bdl_boxscore/deploy_bdl_boxscore_backfill.sh
@@ -23,6 +25,11 @@ Usage:
   # Dry run (see date counts without downloading):
   gcloud run jobs execute bdl-boxscore-backfill \
     --args="--service-url=https://nba-scrapers-f7p3g7f6ya-wl.a.run.app --dry-run --seasons=2023" \
+    --region=us-west2
+
+  # 🏆 PLAYOFFS ONLY - Process just playoff games (much faster!):
+  gcloud run jobs execute bdl-boxscore-backfill \
+    --args="--service-url=https://nba-scrapers-f7p3g7f6ya-wl.a.run.app --seasons=2024 --playoffs-only" \
     --region=us-west2
 
   # Single season test (2023-24):
@@ -57,12 +64,15 @@ logger = logging.getLogger(__name__)
 class BdlBoxscoreBackfillJob:
     """Cloud Run Job for downloading NBA box scores from Ball Don't Lie API using schedule data."""
     
-    def __init__(self, scraper_service_url: str, seasons: List[int] = None, bucket_name: str = "nba-scraped-data", limit: Optional[int] = None, start_date: Optional[str] = None):
+    def __init__(self, scraper_service_url: str, seasons: List[int] = None, 
+                 bucket_name: str = "nba-scraped-data", limit: Optional[int] = None, 
+                 start_date: Optional[str] = None, playoffs_only: bool = False):
         self.scraper_service_url = scraper_service_url.rstrip('/')
         self.seasons = seasons or [2021, 2022, 2023, 2024]  # Default: all 4 seasons
         self.bucket_name = bucket_name
         self.limit = limit
         self.start_date = start_date  # Skip dates before this (format: YYYY-MM-DD)
+        self.playoffs_only = playoffs_only  # 🆕 NEW: Only process playoff games
         
         # Initialize GCS client
         self.storage_client = storage.Client()
@@ -80,6 +90,8 @@ class BdlBoxscoreBackfillJob:
         logger.info("🏀 Ball Don't Lie Boxscore Backfill Job initialized")
         logger.info("Scraper service: %s", self.scraper_service_url)
         logger.info("Seasons: %s", self.seasons)
+        if self.playoffs_only:
+            logger.info("🏆 PLAYOFFS ONLY MODE - Filtering to playoff games only")
         logger.info("GCS bucket: %s", self.bucket_name)
         logger.info("Rate limit: %.1fs between calls (300 req/min conservative)", self.RATE_LIMIT_DELAY)
         if self.limit:
@@ -105,13 +117,15 @@ class BdlBoxscoreBackfillJob:
                 return
             
             estimated_minutes = (self.total_dates * self.RATE_LIMIT_DELAY) / 60
-            logger.info("Total unique VALID game dates found: %d (filtered out pre-season/All-Star)", self.total_dates)
+            mode_description = "playoff dates" if self.playoffs_only else "game dates"
+            logger.info("Total unique VALID %s found: %d (filtered out pre-season/All-Star)", 
+                       mode_description, self.total_dates)
             if self.start_date:
                 logger.info("Starting from: %s (skipped earlier dates with potential data gaps)", self.start_date)
             logger.info("Estimated duration: %.1f minutes (conservative rate limiting)", estimated_minutes)
             
             if dry_run:
-                logger.info("🔍 DRY RUN - Would process %d dates", self.total_dates)
+                logger.info("🔍 DRY RUN - Would process %d %s", self.total_dates, mode_description)
                 logger.info("Sample dates (first 10):")
                 for i, date in enumerate(sorted(all_dates)[:10], 1):
                     logger.info("  %d. %s", i, date)
@@ -160,7 +174,7 @@ class BdlBoxscoreBackfillJob:
             raise
     
     def _collect_all_game_dates(self) -> Set[str]:
-        """Collect all unique game dates from GCS schedule files - using NEWEST file per season."""
+        """Collect all unique game dates from GCS schedule files - with optional playoff filtering."""
         logger.info("📊 Collecting game dates from GCS schedule files (newest per season)...")
         
         all_dates = set()
@@ -182,6 +196,10 @@ class BdlBoxscoreBackfillJob:
                 logger.error(f"Error processing season {season}: {e}")
                 continue
         
+        # 🆕 NEW: Apply playoff filtering if requested
+        if self.playoffs_only:
+            all_dates = self._filter_playoff_dates_only(all_dates)
+        
         # Apply start date filter if specified
         if self.start_date:
             original_count = len(all_dates)
@@ -198,8 +216,90 @@ class BdlBoxscoreBackfillJob:
             all_dates = set(limited_dates)
             logger.info(f"🔢 Limited to first {self.limit} dates (out of {original_count} total)")
         
-        logger.info(f"🎯 Total unique game dates to process: {len(all_dates)}")
+        mode_description = "playoff dates" if self.playoffs_only else "game dates"
+        logger.info(f"🎯 Total unique {mode_description} to process: {len(all_dates)}")
         return all_dates
+    
+    def _filter_playoff_dates_only(self, all_dates: Set[str]) -> Set[str]:
+        """🆕 Filter dates to only include those with playoff games."""
+        logger.info("🏆 Filtering for playoff games only...")
+        playoff_dates = set()
+        
+        for season in self.seasons:
+            try:
+                logger.info(f"Checking season {season} for playoff dates...")
+                
+                # Read schedule for this season
+                schedule_data = self._read_schedule_from_gcs(season)
+                schedule_games = schedule_data.get('gameDates', [])
+                
+                season_playoff_dates = set()
+                
+                for game_date_entry in schedule_games:
+                    game_date = self._extract_game_date(game_date_entry)
+                    if not game_date:
+                        continue
+                    
+                    date_str = game_date.strftime("%Y-%m-%d")
+                    
+                    # Only check dates that are in our original set
+                    if date_str not in all_dates:
+                        continue
+                    
+                    # Check if this date has any playoff games
+                    games_for_date = game_date_entry.get('games', [])
+                    has_playoff_games = False
+                    
+                    for game in games_for_date:
+                        if self._is_playoff_game(game):
+                            has_playoff_games = True
+                            break
+                    
+                    if has_playoff_games:
+                        season_playoff_dates.add(date_str)
+                
+                logger.info(f"Season {season}: {len(season_playoff_dates)} playoff dates found")
+                playoff_dates.update(season_playoff_dates)
+                
+            except Exception as e:
+                logger.error(f"Error filtering playoff dates for season {season}: {e}")
+                continue
+        
+        original_count = len(all_dates)
+        filtered_count = len(playoff_dates)
+        
+        logger.info(f"🏆 Playoff filtering results:")
+        logger.info(f"   Original dates: {original_count}")
+        logger.info(f"   Playoff dates: {filtered_count}")
+        logger.info(f"   Filtered out: {original_count - filtered_count} regular season dates")
+        
+        return playoff_dates
+    
+    def _is_playoff_game(self, game: Dict) -> bool:
+        """🆕 Check if a game is a playoff or play-in game."""
+        try:
+            game_label = game.get('gameLabel', '')
+            
+            # Playoff indicators from NBA.com schedule filtering documentation
+            playoff_indicators = [
+                'Play-In',           # Play-in tournament
+                'First Round',       # First round playoffs
+                'Conf. Semifinals',  # Conference semifinals  
+                'Conf. Finals',      # Conference finals
+                'NBA Finals'         # NBA Finals
+            ]
+            
+            # Check if any playoff indicator is in the game label
+            is_playoff = any(indicator in game_label for indicator in playoff_indicators)
+            
+            if is_playoff:
+                logger.debug(f"✅ Playoff game found: {game_label}")
+            
+            return is_playoff
+            
+        except Exception as e:
+            logger.debug(f"Error checking playoff status: {e}")
+            return False
     
     def _read_schedule_from_gcs(self, season_year: int) -> Dict[str, Any]:
         """Read NBA schedule JSON from GCS for a specific season - USING NEWEST FILE."""
@@ -264,22 +364,46 @@ class BdlBoxscoreBackfillJob:
         return dates
     
     def _is_valid_regular_or_playoff_game(self, game: Dict) -> bool:
-        """Filter out pre-season, All-Star, and other special games - same logic as NBA Gamebook."""
+        """✅ FIXED: Filter out pre-season, All-Star, and other special games - INCLUDES playoffs."""
         try:
-            # Filter 1: All-Star games and special events
+            # Extract key fields
             week_name = game.get('weekName', '')
             game_label = game.get('gameLabel', '')
             game_sub_label = game.get('gameSubLabel', '')
             
-            # Check for All-Star indicators
-            if (week_name == "All-Star" or 
-                game_label or  # Any non-empty gameLabel indicates special event
-                game_sub_label):  # Any non-empty gameSubLabel indicates special event
-                
-                logger.debug(f"⏭️  Filtering All-Star/Special event: {game_label or week_name or 'special game'}")
+            # Filter 1: All-Star week games (definitive exclusion)
+            if week_name == "All-Star":
+                logger.debug(f"⏭️  Filtering All-Star week game")
                 return False
             
-            # Filter 2: Team validation - real NBA teams only
+            # Filter 2: Specific All-Star special events (even outside All-Star week)
+            all_star_events = [
+                'Rising Stars', 'All-Star Game', 'Celebrity Game', 
+                'Skills Challenge', 'Three-Point Contest', 'Slam Dunk Contest'
+            ]
+            
+            for event in all_star_events:
+                if event in game_label or event in game_sub_label:
+                    logger.debug(f"⏭️  Filtering All-Star special event: {game_label}")
+                    return False
+            
+            # Filter 3: Enhanced preseason detection (handles weekNumber=0 playoff issue)
+            week_number = game.get('weekNumber', -1)
+            if week_number == 0:
+                # For older seasons, playoff games also have weekNumber=0
+                # Check if this is actually a playoff game before filtering
+                playoff_indicators = ['Play-In', 'First Round', 'Conf. Semifinals', 'Conf. Finals', 'NBA Finals']
+                is_playoff_game = any(indicator in game_label for indicator in playoff_indicators)
+                
+                if not is_playoff_game:
+                    # This is likely a preseason game
+                    logger.debug(f"⏭️  Filtering preseason game (weekNumber=0, no playoff indicators)")
+                    return False
+                else:
+                    # This is a playoff game with weekNumber=0 (keep it!)
+                    logger.debug(f"✅  Keeping playoff game with weekNumber=0: {game_label}")
+            
+            # Filter 4: Team validation - real NBA teams only
             away_team = game.get('awayTeam', {}).get('teamTricode', '')
             home_team = game.get('homeTeam', {}).get('teamTricode', '')
             
@@ -298,17 +422,21 @@ class BdlBoxscoreBackfillJob:
                 logger.debug(f"⏭️  Filtering game with invalid team codes: {away_team} vs {home_team}")
                 return False
             
-            # Filter 3: Game status - only completed games (status 3)
+            # Filter 5: Game status - only completed games (status 3)
             game_status = game.get('gameStatus', 0)
             if game_status != 3:
                 logger.debug(f"⏭️  Filtering incomplete game (status {game_status})")
                 return False
             
-            # Filter 4: Pre-season detection by game type
+            # Filter 6: Explicit preseason detection by game type
             game_type = game.get('gameType', 0)
             if game_type == 1:  # Pre-season games typically have gameType = 1
-                logger.debug(f"⏭️  Filtering pre-season game (gameType {game_type})")
+                logger.debug(f"⏭️  Filtering preseason game (gameType {game_type})")
                 return False
+            
+            # If we made it here, it's a valid regular season or playoff game
+            if game_label:
+                logger.debug(f"✅  Including game with label: {game_label}")
             
             return True
             
@@ -408,11 +536,14 @@ class BdlBoxscoreBackfillJob:
     def _print_final_summary(self, start_time: datetime):
         """Print final job summary."""
         duration = datetime.now() - start_time
+        mode_description = "playoff dates" if self.playoffs_only else "dates"
         
         logger.info("="*60)
         logger.info("🏀 BALL DON'T LIE BOXSCORE BACKFILL COMPLETE")
+        if self.playoffs_only:
+            logger.info("🏆 PLAYOFFS ONLY MODE")
         logger.info("="*60)
-        logger.info("Total dates: %d", self.total_dates)
+        logger.info("Total %s: %d", mode_description, self.total_dates)
         logger.info("Downloaded: %d", self.processed_dates) 
         logger.info("Skipped: %d", len(self.skipped_dates))
         logger.info("Failed: %d", len(self.failed_dates))
@@ -428,6 +559,8 @@ class BdlBoxscoreBackfillJob:
         logger.info("🎯 Next steps:")
         logger.info("   - Check data in: gs://nba-scraped-data/ball-dont-lie/box-scores/")
         logger.info("   - Validate with: bin/validation/validate_bdl_boxscore.sh --recent")
+        if self.playoffs_only:
+            logger.info("   - Process with: bdl-boxscores-processor-backfill --start-date=2024-04-15 --end-date=2024-06-17")
         logger.info("   - Begin analytics integration")
         logger.info("   - Set up daily scrapers for ongoing collection")
 
@@ -446,6 +579,8 @@ def main():
                        help="Limit number of dates to process (for testing)")
     parser.add_argument("--start-date", default=None,
                        help="Skip dates before this date (YYYY-MM-DD format, e.g., 2021-10-19)")
+    parser.add_argument("--playoffs-only", action="store_true",
+                       help="🏆 Only process playoff and play-in games (skip regular season)")
     
     args = parser.parse_args()
     
@@ -458,13 +593,14 @@ def main():
     # Parse seasons list
     seasons = [int(s.strip()) for s in args.seasons.split(",")]
     
-    # Create and run job
+    # Create and run job with new playoffs_only parameter
     job = BdlBoxscoreBackfillJob(
         scraper_service_url=service_url,
         seasons=seasons,
         bucket_name=args.bucket,
         limit=args.limit,
-        start_date=args.start_date
+        start_date=args.start_date,
+        playoffs_only=args.playoffs_only  # 🆕 NEW PARAMETER
     )
     
     job.run(dry_run=args.dry_run)
