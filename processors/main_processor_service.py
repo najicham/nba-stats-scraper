@@ -9,6 +9,7 @@ import logging
 from flask import Flask, request, jsonify
 from datetime import datetime, timezone
 import base64
+import re
 
 # Import processors
 from processors.basketball_ref.br_roster_processor import BasketballRefRosterProcessor
@@ -18,7 +19,17 @@ from processors.nbacom.nbac_player_list_processor import NbacPlayerListProcessor
 from processors.balldontlie.bdl_standings_processor import BdlStandingsProcessor
 from processors.balldontlie.bdl_injuries_processor import BdlInjuriesProcessor
 from processors.balldontlie.bdl_boxscores_processor import BdlBoxscoresProcessor
-from processors.balldontlie.bdl_active_players_processor import BdlActivePlayersProcessor  # ADD THIS LINE
+from processors.balldontlie.bdl_active_players_processor import BdlActivePlayersProcessor
+from processors.nbacom.nbac_player_movement_processor import NbacPlayerMovementProcessor
+from processors.nbacom.nbac_scoreboard_v2_processor import NbacScoreboardV2Processor
+from processors.nbacom.nbac_player_boxscore_processor import NbacPlayerBoxscoreProcessor
+from processors.nbacom.nbac_play_by_play_processor import NbacPlayByPlayProcessor
+
+from processors.espn.espn_boxscore_processor import EspnBoxscoreProcessor
+from processors.espn.espn_team_roster_processor import EspnTeamRosterProcessor
+from processors.espn.espn_scoreboard_processor import EspnScoreboardProcessor
+from processors.bettingpros.bettingpros_player_props_processor import BettingPropsProcessor
+from processors.bigdataball.bigdataball_pbp_processor import BigDataBallPbpProcessor
 
 
 # from balldontlie.bdl_boxscore_processor import BdlBoxscoreProcessor
@@ -31,13 +42,29 @@ logger = logging.getLogger(__name__)
 # Processor registry
 PROCESSOR_REGISTRY = {
     'basketball-ref/season-rosters': BasketballRefRosterProcessor,
+    
     'odds-api/player-props': OddsApiPropsProcessor,
+    
     'nba-com/gamebooks-data': NbacGamebookProcessor,
     'nba-com/player-list': NbacPlayerListProcessor,
+    
     'ball-dont-lie/standings': BdlStandingsProcessor,
     'ball-dont-lie/injuries': BdlInjuriesProcessor,
     'ball-dont-lie/boxscores': BdlBoxscoresProcessor,
-    'ball-dont-lie/active-players': BdlActivePlayersProcessor,  # ADD THIS LINE
+    'ball-dont-lie/active-players': BdlActivePlayersProcessor,
+    
+    'nba-com/player-movement': NbacPlayerMovementProcessor,
+    'nba-com/scoreboard-v2': NbacScoreboardV2Processor,
+    'nba-com/player-boxscores': NbacPlayerBoxscoreProcessor,
+    'nba-com/play-by-play': NbacPlayByPlayProcessor,
+
+    'espn/boxscores': EspnBoxscoreProcessor,
+    'espn/rosters': EspnTeamRosterProcessor,
+    'espn/scoreboard': EspnScoreboardProcessor,
+
+    'bettingpros/player-props': BettingPropsProcessor,
+
+    'big-data-ball': BigDataBallPbpProcessor,
 }
 
 
@@ -230,7 +257,117 @@ def extract_opts_from_path(file_path: str) -> dict:
             except ValueError:
                 logger.warning(f"Could not parse date from active-players path: {date_str}")
     
-    return opts
+    elif 'nba-com/scoreboard-v2' in file_path:
+        # NBA.com Scoreboard V2 files have date in path
+        # Format: /nba-com/scoreboard-v2/{date}/{timestamp}.json
+        parts = file_path.split('/')
+        if len(parts) >= 4:
+            try:
+                date_str = parts[-2]  # Extract date from path
+                opts['scoreDate'] = date_str
+            except (IndexError, ValueError):
+                pass
+
+    elif 'espn/boxscores' in file_path:
+            # Extract game info from ESPN boxscore path
+            # Path format: /espn/boxscores/{date}/game_{id}/{timestamp}.json
+            parts = file_path.split('/')
+            for i, part in enumerate(parts):
+                if part == 'boxscores' and i + 1 < len(parts):
+                    opts['game_date'] = parts[i + 1]
+                elif part.startswith('game_') and i + 1 < len(parts):
+                    opts['espn_game_id'] = part.replace('game_', '')
+
+    elif 'espn/rosters' in file_path:
+        # Extract team and date from ESPN roster path
+        # Path format: espn/rosters/{date}/team_{team_abbr}/{timestamp}.json
+        parts = file_path.split('/')
+        
+        # Extract date
+        for part in parts:
+            if len(part) == 10 and part.count('-') == 2:  # YYYY-MM-DD format
+                try:
+                    opts['roster_date'] = part
+                    break
+                except:
+                    pass
+        
+        # Extract team abbreviation from team_{abbr} folder
+        for part in parts:
+            if part.startswith('team_') and len(part) > 5:
+                opts['team_abbr'] = part[5:]  # Remove 'team_' prefix
+                break
+
+    elif 'nba-com/player-boxscores' in file_path:  # ADD THIS BLOCK
+        # Extract date from path like: /nba-com/player-boxscores/2024-01-15/timestamp.json
+        date_match = re.search(r'(\d{4}-\d{2}-\d{2})', file_path)
+        if date_match:
+            opts['date'] = date_match.group(1)
+
+    elif 'nba-com/play-by-play' in file_path:
+        # Extract game date and game ID from play-by-play path
+        # Format: /nba-com/play-by-play/{date}/game_{gameId}/{timestamp}.json
+        parts = file_path.split('/')
+        
+        # Find date part (YYYY-MM-DD format)
+        for part in parts:
+            if re.match(r'\d{4}-\d{2}-\d{2}', part):
+                opts['game_date'] = part
+                break
+        
+        # Find game ID from game_{gameId} directory
+        for part in parts:
+            if part.startswith('game_'):
+                opts['nba_game_id'] = part.replace('game_', '')
+                break
+    
+    elif 'bettingpros/player-props' in file_path:
+        # Extract market type from BettingPros path
+        # Pattern: /bettingpros/player-props/{market_type}/{date}/{timestamp}.json
+        parts = file_path.split('/')
+        try:
+            if 'player-props' in parts:
+                market_idx = parts.index('player-props')
+                if market_idx + 1 < len(parts):
+                    opts['market_type'] = parts[market_idx + 1]  # Extract 'points', 'rebounds', etc.
+        except (ValueError, IndexError):
+            pass
+
+    elif 'espn/scoreboard' in file_path:
+        # Extract game date from path: espn/scoreboard/{date}/{timestamp}.json
+        parts = file_path.split('/')
+        if len(parts) >= 3:
+            opts['game_date'] = parts[-2]  # Extract date from path
+
+    elif 'big-data-ball' in file_path or 'bigdataball' in file_path:
+        # BigDataBall play-by-play files
+        # Path formats: 
+        # - /big-data-ball/{season}/{date}/game_{id}/{filename}.csv
+        # - /bigdataball/{season}/{date}/game_{id}/{filename}.csv
+        parts = file_path.split('/')
+        
+        # Find date part (YYYY-MM-DD format)
+        for part in parts:
+            if re.match(r'\d{4}-\d{2}-\d{2}', part):
+                opts['game_date'] = part
+                
+                # Calculate season year from game date
+                try:
+                    from datetime import datetime
+                    game_date_obj = datetime.strptime(part, '%Y-%m-%d').date()
+                    season_year = game_date_obj.year if game_date_obj.month >= 10 else game_date_obj.year - 1
+                    opts['season_year'] = season_year
+                except ValueError:
+                    logger.warning(f"Could not parse date from BigDataBall path: {part}")
+                break
+        
+        # Find game ID from game_{gameId} directory  
+        for part in parts:
+            if part.startswith('game_'):
+                opts['game_id'] = part.replace('game_', '')
+                break
+    
+    return opts    
 
 
 if __name__ == '__main__':
