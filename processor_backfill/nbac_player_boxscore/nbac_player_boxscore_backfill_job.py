@@ -222,7 +222,10 @@ class NbacPlayerBoxscoreBackfill:
         self.logger.info(f"Successfully processed: {processed}")
         self.logger.info(f"Errors: {errors}")
         self.logger.info(f"Total rows loaded: {total_rows}")
-        self.logger.info(f"Success rate: {(processed/total_files*100):.1f}%")
+        if total_files > 0:
+            self.logger.info(f"Success rate: {(processed/total_files*100):.1f}%")
+        else:
+            self.logger.info("Success rate: N/A (no files found)")
         self.logger.info("="*50)
 
 def main():

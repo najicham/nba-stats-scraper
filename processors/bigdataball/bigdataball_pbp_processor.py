@@ -2,7 +2,10 @@
 # File: processors/bigdataball/bigdataball_pbp_processor.py
 # Description: Processor for BigDataBall play-by-play data transformation
 
-import json, logging, re
+import os
+import json
+import logging
+import re
 from typing import Dict, List, Optional
 from datetime import datetime
 from google.cloud import bigquery
@@ -12,7 +15,20 @@ class BigDataBallPbpProcessor(ProcessorBase):
     def __init__(self):
         super().__init__()
         self.table_name = 'nba_raw.bigdataball_play_by_play'
-        self.processing_strategy = 'MERGE_UPDATE'  # Replace existing game data
+        self.processing_strategy = 'MERGE_UPDATE'
+        
+        # CRITICAL: These two lines are REQUIRED for all processors
+        self.project_id = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
+        self.bq_client = bigquery.Client(project=self.project_id)
+        
+    def parse_json(self, json_content: str, file_path: str) -> Dict:
+        """Parse BigDataBall JSON content from .csv file"""
+        try:
+            data = json.loads(json_content)
+            return data
+        except json.JSONDecodeError as e:
+            logging.error(f"Failed to parse JSON from {file_path}: {e}")
+            raise
         
     def normalize_player_name(self, name: str) -> str:
         """Convert player name to lookup format: 'LeBron James' -> 'lebronjames'"""
@@ -28,7 +44,6 @@ class BigDataBallPbpProcessor(ProcessorBase):
     
     def construct_game_id(self, game_date: str, away_team: str, home_team: str) -> str:
         """Construct consistent game_id format: '20241101_NYK_DET'"""
-        # Convert date from 2024-11-01 to 20241101
         date_part = game_date.replace('-', '')
         return f"{date_part}_{away_team}_{home_team}"
     
@@ -93,6 +108,20 @@ class BigDataBallPbpProcessor(ProcessorBase):
             return None
         except (ValueError, IndexError):
             return None
+    
+    def determine_shot_type(self, event_type: str) -> Optional[str]:
+        """Map BigDataBall shot types to standard format"""
+        if not event_type:
+            return None
+        
+        event_type_lower = event_type.lower()
+        
+        if '3pt' in event_type_lower:
+            return '3PT'
+        elif 'free throw' in event_type_lower or 'ft' in event_type_lower:
+            return 'FT'
+        else:
+            return '2PT'
     
     def validate_data(self, data: Dict) -> List[str]:
         """Validate required fields in BigDataBall data"""
@@ -182,13 +211,13 @@ class BigDataBallPbpProcessor(ProcessorBase):
                 # Secondary Player
                 'player_2_name': player_2_name,
                 'player_2_lookup': self.normalize_player_name(player_2_name) if player_2_name else None,
-                'player_2_team_abbr': None,  # Context-dependent, would need team lookup
+                'player_2_team_abbr': None,
                 'player_2_role': player_2_role,
                 
                 # Tertiary Player
                 'player_3_name': player_3_name,
                 'player_3_lookup': self.normalize_player_name(player_3_name) if player_3_name else None,
-                'player_3_team_abbr': None,  # Context-dependent, would need team lookup
+                'player_3_team_abbr': None,
                 'player_3_role': player_3_role,
                 
                 # Shot Details
@@ -226,7 +255,7 @@ class BigDataBallPbpProcessor(ProcessorBase):
                 # Processing Metadata
                 'source_file_path': file_path,
                 'csv_filename': raw_data.get('file_info', {}).get('name'),
-                'csv_row_number': None,  # Would need to track during CSV parsing
+                'csv_row_number': None,
                 'processed_at': datetime.utcnow().isoformat(),
                 'created_at': datetime.utcnow().isoformat()
             }
@@ -235,22 +264,8 @@ class BigDataBallPbpProcessor(ProcessorBase):
         
         return rows
     
-    def determine_shot_type(self, event_type: str) -> Optional[str]:
-        """Map BigDataBall shot types to standard format"""
-        if not event_type:
-            return None
-        
-        event_type_lower = event_type.lower()
-        
-        if '3pt' in event_type_lower:
-            return '3PT'
-        elif 'free throw' in event_type_lower or 'ft' in event_type_lower:
-            return 'FT'
-        else:
-            return '2PT'
-    
     def load_data(self, rows: List[Dict], **kwargs) -> Dict:
-        """Load data to BigQuery using MERGE_UPDATE strategy"""
+        """Load data to BigQuery using streaming-compatible strategy"""
         if not rows:
             return {'rows_processed': 0, 'errors': []}
         
@@ -258,19 +273,37 @@ class BigDataBallPbpProcessor(ProcessorBase):
         errors = []
         
         try:
-            # MERGE_UPDATE: Delete existing data for this game first
             game_id = rows[0]['game_id']
-            delete_query = f"DELETE FROM `{table_id}` WHERE game_id = '{game_id}'"
-            logging.info(f"Deleting existing data for game {game_id}")
-            self.bq_client.query(delete_query).result()
+            game_date = rows[0]['game_date']
             
-            # Insert new data
-            logging.info(f"Inserting {len(rows)} rows for game {game_id}")
-            result = self.bq_client.insert_rows_json(table_id, rows)
+            # Check if this is the first file for this game today
+            check_query = f"""
+            SELECT COUNT(*) as existing_rows
+            FROM `{table_id}` 
+            WHERE game_id = '{game_id}' AND game_date = '{game_date}'
+            """
             
-            if result:
-                errors.extend([str(e) for e in result])
-                logging.error(f"BigQuery insert errors: {errors}")
+            query_job = self.bq_client.query(check_query)
+            result = query_job.result()
+            existing_rows = next(result).existing_rows
+            
+            if existing_rows > 0:
+                # Data already exists - this is likely a duplicate file for the same game
+                logging.info(f"Game {game_id} already has {existing_rows} rows - skipping to avoid streaming buffer conflict")
+                return {
+                    'rows_processed': 0, 
+                    'errors': [],
+                    'game_id': game_id,
+                    'message': f'Skipped - game already processed with {existing_rows} rows'
+                }
+            else:
+                # First time processing this game - safe to insert
+                logging.info(f"Inserting {len(rows)} rows for new game {game_id}")
+                result = self.bq_client.insert_rows_json(table_id, rows)
+                
+                if result:
+                    errors.extend([str(e) for e in result])
+                    logging.error(f"BigQuery insert errors: {errors}")
         except Exception as e:
             error_msg = str(e)
             errors.append(error_msg)

@@ -137,82 +137,65 @@ class EspnTeamRosterProcessor(ProcessorBase):
             season_year = self.extract_season_year(roster_date)
             scrape_hour = self.extract_scrape_hour(file_path)
             
-            # Handle different ESPN JSON structures
-            players_data = []
-            team_info = {}
+            # Handle actual ESPN JSON structure
+            if 'players' not in raw_data:
+                logging.error(f"Expected 'players' field not found in {file_path}")
+                return rows
+                
+            players_data = raw_data['players']
             
-            if 'team' in raw_data:
-                team_info = raw_data.get('team', {})
-                players_data = team_info.get('roster', {}).get('athletes', [])
-            elif 'roster' in raw_data:
-                players_data = raw_data['roster']
-                team_info = raw_data.get('team', {})
-            elif 'players' in raw_data:
-                players_data = raw_data['players']
-                team_info = raw_data.get('team', {})
-            else:
-                # Assume the whole data is the roster
-                players_data = raw_data if isinstance(raw_data, list) else [raw_data]
+            # Extract team information from the top-level data
+            team_display_name = raw_data.get('teamName', '')
+            team_abbr = raw_data.get('team_abbr', '')  # Already provided in ESPN structure
+            espn_team_id = raw_data.get('espn_team_id')
             
-            # Extract team information
-            team_display_name = team_info.get('displayName', team_info.get('name', ''))
-            team_abbr = self.map_team_to_abbr(team_display_name)
+            if not team_abbr and team_display_name:
+                # Fallback: try to map team name to abbreviation
+                team_abbr = self.map_team_to_abbr(team_display_name)
             
             for player_data in players_data:
                 if not isinstance(player_data, dict):
                     continue
                 
-                # Handle nested athlete structure common in ESPN
-                athlete = player_data.get('athlete', player_data)
-                
-                # Extract player information
-                espn_player_id = athlete.get('id')
+                # Extract player information from actual ESPN structure
+                espn_player_id = player_data.get('playerId')
                 if not espn_player_id:
                     continue  # Skip players without IDs
                 
-                full_name = athlete.get('displayName', athlete.get('name', ''))
+                full_name = player_data.get('fullName', '')
                 if not full_name:
                     continue  # Skip players without names
                 
                 player_lookup = self.normalize_player_name(full_name)
                 
-                # Extract additional player details
-                jersey_number = athlete.get('jersey', athlete.get('number', ''))
-                position = athlete.get('position', {})
-                if isinstance(position, dict):
-                    position_name = position.get('name', '')
-                    position_abbr = position.get('abbreviation', position.get('abbrev', ''))
-                else:
-                    position_name = str(position) if position else ''
-                    position_abbr = position_name
+                # Extract ESPN-specific fields
+                jersey_number = player_data.get('jersey', '')
+                position_name = player_data.get('position', '')
                 
-                height = athlete.get('height', '')
-                weight = athlete.get('weight', '')
-                age = athlete.get('age')
+                # Convert height from inches to feet-inches format
+                height_in = player_data.get('heightIn')
+                height = None
+                if height_in and isinstance(height_in, (int, float)):
+                    feet = int(height_in // 12)
+                    inches = int(height_in % 12)
+                    height = f"{feet}' {inches}\""
                 
-                # Experience and background
-                experience_years = athlete.get('experience', {}).get('years') if athlete.get('experience') else None
-                college = athlete.get('college', athlete.get('school', ''))
-                birth_place = athlete.get('birthPlace', athlete.get('hometown', ''))
-                birth_date_str = athlete.get('birthDate', athlete.get('dateOfBirth', ''))
+                # Convert weight to string with "lbs" suffix
+                weight_lb = player_data.get('weightLb')
+                weight = None
+                if weight_lb and isinstance(weight_lb, (int, float)):
+                    weight = f"{int(weight_lb)} lbs"
                 
-                birth_date = None
-                if birth_date_str:
-                    try:
-                        # Handle various date formats
-                        for fmt in ['%Y-%m-%d', '%Y-%m-%dT%H:%M:%SZ', '%m/%d/%Y']:
-                            try:
-                                birth_date = datetime.strptime(birth_date_str, fmt).date()
-                                break
-                            except ValueError:
-                                continue
-                    except:
-                        pass
-                
-                # Status information
-                status = athlete.get('status', athlete.get('active', 'Active'))
-                roster_status = athlete.get('rosterStatus', 'Active Roster')
-                salary = athlete.get('salary', '')
+                # Handle injuries - determine status from injuries array
+                injuries = player_data.get('injuries', [])
+                status = 'Active'
+                if injuries:
+                    # If there are injuries, check the most recent one
+                    if len(injuries) > 0:
+                        recent_injury = injuries[0]  # Assume first is most recent
+                        injury_status = recent_injury.get('status', '')
+                        if injury_status:
+                            status = injury_status
                 
                 row = {
                     'roster_date': roster_date.isoformat(),
@@ -224,18 +207,18 @@ class EspnTeamRosterProcessor(ProcessorBase):
                     'player_full_name': full_name,
                     'player_lookup': player_lookup,
                     'jersey_number': str(jersey_number) if jersey_number else None,
-                    'position': position_name,
-                    'position_abbr': position_abbr,
-                    'height': height if height else None,
-                    'weight': weight if weight else None,
-                    'age': age if isinstance(age, int) else None,
-                    'experience_years': experience_years if isinstance(experience_years, int) else None,
-                    'college': college if college else None,
-                    'birth_place': birth_place if birth_place else None,
-                    'birth_date': birth_date.isoformat() if birth_date else None,
-                    'status': status if status else None,
-                    'roster_status': roster_status if roster_status else None,
-                    'salary': salary if salary else None,
+                    'position': position_name if position_name else None,
+                    'position_abbr': position_name if position_name else None,  # ESPN doesn't separate these
+                    'height': height,
+                    'weight': weight,
+                    'age': None,  # Not provided in this ESPN structure
+                    'experience_years': None,  # Not provided in this ESPN structure
+                    'college': None,  # Not provided in this ESPN structure
+                    'birth_place': None,  # Not provided in this ESPN structure
+                    'birth_date': None,  # Not provided in this ESPN structure
+                    'status': status,
+                    'roster_status': 'Active Roster',  # Default since not specified
+                    'salary': None,  # Not provided in this ESPN structure
                     'espn_roster_url': None,  # Could be extracted from metadata if available
                     'source_file_path': file_path,
                     'created_at': datetime.now(timezone.utc).isoformat(),
@@ -243,6 +226,8 @@ class EspnTeamRosterProcessor(ProcessorBase):
                 }
                 
                 rows.append(row)
+                
+            logging.info(f"Transformed {len(rows)} players from {team_abbr} roster")
         
         except Exception as e:
             logging.error(f"Error transforming ESPN roster data from {file_path}: {str(e)}")

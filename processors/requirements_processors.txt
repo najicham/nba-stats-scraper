@@ -21,3 +21,4 @@ db-dtypes==1.2.0
 
 fuzzywuzzy>=0.18.0
 python-Levenshtein>=0.21.0
+google-cloud-pubsub>=2.31.1

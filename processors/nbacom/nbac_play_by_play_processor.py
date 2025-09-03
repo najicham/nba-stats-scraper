@@ -6,9 +6,10 @@ import json
 import logging
 import re
 import math
+import os
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
-from google.cloud import bigquery
+from google.cloud import bigquery, storage
 from processors.processor_base import ProcessorBase
 
 class NbacPlayByPlayProcessor(ProcessorBase):
@@ -16,6 +17,10 @@ class NbacPlayByPlayProcessor(ProcessorBase):
         super().__init__()
         self.table_name = 'nba_raw.nbac_play_by_play'
         self.processing_strategy = 'MERGE_UPDATE'  # Replace existing game data
+        self.bucket_name = 'nba-scraped-data'
+        self.storage_client = storage.Client()
+        self.bq_client = bigquery.Client()
+        self.project_id = os.environ.get('GCP_PROJECT_ID', self.bq_client.project)
         
         # NBA team ID to abbreviation mapping
         self.team_id_mapping = {
@@ -340,6 +345,49 @@ class NbacPlayByPlayProcessor(ProcessorBase):
         
         return rows
     
+    def process_file(self, file_path: str) -> Dict:
+        """
+        Main entry point for processing a single play-by-play file.
+        Downloads, validates, transforms, and loads the data.
+        """
+        try:
+            # Download file from GCS
+            blob_name = file_path.replace(f"gs://{self.storage_client.bucket(self.bucket_name).name}/", "")
+            bucket = self.storage_client.bucket(self.bucket_name)
+            blob = bucket.blob(blob_name)
+            
+            if not blob.exists():
+                return {'errors': [f'File not found: {file_path}'], 'rows_processed': 0}
+            
+            # Download and parse JSON
+            json_content = blob.download_as_text()
+            raw_data = json.loads(json_content)
+            
+            # Validate data structure
+            validation_errors = self.validate_data(raw_data)
+            if validation_errors:
+                return {'errors': validation_errors, 'rows_processed': 0}
+            
+            # Transform data
+            rows = self.transform_data(raw_data, file_path)
+            if not rows:
+                return {'errors': ['No events extracted from file'], 'rows_processed': 0}
+            
+            # Load to BigQuery
+            load_result = self.load_data(rows)
+            
+            return {
+                'rows_processed': load_result.get('rows_processed', 0),
+                'events_processed': load_result.get('events_processed', len(rows)),
+                'errors': load_result.get('errors', [])
+            }
+            
+        except json.JSONDecodeError as e:
+            return {'errors': [f'Invalid JSON: {str(e)}'], 'rows_processed': 0}
+        except Exception as e:
+            logging.error(f"Error processing file {file_path}: {str(e)}")
+            return {'errors': [str(e)], 'rows_processed': 0}
+
     def load_data(self, rows: List[Dict], **kwargs) -> Dict:
         """Load play-by-play data to BigQuery."""
         if not rows:
@@ -350,9 +398,10 @@ class NbacPlayByPlayProcessor(ProcessorBase):
         
         try:
             if self.processing_strategy == 'MERGE_UPDATE':
-                # Delete existing data for this game first
+                # Delete existing data for this game - MUST include game_date for partition elimination
                 game_id = rows[0]['game_id']
-                delete_query = f"DELETE FROM `{table_id}` WHERE game_id = '{game_id}'"
+                game_date = rows[0]['game_date']  # Add this line
+                delete_query = f"DELETE FROM `{table_id}` WHERE game_id = '{game_id}' AND game_date = '{game_date}'"  # Add game_date filter
                 self.bq_client.query(delete_query).result()
                 logging.info(f"Deleted existing data for game_id: {game_id}")
             

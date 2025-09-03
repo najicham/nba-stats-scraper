@@ -31,6 +31,7 @@
 # ✅ CORRECT (use equals syntax):
 #    --args=--dry-run,--limit=10
 
+import json
 import os
 import sys
 import argparse

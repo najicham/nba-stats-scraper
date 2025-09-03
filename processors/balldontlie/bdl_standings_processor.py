@@ -2,6 +2,7 @@
 import json
 import logging
 import re
+import os
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime, date
 from google.cloud import bigquery
@@ -12,7 +13,7 @@ class BdlStandingsProcessor(ProcessorBase):
         super().__init__()
         self.table_name = 'nba_raw.bdl_standings'
         self.processing_strategy = 'MERGE_UPDATE'
-        self.project_id = 'nba-props-platform'
+        self.project_id = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
         self.bq_client = bigquery.Client(project=self.project_id)
         
     def parse_record_string(self, record_str: str) -> Tuple[int, int]:

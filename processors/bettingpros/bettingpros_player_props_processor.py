@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 # File: processors/bettingpros/bettingpros_player_props_processor.py
 # Description: Processor for BettingPros player props data transformation
+# Fixed: Validation confidence calculation and bookmaker mapping
 
 import json
 import logging
 import re
+import os
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 from google.cloud import bigquery
@@ -15,8 +17,11 @@ class BettingPropsProcessor(ProcessorBase):
         super().__init__()
         self.table_name = 'nba_raw.bettingpros_player_points_props'
         self.processing_strategy = 'APPEND_ALWAYS'  # Track all historical snapshots
+
+        self.project_id = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
+        self.bq_client = bigquery.Client(project=self.project_id)
         
-        # Bookmaker name normalization
+        # Enhanced bookmaker name normalization with comprehensive mapping
         self.bookmaker_mapping = {
             'bettingpros consensus': 'BettingPros Consensus',
             'betmgm': 'BetMGM',
@@ -24,7 +29,48 @@ class BettingPropsProcessor(ProcessorBase):
             'sugarhouse': 'SugarHouse',
             'partycasino': 'PartyCasino',
             'draftkings': 'DraftKings',
-            'fanduel': 'FanDuel'
+            'fanduel': 'FanDuel',
+            'caesars': 'Caesars',
+            'bet365': 'bet365',
+            'pointsbet': 'PointsBet',
+            'wynnbet': 'WynnBET',
+            'barstool': 'Barstool',
+            'unibet': 'UniBet',
+            'betamerica': 'BetAmerica',
+            'twinspires': 'TwinSpires',
+            'fox bet': 'FOX Bet',
+            'oregon lottery': 'Oregon Lottery',
+            'tipico': 'Tipico',
+            'betway': 'Betway',
+            'fubo': 'Fubo',
+        }
+        
+        # Handle unknown books by ID (from your query results and scraper BOOKS mapping)
+        self.book_id_mapping = {
+            0: 'BettingPros Consensus',
+            2: 'SuperBook',           # Unknown Book 2
+            10: 'FanDuel',
+            12: 'DraftKings', 
+            13: 'Caesars',
+            14: 'PointsBet',
+            15: 'SugarHouse',
+            18: 'BetRivers',
+            19: 'BetMGM',
+            20: 'FOX Bet',
+            21: 'BetAmerica',
+            22: 'Oregon Lottery',
+            24: 'bet365',
+            25: 'WynnBET',
+            26: 'Tipico',
+            27: 'PartyCasino',
+            28: 'UniBet',
+            29: 'TwinSpires',
+            30: 'Betway',
+            31: 'Fubo',
+            33: 'Fanatics',          # Unknown Book 33
+            36: 'ESPN Bet',          # Unknown Book 36  
+            37: 'Hard Rock',         # Unknown Book 37
+            49: 'Fliff',             # Unknown Book 49
         }
     
     def normalize_player_name(self, player_name: str) -> str:
@@ -41,12 +87,39 @@ class BettingPropsProcessor(ProcessorBase):
         
         return normalized
     
-    def calculate_validation_confidence(self, scrape_date: datetime, game_date: datetime) -> float:
-        """Calculate time-based validation confidence."""
-        if not scrape_date or not game_date:
+    def extract_scrape_timestamp_from_path(self, file_path: str) -> Optional[datetime]:
+        """Extract when the scraper actually ran from filename timestamp."""
+        # Pattern: /2021-12-04/20250813_011358.json -> actual scrape time
+        try:
+            filename = file_path.split('/')[-1]  # Get "20250813_011358.json"
+            timestamp_part = filename.split('.')[0]  # Get "20250813_011358"
+            return datetime.strptime(timestamp_part, '%Y%m%d_%H%M%S')
+        except Exception as e:
+            logging.warning(f"Could not parse scrape timestamp from {file_path}: {e}")
+            return None
+    
+    def extract_game_date_from_path(self, file_path: str) -> Optional[datetime]:
+        """Extract game date from BettingPros file path."""
+        # Pattern: /bettingpros/player-props/points/2021-12-04/timestamp.json
+        try:
+            parts = file_path.split('/')
+            for part in parts:
+                if re.match(r'^\d{4}-\d{2}-\d{2}$', part):
+                    return datetime.strptime(part, '%Y-%m-%d')
+            return None
+        except Exception as e:
+            logging.warning(f"Could not parse game date from {file_path}: {e}")
+            return None
+    
+    def calculate_validation_confidence(self, scrape_time: datetime, game_date: datetime) -> float:
+        """Calculate data freshness confidence using processing time vs game date."""
+        if not scrape_time or not game_date:
             return 0.1
             
-        days_diff = abs((scrape_date.date() - game_date.date()).days)
+        # Compare actual scrape timestamp vs game date
+        days_diff = abs((scrape_time.date() - game_date.date()).days)
+        
+        logging.debug(f"Validation confidence: scrape_time={scrape_time.date()}, game_date={game_date.date()}, days_diff={days_diff}")
         
         if days_diff == 0:          # Same day - high confidence
             return 0.95
@@ -59,36 +132,48 @@ class BettingPropsProcessor(ProcessorBase):
         else:                       # Over year old
             return 0.1
     
-    def determine_validation_notes(self, player_team: str, confidence: float) -> str:
+    def determine_validation_notes(self, player_team: str, confidence: float, days_diff: int = None, forced_historical: bool = False) -> str:
         """Determine validation notes based on team and confidence."""
         if player_team == "FA":
+            if forced_historical:
+                return "free_agent_historical"
             return "free_agent"
+        elif forced_historical:
+            return "low_confidence_historical_old"
         elif confidence >= 0.8:
             return "high_confidence_gameday"
         elif confidence >= 0.5:
             return "medium_confidence_recent"
+        elif days_diff and days_diff > 365:
+            return "low_confidence_historical_old"
         else:
             return "low_confidence_historical"
     
-    def normalize_bookmaker_name(self, book_name: str) -> str:
-        """Normalize bookmaker names for consistency."""
+    def normalize_bookmaker_name(self, book_name: str, book_id: int = None) -> str:
+        """Enhanced bookmaker normalization with ID fallback."""
         if not book_name:
+            if book_id is not None:
+                return self.book_id_mapping.get(book_id, f"Unknown Book {book_id}")
             return ""
         
+        # First try name mapping
         normalized_key = book_name.lower().strip()
-        return self.bookmaker_mapping.get(normalized_key, book_name)
-    
-    def extract_game_date_from_path(self, file_path: str) -> Optional[datetime]:
-        """Extract game date from BettingPros file path."""
-        # Pattern: /bettingpros/player-props/points/2021-12-04/timestamp.json
-        try:
-            parts = file_path.split('/')
-            for part in parts:
-                if re.match(r'^\d{4}-\d{2}-\d{2}$', part):
-                    return datetime.strptime(part, '%Y-%m-%d')
-            return None
-        except Exception:
-            return None
+        mapped_name = self.bookmaker_mapping.get(normalized_key, book_name)
+        
+        # If still unknown and we have book_id, try ID mapping
+        if book_id is not None and (mapped_name == book_name or mapped_name.startswith('Unknown Book')):
+            mapped_name = self.book_id_mapping.get(book_id, f"Unknown Book {book_id}")
+        
+        # Handle existing "Unknown Book X" format by extracting ID
+        elif mapped_name.startswith('Unknown Book'):
+            try:
+                # Extract ID from "Unknown Book 33" format
+                extracted_id = int(mapped_name.split()[-1])
+                mapped_name = self.book_id_mapping.get(extracted_id, mapped_name)
+            except (ValueError, IndexError):
+                pass
+        
+        return mapped_name
     
     def validate_data(self, data: Dict) -> List[str]:
         """Validate BettingPros JSON structure."""
@@ -111,8 +196,8 @@ class BettingPropsProcessor(ProcessorBase):
         """Transform BettingPros nested JSON into flattened records."""
         rows = []
         
-        # Extract metadata
-        scrape_date = self.extract_game_date_from_path(file_path)
+        # Extract metadata - Use actual scrape timestamp vs game date
+        actual_scrape_time = self.extract_scrape_timestamp_from_path(file_path)
         game_date = None
         if 'date' in raw_data:
             try:
@@ -120,9 +205,20 @@ class BettingPropsProcessor(ProcessorBase):
             except ValueError:
                 logging.warning(f"Could not parse game date: {raw_data.get('date')}")
         
+        # Fallback for game date if not in JSON
+        if not game_date:
+            game_date = self.extract_game_date_from_path(file_path)
+        
         market_type = raw_data.get('market_type', 'points')
         market_id = raw_data.get('market_id')
         current_time = datetime.utcnow()
+        
+        # Debug logging once per file
+        if actual_scrape_time and game_date:
+            days_diff = abs((actual_scrape_time.date() - game_date.date()).days)
+            logging.debug(f"Processing {file_path}: scrape={actual_scrape_time.date()}, game={game_date.date()}, days_diff={days_diff}")
+        else:
+            logging.warning(f"Missing timestamps for {file_path}: scrape_time={actual_scrape_time}, game_date={game_date}")
         
         # Process each prop
         for prop in raw_data.get('props', []):
@@ -136,12 +232,28 @@ class BettingPropsProcessor(ProcessorBase):
             # Normalize player lookup
             player_lookup = self.normalize_player_name(player_name)
             
-            # Calculate validation fields
-            validation_confidence = self.calculate_validation_confidence(scrape_date, game_date) if scrape_date and game_date else 0.1
-            has_team_issues = True  # All records require validation initially
+            # Calculate validation confidence using processing time vs game date
+            # This measures how "fresh" the game data is for current betting decisions
+            # processing_time = today (Sept 2025), game_date = historical (2021) = ~1400 days = 0.1 confidence
+            if game_date:
+                processing_time = current_time  # When we're inserting into database
+                validation_confidence = self.calculate_validation_confidence(processing_time, game_date)
+                validation_method = "bettingpros_freshness_based"
+                days_diff = abs((processing_time.date() - game_date.date()).days)
+                
+                # Debug logging for troubleshooting
+                logging.debug(f"Processing {file_path}: processing_time={processing_time.date()}, game_date={game_date.date()}, days_diff={days_diff}, confidence={validation_confidence}")
+                
+                validation_notes = self.determine_validation_notes(player_team, validation_confidence, days_diff)
+            else:
+                # Fallback when game date extraction fails
+                validation_confidence = 0.1
+                validation_method = "bettingpros_no_game_date"
+                validation_notes = "game_date_extraction_failed"
+                logging.warning(f"Game date extraction failed for {file_path}")
+
+            has_team_issues = True
             team_source = "bettingpros"
-            validation_method = "bettingpros_unvalidated"
-            validation_notes = self.determine_validation_notes(player_team, validation_confidence)
             
             # Process over and under sides
             for bet_side in ['over', 'under']:
@@ -182,7 +294,7 @@ class BettingPropsProcessor(ProcessorBase):
                     # Create flattened record
                     row = {
                         # Core identifiers
-                        'game_date': game_date.date() if game_date else scrape_date.date() if scrape_date else None,
+                        'game_date': game_date.date().isoformat() if game_date else None,
                         'market_type': market_type,
                         'market_id': market_id,
                         'bp_event_id': bp_event_id,
@@ -196,7 +308,7 @@ class BettingPropsProcessor(ProcessorBase):
                         'player_team': player_team,
                         'player_position': player_position,
                         
-                        # Team validation
+                        # Team validation - FIXED: Consistent confidence calculation
                         'team_source': team_source,
                         'has_team_issues': has_team_issues,
                         'validated_team': None,  # To be filled by future validation
@@ -205,9 +317,9 @@ class BettingPropsProcessor(ProcessorBase):
                         'validation_notes': validation_notes,
                         'player_complications': None,  # To be filled if complications detected
                         
-                        # Sportsbook details
+                        # Sportsbook details - ENHANCED: Better normalization
                         'book_id': book_id,
-                        'bookmaker': self.normalize_bookmaker_name(book_name),
+                        'bookmaker': self.normalize_bookmaker_name(book_name, book_id),
                         'line_id': line_id,
                         'points_line': points_line,
                         'odds_american': odds_american,
@@ -257,3 +369,45 @@ class BettingPropsProcessor(ProcessorBase):
             'unique_bookmakers': len(set(row['bookmaker'] for row in rows)),
             'props_processed': len(set(row['offer_id'] for row in rows))
         }
+
+    def process_file_content(self, json_content: str, file_path: str) -> Dict:
+        """Main processing method called by backfill jobs."""
+        try:
+            # Parse JSON
+            raw_data = json.loads(json_content)
+            
+            # Validate data structure
+            validation_errors = self.validate_data(raw_data)
+            if validation_errors:
+                return {
+                    'rows_processed': 0,
+                    'errors': validation_errors,
+                    'unique_players': 0,
+                    'unique_bookmakers': 0,
+                    'props_processed': 0
+                }
+            
+            # Transform data
+            rows = self.transform_data(raw_data, file_path)
+            
+            # Load to BigQuery
+            result = self.load_data(rows)
+            
+            return result
+            
+        except json.JSONDecodeError as e:
+            return {
+                'rows_processed': 0,
+                'errors': [f"Invalid JSON: {str(e)}"],
+                'unique_players': 0,
+                'unique_bookmakers': 0,
+                'props_processed': 0
+            }
+        except Exception as e:
+            return {
+                'rows_processed': 0,
+                'errors': [f"Processing error: {str(e)}"],
+                'unique_players': 0,
+                'unique_bookmakers': 0,
+                'props_processed': 0
+            }

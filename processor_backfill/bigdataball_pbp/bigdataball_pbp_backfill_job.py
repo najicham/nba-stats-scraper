@@ -53,8 +53,9 @@ class BigDataBallPbpBackfill:
         
         self.logger.info(f"Searching for BigDataBall files from {start_date} to {end_date}")
         
-        # BigDataBall files are stored in: /big-data-ball/{season}/{date}/game_{id}/{filename}.csv
-        # We need to search across multiple seasons and date patterns
+        # BigDataBall files are stored in: 
+        # /big-data-ball/{season-format}/{date}/game_{id}/bigdataball_{hash}_[{date}]-{nba_game_id}-{teams}.csv
+        # Example: /big-data-ball/2024-25/2024-11-01/game_22400134/bigdataball_e58c35ec_[2024-11-01]-0022400134-NYK@DET.csv
         
         current_date = start_date
         while current_date <= end_date:
@@ -66,37 +67,36 @@ class BigDataBallPbpBackfill:
             
             nba_season = f"{season_year}-{str(season_year + 1)[2:]}"  # "2024-25"
             
-            # Search multiple possible path patterns
-            prefixes = [
-                f"big-data-ball/{nba_season}/{current_date.strftime('%Y-%m-%d')}/",
-                f"big-data-ball/{season_year}/{current_date.strftime('%Y-%m-%d')}/",
-                f"bigdataball/{nba_season}/{current_date.strftime('%Y-%m-%d')}/",
-                f"bigdataball/{season_year}/{current_date.strftime('%Y-%m-%d')}/",
-            ]
+            # Correct path pattern based on actual GCS structure
+            prefix = f"big-data-ball/{nba_season}/{current_date.strftime('%Y-%m-%d')}/"
             
-            for prefix in prefixes:
-                try:
-                    blobs = bucket.list_blobs(prefix=prefix)
-                    for blob in blobs:
-                        if (blob.name.endswith('.json') and 
-                            'bigdataball' in blob.name.lower() and
-                            blob.name not in [f['path'] for f in all_files]):
+            try:
+                self.logger.debug(f"Searching prefix: {prefix}")
+                blobs = bucket.list_blobs(prefix=prefix)
+                
+                for blob in blobs:
+                    # Look for .csv files that contain "bigdataball" in the name
+                    if (blob.name.endswith('.csv') and 
+                        'bigdataball' in blob.name.lower() and
+                        blob.name not in [f['path'] for f in all_files]):
+                        
+                        file_info = {
+                            'path': f"gs://{self.bucket_name}/{blob.name}",
+                            'date': current_date,
+                            'size': blob.size,
+                            'updated': blob.updated
+                        }
+                        all_files.append(file_info)
+                        
+                        self.logger.debug(f"Found file: {blob.name}")
+                        
+                        if limit and len(all_files) >= limit:
+                            self.logger.info(f"Reached limit of {limit} files")
+                            return [f['path'] for f in all_files]
                             
-                            file_info = {
-                                'path': f"gs://{self.bucket_name}/{blob.name}",
-                                'date': current_date,
-                                'size': blob.size,
-                                'updated': blob.updated
-                            }
-                            all_files.append(file_info)
-                            
-                            if limit and len(all_files) >= limit:
-                                self.logger.info(f"Reached limit of {limit} files")
-                                return [f['path'] for f in all_files]
-                                
-                except Exception as e:
-                    self.logger.debug(f"No files found with prefix {prefix}: {e}")
-                    continue
+            except Exception as e:
+                self.logger.debug(f"No files found with prefix {prefix}: {e}")
+                continue
             
             current_date += timedelta(days=1)
         

@@ -5,6 +5,7 @@
 import json
 import logging
 import re
+import os
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 from google.cloud import bigquery
@@ -18,6 +19,8 @@ class EspnBoxscoreProcessor(ProcessorBase):
         self.table_name = 'nba_raw.espn_boxscores'
         self.processing_strategy = 'MERGE_UPDATE'
         self.team_mapper = NBATeamMapper()
+        self.project_id = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
+        self.bq_client = bigquery.Client(project=self.project_id)
         
     def normalize_player_name(self, name: str) -> str:
         """Normalize player name for cross-source matching."""
@@ -91,12 +94,118 @@ class EspnBoxscoreProcessor(ProcessorBase):
             return errors
             
         # Check for required ESPN boxscore structure
-        if 'gamepackageJSON' not in data:
-            errors.append("Missing gamepackageJSON")
-        elif 'boxscore' not in data.get('gamepackageJSON', {}):
-            errors.append("Missing boxscore data")
-            
+        required_fields = ['game_id', 'gamedate', 'teams', 'players']
+        for field in required_fields:
+            if field not in data:
+                errors.append(f"Missing {field}")
+        
+        # Validate teams structure
+        if 'teams' in data:
+            teams = data['teams']
+            if not isinstance(teams, dict) or 'home' not in teams or 'away' not in teams:
+                errors.append("Invalid teams structure - need home/away")
+                
+        # Validate players array
+        if 'players' in data:
+            if not isinstance(data['players'], list):
+                errors.append("Players field is not a list")
+            elif len(data['players']) == 0:
+                errors.append("No players found")
+                
         return errors
+    
+    def parse_stats_array(self, stats_array: List[str]) -> Dict:
+        """Parse ESPN stats array into structured data."""
+        # Default values
+        parsed_stats = {
+            'minutes': '0:00',
+            'points': 0,
+            'field_goals_made': 0,
+            'field_goals_attempted': 0,
+            'field_goal_percentage': 0.0,
+            'three_pointers_made': 0,
+            'three_pointers_attempted': 0,
+            'three_point_percentage': 0.0,
+            'free_throws_made': 0,
+            'free_throws_attempted': 0,
+            'free_throw_percentage': 0.0,
+            'rebounds': 0,
+            'offensive_rebounds': 0,
+            'defensive_rebounds': 0,
+            'assists': 0,
+            'steals': 0,
+            'blocks': 0,
+            'turnovers': 0,
+            'fouls': 0,
+            'plus_minus': 0
+        }
+        
+        if not stats_array or len(stats_array) < 14:
+            return parsed_stats
+        
+        try:
+            # Parse each stat position based on observed format
+            parsed_stats['minutes'] = stats_array[0] or '0:00'
+            
+            # Field Goals (format: "5-9")
+            fg_parts = stats_array[1].split('-') if stats_array[1] else ['0', '0']
+            parsed_stats['field_goals_made'] = self.safe_int_conversion(fg_parts[0])
+            parsed_stats['field_goals_attempted'] = self.safe_int_conversion(fg_parts[1] if len(fg_parts) > 1 else '0')
+            
+            # Three Pointers (format: "0-1")
+            tp_parts = stats_array[2].split('-') if stats_array[2] else ['0', '0']
+            parsed_stats['three_pointers_made'] = self.safe_int_conversion(tp_parts[0])
+            parsed_stats['three_pointers_attempted'] = self.safe_int_conversion(tp_parts[1] if len(tp_parts) > 1 else '0')
+            
+            # Free Throws (format: "3-5")
+            ft_parts = stats_array[3].split('-') if stats_array[3] else ['0', '0']
+            parsed_stats['free_throws_made'] = self.safe_int_conversion(ft_parts[0])
+            parsed_stats['free_throws_attempted'] = self.safe_int_conversion(ft_parts[1] if len(ft_parts) > 1 else '0')
+            
+            # Individual stats
+            parsed_stats['offensive_rebounds'] = self.safe_int_conversion(stats_array[4])
+            parsed_stats['defensive_rebounds'] = self.safe_int_conversion(stats_array[5])
+            parsed_stats['rebounds'] = self.safe_int_conversion(stats_array[6])
+            parsed_stats['assists'] = self.safe_int_conversion(stats_array[7])
+            parsed_stats['steals'] = self.safe_int_conversion(stats_array[8])
+            parsed_stats['blocks'] = self.safe_int_conversion(stats_array[9])
+            parsed_stats['turnovers'] = self.safe_int_conversion(stats_array[10])
+            parsed_stats['fouls'] = self.safe_int_conversion(stats_array[11])
+            
+            # Plus/minus (can be negative, format: "-8" or "+15")
+            plus_minus_str = stats_array[12].replace('+', '') if stats_array[12] else '0'
+            parsed_stats['plus_minus'] = self.safe_int_conversion(plus_minus_str)
+            
+            # Points (last element)
+            parsed_stats['points'] = self.safe_int_conversion(stats_array[13])
+            
+            # Calculate percentages
+            if parsed_stats['field_goals_attempted'] > 0:
+                parsed_stats['field_goal_percentage'] = round(
+                    parsed_stats['field_goals_made'] / parsed_stats['field_goals_attempted'] * 100, 1
+                )
+            
+            if parsed_stats['three_pointers_attempted'] > 0:
+                parsed_stats['three_point_percentage'] = round(
+                    parsed_stats['three_pointers_made'] / parsed_stats['three_pointers_attempted'] * 100, 1
+                )
+            
+            if parsed_stats['free_throws_attempted'] > 0:
+                parsed_stats['free_throw_percentage'] = round(
+                    parsed_stats['free_throws_made'] / parsed_stats['free_throws_attempted'] * 100, 1
+                )
+                
+        except (IndexError, ValueError, AttributeError) as e:
+            logging.warning(f"Error parsing stats array {stats_array}: {str(e)}")
+        
+        return parsed_stats
+    
+    def detect_postseason(self, game_date: str) -> bool:
+        """Detect if game is in postseason based on date."""
+        # Simple heuristic: games after April 15 are likely playoffs
+        month = int(game_date[5:7])
+        day = int(game_date[8:10])
+        return month > 4 or (month == 4 and day > 15)
     
     def transform_data(self, raw_data: Dict, file_path: str) -> List[Dict]:
         """Transform ESPN boxscore data into BigQuery format."""
@@ -105,47 +214,20 @@ class EspnBoxscoreProcessor(ProcessorBase):
             logging.error(f"Validation failed for {file_path}: {validation_errors}")
             return []
         
-        # Extract game info from file path
-        game_info = self.extract_game_info_from_path(file_path)
-        if not game_info.get('date') or not game_info.get('espn_game_id'):
-            logging.error(f"Could not extract game info from path: {file_path}")
-            return []
-        
         try:
-            # Navigate ESPN JSON structure
-            game_package = raw_data['gamepackageJSON']
-            boxscore = game_package['boxscore']
-            header = game_package.get('header', {})
+            # Extract basic game info
+            espn_game_id = raw_data['game_id']
+            game_date_str = raw_data['gamedate']  # Format: "20250115"
             
-            # Extract game-level info
-            competition = header.get('competitions', [{}])[0]
-            competitors = competition.get('competitors', [])
+            # Parse game date
+            game_date = f"{game_date_str[:4]}-{game_date_str[4:6]}-{game_date_str[6:8]}"
             
-            if len(competitors) != 2:
-                logging.error(f"Expected 2 competitors, found {len(competitors)}")
-                return []
+            # Extract teams
+            teams = raw_data['teams']
+            home_team_abbr = teams['home']
+            away_team_abbr = teams['away']
             
-            # Determine home/away teams
-            home_team_data = next((c for c in competitors if c.get('homeAway') == 'home'), None)
-            away_team_data = next((c for c in competitors if c.get('homeAway') == 'away'), None)
-            
-            if not home_team_data or not away_team_data:
-                logging.error("Could not identify home/away teams")
-                return []
-            
-            # Map team names to standard abbreviations
-            home_team_name = home_team_data['team'].get('displayName', '')
-            away_team_name = away_team_data['team'].get('displayName', '')
-            
-            home_team_abbr = self.team_mapper.get_team_abbreviation(home_team_name)
-            away_team_abbr = self.team_mapper.get_team_abbreviation(away_team_name)
-            
-            if not home_team_abbr or not away_team_abbr:
-                logging.error(f"Could not map teams: {home_team_name} -> {home_team_abbr}, {away_team_name} -> {away_team_abbr}")
-                return []
-            
-            # Extract game details
-            game_date = game_info['date']
+            # Construct standardized game ID
             game_id = self.construct_game_id(game_date, home_team_abbr, away_team_abbr)
             
             # Extract season year (assume games in Oct+ are new season)
@@ -153,99 +235,89 @@ class EspnBoxscoreProcessor(ProcessorBase):
             month = int(game_date[5:7])
             season_year = year if month < 10 else year + 1
             
-            # Game status and scores
-            game_status = competition.get('status', {}).get('type', {}).get('description', 'Unknown')
-            home_score = int(home_team_data.get('score', 0))
-            away_score = int(away_team_data.get('score', 0))
-            
+            # Process players
             rows = []
+            players = raw_data.get('players', [])
             
-            # Process players for both teams
-            teams_data = boxscore.get('teams', [])
-            for team_data in teams_data:
-                team_name = team_data.get('team', {}).get('displayName', '')
-                team_abbr = self.team_mapper.get_team_abbreviation(team_name)
-                
-                if not team_abbr:
-                    logging.warning(f"Could not map team: {team_name}")
-                    continue
-                
-                # Process player statistics
-                player_stats = team_data.get('statistics', [])
-                for stat_category in player_stats:
-                    if stat_category.get('name') == 'General':
-                        athletes = stat_category.get('athletes', [])
+            for player_data in players:
+                try:
+                    # Basic player info
+                    player_name = player_data.get('playerName', '')
+                    team_abbr = player_data.get('team', '')
+                    player_type = player_data.get('type', '')  # "starters" or "bench"
+                    stats_array = player_data.get('stats', [])
+                    dnp_reason = player_data.get('dnpReason', '')
+                    
+                    # Parse stats (empty for DNP players)
+                    parsed_stats = self.parse_stats_array(stats_array)
+                    
+                    # Determine if player was active
+                    is_active = len(stats_array) > 0
+                    starter = player_type == 'starters' if is_active else False
+                    
+                    # Build player record
+                    player_record = {
+                        # Core identifiers
+                        'game_id': game_id,
+                        'espn_game_id': espn_game_id,
+                        'game_date': game_date,
+                        'season_year': season_year,
+                        'game_status': 'Final',  # ESPN data is post-game
+                        'period': 4,  # Assume regulation game
+                        'is_postseason': self.detect_postseason(game_date),
                         
-                        for athlete_data in athletes:
-                            athlete = athlete_data.get('athlete', {})
-                            stats = athlete_data.get('stats', [])
-                            
-                            # Convert stats array to dictionary
-                            stat_dict = {}
-                            stat_names = stat_category.get('names', [])
-                            for i, stat_value in enumerate(stats):
-                                if i < len(stat_names):
-                                    stat_dict[stat_names[i]] = stat_value
-                            
-                            # Build player record
-                            player_record = {
-                                # Core identifiers
-                                'game_id': game_id,
-                                'espn_game_id': game_info['espn_game_id'],
-                                'game_date': game_date,
-                                'season_year': season_year,
-                                'game_status': game_status,
-                                'period': self.safe_int_conversion(stat_dict.get('PERIOD')),
-                                'is_postseason': False,  # TODO: Detect postseason
-                                
-                                # Team information
-                                'home_team_abbr': home_team_abbr,
-                                'away_team_abbr': away_team_abbr,
-                                'home_team_score': home_score,
-                                'away_team_score': away_score,
-                                'home_team_espn_id': home_team_data['team'].get('id', ''),
-                                'away_team_espn_id': away_team_data['team'].get('id', ''),
-                                
-                                # Player information
-                                'team_abbr': team_abbr,
-                                'player_full_name': athlete.get('displayName', ''),
-                                'player_lookup': self.normalize_player_name(athlete.get('displayName', '')),
-                                'espn_player_id': str(athlete.get('id', '')),
-                                'jersey_number': str(athlete.get('jersey', '')),
-                                'position': athlete.get('position', {}).get('abbreviation', ''),
-                                'starter': athlete_data.get('starter', False),
-                                
-                                # Core statistics
-                                'minutes': self.parse_minutes(stat_dict.get('MIN', '0:00')),
-                                'points': self.safe_int_conversion(stat_dict.get('PTS')),
-                                'field_goals_made': self.safe_int_conversion(stat_dict.get('FGM')),
-                                'field_goals_attempted': self.safe_int_conversion(stat_dict.get('FGA')),
-                                'field_goal_percentage': self.safe_float_conversion(stat_dict.get('FG%')),
-                                'three_pointers_made': self.safe_int_conversion(stat_dict.get('3PM')),
-                                'three_pointers_attempted': self.safe_int_conversion(stat_dict.get('3PA')),
-                                'three_point_percentage': self.safe_float_conversion(stat_dict.get('3P%')),
-                                'free_throws_made': self.safe_int_conversion(stat_dict.get('FTM')),
-                                'free_throws_attempted': self.safe_int_conversion(stat_dict.get('FTA')),
-                                'free_throw_percentage': self.safe_float_conversion(stat_dict.get('FT%')),
-                                
-                                # Additional statistics
-                                'rebounds': self.safe_int_conversion(stat_dict.get('REB')),
-                                'offensive_rebounds': self.safe_int_conversion(stat_dict.get('OREB')),
-                                'defensive_rebounds': self.safe_int_conversion(stat_dict.get('DREB')),
-                                'assists': self.safe_int_conversion(stat_dict.get('AST')),
-                                'steals': self.safe_int_conversion(stat_dict.get('STL')),
-                                'blocks': self.safe_int_conversion(stat_dict.get('BLK')),
-                                'turnovers': self.safe_int_conversion(stat_dict.get('TO')),
-                                'fouls': self.safe_int_conversion(stat_dict.get('PF')),
-                                'plus_minus': self.safe_int_conversion(stat_dict.get('+/-')),
-                                
-                                # Processing metadata
-                                'source_file_path': file_path,
-                                'created_at': datetime.now(timezone.utc).isoformat(),
-                                'processed_at': datetime.now(timezone.utc).isoformat()
-                            }
-                            
-                            rows.append(player_record)
+                        # Team information
+                        'home_team_abbr': home_team_abbr,
+                        'away_team_abbr': away_team_abbr,
+                        'home_team_score': 0,  # Not provided in this format
+                        'away_team_score': 0,  # Not provided in this format
+                        'home_team_espn_id': '',
+                        'away_team_espn_id': '',
+                        
+                        # Player information
+                        'team_abbr': team_abbr,
+                        'player_full_name': player_name,
+                        'player_lookup': self.normalize_player_name(player_name),
+                        'espn_player_id': str(player_data.get('playerId', '')),
+                        'jersey_number': str(player_data.get('jersey', '')),
+                        'position': '',  # Not provided in this format
+                        'starter': starter,
+                        
+                        # Core statistics
+                        'minutes': parsed_stats['minutes'],
+                        'points': parsed_stats['points'],
+                        'field_goals_made': parsed_stats['field_goals_made'],
+                        'field_goals_attempted': parsed_stats['field_goals_attempted'],
+                        'field_goal_percentage': parsed_stats['field_goal_percentage'],
+                        'three_pointers_made': parsed_stats['three_pointers_made'],
+                        'three_pointers_attempted': parsed_stats['three_pointers_attempted'],
+                        'three_point_percentage': parsed_stats['three_point_percentage'],
+                        'free_throws_made': parsed_stats['free_throws_made'],
+                        'free_throws_attempted': parsed_stats['free_throws_attempted'],
+                        'free_throw_percentage': parsed_stats['free_throw_percentage'],
+                        
+                        # Additional statistics
+                        'rebounds': parsed_stats['rebounds'],
+                        'offensive_rebounds': parsed_stats['offensive_rebounds'],
+                        'defensive_rebounds': parsed_stats['defensive_rebounds'],
+                        'assists': parsed_stats['assists'],
+                        'steals': parsed_stats['steals'],
+                        'blocks': parsed_stats['blocks'],
+                        'turnovers': parsed_stats['turnovers'],
+                        'fouls': parsed_stats['fouls'],
+                        'plus_minus': parsed_stats['plus_minus'],
+                        
+                        # Processing metadata
+                        'source_file_path': file_path,
+                        'created_at': datetime.now(timezone.utc).isoformat(),
+                        'processed_at': datetime.now(timezone.utc).isoformat()
+                    }
+                    
+                    rows.append(player_record)
+                    
+                except Exception as e:
+                    logging.warning(f"Error processing player {player_data.get('playerName', 'Unknown')}: {str(e)}")
+                    continue
             
             logging.info(f"Transformed {len(rows)} player records from {file_path}")
             return rows
@@ -265,9 +337,11 @@ class EspnBoxscoreProcessor(ProcessorBase):
         try:
             if self.processing_strategy == 'MERGE_UPDATE':
                 # Delete existing data for this game first
+                # MUST include game_date filter for partitioned table
                 game_id = rows[0]['game_id']
-                delete_query = f"DELETE FROM `{table_id}` WHERE game_id = '{game_id}'"
-                logging.info(f"Deleting existing data for game_id: {game_id}")
+                game_date = rows[0]['game_date']  # ADD THIS LINE
+                delete_query = f"DELETE FROM `{table_id}` WHERE game_id = '{game_id}' AND game_date = '{game_date}'"  # ADD game_date filter
+                logging.info(f"Deleting existing data for game_id: {game_id}, game_date: {game_date}")
                 self.bq_client.query(delete_query).result()
             
             # Insert new data

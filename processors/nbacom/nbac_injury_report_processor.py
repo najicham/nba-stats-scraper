@@ -7,6 +7,7 @@ Process NBA.com Injury Report data for player availability tracking.
 
 import json
 import logging
+import os
 from datetime import datetime, date
 from typing import Dict, List, Optional
 from google.cloud import bigquery
@@ -21,6 +22,8 @@ class NbacInjuryReportProcessor(ProcessorBase):
         super().__init__()
         self.table_name = 'nba_raw.nbac_injury_report'
         self.processing_strategy = 'APPEND_ALWAYS'  # Keep all reports for history
+        self.project_id = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
+        self.bq_client = bigquery.Client(project=self.project_id)
         
     def validate_data(self, data: Dict) -> List[str]:
         """Validate the JSON data structure."""

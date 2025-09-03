@@ -22,9 +22,10 @@ logger = logging.getLogger(__name__)
 class BdlInjuriesProcessor(ProcessorBase):
     def __init__(self):
         super().__init__()
-        self.bq_client = bigquery.Client()
         self.table_name = 'nba_raw.bdl_injuries'
         self.processing_strategy = 'APPEND_ALWAYS'  # Track intraday changes
+        self.project_id = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
+        self.bq_client = bigquery.Client(project=self.project_id)
         
         # Team ID mapping (Ball Don't Lie team_id -> standard abbreviation)
         self.team_mapping = {

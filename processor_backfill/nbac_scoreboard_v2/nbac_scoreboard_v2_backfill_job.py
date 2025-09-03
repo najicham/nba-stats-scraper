@@ -37,7 +37,7 @@ import argparse
 import logging
 import json
 from datetime import datetime, date, timedelta
-from typing import List
+from typing import Dict, List
 from google.cloud import storage
 
 # Add parent directories to path
@@ -62,7 +62,7 @@ class NbacScoreboardV2Backfill:
         
         current_date = start_date
         while current_date <= end_date:
-            date_str = current_date.strftime('%Y%m%d')
+            date_str = current_date.strftime('%Y-%m-%d')
             prefix = f"{self.base_path}/{date_str}/"
             
             try:

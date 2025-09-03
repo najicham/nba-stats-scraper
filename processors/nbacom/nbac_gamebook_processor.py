@@ -10,6 +10,7 @@ Updated with aggressive team name normalization to handle all case/formatting va
 import json
 import logging
 import re
+import os
 from datetime import datetime
 from typing import Dict, List, Tuple, Optional
 from collections import defaultdict
@@ -39,8 +40,8 @@ class NbacGamebookProcessor(ProcessorBase):
         self.table_name = 'nba_raw.nbac_gamebook_player_stats'
         self.processing_strategy = 'MERGE_UPDATE'
         self.br_roster_cache = {}  # Cache for Basketball Reference rosters
-        self.bq_client = bigquery.Client()
-        self.project_id = self.bq_client.project
+        self.project_id = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
+        self.bq_client = bigquery.Client(project=self.project_id)
     
     def log_quality_issue(self, issue_type: str, severity: str, identifier: str, details: Dict):
         """Log data quality issues for review."""

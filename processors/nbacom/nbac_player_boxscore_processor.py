@@ -5,6 +5,7 @@
 import json
 import logging
 import re
+import os
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 from google.cloud import bigquery
@@ -17,6 +18,9 @@ class NbacPlayerBoxscoreProcessor(ProcessorBase):
         self.table_name = 'nba_raw.nbac_player_boxscores'
         self.processing_strategy = 'MERGE_UPDATE'
         self.team_mapper = NBATeamMapper()
+
+        self.project_id = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
+        self.bq_client = bigquery.Client(project=self.project_id)
         
     def normalize_player_name(self, name: str) -> str:
         """Normalize player names for cross-source matching."""

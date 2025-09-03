@@ -15,10 +15,10 @@ logger = logging.getLogger(__name__)
 class BdlBoxscoresProcessor(ProcessorBase):
     def __init__(self):
         super().__init__()
-        self.project_id = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
-        self.bq_client = bigquery.Client(project=self.project_id)
         self.table_name = 'nba_raw.bdl_player_boxscores'
         self.processing_strategy = 'MERGE_UPDATE'
+        self.project_id = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
+        self.bq_client = bigquery.Client(project=self.project_id)
         
         # Team abbreviation mapping for consistency
         self.team_mapping = {

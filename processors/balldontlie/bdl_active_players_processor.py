@@ -11,11 +11,8 @@ class BdlActivePlayersProcessor(ProcessorBase):
         super().__init__()
         self.table_name = 'nba_raw.bdl_active_players_current'
         self.processing_strategy = 'MERGE_UPDATE'  # Current-state data
-        
-        # Initialize BigQuery client explicitly
-        self.bq_client = bigquery.Client()
-        # Set project ID from environment or BigQuery client
-        self.project_id = os.environ.get('GCP_PROJECT_ID', self.bq_client.project)
+        self.project_id = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
+        self.bq_client = bigquery.Client(project=self.project_id)
         
         # Load NBA.com player data for validation
         self.nba_com_players = self._load_nba_com_players()

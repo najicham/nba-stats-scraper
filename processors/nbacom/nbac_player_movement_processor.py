@@ -2,9 +2,9 @@
 # File: processors/nbacom/nbac_player_movement_processor.py
 # Description: Processor for NBA.com Player Movement data transformation
 
-import json
 import logging
-import re
+import os
+from google.cloud import bigquery
 from datetime import datetime, date
 from typing import Dict, List, Optional, Set, Tuple
 from google.cloud import bigquery
@@ -18,6 +18,8 @@ class NbacPlayerMovementProcessor(ProcessorBase):
         super().__init__()
         self.table_name = 'nba_raw.nbac_player_movement'
         self.processing_strategy = 'INSERT_NEW_ONLY'  # Custom strategy
+        self.project_id = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
+        self.bq_client = bigquery.Client(project=self.project_id)
         
         # Team slug to abbreviation mapping
         self.team_slug_to_abbr = {

@@ -4,6 +4,7 @@
 
 import json
 import logging
+import os
 import re
 from datetime import datetime, date
 from typing import Dict, List, Optional
@@ -15,6 +16,10 @@ class EspnScoreboardProcessor(ProcessorBase):
         super().__init__()
         self.table_name = 'nba_raw.espn_scoreboard'
         self.processing_strategy = 'MERGE_UPDATE'
+        
+        # Initialize BigQuery client and project_id
+        self.bq_client = bigquery.Client()
+        self.project_id = os.environ.get('GCP_PROJECT_ID', self.bq_client.project)
         
         # ESPN team abbreviation mapping to standard NBA codes
         self.team_mapping = {
@@ -223,3 +228,30 @@ class EspnScoreboardProcessor(ProcessorBase):
             'rows_processed': len(rows) if not errors else 0,
             'errors': errors
         }
+    
+    def process_file(self, json_content: str, file_path: str) -> Dict:
+        """Process a single ESPN scoreboard file end-to-end."""
+        try:
+            # Parse JSON
+            raw_data = json.loads(json_content)
+            
+            # Validate data structure
+            errors = self.validate_data(raw_data)
+            if errors:
+                logging.warning(f"Validation errors for {file_path}: {errors}")
+            
+            # Transform data
+            rows = self.transform_data(raw_data, file_path)
+            
+            # Load to BigQuery
+            load_result = self.load_data(rows)
+            
+            return {
+                'rows_processed': load_result.get('rows_processed', 0),
+                'errors': errors + load_result.get('errors', [])
+            }
+            
+        except Exception as e:
+            error_msg = f"Error processing file {file_path}: {str(e)}"
+            logging.error(error_msg)
+            return {'rows_processed': 0, 'errors': [error_msg]}

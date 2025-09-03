@@ -4,6 +4,7 @@
 
 import json
 import logging
+import os
 import re
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -15,6 +16,9 @@ class NbacScoreboardV2Processor(ProcessorBase):
         super().__init__()
         self.table_name = 'nba_raw.nbac_scoreboard_v2'
         self.processing_strategy = 'MERGE_UPDATE'
+        # Initialize BigQuery client and project ID
+        self.bq_client = bigquery.Client()
+        self.project_id = os.environ.get('GCP_PROJECT_ID', self.bq_client.project)
         
         # Team abbreviation normalization mapping
         self.team_abbr_mapping = {
@@ -68,19 +72,31 @@ class NbacScoreboardV2Processor(ProcessorBase):
                 errors.append(f"Game {i}: Missing teams")
                 continue
                 
-            if not isinstance(game['teams'], list) or len(game['teams']) != 2:
-                errors.append(f"Game {i}: teams must be list of exactly 2 teams")
+            if not isinstance(game['teams'], dict):
+                errors.append(f"Game {i}: teams must be an object")
                 continue
             
-            for j, team in enumerate(game['teams']):
-                if 'abbreviation' not in team:
-                    errors.append(f"Game {i}, Team {j}: Missing abbreviation")
-                if 'score' not in team:
-                    errors.append(f"Game {i}, Team {j}: Missing score")
-                if 'homeAway' not in team:
-                    errors.append(f"Game {i}, Team {j}: Missing homeAway")
-                if 'winner' not in team:
-                    errors.append(f"Game {i}, Team {j}: Missing winner")
+            teams = game['teams']
+            if 'home' not in teams:
+                errors.append(f"Game {i}: Missing home team in teams")
+            if 'away' not in teams:
+                errors.append(f"Game {i}: Missing away team in teams")
+            
+            # Check home team structure
+            if 'home' in teams:
+                home_team = teams['home']
+                if 'abbreviation' not in home_team:
+                    errors.append(f"Game {i}: Home team missing abbreviation")
+                if 'points' not in home_team:
+                    errors.append(f"Game {i}: Home team missing points")
+            
+            # Check away team structure
+            if 'away' in teams:
+                away_team = teams['away']
+                if 'abbreviation' not in away_team:
+                    errors.append(f"Game {i}: Away team missing abbreviation")
+                if 'points' not in away_team:
+                    errors.append(f"Game {i}: Away team missing points")
         
         return errors
     
@@ -111,47 +127,38 @@ class NbacScoreboardV2Processor(ProcessorBase):
         
         for game in raw_data.get('games', []):
             try:
-                # Identify home and away teams
-                home_team = None
-                away_team = None
-                
-                for team in game.get('teams', []):
-                    if team.get('homeAway') == 'home':
-                        home_team = team
-                    elif team.get('homeAway') == 'away':
-                        away_team = team
+                # Get team data
+                teams = game.get('teams', {})
+                home_team = teams.get('home', {})
+                away_team = teams.get('away', {})
                 
                 if not home_team or not away_team:
-                    logging.warning(f"Game {game.get('gameId')}: Could not identify home/away teams")
+                    logging.warning(f"Game {game.get('gameId')}: Missing team data")
                     continue
                 
-                # Determine winner
+                # Determine winner by comparing points
+                home_points = home_team.get('points', 0)
+                away_points = away_team.get('points', 0)
+                
                 winning_team_abbr = None
                 winning_team_side = None
                 
-                if home_team.get('winner'):
+                if home_points > away_points:
                     winning_team_abbr = self.normalize_team_abbreviation(home_team.get('abbreviation', ''))
                     winning_team_side = 'home'
-                elif away_team.get('winner'):
+                elif away_points > home_points:
                     winning_team_abbr = self.normalize_team_abbreviation(away_team.get('abbreviation', ''))
                     winning_team_side = 'away'
+                # If tied, leave winner fields as None
                 
                 # Parse start time
                 start_time = None
-                if game.get('startTime'):
+                start_time_str = game.get('startTimeET', '')
+                if start_time_str:
                     try:
-                        start_time = datetime.fromisoformat(game['startTime'].replace('Z', '+00:00'))
+                        start_time = datetime.fromisoformat(start_time_str)
                     except ValueError:
-                        logging.warning(f"Could not parse startTime: {game.get('startTime')}")
-                
-                # Convert scores to integers
-                home_score = None
-                away_score = None
-                try:
-                    home_score = int(home_team.get('score', 0))
-                    away_score = int(away_team.get('score', 0))
-                except (ValueError, TypeError):
-                    logging.warning(f"Game {game.get('gameId')}: Could not convert scores to integers")
+                        logging.warning(f"Could not parse startTimeET: {start_time_str}")
                 
                 row = {
                     'game_id': game.get('gameId', ''),
@@ -160,21 +167,21 @@ class NbacScoreboardV2Processor(ProcessorBase):
                     'start_time': start_time.isoformat() if start_time else None,
                     
                     # Game status
-                    'game_status_id': game.get('statusId', ''),
+                    'game_status_id': str(game.get('gameStatus', '')),
                     'game_state': game.get('state', ''),
-                    'game_status_text': game.get('status', ''),
+                    'game_status_text': game.get('gameStatusText', ''),
                     
                     # Home team
-                    'home_team_id': home_team.get('teamId', ''),
+                    'home_team_id': str(home_team.get('teamId', '')),
                     'home_team_abbr': self.normalize_team_abbreviation(home_team.get('abbreviation', '')),
                     'home_team_abbr_raw': home_team.get('abbreviation', ''),
-                    'home_score': home_score,
+                    'home_score': home_points,
                     
                     # Away team
-                    'away_team_id': away_team.get('teamId', ''),
+                    'away_team_id': str(away_team.get('teamId', '')),
                     'away_team_abbr': self.normalize_team_abbreviation(away_team.get('abbreviation', '')),
                     'away_team_abbr_raw': away_team.get('abbreviation', ''),
-                    'away_score': away_score,
+                    'away_score': away_points,
                     
                     # Game outcome
                     'winning_team_abbr': winning_team_abbr,

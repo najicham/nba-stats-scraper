@@ -30,8 +30,14 @@ class BasketballRefRosterProcessor(ProcessorBase):
     
     # Configuration
     required_opts = ["season_year", "team_abbrev", "file_path"]
-    table_name = "br_rosters_current"
     dataset_id = "nba_raw"
+
+    def __init__(self):
+        super().__init__()
+        self.table_name = "br_rosters_current"
+        self.processing_strategy = 'MERGE_UPDATE'
+        self.project_id = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
+        self.bq_client = bigquery.Client(project=self.project_id)
     
     def set_additional_opts(self) -> None:
         """Add season display format."""
