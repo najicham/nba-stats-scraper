@@ -1,7 +1,6 @@
-# scrapers/oddsapi/oddsa_player_props_his.py
 """
-odds_api_historical_event_odds.py
-Scraper for The-Odds-API v4 "historical event odds" endpoint.
+odds_api_historical_game_lines.py
+Scraper for The-Odds-API v4 "historical event odds" endpoint for NBA game lines (spreads/totals).
 
 Docs:
   https://the-odds-api.com/liveapi/guides/v4/#get-historical-event-odds
@@ -9,7 +8,7 @@ Docs:
 Usage examples
 --------------
   # Via capture tool (recommended for data collection):
-  python tools/fixtures/capture.py oddsa_player_props_his \
+  python tools/fixtures/capture.py oddsa_game_lines_his \
       --event_id cd0bc7d0c238f4446ce1c03d0cea7ec4 \
       --game_date 2024-01-25 \
       --snapshot_timestamp 2024-01-25T04:00:00Z \
@@ -17,7 +16,7 @@ Usage examples
       --debug
 
   # Direct CLI execution:
-  python scrapers/oddsapi/oddsa_player_props_his.py \
+  python scrapers/oddsapi/oddsa_game_lines_his.py \
       --event_id cd0bc7d0c238f4446ce1c03d0cea7ec4 \
       --game_date 2024-01-25 \
       --snapshot_timestamp 2024-01-25T04:00:00Z \
@@ -25,7 +24,7 @@ Usage examples
       --debug
 
   # Flask web service:
-  python scrapers/oddsapi/oddsa_player_props_his.py --serve --debug
+  python scrapers/oddsapi/oddsa_game_lines_his.py --serve --debug
 
   CRITICAL TIMING CONSTRAINT FOR HISTORICAL ODDS:
   Events disappear from the API when games start or shortly before. If your 
@@ -64,7 +63,7 @@ from typing import Any, Dict, List
 
 # Support both module execution (python -m) and direct execution
 try:
-    # Module execution: python -m scrapers.oddsapi.oddsa_player_props_his
+    # Module execution: python -m scrapers.oddsapi.oddsa_game_lines_his
     from ..scraper_base import ScraperBase, ExportMode
     from ..scraper_flask_mixin import ScraperFlaskMixin
     from ..scraper_flask_mixin import convert_existing_flask_scraper
@@ -72,7 +71,7 @@ try:
     from ..utils.gcs_path_builder import GCSPathBuilder
     from ..utils.nba_team_mapper import build_event_teams_suffix
 except ImportError:
-    # Direct execution: python scrapers/oddsapi/oddsa_player_props_his.py
+    # Direct execution: python scrapers/oddsapi/oddsa_game_lines_his.py
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
     from scrapers.scraper_base import ScraperBase, ExportMode
     from scrapers.scraper_flask_mixin import ScraperFlaskMixin
@@ -103,7 +102,7 @@ def snap_iso_ts_to_five_minutes(iso_ts: str) -> str:
 # --------------------------------------------------------------------------- #
 # Scraper (USING MIXIN)
 # --------------------------------------------------------------------------- #
-class GetOddsApiHistoricalEventOdds(ScraperBase, ScraperFlaskMixin):
+class GetOddsApiHistoricalGameLines(ScraperBase, ScraperFlaskMixin):
     """
     Required opts:
       • event_id           - e.g. 6f0b6f8d8cc9c5bc6375cdee
@@ -113,7 +112,7 @@ class GetOddsApiHistoricalEventOdds(ScraperBase, ScraperFlaskMixin):
     Optional opts:
       • sport      - e.g. basketball_nba (defaults to basketball_nba)
       • regions    - comma-separated list (us, uk, eu, au) (defaults to us)
-      • markets    - comma-separated list (player_points, player_assists, …) (defaults to player_points)
+      • markets    - comma-separated list (spreads, totals) (defaults to spreads,totals)
       • bookmakers - comma-separated list (defaults to draftkings,fanduel)
       • oddsFormat  - american | decimal | fractional
       • dateFormat  - iso | unix
@@ -122,13 +121,13 @@ class GetOddsApiHistoricalEventOdds(ScraperBase, ScraperFlaskMixin):
     """
 
     # Flask Mixin Configuration
-    scraper_name = "oddsa_player_props_his"
+    scraper_name = "oddsa_game_lines_his"
     required_params = ["event_id", "game_date", "snapshot_timestamp"]
     optional_params = {
         "api_key": None,  # Falls back to env ODDS_API_KEY
         "sport": None,  # Defaults to basketball_nba in set_additional_opts
         "regions": None,  # Defaults to us in set_additional_opts
-        "markets": None,  # Defaults to player_points in set_additional_opts
+        "markets": None,  # Defaults to spreads,totals in set_additional_opts
         "bookmakers": None,  # Defaults to draftkings,fanduel in set_additional_opts
         "oddsFormat": None,
         "dateFormat": None,
@@ -142,7 +141,7 @@ class GetOddsApiHistoricalEventOdds(ScraperBase, ScraperFlaskMixin):
     # ------------------------------------------------------------------ #
     # Exporters                                                          #
     # ------------------------------------------------------------------ #
-    GCS_PATH_KEY = "odds_api_player_props_history"
+    GCS_PATH_KEY = "odds_api_game_lines_history"
     exporters = [
         {   # RAW payload for prod / GCS archival
             "type": "gcs",
@@ -153,7 +152,7 @@ class GetOddsApiHistoricalEventOdds(ScraperBase, ScraperFlaskMixin):
         },
         {   # Pretty JSON for dev & capture
             "type": "file",
-            "filename": "/tmp/oddsapi_hist_event_odds_%(sport)s_%(event_id)s.json",
+            "filename": "/tmp/oddsapi_hist_game_lines_%(sport)s_%(event_id)s.json",
             "pretty_print": True,
             "export_mode": ExportMode.DATA,
             "groups": ["dev", "test"],
@@ -195,13 +194,13 @@ class GetOddsApiHistoricalEventOdds(ScraperBase, ScraperFlaskMixin):
             self.opts["snap"] = snap_hour                    # For GCS path template
             logger.debug("Extracted snap time for filename: %s", snap_hour)
         
-        # ── season‑wide defaults (FIXED: handle None values) ──────────────────────────────
+        # ── season‑wide defaults for game lines (spreads & totals) ──────────────────────
         if not self.opts.get("sport"):
             self.opts["sport"] = "basketball_nba"
         if not self.opts.get("regions"):
             self.opts["regions"] = "us"
         if not self.opts.get("markets"):
-            self.opts["markets"] = "player_points"
+            self.opts["markets"] = "spreads,totals"  # Default to both spreads and totals
         if not self.opts.get("bookmakers"):
             self.opts["bookmakers"] = "draftkings,fanduel"
 
@@ -236,7 +235,7 @@ class GetOddsApiHistoricalEventOdds(ScraperBase, ScraperFlaskMixin):
         }
         query = {k: v for k, v in query.items() if v is not None}
         self.url = f"{base}?{urlencode(query, doseq=True)}"
-        logger.info("Odds-API Historical Event Odds URL: %s", self.url.replace(api_key, "***"))
+        logger.info("Odds-API Historical Game Lines URL: %s", self.url.replace(api_key, "***"))
 
     def set_headers(self) -> None:
         self.headers = {"Accept": "application/json"}
@@ -263,13 +262,13 @@ class GetOddsApiHistoricalEventOdds(ScraperBase, ScraperFlaskMixin):
         """
         # Handle 204 responses (empty snapshot)
         if self.raw_response.status_code == 204:
-            logger.info("204 response - no odds data available for snapshot %s", 
+            logger.info("204 response - no game lines data available for snapshot %s", 
                        self.opts.get("snapshot_timestamp"))
             # Create empty response structure for consistency
             self.decoded_data = {
                 "data": {},
                 "timestamp": self.opts.get("snapshot_timestamp"),
-                "message": "No odds data available for this snapshot"
+                "message": "No game lines data available for this snapshot"
             }
             return
 
@@ -286,11 +285,21 @@ class GetOddsApiHistoricalEventOdds(ScraperBase, ScraperFlaskMixin):
         wrapper: Dict[str, Any] = self.decoded_data  # type: ignore[assignment]
         event_odds: Dict[str, Any] = wrapper.get("data", {})
 
-        # Count distinct bookmaker × market entries
+        # Count distinct bookmaker × market entries for game lines
         row_count = 0
+        spreads_count = 0
+        totals_count = 0
+        
         for bm in event_odds.get("bookmakers", []):
             for mk in bm.get("markets", []):
-                row_count += len(mk.get("outcomes", [])) or 1
+                market_key = mk.get("key", "")
+                outcome_count = len(mk.get("outcomes", [])) or 1
+                row_count += outcome_count
+                
+                if market_key == "spreads":
+                    spreads_count += outcome_count
+                elif market_key == "totals":
+                    totals_count += outcome_count
 
         # Extract team information and build teams suffix for GCS path
         teams_suffix = self._extract_teams_suffix(event_odds)
@@ -316,10 +325,13 @@ class GetOddsApiHistoricalEventOdds(ScraperBase, ScraperFlaskMixin):
             "regions": self.opts["regions"],
             "markets": self.opts["markets"],
             "rowCount": row_count,
+            "spreadsCount": spreads_count,
+            "totalsCount": totals_count,
             "eventOdds": event_odds,
         }
         logger.info(
-            "Fetched %d bookmaker-market rows for event %s", row_count, self.opts["event_id"][:12] + "..."
+            "Fetched %d game lines rows (%d spreads, %d totals) for event %s", 
+            row_count, spreads_count, totals_count, self.opts["event_id"][:12] + "..."
         )
 
     def _extract_teams_suffix(self, event_odds: Dict[str, Any]) -> str:
@@ -403,6 +415,8 @@ class GetOddsApiHistoricalEventOdds(ScraperBase, ScraperFlaskMixin):
     def get_scraper_stats(self) -> dict:
         return {
             "rowCount": self.data.get("rowCount", 0),
+            "spreadsCount": self.data.get("spreadsCount", 0),
+            "totalsCount": self.data.get("totalsCount", 0),
             "sport": self.opts.get("sport"),
             "eventId": self.opts.get("event_id", "")[:12] + "..." if self.opts.get("event_id") else "",
             "markets": self.opts.get("markets"),
@@ -419,9 +433,9 @@ class GetOddsApiHistoricalEventOdds(ScraperBase, ScraperFlaskMixin):
 # --------------------------------------------------------------------------- #
 
 # Use the mixin's utility to create the Flask app
-create_app = convert_existing_flask_scraper(GetOddsApiHistoricalEventOdds)
+create_app = convert_existing_flask_scraper(GetOddsApiHistoricalGameLines)
 
 # Use the mixin's main function generator
 if __name__ == "__main__":
-    main = GetOddsApiHistoricalEventOdds.create_cli_and_flask_main()
+    main = GetOddsApiHistoricalGameLines.create_cli_and_flask_main()
     main()

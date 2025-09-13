@@ -46,9 +46,11 @@ class GCSPathBuilder:
         
         # Odds API Scrapers
         "odds_api_events": "odds-api/events/%(date)s/%(timestamp)s.json",
-        "odds_api_player_props": "odds-api/player-props/%(date)s/%(event_id)s-%(teams)s/%(timestamp)s-snap-%(snap)s.json",
         "odds_api_events_history": "odds-api/events-history/%(date)s/%(timestamp)s.json", 
+        "odds_api_player_props": "odds-api/player-props/%(date)s/%(event_id)s-%(teams)s/%(timestamp)s-snap-%(snap)s.json",
         "odds_api_player_props_history": "odds-api/player-props-history/%(date)s/%(event_id)s-%(teams)s/%(timestamp)s-snap-%(snap)s.json",
+        "odds_api_game_lines": "odds-api/game-lines/%(date)s/%(event_id)s-%(teams)s/%(timestamp)s-snap-%(snap)s.json",
+        "odds_api_game_lines_history": "odds-api/game-lines-history/%(date)s/%(event_id)s-%(teams)s/%(timestamp)s-snap-%(snap)s.json",
         "odds_api_team_players": "odds-api/players/%(date)s/%(timestamp)s.json",
         
         # ESPN Scrapers
@@ -61,6 +63,7 @@ class GCSPathBuilder:
         "nba_com_schedule": "nba-com/schedule/%(actual_season_nba_format)s/%(timestamp)s.json",
         "nba_com_schedule_cdn": "nba-com/schedule-cdn/%(actual_season_nba_format)s/%(timestamp)s.json",
         "nba_com_scoreboard_v2": "nba-com/scoreboard-v2/%(date)s/%(timestamp)s.json",
+        "nba_com_referee_assignments": "nba-com/referee-assignments/%(date)s/%(timestamp)s.json",
         "nba_com_play_by_play": "nba-com/play-by-play/%(date)s/game-%(game_id)s/%(timestamp)s.json",
         "nba_com_player_boxscore": "nba-com/player-boxscores/%(date)s/%(timestamp)s.json",
         "nba_com_team_roster": "nba-com/rosters/%(date)s/team_%(team_abbr)s/%(timestamp)s.json", 

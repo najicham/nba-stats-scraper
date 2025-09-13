@@ -1,0 +1,93 @@
+{
+  "timestamp": "2024-01-25T03:55:40Z",
+  "previous_timestamp": "2024-01-25T03:50:38Z",
+  "next_timestamp": "2024-01-25T04:00:38Z",
+  "data": {
+    "id": "cd0bc7d0c238f4446ce1c03d0cea7ec4",
+    "sport_key": "basketball_nba",
+    "sport_title": "NBA",
+    "commence_time": "2024-01-25T03:20:30Z",
+    "home_team": "Golden State Warriors",
+    "away_team": "Atlanta Hawks",
+    "bookmakers": [
+      {
+        "key": "draftkings",
+        "title": "DraftKings",
+        "last_update": "2024-01-25T03:55:22Z",
+        "markets": [
+          {
+            "key": "spreads",
+            "last_update": "2024-01-25T03:55:22Z",
+            "outcomes": [
+              {
+                "name": "Atlanta Hawks",
+                "price": 1.91,
+                "point": 6.5
+              },
+              {
+                "name": "Golden State Warriors",
+                "price": 1.83,
+                "point": -6.5
+              }
+            ]
+          },
+          {
+            "key": "totals",
+            "last_update": "2024-01-25T03:55:22Z",
+            "outcomes": [
+              {
+                "name": "Over",
+                "price": 1.87,
+                "point": 248.5
+              },
+              {
+                "name": "Under",
+                "price": 1.87,
+                "point": 248.5
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "key": "fanduel",
+        "title": "FanDuel",
+        "last_update": "2024-01-25T03:55:01Z",
+        "markets": [
+          {
+            "key": "spreads",
+            "last_update": "2024-01-25T03:55:01Z",
+            "outcomes": [
+              {
+                "name": "Atlanta Hawks",
+                "price": 1.88,
+                "point": 7.5
+              },
+              {
+                "name": "Golden State Warriors",
+                "price": 1.88,
+                "point": -7.5
+              }
+            ]
+          },
+          {
+            "key": "totals",
+            "last_update": "2024-01-25T03:55:01Z",
+            "outcomes": [
+              {
+                "name": "Over",
+                "price": 1.87,
+                "point": 247.5
+              },
+              {
+                "name": "Under",
+                "price": 1.88,
+                "point": 247.5
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,57 @@
+{
+  "timestamp": "2024-01-25T03:55:40Z",
+  "previous_timestamp": "2024-01-25T03:50:38Z",
+  "next_timestamp": "2024-01-25T04:00:38Z",
+  "data": {
+    "id": "cd0bc7d0c238f4446ce1c03d0cea7ec4",
+    "sport_key": "basketball_nba",
+    "sport_title": "NBA",
+    "commence_time": "2024-01-25T03:20:30Z",
+    "home_team": "Golden State Warriors",
+    "away_team": "Atlanta Hawks",
+    "bookmakers": [
+      {
+        "key": "draftkings",
+        "title": "DraftKings",
+        "last_update": "2024-01-25T03:55:22Z",
+        "markets": [
+          {
+            "key": "h2h",
+            "last_update": "2024-01-25T03:55:22Z",
+            "outcomes": [
+              {
+                "name": "Atlanta Hawks",
+                "price": 3.3
+              },
+              {
+                "name": "Golden State Warriors",
+                "price": 1.32
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "key": "fanduel",
+        "title": "FanDuel",
+        "last_update": "2024-01-25T03:55:01Z",
+        "markets": [
+          {
+            "key": "h2h",
+            "last_update": "2024-01-25T03:55:01Z",
+            "outcomes": [
+              {
+                "name": "Atlanta Hawks",
+                "price": 3.8
+              },
+              {
+                "name": "Golden State Warriors",
+                "price": 1.26
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

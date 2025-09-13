@@ -1,0 +1,666 @@
+{
+  "metadata": {
+    "date": "2025-01-08",
+    "season": "2024-25",
+    "fetchedUtc": "2025-09-13T04:27:59.862696+00:00",
+    "gameCount": {
+      "nba": 8,
+      "gLeague": 3,
+      "wnba": 0,
+      "total": 11
+    },
+    "replayCenterOfficials": 3
+  },
+  "refereeAssignments": {
+    "nba": {
+      "Table": {
+        "rows": [
+          {
+            "game_id": "0022400509",
+            "game_date": "01/08/2025",
+            "season": "22024",
+            "game_code": "20250108/OKCCLE",
+            "home_team_id": 1610612739,
+            "home_team": "Cleveland",
+            "home_team_abbr": "CLE",
+            "away_team_id": 1610612760,
+            "away_team": "Oklahoma City",
+            "away_team_abbr": "OKC",
+            "official1": "John Goble",
+            "official1_code": 101284,
+            "official1_JNum": "10",
+            "official2": "Ray Acosta",
+            "official2_code": 1626300,
+            "official2_JNum": "54",
+            "official3": "Robert Hussey",
+            "official3_code": 1628480,
+            "official3_JNum": "85",
+            "official4": null,
+            "official4_code": null,
+            "official4_JNum": null
+          },
+          {
+            "game_id": "0022400510",
+            "game_date": "01/08/2025",
+            "season": "22024",
+            "game_code": "20250108/CHIIND",
+            "home_team_id": 1610612754,
+            "home_team": "Indiana",
+            "home_team_abbr": "IND",
+            "away_team_id": 1610612741,
+            "away_team": "Chicago",
+            "away_team_abbr": "CHI",
+            "official1": "Jacyn Goble",
+            "official1_code": 1627962,
+            "official1_JNum": "68",
+            "official2": "Danielle Scott",
+            "official2_code": 1628487,
+            "official2_JNum": "87",
+            "official3": "Michael Smith",
+            "official3_code": 1193,
+            "official3_JNum": "38",
+            "official4": null,
+            "official4_code": null,
+            "official4_JNum": null
+          },
+          {
+            "game_id": "0022400511",
+            "game_date": "01/08/2025",
+            "season": "22024",
+            "game_code": "20250108/TORNYK",
+            "home_team_id": 1610612752,
+            "home_team": "New York",
+            "home_team_abbr": "NYK",
+            "away_team_id": 1610612761,
+            "away_team": "Toronto",
+            "away_team_abbr": "TOR",
+            "official1": "Ed Malloy",
+            "official1_code": 2530,
+            "official1_JNum": "14",
+            "official2": "Nate Green",
+            "official2_code": 1627524,
+            "official2_JNum": "41",
+            "official3": "Derrick Collins",
+            "official3_code": 2002,
+            "official3_JNum": "11",
+            "official4": null,
+            "official4_code": null,
+            "official4_JNum": null
+          },
+          {
+            "game_id": "0022400512",
+            "game_date": "01/08/2025",
+            "season": "22024",
+            "game_code": "20250108/WASPHI",
+            "home_team_id": 1610612755,
+            "home_team": "Philadelphia",
+            "home_team_abbr": "PHI",
+            "away_team_id": 1610612764,
+            "away_team": "Washington",
+            "away_team_abbr": "WAS",
+            "official1": "Zach Zarba",
+            "official1_code": 2534,
+            "official1_JNum": "15",
+            "official2": "CJ Washington",
+            "official2_code": 202056,
+            "official2_JNum": "12",
+            "official3": "Suyash Mehta",
+            "official3_code": 1627529,
+            "official3_JNum": "82",
+            "official4": null,
+            "official4_code": null,
+            "official4_JNum": null
+          },
+          {
+            "game_id": "0022400513",
+            "game_date": "01/08/2025",
+            "season": "22024",
+            "game_code": "20250108/DETBKN",
+            "home_team_id": 1610612751,
+            "home_team": "Brooklyn",
+            "home_team_abbr": "BKN",
+            "away_team_id": 1610612765,
+            "away_team": "Detroit",
+            "away_team_abbr": "DET",
+            "official1": "Ben Taylor",
+            "official1_code": 202049,
+            "official1_JNum": "46",
+            "official2": "Phenizee Ransom",
+            "official2_code": 1627963,
+            "official2_JNum": "70",
+            "official3": "Matt Boland",
+            "official3_code": 2005,
+            "official3_JNum": "18",
+            "official4": null,
+            "official4_code": null,
+            "official4_JNum": null
+          },
+          {
+            "game_id": "0022400514",
+            "game_date": "01/08/2025",
+            "season": "22024",
+            "game_code": "20250108/PORNOP",
+            "home_team_id": 1610612740,
+            "home_team": "New Orleans",
+            "home_team_abbr": "NOP",
+            "away_team_id": 1610612757,
+            "away_team": "Portland",
+            "away_team_abbr": "POR",
+            "official1": "Kevin Scott",
+            "official1_code": 202041,
+            "official1_JNum": "24",
+            "official2": "Andy Nagy",
+            "official2_code": 1627534,
+            "official2_JNum": "83",
+            "official3": "Matt Myers",
+            "official3_code": 202901,
+            "official3_JNum": "43",
+            "official4": null,
+            "official4_code": null,
+            "official4_JNum": null
+          },
+          {
+            "game_id": "0022400515",
+            "game_date": "01/08/2025",
+            "season": "22024",
+            "game_code": "20250108/LACDEN",
+            "home_team_id": 1610612743,
+            "home_team": "Denver",
+            "home_team_abbr": "DEN",
+            "away_team_id": 1610612746,
+            "away_team": "LA Clippers",
+            "away_team_abbr": "LAC",
+            "official1": "Nick Buchert",
+            "official1_code": 202007,
+            "official1_JNum": "3",
+            "official2": "Marat Kogut",
+            "official2_code": 201245,
+            "official2_JNum": "32",
+            "official3": "JD Ralls",
+            "official3_code": 1628485,
+            "official3_JNum": "94",
+            "official4": null,
+            "official4_code": null,
+            "official4_JNum": null
+          },
+          {
+            "game_id": "0022400516",
+            "game_date": "01/08/2025",
+            "season": "22024",
+            "game_code": "20250108/SASMIL",
+            "home_team_id": 1610612749,
+            "home_team": "Milwaukee",
+            "home_team_abbr": "MIL",
+            "away_team_id": 1610612759,
+            "away_team": "San Antonio",
+            "away_team_abbr": "SAS",
+            "official1": "Josh Tiven",
+            "official1_code": 201639,
+            "official1_JNum": "58",
+            "official2": "Tre Maddox",
+            "official2_code": 202027,
+            "official2_JNum": "23",
+            "official3": "Derek Richardson",
+            "official3_code": 1204,
+            "official3_JNum": "63",
+            "official4": null,
+            "official4_code": null,
+            "official4_JNum": null
+          }
+        ],
+        "columns": [
+          {
+            "Name": "game_id",
+            "DataType": "String"
+          },
+          {
+            "Name": "game_date",
+            "DataType": "String"
+          },
+          {
+            "Name": "season",
+            "DataType": "String"
+          },
+          {
+            "Name": "game_code",
+            "DataType": "String"
+          },
+          {
+            "Name": "home_team_id",
+            "DataType": "Int32"
+          },
+          {
+            "Name": "home_team",
+            "DataType": "String"
+          },
+          {
+            "Name": "home_team_abbr",
+            "DataType": "String"
+          },
+          {
+            "Name": "away_team_id",
+            "DataType": "Int32"
+          },
+          {
+            "Name": "away_team",
+            "DataType": "String"
+          },
+          {
+            "Name": "away_team_abbr",
+            "DataType": "String"
+          },
+          {
+            "Name": "official1",
+            "DataType": "String"
+          },
+          {
+            "Name": "official1_code",
+            "DataType": "Int32"
+          },
+          {
+            "Name": "official1_JNum",
+            "DataType": "String"
+          },
+          {
+            "Name": "official2",
+            "DataType": "String"
+          },
+          {
+            "Name": "official2_code",
+            "DataType": "Int32"
+          },
+          {
+            "Name": "official2_JNum",
+            "DataType": "String"
+          },
+          {
+            "Name": "official3",
+            "DataType": "String"
+          },
+          {
+            "Name": "official3_code",
+            "DataType": "Int32"
+          },
+          {
+            "Name": "official3_JNum",
+            "DataType": "String"
+          },
+          {
+            "Name": "official4",
+            "DataType": "String"
+          },
+          {
+            "Name": "official4_code",
+            "DataType": "Int32"
+          },
+          {
+            "Name": "official4_JNum",
+            "DataType": "String"
+          }
+        ]
+      },
+      "Table1": {
+        "rows": [
+          {
+            "game_date": "01/08/2025",
+            "official_code": 202035,
+            "replaycenter_official": "Brett Nansel"
+          },
+          {
+            "game_date": "01/08/2025",
+            "official_code": 1626301,
+            "replaycenter_official": "Jason Goldenberg"
+          },
+          {
+            "game_date": "01/08/2025",
+            "official_code": 1628954,
+            "replaycenter_official": "Jenna Schroeder"
+          }
+        ],
+        "columns": [
+          {
+            "Name": "game_date",
+            "DataType": "String"
+          },
+          {
+            "Name": "official_code",
+            "DataType": "Int32"
+          },
+          {
+            "Name": "replaycenter_official",
+            "DataType": "String"
+          }
+        ]
+      }
+    },
+    "gl": {
+      "Table": {
+        "rows": [
+          {
+            "game_id": "2022400077",
+            "game_date": "01/08/2025",
+            "season": "22024",
+            "game_code": "20250108/OSCIMA",
+            "home_team_id": 1612709910,
+            "home_team": "Indiana",
+            "home_team_abbr": "IMA",
+            "away_team_id": 1612709925,
+            "away_team": "Osceola",
+            "away_team_abbr": "OSC",
+            "official1": "Cameron Garber",
+            "official1_code": 1641519,
+            "official1_JNum": "33",
+            "official2": "Hortencia Sanchez-Carrizales",
+            "official2_code": 1629768,
+            "official2_JNum": "50",
+            "official3": "William McClatchy",
+            "official3_code": 1642723,
+            "official3_JNum": "31",
+            "official4": null,
+            "official4_code": null,
+            "official4_JNum": null
+          },
+          {
+            "game_id": "2022400078",
+            "game_date": "01/08/2025",
+            "season": "22024",
+            "game_code": "20250108/SXFWES",
+            "home_team_id": 1612709919,
+            "home_team": "Westchester",
+            "home_team_abbr": "WES",
+            "away_team_id": 1612709904,
+            "away_team": "Sioux Falls",
+            "away_team_abbr": "SXF",
+            "official1": "Intae Hwang",
+            "official1_code": 1630886,
+            "official1_JNum": "46",
+            "official2": "Ken Jones",
+            "official2_code": 1629764,
+            "official2_JNum": "40",
+            "official3": "Genesis Perrymond",
+            "official3_code": 1642725,
+            "official3_JNum": "9",
+            "official4": null,
+            "official4_code": null,
+            "official4_JNum": null
+          },
+          {
+            "game_id": "2022400079",
+            "game_date": "01/08/2025",
+            "season": "22024",
+            "game_code": "20250108/VALSTO",
+            "home_team_id": 1612709914,
+            "home_team": "Stockton",
+            "home_team_abbr": "STO",
+            "away_team_id": 1612709934,
+            "away_team": "Valley",
+            "away_team_abbr": "VAL",
+            "official1": "Cameron Gelinas",
+            "official1_code": 1630883,
+            "official1_JNum": "54",
+            "official2": "Ajay Gonnelli",
+            "official2_code": 1642140,
+            "official2_JNum": "62",
+            "official3": "Matt Rafferty",
+            "official3_code": 1629766,
+            "official3_JNum": "48",
+            "official4": null,
+            "official4_code": null,
+            "official4_JNum": null
+          }
+        ],
+        "columns": [
+          {
+            "Name": "game_id",
+            "DataType": "String"
+          },
+          {
+            "Name": "game_date",
+            "DataType": "String"
+          },
+          {
+            "Name": "season",
+            "DataType": "String"
+          },
+          {
+            "Name": "game_code",
+            "DataType": "String"
+          },
+          {
+            "Name": "home_team_id",
+            "DataType": "Int32"
+          },
+          {
+            "Name": "home_team",
+            "DataType": "String"
+          },
+          {
+            "Name": "home_team_abbr",
+            "DataType": "String"
+          },
+          {
+            "Name": "away_team_id",
+            "DataType": "Int32"
+          },
+          {
+            "Name": "away_team",
+            "DataType": "String"
+          },
+          {
+            "Name": "away_team_abbr",
+            "DataType": "String"
+          },
+          {
+            "Name": "official1",
+            "DataType": "String"
+          },
+          {
+            "Name": "official1_code",
+            "DataType": "Int32"
+          },
+          {
+            "Name": "official1_JNum",
+            "DataType": "String"
+          },
+          {
+            "Name": "official2",
+            "DataType": "String"
+          },
+          {
+            "Name": "official2_code",
+            "DataType": "Int32"
+          },
+          {
+            "Name": "official2_JNum",
+            "DataType": "String"
+          },
+          {
+            "Name": "official3",
+            "DataType": "String"
+          },
+          {
+            "Name": "official3_code",
+            "DataType": "Int32"
+          },
+          {
+            "Name": "official3_JNum",
+            "DataType": "String"
+          },
+          {
+            "Name": "official4",
+            "DataType": "String"
+          },
+          {
+            "Name": "official4_code",
+            "DataType": "Int32"
+          },
+          {
+            "Name": "official4_JNum",
+            "DataType": "String"
+          }
+        ]
+      },
+      "Table1": {
+        "rows": [
+          {
+            "game_date": "01/08/2025",
+            "official_code": 202035,
+            "replaycenter_official": "Brett Nansel"
+          },
+          {
+            "game_date": "01/08/2025",
+            "official_code": 1626301,
+            "replaycenter_official": "Jason Goldenberg"
+          },
+          {
+            "game_date": "01/08/2025",
+            "official_code": 1628954,
+            "replaycenter_official": "Jenna Schroeder"
+          }
+        ],
+        "columns": [
+          {
+            "Name": "game_date",
+            "DataType": "String"
+          },
+          {
+            "Name": "official_code",
+            "DataType": "Int32"
+          },
+          {
+            "Name": "replaycenter_official",
+            "DataType": "String"
+          }
+        ]
+      }
+    },
+    "wnba": {
+      "Table": {
+        "rows": [],
+        "columns": [
+          {
+            "Name": "game_id",
+            "DataType": "String"
+          },
+          {
+            "Name": "game_date",
+            "DataType": "String"
+          },
+          {
+            "Name": "season",
+            "DataType": "String"
+          },
+          {
+            "Name": "game_code",
+            "DataType": "String"
+          },
+          {
+            "Name": "home_team_id",
+            "DataType": "Int32"
+          },
+          {
+            "Name": "home_team",
+            "DataType": "String"
+          },
+          {
+            "Name": "home_team_abbr",
+            "DataType": "String"
+          },
+          {
+            "Name": "away_team_id",
+            "DataType": "Int32"
+          },
+          {
+            "Name": "away_team",
+            "DataType": "String"
+          },
+          {
+            "Name": "away_team_abbr",
+            "DataType": "String"
+          },
+          {
+            "Name": "official1",
+            "DataType": "String"
+          },
+          {
+            "Name": "official1_code",
+            "DataType": "Int32"
+          },
+          {
+            "Name": "official1_JNum",
+            "DataType": "String"
+          },
+          {
+            "Name": "official2",
+            "DataType": "String"
+          },
+          {
+            "Name": "official2_code",
+            "DataType": "Int32"
+          },
+          {
+            "Name": "official2_JNum",
+            "DataType": "String"
+          },
+          {
+            "Name": "official3",
+            "DataType": "String"
+          },
+          {
+            "Name": "official3_code",
+            "DataType": "Int32"
+          },
+          {
+            "Name": "official3_JNum",
+            "DataType": "String"
+          },
+          {
+            "Name": "official4",
+            "DataType": "String"
+          },
+          {
+            "Name": "official4_code",
+            "DataType": "Int32"
+          },
+          {
+            "Name": "official4_JNum",
+            "DataType": "String"
+          }
+        ]
+      },
+      "Table1": {
+        "rows": [
+          {
+            "game_date": "01/08/2025",
+            "official_code": 202035,
+            "replaycenter_official": "Brett Nansel"
+          },
+          {
+            "game_date": "01/08/2025",
+            "official_code": 1626301,
+            "replaycenter_official": "Jason Goldenberg"
+          },
+          {
+            "game_date": "01/08/2025",
+            "official_code": 1628954,
+            "replaycenter_official": "Jenna Schroeder"
+          }
+        ],
+        "columns": [
+          {
+            "Name": "game_date",
+            "DataType": "String"
+          },
+          {
+            "Name": "official_code",
+            "DataType": "Int32"
+          },
+          {
+            "Name": "replaycenter_official",
+            "DataType": "String"
+          }
+        ]
+      }
+    }
+  }
+}

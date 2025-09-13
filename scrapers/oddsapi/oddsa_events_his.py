@@ -1,9 +1,59 @@
 # scrapers/oddsapi/oddsa_events_his.py
 """
-odds_api_historical_events.py (FIXED VERSION)
+odds_api_historical_events.py
 Scraper for The-Odds-API v4 "historical events" endpoint.
 
-FIXED: Proper parameter handling to ensure game_date is used for GCS paths
+This scraper retrieves event IDs and basic event information (teams, commence times) 
+for a given date and timestamp. Use this to discover available events before fetching 
+their odds with the historical event odds scrapers.
+
+SNAPSHOT TIMESTAMP STRATEGY FOR EVENTS:
+  • Use 00:00:00Z (midnight UTC) to get the full day's event lineup
+  • Events are typically available from early morning until they start
+  • NBA games usually commence 23:00-02:00 UTC (evening US time)
+  • The API returns the closest available snapshot <= your timestamp
+  • Events disappear from the API when games start or shortly before
+
+Usage examples
+--------------
+  # Get full daily NBA schedule (recommended for event discovery):
+  python tools/fixtures/capture.py oddsa_events_his \
+      --game_date 2024-01-25 \
+      --snapshot_timestamp 2024-01-25T00:00:00Z \
+      --debug
+
+  # Get events as they appeared later in the day:
+  python tools/fixtures/capture.py oddsa_events_his \
+      --game_date 2024-01-25 \
+      --snapshot_timestamp 2024-01-25T16:00:00Z \
+      --debug
+
+  # Via capture tool (recommended for data collection):
+  python tools/fixtures/capture.py oddsa_events_his \
+      --game_date 2024-01-25 \
+      --snapshot_timestamp 2024-01-25T04:00:00Z \
+      --debug
+
+  # Direct CLI execution:
+  python scrapers/oddsapi/oddsa_events_his.py \
+      --game_date 2024-01-25 \
+      --snapshot_timestamp 2024-01-25T00:00:00Z \
+      --debug
+
+  # Flask web service:
+  python scrapers/oddsapi/oddsa_events_his.py --serve --debug
+
+WORKFLOW:
+  1. Run this scraper to get event IDs for a date
+  2. Use the event IDs with oddsa_player_props_his or oddsa_game_lines_his
+  3. Use the same (or similar) snapshot_timestamp for consistency
+
+OUTPUT:
+  Returns event objects with:
+  • id: Event ID to use with other historical scrapers
+  • home_team / away_team: Team names
+  • commence_time: When the game starts
+  • sport_key: Always "basketball_nba" for NBA
 """
 
 from __future__ import annotations
@@ -135,9 +185,11 @@ class GetOddsApiHistoricalEvents(ScraperBase, ScraperFlaskMixin):
             self.opts["snapshot_timestamp"] = snap_iso_ts_to_five_minutes(original_timestamp)
             if original_timestamp != self.opts["snapshot_timestamp"]:
                 logger.debug("Snapped timestamp %s → %s", original_timestamp, self.opts["snapshot_timestamp"])
-        
-        # Set default sport if not provided
-        self.opts.setdefault("sport", "basketball_nba")
+
+        if not self.opts.get("sport"):
+            self.opts["sport"] = "basketball_nba"
+        if not self.opts.get("regions"):
+            self.opts["regions"] = "us"
         
         # Debug logging to verify path variables
         logger.debug("Events scraper path variables: date=%s, game_date=%s, snapshot_timestamp=%s", 
