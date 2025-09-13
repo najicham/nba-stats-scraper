@@ -29,14 +29,16 @@ from dotenv import load_dotenv
 # Updated SCRAPER_REGISTRY section for main_scraper_service.py
 
 SCRAPER_REGISTRY = {
-    # Odds API scrapers (5 total)
+    # Odds API scrapers (7 total)
     "oddsa_events_his": ("scrapers.oddsapi.oddsa_events_his", "GetOddsApiHistoricalEvents"),
     "oddsa_events": ("scrapers.oddsapi.oddsa_events", "GetOddsApiEvents"),
     "oddsa_player_props": ("scrapers.oddsapi.oddsa_player_props", "GetOddsApiCurrentEventOdds"),
     "oddsa_player_props_his": ("scrapers.oddsapi.oddsa_player_props_his", "GetOddsApiHistoricalEventOdds"),
+    "oddsa_game_lines": ("scrapers.oddsapi.oddsa_game_lines", "GetOddsApiCurrentGameLines"),
+    "oddsa_game_lines_his": ("scrapers.oddsapi.oddsa_game_lines_his", "GetOddsApiHistoricalGameLines"),
     "oddsa_team_players": ("scrapers.oddsapi.oddsa_team_players", "GetOddsApiTeamPlayers"),
     
-    # Ball Don't Lie scrapers (5 total)
+    # Ball Don't Lie scrapers (6 total)
     "bdl_games": ("scrapers.balldontlie.bdl_games", "BdlGamesScraper"),
     "bdl_box_scores": ("scrapers.balldontlie.bdl_box_scores", "BdlBoxScoresScraper"),
     "bdl_player_box_scores": ("scrapers.balldontlie.bdl_player_box_scores", "BdlPlayerBoxScoresScraper"),
@@ -55,7 +57,7 @@ SCRAPER_REGISTRY = {
     "bigdataball_discovery": ("scrapers.bigdataball.bigdataball_discovery", "BigDataBallDiscoveryScraper"),
     "bigdataball_pbp": ("scrapers.bigdataball.bigdataball_pbp", "BigDataBallPbpScraper"),
     
-    # NBA.com scrapers (10 total)
+    # NBA.com scrapers (12 total)
     "nbac_schedule_api": ("scrapers.nbacom.nbac_schedule_api", "GetNbaComScheduleApi"),
     "nbac_player_list": ("scrapers.nbacom.nbac_player_list", "GetNbaComPlayerList"),
     "nbac_player_movement": ("scrapers.nbacom.nbac_player_movement", "GetNbaComPlayerMovement"),
@@ -67,6 +69,7 @@ SCRAPER_REGISTRY = {
     "nbac_player_boxscore": ("scrapers.nbacom.nbac_player_boxscore", "GetNbaComPlayerBoxscore"),
     "nbac_roster": ("scrapers.nbacom.nbac_roster", "GetNbaTeamRoster"),
     "nbac_gamebook_pdf": ("scrapers.nbacom.nbac_gamebook_pdf", "GetNbaComGamebookPdf"),
+    "nbac_referee_assignments": ("scrapers.nbacom.nbac_referee_assignments", "GetNbaComRefereeAssignments"),
     
     # ESPN scrapers (3 total)
     "espn_roster": ("scrapers.espn.espn_roster_api", "GetEspnTeamRosterAPI"),
