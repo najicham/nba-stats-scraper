@@ -30,6 +30,8 @@ from processors.espn.espn_team_roster_processor import EspnTeamRosterProcessor
 from processors.espn.espn_scoreboard_processor import EspnScoreboardProcessor
 from processors.bettingpros.bettingpros_player_props_processor import BettingPropsProcessor
 from processors.bigdataball.bigdataball_pbp_processor import BigDataBallPbpProcessor
+from processors.nbacom.nbac_referee_processor import NbacRefereeProcessor
+from processors.oddsapi.odds_game_lines_processor import OddsGameLinesProcessor
 
 
 # from balldontlie.bdl_boxscore_processor import BdlBoxscoreProcessor
@@ -44,6 +46,7 @@ PROCESSOR_REGISTRY = {
     'basketball-ref/season-rosters': BasketballRefRosterProcessor,
     
     'odds-api/player-props': OddsApiPropsProcessor,
+    'odds-api/game-lines-history': OddsGameLinesProcessor,
     
     'nba-com/gamebooks-data': NbacGamebookProcessor,
     'nba-com/player-list': NbacPlayerListProcessor,
@@ -57,6 +60,7 @@ PROCESSOR_REGISTRY = {
     'nba-com/scoreboard-v2': NbacScoreboardV2Processor,
     'nba-com/player-boxscores': NbacPlayerBoxscoreProcessor,
     'nba-com/play-by-play': NbacPlayByPlayProcessor,
+    'nba-com/referee-assignments': NbacRefereeProcessor,
 
     'espn/boxscores': EspnBoxscoreProcessor,
     'espn/rosters': EspnTeamRosterProcessor,
@@ -366,6 +370,38 @@ def extract_opts_from_path(file_path: str) -> dict:
             if part.startswith('game_'):
                 opts['game_id'] = part.replace('game_', '')
                 break
+
+    elif 'nba-com/referee-assignments' in file_path:
+        # Extract date from referee path: /nba-com/referee-assignments/{date}/{timestamp}.json
+        parts = file_path.split('/')
+        if len(parts) >= 4:
+            date_str = parts[-2]  # "2025-01-01"
+            
+            # Parse referee assignment date
+            try:
+                from datetime import datetime
+                assignment_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+                opts['assignment_date'] = assignment_date
+                
+                # Calculate season year (Oct-Sept NBA season)
+                season_year = assignment_date.year if assignment_date.month >= 10 else assignment_date.year - 1
+                opts['season_year'] = season_year
+                
+            except ValueError:
+                logger.warning(f"Could not parse date from referee path: {date_str}")
+
+    elif 'odds-api/game-lines-history' in file_path:
+        # Extract metadata from path: odds-api/game-lines-history/date/hash-teams/file.json
+        parts = file_path.split('/')
+        if len(parts) >= 4:
+            opts['game_date'] = parts[-3]
+            opts['game_hash_teams'] = parts[-2]
+            opts['filename'] = parts[-1]
+            
+            # Extract snapshot timestamp if available
+            if 'snap-' in parts[-1]:
+                snapshot_part = parts[-1].split('snap-')[-1].replace('.json', '')
+                opts['snapshot_timestamp'] = snapshot_part
     
     return opts    
 

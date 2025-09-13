@@ -28,7 +28,7 @@ class GCSExporter(BaseExporter):
     """
     Upload scraped data to Google Cloud Storage (GCS).
     Handles both binary (PDF) and text (JSON) data correctly.
-    Enhanced with proper authentication handling.
+    Enhanced with proper authentication handling and smart content-type detection.
     """
     def run(self, data, config, opts):
         # 1) Use explicit bucket from config, or default to raw scraped data bucket
@@ -42,15 +42,18 @@ class GCSExporter(BaseExporter):
         # 3) Prepare data (preserves binary, serializes JSON)
         payload, is_binary = _prepare_data_for_export(data, config)
         
-        # 4) Set appropriate content type
+        # 4) Set appropriate content type with smart detection
         if is_binary and gcs_path.endswith('.pdf'):
             content_type = "application/pdf"
+        elif is_binary and gcs_path.endswith('.json'):
+            # Smart fix: binary data to .json file is JSON content
+            content_type = "application/json"
         elif is_binary:
             content_type = "application/octet-stream"
         else:
             content_type = "application/json"
 
-        # 5) ENHANCED: Create GCS client with proper authentication handling
+        # 5) Create GCS client with proper authentication handling
         client = self._create_gcs_client()
         bucket = client.bucket(bucket_name)
         blob = bucket.blob(gcs_path)
@@ -62,7 +65,7 @@ class GCSExporter(BaseExporter):
             # Upload text data as UTF-8 encoded bytes
             blob.upload_from_string(payload.encode('utf-8'), content_type=content_type)
 
-        print(f"[GCS Exporter] Uploaded to gs://{bucket_name}/{gcs_path}")
+        print(f"[GCS Exporter] Uploaded to gs://{bucket_name}/{gcs_path} (content-type: {content_type})")
 
     def _create_gcs_client(self):
         """

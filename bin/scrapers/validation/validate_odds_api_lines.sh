@@ -1,6 +1,6 @@
 #!/bin/bash
 # File: bin/scrapers/validation/validate_odds_api_lines.sh
-# Purpose: Validate NBA Game Lines data from Odds API
+# Purpose: Validate NBA Game Lines data from Odds API - FIXED FOR NESTED STRUCTURE
 
 set -e
 
@@ -19,7 +19,7 @@ NC='\033[0m'
 
 print_header() {
     echo -e "${CYAN}================================================${NC}"
-    echo -e "${CYAN}🏀 NBA ODDS API GAME LINES VALIDATOR${NC}"
+    echo -e "${CYAN}🏀 NBA ODDS API GAME LINES VALIDATOR - FIXED${NC}"
     echo -e "${CYAN}================================================${NC}"
     echo -e "Time: $(date)"
     echo -e "Bucket: $BUCKET/$LINES_PATH/"
@@ -129,11 +129,11 @@ validate_lines_json() {
     [[ "$has_timestamp" == "true" ]] && quality_score=$((quality_score + 10)) || issues+=("Missing timestamp")
     [[ "$has_data" == "true" ]] && quality_score=$((quality_score + 10)) || issues+=("Missing/invalid data array")
     
-    # Game count (expecting 1-15 games per date)
-    if [[ $game_count -ge 1 && $game_count -le 15 ]]; then
+    # Game count (expecting 1 game per file for individual game lines)
+    if [[ $game_count -eq 1 ]]; then
         quality_score=$((quality_score + 15))
     else
-        issues+=("Unusual game count: $game_count")
+        issues+=("Expected 1 game, got $game_count")
     fi
     
     # Game info (if we have games)
@@ -160,13 +160,15 @@ validate_lines_json() {
         [[ "$has_totals" == "true" ]] && market_score=$((market_score + 1))
         [[ "$has_h2h" == "true" ]] && market_score=$((market_score + 1))
         
-        if [[ $market_score -eq 3 ]]; then
-            quality_score=$((quality_score + 15))
-        elif [[ $market_score -eq 2 ]]; then
-            quality_score=$((quality_score + 10))
-            issues+=("Missing 1 market type")
+        if [[ $market_score -eq 2 ]]; then
+            quality_score=$((quality_score + 15))  # spreads + totals is what we requested
+        elif [[ $market_score -eq 3 ]]; then
+            quality_score=$((quality_score + 15))  # all markets is even better
+        elif [[ $market_score -eq 1 ]]; then
+            quality_score=$((quality_score + 8))
+            issues+=("Only 1 market type available")
         else
-            issues+=("Missing ${$((3 - market_score))} market types")
+            issues+=("No market types found")
         fi
         
         # Spread range validation (typically -20 to +20)
@@ -187,7 +189,7 @@ validate_lines_json() {
             fi
         fi
         
-        # H2H price range validation (typically 1.4-3.0)
+        # H2H price range validation (decimal odds: typically 1.4-3.0)
         if [[ "$h2h_price_min" != "null" && "$h2h_price_max" != "null" ]]; then
             if [[ $(echo "$h2h_price_min >= 1.2 && $h2h_price_max <= 4.0" | bc -l 2>/dev/null || echo 0) -eq 1 ]]; then
                 quality_score=$((quality_score + 5))
@@ -203,22 +205,18 @@ validate_lines_json() {
     [[ $quality_score -lt 50 ]] && quality_color=$RED
     
     echo -e "    ${GREEN}✅ Valid Lines JSON${NC} - ${file_size}B"
-    echo -e "    🏀 Games: $game_count"
+    echo -e "    🏀 Game: $away_team @ $home_team"
+    echo -e "    📊 Bookmakers: $bookmaker_count ($bookmaker_names)"
+    echo -e "    📈 Markets: $([ "$has_spreads" == "true" ] && echo "Spreads" || echo "")$([ "$has_totals" == "true" ] && echo " Totals" || echo "")$([ "$has_h2h" == "true" ] && echo " H2H" || echo "")"
     
-    if [[ $game_count -gt 0 ]]; then
-        echo -e "    🏀 Sample: $away_team @ $home_team"
-        echo -e "    📊 Bookmakers: $bookmaker_count ($bookmaker_names)"
-        echo -e "    📈 Markets: $([ "$has_spreads" == "true" ] && echo "Spreads" || echo "")$([ "$has_totals" == "true" ] && echo " Totals" || echo "")$([ "$has_h2h" == "true" ] && echo " H2H" || echo "")"
-        
-        if [[ "$spread_min" != "null" ]]; then
-            echo -e "    📊 Spreads: $spread_min to $spread_max"
-        fi
-        if [[ "$total_min" != "null" ]]; then
-            echo -e "    📊 Totals: $total_min to $total_max"
-        fi
-        if [[ "$h2h_price_min" != "null" ]]; then
-            echo -e "    💰 H2H Odds: $h2h_price_min to $h2h_price_max"
-        fi
+    if [[ "$spread_min" != "null" && "$spread_min" != "" ]]; then
+        echo -e "    📊 Spreads: $spread_min to $spread_max"
+    fi
+    if [[ "$total_min" != "null" && "$total_min" != "" ]]; then
+        echo -e "    📊 Totals: $total_min to $total_max"
+    fi
+    if [[ "$h2h_price_min" != "null" && "$h2h_price_min" != "" ]]; then
+        echo -e "    💰 H2H Odds: $h2h_price_min to $h2h_price_max (decimal)"
     fi
     
     echo -e "    📈 Quality: ${quality_color}$quality_score/100${NC}"
@@ -231,7 +229,7 @@ validate_lines_json() {
     return 0
 }
 
-# Check a specific date directory for game lines
+# Check a specific date directory for game lines - FIXED FOR NESTED STRUCTURE
 check_date_for_lines() {
     local date="$1"
     local date_path="$BUCKET/$LINES_PATH/$date/"
@@ -243,16 +241,36 @@ check_date_for_lines() {
         return 1
     fi
     
-    # Get JSON files directly from the date directory
-    local json_files=$(timeout 30 gcloud storage ls "$date_path" 2>/dev/null | grep "\.json$" | head -3)
-    local file_count=$(echo "$json_files" | wc -l | tr -d ' ')
+    # FIXED: Get game subdirectories first, then look for JSON files within them
+    local game_dirs=$(timeout 30 gcloud storage ls "$date_path" 2>/dev/null | grep "/" | head -5)
+    local game_count=$(echo "$game_dirs" | grep -c "/$" 2>/dev/null || echo "0")
     
-    if [[ -n "$json_files" && "$file_count" -gt 0 ]]; then
-        echo -e "    ${GREEN}Found $file_count JSON files${NC}" >&2
-        echo "$json_files"
+    if [[ $game_count -eq 0 ]]; then
+        echo -e "    ${YELLOW}No game directories found${NC}" >&2
+        return 1
+    fi
+    
+    echo -e "    ${GREEN}Found $game_count game directories${NC}" >&2
+    
+    # Get sample JSON files from game directories
+    local sample_files=()
+    while IFS= read -r game_dir; do
+        if [[ -n "$game_dir" ]]; then
+            # Look inside each game directory for JSON files
+            local json_files=$(timeout 20 gcloud storage ls "$game_dir" 2>/dev/null | grep "\.json$" | head -1)
+            if [[ -n "$json_files" ]]; then
+                sample_files+=("$json_files")
+            fi
+        fi
+    done <<< "$game_dirs"
+    
+    if [[ ${#sample_files[@]} -gt 0 ]]; then
+        echo -e "    ${BLUE}Sample files found: ${#sample_files[@]}${NC}" >&2
+        # Return files for validation
+        printf '%s\n' "${sample_files[@]}"
         return 0
     else
-        echo -e "    ${YELLOW}No JSON files found${NC}" >&2
+        echo -e "    ${YELLOW}No JSON files found in game directories${NC}" >&2
         return 1
     fi
 }
@@ -287,7 +305,19 @@ validate_sample_files() {
     for file_path in "${files[@]}"; do
         file_num=$((file_num + 1))
         
-        echo -e "${CYAN}[$file_num/${#files[@]}]${NC} $(basename "$file_path")"
+        # Extract game info from path for display
+        local path_parts=(${file_path//\// })
+        local date_part=""
+        local game_part=""
+        for part in "${path_parts[@]}"; do
+            if [[ $part =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+                date_part="$part"
+            elif [[ $part =~ -[A-Z]{3}[A-Z]{3}$ ]]; then
+                game_part="$part"
+            fi
+        done
+        
+        echo -e "${CYAN}[$file_num/${#files[@]}]${NC} $date_part/$game_part/$(basename "$file_path")"
         
         if validate_lines_json "$file_path"; then
             valid_files=$((valid_files + 1))
@@ -393,8 +423,8 @@ cmd_dates() {
         echo "Usage: $0 dates YYYY-MM-DD [YYYY-MM-DD ...]"
         echo ""
         echo "Examples:"
-        echo "  $0 dates 2023-10-25"
-        echo "  $0 dates 2023-10-25 2023-10-26 2023-10-27"
+        echo "  $0 dates 2021-10-19"
+        echo "  $0 dates 2021-10-19 2021-10-20 2021-10-21"
         return 1
     fi
     
@@ -436,18 +466,21 @@ show_usage() {
     echo "Examples:"
     echo "  $0 test                    - Test basic functionality"
     echo "  $0 recent 5                - Check 5 most recent dates"
-    echo "  $0 dates 2023-10-25       - Check specific date"
-    echo "  $0 dates 2023-10-25 2023-10-26  - Check multiple dates"
+    echo "  $0 dates 2021-10-19       - Check specific date"
+    echo "  $0 dates 2021-10-19 2021-10-20  - Check multiple dates"
     echo ""
     echo "What it validates:"
     echo "  ✅ JSON structure and required fields"
-    echo "  ✅ Game count per date (1-15 games expected)"
+    echo "  ✅ Individual game files (1 game per file expected)"
     echo "  ✅ Bookmaker presence (2-8 bookmakers, expecting fanduel)"
-    echo "  ✅ Market types (spreads, totals, h2h/moneyline)"
+    echo "  ✅ Market types (spreads, totals requested)"
     echo "  ✅ Spread ranges (-25 to +25 typical)"
     echo "  ✅ Total ranges (180-280 for NBA)"
-    echo "  ✅ H2H price ranges (1.2-4.0 typical)"
+    echo "  ✅ Decimal odds ranges (1.2-4.0 typical)"
     echo "  ✅ Game and team information completeness"
+    echo ""
+    echo "Note: This version handles the nested per-game directory structure:"
+    echo "  date/eventid-teams/timestamp.json"
 }
 
 # Main command handling

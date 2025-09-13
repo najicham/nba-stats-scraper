@@ -11,6 +11,7 @@ from .nbac_player_movement_processor import NbacPlayerMovementProcessor
 from .nbac_scoreboard_v2_processor import NbacScoreboardV2Processor
 from .nbac_player_boxscore_processor import NbacPlayerBoxscoreProcessor
 from .nbac_play_by_play_processor import NbacPlayByPlayProcessor
+from .nbac_referee_processor import NbacRefereeProcessor
 
 
 __all__ = [
@@ -21,4 +22,5 @@ __all__ = [
     'NbacScoreboardV2Processor',
     'NbacPlayerBoxscoreProcessor',
     'NbacPlayByPlayProcessor',
+    'NbacRefereeProcessor',
 ]
