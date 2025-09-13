@@ -307,14 +307,10 @@ get_recent_files() {
 get_files_for_date() {
     local date="$1"
     
-    # Convert YYYY-MM-DD to YYYY/MM/DD for GCS path
-    local year=$(echo "$date" | cut -d'-' -f1)
-    local month=$(echo "$date" | cut -d'-' -f2)
-    local day=$(echo "$date" | cut -d'-' -f3)
-    
     echo -e "${BLUE}Finding files for $date...${NC}"
     
-    gsutil ls "gs://$GCS_BUCKET/$GCS_PATH/$year/$month/$day/*.json" 2>/dev/null || true
+    # Get actual JSON files, not wildcard paths
+    gsutil ls "gs://$GCS_BUCKET/$GCS_PATH/$date/*.json" 2>/dev/null || true
 }
 
 # Get random sample of files
@@ -323,11 +319,21 @@ get_sample_files() {
     
     echo -e "${BLUE}Getting random sample (size: $sample_size)...${NC}"
     
-    # Get all files and sample them
-    gsutil ls -r "gs://$GCS_BUCKET/$GCS_PATH/" 2>/dev/null | \
-        grep "\.json$" | \
-        shuf | \
-        head -n "$sample_size"
+    # Get all date folders, shuffle them, and find JSON files
+    local all_folders=$(gsutil ls "gs://$GCS_BUCKET/$GCS_PATH/" 2>/dev/null | grep "/" | shuf | head -n "$sample_size")
+    
+    local files=()
+    for folder in $all_folders; do
+        local json_files=$(gsutil ls "$folder*.json" 2>/dev/null | head -1)  # Just get one file per folder
+        if [[ -n "$json_files" ]]; then
+            files+=($json_files)
+            if [[ ${#files[@]} -ge $sample_size ]]; then
+                break
+            fi
+        fi
+    done
+    
+    printf '%s\n' "${files[@]}"
 }
 
 # Print validation summary

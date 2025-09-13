@@ -284,15 +284,9 @@ class NbaRefereeAssignmentsBackfillJob:
     def _date_already_processed(self, date_str: str) -> bool:
         """Check if referee assignments for this date already exist in GCS."""
         try:
-            # Construct GCS path based on the scraper's GCS_PATH_KEY
-            # Format should match: nba-com/referee-assignments/YYYY/MM/DD/
-            date_obj = datetime.strptime(date_str, "%Y-%m-%d")
-            year = date_obj.strftime("%Y")
-            month = date_obj.strftime("%m")
-            day = date_obj.strftime("%d")
-            
-            # Check if files exist with this date pattern
-            prefix = f"nba-com/referee-assignments/{year}/{month}/{day}/"
+            # GCS path uses YYYY-MM-DD format directly
+            # Format: gs://bucket/nba-com/referee-assignments/YYYY-MM-DD/
+            prefix = f"nba-com/referee-assignments/{date_str}/"
             
             blobs = list(self.bucket.list_blobs(prefix=prefix, max_results=1))
             
