@@ -1,0 +1,253 @@
+{
+  "_comment": "File: scripts/team_locations.json - NBA team location reference data for travel distance calculations",
+  "teams": {
+    "ATL": {
+      "city": "Atlanta",
+      "state": "Georgia", 
+      "arena": "State Farm Arena",
+      "coordinates": [33.7573, -84.3963],
+      "timezone": "America/New_York",
+      "airport_code": "ATL"
+    },
+    "BOS": {
+      "city": "Boston",
+      "state": "Massachusetts",
+      "arena": "TD Garden", 
+      "coordinates": [42.3662, -71.0621],
+      "timezone": "America/New_York",
+      "airport_code": "BOS"
+    },
+    "BKN": {
+      "city": "Brooklyn",
+      "state": "New York",
+      "arena": "Barclays Center",
+      "coordinates": [40.6826, -73.9754],
+      "timezone": "America/New_York", 
+      "airport_code": "LGA"
+    },
+    "CHA": {
+      "city": "Charlotte",
+      "state": "North Carolina",
+      "arena": "Spectrum Center",
+      "coordinates": [35.2251, -80.8392],
+      "timezone": "America/New_York",
+      "airport_code": "CLT"
+    },
+    "CHI": {
+      "city": "Chicago", 
+      "state": "Illinois",
+      "arena": "United Center",
+      "coordinates": [41.8807, -87.6742],
+      "timezone": "America/Chicago",
+      "airport_code": "ORD"
+    },
+    "CLE": {
+      "city": "Cleveland",
+      "state": "Ohio", 
+      "arena": "Rocket Mortgage FieldHouse",
+      "coordinates": [41.4965, -81.6882],
+      "timezone": "America/New_York",
+      "airport_code": "CLE"
+    },
+    "DAL": {
+      "city": "Dallas",
+      "state": "Texas",
+      "arena": "American Airlines Center", 
+      "coordinates": [32.7906, -96.8103],
+      "timezone": "America/Chicago",
+      "airport_code": "DFW"
+    },
+    "DEN": {
+      "city": "Denver",
+      "state": "Colorado",
+      "arena": "Ball Arena",
+      "coordinates": [39.7487, -105.0077],
+      "timezone": "America/Denver", 
+      "airport_code": "DEN"
+    },
+    "DET": {
+      "city": "Detroit", 
+      "state": "Michigan",
+      "arena": "Little Caesars Arena",
+      "coordinates": [42.3411, -83.0553],
+      "timezone": "America/New_York",
+      "airport_code": "DTW"
+    },
+    "GSW": {
+      "city": "San Francisco",
+      "state": "California", 
+      "arena": "Chase Center",
+      "coordinates": [37.7679, -122.3873],
+      "timezone": "America/Los_Angeles",
+      "airport_code": "SFO"
+    },
+    "HOU": {
+      "city": "Houston",
+      "state": "Texas",
+      "arena": "Toyota Center",
+      "coordinates": [29.6807, -95.3615],
+      "timezone": "America/Chicago",
+      "airport_code": "IAH"
+    },
+    "IND": {
+      "city": "Indianapolis", 
+      "state": "Indiana",
+      "arena": "Gainbridge Fieldhouse",
+      "coordinates": [39.7640, -86.1555],
+      "timezone": "America/New_York",
+      "airport_code": "IND"
+    },
+    "LAC": {
+      "city": "Los Angeles",
+      "state": "California",
+      "arena": "Crypto.com Arena",
+      "coordinates": [34.0430, -118.2673],
+      "timezone": "America/Los_Angeles", 
+      "airport_code": "LAX"
+    },
+    "LAL": {
+      "city": "Los Angeles", 
+      "state": "California",
+      "arena": "Crypto.com Arena", 
+      "coordinates": [34.0430, -118.2673],
+      "timezone": "America/Los_Angeles",
+      "airport_code": "LAX"
+    },
+    "MEM": {
+      "city": "Memphis",
+      "state": "Tennessee",
+      "arena": "FedExForum",
+      "coordinates": [35.1382, -90.0505],
+      "timezone": "America/Chicago", 
+      "airport_code": "MEM"
+    },
+    "MIA": {
+      "city": "Miami",
+      "state": "Florida",
+      "arena": "Kaseya Center", 
+      "coordinates": [25.7814, -80.1870],
+      "timezone": "America/New_York",
+      "airport_code": "MIA"
+    },
+    "MIL": {
+      "city": "Milwaukee",
+      "state": "Wisconsin",
+      "arena": "Fiserv Forum",
+      "coordinates": [43.0435, -87.9167],
+      "timezone": "America/Chicago",
+      "airport_code": "MKE"
+    },
+    "MIN": {
+      "city": "Minneapolis",
+      "state": "Minnesota", 
+      "arena": "Target Center",
+      "coordinates": [44.9795, -93.2760],
+      "timezone": "America/Chicago",
+      "airport_code": "MSP"
+    },
+    "NOP": {
+      "city": "New Orleans",
+      "state": "Louisiana",
+      "arena": "Smoothie King Center",
+      "coordinates": [29.9490, -90.0821],
+      "timezone": "America/Chicago",
+      "airport_code": "MSY"
+    },
+    "NYK": {
+      "city": "New York",
+      "state": "New York", 
+      "arena": "Madison Square Garden",
+      "coordinates": [40.7505, -73.9934],
+      "timezone": "America/New_York",
+      "airport_code": "LGA"
+    },
+    "OKC": {
+      "city": "Oklahoma City",
+      "state": "Oklahoma",
+      "arena": "Paycom Center", 
+      "coordinates": [35.4634, -97.5151],
+      "timezone": "America/Chicago",
+      "airport_code": "OKC"
+    },
+    "ORL": {
+      "city": "Orlando",
+      "state": "Florida",
+      "arena": "Kia Center",
+      "coordinates": [28.5392, -81.3839],
+      "timezone": "America/New_York",
+      "airport_code": "MCO"
+    },
+    "PHI": {
+      "city": "Philadelphia",
+      "state": "Pennsylvania", 
+      "arena": "Wells Fargo Center",
+      "coordinates": [39.9012, -75.1720],
+      "timezone": "America/New_York",
+      "airport_code": "PHL"
+    },
+    "PHX": {
+      "city": "Phoenix", 
+      "state": "Arizona",
+      "arena": "Footprint Center",
+      "coordinates": [33.4457, -112.0712],
+      "timezone": "America/Phoenix",
+      "airport_code": "PHX"
+    },
+    "POR": {
+      "city": "Portland",
+      "state": "Oregon",
+      "arena": "Moda Center",
+      "coordinates": [45.5316, -122.6668],
+      "timezone": "America/Los_Angeles",
+      "airport_code": "PDX"
+    },
+    "SAC": {
+      "city": "Sacramento", 
+      "state": "California",
+      "arena": "Golden 1 Center",
+      "coordinates": [38.5816, -121.4999],
+      "timezone": "America/Los_Angeles",
+      "airport_code": "SMF"
+    },
+    "SAS": {
+      "city": "San Antonio",
+      "state": "Texas",
+      "arena": "Frost Bank Center",
+      "coordinates": [29.4270, -98.4375],
+      "timezone": "America/Chicago",
+      "airport_code": "SAT"
+    },
+    "TOR": {
+      "city": "Toronto", 
+      "state": "Ontario",
+      "arena": "Scotiabank Arena",
+      "coordinates": [43.6434, -79.3791],
+      "timezone": "America/Toronto",
+      "airport_code": "YYZ"
+    },
+    "UTA": {
+      "city": "Salt Lake City",
+      "state": "Utah",
+      "arena": "Delta Center",
+      "coordinates": [40.7683, -111.9011], 
+      "timezone": "America/Denver",
+      "airport_code": "SLC"
+    },
+    "WAS": {
+      "city": "Washington",
+      "state": "District of Columbia",
+      "arena": "Capital One Arena",
+      "coordinates": [38.8981, -77.0209],
+      "timezone": "America/New_York",
+      "airport_code": "DCA"
+    }
+  },
+  "timezone_offsets": {
+    "America/New_York": -5,
+    "America/Chicago": -6, 
+    "America/Denver": -7,
+    "America/Los_Angeles": -8,
+    "America/Phoenix": -7,
+    "America/Toronto": -5
+  }
+}

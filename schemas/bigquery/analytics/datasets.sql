@@ -7,15 +7,13 @@
 -- Analytics dataset for computed NBA metrics and player performance data
 CREATE SCHEMA IF NOT EXISTS `nba-props-platform.nba_analytics`
 OPTIONS (
-  description = "Analytics tables with computed NBA metrics for prop betting analysis. Contains player game summaries, team offense/defense logs, and derived performance metrics.",
-  location = "us-west2"
+  description = "Analytics tables with computed NBA metrics for prop betting analysis. Contains player game summaries, team offense/defense logs, and derived performance metrics."
 );
 
 -- Processing dataset for pipeline monitoring and data quality tracking
-CREATE SCHEMA IF NOT EXISTS `nba_processing`
+CREATE SCHEMA IF NOT EXISTS `nba-props-platform.nba_processing`
 OPTIONS (
-  description = "Processing logs, data quality tracking, and analytics pipeline monitoring. Used for debugging and performance optimization.",
-  location = "us-west2"
+  description = "Processing logs, data quality tracking, and analytics pipeline monitoring. Used for debugging and performance optimization."
 );
 
 -- ============================================================================

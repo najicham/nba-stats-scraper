@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # File: processors/nbacom/nbac_referee_processor.py
 # Description: Processor for NBA.com referee assignments data transformation
+# Enhanced with monitoring to detect duplication issues
 
 import json
 import logging
@@ -181,12 +182,25 @@ class NbacRefereeProcessor(ProcessorBase):
         return rows
     
     def load_data(self, rows: List[Dict], **kwargs) -> Dict:
-        """Load game assignment data into BigQuery."""
+        """Load game assignment data into BigQuery with duplicate detection and verification."""
         if not rows:
             return {'rows_processed': 0, 'errors': []}
         
+        # Check for duplicates in input data
+        unique_keys = set()
+        duplicates = []
+        for row in rows:
+            key = (row['game_id'], row['official_position'], row['official_code'])
+            if key in unique_keys:
+                duplicates.append(key)
+            unique_keys.add(key)
+        
+        if duplicates:
+            logging.warning(f"Found {len(duplicates)} duplicate keys in input data: {duplicates[:3]}...")
+        
         table_id = f"{self.project_id}.{self.table_name}"
         errors = []
+        file_path = rows[0].get('source_file_path', 'unknown') if rows else 'unknown'
         
         try:
             if self.processing_strategy == 'MERGE_UPDATE':
@@ -194,20 +208,45 @@ class NbacRefereeProcessor(ProcessorBase):
                 game_dates = set(row['game_date'] for row in rows if row['game_date'])
                 
                 for game_date in game_dates:
+                    # Log delete operation with timing
+                    delete_start = datetime.utcnow()
                     delete_query = f"""
                     DELETE FROM `{table_id}` 
                     WHERE game_date = '{game_date}'
                     """
                     self.bq_client.query(delete_query).result()
-                    logging.info(f"Deleted existing referee assignments for {game_date}")
+                    delete_duration = (datetime.utcnow() - delete_start).total_seconds()
+                    logging.info(f"Deleted existing referee assignments for {game_date} ({delete_duration:.2f}s)")
+            
+            # Log insert operation with timing
+            insert_start = datetime.utcnow()
+            logging.info(f"Inserting {len(rows)} rows into {self.table_name}")
             
             # Insert new data
             result = self.bq_client.insert_rows_json(table_id, rows)
+            insert_duration = (datetime.utcnow() - insert_start).total_seconds()
+            
             if result:
                 errors.extend([str(e) for e in result])
                 logging.error(f"BigQuery insert errors: {errors}")
             else:
-                logging.info(f"Successfully inserted {len(rows)} rows to {self.table_name}")
+                logging.info(f"Successfully inserted {len(rows)} rows to {self.table_name} ({insert_duration:.2f}s)")
+                
+                # Verify row count post-insertion
+                verify_query = f"""
+                SELECT COUNT(*) as count 
+                FROM `{table_id}` 
+                WHERE source_file_path = '{file_path}'
+                AND game_date = '{game_date}'
+                """
+                try:
+                    actual_count = list(self.bq_client.query(verify_query))[0].count
+                    if actual_count != len(rows):
+                        logging.error(f"ROW COUNT MISMATCH! Expected {len(rows)}, got {actual_count}")
+                    else:
+                        logging.info(f"Row count verified: {actual_count} rows")
+                except Exception as verify_error:
+                    logging.warning(f"Could not verify row count: {verify_error}")
                 
         except Exception as e:
             error_msg = str(e)
@@ -217,12 +256,25 @@ class NbacRefereeProcessor(ProcessorBase):
         return {'rows_processed': len(rows) if not errors else 0, 'errors': errors}
     
     def load_replay_center_data(self, replay_rows: List[Dict]) -> Dict:
-        """Load replay center data into separate table."""
+        """Load replay center data with duplicate detection and verification."""
         if not replay_rows:
             return {'rows_processed': 0, 'errors': []}
         
+        # Check for duplicates in replay center data
+        unique_keys = set()
+        duplicates = []
+        for row in replay_rows:
+            key = (row['game_date'], row['official_code'])
+            if key in unique_keys:
+                duplicates.append(key)
+            unique_keys.add(key)
+        
+        if duplicates:
+            logging.warning(f"Found {len(duplicates)} duplicate replay center keys: {duplicates}")
+        
         table_id = f"{self.project_id}.{self.replay_table_name}"
         errors = []
+        file_path = replay_rows[0].get('source_file_path', 'unknown') if replay_rows else 'unknown'
         
         try:
             if self.processing_strategy == 'MERGE_UPDATE':
@@ -230,20 +282,43 @@ class NbacRefereeProcessor(ProcessorBase):
                 game_dates = set(row['game_date'] for row in replay_rows if row['game_date'])
                 
                 for game_date in game_dates:
+                    delete_start = datetime.utcnow()
                     delete_query = f"""
                     DELETE FROM `{table_id}` 
                     WHERE game_date = '{game_date}'
                     """
                     self.bq_client.query(delete_query).result()
-                    logging.info(f"Deleted existing replay center data for {game_date}")
+                    delete_duration = (datetime.utcnow() - delete_start).total_seconds()
+                    logging.info(f"Deleted existing replay center data for {game_date} ({delete_duration:.2f}s)")
+            
+            # Enhanced insert logging with timing
+            insert_start = datetime.utcnow()
+            logging.info(f"Inserting {len(replay_rows)} replay center rows")
             
             # Insert new data
             result = self.bq_client.insert_rows_json(table_id, replay_rows)
+            insert_duration = (datetime.utcnow() - insert_start).total_seconds()
+            
             if result:
                 errors.extend([str(e) for e in result])
-                logging.error(f"BigQuery insert errors: {errors}")
+                logging.error(f"BigQuery replay center insert errors: {errors}")
             else:
-                logging.info(f"Successfully inserted {len(replay_rows)} rows to {self.replay_table_name}")
+                logging.info(f"Successfully inserted {len(replay_rows)} rows to {self.replay_table_name} ({insert_duration:.2f}s)")
+                
+                # Verify replay center row count
+                verify_query = f"""
+                SELECT COUNT(*) as count 
+                FROM `{table_id}` 
+                WHERE source_file_path = '{file_path}'
+                """
+                try:
+                    actual_count = list(self.bq_client.query(verify_query))[0].count
+                    if actual_count != len(replay_rows):
+                        logging.error(f"REPLAY CENTER ROW COUNT MISMATCH! Expected {len(replay_rows)}, got {actual_count}")
+                    else:
+                        logging.info(f"Replay center row count verified: {actual_count} rows")
+                except Exception as verify_error:
+                    logging.warning(f"Could not verify replay center row count: {verify_error}")
                 
         except Exception as e:
             error_msg = str(e)
@@ -253,7 +328,7 @@ class NbacRefereeProcessor(ProcessorBase):
         return {'rows_processed': len(replay_rows) if not errors else 0, 'errors': errors}
     
     def process_file(self, file_path: str, **kwargs) -> Dict:
-        """Process a single referee assignments file."""
+        """Process a single referee assignments file with enhanced validation."""
         try:
             logging.info(f"Processing referee file: {file_path}")
             
@@ -285,27 +360,48 @@ class NbacRefereeProcessor(ProcessorBase):
                     'status': 'validation_failed',
                     'errors': validation_errors,
                     'game_assignments_processed': 0,
-                    'replay_center_processed': 0
+                    'replay_center_processed': 0,
+                    'expected_game_assignments': 0,
+                    'expected_replay_center': 0
                 }
             
-            # Transform and load game assignments
+            # Transform data
             game_rows = self.transform_data(raw_data, file_path)
+            replay_rows = self.transform_replay_center_data(raw_data, file_path)
+            
+            # Log expected counts before processing
+            logging.info(f"Expected: {len(game_rows)} game assignments, {len(replay_rows)} replay center records")
+            
+            # Transform and load game assignments
             game_result = self.load_data(game_rows, **kwargs)
             
             # Transform and load replay center data
-            replay_rows = self.transform_replay_center_data(raw_data, file_path)
             replay_result = self.load_replay_center_data(replay_rows)
             
-            all_errors = game_result.get('errors', []) + replay_result.get('errors', [])
-            status = 'success' if not all_errors else 'partial_success' if (game_result.get('rows_processed', 0) > 0 or replay_result.get('rows_processed', 0) > 0) else 'failed'
+            # Enhanced result validation
+            game_processed = game_result.get('rows_processed', 0)
+            replay_processed = replay_result.get('rows_processed', 0)
             
-            logging.info(f"Processed {file_path}: {game_result.get('rows_processed', 0)} game assignments, {replay_result.get('rows_processed', 0)} replay center records")
+            # Validate expectations vs actuals
+            if game_processed != len(game_rows):
+                logging.warning(f"GAME ASSIGNMENT COUNT MISMATCH! Expected {len(game_rows)}, processed {game_processed}")
+            
+            if replay_processed != len(replay_rows):
+                logging.warning(f"REPLAY CENTER COUNT MISMATCH! Expected {len(replay_rows)}, processed {replay_processed}")
+            
+            all_errors = game_result.get('errors', []) + replay_result.get('errors', [])
+            status = 'success' if not all_errors else 'partial_success' if (game_processed > 0 or replay_processed > 0) else 'failed'
+            
+            # Enhanced completion logging
+            logging.info(f"Processed {file_path}: {game_processed} game assignments, {replay_processed} replay center records (status: {status})")
             
             return {
                 'file_path': file_path,
                 'status': status,
-                'game_assignments_processed': game_result.get('rows_processed', 0),
-                'replay_center_processed': replay_result.get('rows_processed', 0),
+                'game_assignments_processed': game_processed,
+                'replay_center_processed': replay_processed,
+                'expected_game_assignments': len(game_rows),
+                'expected_replay_center': len(replay_rows),
                 'errors': all_errors
             }
             
@@ -317,5 +413,7 @@ class NbacRefereeProcessor(ProcessorBase):
                 'status': 'error',
                 'error': error_msg,
                 'game_assignments_processed': 0,
-                'replay_center_processed': 0
+                'replay_center_processed': 0,
+                'expected_game_assignments': 0,
+                'expected_replay_center': 0
             }

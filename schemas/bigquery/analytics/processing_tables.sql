@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_processing.analytics_processo
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP()  -- When record was created
 )
 PARTITION BY DATE(run_date)
-CLUSTER BY processor_name, success, DATE(run_date)
+CLUSTER BY processor_name, success, run_date
 OPTIONS (
   description = "Analytics processor execution logs and performance tracking for monitoring and optimization",
   partition_expiration_days = 365  -- 1 year retention for processing logs
@@ -82,7 +82,8 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_processing.analytics_data_iss
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP(), -- When issue was detected
   resolved_at TIMESTAMP                             -- When issue was resolved
 )
-CLUSTER BY processor_name, resolved, severity, DATE(created_at)
+PARTITION BY DATE(created_at)
+CLUSTER BY processor_name, resolved, severity, created_at
 OPTIONS (
   description = "Data quality issues tracked during analytics processing for debugging and improvement",
   partition_expiration_days = 730  -- 2 years retention for issue tracking

@@ -1,0 +1,871 @@
+from_team,to_team,from_city,to_city,distance_miles,time_zones_crossed,travel_direction,jet_lag_factor
+ATL,BOS,Atlanta,Boston,936,0,neutral,0.0
+ATL,BKN,Atlanta,Brooklyn,746,0,neutral,0.0
+ATL,CHA,Atlanta,Charlotte,227,0,neutral,0.0
+ATL,CHI,Atlanta,Chicago,589,1,east,1.5
+ATL,CLE,Atlanta,Cleveland,555,0,neutral,0.0
+ATL,DAL,Atlanta,Dallas,720,1,east,1.5
+ATL,DEN,Atlanta,Denver,1210,2,east,3.0
+ATL,DET,Atlanta,Detroit,598,0,neutral,0.0
+ATL,GSW,Atlanta,San Francisco,2133,3,east,4.5
+ATL,HOU,Atlanta,Houston,703,1,east,1.5
+ATL,IND,Atlanta,Indianapolis,426,0,neutral,0.0
+ATL,LAC,Atlanta,Los Angeles,1934,3,east,4.5
+ATL,LAL,Atlanta,Los Angeles,1934,3,east,4.5
+ATL,MEM,Atlanta,Memphis,336,1,east,1.5
+ATL,MIA,Atlanta,Miami,606,0,neutral,0.0
+ATL,MIL,Atlanta,Milwaukee,669,1,east,1.5
+ATL,MIN,Atlanta,Minneapolis,908,1,east,1.5
+ATL,NOP,Atlanta,New Orleans,425,1,east,1.5
+ATL,NYK,Atlanta,New York,748,0,neutral,0.0
+ATL,OKC,Atlanta,Oklahoma City,755,1,east,1.5
+ATL,ORL,Atlanta,Orlando,402,0,neutral,0.0
+ATL,PHI,Atlanta,Philadelphia,663,0,neutral,0.0
+ATL,PHX,Atlanta,Phoenix,1588,2,east,3.0
+ATL,POR,Atlanta,Portland,2168,3,east,4.5
+ATL,SAC,Atlanta,Sacramento,2082,3,east,4.5
+ATL,SAS,Atlanta,San Antonio,878,1,east,1.5
+ATL,TOR,Atlanta,Toronto,734,0,neutral,0.0
+ATL,UTA,Atlanta,Salt Lake City,1581,2,east,3.0
+ATL,WAS,Atlanta,Washington,543,0,neutral,0.0
+BOS,ATL,Boston,Atlanta,936,0,neutral,0.0
+BOS,BKN,Boston,Brooklyn,190,0,neutral,0.0
+BOS,CHA,Boston,Charlotte,721,0,neutral,0.0
+BOS,CHI,Boston,Chicago,851,1,east,1.5
+BOS,CLE,Boston,Cleveland,549,0,neutral,0.0
+BOS,DAL,Boston,Dallas,1549,1,east,1.5
+BOS,DEN,Boston,Denver,1766,2,east,3.0
+BOS,DET,Boston,Detroit,612,0,neutral,0.0
+BOS,GSW,Boston,San Francisco,2691,3,east,4.5
+BOS,HOU,Boston,Houston,1607,1,east,1.5
+BOS,IND,Boston,Indianapolis,805,0,neutral,0.0
+BOS,LAC,Boston,Los Angeles,2592,3,east,4.5
+BOS,LAL,Boston,Los Angeles,2592,3,east,4.5
+BOS,MEM,Boston,Memphis,1135,1,east,1.5
+BOS,MIA,Boston,Miami,1257,0,neutral,0.0
+BOS,MIL,Boston,Milwaukee,856,1,east,1.5
+BOS,MIN,Boston,Minneapolis,1121,1,east,1.5
+BOS,NOP,Boston,New Orleans,1359,1,east,1.5
+BOS,NYK,Boston,New York,188,0,neutral,0.0
+BOS,OKC,Boston,Oklahoma City,1493,1,east,1.5
+BOS,ORL,Boston,Orlando,1116,0,neutral,0.0
+BOS,PHI,Boston,Philadelphia,273,0,neutral,0.0
+BOS,PHX,Boston,Phoenix,2295,2,east,3.0
+BOS,POR,Boston,Portland,2532,3,east,4.5
+BOS,SAC,Boston,Sacramento,2625,3,east,4.5
+BOS,SAS,Boston,San Antonio,1762,1,east,1.5
+BOS,TOR,Boston,Toronto,429,0,neutral,0.0
+BOS,UTA,Boston,Salt Lake City,2094,2,east,3.0
+BOS,WAS,Boston,Washington,394,0,neutral,0.0
+BKN,ATL,Brooklyn,Atlanta,746,0,neutral,0.0
+BKN,BOS,Brooklyn,Boston,190,0,neutral,0.0
+BKN,CHA,Brooklyn,Charlotte,531,0,neutral,0.0
+BKN,CHI,Brooklyn,Chicago,715,1,east,1.5
+BKN,CLE,Brooklyn,Cleveland,405,0,neutral,0.0
+BKN,DAL,Brooklyn,Dallas,1372,1,east,1.5
+BKN,DEN,Brooklyn,Denver,1630,2,east,3.0
+BKN,DET,Brooklyn,Detroit,483,0,neutral,0.0
+BKN,GSW,Brooklyn,San Francisco,2566,3,east,4.5
+BKN,HOU,Brooklyn,Houston,1421,1,east,1.5
+BKN,IND,Brooklyn,Indianapolis,645,0,neutral,0.0
+BKN,LAC,Brooklyn,Los Angeles,2449,3,east,4.5
+BKN,LAL,Brooklyn,Los Angeles,2449,3,east,4.5
+BKN,MEM,Brooklyn,Memphis,955,1,east,1.5
+BKN,MIA,Brooklyn,Miami,1090,0,neutral,0.0
+BKN,MIL,Brooklyn,Milwaukee,735,1,east,1.5
+BKN,MIN,Brooklyn,Minneapolis,1019,1,east,1.5
+BKN,NOP,Brooklyn,New Orleans,1169,1,east,1.5
+BKN,NYK,Brooklyn,New York,5,0,neutral,0.0
+BKN,OKC,Brooklyn,Oklahoma City,1326,1,east,1.5
+BKN,ORL,Brooklyn,Orlando,938,0,neutral,0.0
+BKN,PHI,Brooklyn,Philadelphia,83,0,neutral,0.0
+BKN,PHX,Brooklyn,Phoenix,2141,2,east,3.0
+BKN,POR,Brooklyn,Portland,2441,3,east,4.5
+BKN,SAC,Brooklyn,Sacramento,2502,3,east,4.5
+BKN,SAS,Brooklyn,San Antonio,1579,1,east,1.5
+BKN,TOR,Brooklyn,Toronto,344,0,neutral,0.0
+BKN,UTA,Brooklyn,Salt Lake City,1970,2,east,3.0
+BKN,WAS,Brooklyn,Washington,203,0,neutral,0.0
+CHA,ATL,Charlotte,Atlanta,227,0,neutral,0.0
+CHA,BOS,Charlotte,Boston,721,0,neutral,0.0
+CHA,BKN,Charlotte,Brooklyn,531,0,neutral,0.0
+CHA,CHI,Charlotte,Chicago,589,1,east,1.5
+CHA,CLE,Charlotte,Cleveland,436,0,neutral,0.0
+CHA,DAL,Charlotte,Dallas,929,1,east,1.5
+CHA,DEN,Charlotte,Denver,1357,2,east,3.0
+CHA,DET,Charlotte,Detroit,506,0,neutral,0.0
+CHA,GSW,Charlotte,San Francisco,2296,3,east,4.5
+CHA,HOU,Charlotte,Houston,928,1,east,1.5
+CHA,IND,Charlotte,Indianapolis,428,0,neutral,0.0
+CHA,LAC,Charlotte,Los Angeles,2117,3,east,4.5
+CHA,LAL,Charlotte,Los Angeles,2117,3,east,4.5
+CHA,MEM,Charlotte,Memphis,520,1,east,1.5
+CHA,MIA,Charlotte,Miami,654,0,neutral,0.0
+CHA,MIL,Charlotte,Milwaukee,660,1,east,1.5
+CHA,MIN,Charlotte,Minneapolis,939,1,east,1.5
+CHA,NOP,Charlotte,New Orleans,649,1,east,1.5
+CHA,NYK,Charlotte,New York,533,0,neutral,0.0
+CHA,OKC,Charlotte,Oklahoma City,939,1,east,1.5
+CHA,ORL,Charlotte,Orlando,463,0,neutral,0.0
+CHA,PHI,Charlotte,Philadelphia,448,0,neutral,0.0
+CHA,PHX,Charlotte,Phoenix,1779,2,east,3.0
+CHA,POR,Charlotte,Portland,2285,3,east,4.5
+CHA,SAC,Charlotte,Sacramento,2240,3,east,4.5
+CHA,SAS,Charlotte,San Antonio,1101,1,east,1.5
+CHA,TOR,Charlotte,Toronto,587,0,neutral,0.0
+CHA,UTA,Charlotte,Salt Lake City,1725,2,east,3.0
+CHA,WAS,Charlotte,Washington,330,0,neutral,0.0
+CHI,ATL,Chicago,Atlanta,589,1,west,1.0
+CHI,BOS,Chicago,Boston,851,1,west,1.0
+CHI,BKN,Chicago,Brooklyn,715,1,west,1.0
+CHI,CHA,Chicago,Charlotte,589,1,west,1.0
+CHI,CLE,Chicago,Cleveland,310,1,west,1.0
+CHI,DAL,Chicago,Dallas,803,0,neutral,0.0
+CHI,DEN,Chicago,Denver,917,1,east,1.5
+CHI,DET,Chicago,Detroit,239,1,west,1.0
+CHI,GSW,Chicago,San Francisco,1851,2,east,3.0
+CHI,HOU,Chicago,Houston,946,0,neutral,0.0
+CHI,IND,Chicago,Indianapolis,166,1,west,1.0
+CHI,LAC,Chicago,Los Angeles,1742,2,east,3.0
+CHI,LAL,Chicago,Los Angeles,1742,2,east,3.0
+CHI,MEM,Chicago,Memphis,483,0,neutral,0.0
+CHI,MIA,Chicago,Miami,1191,1,west,1.0
+CHI,MIL,Chicago,Milwaukee,81,0,neutral,0.0
+CHI,MIN,Chicago,Minneapolis,353,0,neutral,0.0
+CHI,NOP,Chicago,New Orleans,835,0,neutral,0.0
+CHI,NYK,Chicago,New York,714,1,west,1.0
+CHI,OKC,Chicago,Oklahoma City,691,0,neutral,0.0
+CHI,ORL,Chicago,Orlando,987,1,west,1.0
+CHI,PHI,Chicago,Philadelphia,667,1,west,1.0
+CHI,PHX,Chicago,Phoenix,1450,1,east,1.5
+CHI,POR,Chicago,Portland,1752,2,east,3.0
+CHI,SAC,Chicago,Sacramento,1787,2,east,3.0
+CHI,SAS,Chicago,San Antonio,1050,0,neutral,0.0
+CHI,TOR,Chicago,Toronto,438,1,west,1.0
+CHI,UTA,Chicago,Salt Lake City,1255,1,east,1.5
+CHI,WAS,Chicago,Washington,597,1,west,1.0
+CLE,ATL,Cleveland,Atlanta,555,0,neutral,0.0
+CLE,BOS,Cleveland,Boston,549,0,neutral,0.0
+CLE,BKN,Cleveland,Brooklyn,405,0,neutral,0.0
+CLE,CHA,Cleveland,Charlotte,436,0,neutral,0.0
+CLE,CHI,Cleveland,Chicago,310,1,east,1.5
+CLE,DAL,Cleveland,Dallas,1025,1,east,1.5
+CLE,DEN,Cleveland,Denver,1225,2,east,3.0
+CLE,DET,Cleveland,Detroit,91,0,neutral,0.0
+CLE,GSW,Cleveland,San Francisco,2161,3,east,4.5
+CLE,HOU,Cleveland,Houston,1118,1,east,1.5
+CLE,IND,Cleveland,Indianapolis,263,0,neutral,0.0
+CLE,LAC,Cleveland,Los Angeles,2047,3,east,4.5
+CLE,LAL,Cleveland,Los Angeles,2047,3,east,4.5
+CLE,MEM,Cleveland,Memphis,631,1,east,1.5
+CLE,MIA,Cleveland,Miami,1089,0,neutral,0.0
+CLE,MIL,Cleveland,Milwaukee,336,1,east,1.5
+CLE,MIN,Cleveland,Minneapolis,630,1,east,1.5
+CLE,NOP,Cleveland,New Orleans,925,1,east,1.5
+CLE,NYK,Cleveland,New York,404,0,neutral,0.0
+CLE,OKC,Cleveland,Oklahoma City,950,1,east,1.5
+CLE,ORL,Cleveland,Orlando,895,0,neutral,0.0
+CLE,PHI,Cleveland,Philadelphia,359,0,neutral,0.0
+CLE,PHX,Cleveland,Phoenix,1746,2,east,3.0
+CLE,POR,Cleveland,Portland,2050,3,east,4.5
+CLE,SAC,Cleveland,Sacramento,2097,3,east,4.5
+CLE,SAS,Cleveland,San Antonio,1254,1,east,1.5
+CLE,TOR,Cleveland,Toronto,189,0,neutral,0.0
+CLE,UTA,Cleveland,Salt Lake City,1565,2,east,3.0
+CLE,WAS,Cleveland,Washington,305,0,neutral,0.0
+DAL,ATL,Dallas,Atlanta,720,1,west,1.0
+DAL,BOS,Dallas,Boston,1549,1,west,1.0
+DAL,BKN,Dallas,Brooklyn,1372,1,west,1.0
+DAL,CHA,Dallas,Charlotte,929,1,west,1.0
+DAL,CHI,Dallas,Chicago,803,0,neutral,0.0
+DAL,CLE,Dallas,Cleveland,1025,1,west,1.0
+DAL,DEN,Dallas,Denver,663,1,east,1.5
+DAL,DET,Dallas,Detroit,999,1,west,1.0
+DAL,GSW,Dallas,San Francisco,1478,2,east,3.0
+DAL,HOU,Dallas,Houston,231,0,neutral,0.0
+DAL,IND,Dallas,Indianapolis,764,1,west,1.0
+DAL,LAC,Dallas,Los Angeles,1238,2,east,3.0
+DAL,LAL,Dallas,Los Angeles,1238,2,east,3.0
+DAL,MEM,Dallas,Memphis,420,0,neutral,0.0
+DAL,MIA,Dallas,Miami,1111,1,west,1.0
+DAL,MIL,Dallas,Milwaukee,857,0,neutral,0.0
+DAL,MIN,Dallas,Minneapolis,863,0,neutral,0.0
+DAL,NOP,Dallas,New Orleans,443,0,neutral,0.0
+DAL,NYK,Dallas,New York,1372,1,west,1.0
+DAL,OKC,Dallas,Oklahoma City,189,0,neutral,0.0
+DAL,ORL,Dallas,Orlando,962,1,west,1.0
+DAL,PHI,Dallas,Philadelphia,1296,1,west,1.0
+DAL,PHX,Dallas,Phoenix,884,1,east,1.5
+DAL,POR,Dallas,Portland,1630,2,east,3.0
+DAL,SAC,Dallas,Sacramento,1437,2,east,3.0
+DAL,SAS,Dallas,San Antonio,252,0,neutral,0.0
+DAL,TOR,Dallas,Toronto,1203,1,west,1.0
+DAL,UTA,Dallas,Salt Lake City,998,1,east,1.5
+DAL,WAS,Dallas,Washington,1183,1,west,1.0
+DEN,ATL,Denver,Atlanta,1210,2,west,2.0
+DEN,BOS,Denver,Boston,1766,2,west,2.0
+DEN,BKN,Denver,Brooklyn,1630,2,west,2.0
+DEN,CHA,Denver,Charlotte,1357,2,west,2.0
+DEN,CHI,Denver,Chicago,917,1,west,1.0
+DEN,CLE,Denver,Cleveland,1225,2,west,2.0
+DEN,DAL,Denver,Dallas,663,1,west,1.0
+DEN,DET,Denver,Detroit,1155,2,west,2.0
+DEN,GSW,Denver,San Francisco,945,1,east,1.5
+DEN,HOU,Denver,Houston,884,1,west,1.0
+DEN,IND,Denver,Indianapolis,1000,2,west,2.0
+DEN,LAC,Denver,Los Angeles,831,1,east,1.5
+DEN,LAL,Denver,Los Angeles,831,1,east,1.5
+DEN,MEM,Denver,Memphis,879,1,west,1.0
+DEN,MIA,Denver,Miami,1726,2,west,2.0
+DEN,MIL,Denver,Milwaukee,913,1,west,1.0
+DEN,MIN,Denver,Minneapolis,699,1,west,1.0
+DEN,NOP,Denver,New Orleans,1081,1,west,1.0
+DEN,NYK,Denver,New York,1629,2,west,2.0
+DEN,OKC,Denver,Oklahoma City,506,1,west,1.0
+DEN,ORL,Denver,Orlando,1550,2,west,2.0
+DEN,PHI,Denver,Philadelphia,1576,2,west,2.0
+DEN,PHX,Denver,Phoenix,585,0,neutral,0.0
+DEN,POR,Denver,Portland,980,1,east,1.5
+DEN,SAC,Denver,Sacramento,886,1,east,1.5
+DEN,SAS,Denver,San Antonio,805,1,west,1.0
+DEN,TOR,Denver,Toronto,1344,2,west,2.0
+DEN,UTA,Denver,Salt Lake City,370,0,neutral,0.0
+DEN,WAS,Denver,Washington,1491,2,west,2.0
+DET,ATL,Detroit,Atlanta,598,0,neutral,0.0
+DET,BOS,Detroit,Boston,612,0,neutral,0.0
+DET,BKN,Detroit,Brooklyn,483,0,neutral,0.0
+DET,CHA,Detroit,Charlotte,506,0,neutral,0.0
+DET,CHI,Detroit,Chicago,239,1,east,1.5
+DET,CLE,Detroit,Cleveland,91,0,neutral,0.0
+DET,DAL,Detroit,Dallas,999,1,east,1.5
+DET,DEN,Detroit,Denver,1155,2,east,3.0
+DET,GSW,Detroit,San Francisco,2085,3,east,4.5
+DET,HOU,Detroit,Houston,1110,1,east,1.5
+DET,IND,Detroit,Indianapolis,240,0,neutral,0.0
+DET,LAC,Detroit,Los Angeles,1980,3,east,4.5
+DET,LAL,Detroit,Los Angeles,1980,3,east,4.5
+DET,MEM,Detroit,Memphis,624,1,east,1.5
+DET,MIA,Detroit,Miami,1156,0,neutral,0.0
+DET,MIL,Detroit,Milwaukee,252,1,east,1.5
+DET,MIN,Detroit,Minneapolis,542,1,east,1.5
+DET,NOP,Detroit,New Orleans,941,1,east,1.5
+DET,NYK,Detroit,New York,481,0,neutral,0.0
+DET,OKC,Detroit,Oklahoma City,909,1,east,1.5
+DET,ORL,Detroit,Orlando,958,0,neutral,0.0
+DET,PHI,Detroit,Philadelphia,443,0,neutral,0.0
+DET,PHX,Detroit,Phoenix,1687,2,east,3.0
+DET,POR,Detroit,Portland,1963,3,east,4.5
+DET,SAC,Detroit,Sacramento,2020,3,east,4.5
+DET,SAS,Detroit,San Antonio,1236,1,east,1.5
+DET,TOR,Detroit,Toronto,206,0,neutral,0.0
+DET,UTA,Detroit,Salt Lake City,1488,2,east,3.0
+DET,WAS,Detroit,Washington,396,0,neutral,0.0
+GSW,ATL,San Francisco,Atlanta,2133,3,west,3.0
+GSW,BOS,San Francisco,Boston,2691,3,west,3.0
+GSW,BKN,San Francisco,Brooklyn,2566,3,west,3.0
+GSW,CHA,San Francisco,Charlotte,2296,3,west,3.0
+GSW,CHI,San Francisco,Chicago,1851,2,west,2.0
+GSW,CLE,San Francisco,Cleveland,2161,3,west,3.0
+GSW,DAL,San Francisco,Dallas,1478,2,west,2.0
+GSW,DEN,San Francisco,Denver,945,1,west,1.0
+GSW,DET,San Francisco,Detroit,2085,3,west,3.0
+GSW,HOU,San Francisco,Houston,1644,2,west,2.0
+GSW,IND,San Francisco,Indianapolis,1944,3,west,3.0
+GSW,LAC,San Francisco,Los Angeles,345,0,neutral,0.0
+GSW,LAL,San Francisco,Los Angeles,345,0,neutral,0.0
+GSW,MEM,San Francisco,Memphis,1797,2,west,2.0
+GSW,MIA,San Francisco,Miami,2589,3,west,3.0
+GSW,MIL,San Francisco,Milwaukee,1836,2,west,2.0
+GSW,MIN,San Francisco,Minneapolis,1580,2,west,2.0
+GSW,NOP,San Francisco,New Orleans,1920,2,west,2.0
+GSW,NYK,San Francisco,New York,2564,3,west,3.0
+GSW,OKC,San Francisco,Oklahoma City,1384,2,west,2.0
+GSW,ORL,San Francisco,Orlando,2435,3,west,3.0
+GSW,PHI,San Francisco,Philadelphia,2516,3,west,3.0
+GSW,PHX,San Francisco,Phoenix,651,1,west,1.0
+GSW,POR,San Francisco,Portland,537,0,neutral,0.0
+GSW,SAC,San Francisco,Sacramento,74,0,neutral,0.0
+GSW,SAS,San Francisco,San Antonio,1489,2,west,2.0
+GSW,TOR,San Francisco,Toronto,2263,3,west,3.0
+GSW,UTA,San Francisco,Salt Lake City,598,1,west,1.0
+GSW,WAS,San Francisco,Washington,2434,3,west,3.0
+HOU,ATL,Houston,Atlanta,703,1,west,1.0
+HOU,BOS,Houston,Boston,1607,1,west,1.0
+HOU,BKN,Houston,Brooklyn,1421,1,west,1.0
+HOU,CHA,Houston,Charlotte,928,1,west,1.0
+HOU,CHI,Houston,Chicago,946,0,neutral,0.0
+HOU,CLE,Houston,Cleveland,1118,1,west,1.0
+HOU,DAL,Houston,Dallas,231,0,neutral,0.0
+HOU,DEN,Houston,Denver,884,1,east,1.5
+HOU,DET,Houston,Detroit,1110,1,west,1.0
+HOU,GSW,Houston,San Francisco,1644,2,east,3.0
+HOU,IND,Houston,Indianapolis,870,1,west,1.0
+HOU,LAC,Houston,Los Angeles,1374,2,east,3.0
+HOU,LAL,Houston,Los Angeles,1374,2,east,3.0
+HOU,MEM,Houston,Memphis,488,0,neutral,0.0
+HOU,MIA,Houston,Miami,966,1,west,1.0
+HOU,MIL,Houston,Milwaukee,1011,0,neutral,0.0
+HOU,MIN,Houston,Minneapolis,1063,0,neutral,0.0
+HOU,NOP,Houston,New Orleans,317,0,neutral,0.0
+HOU,NYK,Houston,New York,1422,1,west,1.0
+HOU,OKC,Houston,Oklahoma City,419,0,neutral,0.0
+HOU,ORL,Houston,Orlando,847,1,west,1.0
+HOU,PHI,Houston,Philadelphia,1341,1,west,1.0
+HOU,PHX,Houston,Phoenix,1016,1,east,1.5
+HOU,POR,Houston,Portland,1838,2,east,3.0
+HOU,SAC,Houston,Sacramento,1609,2,east,3.0
+HOU,SAS,Houston,San Antonio,186,0,neutral,0.0
+HOU,TOR,Houston,Toronto,1305,1,west,1.0
+HOU,UTA,Houston,Salt Lake City,1204,1,east,1.5
+HOU,WAS,Houston,Washington,1222,1,west,1.0
+IND,ATL,Indianapolis,Atlanta,426,0,neutral,0.0
+IND,BOS,Indianapolis,Boston,805,0,neutral,0.0
+IND,BKN,Indianapolis,Brooklyn,645,0,neutral,0.0
+IND,CHA,Indianapolis,Charlotte,428,0,neutral,0.0
+IND,CHI,Indianapolis,Chicago,166,1,east,1.5
+IND,CLE,Indianapolis,Cleveland,263,0,neutral,0.0
+IND,DAL,Indianapolis,Dallas,764,1,east,1.5
+IND,DEN,Indianapolis,Denver,1000,2,east,3.0
+IND,DET,Indianapolis,Detroit,240,0,neutral,0.0
+IND,GSW,Indianapolis,San Francisco,1944,3,east,4.5
+IND,HOU,Indianapolis,Houston,870,1,east,1.5
+IND,LAC,Indianapolis,Los Angeles,1808,3,east,4.5
+IND,LAL,Indianapolis,Los Angeles,1808,3,east,4.5
+IND,MEM,Indianapolis,Memphis,384,1,east,1.5
+IND,MIA,Indianapolis,Miami,1026,0,neutral,0.0
+IND,MIL,Indianapolis,Milwaukee,244,1,east,1.5
+IND,MIN,Indianapolis,Minneapolis,511,1,east,1.5
+IND,NOP,Indianapolis,New Orleans,714,1,east,1.5
+IND,NYK,Indianapolis,New York,644,0,neutral,0.0
+IND,OKC,Indianapolis,Oklahoma City,688,1,east,1.5
+IND,ORL,Indianapolis,Orlando,822,0,neutral,0.0
+IND,PHI,Indianapolis,Philadelphia,583,0,neutral,0.0
+IND,PHX,Indianapolis,Phoenix,1496,2,east,3.0
+IND,POR,Indianapolis,Portland,1881,3,east,4.5
+IND,SAC,Indianapolis,Sacramento,1883,3,east,4.5
+IND,SAS,Indianapolis,San Antonio,997,1,east,1.5
+IND,TOR,Indianapolis,Toronto,440,0,neutral,0.0
+IND,UTA,Indianapolis,Salt Lake City,1354,2,east,3.0
+IND,WAS,Indianapolis,Washington,492,0,neutral,0.0
+LAC,ATL,Los Angeles,Atlanta,1934,3,west,3.0
+LAC,BOS,Los Angeles,Boston,2592,3,west,3.0
+LAC,BKN,Los Angeles,Brooklyn,2449,3,west,3.0
+LAC,CHA,Los Angeles,Charlotte,2117,3,west,3.0
+LAC,CHI,Los Angeles,Chicago,1742,2,west,2.0
+LAC,CLE,Los Angeles,Cleveland,2047,3,west,3.0
+LAC,DAL,Los Angeles,Dallas,1238,2,west,2.0
+LAC,DEN,Los Angeles,Denver,831,1,west,1.0
+LAC,DET,Los Angeles,Detroit,1980,3,west,3.0
+LAC,GSW,Los Angeles,San Francisco,345,0,neutral,0.0
+LAC,HOU,Los Angeles,Houston,1374,2,west,2.0
+LAC,IND,Los Angeles,Indianapolis,1808,3,west,3.0
+LAC,LAL,Los Angeles,Los Angeles,0,0,neutral,0.0
+LAC,MEM,Los Angeles,Memphis,1601,2,west,2.0
+LAC,MIA,Los Angeles,Miami,2337,3,west,3.0
+LAC,MIL,Los Angeles,Milwaukee,1743,2,west,2.0
+LAC,MIN,Los Angeles,Minneapolis,1523,2,west,2.0
+LAC,NOP,Los Angeles,New Orleans,1670,2,west,2.0
+LAC,NYK,Los Angeles,New York,2448,3,west,3.0
+LAC,OKC,Los Angeles,Oklahoma City,1180,2,west,2.0
+LAC,ORL,Los Angeles,Orlando,2199,3,west,3.0
+LAC,PHI,Los Angeles,Philadelphia,2390,3,west,3.0
+LAC,PHX,Los Angeles,Phoenix,358,1,west,1.0
+LAC,POR,Los Angeles,Portland,827,0,neutral,0.0
+LAC,SAC,Los Angeles,Sacramento,362,0,neutral,0.0
+LAC,SAS,Los Angeles,San Antonio,1206,2,west,2.0
+LAC,TOR,Los Angeles,Toronto,2173,3,west,3.0
+LAC,UTA,Los Angeles,Salt Lake City,581,1,west,1.0
+LAC,WAS,Los Angeles,Washington,2297,3,west,3.0
+LAL,ATL,Los Angeles,Atlanta,1934,3,west,3.0
+LAL,BOS,Los Angeles,Boston,2592,3,west,3.0
+LAL,BKN,Los Angeles,Brooklyn,2449,3,west,3.0
+LAL,CHA,Los Angeles,Charlotte,2117,3,west,3.0
+LAL,CHI,Los Angeles,Chicago,1742,2,west,2.0
+LAL,CLE,Los Angeles,Cleveland,2047,3,west,3.0
+LAL,DAL,Los Angeles,Dallas,1238,2,west,2.0
+LAL,DEN,Los Angeles,Denver,831,1,west,1.0
+LAL,DET,Los Angeles,Detroit,1980,3,west,3.0
+LAL,GSW,Los Angeles,San Francisco,345,0,neutral,0.0
+LAL,HOU,Los Angeles,Houston,1374,2,west,2.0
+LAL,IND,Los Angeles,Indianapolis,1808,3,west,3.0
+LAL,LAC,Los Angeles,Los Angeles,0,0,neutral,0.0
+LAL,MEM,Los Angeles,Memphis,1601,2,west,2.0
+LAL,MIA,Los Angeles,Miami,2337,3,west,3.0
+LAL,MIL,Los Angeles,Milwaukee,1743,2,west,2.0
+LAL,MIN,Los Angeles,Minneapolis,1523,2,west,2.0
+LAL,NOP,Los Angeles,New Orleans,1670,2,west,2.0
+LAL,NYK,Los Angeles,New York,2448,3,west,3.0
+LAL,OKC,Los Angeles,Oklahoma City,1180,2,west,2.0
+LAL,ORL,Los Angeles,Orlando,2199,3,west,3.0
+LAL,PHI,Los Angeles,Philadelphia,2390,3,west,3.0
+LAL,PHX,Los Angeles,Phoenix,358,1,west,1.0
+LAL,POR,Los Angeles,Portland,827,0,neutral,0.0
+LAL,SAC,Los Angeles,Sacramento,362,0,neutral,0.0
+LAL,SAS,Los Angeles,San Antonio,1206,2,west,2.0
+LAL,TOR,Los Angeles,Toronto,2173,3,west,3.0
+LAL,UTA,Los Angeles,Salt Lake City,581,1,west,1.0
+LAL,WAS,Los Angeles,Washington,2297,3,west,3.0
+MEM,ATL,Memphis,Atlanta,336,1,west,1.0
+MEM,BOS,Memphis,Boston,1135,1,west,1.0
+MEM,BKN,Memphis,Brooklyn,955,1,west,1.0
+MEM,CHA,Memphis,Charlotte,520,1,west,1.0
+MEM,CHI,Memphis,Chicago,483,0,neutral,0.0
+MEM,CLE,Memphis,Cleveland,631,1,west,1.0
+MEM,DAL,Memphis,Dallas,420,0,neutral,0.0
+MEM,DEN,Memphis,Denver,879,1,east,1.5
+MEM,DET,Memphis,Detroit,624,1,west,1.0
+MEM,GSW,Memphis,San Francisco,1797,2,east,3.0
+MEM,HOU,Memphis,Houston,488,0,neutral,0.0
+MEM,IND,Memphis,Indianapolis,384,1,west,1.0
+MEM,LAC,Memphis,Los Angeles,1601,2,east,3.0
+MEM,LAL,Memphis,Los Angeles,1601,2,east,3.0
+MEM,MIA,Memphis,Miami,873,1,west,1.0
+MEM,MIL,Memphis,Milwaukee,558,0,neutral,0.0
+MEM,MIN,Memphis,Minneapolis,701,0,neutral,0.0
+MEM,NOP,Memphis,New Orleans,359,0,neutral,0.0
+MEM,NYK,Memphis,New York,955,1,west,1.0
+MEM,OKC,Memphis,Oklahoma City,421,0,neutral,0.0
+MEM,ORL,Memphis,Orlando,683,1,west,1.0
+MEM,PHI,Memphis,Philadelphia,878,1,west,1.0
+MEM,PHX,Memphis,Phoenix,1260,1,east,1.5
+MEM,POR,Memphis,Portland,1846,2,east,3.0
+MEM,SAC,Memphis,Sacramento,1746,2,east,3.0
+MEM,SAS,Memphis,San Antonio,629,0,neutral,0.0
+MEM,TOR,Memphis,Toronto,817,1,west,1.0
+MEM,UTA,Memphis,Salt Lake City,1249,1,east,1.5
+MEM,WAS,Memphis,Washington,763,1,west,1.0
+MIA,ATL,Miami,Atlanta,606,0,neutral,0.0
+MIA,BOS,Miami,Boston,1257,0,neutral,0.0
+MIA,BKN,Miami,Brooklyn,1090,0,neutral,0.0
+MIA,CHA,Miami,Charlotte,654,0,neutral,0.0
+MIA,CHI,Miami,Chicago,1191,1,east,1.5
+MIA,CLE,Miami,Cleveland,1089,0,neutral,0.0
+MIA,DAL,Miami,Dallas,1111,1,east,1.5
+MIA,DEN,Miami,Denver,1726,2,east,3.0
+MIA,DET,Miami,Detroit,1156,0,neutral,0.0
+MIA,GSW,Miami,San Francisco,2589,3,east,4.5
+MIA,HOU,Miami,Houston,966,1,east,1.5
+MIA,IND,Miami,Indianapolis,1026,0,neutral,0.0
+MIA,LAC,Miami,Los Angeles,2337,3,east,4.5
+MIA,LAL,Miami,Los Angeles,2337,3,east,4.5
+MIA,MEM,Miami,Memphis,873,1,east,1.5
+MIA,MIL,Miami,Milwaukee,1270,1,east,1.5
+MIA,MIN,Miami,Minneapolis,1513,1,east,1.5
+MIA,NOP,Miami,New Orleans,669,1,east,1.5
+MIA,NYK,Miami,New York,1094,0,neutral,0.0
+MIA,OKC,Miami,Oklahoma City,1226,1,east,1.5
+MIA,ORL,Miami,Orlando,204,0,neutral,0.0
+MIA,PHI,Miami,Philadelphia,1018,0,neutral,0.0
+MIA,PHX,Miami,Phoenix,1979,2,east,3.0
+MIA,POR,Miami,Portland,2704,3,east,4.5
+MIA,SAC,Miami,Sacramento,2548,3,east,4.5
+MIA,SAS,Miami,San Antonio,1144,1,east,1.5
+MIA,TOR,Miami,Toronto,1235,0,neutral,0.0
+MIA,UTA,Miami,Salt Lake City,2088,2,east,3.0
+MIA,WAS,Miami,Washington,925,0,neutral,0.0
+MIL,ATL,Milwaukee,Atlanta,669,1,west,1.0
+MIL,BOS,Milwaukee,Boston,856,1,west,1.0
+MIL,BKN,Milwaukee,Brooklyn,735,1,west,1.0
+MIL,CHA,Milwaukee,Charlotte,660,1,west,1.0
+MIL,CHI,Milwaukee,Chicago,81,0,neutral,0.0
+MIL,CLE,Milwaukee,Cleveland,336,1,west,1.0
+MIL,DAL,Milwaukee,Dallas,857,0,neutral,0.0
+MIL,DEN,Milwaukee,Denver,913,1,east,1.5
+MIL,DET,Milwaukee,Detroit,252,1,west,1.0
+MIL,GSW,Milwaukee,San Francisco,1836,2,east,3.0
+MIL,HOU,Milwaukee,Houston,1011,0,neutral,0.0
+MIL,IND,Milwaukee,Indianapolis,244,1,west,1.0
+MIL,LAC,Milwaukee,Los Angeles,1743,2,east,3.0
+MIL,LAL,Milwaukee,Los Angeles,1743,2,east,3.0
+MIL,MEM,Milwaukee,Memphis,558,0,neutral,0.0
+MIL,MIA,Milwaukee,Miami,1270,1,west,1.0
+MIL,MIN,Milwaukee,Minneapolis,298,0,neutral,0.0
+MIL,NOP,Milwaukee,New Orleans,913,0,neutral,0.0
+MIL,NYK,Milwaukee,New York,733,1,west,1.0
+MIL,OKC,Milwaukee,Oklahoma City,733,0,neutral,0.0
+MIL,ORL,Milwaukee,Orlando,1066,1,west,1.0
+MIL,PHI,Milwaukee,Philadelphia,694,1,west,1.0
+MIL,PHX,Milwaukee,Phoenix,1462,1,east,1.5
+MIL,POR,Milwaukee,Portland,1714,2,east,3.0
+MIL,SAC,Milwaukee,Sacramento,1771,2,east,3.0
+MIL,SAS,Milwaukee,San Antonio,1107,0,neutral,0.0
+MIL,TOR,Milwaukee,Toronto,431,1,west,1.0
+MIL,UTA,Milwaukee,Salt Lake City,1239,1,east,1.5
+MIL,WAS,Milwaukee,Washington,636,1,west,1.0
+MIN,ATL,Minneapolis,Atlanta,908,1,west,1.0
+MIN,BOS,Minneapolis,Boston,1121,1,west,1.0
+MIN,BKN,Minneapolis,Brooklyn,1019,1,west,1.0
+MIN,CHA,Minneapolis,Charlotte,939,1,west,1.0
+MIN,CHI,Minneapolis,Chicago,353,0,neutral,0.0
+MIN,CLE,Minneapolis,Cleveland,630,1,west,1.0
+MIN,DAL,Minneapolis,Dallas,863,0,neutral,0.0
+MIN,DEN,Minneapolis,Denver,699,1,east,1.5
+MIN,DET,Minneapolis,Detroit,542,1,west,1.0
+MIN,GSW,Minneapolis,San Francisco,1580,2,east,3.0
+MIN,HOU,Minneapolis,Houston,1063,0,neutral,0.0
+MIN,IND,Minneapolis,Indianapolis,511,1,west,1.0
+MIN,LAC,Minneapolis,Los Angeles,1523,2,east,3.0
+MIN,LAL,Minneapolis,Los Angeles,1523,2,east,3.0
+MIN,MEM,Minneapolis,Memphis,701,0,neutral,0.0
+MIN,MIA,Minneapolis,Miami,1513,1,west,1.0
+MIN,MIL,Minneapolis,Milwaukee,298,0,neutral,0.0
+MIN,NOP,Minneapolis,New Orleans,1053,0,neutral,0.0
+MIN,NYK,Minneapolis,New York,1017,1,west,1.0
+MIN,OKC,Minneapolis,Oklahoma City,694,0,neutral,0.0
+MIN,ORL,Minneapolis,Orlando,1310,1,west,1.0
+MIN,PHI,Minneapolis,Philadelphia,985,1,west,1.0
+MIN,PHX,Minneapolis,Phoenix,1278,1,east,1.5
+MIN,POR,Minneapolis,Portland,1422,2,east,3.0
+MIN,SAC,Minneapolis,Sacramento,1511,2,east,3.0
+MIN,SAS,Minneapolis,San Antonio,1111,0,neutral,0.0
+MIN,TOR,Minneapolis,Toronto,692,1,west,1.0
+MIN,UTA,Minneapolis,Salt Lake City,984,1,east,1.5
+MIN,WAS,Minneapolis,Washington,933,1,west,1.0
+NOP,ATL,New Orleans,Atlanta,425,1,west,1.0
+NOP,BOS,New Orleans,Boston,1359,1,west,1.0
+NOP,BKN,New Orleans,Brooklyn,1169,1,west,1.0
+NOP,CHA,New Orleans,Charlotte,649,1,west,1.0
+NOP,CHI,New Orleans,Chicago,835,0,neutral,0.0
+NOP,CLE,New Orleans,Cleveland,925,1,west,1.0
+NOP,DAL,New Orleans,Dallas,443,0,neutral,0.0
+NOP,DEN,New Orleans,Denver,1081,1,east,1.5
+NOP,DET,New Orleans,Detroit,941,1,west,1.0
+NOP,GSW,New Orleans,San Francisco,1920,2,east,3.0
+NOP,HOU,New Orleans,Houston,317,0,neutral,0.0
+NOP,IND,New Orleans,Indianapolis,714,1,west,1.0
+NOP,LAC,New Orleans,Los Angeles,1670,2,east,3.0
+NOP,LAL,New Orleans,Los Angeles,1670,2,east,3.0
+NOP,MEM,New Orleans,Memphis,359,0,neutral,0.0
+NOP,MIA,New Orleans,Miami,669,1,west,1.0
+NOP,MIL,New Orleans,Milwaukee,913,0,neutral,0.0
+NOP,MIN,New Orleans,Minneapolis,1053,0,neutral,0.0
+NOP,NYK,New Orleans,New York,1171,1,west,1.0
+NOP,OKC,New Orleans,Oklahoma City,576,0,neutral,0.0
+NOP,ORL,New Orleans,Orlando,533,1,west,1.0
+NOP,PHI,New Orleans,Philadelphia,1087,1,west,1.0
+NOP,PHX,New Orleans,Phoenix,1313,1,east,1.5
+NOP,POR,New Orleans,Portland,2060,2,east,3.0
+NOP,SAC,New Orleans,Sacramento,1880,2,east,3.0
+NOP,SAS,New Orleans,San Antonio,503,0,neutral,0.0
+NOP,TOR,New Orleans,Toronto,1114,1,west,1.0
+NOP,UTA,New Orleans,Salt Lake City,1433,1,east,1.5
+NOP,WAS,New Orleans,Washington,966,1,west,1.0
+NYK,ATL,New York,Atlanta,748,0,neutral,0.0
+NYK,BOS,New York,Boston,188,0,neutral,0.0
+NYK,BKN,New York,Brooklyn,5,0,neutral,0.0
+NYK,CHA,New York,Charlotte,533,0,neutral,0.0
+NYK,CHI,New York,Chicago,714,1,east,1.5
+NYK,CLE,New York,Cleveland,404,0,neutral,0.0
+NYK,DAL,New York,Dallas,1372,1,east,1.5
+NYK,DEN,New York,Denver,1629,2,east,3.0
+NYK,DET,New York,Detroit,481,0,neutral,0.0
+NYK,GSW,New York,San Francisco,2564,3,east,4.5
+NYK,HOU,New York,Houston,1422,1,east,1.5
+NYK,IND,New York,Indianapolis,644,0,neutral,0.0
+NYK,LAC,New York,Los Angeles,2448,3,east,4.5
+NYK,LAL,New York,Los Angeles,2448,3,east,4.5
+NYK,MEM,New York,Memphis,955,1,east,1.5
+NYK,MIA,New York,Miami,1094,0,neutral,0.0
+NYK,MIL,New York,Milwaukee,733,1,east,1.5
+NYK,MIN,New York,Minneapolis,1017,1,east,1.5
+NYK,NOP,New York,New Orleans,1171,1,east,1.5
+NYK,OKC,New York,Oklahoma City,1325,1,east,1.5
+NYK,ORL,New York,Orlando,942,0,neutral,0.0
+NYK,PHI,New York,Philadelphia,85,0,neutral,0.0
+NYK,PHX,New York,Phoenix,2141,2,east,3.0
+NYK,POR,New York,Portland,2438,3,east,4.5
+NYK,SAC,New York,Sacramento,2500,3,east,4.5
+NYK,SAS,New York,San Antonio,1580,1,east,1.5
+NYK,TOR,New York,Toronto,340,0,neutral,0.0
+NYK,UTA,New York,Salt Lake City,1968,2,east,3.0
+NYK,WAS,New York,Washington,205,0,neutral,0.0
+OKC,ATL,Oklahoma City,Atlanta,755,1,west,1.0
+OKC,BOS,Oklahoma City,Boston,1493,1,west,1.0
+OKC,BKN,Oklahoma City,Brooklyn,1326,1,west,1.0
+OKC,CHA,Oklahoma City,Charlotte,939,1,west,1.0
+OKC,CHI,Oklahoma City,Chicago,691,0,neutral,0.0
+OKC,CLE,Oklahoma City,Cleveland,950,1,west,1.0
+OKC,DAL,Oklahoma City,Dallas,189,0,neutral,0.0
+OKC,DEN,Oklahoma City,Denver,506,1,east,1.5
+OKC,DET,Oklahoma City,Detroit,909,1,west,1.0
+OKC,GSW,Oklahoma City,San Francisco,1384,2,east,3.0
+OKC,HOU,Oklahoma City,Houston,419,0,neutral,0.0
+OKC,IND,Oklahoma City,Indianapolis,688,1,west,1.0
+OKC,LAC,Oklahoma City,Los Angeles,1180,2,east,3.0
+OKC,LAL,Oklahoma City,Los Angeles,1180,2,east,3.0
+OKC,MEM,Oklahoma City,Memphis,421,0,neutral,0.0
+OKC,MIA,Oklahoma City,Miami,1226,1,west,1.0
+OKC,MIL,Oklahoma City,Milwaukee,733,0,neutral,0.0
+OKC,MIN,Oklahoma City,Minneapolis,694,0,neutral,0.0
+OKC,NOP,Oklahoma City,New Orleans,576,0,neutral,0.0
+OKC,NYK,Oklahoma City,New York,1325,1,west,1.0
+OKC,ORL,Oklahoma City,Orlando,1058,1,west,1.0
+OKC,PHI,Oklahoma City,Philadelphia,1256,1,west,1.0
+OKC,PHX,Oklahoma City,Phoenix,840,1,east,1.5
+OKC,POR,Oklahoma City,Portland,1485,2,east,3.0
+OKC,SAC,Oklahoma City,Sacramento,1337,2,east,3.0
+OKC,SAS,Oklahoma City,San Antonio,421,0,neutral,0.0
+OKC,TOR,Oklahoma City,Toronto,1116,1,west,1.0
+OKC,UTA,Oklahoma City,Salt Lake City,862,1,east,1.5
+OKC,WAS,Oklahoma City,Washington,1150,1,west,1.0
+ORL,ATL,Orlando,Atlanta,402,0,neutral,0.0
+ORL,BOS,Orlando,Boston,1116,0,neutral,0.0
+ORL,BKN,Orlando,Brooklyn,938,0,neutral,0.0
+ORL,CHA,Orlando,Charlotte,463,0,neutral,0.0
+ORL,CHI,Orlando,Chicago,987,1,east,1.5
+ORL,CLE,Orlando,Cleveland,895,0,neutral,0.0
+ORL,DAL,Orlando,Dallas,962,1,east,1.5
+ORL,DEN,Orlando,Denver,1550,2,east,3.0
+ORL,DET,Orlando,Detroit,958,0,neutral,0.0
+ORL,GSW,Orlando,San Francisco,2435,3,east,4.5
+ORL,HOU,Orlando,Houston,847,1,east,1.5
+ORL,IND,Orlando,Indianapolis,822,0,neutral,0.0
+ORL,LAC,Orlando,Los Angeles,2199,3,east,4.5
+ORL,LAL,Orlando,Los Angeles,2199,3,east,4.5
+ORL,MEM,Orlando,Memphis,683,1,east,1.5
+ORL,MIA,Orlando,Miami,204,0,neutral,0.0
+ORL,MIL,Orlando,Milwaukee,1066,1,east,1.5
+ORL,MIN,Orlando,Minneapolis,1310,1,east,1.5
+ORL,NOP,Orlando,New Orleans,533,1,east,1.5
+ORL,NYK,Orlando,New York,942,0,neutral,0.0
+ORL,OKC,Orlando,Oklahoma City,1058,1,east,1.5
+ORL,PHI,Orlando,Philadelphia,861,0,neutral,0.0
+ORL,PHX,Orlando,Phoenix,1842,2,east,3.0
+ORL,POR,Orlando,Portland,2525,3,east,4.5
+ORL,SAC,Orlando,Sacramento,2391,3,east,4.5
+ORL,SAS,Orlando,San Antonio,1032,1,east,1.5
+ORL,TOR,Orlando,Toronto,1050,0,neutral,0.0
+ORL,UTA,Orlando,Salt Lake City,1916,2,east,3.0
+ORL,WAS,Orlando,Washington,758,0,neutral,0.0
+PHI,ATL,Philadelphia,Atlanta,663,0,neutral,0.0
+PHI,BOS,Philadelphia,Boston,273,0,neutral,0.0
+PHI,BKN,Philadelphia,Brooklyn,83,0,neutral,0.0
+PHI,CHA,Philadelphia,Charlotte,448,0,neutral,0.0
+PHI,CHI,Philadelphia,Chicago,667,1,east,1.5
+PHI,CLE,Philadelphia,Cleveland,359,0,neutral,0.0
+PHI,DAL,Philadelphia,Dallas,1296,1,east,1.5
+PHI,DEN,Philadelphia,Denver,1576,2,east,3.0
+PHI,DET,Philadelphia,Detroit,443,0,neutral,0.0
+PHI,GSW,Philadelphia,San Francisco,2516,3,east,4.5
+PHI,HOU,Philadelphia,Houston,1341,1,east,1.5
+PHI,IND,Philadelphia,Indianapolis,583,0,neutral,0.0
+PHI,LAC,Philadelphia,Los Angeles,2390,3,east,4.5
+PHI,LAL,Philadelphia,Los Angeles,2390,3,east,4.5
+PHI,MEM,Philadelphia,Memphis,878,1,east,1.5
+PHI,MIA,Philadelphia,Miami,1018,0,neutral,0.0
+PHI,MIL,Philadelphia,Milwaukee,694,1,east,1.5
+PHI,MIN,Philadelphia,Minneapolis,985,1,east,1.5
+PHI,NOP,Philadelphia,New Orleans,1087,1,east,1.5
+PHI,NYK,Philadelphia,New York,85,0,neutral,0.0
+PHI,OKC,Philadelphia,Oklahoma City,1256,1,east,1.5
+PHI,ORL,Philadelphia,Orlando,861,0,neutral,0.0
+PHI,PHX,Philadelphia,Phoenix,2078,2,east,3.0
+PHI,POR,Philadelphia,Portland,2407,3,east,4.5
+PHI,SAC,Philadelphia,Sacramento,2453,3,east,4.5
+PHI,SAS,Philadelphia,San Antonio,1501,1,east,1.5
+PHI,TOR,Philadelphia,Toronto,337,0,neutral,0.0
+PHI,UTA,Philadelphia,Salt Lake City,1921,2,east,3.0
+PHI,WAS,Philadelphia,Washington,121,0,neutral,0.0
+PHX,ATL,Phoenix,Atlanta,1588,2,west,2.0
+PHX,BOS,Phoenix,Boston,2295,2,west,2.0
+PHX,BKN,Phoenix,Brooklyn,2141,2,west,2.0
+PHX,CHA,Phoenix,Charlotte,1779,2,west,2.0
+PHX,CHI,Phoenix,Chicago,1450,1,west,1.0
+PHX,CLE,Phoenix,Cleveland,1746,2,west,2.0
+PHX,DAL,Phoenix,Dallas,884,1,west,1.0
+PHX,DEN,Phoenix,Denver,585,0,neutral,0.0
+PHX,DET,Phoenix,Detroit,1687,2,west,2.0
+PHX,GSW,Phoenix,San Francisco,651,1,east,1.5
+PHX,HOU,Phoenix,Houston,1016,1,west,1.0
+PHX,IND,Phoenix,Indianapolis,1496,2,west,2.0
+PHX,LAC,Phoenix,Los Angeles,358,1,east,1.5
+PHX,LAL,Phoenix,Los Angeles,358,1,east,1.5
+PHX,MEM,Phoenix,Memphis,1260,1,west,1.0
+PHX,MIA,Phoenix,Miami,1979,2,west,2.0
+PHX,MIL,Phoenix,Milwaukee,1462,1,west,1.0
+PHX,MIN,Phoenix,Minneapolis,1278,1,west,1.0
+PHX,NOP,Phoenix,New Orleans,1313,1,west,1.0
+PHX,NYK,Phoenix,New York,2141,2,west,2.0
+PHX,OKC,Phoenix,Oklahoma City,840,1,west,1.0
+PHX,ORL,Phoenix,Orlando,1842,2,west,2.0
+PHX,PHI,Phoenix,Philadelphia,2078,2,west,2.0
+PHX,POR,Phoenix,Portland,1006,1,east,1.5
+PHX,SAC,Phoenix,Sacramento,635,1,east,1.5
+PHX,SAS,Phoenix,San Antonio,850,1,west,1.0
+PHX,TOR,Phoenix,Toronto,1887,2,west,2.0
+PHX,UTA,Phoenix,Salt Lake City,506,0,neutral,0.0
+PHX,WAS,Phoenix,Washington,1978,2,west,2.0
+POR,ATL,Portland,Atlanta,2168,3,west,3.0
+POR,BOS,Portland,Boston,2532,3,west,3.0
+POR,BKN,Portland,Brooklyn,2441,3,west,3.0
+POR,CHA,Portland,Charlotte,2285,3,west,3.0
+POR,CHI,Portland,Chicago,1752,2,west,2.0
+POR,CLE,Portland,Cleveland,2050,3,west,3.0
+POR,DAL,Portland,Dallas,1630,2,west,2.0
+POR,DEN,Portland,Denver,980,1,west,1.0
+POR,DET,Portland,Detroit,1963,3,west,3.0
+POR,GSW,Portland,San Francisco,537,0,neutral,0.0
+POR,HOU,Portland,Houston,1838,2,west,2.0
+POR,IND,Portland,Indianapolis,1881,3,west,3.0
+POR,LAC,Portland,Los Angeles,827,0,neutral,0.0
+POR,LAL,Portland,Los Angeles,827,0,neutral,0.0
+POR,MEM,Portland,Memphis,1846,2,west,2.0
+POR,MIA,Portland,Miami,2704,3,west,3.0
+POR,MIL,Portland,Milwaukee,1714,2,west,2.0
+POR,MIN,Portland,Minneapolis,1422,2,west,2.0
+POR,NOP,Portland,New Orleans,2060,2,west,2.0
+POR,NYK,Portland,New York,2438,3,west,3.0
+POR,OKC,Portland,Oklahoma City,1485,2,west,2.0
+POR,ORL,Portland,Orlando,2525,3,west,3.0
+POR,PHI,Portland,Philadelphia,2407,3,west,3.0
+POR,PHX,Portland,Phoenix,1006,1,west,1.0
+POR,SAC,Portland,Sacramento,484,0,neutral,0.0
+POR,SAS,Portland,San Antonio,1721,2,west,2.0
+POR,TOR,Portland,Toronto,2108,3,west,3.0
+POR,UTA,Portland,Salt Lake City,634,1,west,1.0
+POR,WAS,Portland,Washington,2348,3,west,3.0
+SAC,ATL,Sacramento,Atlanta,2082,3,west,3.0
+SAC,BOS,Sacramento,Boston,2625,3,west,3.0
+SAC,BKN,Sacramento,Brooklyn,2502,3,west,3.0
+SAC,CHA,Sacramento,Charlotte,2240,3,west,3.0
+SAC,CHI,Sacramento,Chicago,1787,2,west,2.0
+SAC,CLE,Sacramento,Cleveland,2097,3,west,3.0
+SAC,DAL,Sacramento,Dallas,1437,2,west,2.0
+SAC,DEN,Sacramento,Denver,886,1,west,1.0
+SAC,DET,Sacramento,Detroit,2020,3,west,3.0
+SAC,GSW,Sacramento,San Francisco,74,0,neutral,0.0
+SAC,HOU,Sacramento,Houston,1609,2,west,2.0
+SAC,IND,Sacramento,Indianapolis,1883,3,west,3.0
+SAC,LAC,Sacramento,Los Angeles,362,0,neutral,0.0
+SAC,LAL,Sacramento,Los Angeles,362,0,neutral,0.0
+SAC,MEM,Sacramento,Memphis,1746,2,west,2.0
+SAC,MIA,Sacramento,Miami,2548,3,west,3.0
+SAC,MIL,Sacramento,Milwaukee,1771,2,west,2.0
+SAC,MIN,Sacramento,Minneapolis,1511,2,west,2.0
+SAC,NOP,Sacramento,New Orleans,1880,2,west,2.0
+SAC,NYK,Sacramento,New York,2500,3,west,3.0
+SAC,OKC,Sacramento,Oklahoma City,1337,2,west,2.0
+SAC,ORL,Sacramento,Orlando,2391,3,west,3.0
+SAC,PHI,Sacramento,Philadelphia,2453,3,west,3.0
+SAC,PHX,Sacramento,Phoenix,635,1,west,1.0
+SAC,POR,Sacramento,Portland,484,0,neutral,0.0
+SAC,SAS,Sacramento,San Antonio,1459,2,west,2.0
+SAC,TOR,Sacramento,Toronto,2196,3,west,3.0
+SAC,UTA,Sacramento,Salt Lake City,532,1,west,1.0
+SAC,WAS,Sacramento,Washington,2373,3,west,3.0
+SAS,ATL,San Antonio,Atlanta,878,1,west,1.0
+SAS,BOS,San Antonio,Boston,1762,1,west,1.0
+SAS,BKN,San Antonio,Brooklyn,1579,1,west,1.0
+SAS,CHA,San Antonio,Charlotte,1101,1,west,1.0
+SAS,CHI,San Antonio,Chicago,1050,0,neutral,0.0
+SAS,CLE,San Antonio,Cleveland,1254,1,west,1.0
+SAS,DAL,San Antonio,Dallas,252,0,neutral,0.0
+SAS,DEN,San Antonio,Denver,805,1,east,1.5
+SAS,DET,San Antonio,Detroit,1236,1,west,1.0
+SAS,GSW,San Antonio,San Francisco,1489,2,east,3.0
+SAS,HOU,San Antonio,Houston,186,0,neutral,0.0
+SAS,IND,San Antonio,Indianapolis,997,1,west,1.0
+SAS,LAC,San Antonio,Los Angeles,1206,2,east,3.0
+SAS,LAL,San Antonio,Los Angeles,1206,2,east,3.0
+SAS,MEM,San Antonio,Memphis,629,0,neutral,0.0
+SAS,MIA,San Antonio,Miami,1144,1,west,1.0
+SAS,MIL,San Antonio,Milwaukee,1107,0,neutral,0.0
+SAS,MIN,San Antonio,Minneapolis,1111,0,neutral,0.0
+SAS,NOP,San Antonio,New Orleans,503,0,neutral,0.0
+SAS,NYK,San Antonio,New York,1580,1,west,1.0
+SAS,OKC,San Antonio,Oklahoma City,421,0,neutral,0.0
+SAS,ORL,San Antonio,Orlando,1032,1,west,1.0
+SAS,PHI,San Antonio,Philadelphia,1501,1,west,1.0
+SAS,PHX,San Antonio,Phoenix,850,1,east,1.5
+SAS,POR,San Antonio,Portland,1721,2,east,3.0
+SAS,SAC,San Antonio,Sacramento,1459,2,east,3.0
+SAS,TOR,San Antonio,Toronto,1437,1,west,1.0
+SAS,UTA,San Antonio,Salt Lake City,1090,1,east,1.5
+SAS,WAS,San Antonio,Washington,1383,1,west,1.0
+TOR,ATL,Toronto,Atlanta,734,0,neutral,0.0
+TOR,BOS,Toronto,Boston,429,0,neutral,0.0
+TOR,BKN,Toronto,Brooklyn,344,0,neutral,0.0
+TOR,CHA,Toronto,Charlotte,587,0,neutral,0.0
+TOR,CHI,Toronto,Chicago,438,1,east,1.5
+TOR,CLE,Toronto,Cleveland,189,0,neutral,0.0
+TOR,DAL,Toronto,Dallas,1203,1,east,1.5
+TOR,DEN,Toronto,Denver,1344,2,east,3.0
+TOR,DET,Toronto,Detroit,206,0,neutral,0.0
+TOR,GSW,Toronto,San Francisco,2263,3,east,4.5
+TOR,HOU,Toronto,Houston,1305,1,east,1.5
+TOR,IND,Toronto,Indianapolis,440,0,neutral,0.0
+TOR,LAC,Toronto,Los Angeles,2173,3,east,4.5
+TOR,LAL,Toronto,Los Angeles,2173,3,east,4.5
+TOR,MEM,Toronto,Memphis,817,1,east,1.5
+TOR,MIA,Toronto,Miami,1235,0,neutral,0.0
+TOR,MIL,Toronto,Milwaukee,431,1,east,1.5
+TOR,MIN,Toronto,Minneapolis,692,1,east,1.5
+TOR,NOP,Toronto,New Orleans,1114,1,east,1.5
+TOR,NYK,Toronto,New York,340,0,neutral,0.0
+TOR,OKC,Toronto,Oklahoma City,1116,1,east,1.5
+TOR,ORL,Toronto,Orlando,1050,0,neutral,0.0
+TOR,PHI,Toronto,Philadelphia,337,0,neutral,0.0
+TOR,PHX,Toronto,Phoenix,1887,2,east,3.0
+TOR,POR,Toronto,Portland,2108,3,east,4.5
+TOR,SAC,Toronto,Sacramento,2196,3,east,4.5
+TOR,SAS,Toronto,San Antonio,1437,1,east,1.5
+TOR,UTA,Toronto,Salt Lake City,1666,2,east,3.0
+TOR,WAS,Toronto,Washington,350,0,neutral,0.0
+UTA,ATL,Salt Lake City,Atlanta,1581,2,west,2.0
+UTA,BOS,Salt Lake City,Boston,2094,2,west,2.0
+UTA,BKN,Salt Lake City,Brooklyn,1970,2,west,2.0
+UTA,CHA,Salt Lake City,Charlotte,1725,2,west,2.0
+UTA,CHI,Salt Lake City,Chicago,1255,1,west,1.0
+UTA,CLE,Salt Lake City,Cleveland,1565,2,west,2.0
+UTA,DAL,Salt Lake City,Dallas,998,1,west,1.0
+UTA,DEN,Salt Lake City,Denver,370,0,neutral,0.0
+UTA,DET,Salt Lake City,Detroit,1488,2,west,2.0
+UTA,GSW,Salt Lake City,San Francisco,598,1,east,1.5
+UTA,HOU,Salt Lake City,Houston,1204,1,west,1.0
+UTA,IND,Salt Lake City,Indianapolis,1354,2,west,2.0
+UTA,LAC,Salt Lake City,Los Angeles,581,1,east,1.5
+UTA,LAL,Salt Lake City,Los Angeles,581,1,east,1.5
+UTA,MEM,Salt Lake City,Memphis,1249,1,west,1.0
+UTA,MIA,Salt Lake City,Miami,2088,2,west,2.0
+UTA,MIL,Salt Lake City,Milwaukee,1239,1,west,1.0
+UTA,MIN,Salt Lake City,Minneapolis,984,1,west,1.0
+UTA,NOP,Salt Lake City,New Orleans,1433,1,west,1.0
+UTA,NYK,Salt Lake City,New York,1968,2,west,2.0
+UTA,OKC,Salt Lake City,Oklahoma City,862,1,west,1.0
+UTA,ORL,Salt Lake City,Orlando,1916,2,west,2.0
+UTA,PHI,Salt Lake City,Philadelphia,1921,2,west,2.0
+UTA,PHX,Salt Lake City,Phoenix,506,0,neutral,0.0
+UTA,POR,Salt Lake City,Portland,634,1,east,1.5
+UTA,SAC,Salt Lake City,Sacramento,532,1,east,1.5
+UTA,SAS,Salt Lake City,San Antonio,1090,1,west,1.0
+UTA,TOR,Salt Lake City,Toronto,1666,2,west,2.0
+UTA,WAS,Salt Lake City,Washington,1843,2,west,2.0
+WAS,ATL,Washington,Atlanta,543,0,neutral,0.0
+WAS,BOS,Washington,Boston,394,0,neutral,0.0
+WAS,BKN,Washington,Brooklyn,203,0,neutral,0.0
+WAS,CHA,Washington,Charlotte,330,0,neutral,0.0
+WAS,CHI,Washington,Chicago,597,1,east,1.5
+WAS,CLE,Washington,Cleveland,305,0,neutral,0.0
+WAS,DAL,Washington,Dallas,1183,1,east,1.5
+WAS,DEN,Washington,Denver,1491,2,east,3.0
+WAS,DET,Washington,Detroit,396,0,neutral,0.0
+WAS,GSW,Washington,San Francisco,2434,3,east,4.5
+WAS,HOU,Washington,Houston,1222,1,east,1.5
+WAS,IND,Washington,Indianapolis,492,0,neutral,0.0
+WAS,LAC,Washington,Los Angeles,2297,3,east,4.5
+WAS,LAL,Washington,Los Angeles,2297,3,east,4.5
+WAS,MEM,Washington,Memphis,763,1,east,1.5
+WAS,MIA,Washington,Miami,925,0,neutral,0.0
+WAS,MIL,Washington,Milwaukee,636,1,east,1.5
+WAS,MIN,Washington,Minneapolis,933,1,east,1.5
+WAS,NOP,Washington,New Orleans,966,1,east,1.5
+WAS,NYK,Washington,New York,205,0,neutral,0.0
+WAS,OKC,Washington,Oklahoma City,1150,1,east,1.5
+WAS,ORL,Washington,Orlando,758,0,neutral,0.0
+WAS,PHI,Washington,Philadelphia,121,0,neutral,0.0
+WAS,PHX,Washington,Phoenix,1978,2,east,3.0
+WAS,POR,Washington,Portland,2348,3,east,4.5
+WAS,SAC,Washington,Sacramento,2373,3,east,4.5
+WAS,SAS,Washington,San Antonio,1383,1,east,1.5
+WAS,TOR,Washington,Toronto,350,0,neutral,0.0
+WAS,UTA,Washington,Salt Lake City,1843,2,east,3.0
