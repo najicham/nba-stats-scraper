@@ -1,27 +1,27 @@
 #!/usr/bin/env python3
 """
-File: analytics_processors/player_game_summary/player_game_summary_backfill_job.py
+File: analytics_backfill/player_game_summary/player_game_summary_backfill_job.py
 
-Backfill job for player game summary analytics.
-Processes date ranges from raw BigQuery tables into analytics tables.
+Analytics backfill job for player game summary processing.
+Follows processor backfill pattern but works with analytics processors.
 
 Usage Examples:
 =============
 
 1. Deploy Job:
-   ./bin/deployment/deploy_analytics_backfill_job.sh player_game_summary
+   ./bin/analytics/deploy/deploy_analytics_processor_backfill.sh player_game_summary
 
 2. Test with Dry Run:
-   gcloud run jobs execute player-game-summary-analytics-backfill \
-     --args=--dry-run,--start-date=2024-01-01,--end-date=2024-01-07 --region=us-west2
+   gcloud run jobs execute player-game-summary-analytics-backfill --args=--dry-run,--limit=5 --region=us-west2
 
-3. Process Single Date:
-   gcloud run jobs execute player-game-summary-analytics-backfill \
-     --args=--start-date=2024-01-15,--end-date=2024-01-15 --region=us-west2
+3. Process Recent Games:
+   gcloud run jobs execute player-game-summary-analytics-backfill --args=--start-date=2024-01-01,--end-date=2024-01-07 --region=us-west2
 
-4. Process Full Season:
-   gcloud run jobs execute player-game-summary-analytics-backfill \
-     --args=--start-date=2023-10-01,--end-date=2024-06-30 --region=us-west2
+4. Full Historical Backfill:
+   gcloud run jobs execute player-game-summary-analytics-backfill --args=--start-date=2021-10-01,--end-date=2025-01-01 --region=us-west2
+
+5. Monitor Logs:
+   gcloud beta run jobs executions logs read [execution-id] --region=us-west2 --follow
 """
 
 import os
@@ -29,124 +29,211 @@ import sys
 import argparse
 import logging
 from datetime import datetime, date, timedelta
-from typing import List
+from typing import Dict, List
 
-# Add parent directories to path
+# Add parent directories to path  
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 from analytics_processors.player_game_summary.player_game_summary_processor import PlayerGameSummaryProcessor
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+
 class PlayerGameSummaryBackfill:
-    """Backfill player game summary analytics data."""
-    
     def __init__(self):
         self.processor = PlayerGameSummaryProcessor()
+        self.processor_name = "PlayerGameSummaryProcessor"
+        
+    def validate_date_range(self, start_date: date, end_date: date) -> bool:
+        """Validate date range for analytics processing."""
+        if start_date > end_date:
+            logger.error("Start date must be before end date")
+            return False
+            
+        if end_date > date.today():
+            logger.error("End date cannot be in the future") 
+            return False
+            
+        # Check if range is too large (>6 months)
+        if (end_date - start_date).days > 180:
+            logger.warning(f"Large date range: {(end_date - start_date).days} days. Consider smaller chunks.")
+            
+        return True
     
-    def run_backfill(self, start_date: date, end_date: date, 
-                     chunk_days: int = 7, dry_run: bool = False):
-        """
-        Run backfill for date range, processing in chunks.
-        
-        Args:
-            start_date: Start date for backfill
-            end_date: End date for backfill  
-            chunk_days: Process in chunks of N days (default 7)
-            dry_run: Log what would be processed without running
-        """
-        logger.info(f"Starting analytics backfill from {start_date} to {end_date}")
-        
-        # Calculate chunks
-        chunks = []
-        current_date = start_date
-        
-        while current_date <= end_date:
-            chunk_end = min(current_date + timedelta(days=chunk_days - 1), end_date)
-            chunks.append((current_date, chunk_end))
-            current_date = chunk_end + timedelta(days=1)
-        
-        logger.info(f"Processing {len(chunks)} chunks of up to {chunk_days} days each")
+    def check_data_availability(self, start_date: date, end_date: date) -> Dict:
+        """Check raw data availability for the date range."""
+        try:
+            query = f"""
+            SELECT 
+                'nbac_gamebook' as source,
+                COUNT(*) as records,
+                COUNT(DISTINCT game_id) as games,
+                MIN(game_date) as min_date,
+                MAX(game_date) as max_date
+            FROM `nba-props-platform.nba_raw.nbac_gamebook_player_stats`
+            WHERE game_date BETWEEN '{start_date}' AND '{end_date}'
+                AND player_status = 'active'
+            
+            UNION ALL
+            
+            SELECT 
+                'bdl_boxscores' as source,
+                COUNT(*) as records,
+                COUNT(DISTINCT game_id) as games, 
+                MIN(game_date) as min_date,
+                MAX(game_date) as max_date
+            FROM `nba-props-platform.nba_raw.bdl_player_boxscores`
+            WHERE game_date BETWEEN '{start_date}' AND '{end_date}'
+            
+            UNION ALL
+            
+            SELECT 
+                'odds_api_props' as source,
+                COUNT(*) as records,
+                COUNT(DISTINCT game_id) as games,
+                MIN(game_date) as min_date, 
+                MAX(game_date) as max_date
+            FROM `nba-props-platform.nba_raw.odds_api_player_points_props`
+            WHERE game_date BETWEEN '{start_date}' AND '{end_date}'
+            """
+            
+            result = self.processor.bq_client.query(query).to_dataframe()
+            
+            availability = {}
+            for _, row in result.iterrows():
+                availability[row['source']] = {
+                    'records': int(row['records']),
+                    'games': int(row['games']),
+                    'date_range': f"{row['min_date']} to {row['max_date']}"
+                }
+            
+            logger.info("Data availability:")
+            for source, info in availability.items():
+                logger.info(f"  {source}: {info['records']} records, {info['games']} games, {info['date_range']}")
+                
+            return availability
+            
+        except Exception as e:
+            logger.error(f"Error checking data availability: {e}")
+            return {}
+    
+    def run_analytics_processing(self, start_date: date, end_date: date, dry_run: bool = False) -> Dict:
+        """Run analytics processing for date range."""
+        logger.info(f"Processing analytics for {start_date} to {end_date}")
         
         if dry_run:
-            logger.info("DRY RUN - Date ranges that would be processed:")
-            for i, (chunk_start, chunk_end) in enumerate(chunks, 1):
-                logger.info(f"  Chunk {i}: {chunk_start} to {chunk_end}")
+            logger.info("DRY RUN MODE - checking data availability only")
+            availability = self.check_data_availability(start_date, end_date)
+            
+            total_games = sum(info['games'] for info in availability.values())
+            if total_games == 0:
+                logger.warning("No games found in date range")
+            else:
+                logger.info(f"Would process approximately {total_games} games")
+                
+            return {'status': 'dry_run_complete', 'games_available': total_games}
+        
+        # Run actual processing
+        opts = {
+            'start_date': start_date.isoformat(),
+            'end_date': end_date.isoformat(),
+            'project_id': 'nba-props-platform'
+        }
+        
+        success = self.processor.run(opts)
+        
+        result = {
+            'status': 'success' if success else 'failed',
+            'start_date': start_date.isoformat(),
+            'end_date': end_date.isoformat(),
+            'processor_stats': self.processor.get_analytics_stats()
+        }
+        
+        return result
+    
+    def run_backfill(self, start_date: date, end_date: date, dry_run: bool = False, chunk_days: int = 30):
+        """Run backfill processing with optional chunking for large ranges."""
+        logger.info(f"Starting analytics backfill from {start_date} to {end_date}")
+        
+        if not self.validate_date_range(start_date, end_date):
             return
         
-        # Process each chunk
-        total_records = 0
-        successful_chunks = 0
-        
-        for i, (chunk_start, chunk_end) in enumerate(chunks, 1):
-            try:
-                logger.info(f"Processing chunk {i}/{len(chunks)}: {chunk_start} to {chunk_end}")
+        # Check if we need to chunk the processing
+        total_days = (end_date - start_date).days
+        if total_days > chunk_days and not dry_run:
+            logger.info(f"Large range detected ({total_days} days), processing in {chunk_days}-day chunks")
+            
+            current_start = start_date
+            results = []
+            
+            while current_start <= end_date:
+                current_end = min(current_start + timedelta(days=chunk_days-1), end_date)
                 
-                opts = {
-                    'start_date': chunk_start.strftime('%Y-%m-%d'),
-                    'end_date': chunk_end.strftime('%Y-%m-%d'),
-                    'project_id': os.environ.get('GCP_PROJECT_ID', 'nba-props-platform'),
-                    'triggered_by': 'backfill'
-                }
+                logger.info(f"Processing chunk: {current_start} to {current_end}")
+                result = self.run_analytics_processing(current_start, current_end, dry_run)
+                results.append(result)
                 
-                success = self.processor.run(opts)
+                if result['status'] == 'failed':
+                    logger.error(f"Chunk failed: {current_start} to {current_end}")
+                    break
                 
-                if success:
-                    stats = self.processor.get_analytics_stats()
-                    chunk_records = stats.get('records_processed', 0)
-                    total_records += chunk_records
-                    successful_chunks += 1
-                    
-                    logger.info(f"Chunk {i} completed: {chunk_records} records processed")
-                else:
-                    logger.error(f"Chunk {i} failed")
-                    
-            except Exception as e:
-                logger.error(f"Chunk {i} failed with error: {e}")
-                continue
-        
-        # Summary
-        logger.info("=" * 50)
-        logger.info("ANALYTICS BACKFILL COMPLETE")
-        logger.info(f"Successful chunks: {successful_chunks}/{len(chunks)}")
-        logger.info(f"Total records processed: {total_records}")
-        logger.info(f"Date range: {start_date} to {end_date}")
-        logger.info("=" * 50)
+                current_start = current_end + timedelta(days=1)
+            
+            # Summary
+            successful_chunks = sum(1 for r in results if r['status'] == 'success')
+            total_chunks = len(results)
+            
+            logger.info("=" * 60)
+            logger.info(f"CHUNKED BACKFILL SUMMARY:")
+            logger.info(f"  Successful chunks: {successful_chunks}/{total_chunks}")
+            logger.info(f"  Date range: {start_date} to {end_date}")
+            logger.info("=" * 60)
+            
+        else:
+            # Single processing run
+            result = self.run_analytics_processing(start_date, end_date, dry_run)
+            
+            logger.info("=" * 60)
+            logger.info(f"ANALYTICS PROCESSING SUMMARY:")
+            logger.info(f"  Status: {result['status']}")
+            logger.info(f"  Date range: {start_date} to {end_date}")
+            if 'processor_stats' in result:
+                stats = result['processor_stats']
+                for key, value in stats.items():
+                    logger.info(f"  {key}: {value}")
+            logger.info("=" * 60)
+
 
 def main():
-    parser = argparse.ArgumentParser(description='Backfill player game summary analytics')
+    parser = argparse.ArgumentParser(description='Analytics backfill for player game summaries')
     parser.add_argument('--start-date', type=str, help='Start date (YYYY-MM-DD)')
     parser.add_argument('--end-date', type=str, help='End date (YYYY-MM-DD)')
-    parser.add_argument('--chunk-days', type=int, default=7, help='Days per chunk (default: 7)')
-    parser.add_argument('--dry-run', action='store_true', help='Show what would be processed')
+    parser.add_argument('--dry-run', action='store_true', help='Check data availability without processing')
+    parser.add_argument('--chunk-days', type=int, default=30, help='Days per processing chunk')
     
     args = parser.parse_args()
     
-    # Parse dates or use defaults
+    # Default date range - last 7 days
     if args.start_date:
         start_date = datetime.strptime(args.start_date, '%Y-%m-%d').date()
     else:
-        # Default: start of current season
-        start_date = date(2024, 10, 1)
+        start_date = date.today() - timedelta(days=7)
     
     if args.end_date:
         end_date = datetime.strptime(args.end_date, '%Y-%m-%d').date()
     else:
-        # Default: yesterday (don't process today's incomplete data)
-        end_date = date.today() - timedelta(days=1)
+        end_date = date.today() - timedelta(days=1)  # Yesterday
     
-    # Run backfill
+    logger.info(f"Analytics backfill configuration:")
+    logger.info(f"  Date range: {start_date} to {end_date}")
+    logger.info(f"  Dry run: {args.dry_run}")
+    logger.info(f"  Chunk size: {args.chunk_days} days")
+    
     backfiller = PlayerGameSummaryBackfill()
-    backfiller.run_backfill(
-        start_date=start_date,
-        end_date=end_date,
-        chunk_days=args.chunk_days,
-        dry_run=args.dry_run
-    )
+    backfiller.run_backfill(start_date, end_date, dry_run=args.dry_run, chunk_days=args.chunk_days)
+
 
 if __name__ == "__main__":
     main()
