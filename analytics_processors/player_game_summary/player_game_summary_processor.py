@@ -234,40 +234,326 @@ class PlayerGameSummaryProcessor(AnalyticsProcessorBase):
         if self.raw_data.empty:
             raise ValueError("No data extracted for date range")
         
-        # Check for missing critical fields
-        critical_fields = ['game_id', 'player_lookup', 'points']
-        missing_critical = []
+        # Run comprehensive validation suite
+        self.validate_critical_fields()
+        self.validate_player_data()
+        self.validate_statistical_integrity()
+        self.cross_validate_data_sources()
+        self.validate_team_assignments()
+        
+        # Summary validation report
+        self.generate_validation_summary()
+
+    def validate_critical_fields(self) -> None:
+        """Check for missing critical fields that would break processing."""
+        critical_fields = ['game_id', 'player_lookup', 'points', 'team_abbr']
+        validation_issues = []
         
         for field in critical_fields:
             null_count = self.raw_data[field].isnull().sum()
             if null_count > 0:
-                missing_critical.append(f"{field}: {null_count} nulls")
+                issue_details = {
+                    'field': field,
+                    'null_count': null_count,
+                    'total_records': len(self.raw_data),
+                    'null_percentage': round(null_count / len(self.raw_data) * 100, 2)
+                }
+                
+                severity = 'high' if null_count > len(self.raw_data) * 0.1 else 'medium'
+                
+                self.log_quality_issue(
+                    issue_type='missing_critical_data',
+                    severity=severity,
+                    identifier=f"{field}_nulls_{self.opts['start_date']}",
+                    details=issue_details
+                )
+                validation_issues.append(f"{field}: {null_count} nulls ({issue_details['null_percentage']}%)")
         
-        if missing_critical:
-            self.log_quality_issue(
-                issue_type='missing_critical_data',
-                severity='high',
-                identifier=f"date_range_{self.opts['start_date']}_{self.opts['end_date']}",
-                details={'missing_fields': missing_critical}
-            )
+        if validation_issues:
+            logger.warning(f"Critical field issues: {'; '.join(validation_issues)}")
+
+    def validate_player_data(self) -> None:
+        """Validate player names, lookups, and identify problematic records."""
         
-        # Log data quality summary
+        # Check for very short player lookups (likely incomplete names)
+        short_lookups = self.raw_data[
+            (self.raw_data['player_lookup'].str.len() < 5) & 
+            (self.raw_data['player_lookup'].notna())
+        ]
+        
+        if not short_lookups.empty:
+            for _, row in short_lookups.iterrows():
+                self.log_quality_issue(
+                    issue_type='incomplete_player_name',
+                    severity='medium',
+                    identifier=f"{row['game_id']}_{row['player_lookup']}",
+                    details={
+                        'player_lookup': row['player_lookup'],
+                        'player_name': row.get('player_full_name', 'N/A'),
+                        'team': row['team_abbr'],
+                        'game_id': row['game_id'],
+                        'likely_cause': 'injured_player_partial_name'
+                    }
+                )
+            
+            logger.warning(f"Found {len(short_lookups)} players with suspiciously short names")
+        
+        # Check for duplicate player-game combinations (shouldn't happen)
+        duplicates = self.raw_data.groupby(['game_id', 'player_lookup', 'primary_source']).size()
+        duplicate_records = duplicates[duplicates > 1]
+        
+        if not duplicate_records.empty:
+            for (game_id, player_lookup, source), count in duplicate_records.items():
+                self.log_quality_issue(
+                    issue_type='duplicate_player_game',
+                    severity='high',
+                    identifier=f"{game_id}_{player_lookup}_{source}",
+                    details={
+                        'game_id': game_id,
+                        'player_lookup': player_lookup,
+                        'source': source,
+                        'duplicate_count': count
+                    }
+                )
+
+    def validate_statistical_integrity(self) -> None:
+        """Check for statistical anomalies and impossible values."""
+        anomalies = []
+        
+        # Check for impossible negative stats
+        stat_columns = ['points', 'assists', 'minutes', 'field_goals_made', 'field_goals_attempted']
+        for col in stat_columns:
+            if col in self.raw_data.columns:
+                negative_stats = self.raw_data[self.raw_data[col] < 0]
+                if not negative_stats.empty:
+                    anomalies.append(f"{col}: {len(negative_stats)} negative values")
+                    
+                    for _, row in negative_stats.iterrows():
+                        self.log_quality_issue(
+                            issue_type='impossible_statistic',
+                            severity='high',
+                            identifier=f"{row['game_id']}_{row['player_lookup']}_{col}",
+                            details={
+                                'statistic': col,
+                                'value': row[col],
+                                'player': row['player_lookup'],
+                                'game_id': row['game_id']
+                            }
+                        )
+        
+        # Check for statistical impossibilities (FGM > FGA, etc.)
+        if 'field_goals_made' in self.raw_data.columns and 'field_goals_attempted' in self.raw_data.columns:
+            impossible_fg = self.raw_data[
+                (self.raw_data['field_goals_made'] > self.raw_data['field_goals_attempted']) &
+                (self.raw_data['field_goals_made'].notna()) &
+                (self.raw_data['field_goals_attempted'].notna())
+            ]
+            
+            if not impossible_fg.empty:
+                anomalies.append(f"FGM > FGA: {len(impossible_fg)} cases")
+                for _, row in impossible_fg.iterrows():
+                    self.log_quality_issue(
+                        issue_type='statistical_impossibility',
+                        severity='high',
+                        identifier=f"{row['game_id']}_{row['player_lookup']}_fg_impossible",
+                        details={
+                            'fg_made': row['field_goals_made'],
+                            'fg_attempted': row['field_goals_attempted'],
+                            'player': row['player_lookup'],
+                            'game_id': row['game_id']
+                        }
+                    )
+        
+        # Check for extreme outliers (points > 100, minutes > 60, etc.)
+        extreme_outliers = self.raw_data[
+            (self.raw_data['points'] > 100) |
+            (self.raw_data.get('minutes', 0) > 60)
+        ]
+        
+        if not extreme_outliers.empty:
+            for _, row in extreme_outliers.iterrows():
+                self.log_quality_issue(
+                    issue_type='extreme_outlier',
+                    severity='medium',
+                    identifier=f"{row['game_id']}_{row['player_lookup']}_outlier",
+                    details={
+                        'points': row['points'],
+                        'minutes': row.get('minutes', 'N/A'),
+                        'player': row['player_lookup'],
+                        'game_id': row['game_id'],
+                        'note': 'May be legitimate but worth review'
+                    }
+                )
+        
+        if anomalies:
+            logger.warning(f"Statistical anomalies found: {'; '.join(anomalies)}")
+
+    def cross_validate_data_sources(self) -> None:
+        """Compare NBA.com and BDL data for overlapping games."""
+        
+        # Find games that exist in both sources
+        nba_games = set(self.raw_data[self.raw_data['primary_source'] == 'nbac_gamebook']['game_id'])
+        bdl_games = set(self.raw_data[self.raw_data['primary_source'] == 'bdl_boxscores']['game_id'])
+        overlapping_games = nba_games.intersection(bdl_games)
+        
+        if overlapping_games:
+            logger.info(f"Found {len(overlapping_games)} games with both NBA.com and BDL data")
+            
+            # For overlapping games, compare key stats
+            for game_id in list(overlapping_games)[:5]:  # Sample first 5 for validation
+                nba_data = self.raw_data[
+                    (self.raw_data['game_id'] == game_id) & 
+                    (self.raw_data['primary_source'] == 'nbac_gamebook')
+                ]
+                bdl_data = self.raw_data[
+                    (self.raw_data['game_id'] == game_id) & 
+                    (self.raw_data['primary_source'] == 'bdl_boxscores')
+                ]
+                
+                # Compare player counts
+                nba_players = set(nba_data['player_lookup'])
+                bdl_players = set(bdl_data['player_lookup'])
+                
+                missing_in_bdl = nba_players - bdl_players
+                missing_in_nba = bdl_players - nba_players
+                
+                if missing_in_bdl or missing_in_nba:
+                    self.log_quality_issue(
+                        issue_type='source_coverage_difference',
+                        severity='low',
+                        identifier=f"{game_id}_coverage_diff",
+                        details={
+                            'game_id': game_id,
+                            'nba_player_count': len(nba_players),
+                            'bdl_player_count': len(bdl_players),
+                            'missing_in_bdl': list(missing_in_bdl),
+                            'missing_in_nba': list(missing_in_nba)
+                        }
+                    )
+
+    def validate_team_assignments(self) -> None:
+        """Validate player-team assignments against expected rosters."""
+        
+        # Check for obviously wrong team assignments (could expand with roster data)
+        team_player_counts = self.raw_data.groupby(['game_id', 'team_abbr'])['player_lookup'].nunique()
+        
+        # Teams should have 8-15 active players per game typically
+        unusual_roster_sizes = team_player_counts[(team_player_counts < 5) | (team_player_counts > 20)]
+        
+        if not unusual_roster_sizes.empty:
+            for (game_id, team), player_count in unusual_roster_sizes.items():
+                self.log_quality_issue(
+                    issue_type='unusual_roster_size',
+                    severity='medium',
+                    identifier=f"{game_id}_{team}_roster_size",
+                    details={
+                        'game_id': game_id,
+                        'team': team,
+                        'active_player_count': player_count,
+                        'expected_range': '8-15 players'
+                    }
+                )
+        
+        # Check for unknown team abbreviations
+        known_teams = {
+            'ATL', 'BOS', 'BKN', 'CHA', 'CHI', 'CLE', 'DAL', 'DEN', 'DET', 'GSW',
+            'HOU', 'IND', 'LAC', 'LAL', 'MEM', 'MIA', 'MIL', 'MIN', 'NOP', 'NYK',
+            'OKC', 'ORL', 'PHI', 'PHX', 'POR', 'SAC', 'SAS', 'TOR', 'UTA', 'WAS'
+        }
+        
+        unknown_teams = set(self.raw_data['team_abbr']) - known_teams
+        if unknown_teams:
+            for team in unknown_teams:
+                self.log_quality_issue(
+                    issue_type='unknown_team_abbreviation',
+                    severity='medium',
+                    identifier=f"unknown_team_{team}",
+                    details={
+                        'team_abbreviation': team,
+                        'record_count': len(self.raw_data[self.raw_data['team_abbr'] == team]),
+                        'possible_causes': ['typo', 'historical_team', 'data_corruption']
+                    }
+                )
+
+    def generate_validation_summary(self) -> None:
+        """Generate comprehensive validation summary."""
         total_records = len(self.raw_data)
         nba_com_records = (self.raw_data['primary_source'] == 'nbac_gamebook').sum()
         bdl_records = (self.raw_data['primary_source'] == 'bdl_boxscores').sum()
         
-        logger.info(f"Data quality: {nba_com_records}/{total_records} from NBA.com "
-                   f"({nba_com_records/total_records*100:.1f}%)")
+        validation_summary = {
+            'total_records': total_records,
+            'nba_com_coverage': f"{nba_com_records}/{total_records} ({nba_com_records/total_records*100:.1f}%)",
+            'bdl_coverage': f"{bdl_records}/{total_records} ({bdl_records/total_records*100:.1f}%)",
+            'unique_games': self.raw_data['game_id'].nunique(),
+            'unique_players': self.raw_data['player_lookup'].nunique(),
+            'date_range': f"{self.raw_data['game_date'].min()} to {self.raw_data['game_date'].max()}"
+        }
+        
+        logger.info(f"Validation Summary: {validation_summary}")
+        
+        # Store validation summary for monitoring
+        self.stats['validation_summary'] = validation_summary
+
+    def handle_data_quality_issues(self) -> None:
+        """Apply automatic fixes for certain types of data quality issues."""
+        
+        # Auto-fix: Remove records with null critical fields
+        critical_nulls = self.raw_data[
+            self.raw_data[['game_id', 'player_lookup', 'points']].isnull().any(axis=1)
+        ]
+        
+        if not critical_nulls.empty:
+            logger.warning(f"Removing {len(critical_nulls)} records with null critical fields")
+            self.raw_data = self.raw_data.dropna(subset=['game_id', 'player_lookup', 'points'])
+            
+            self.log_quality_issue(
+                issue_type='auto_removed_critical_nulls',
+                severity='medium',
+                identifier=f"auto_fix_{self.opts['start_date']}",
+                details={
+                    'removed_count': len(critical_nulls),
+                    'action': 'automatically_removed',
+                    'remaining_records': len(self.raw_data)
+                }
+            )
+        
+        # Auto-fix: Cap extreme minutes values
+        extreme_minutes = self.raw_data['minutes'] > 60
+        if hasattr(self.raw_data, 'minutes') and extreme_minutes.any():
+            original_values = self.raw_data.loc[extreme_minutes, 'minutes'].copy()
+            self.raw_data.loc[extreme_minutes, 'minutes'] = 60
+            
+            logger.warning(f"Capped {extreme_minutes.sum()} extreme minutes values to 60")
+            
+            self.log_quality_issue(
+                issue_type='auto_capped_extreme_minutes',
+                severity='low',
+                identifier=f"minutes_cap_{self.opts['start_date']}",
+                details={
+                    'affected_records': extreme_minutes.sum(),
+                    'action': 'capped_to_60_minutes',
+                    'original_max': original_values.max()
+                }
+            )
     
     def get_team_last_game_location(self, team_abbr: str, current_game_date: str) -> Optional[str]:
-        """Get team's previous game location for travel calculation."""
+        """Get team's previous game location within same season only."""
         try:
-            # Query for team's previous game
+            # Determine current season year (NBA seasons start in October)
+            game_date_obj = datetime.strptime(current_game_date, '%Y-%m-%d').date()
+            if game_date_obj.month >= 10:  # Oct-Dec = start of season
+                season_year = game_date_obj.year
+            else:  # Jan-Sep = end of season  
+                season_year = game_date_obj.year - 1
+                
+            # Only look for games within same season using raw schedule data
             query = f"""
-            SELECT opponent_team_abbr, home_game
-            FROM `{self.project_id}.nba_analytics.{self.table_name}`
-            WHERE team_abbr = '{team_abbr}' 
+            SELECT away_team_abbr, home_team_abbr, game_date
+            FROM `{self.project_id}.nba_raw.nbac_schedule`
+            WHERE (away_team_abbr = '{team_abbr}' OR home_team_abbr = '{team_abbr}')
                 AND game_date < '{current_game_date}'
+                AND season_year = {season_year}
             ORDER BY game_date DESC
             LIMIT 1
             """
@@ -275,15 +561,16 @@ class PlayerGameSummaryProcessor(AnalyticsProcessorBase):
             result = self.bq_client.query(query).to_dataframe()
             if not result.empty:
                 row = result.iloc[0]
-                # If they were home, they were at their own location
-                if row['home_game']:
-                    return team_abbr
+                # Return where they played (home = their city, away = opponent's city)
+                if row['home_team_abbr'] == team_abbr:
+                    return team_abbr  # They were home
                 else:
-                    return row['opponent_team_abbr']
+                    return row['home_team_abbr']  # They were away at opponent's city
                     
         except Exception as e:
-            logger.warning(f"Could not get last game location for {team_abbr}: {e}")
+            logger.debug(f"Could not get last game location for {team_abbr}: {e}")
             
+        # Default: no previous game this season or error
         return None
     
     def calculate_analytics(self) -> None:

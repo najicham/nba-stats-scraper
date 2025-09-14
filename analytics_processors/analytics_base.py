@@ -11,12 +11,11 @@ Base class for analytics processors that handles:
 
 import json
 import logging
-import time
+import os
 import uuid
-from datetime import datetime, timezone, date
-from typing import Dict, List, Optional, Any
+from datetime import datetime, timezone
+from typing import Dict, List, Optional
 from google.cloud import bigquery
-import pandas as pd
 import sentry_sdk
 
 # Configure logging to match processor_base pattern
@@ -68,8 +67,8 @@ class AnalyticsProcessorBase:
         self.stats["run_id"] = self.run_id
         
         # GCP clients - match processor init pattern
-        self.project_id = None
-        self.bq_client = None
+        self.bq_client = bigquery.Client()
+        self.project_id = os.environ.get('GCP_PROJECT_ID', self.bq_client.project)
         
     def run(self, opts: Optional[Dict] = None) -> bool:
         """
