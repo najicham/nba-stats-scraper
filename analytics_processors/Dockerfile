@@ -15,8 +15,8 @@ COPY shared/requirements.txt /app/shared/
 RUN pip install --no-cache-dir -r /app/shared/requirements.txt || true
 
 # Copy analytics processor requirements
-COPY analytics_processors/requirements_analytics.txt /app/analytics_processors/
-RUN pip install --no-cache-dir -r /app/analytics_processors/requirements_analytics.txt
+COPY analytics_processors/requirements.txt /app/analytics_processors/
+RUN pip install --no-cache-dir -r /app/analytics_processors/requirements.txt
 
 # Copy all necessary code
 COPY shared/ /app/shared/
