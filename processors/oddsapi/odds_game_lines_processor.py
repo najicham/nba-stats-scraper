@@ -11,7 +11,7 @@ from processors.processor_base import ProcessorBase
 class OddsGameLinesProcessor(ProcessorBase):
     def __init__(self):
         super().__init__()
-        self.table_name = 'nba_raw.odds_game_lines_history'
+        self.table_name = 'nba_raw.odds_api_game_lines'
         self.processing_strategy = 'MERGE_UPDATE'  # Replace snapshots for same game/timestamp
         
         # CRITICAL: Initialize BigQuery client and project_id

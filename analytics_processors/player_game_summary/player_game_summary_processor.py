@@ -7,11 +7,11 @@ Transforms raw gamebook, box scores, and props data into analytics tables.
 
 Features:
 - NBA.com → BDL fallback with data quality tracking
-- Proper minutes parsing ("40:11" → 40.18)
-- Travel distance integration 
+- Proper minutes parsing ("40:11" → 40.18) and conversion to integer
+- Data type cleaning to prevent validation errors
 - Prop outcome calculation with margin analysis
 - Cross-source validation and error handling
-- Team aggregation for offense/defense summaries
+- Schema-compliant output for BigQuery insertion
 """
 
 import logging
@@ -20,7 +20,6 @@ import re
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 from analytics_processors.analytics_base import AnalyticsProcessorBase
-from analytics_processors.utils.travel_utils import quick_distance_lookup, get_game_travel_context
 
 logger = logging.getLogger(__name__)
 
@@ -227,12 +226,37 @@ class PlayerGameSummaryProcessor(AnalyticsProcessorBase):
             source_counts = self.raw_data['primary_source'].value_counts()
             logger.info(f"Data sources: {dict(source_counts)}")
     
+    def clean_numeric_columns(self) -> None:
+        """Ensure numeric columns have consistent data types before validation."""
+        numeric_columns = [
+            'points', 'assists', 'minutes', 'field_goals_made', 'field_goals_attempted',
+            'three_pointers_made', 'three_pointers_attempted', 'free_throws_made', 
+            'free_throws_attempted', 'steals', 'blocks', 'turnovers', 'personal_fouls',
+            'total_rebounds', 'offensive_rebounds', 'defensive_rebounds', 'season_year'
+        ]
+        
+        for col in numeric_columns:
+            if col in self.raw_data.columns:
+                # Convert to numeric, errors='coerce' turns invalid values to NaN
+                self.raw_data[col] = pd.to_numeric(self.raw_data[col], errors='coerce')
+        
+        # Handle plus_minus separately (can have '+' prefix)
+        if 'plus_minus' in self.raw_data.columns:
+            # Remove '+' prefix and convert to numeric
+            self.raw_data['plus_minus'] = self.raw_data['plus_minus'].astype(str).str.replace('+', '')
+            self.raw_data['plus_minus'] = pd.to_numeric(self.raw_data['plus_minus'], errors='coerce')
+        
+        logger.info("Cleaned numeric column data types")
+    
     def validate_extracted_data(self) -> None:
         """Enhanced validation with cross-source quality checks."""
         super().validate_extracted_data()
         
         if self.raw_data.empty:
             raise ValueError("No data extracted for date range")
+        
+        # Clean data types before validation to prevent comparison errors
+        self.clean_numeric_columns()
         
         # Run comprehensive validation suite
         self.validate_critical_fields()
@@ -324,66 +348,79 @@ class PlayerGameSummaryProcessor(AnalyticsProcessorBase):
         stat_columns = ['points', 'assists', 'minutes', 'field_goals_made', 'field_goals_attempted']
         for col in stat_columns:
             if col in self.raw_data.columns:
-                negative_stats = self.raw_data[self.raw_data[col] < 0]
-                if not negative_stats.empty:
-                    anomalies.append(f"{col}: {len(negative_stats)} negative values")
-                    
-                    for _, row in negative_stats.iterrows():
+                # Use notna() to exclude NaN values from comparison
+                valid_data = self.raw_data[self.raw_data[col].notna()]
+                if not valid_data.empty:
+                    negative_stats = valid_data[valid_data[col] < 0]
+                    if not negative_stats.empty:
+                        anomalies.append(f"{col}: {len(negative_stats)} negative values")
+                        
+                        for _, row in negative_stats.iterrows():
+                            self.log_quality_issue(
+                                issue_type='impossible_statistic',
+                                severity='high',
+                                identifier=f"{row['game_id']}_{row['player_lookup']}_{col}",
+                                details={
+                                    'statistic': col,
+                                    'value': row[col],
+                                    'player': row['player_lookup'],
+                                    'game_id': row['game_id']
+                                }
+                            )
+        
+        # Check for statistical impossibilities (FGM > FGA, etc.) - with null safety
+        if 'field_goals_made' in self.raw_data.columns and 'field_goals_attempted' in self.raw_data.columns:
+            valid_fg_data = self.raw_data[
+                (self.raw_data['field_goals_made'].notna()) &
+                (self.raw_data['field_goals_attempted'].notna())
+            ]
+            
+            if not valid_fg_data.empty:
+                impossible_fg = valid_fg_data[
+                    valid_fg_data['field_goals_made'] > valid_fg_data['field_goals_attempted']
+                ]
+                
+                if not impossible_fg.empty:
+                    anomalies.append(f"FGM > FGA: {len(impossible_fg)} cases")
+                    for _, row in impossible_fg.iterrows():
                         self.log_quality_issue(
-                            issue_type='impossible_statistic',
+                            issue_type='statistical_impossibility',
                             severity='high',
-                            identifier=f"{row['game_id']}_{row['player_lookup']}_{col}",
+                            identifier=f"{row['game_id']}_{row['player_lookup']}_fg_impossible",
                             details={
-                                'statistic': col,
-                                'value': row[col],
+                                'fg_made': row['field_goals_made'],
+                                'fg_attempted': row['field_goals_attempted'],
                                 'player': row['player_lookup'],
                                 'game_id': row['game_id']
                             }
                         )
         
-        # Check for statistical impossibilities (FGM > FGA, etc.)
-        if 'field_goals_made' in self.raw_data.columns and 'field_goals_attempted' in self.raw_data.columns:
-            impossible_fg = self.raw_data[
-                (self.raw_data['field_goals_made'] > self.raw_data['field_goals_attempted']) &
-                (self.raw_data['field_goals_made'].notna()) &
-                (self.raw_data['field_goals_attempted'].notna())
-            ]
-            
-            if not impossible_fg.empty:
-                anomalies.append(f"FGM > FGA: {len(impossible_fg)} cases")
-                for _, row in impossible_fg.iterrows():
-                    self.log_quality_issue(
-                        issue_type='statistical_impossibility',
-                        severity='high',
-                        identifier=f"{row['game_id']}_{row['player_lookup']}_fg_impossible",
-                        details={
-                            'fg_made': row['field_goals_made'],
-                            'fg_attempted': row['field_goals_attempted'],
-                            'player': row['player_lookup'],
-                            'game_id': row['game_id']
-                        }
-                    )
-        
-        # Check for extreme outliers (points > 100, minutes > 60, etc.)
-        extreme_outliers = self.raw_data[
-            (self.raw_data['points'] > 100) |
-            (self.raw_data.get('minutes', 0) > 60)
+        # Check for extreme outliers (points > 100, minutes > 60, etc.) - with null safety
+        valid_outlier_data = self.raw_data[
+            (self.raw_data['points'].notna()) | 
+            (self.raw_data['minutes'].notna())
         ]
         
-        if not extreme_outliers.empty:
-            for _, row in extreme_outliers.iterrows():
-                self.log_quality_issue(
-                    issue_type='extreme_outlier',
-                    severity='medium',
-                    identifier=f"{row['game_id']}_{row['player_lookup']}_outlier",
-                    details={
-                        'points': row['points'],
-                        'minutes': row.get('minutes', 'N/A'),
-                        'player': row['player_lookup'],
-                        'game_id': row['game_id'],
-                        'note': 'May be legitimate but worth review'
-                    }
-                )
+        if not valid_outlier_data.empty:
+            extreme_outliers = valid_outlier_data[
+                (valid_outlier_data['points'] > 100) |
+                (valid_outlier_data['minutes'] > 60)
+            ]
+            
+            if not extreme_outliers.empty:
+                for _, row in extreme_outliers.iterrows():
+                    self.log_quality_issue(
+                        issue_type='extreme_outlier',
+                        severity='medium',
+                        identifier=f"{row['game_id']}_{row['player_lookup']}_outlier",
+                        details={
+                            'points': row['points'],
+                            'minutes': row.get('minutes', 'N/A'),
+                            'player': row['player_lookup'],
+                            'game_id': row['game_id'],
+                            'note': 'May be legitimate but worth review'
+                        }
+                    )
         
         if anomalies:
             logger.warning(f"Statistical anomalies found: {'; '.join(anomalies)}")
@@ -519,68 +556,34 @@ class PlayerGameSummaryProcessor(AnalyticsProcessorBase):
             )
         
         # Auto-fix: Cap extreme minutes values
-        extreme_minutes = self.raw_data['minutes'] > 60
-        if hasattr(self.raw_data, 'minutes') and extreme_minutes.any():
-            original_values = self.raw_data.loc[extreme_minutes, 'minutes'].copy()
-            self.raw_data.loc[extreme_minutes, 'minutes'] = 60
-            
-            logger.warning(f"Capped {extreme_minutes.sum()} extreme minutes values to 60")
-            
-            self.log_quality_issue(
-                issue_type='auto_capped_extreme_minutes',
-                severity='low',
-                identifier=f"minutes_cap_{self.opts['start_date']}",
-                details={
-                    'affected_records': extreme_minutes.sum(),
-                    'action': 'capped_to_60_minutes',
-                    'original_max': original_values.max()
-                }
-            )
-    
-    def get_team_last_game_location(self, team_abbr: str, current_game_date: str) -> Optional[str]:
-        """Get team's previous game location within same season only."""
-        try:
-            # Determine current season year (NBA seasons start in October)
-            game_date_obj = datetime.strptime(current_game_date, '%Y-%m-%d').date()
-            if game_date_obj.month >= 10:  # Oct-Dec = start of season
-                season_year = game_date_obj.year
-            else:  # Jan-Sep = end of season  
-                season_year = game_date_obj.year - 1
+        if 'minutes' in self.raw_data.columns:
+            extreme_minutes = self.raw_data['minutes'] > 60
+            if extreme_minutes.any():
+                original_values = self.raw_data.loc[extreme_minutes, 'minutes'].copy()
+                self.raw_data.loc[extreme_minutes, 'minutes'] = 60
                 
-            # Only look for games within same season using raw schedule data
-            query = f"""
-            SELECT away_team_abbr, home_team_abbr, game_date
-            FROM `{self.project_id}.nba_raw.nbac_schedule`
-            WHERE (away_team_abbr = '{team_abbr}' OR home_team_abbr = '{team_abbr}')
-                AND game_date < '{current_game_date}'
-                AND season_year = {season_year}
-            ORDER BY game_date DESC
-            LIMIT 1
-            """
-            
-            result = self.bq_client.query(query).to_dataframe()
-            if not result.empty:
-                row = result.iloc[0]
-                # Return where they played (home = their city, away = opponent's city)
-                if row['home_team_abbr'] == team_abbr:
-                    return team_abbr  # They were home
-                else:
-                    return row['home_team_abbr']  # They were away at opponent's city
-                    
-        except Exception as e:
-            logger.debug(f"Could not get last game location for {team_abbr}: {e}")
-            
-        # Default: no previous game this season or error
-        return None
+                logger.warning(f"Capped {extreme_minutes.sum()} extreme minutes values to 60")
+                
+                self.log_quality_issue(
+                    issue_type='auto_capped_extreme_minutes',
+                    severity='low',
+                    identifier=f"minutes_cap_{self.opts['start_date']}",
+                    details={
+                        'affected_records': extreme_minutes.sum(),
+                        'action': 'capped_to_60_minutes',
+                        'original_max': original_values.max()
+                    }
+                )
     
     def calculate_analytics(self) -> None:
-        """Calculate analytics metrics with travel integration."""
+        """Calculate analytics metrics with schema-compliant output."""
         records = []
         
         for _, row in self.raw_data.iterrows():
             try:
-                # Parse minutes to decimal
+                # Parse minutes to decimal, then convert to integer for schema compliance
                 minutes_decimal = self.parse_minutes_to_decimal(row['minutes'])
+                minutes_int = int(round(minutes_decimal)) if minutes_decimal else None
                 
                 # Parse plus/minus  
                 plus_minus_int = self.parse_plus_minus(str(row['plus_minus']))
@@ -594,20 +597,6 @@ class PlayerGameSummaryProcessor(AnalyticsProcessorBase):
                     else:
                         over_under_result = 'UNDER'
                     margin = float(row['points']) - float(row['points_line'])
-                
-                # Calculate travel distance
-                travel_miles = 0
-                time_zone_changes = 0
-                if pd.notna(row['away_team_abbr']) and pd.notna(row['home_team_abbr']):
-                    # For away team, calculate travel from last game
-                    if not row['home_game']:  # Player is on away team
-                        last_location = self.get_team_last_game_location(
-                            row['team_abbr'], row['game_date']
-                        )
-                        if last_location:
-                            travel_miles = quick_distance_lookup(last_location, row['home_team_abbr'])
-                            # Simplified time zone calculation (could be enhanced)
-                            time_zone_changes = max(0, travel_miles // 1000)  # Rough estimate
                 
                 # Enhanced efficiency calculations
                 ts_pct = None
@@ -631,9 +620,9 @@ class PlayerGameSummaryProcessor(AnalyticsProcessorBase):
                         if total_shots > 0:
                             ts_pct = row['points'] / (2 * total_shots)
                 
-                # Build analytics record
+                # Build analytics record - schema compliant
                 record = {
-                    # Core identifiers
+                    # Core identifiers (all required fields)
                     'player_lookup': row['player_lookup'],
                     'player_full_name': row['player_full_name'],
                     'game_id': row['game_id'],
@@ -644,7 +633,7 @@ class PlayerGameSummaryProcessor(AnalyticsProcessorBase):
                     
                     # Basic performance stats
                     'points': int(row['points']) if pd.notna(row['points']) else None,
-                    'minutes_played': minutes_decimal,
+                    'minutes_played': minutes_int,  # FIXED: Now integer instead of decimal
                     'assists': int(row['assists']) if pd.notna(row['assists']) else None,
                     'offensive_rebounds': int(row['offensive_rebounds']) if pd.notna(row['offensive_rebounds']) else None,
                     'defensive_rebounds': int(row['defensive_rebounds']) if pd.notna(row['defensive_rebounds']) else None,
@@ -662,7 +651,7 @@ class PlayerGameSummaryProcessor(AnalyticsProcessorBase):
                     'ft_attempts': int(row['free_throws_attempted']) if pd.notna(row['free_throws_attempted']) else None,
                     'ft_makes': int(row['free_throws_made']) if pd.notna(row['free_throws_made']) else None,
                     
-                    # Shot zone performance - defer for now
+                    # Shot zone performance - defer for now (all set to None to match schema)
                     'paint_attempts': None,
                     'paint_makes': None, 
                     'mid_range_attempts': None,
@@ -680,8 +669,10 @@ class PlayerGameSummaryProcessor(AnalyticsProcessorBase):
                     'usage_rate': usage_rate,
                     'ts_pct': round(ts_pct, 3) if ts_pct else None,
                     'efg_pct': round(efg_pct, 3) if efg_pct else None,
-                    'starter_flag': minutes_decimal and minutes_decimal > 20,  # Rough estimate
-                    'win_flag': None,  # Need game results to determine
+                    
+                    # FIXED: Ensure boolean flags are always boolean, never null
+                    'starter_flag': bool(minutes_decimal and minutes_decimal > 20) if minutes_decimal else False,
+                    'win_flag': False,  # FIXED: Default to False instead of None (can enhance later with game results)
                     
                     # Prop betting results
                     'points_line': float(row['points_line']) if pd.notna(row['points_line']) else None,
@@ -692,13 +683,9 @@ class PlayerGameSummaryProcessor(AnalyticsProcessorBase):
                     'points_line_source': row['points_line_source'],
                     'opening_line_source': None,
                     
-                    # Player availability
-                    'is_active': row['player_status'] == 'active',
+                    # Player availability (is_active is required boolean)
+                    'is_active': bool(row['player_status'] == 'active'),
                     'player_status': row['player_status'],
-                    
-                    # Travel context  
-                    'travel_miles': travel_miles,
-                    'time_zone_changes': time_zone_changes,
                     
                     # Data quality
                     'data_quality_tier': 'high' if row['primary_source'] == 'nbac_gamebook' else 'medium',
@@ -738,7 +725,6 @@ class PlayerGameSummaryProcessor(AnalyticsProcessorBase):
             'high_quality_records': sum(1 for r in self.transformed_data if r['data_quality_tier'] == 'high'),
             'avg_points': round(sum(r['points'] for r in self.transformed_data if r['points']) / 
                               len([r for r in self.transformed_data if r['points']]), 1) if any(r['points'] for r in self.transformed_data) else 0,
-            'travel_games': sum(1 for r in self.transformed_data if r['travel_miles'] and r['travel_miles'] > 0)
         }
         
         return stats

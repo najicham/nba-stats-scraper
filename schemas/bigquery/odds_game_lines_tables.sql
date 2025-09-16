@@ -3,7 +3,7 @@
 -- Odds Game Lines History Tables
 -- Description: Historical snapshots of game lines (spreads/totals) from various sportsbooks
 
-CREATE TABLE IF NOT EXISTS `nba_raw.odds_game_lines_history` (
+CREATE TABLE IF NOT EXISTS `nba_raw.odds_api_game_lines` (
   -- Snapshot metadata
   snapshot_timestamp TIMESTAMP NOT NULL,
   previous_snapshot_timestamp TIMESTAMP,
@@ -49,19 +49,19 @@ OPTIONS (
 );
 
 -- Helpful views for common queries
-CREATE OR REPLACE VIEW `nba_raw.odds_game_lines_recent` AS
+CREATE OR REPLACE VIEW `nba_raw.odds_api_game_lines_recent` AS
 SELECT *
-FROM `nba_raw.odds_game_lines_history`
+FROM `nba_raw.odds_api_game_lines`
 WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY);
 
-CREATE OR REPLACE VIEW `nba_raw.odds_game_lines_latest_by_game` AS
+CREATE OR REPLACE VIEW `nba_raw.odds_api_game_lines_latest_by_game` AS
 WITH ranked_snapshots AS (
   SELECT *,
     ROW_NUMBER() OVER (
       PARTITION BY game_id, bookmaker_key, market_key, outcome_name 
       ORDER BY snapshot_timestamp DESC
     ) as rn
-  FROM `nba_raw.odds_game_lines_history`
+  FROM `nba_raw.odds_api_game_lines`
   WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
 )
 SELECT * EXCEPT(rn)

@@ -345,6 +345,75 @@ class NbacGamebookProcessor(ProcessorBase):
             'source_file_path': None  # Will be set by transform_data
         }
     
+    def resolve_inactive_player(self, last_name: str, team_abbr: str, season_year: int) -> Tuple[str, str, str]:
+        """
+        Resolve inactive player name using Basketball Reference rosters.
+        Returns: (resolved_name, resolved_lookup, resolution_status)
+        """
+        # Load roster cache if needed
+        self.load_br_rosters_for_season(season_year)
+        
+        if season_year not in self.br_roster_cache:
+            return last_name, self.normalize_name(last_name), 'not_found'
+        
+        # Fix team abbreviation mapping
+        br_team_abbr = self.map_team_to_br_code(team_abbr)
+        
+        # Look up in roster cache
+        roster_key = (br_team_abbr, last_name.lower())
+        matches = self.br_roster_cache[season_year].get(roster_key, [])
+        
+        if len(matches) == 1:
+            # Single match found
+            return matches[0]['full_name'], matches[0]['lookup'], 'resolved'
+        elif len(matches) > 1:
+            # Multiple matches - needs manual review
+            return last_name, self.normalize_name(last_name), 'multiple_matches'
+        else:
+            # No match found
+            return last_name, self.normalize_name(last_name), 'not_found'
+
+    def map_team_to_br_code(self, team_abbr: str) -> str:
+        """Map NBA.com team abbreviations to Basketball Reference codes."""
+        mapping = {
+            'BKN': 'BRK',  # Brooklyn Nets
+            'PHX': 'PHO',  # Phoenix Suns  
+            'CHA': 'CHO',  # Charlotte Hornets
+        }
+        return mapping.get(team_abbr, team_abbr)
+
+    def get_roster_matches(self, last_name: str, team_abbr: str, season_year: int) -> List[Dict]:
+        """Get potential roster matches for enhanced resolution."""
+        # Load roster cache if needed
+        self.load_br_rosters_for_season(season_year)
+        
+        if season_year not in self.br_roster_cache:
+            return []
+        
+        # Fix team abbreviation mapping
+        br_team_abbr = self.map_team_to_br_code(team_abbr)
+        
+        # Look up in roster cache
+        roster_key = (br_team_abbr, last_name.lower())
+        return self.br_roster_cache[season_year].get(roster_key, [])
+
+    def handle_suffix_names(self, name: str) -> str:
+        """
+        Handle names with suffixes like 'Holmes II', 'Brown III', etc.
+        Extract the base last name for lookup.
+        """
+        # Remove common suffixes for lookup
+        suffixes = [' II', ' III', ' Jr', ' Jr.', ' Sr', ' Sr.']
+        base_name = name
+        
+        for suffix in suffixes:
+            if name.endswith(suffix):
+                base_name = name[:-len(suffix)].strip()
+                break
+        
+        return base_name
+
+    # Updated process_inactive_player method - replace lines ~350-380 in your file
     def process_inactive_player(self, player: Dict, game_info: Dict, status: str) -> Dict:
         """Process a DNP or inactive player."""
         # Determine team abbreviation
@@ -359,23 +428,26 @@ class NbacGamebookProcessor(ProcessorBase):
         confidence = None
         method = None
         
-        if status == 'inactive' and player_name and not ' ' in player_name:
-            # Likely just a last name, try to resolve
-            if team_abbr:
-                resolved_name, resolved_lookup, resolution_status = self.resolve_inactive_player(
-                    player_name, team_abbr, game_info['season_year']
-                )
+        if status == 'inactive' and player_name and team_abbr:
+            # Handle suffixes first
+            lookup_name = self.handle_suffix_names(player_name)
+            
+            # Try to resolve the name
+            resolved_name, resolved_lookup, resolution_status = self.resolve_inactive_player(
+                lookup_name, team_abbr, game_info['season_year']
+            )
+            
+            if resolution_status == 'resolved':
+                player_name = resolved_name
                 player_lookup = resolved_lookup
-                if resolution_status == 'resolved':
-                    player_name = resolved_name
-                    confidence = 1.0
-                    method = 'auto_exact'
-                elif resolution_status == 'multiple_matches':
-                    confidence = 0.6
-                    method = 'pending_review'
-                elif resolution_status == 'not_found':
-                    confidence = 0.0
-                    method = 'not_found'
+                confidence = 1.0
+                method = 'auto_exact'
+            elif resolution_status == 'multiple_matches':
+                confidence = 0.6
+                method = 'pending_review'
+            elif resolution_status == 'not_found':
+                confidence = 0.0
+                method = 'not_found'
         
         return {
             'game_id': game_info['game_id'],
@@ -391,6 +463,10 @@ class NbacGamebookProcessor(ProcessorBase):
             'player_status': status,
             'dnp_reason': player.get('dnp_reason') or player.get('reason'),
             'name_resolution_status': resolution_status,
+            'name_resolution_confidence': confidence,
+            'name_resolution_method': method,
+            'resolution_id': None,  # Keep simple for now
+            'name_last_validated': None,
             # All stats are NULL for inactive players
             'minutes': None,
             'minutes_decimal': None,
@@ -413,12 +489,6 @@ class NbacGamebookProcessor(ProcessorBase):
             'turnovers': None,
             'personal_fouls': None,
             'plus_minus': None,
-
-            'name_resolution_confidence': confidence,
-            'name_resolution_method': method,
-            'resolution_id': None,  # Keep simple for now
-            'name_last_validated': None,
-
             'source_file_path': None  # Will be set by transform_data
         }
     
