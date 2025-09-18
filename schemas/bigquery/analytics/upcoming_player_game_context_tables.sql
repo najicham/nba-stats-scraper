@@ -76,6 +76,17 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_analytics.upcoming_player_gam
   shooting_pct_decline_last_5 NUMERIC(5,3),         -- Performance decline signal
   fourth_quarter_production_last_7 NUMERIC(5,1),    -- Late-game energy
   
+  -- NEW: Forward-Looking Schedule Context (4 fields)
+  next_game_days_rest INT64,                        -- Days until player's next game (0 = back-to-back tomorrow)
+  games_in_next_7_days INT64,                       -- Player's upcoming game density (energy management factor)
+  next_opponent_win_pct NUMERIC(5,3),               -- Win percentage of player's next opponent (motivation factor)
+  next_game_is_primetime BOOLEAN,                   -- Whether player's next game is nationally televised (motivation factor)
+  
+  -- NEW: Opponent Asymmetry Context (3 fields)
+  opponent_days_rest INT64,                         -- Current opponent's rest before this game (energy mismatch opportunity)
+  opponent_games_in_next_7_days INT64,              -- Current opponent's upcoming schedule density (opponent fatigue factor)
+  opponent_next_game_days_rest INT64,               -- Current opponent's rest after this game (opponent conservation risk)
+  
   -- Real-time updates (4 fields)
   player_status STRING,                             -- Injury report status
   injury_report STRING,                             -- Detailed injury info
@@ -95,5 +106,5 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_analytics.upcoming_player_gam
 PARTITION BY game_date
 CLUSTER BY player_lookup, game_date
 OPTIONS(
-  description="Complete pre-game context for player similarity matching"
+  description="Complete pre-game context for player similarity matching with forward-looking schedule psychology"
 );

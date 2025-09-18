@@ -1,8 +1,9 @@
 # scrapers/nbacom/nbac_schedule_api.py
 """
-NBA.com stats API schedule scraper                       v1 - 2025-07-17
+NBA.com stats API schedule scraper                       v2 - 2025-09-17
 ------------------------------------------------------------------------
 Uses the current NBA.com stats API endpoint to get season schedules.
+Enhanced with broadcaster analysis and game context flags.
 
 URL: https://stats.nba.com/stats/scheduleleaguev2int
 
@@ -50,7 +51,7 @@ logger = logging.getLogger("scraper_base")
 
 class GetNbaComScheduleApi(ScraperBase, ScraperFlaskMixin):
     """
-    NBA.com stats API schedule scraper.
+    NBA.com stats API schedule scraper with enhanced broadcaster and context analysis.
     
     Required opts:
         season: 4-digit start year (e.g., 2025 for 2025-26 season)
@@ -109,7 +110,7 @@ class GetNbaComScheduleApi(ScraperBase, ScraperFlaskMixin):
         {
             "type": "file",
             "filename": "/tmp/exp_%(run_id)s.json",
-            "export_mode": ExportMode.DECODED,
+            "export_mode": ExportMode.DATA,
             "pretty_print": True,
             "groups": ["capture"],
         },
@@ -198,7 +199,7 @@ class GetNbaComScheduleApi(ScraperBase, ScraperFlaskMixin):
         logger.info("Validation passed: %d game dates found", len(game_dates))
 
     def transform_data(self) -> None:
-        """Transform NBA.com API response into structured data and generate metadata"""
+        """Transform NBA.com API response into structured data with enhanced flags"""
         league_schedule = self.decoded_data["leagueSchedule"]
         meta = self.decoded_data.get("meta", {})
 
@@ -225,9 +226,7 @@ class GetNbaComScheduleApi(ScraperBase, ScraperFlaskMixin):
             games = game_date_obj.get("games", [])
             
             for game in games:
-                # Remove broadcaster data to keep files lean
-                if 'broadcasters' in game:
-                    del game['broadcasters']
+                # Remove bulky data to keep files lean
                 if 'tickets' in game:
                     del game['tickets']
                 if 'links' in game:
@@ -239,13 +238,20 @@ class GetNbaComScheduleApi(ScraperBase, ScraperFlaskMixin):
                 if 'pointsLeaders' in game:
                     del game['pointsLeaders']
                 
+                # Add enhanced flags and context
+                enhanced_game = self._enhance_game_with_flags(game, game_date)
+                
+                # Remove broadcaster data after extracting flags (storage optimization)
+                if 'broadcasters' in enhanced_game:
+                    del enhanced_game['broadcasters']
+                
                 # Add the game date to each game for easier processing
-                game_with_date = {
-                    **game,
+                enhanced_game.update({
                     "gameDate": game_date,
                     "gameDateObj": game_date_obj.get("gameDate", "")
-                }
-                all_games.append(game_with_date)
+                })
+                
+                all_games.append(enhanced_game)
         
         # Sort games by date and game sequence
         all_games.sort(key=lambda x: (x.get("gameDateEst", ""), x.get("gameSequence", 0)))
@@ -264,7 +270,7 @@ class GetNbaComScheduleApi(ScraperBase, ScraperFlaskMixin):
             "game_count": len(all_games),
             "date_count": len(game_dates),
             "games": all_games,
-            "gameDates": game_dates,  # Keep original structure too
+            # "gameDates": game_dates,  # Keep original structure too
             "metadata": metadata  # Store metadata here for the exporter
         }
         
@@ -272,6 +278,230 @@ class GetNbaComScheduleApi(ScraperBase, ScraperFlaskMixin):
                 len(all_games), len(game_dates), self.opts["season_nba_format"])
         logger.info("Generated metadata: %d total games, %d backfill eligible", 
                 metadata["total_games"], metadata["backfill"]["total_games"])
+
+    def _enhance_game_with_flags(self, game: dict, game_date: str) -> dict:
+        """Add computed flags for fast querying while preserving raw data"""
+        enhanced = game.copy()
+        
+        # Broadcaster flags (5 fields)
+        broadcaster_info = self._analyze_broadcasters(game.get('broadcasters', {}))
+        enhanced.update(broadcaster_info)
+        
+        # Game context flags (7 fields)
+        context_info = self._analyze_game_context(game, game_date)
+        enhanced.update(context_info)
+        
+        # Scheduling flags (3 fields)
+        scheduling_info = self._analyze_scheduling(game, game_date)
+        enhanced.update(scheduling_info)
+        
+        return enhanced
+
+    def _analyze_broadcasters(self, broadcasters_obj: dict) -> dict:
+        """Extract broadcaster flags and primary network info"""
+        if not broadcasters_obj:
+            return {
+                'isPrimetime': False,
+                'hasNationalTV': False,
+                'primaryNetwork': None,
+                'traditionalNetworks': [],
+                'streamingPlatforms': [],
+            }
+        
+        national_tv = broadcasters_obj.get('nationalTvBroadcasters', [])
+        if not isinstance(national_tv, list):
+            national_tv = []
+        
+        # Extract network names safely
+        national_networks = []
+        for broadcaster in national_tv:
+            if broadcaster and isinstance(broadcaster, dict):
+                display_name = broadcaster.get('broadcasterDisplay', '')
+                if display_name:
+                    national_networks.append(display_name)
+        
+        # Network configuration based on actual NBA broadcast deals
+        # Updated for 2024-25 current season and 2025-26+ future seasons
+        PRIMETIME_NETWORKS = {
+            # Traditional broadcast networks (highest priority - Finals, marquee games)
+            'ABC': {'priority': 1, 'type': 'broadcast', 'seasons': 'all'},
+            'NBC': {'priority': 2, 'type': 'broadcast', 'seasons': '2025-26+'},  # Returns next season
+            
+            # Premium cable networks  
+            'ESPN': {'priority': 3, 'type': 'cable', 'seasons': 'all'},
+            'TNT': {'priority': 4, 'type': 'cable', 'seasons': '2024-25'},  # Exits after this season
+            
+            # Major streaming platforms (lower priority but still primetime)
+            'Amazon Prime': {'priority': 5, 'type': 'streaming', 'seasons': '2025-26+'},  # New exclusive games
+            'Peacock': {'priority': 6, 'type': 'streaming', 'seasons': '2025-26+'},  # NBC streaming partner
+        }
+        
+        # National but not traditionally "primetime" 
+        NATIONAL_NETWORKS = ['NBA TV', 'NBATV']
+        
+        # Streaming supplements (simulcasts, not exclusive)
+        STREAMING_SUPPLEMENTS = ['ESPN+', 'Max', 'Disney+', 'truTV']  # Max exits with TNT
+        
+        # Season-aware network detection
+        current_season = self.opts.get('actual_season_nba_format', '2024-25')
+        
+        # Filter networks based on season availability
+        active_networks = {}
+        for network, config in PRIMETIME_NETWORKS.items():
+            seasons = config['seasons']
+            if seasons == 'all':
+                active_networks[network] = config
+            elif seasons == '2024-25' and current_season == '2024-25':
+                active_networks[network] = config
+            elif seasons == '2025-26+' and current_season >= '2025-26':
+                active_networks[network] = config
+        
+        # Parse traditional networks vs streaming platforms
+        traditional_networks = []
+        streaming_platforms = []
+        
+        for network_display in national_networks:
+            # Split on '/' to handle cases like "ABC/ESPN+/Disney+"
+            network_parts = [part.strip() for part in network_display.split('/')]
+            
+            for part in network_parts:
+                part_upper = part.upper()
+                
+                # Check if it's a traditional primetime network
+                is_traditional = False
+                for network_key in active_networks.keys():
+                    if network_key.upper() in part_upper:
+                        if part not in traditional_networks:
+                            traditional_networks.append(part)
+                        is_traditional = True
+                        break
+                
+                # Check if it's a streaming platform (if not traditional)
+                if not is_traditional:
+                    for streaming in STREAMING_SUPPLEMENTS:
+                        if streaming.upper() in part_upper:
+                            if part not in streaming_platforms:
+                                streaming_platforms.append(part)
+                            break
+                    # Also check for standalone streaming services
+                    standalone_streaming = ['PEACOCK', 'AMAZON PRIME', 'PRIME VIDEO', 'NETFLIX', 'APPLE TV']
+                    for streaming in standalone_streaming:
+                        if streaming in part_upper:
+                            if part not in streaming_platforms:
+                                streaming_platforms.append(part)
+                            break
+        
+        # Determine primary network from traditional networks only
+        primetime_networks_found = []
+        is_primetime = False
+        for network in traditional_networks:
+            for network_key, network_info in active_networks.items():
+                if network_key.upper() in network.upper():
+                    is_primetime = True
+                    primetime_networks_found.append((network_key, network, network_info['priority']))
+                    break
+        
+        # Sort by priority to determine primary network
+        primary_network = None
+        if primetime_networks_found:
+            primetime_networks_found.sort(key=lambda x: x[2])  # Sort by priority
+            primary_network = primetime_networks_found[0][0]  # Take highest priority
+        
+        # If no primetime network, check for NBA TV in traditional networks
+        if not primary_network:
+            for network in traditional_networks:
+                if any(nba_tv in network.upper() for nba_tv in ['NBA TV', 'NBATV']):
+                    primary_network = 'NBA TV'
+                    break
+        
+        # Create streamlined network summary with core fields only
+        network_summary = {
+            # === CORE BROADCASTER FLAGS (5) ===
+            'isPrimetime': is_primetime,
+            'hasNationalTV': len(traditional_networks) > 0 or len(streaming_platforms) > 0,
+            'primaryNetwork': primary_network,
+            'traditionalNetworks': traditional_networks,
+            'streamingPlatforms': streaming_platforms,
+        }
+        
+        return network_summary
+
+    def _analyze_game_context(self, game: dict, game_date: str) -> dict:
+        """Determine game type and importance context"""
+        game_label = (game.get("gameLabel", "") or "").lower()
+        week_name = (game.get("weekName", "") or "").lower()
+        game_sublabel = (game.get("gameSubLabel", "") or "").lower()
+        
+        # Game type flags
+        is_regular_season = week_name.startswith("week")
+        is_allstar = "all-star" in game_label or "rising stars" in game_label
+        is_playoffs = any(term in game_label for term in [
+            "first round", "conf", "finals", "play-in"
+        ]) and not is_allstar
+        is_emiratescup = "emirates" in game_label or "cup" in game_label
+        
+        # Special game flags
+        is_christmas = "christmas" in game_sublabel or "12/25" in game_date
+        is_mlk_day = "mlk" in game_sublabel or "01/15" in game_date  # MLK Day games
+        
+        # Playoff round detection
+        playoff_round = None
+        if is_playoffs:
+            if "first round" in game_label:
+                playoff_round = "first_round"
+            elif "conf" in game_label and "semi" in game_label:
+                playoff_round = "conf_semifinals"
+            elif "conf" in game_label and "finals" in game_label:
+                playoff_round = "conf_finals"
+            elif "nba finals" in game_label:
+                playoff_round = "nba_finals"
+            elif "play-in" in game_label:
+                playoff_round = "play_in"
+        
+        return {
+            # === CORE CONTEXT FLAGS (7) ===
+            'isRegularSeason': is_regular_season,
+            'isPlayoffs': is_playoffs,
+            'isAllStar': is_allstar,
+            'isEmiratesCup': is_emiratescup,
+            'playoffRound': playoff_round,
+            'isChristmas': is_christmas,
+            'isMLKDay': is_mlk_day,
+        }
+
+    def _analyze_scheduling(self, game: dict, game_date: str) -> dict:
+        """Extract scheduling and timing information"""
+        day_of_week = game.get("day", "").lower()
+        game_time_est = game.get("gameTimeEst", "")
+        
+        # Weekend detection
+        is_weekend = day_of_week in ["fri", "sat", "sun"]
+        
+        # Time slot detection (rough estimates based on common NBA scheduling)
+        time_slot = "unknown"
+        if game_time_est:
+            try:
+                # Extract hour from time string (format varies)
+                hour = 12  # Default noon if can't parse
+                if "T" in game_time_est:
+                    time_part = game_time_est.split("T")[1]
+                    hour = int(time_part.split(":")[0])
+                
+                if hour < 15:  # Before 3 PM ET
+                    time_slot = "afternoon"
+                elif hour < 20:  # 3-8 PM ET
+                    time_slot = "early_evening"
+                else:  # 8 PM ET and later
+                    time_slot = "primetime"
+            except:
+                time_slot = "unknown"
+        
+        return {
+            # === CORE SCHEDULING FLAGS (3) ===
+            'dayOfWeek': day_of_week,
+            'isWeekend': is_weekend,
+            'timeSlot': time_slot,
+        }
 
     def _generate_season_metadata(self, all_games: list) -> dict:
         """Generate comprehensive season metadata for monitoring and analysis"""
@@ -442,4 +672,3 @@ create_app = convert_existing_flask_scraper(GetNbaComScheduleApi)
 if __name__ == "__main__":
     main = GetNbaComScheduleApi.create_cli_and_flask_main()
     main()
-    

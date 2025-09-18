@@ -5,7 +5,7 @@ set -e
 
 PROJECT_ID=${GCP_PROJECT_ID:-"nba-props-platform"}
 REGION=${REGION:-"us-west2"}
-JOB_NAME="nbac-gamebook-backfill"  # Note: uses hyphens
+JOB_NAME="nbac-gamebook-processor-backfill"  # Note: uses hyphens
 
 echo "==========================================
 NBA.com Gamebook Backfill Monitor

@@ -60,6 +60,12 @@ class NbacGamebookProcessor(ProcessorBase):
         
         logger.info(f"Initialized processor with run ID: {self.processing_run_id}")
     
+    def set_processing_date_range(self, start_date: str, end_date: str):
+        """Set the date range for this processing run (for performance logging)."""
+        self.processing_date_range_start = start_date
+        self.processing_date_range_end = end_date
+        logger.info(f"Set processing date range: {start_date} to {end_date}")
+
     def log_quality_issue(self, issue_type: str, severity: str, identifier: str, details: Dict):
         """Log data quality issues for review."""
         logger.warning(f"Quality issue [{severity}] {issue_type}: {identifier} - {details}")
@@ -158,6 +164,12 @@ class NbacGamebookProcessor(ProcessorBase):
         
         try:
             end_time = datetime.now()
+
+            # Use stored date range if not provided
+            if not date_range_start and hasattr(self, 'processing_date_range_start'):
+                date_range_start = self.processing_date_range_start
+            if not date_range_end and hasattr(self, 'processing_date_range_end'):
+                date_range_end = self.processing_date_range_end
             
             # Calculate resolution stats from current logs
             resolution_stats = {

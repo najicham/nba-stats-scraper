@@ -32,6 +32,7 @@ from processors.bettingpros.bettingpros_player_props_processor import BettingPro
 from processors.bigdataball.bigdataball_pbp_processor import BigDataBallPbpProcessor
 from processors.nbacom.nbac_referee_processor import NbacRefereeProcessor
 from processors.oddsapi.odds_game_lines_processor import OddsGameLinesProcessor
+from processors.nbacom.nbac_schedule_processor import NbacScheduleProcessor
 
 
 # from balldontlie.bdl_boxscore_processor import BdlBoxscoreProcessor
@@ -61,6 +62,7 @@ PROCESSOR_REGISTRY = {
     'nba-com/player-boxscores': NbacPlayerBoxscoreProcessor,
     'nba-com/play-by-play': NbacPlayByPlayProcessor,
     'nba-com/referee-assignments': NbacRefereeProcessor,
+    'nba-com/schedule': NbacScheduleProcessor,
 
     'espn/boxscores': EspnBoxscoreProcessor,
     'espn/rosters': EspnTeamRosterProcessor,
@@ -402,6 +404,21 @@ def extract_opts_from_path(file_path: str) -> dict:
             if 'snap-' in parts[-1]:
                 snapshot_part = parts[-1].split('snap-')[-1].replace('.json', '')
                 opts['snapshot_timestamp'] = snapshot_part
+
+    elif 'nba-com/schedule' in file_path:
+        # Extract metadata from path: /nba-com/schedule/{season}/{timestamp}.json
+        parts = file_path.split('/')
+        if len(parts) >= 4:
+            season_str = parts[-2]  # Extract season like "2023-24"
+            
+            try:
+                # Parse season year (2023 for 2023-24)
+                season_year = int(season_str.split('-')[0])
+                opts['season_year'] = season_year
+                opts['season_nba_format'] = season_str
+                
+            except (ValueError, IndexError):
+                logger.warning(f"Could not parse season from path: {season_str}")
     
     return opts    
 

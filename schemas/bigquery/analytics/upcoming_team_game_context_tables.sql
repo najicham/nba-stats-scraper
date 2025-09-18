@@ -50,11 +50,20 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_analytics.upcoming_team_game_
   under_streak INT64,                               -- Team total unders streak (0 if none)
   ats_record_last_10 STRING,                        -- "7-3" format for quick reference
   
-  -- Basic game context (4 fields)
+  -- Basic game context (2 fields)
   home_game BOOLEAN NOT NULL,                       -- Home court advantage
-  opponent_days_rest INT64,                         -- Opponent rest
-  opponent_back_to_back BOOLEAN,                    -- Opponent fatigue
   travel_miles INT64,                               -- Travel distance
+  
+  -- NEW: Team Forward-Looking Schedule Context (4 fields)
+  team_next_game_days_rest INT64,                   -- Days until team's next game (energy management at team level)
+  team_games_in_next_7_days INT64,                  -- Team's upcoming game density (team fatigue management)
+  next_opponent_win_pct NUMERIC(5,3),               -- Win percentage of team's next opponent (team motivation factor)
+  next_game_is_primetime BOOLEAN,                   -- Whether team's next game is nationally televised (team motivation)
+  
+  -- NEW: Opponent Asymmetry Context (3 fields)
+  opponent_days_rest INT64,                         -- Current opponent's rest before this game (energy mismatch at team level)
+  opponent_games_in_next_7_days INT64,              -- Current opponent's upcoming schedule density (opponent team fatigue)
+  opponent_next_game_days_rest INT64,               -- Current opponent's rest after this game (opponent team conservation)
   
   -- Market context (4 fields)
   closing_spread NUMERIC(4,1),                      -- Final betting spread
@@ -78,5 +87,5 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_analytics.upcoming_team_game_
 PARTITION BY game_date
 CLUSTER BY team_abbr, game_date
 OPTIONS(
-  description="Team-level context for upcoming games with fatigue, personnel, and betting intelligence"
+  description="Team-level context for upcoming games with fatigue, personnel, betting intelligence, and forward-looking schedule psychology"
 );
