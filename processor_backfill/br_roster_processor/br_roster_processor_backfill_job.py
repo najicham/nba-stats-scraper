@@ -43,7 +43,7 @@ def get_roster_files(bucket_name: str, season_year: int, teams: List[str]) -> Li
     
     # Build season string (e.g., 2023 -> "2023-24")
     season_str = f"{season_year}-{str(season_year + 1)[2:]}"
-    prefix = f"basketball_reference/season_rosters/{season_str}/"
+    prefix = f"basketball-ref/season-rosters/{season_str}/"
     
     files = []
     blobs = bucket.list_blobs(prefix=prefix)

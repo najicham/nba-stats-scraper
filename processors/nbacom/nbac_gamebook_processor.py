@@ -11,6 +11,7 @@ Key Features:
 - Complete resolution attempt logging
 - Data quality indicators and flags
 - Enhanced audit trail
+- DEBUG LOGGING for cache resolution issues
 """
 
 import json
@@ -18,6 +19,7 @@ import logging
 import re
 import os
 import uuid
+import pandas as pd
 from datetime import datetime
 from typing import Dict, List, Tuple, Optional
 from collections import defaultdict
@@ -73,6 +75,7 @@ class NbacGamebookProcessor(ProcessorBase):
     def load_br_rosters_for_season(self, season_year: int) -> None:
         """Cache Basketball Reference rosters for a season to resolve inactive player names."""
         if season_year in self.br_roster_cache:
+            logger.info(f"Season {season_year} already in cache with {len(self.br_roster_cache[season_year])} entries")
             return
             
         query = f"""
@@ -86,22 +89,86 @@ class NbacGamebookProcessor(ProcessorBase):
         """
         
         try:
+            logger.info(f"=== CACHE LOADING START for season {season_year} ===")
             results = self.bq_client.query(query).to_dataframe()
+            logger.info(f"Query returned {len(results)} rows, columns: {results.columns.tolist()}")
+            
+            if results.empty:
+                logger.warning(f"No roster data found for season {season_year}")
+                self.br_roster_cache[season_year] = {}
+                return
+            
+            # Check for Charlie Brown Jr specifically
+            brown_players = results[
+                (results['team_abbrev'] == 'NYK') & 
+                (results['player_last_name'] == 'Brown')
+            ]
+            logger.info(f"Found {len(brown_players)} Brown players on NYK: {brown_players['player_full_name'].tolist()}")
             
             # Build lookup: {(team, last_name): [list of players]}
             roster_lookup = defaultdict(list)
-            for _, row in results.iterrows():
-                key = (row['team_abbrev'], row['player_last_name'].lower())
+            brown_entries_added = 0
+            total_entries_added = 0
+            
+            for idx, row in results.iterrows():
+                # Check for NaN/None values that could break things
+                team_abbrev = row['team_abbrev']
+                player_last_name = row['player_last_name']
+                
+                if pd.isna(team_abbrev) or pd.isna(player_last_name):
+                    logger.warning(f"Skipping row {idx} due to NaN values: team={team_abbrev}, last_name={player_last_name}")
+                    continue
+                
+                # Build cache key
+                key = (team_abbrev, player_last_name.lower())
                 roster_lookup[key].append({
                     'full_name': row['player_full_name'],
                     'lookup': row['player_lookup']
                 })
+                total_entries_added += 1
+                
+                # Track Brown entries specifically
+                if team_abbrev == 'NYK' and 'brown' in player_last_name.lower():
+                    brown_entries_added += 1
+                    logger.info(f"Added Brown player to cache: key={key}, name={row['player_full_name']}")
+                    logger.info(f"  Full row data: {row.to_dict()}")
             
+            # Store the cache
             self.br_roster_cache[season_year] = roster_lookup
-            logger.info(f"Loaded {len(results)} roster entries for {season_year} season")
+            
+            # Verify the cache was built correctly
+            nyk_brown_key = ('NYK', 'brown')
+            nyk_brown_matches = roster_lookup.get(nyk_brown_key, [])
+            
+            logger.info(f"=== CACHE BUILDING COMPLETE ===")
+            logger.info(f"  Total DB rows processed: {len(results)}")
+            logger.info(f"  Total cache entries added: {total_entries_added}")
+            logger.info(f"  Unique cache keys: {len(roster_lookup)}")
+            logger.info(f"  Brown entries added: {brown_entries_added}")
+            logger.info(f"  NYK Brown key {nyk_brown_key} has {len(nyk_brown_matches)} matches")
+            logger.info(f"  NYK Brown matches: {[m['full_name'] for m in nyk_brown_matches]}")
+            
+            # Show sample of cache keys for debugging
+            sample_keys = list(roster_lookup.keys())[:10]
+            logger.info(f"Sample cache keys: {sample_keys}")
+            
+            # Show all NYK keys for debugging
+            nyk_keys = [k for k in roster_lookup.keys() if k[0] == 'NYK']
+            logger.info(f"All NYK keys in cache ({len(nyk_keys)}): {nyk_keys}")
+            
+            # Double-check with direct lookup
+            post_cache_lookup = self.br_roster_cache[season_year].get(nyk_brown_key, [])
+            logger.info(f"Post-cache direct lookup for {nyk_brown_key}: {len(post_cache_lookup)} matches")
+            if post_cache_lookup:
+                logger.info(f"  Post-cache matches: {[m['full_name'] for m in post_cache_lookup]}")
+            
+            logger.info(f"=== CACHE LOADING END ===")
+            
         except Exception as e:
-            logger.warning(f"Could not load BR rosters for {season_year}: {e}")
-            self.br_roster_cache[season_year] = {}
+            logger.error(f"CRITICAL ERROR loading BR rosters for {season_year}: {e}")
+            logger.error(f"Query was: {query}")
+            # Don't set empty cache on error - let it fail loudly
+            raise e
     
     def log_resolution_attempt(self, original_name: str, team_abbr: str, season_year: int,
                              resolution_status: str, game_id: str, game_date: str,
@@ -160,7 +227,7 @@ class NbacGamebookProcessor(ProcessorBase):
             logger.error(f"Error flushing resolution logs: {e}")
 
     def log_processing_performance(self, date_range_start: str = None, date_range_end: str = None):
-        """Log overall processing performance summary with enhanced metrics."""
+        """Log overall processing performance summary with enhanced metrics - FIXED VERSION."""
         
         try:
             end_time = datetime.now()
@@ -171,40 +238,114 @@ class NbacGamebookProcessor(ProcessorBase):
             if not date_range_end and hasattr(self, 'processing_date_range_end'):
                 date_range_end = self.processing_date_range_end
             
-            # Calculate resolution stats from current logs
-            resolution_stats = {
-                'resolved': 0, 'not_found': 0, 'multiple_matches': 0, 'original': 0, 'error': 0,
-                'team_mapped': 0, 'suffix_handled': 0, 'direct_lookup': 0,
-                'inactive_total': 0, 'dnp_total': 0
-            }
+            # Query the actual database for accurate stats instead of relying on in-memory logs
+            stats_query = f"""
+            SELECT 
+                player_status,
+                name_resolution_status,
+                name_resolution_method,
+                COUNT(*) as count
+            FROM `{self.project_id}.{self.table_name}`
+            WHERE processed_by_run_id = '{self.processing_run_id}'
+            GROUP BY player_status, name_resolution_status, name_resolution_method
+            ORDER BY player_status, name_resolution_status
+            """
             
-            for log_entry in self.resolution_logs:
-                status = log_entry['resolution_status']
-                method = log_entry.get('resolution_method', '')
-                player_status = log_entry.get('player_status', '')
+            try:
+                stats_results = self.bq_client.query(stats_query).to_dataframe()
+                logger.info(f"Retrieved {len(stats_results)} stat groups for performance calculation")
                 
-                resolution_stats[status] = resolution_stats.get(status, 0) + 1
+                # Initialize counters
+                resolution_stats = {
+                    'resolved': 0, 'not_found': 0, 'multiple_matches': 0, 'original': 0, 'error': 0,
+                    'team_mapped': 0, 'suffix_handled': 0, 'direct_lookup': 0,
+                    'inactive_total': 0, 'dnp_total': 0, 'active_total': 0,
+                    'injury_database_resolved': 0, 'br_fallback_resolved': 0
+                }
                 
-                # Track player status distribution
-                if player_status == 'inactive':
-                    resolution_stats['inactive_total'] += 1
-                elif player_status == 'dnp':
-                    resolution_stats['dnp_total'] += 1
+                # Process the results
+                for _, row in stats_results.iterrows():
+                    player_status = row['player_status']
+                    resolution_status = row['name_resolution_status']
+                    method = row['name_resolution_method'] or ''
+                    count = row['count']
+                    
+                    # Count by player status
+                    if player_status == 'inactive':
+                        resolution_stats['inactive_total'] += count
+                    elif player_status == 'dnp':
+                        resolution_stats['dnp_total'] += count
+                    elif player_status == 'active':
+                        resolution_stats['active_total'] += count
+                    
+                    # Count by resolution status (only for inactive/dnp players that need resolution)
+                    if player_status in ['inactive', 'dnp']:
+                        if resolution_status in resolution_stats:
+                            resolution_stats[resolution_status] += count
+                    
+                    # Count by method
+                    if 'team_mapped' in method:
+                        resolution_stats['team_mapped'] += count
+                    if 'suffix_handled' in method:
+                        resolution_stats['suffix_handled'] += count
+                    if method == 'direct_lookup':
+                        resolution_stats['direct_lookup'] += count
+                    if 'injury_database' in method:
+                        resolution_stats['injury_database_resolved'] += count
+                    if method in ['auto_exact', 'pending_review']:
+                        resolution_stats['injury_database_resolved'] += count
                 
-                # Track methods
-                if 'team_mapped' in method:
-                    resolution_stats['team_mapped'] += 1
-                if 'suffix_handled' in method:
-                    resolution_stats['suffix_handled'] += 1
-                if method == 'direct_lookup':
-                    resolution_stats['direct_lookup'] += 1
-            
-            total = sum([resolution_stats[k] for k in ['resolved', 'not_found', 'multiple_matches', 'original', 'error']])
-            resolution_rate = resolution_stats['resolved'] / total if total > 0 else 0
-            
+                # Calculate resolution rate for players that needed resolution (inactive players primarily)
+                inactive_needing_resolution = resolution_stats['inactive_total']
+                inactive_resolved = sum([
+                    resolution_stats['resolved'],
+                    resolution_stats['injury_database_resolved']
+                ])
+                
+                # Avoid double counting - use max of the two counts
+                inactive_resolved = max(resolution_stats['resolved'], resolution_stats['injury_database_resolved'])
+                
+                resolution_rate = inactive_resolved / inactive_needing_resolution if inactive_needing_resolution > 0 else 0
+                
+                logger.info(f"Performance calculation:")
+                logger.info(f"  Total players processed: {resolution_stats['active_total'] + resolution_stats['inactive_total'] + resolution_stats['dnp_total']}")
+                logger.info(f"  Active: {resolution_stats['active_total']}, Inactive: {resolution_stats['inactive_total']}, DNP: {resolution_stats['dnp_total']}")
+                logger.info(f"  Inactive resolved: {inactive_resolved}/{inactive_needing_resolution} = {resolution_rate:.2%}")
+                
+            except Exception as e:
+                logger.error(f"Error querying performance stats: {e}")
+                # Fallback to original method if database query fails
+                logger.warning("Falling back to in-memory resolution logs for performance calculation")
+                
+                resolution_stats = {
+                    'resolved': 0, 'not_found': 0, 'multiple_matches': 0, 'original': 0, 'error': 0,
+                    'team_mapped': 0, 'suffix_handled': 0, 'direct_lookup': 0,
+                    'inactive_total': 0, 'dnp_total': 0, 'active_total': 0,
+                    'injury_database_resolved': 0
+                }
+                
+                for log_entry in self.resolution_logs:
+                    status = log_entry['resolution_status']
+                    method = log_entry.get('resolution_method', '')
+                    player_status = log_entry.get('player_status', '')
+                    
+                    resolution_stats[status] = resolution_stats.get(status, 0) + 1
+                    
+                    if player_status == 'inactive':
+                        resolution_stats['inactive_total'] += 1
+                    elif player_status == 'dnp':
+                        resolution_stats['dnp_total'] += 1
+                
+                inactive_needing_resolution = resolution_stats['inactive_total']
+                inactive_resolved = resolution_stats['resolved']
+                resolution_rate = inactive_resolved / inactive_needing_resolution if inactive_needing_resolution > 0 else 0
+
+            # Create performance summary
             performance_summary = {
                 'processing_run_id': self.processing_run_id,
                 'processing_timestamp': self.processing_start_time.isoformat(),
+                'total_players_processed': resolution_stats['active_total'] + resolution_stats['inactive_total'] + resolution_stats['dnp_total'],
+                'active_players': resolution_stats['active_total'],
                 'total_inactive_players': resolution_stats['inactive_total'],
                 'total_dnp_players': resolution_stats['dnp_total'],
                 'resolved_count': resolution_stats['resolved'],
@@ -215,7 +356,9 @@ class NbacGamebookProcessor(ProcessorBase):
                 'team_mapping_fixes': resolution_stats['team_mapped'],
                 'suffix_handling_fixes': resolution_stats['suffix_handled'],
                 'direct_lookup_successes': resolution_stats['direct_lookup'],
+                'injury_database_resolutions': resolution_stats['injury_database_resolved'],
                 'resolution_rate': resolution_rate,
+                'inactive_resolution_rate': resolution_rate,  # More specific metric
                 'improvement_from_baseline': None,
                 'date_range_start': date_range_start,
                 'date_range_end': date_range_end,
@@ -224,6 +367,7 @@ class NbacGamebookProcessor(ProcessorBase):
                 'created_at': datetime.now().isoformat()
             }
             
+            # Log to BigQuery
             table_id = f"{self.project_id}.nba_processing.resolution_performance"
             errors = self.bq_client.insert_rows_json(table_id, [performance_summary])
             
@@ -231,9 +375,13 @@ class NbacGamebookProcessor(ProcessorBase):
                 logger.error(f"Failed to log performance summary: {errors}")
             else:
                 logger.info(f"Logged performance summary for run {self.processing_run_id}")
-                logger.info(f"Resolution rate: {resolution_rate:.2%} ({resolution_stats['resolved']}/{total})")
-                logger.info(f"Inactive players: {resolution_stats['inactive_total']}, DNP players: {resolution_stats['dnp_total']}")
+                logger.info(f"Total players processed: {performance_summary['total_players_processed']}")
+                logger.info(f"Active: {resolution_stats['active_total']}, Inactive: {resolution_stats['inactive_total']}, DNP: {resolution_stats['dnp_total']}")
+                logger.info(f"Inactive resolution rate: {resolution_rate:.2%} ({inactive_resolved}/{inactive_needing_resolution})")
                 
+                if resolution_stats['injury_database_resolved'] > 0:
+                    logger.info(f"Injury database resolutions: {resolution_stats['injury_database_resolved']}")
+                    
         except Exception as e:
             logger.error(f"Error logging performance: {e}")
 
@@ -326,11 +474,20 @@ class NbacGamebookProcessor(ProcessorBase):
                               player_status: str = None, source_file_path: str = None) -> Tuple[str, str, str, List[str], bool]:
         """Resolve inactive player with comprehensive logging and quality tracking."""
         
+        # Add debug logging for Charlie Brown Jr. specifically
+        is_debug_case = 'brown' in last_name.lower() and team_abbr == 'NYK'
+        
+        if is_debug_case:
+            logger.info(f"=== RESOLVE DEBUG START ===")
+            logger.info(f"Input: last_name='{last_name}', team_abbr='{team_abbr}', season_year={season_year}")
+        
         try:
             # Load roster cache if needed
             self.load_br_rosters_for_season(season_year)
             
             if season_year not in self.br_roster_cache:
+                if is_debug_case:
+                    logger.error(f"CACHE MISS: Season {season_year} not in cache after loading")
                 if game_id and game_date:
                     self.log_resolution_attempt(
                         last_name, team_abbr, season_year, 'not_found', game_id, game_date,
@@ -340,13 +497,22 @@ class NbacGamebookProcessor(ProcessorBase):
                     )
                 return last_name, self.normalize_name(last_name), 'not_found', ['no_roster_data'], True
             
+            if is_debug_case:
+                logger.info(f"Cache hit: Season {season_year} has {len(self.br_roster_cache[season_year])} entries")
+            
             # Handle team abbreviation mapping
             br_team_abbr = self.map_team_to_br_code(team_abbr)
             was_team_mapped = br_team_abbr != team_abbr
             
+            if is_debug_case:
+                logger.info(f"Team mapping: '{team_abbr}' -> '{br_team_abbr}' (mapped: {was_team_mapped})")
+            
             # Handle suffix removal
             lookup_name = self.handle_suffix_names(last_name)
             was_suffix_handled = lookup_name != last_name
+            
+            if is_debug_case:
+                logger.info(f"Suffix handling: '{last_name}' -> '{lookup_name}' (handled: {was_suffix_handled})")
             
             # Determine method
             if was_team_mapped and was_suffix_handled:
@@ -360,7 +526,37 @@ class NbacGamebookProcessor(ProcessorBase):
             
             # Look up in roster cache
             roster_key = (br_team_abbr, lookup_name.lower())
+            
+            if is_debug_case:
+                logger.info(f"Lookup key: {roster_key}")
+                
+                # Debug cache state
+                cache_keys = list(self.br_roster_cache[season_year].keys())
+                logger.info(f"Total cache keys: {len(cache_keys)}")
+                
+                # Look for similar keys
+                similar_keys = [k for k in cache_keys if k[0] == br_team_abbr]
+                logger.info(f"Keys for team {br_team_abbr}: {similar_keys}")
+                
+                brown_keys = [k for k in cache_keys if 'brown' in str(k[1]).lower()]
+                logger.info(f"Keys containing 'brown': {brown_keys}")
+                
+                # Check exact match
+                exact_key_exists = roster_key in self.br_roster_cache[season_year]
+                logger.info(f"Exact key {roster_key} exists in cache: {exact_key_exists}")
+            
             matches = self.br_roster_cache[season_year].get(roster_key, [])
+            
+            if is_debug_case:
+                logger.info(f"Lookup result: {len(matches)} matches found")
+                if matches:
+                    logger.info(f"Matches: {[m['full_name'] for m in matches]}")
+                else:
+                    logger.warning(f"NO MATCHES for key {roster_key}")
+                    # Try to debug what went wrong
+                    team_brown_keys = [k for k in cache_keys if k[0] == br_team_abbr and 'brown' in k[1]]
+                    logger.info(f"Brown players on {br_team_abbr}: {team_brown_keys}")
+                logger.info(f"=== RESOLVE DEBUG END ===")
             
             # Generate quality flags
             quality_flags = self.generate_quality_flags(
@@ -412,6 +608,8 @@ class NbacGamebookProcessor(ProcessorBase):
                     matches_found=0, error_details=str(e), source_file_path=source_file_path
                 )
             logger.error(f"Error resolving {last_name}: {e}")
+            if is_debug_case:
+                logger.info(f"=== RESOLVE DEBUG END (ERROR) ===")
             return last_name, self.normalize_name(last_name), 'not_found', ['processing_error'], True
 
     def get_roster_matches(self, last_name: str, team_abbr: str, season_year: int) -> List[Dict]:
@@ -582,16 +780,16 @@ class NbacGamebookProcessor(ProcessorBase):
         br_team_abbr_used = None
         
         if status == 'inactive' and player_name and team_abbr:
-            # Handle suffixes first
-            lookup_name = self.handle_suffix_names(player_name)
-            
             # Try to resolve the name WITH full context for logging
-            resolved_name, resolved_lookup, resolution_status, quality_flags, requires_review = self.resolve_inactive_player(
-                lookup_name, team_abbr, game_info['season_year'],
-                game_id=game_info['game_id'],
-                game_date=game_info['game_date'].isoformat() if hasattr(game_info['game_date'], 'isoformat') else str(game_info['game_date']),
-                player_status=status,
-                source_file_path=source_file_path
+            resolved_name, resolved_lookup, resolution_status, quality_flags, requires_review = self.resolve_with_injury_database(
+                player_name,              # 1st: last_name with suffix
+                team_abbr,                # 2nd: team_abbr  
+                game_info['season_year'], # 3rd: season_year
+                game_info['game_date'].isoformat() if hasattr(game_info['game_date'], 'isoformat') else str(game_info['game_date']),  # 4th: game_date
+                reason=player.get('reason', ''),  # keyword: reason
+                game_id=game_info['game_id'],     # keyword: game_id
+                player_status=status,             # keyword: player_status
+                source_file_path=source_file_path # keyword: source_file_path
             )
             
             br_team_abbr_used = self.map_team_to_br_code(team_abbr)
@@ -745,3 +943,127 @@ class NbacGamebookProcessor(ProcessorBase):
     def update_resolution_games_count(self, resolution_id: str):
         """Update the count of games affected by this resolution (stub for future enhancement)."""
         pass
+
+    # Data-driven disambiguation without hard-coded player names
+    def disambiguate_injury_matches(self, matches_df, gamebook_reason: str, last_name: str) -> dict:
+        """Use data-driven heuristics to pick best match from injury database."""
+        
+        gamebook_reason_lower = gamebook_reason.lower() if gamebook_reason else ""
+        
+        # Strategy 1: Direct reason keyword matching (data-driven)
+        if gamebook_reason_lower:
+            for _, match in matches_df.iterrows():
+                injury_reason_lower = match['injury_reason'].lower() if match['injury_reason'] else ""
+                
+                # Match specific injury types
+                if 'g league' in gamebook_reason_lower and 'g league' in injury_reason_lower:
+                    return match.to_dict()
+                if 'two-way' in gamebook_reason_lower and 'two-way' in injury_reason_lower:
+                    return match.to_dict()
+                if any(keyword in gamebook_reason_lower and keyword in injury_reason_lower 
+                    for keyword in ['injury', 'illness', 'strain', 'sprain']):
+                    return match.to_dict()
+        
+        # Strategy 2: Use injury database patterns (data-driven heuristics)
+        
+        # For G-League/Two-way assignments, prefer players with G-League reasons in injury DB
+        if 'g league' in gamebook_reason_lower or 'two-way' in gamebook_reason_lower:
+            gleague_matches = matches_df[matches_df['injury_reason'].str.contains('g league|two-way', case=False, na=False)]
+            if not gleague_matches.empty:
+                return gleague_matches.iloc[0].to_dict()
+        
+        # For injury reasons, prefer players with injury-related reasons in injury DB  
+        if any(keyword in gamebook_reason_lower for keyword in ['injury', 'illness', 'strain', 'sprain']):
+            injury_matches = matches_df[matches_df['injury_reason'].str.contains('injury|illness|strain|sprain', case=False, na=False)]
+            if not injury_matches.empty:
+                return injury_matches.iloc[0].to_dict()
+        
+        # Strategy 3: Use injury status patterns (data-driven)
+        # Players with status "out" are often more established (vs "questionable" for minor issues)
+        out_players = matches_df[matches_df['injury_status'] == 'out']
+        if len(out_players) == 1:
+            return out_players.iloc[0].to_dict()
+        
+        # Strategy 4: Use confidence scores from injury database (data-driven)
+        # Higher confidence scores suggest better data quality for that player
+        highest_confidence = matches_df.loc[matches_df['confidence_score'].idxmax()] if 'confidence_score' in matches_df.columns else None
+        if highest_confidence is not None:
+            return highest_confidence.to_dict()
+        
+        # Strategy 5: Alphabetical consistency (deterministic fallback)
+        # Always pick the first alphabetically to ensure reproducible results
+        return matches_df.sort_values('player_full_name').iloc[0].to_dict()
+
+    def resolve_with_injury_database(self, last_name: str, team_abbr: str, season_year: int,
+                                    game_date: str, reason: str = None, game_id: str = None,
+                                    player_status: str = None, source_file_path: str = None) -> Tuple[str, str, str, List[str], bool]:
+        """Resolve player name using injury database integration (data-driven)."""
+        
+        try:
+            # Query injury database for exact game and team match
+            injury_query = f"""
+            SELECT DISTINCT
+                player_full_name,
+                player_lookup,
+                injury_status,
+                reason as injury_reason,
+                confidence_score
+            FROM `nba_raw.nbac_injury_report`
+            WHERE team = '{team_abbr}'
+            AND game_date = '{game_date}'
+            AND (
+                LOWER(player_full_name) LIKE LOWER('%{last_name}%') OR
+                LOWER('{last_name}') LIKE LOWER('%' || SPLIT(player_full_name, ' ')[OFFSET(1)] || '%')
+            )
+            ORDER BY confidence_score DESC
+            """
+            
+            results = self.bq_client.query(injury_query).to_dataframe()
+            
+            if len(results) == 1:
+                # Single match found - highest confidence
+                resolved_name = results.iloc[0]['player_full_name']
+                confidence = float(results.iloc[0]['confidence_score']) if results.iloc[0]['confidence_score'] else 0.95
+                
+                if game_id:
+                    self.log_resolution_attempt(
+                        last_name, team_abbr, season_year, 'resolved', game_id, game_date,
+                        player_status=player_status, resolved_name=resolved_name,
+                        method='injury_database_single_match', confidence=confidence, matches_found=1,
+                        source_file_path=source_file_path
+                    )
+                return resolved_name, self.normalize_name(resolved_name), 'resolved', ['injury_database_single'], False
+            
+            elif len(results) > 1:
+                # Multiple matches - use data-driven disambiguation
+                disambiguation_result = self.disambiguate_injury_matches(results, reason, last_name)
+                resolved_name = disambiguation_result['player_full_name']
+                
+                # Determine confidence based on disambiguation method used
+                if reason and any(keyword in reason.lower() for keyword in ['g league', 'two-way', 'injury', 'illness']):
+                    confidence = 0.85  # Good confidence when reason helps disambiguation
+                    method = 'injury_database_reason_matched'
+                else:
+                    confidence = 0.70  # Lower confidence when using heuristics
+                    method = 'injury_database_heuristic_pick'
+                
+                if game_id:
+                    self.log_resolution_attempt(
+                        last_name, team_abbr, season_year, 'resolved', game_id, game_date,
+                        player_status=player_status, resolved_name=resolved_name,
+                        method=method, confidence=confidence, 
+                        matches_found=len(results), potential_matches=results.to_dict('records'),
+                        error_details=f"Disambiguated using: {results.columns.tolist()}",
+                        source_file_path=source_file_path
+                    )
+                return resolved_name, self.normalize_name(resolved_name), 'resolved', ['injury_database_disambiguated'], False
+            
+            else:
+                # No injury database matches - fall back to Basketball Reference
+                return self.resolve_inactive_player(last_name, team_abbr, season_year, game_id, game_date, player_status, source_file_path)
+                
+        except Exception as e:
+            logger.error(f"Error in injury database resolution for {last_name}: {e}")
+            # Fall back to Basketball Reference on error
+            return self.resolve_inactive_player(last_name, team_abbr, season_year, game_id, game_date, player_status, source_file_path)
+        

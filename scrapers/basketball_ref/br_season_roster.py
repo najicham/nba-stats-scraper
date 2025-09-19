@@ -387,7 +387,7 @@ class BasketballRefSeasonRoster(ScraperBase, ScraperFlaskMixin):
                         sample.get("suffix", ""))
 
     def _extract_player_from_row(self, cells) -> Dict[str, str]:
-        """Extract player data from a single table row - ENHANCED WITH UNICODE SUPPORT."""
+        """Extract player data from a single table row - FIXED FOR MULTIPLE JERSEY NUMBERS."""
         try:
             # Simplified, cleaner data structure
             player_data = {
@@ -402,83 +402,148 @@ class BasketballRefSeasonRoster(ScraperBase, ScraperFlaskMixin):
                 "weight": ""
             }
 
-            # Find player name - usually in a cell with a link
-            name_cell = None
+            def is_jersey_number_cell(text: str) -> bool:
+                """Detect if cell contains jersey number(s) - HANDLES MULTIPLE NUMBERS."""
+                if not text:
+                    return False
+                
+                # Pattern 1: Single number (4, 23, etc.)
+                if re.match(r'^\d{1,2}$', text):
+                    return True
+                
+                # Pattern 2: Multiple numbers with comma/space (4, 44 or 4,44 or 4 44)
+                if re.match(r'^\d{1,2}[\s,]+\d{1,2}$', text):
+                    return True
+                    
+                # Pattern 3: Multiple numbers with slash (4/44)
+                # Note: Dashes excluded - they're used for heights (6-8)
+                if re.match(r'^\d{1,2}/\d{1,2}$', text):
+                    return True
+                    
+                return False
+
+            def is_likely_name(text: str) -> bool:
+                """Enhanced name detection - EXCLUDES JERSEY NUMBERS."""
+                if not text or len(text.strip()) < 2:
+                    return False
+                    
+                # FIXED: Exclude jersey number patterns first
+                if is_jersey_number_cell(text):
+                    return False
+                    
+                # Must have at least 2 words for first/last name
+                words = text.split()
+                if len(words) < 2:
+                    return False
+                    
+                # Exclude obvious non-names (numbers, measurements, etc.)
+                if re.match(r'^[\d\-\.\s,/]+$', text):
+                    return False
+                    
+                # Exclude measurements/stats
+                if "'" in text or '"' in text:  # Heights like 6'8"
+                    return False
+                    
+                if re.match(r'^\d+\s*(lbs?|kg)$', text.lower()):  # Weights
+                    return False
+                    
+                # Exclude positions
+                if re.match(r'^[A-Z]{1,3}(-[A-Z]{1,3})?$', text):
+                    return False
+                    
+                return True
+
+            # Find player name - prioritize links, then use enhanced detection
             raw_full_name = ""
             
-            for i, cell in enumerate(cells):
-                # Look for player link
+            # Step 1: Look for player links (most reliable)
+            for cell in cells:
                 player_link = cell.find("a", href=re.compile(r"/players/"))
                 if player_link:
-                    name_cell = cell
                     raw_full_name = self.safe_extract_text(player_link)
                     break
-                # Fallback: look for cell that seems like a name
-                elif self.safe_extract_text(cell) and len(self.safe_extract_text(cell).split()) >= 2:
+
+            # Step 2: Enhanced fallback with proper jersey number exclusion
+            if not raw_full_name:
+                for cell in cells:
                     text = self.safe_extract_text(cell)
-                    # Skip if it looks like a number or stat
-                    if not re.match(r'^[\d\-\.\s]+$', text) and "'" not in text:
-                        name_cell = cell
+                    if is_likely_name(text):
                         raw_full_name = text
                         break
 
             if not raw_full_name:
+                logger.debug("No valid player name found in row cells: %s", 
+                            [self.safe_extract_text(cell) for cell in cells[:5]])
                 return {}
 
-            # FIXED: Now properly preserves original UTF-8 characters
-            player_data["full_name"] = raw_full_name  # Original: "Dāvis Bertāns" (proper UTF-8)
-            player_data["full_name_ascii"] = self.clean_unicode_text(raw_full_name)  # ASCII: "Davis Bertans"
+            # Store original and ASCII versions
+            player_data["full_name"] = raw_full_name
+            player_data["full_name_ascii"] = self.clean_unicode_text(raw_full_name)
 
-            # Use ASCII version for parsing (more reliable)
+            # Extract last name and suffix from ASCII version
             ascii_name = player_data["full_name_ascii"]
-            
-            # ENHANCED: Extract last name and suffix from ASCII version
             name_parts = ascii_name.split()
             if name_parts:
-                # Define common suffixes
                 suffixes = ["Jr.", "Sr.", "Jr", "Sr", "II", "III", "IV", "V"]
                 last_part = name_parts[-1]
                 
                 if last_part in suffixes and len(name_parts) > 1:
-                    # Last word is a suffix - use second-to-last as surname
                     player_data["last_name"] = name_parts[-2]
                     player_data["suffix"] = last_part
                 else:
-                    # Last word is the surname
                     player_data["last_name"] = last_part
                     player_data["suffix"] = ""
             
-            # ENHANCED: Add normalized name (now with proper Unicode handling)
+            # Add normalized name
             player_data["normalized"] = self.normalize_name(raw_full_name)
 
-            # Try to extract jersey number
-            for cell in cells[:3]:  # Check first few cells
+            # FIXED: Enhanced jersey number extraction (excludes height measurements)
+            jersey_numbers = []
+            for cell in cells[:4]:  # Check first few cells
                 text = self.safe_extract_text(cell)
-                number_match = re.search(r'\b(\d{1,2})\b', text)
-                if number_match:
-                    player_data["jersey_number"] = number_match.group(1)
-                    break
+                if is_jersey_number_cell(text):
+                    if re.match(r'^\d{1,2}$', text):
+                        # Single jersey number
+                        jersey_numbers.append(text)
+                    elif re.match(r'^\d{1,2}[\s,]+\d{1,2}$', text):
+                        # Multiple jersey numbers with comma/space
+                        numbers = re.findall(r'\d{1,2}', text)
+                        jersey_numbers.extend(numbers)
+                    elif re.match(r'^\d{1,2}/\d{1,2}$', text):
+                        # Multiple jersey numbers with slash
+                        numbers = re.findall(r'\d{1,2}', text)
+                        jersey_numbers.extend(numbers)
+                    
+            if jersey_numbers:
+                # Use the first number as primary
+                player_data["jersey_number"] = jersey_numbers[0]
+                
+                # Store all numbers if multiple (for debugging/reference)
+                if len(jersey_numbers) > 1:
+                    player_data["all_jersey_numbers"] = jersey_numbers
+                    logger.debug("Player %s has multiple jersey numbers: %s", 
+                            raw_full_name, jersey_numbers)
 
             # Extract other fields by position
             cell_texts = [self.safe_extract_text(cell) for cell in cells]
             
-            # Position is usually after name
+            # Position (PG, SG, PF-C, etc.)
             for text in cell_texts:
-                if re.match(r'^[A-Z]{1,3}(-[A-Z]{1,3})?$', text):  # PG, SG, PF-C, etc.
+                if re.match(r'^[A-Z]{1,3}(-[A-Z]{1,3})?$', text):
                     player_data["position"] = text
                     break
 
-            # Height pattern like "6-8" or "6'8\""
+            # Height (6-8 or 6'8")
             for text in cell_texts:
                 if re.match(r'\d+-\d+|\d+\'\d+', text):
                     player_data["height"] = text
                     break
 
-            # Weight (just numbers, usually 180-300 range for NBA)
+            # Weight (180-350 range for NBA)
             for text in cell_texts:
-                if re.match(r'^\d{3}$', text):  # 3-digit weight
+                if re.match(r'^\d{3}$', text):
                     weight_num = int(text)
-                    if 150 <= weight_num <= 350:  # Reasonable NBA weight range
+                    if 150 <= weight_num <= 350:
                         player_data["weight"] = text
                         break
 
@@ -486,6 +551,7 @@ class BasketballRefSeasonRoster(ScraperBase, ScraperFlaskMixin):
 
         except Exception as e:
             logger.warning("Error parsing player row: %s", e)
+            logger.debug("Row cells: %s", [self.safe_extract_text(cell) for cell in cells])
             return {}
 
     def _create_empty_roster(self) -> Dict:

@@ -1,13 +1,13 @@
 # FILE: docker/backfill.Dockerfile
-# 
+#
 # Single parameterized Dockerfile for all NBA backfill jobs
-# Takes job script as build argument - simpler than two-stage approach
+# Takes job script as build argument - matches processor.Dockerfile pattern
 #
 # IMPORTANT: Args Passing for Cloud Run Jobs
 # ==========================================
 # When executing jobs with gcloud, use custom delimiter syntax for comma-separated values:
 #   gcloud run jobs execute JOB_NAME --args="^|^--seasons=2021,2022,2023|--limit=5"
-# 
+#
 # The ^|^ syntax tells gcloud to use | as delimiter instead of comma, preserving commas in values.
 # Without this, gcloud splits on commas causing "unrecognized arguments" errors.
 # See: https://discuss.google.dev/t/gcloud-run-jobs-args-with-comma-delim-values/176982/4
@@ -24,24 +24,27 @@ RUN test -n "$JOB_SCRIPT" || (echo "ERROR: JOB_SCRIPT build arg required" && fal
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies (match processor pattern)
 RUN apt-get update && apt-get install -y \
+    gcc \
+    python3-dev \
     curl \
     jq \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies (comprehensive set for all backfills)
-RUN pip install --no-cache-dir \
-    requests==2.31.0 \
-    google-cloud-storage==2.10.0 \
-    google-cloud-logging==3.8.0 \
-    python-dotenv==1.0.0
+# Copy and install requirements (match processor pattern)
+COPY shared/requirements.txt /app/shared/
+RUN pip install --no-cache-dir -r /app/shared/requirements.txt
 
-# Copy common utilities (needed by some backfills)
-COPY scrapers/__init__.py ./scrapers/
-COPY scrapers/utils/ ./scrapers/utils/
+COPY scrapers/requirements.txt /app/scrapers/
+RUN pip install --no-cache-dir -r /app/scrapers/requirements.txt
 
-# Copy the specific job script
+# Copy all necessary directories (match processor pattern)
+COPY shared/ /app/shared/
+COPY scrapers/ /app/scrapers/
+COPY backfill/ /app/backfill/
+
+# Copy the specific job script to fixed location
 COPY ${JOB_SCRIPT} ./job_script.py
 
 # Set environment variables
@@ -64,4 +67,4 @@ ENTRYPOINT ["python", "job_script.py"]
 LABEL maintainer="NBA Props Platform"
 LABEL description="Parameterized backfill job container"
 LABEL job.name="${JOB_NAME}"
-LABEL version="1.0.0"
+LABEL version="1.2.0"
