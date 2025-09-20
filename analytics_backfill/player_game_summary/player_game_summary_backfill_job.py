@@ -1,27 +1,7 @@
 #!/usr/bin/env python3
 """
-File: analytics_backfill/player_game_summary/player_game_summary_backfill_job.py
-
-Analytics backfill job for player game summary processing.
-Follows processor backfill pattern but works with analytics processors.
-
-Usage Examples:
-=============
-
-1. Deploy Job:
-   ./bin/analytics/deploy/deploy_analytics_processor_backfill.sh player_game_summary
-
-2. Test with Dry Run:
-   gcloud run jobs execute player-game-summary-analytics-backfill --args=--dry-run,--limit=5 --region=us-west2
-
-3. Process Recent Games:
-   gcloud run jobs execute player-game-summary-analytics-backfill --args=--start-date=2024-01-01,--end-date=2024-01-07 --region=us-west2
-
-4. Full Historical Backfill:
-   gcloud run jobs execute player-game-summary-analytics-backfill --args=--start-date=2021-10-01,--end-date=2025-01-01 --region=us-west2
-
-5. Monitor Logs:
-   gcloud beta run jobs executions logs read [execution-id] --region=us-west2 --follow
+Updated backfill job that processes day-by-day instead of in large chunks.
+This fixes the BigQuery 413 error by keeping insertions small and manageable.
 """
 
 import os
@@ -56,9 +36,9 @@ class PlayerGameSummaryBackfill:
             logger.error("End date cannot be in the future") 
             return False
             
-        # Check if range is too large (>6 months)
-        if (end_date - start_date).days > 180:
-            logger.warning(f"Large date range: {(end_date - start_date).days} days. Consider smaller chunks.")
+        # Remove the large range warning since day-by-day processing handles any size
+        total_days = (end_date - start_date).days + 1
+        logger.info(f"Will process {total_days} days from {start_date} to {end_date}")
             
         return True
     
@@ -119,26 +99,22 @@ class PlayerGameSummaryBackfill:
             logger.error(f"Error checking data availability: {e}")
             return {}
     
-    def run_analytics_processing(self, start_date: date, end_date: date, dry_run: bool = False) -> Dict:
-        """Run analytics processing for date range."""
-        logger.info(f"Processing analytics for {start_date} to {end_date}")
+    def run_analytics_processing(self, single_date: date, dry_run: bool = False) -> Dict:
+        """Run analytics processing for a single date."""
+        logger.debug(f"Processing analytics for {single_date}")
         
         if dry_run:
-            logger.info("DRY RUN MODE - checking data availability only")
-            availability = self.check_data_availability(start_date, end_date)
+            logger.info(f"DRY RUN MODE - checking data for {single_date}")
+            # For dry run, still check full range availability
+            availability = self.check_data_availability(single_date, single_date)
             
             total_games = sum(info['games'] for info in availability.values())
-            if total_games == 0:
-                logger.warning("No games found in date range")
-            else:
-                logger.info(f"Would process approximately {total_games} games")
-                
-            return {'status': 'dry_run_complete', 'games_available': total_games}
+            return {'status': 'dry_run_complete', 'games_available': total_games, 'date': single_date.isoformat()}
         
-        # Run actual processing
+        # Run actual processing for single day
         opts = {
-            'start_date': start_date.isoformat(),
-            'end_date': end_date.isoformat(),
+            'start_date': single_date.isoformat(),
+            'end_date': single_date.isoformat(),  # Same day for single-day processing
             'project_id': 'nba-props-platform'
         }
         
@@ -146,72 +122,97 @@ class PlayerGameSummaryBackfill:
         
         result = {
             'status': 'success' if success else 'failed',
-            'start_date': start_date.isoformat(),
-            'end_date': end_date.isoformat(),
-            'processor_stats': self.processor.get_analytics_stats()
+            'date': single_date.isoformat(),
+            'processor_stats': self.processor.get_analytics_stats() if success else {}
         }
         
         return result
     
-    def run_backfill(self, start_date: date, end_date: date, dry_run: bool = False, chunk_days: int = 30):
-        """Run backfill processing with optional chunking for large ranges."""
-        logger.info(f"Starting analytics backfill from {start_date} to {end_date}")
+    def run_backfill(self, start_date: date, end_date: date, dry_run: bool = False):
+        """
+        UPDATED: Run backfill processing day-by-day instead of in chunks.
+        This fixes the BigQuery 413 error by keeping each insertion small.
+        """
+        logger.info(f"Starting day-by-day analytics backfill from {start_date} to {end_date}")
         
         if not self.validate_date_range(start_date, end_date):
             return
         
-        # Check if we need to chunk the processing
-        total_days = (end_date - start_date).days
-        if total_days > chunk_days and not dry_run:
-            logger.info(f"Large range detected ({total_days} days), processing in {chunk_days}-day chunks")
+        # Calculate totals for progress tracking
+        total_days = (end_date - start_date).days + 1
+        current_date = start_date
+        processed_days = 0
+        successful_days = 0
+        failed_days = []
+        total_records = 0
+        
+        logger.info(f"Processing {total_days} days individually (day-by-day approach)")
+        
+        # Process each day individually
+        while current_date <= end_date:
+            day_number = processed_days + 1
             
-            current_start = start_date
-            results = []
+            logger.info(f"Processing day {day_number}/{total_days}: {current_date}")
             
-            while current_start <= end_date:
-                current_end = min(current_start + timedelta(days=chunk_days-1), end_date)
+            try:
+                result = self.run_analytics_processing(current_date, dry_run)
                 
-                logger.info(f"Processing chunk: {current_start} to {current_end}")
-                result = self.run_analytics_processing(current_start, current_end, dry_run)
-                results.append(result)
+                if result['status'] == 'success':
+                    successful_days += 1
+                    day_records = result.get('processor_stats', {}).get('records_processed', 0)
+                    total_records += day_records
+                    logger.info(f"  ✓ Success: {day_records} records processed")
+                    
+                elif result['status'] == 'failed':
+                    failed_days.append(current_date)
+                    logger.error(f"  ✗ Failed: {current_date}")
+                    
+                elif result['status'] == 'dry_run_complete':
+                    games = result.get('games_available', 0)
+                    logger.info(f"  ✓ Dry run: {games} games available")
                 
-                if result['status'] == 'failed':
-                    logger.error(f"Chunk failed: {current_start} to {current_end}")
-                    break
+                processed_days += 1
                 
-                current_start = current_end + timedelta(days=1)
+                # Progress update every 10 days
+                if processed_days % 10 == 0:
+                    success_rate = successful_days / processed_days * 100
+                    logger.info(f"Progress: {processed_days}/{total_days} days ({success_rate:.1f}% success), {total_records} total records")
+                
+            except Exception as e:
+                logger.error(f"Exception processing {current_date}: {e}")
+                failed_days.append(current_date)
+                processed_days += 1
             
-            # Summary
-            successful_chunks = sum(1 for r in results if r['status'] == 'success')
-            total_chunks = len(results)
-            
-            logger.info("=" * 60)
-            logger.info(f"CHUNKED BACKFILL SUMMARY:")
-            logger.info(f"  Successful chunks: {successful_chunks}/{total_chunks}")
-            logger.info(f"  Date range: {start_date} to {end_date}")
-            logger.info("=" * 60)
-            
-        else:
-            # Single processing run
-            result = self.run_analytics_processing(start_date, end_date, dry_run)
-            
-            logger.info("=" * 60)
-            logger.info(f"ANALYTICS PROCESSING SUMMARY:")
-            logger.info(f"  Status: {result['status']}")
-            logger.info(f"  Date range: {start_date} to {end_date}")
-            if 'processor_stats' in result:
-                stats = result['processor_stats']
-                for key, value in stats.items():
-                    logger.info(f"  {key}: {value}")
-            logger.info("=" * 60)
+            # Move to next day
+            current_date += timedelta(days=1)
+        
+        # Final summary
+        logger.info("=" * 80)
+        logger.info(f"DAY-BY-DAY BACKFILL SUMMARY:")
+        logger.info(f"  Date range: {start_date} to {end_date}")
+        logger.info(f"  Total days: {total_days}")
+        logger.info(f"  Successful days: {successful_days}")
+        logger.info(f"  Failed days: {len(failed_days)}")
+        logger.info(f"  Success rate: {successful_days/total_days*100:.1f}%")
+        
+        if not dry_run:
+            logger.info(f"  Total records processed: {total_records}")
+        
+        if failed_days:
+            logger.info(f"  Failed dates: {', '.join(str(d) for d in failed_days[:10])}")
+            if len(failed_days) > 10:
+                logger.info(f"    ... and {len(failed_days) - 10} more")
+            logger.info(f"  To retry failed days, run with specific date ranges")
+        
+        logger.info("=" * 80)
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Analytics backfill for player game summaries')
+    parser = argparse.ArgumentParser(description='Day-by-day analytics backfill for player game summaries')
     parser.add_argument('--start-date', type=str, help='Start date (YYYY-MM-DD)')
     parser.add_argument('--end-date', type=str, help='End date (YYYY-MM-DD)')
     parser.add_argument('--dry-run', action='store_true', help='Check data availability without processing')
-    parser.add_argument('--chunk-days', type=int, default=30, help='Days per processing chunk')
+    # Remove chunk-days parameter since we're always processing day-by-day
     
     args = parser.parse_args()
     
@@ -226,13 +227,13 @@ def main():
     else:
         end_date = date.today() - timedelta(days=1)  # Yesterday
     
-    logger.info(f"Analytics backfill configuration:")
+    logger.info(f"Day-by-day analytics backfill configuration:")
     logger.info(f"  Date range: {start_date} to {end_date}")
     logger.info(f"  Dry run: {args.dry_run}")
-    logger.info(f"  Chunk size: {args.chunk_days} days")
+    logger.info(f"  Processing strategy: Day-by-day (fixes BigQuery size limits)")
     
     backfiller = PlayerGameSummaryBackfill()
-    backfiller.run_backfill(start_date, end_date, dry_run=args.dry_run, chunk_days=args.chunk_days)
+    backfiller.run_backfill(start_date, end_date, dry_run=args.dry_run)
 
 
 if __name__ == "__main__":
