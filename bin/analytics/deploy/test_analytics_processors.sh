@@ -81,7 +81,7 @@ echo "📊 Phase 4: Testing travel distance integration..."
 
 TRAVEL_TEST=$(python3 -c "
 import sys
-sys.path.append('analytics_processors')
+sys.path.append('data_processors/analytics')
 try:
     from utils.travel_utils import quick_distance_lookup
     distance = quick_distance_lookup('LAL', 'BOS')

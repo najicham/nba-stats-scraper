@@ -23,13 +23,13 @@ RUN apt-get update && apt-get install -y \
 COPY shared/requirements.txt /app/shared/
 RUN pip install --no-cache-dir -r /app/shared/requirements.txt
 
-COPY processors/requirements_processors.txt /app/processors/
-RUN pip install --no-cache-dir -r /app/processors/requirements_processors.txt
+COPY data_processors/raw/requirements_processors.txt /app/data_processors/raw/
+RUN pip install --no-cache-dir -r /app/data_processors/raw/requirements_processors.txt
 
 # Copy all code
 COPY shared/ /app/shared/
-COPY processors/ /app/processors/
-COPY processor_backfill/ /app/processor_backfill/
+COPY data_processors/raw/ /app/data_processors/raw/
+COPY backfill_jobs/raw/ /app/backfill_jobs/raw/
 
 # Copy the specific job script to fixed location
 COPY ${JOB_SCRIPT} ./job_script.py

@@ -13,7 +13,7 @@ if [[ -z "$1" ]]; then
     echo "  $0 team_defense_game_log   # Deploy team defense analytics"
     echo ""
     echo "Available analytics jobs:"
-    find analytics_backfill/ -name "job-config.env" 2>/dev/null | sed 's|analytics_backfill/||' | sed 's|/job-config.env||' | sed 's/^/  /' || echo "  No jobs found"
+    find backfill_jobs/analytics/ -name "job-config.env" 2>/dev/null | sed 's|backfill_jobs/analytics/||' | sed 's|/job-config.env||' | sed 's/^/  /' || echo "  No jobs found"
     exit 1
 fi
 
@@ -29,9 +29,9 @@ discover_config_file() {
     fi
     
     local patterns=(
-        "analytics_backfill/${input}/job-config.env"
-        "analytics_backfill/${input/_/-}/job-config.env"  
-        "analytics_backfill/${input//-/_}/job-config.env"
+        "backfill_jobs/analytics/${input}/job-config.env"
+        "backfill_jobs/analytics/${input/_/-}/job-config.env"  
+        "backfill_jobs/analytics/${input//-/_}/job-config.env"
     )
     
     for pattern in "${patterns[@]}"; do
@@ -51,7 +51,7 @@ if [[ -z "$CONFIG_FILE" ]]; then
     echo "❌ Error: Could not find config file for: $JOB_INPUT"
     echo ""
     echo "Available analytics jobs:"
-    find analytics_backfill/ -name "job-config.env" 2>/dev/null | sed 's|analytics_backfill/||' | sed 's|/job-config.env||' | sed 's/^/  /'
+    find backfill_jobs/analytics/ -name "job-config.env" 2>/dev/null | sed 's|backfill_jobs/analytics/||' | sed 's|/job-config.env||' | sed 's/^/  /'
     exit 1
 fi
 
@@ -92,7 +92,7 @@ if [[ ! -f "docker/analytics.Dockerfile" ]]; then
     echo "   Creating based on processor.Dockerfile..."
     
     # Create analytics Dockerfile based on processor pattern
-    sed 's|processor_backfill|analytics_backfill|g' docker/processor.Dockerfile > docker/analytics.Dockerfile
+    sed 's|backfill_jobs/raw|backfill_jobs/analytics|g' docker/processor.Dockerfile > docker/analytics.Dockerfile
 fi
 
 echo "✅ Required files found"

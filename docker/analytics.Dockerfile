@@ -1,7 +1,7 @@
 # FILE: docker/analytics.Dockerfile
 # 
 # Analytics Dockerfile for NBA analytics processor backfill jobs
-# Includes analytics_processors module and all required dependencies
+# Includes data_processors/analytics module and all required dependencies
 #
 # IMPORTANT: Args Passing for Cloud Run Jobs
 # ==========================================
@@ -31,7 +31,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy and install analytics processor requirements first (for compatible versions)
-COPY analytics_processors/requirements.txt /app/analytics_requirements.txt
+COPY data_processors/analytics/requirements.txt /app/analytics_requirements.txt
 RUN pip install --no-cache-dir -r /app/analytics_requirements.txt
 
 # Install additional backfill-specific dependencies
@@ -49,10 +49,10 @@ COPY scrapers/__init__.py ./scrapers/
 COPY scrapers/utils/ ./scrapers/utils/
 
 # Copy analytics processors module (CRITICAL - this was missing initially)
-COPY analytics_processors/ ./analytics_processors/
+COPY data_processors/analytics/ ./data_processors/analytics/
 
 # Copy analytics backfill directory
-COPY analytics_backfill/ ./analytics_backfill/
+COPY backfill_jobs/analytics/ ./backfill_jobs/analytics/
 
 # Copy the specific job script
 COPY ${JOB_SCRIPT} ./job_script.py

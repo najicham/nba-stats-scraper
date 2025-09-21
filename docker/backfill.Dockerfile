@@ -42,7 +42,7 @@ RUN pip install --no-cache-dir -r /app/scrapers/requirements.txt
 # Copy all necessary directories (match processor pattern)
 COPY shared/ /app/shared/
 COPY scrapers/ /app/scrapers/
-COPY backfill/ /app/backfill/
+COPY backfill_jobs/scrapers/ /app/backfill_jobs/scrapers/
 
 # Copy the specific job script to fixed location
 COPY ${JOB_SCRIPT} ./job_script.py

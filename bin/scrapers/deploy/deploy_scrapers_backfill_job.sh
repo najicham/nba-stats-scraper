@@ -1,5 +1,5 @@
 #!/bin/bash
-# FILE: bin/deployment/deploy_backfill_job.sh
+# FILE: bin/scrapers/deploy/deploy_scrapers_backfill_job.sh
 # 
 # Simplified deployment script using single parameterized Dockerfile
 # Auto-discovers config file from job name for cleaner usage
@@ -11,15 +11,15 @@ if [[ -z "$1" ]]; then
     echo "Usage: $0 <job-name-or-config-path>"
     echo ""
     echo "Examples (clean approach):"
-    echo "  $0 bdl_boxscore                    # Auto-finds backfill/bdl_boxscore/job-config.env"
+    echo "  $0 bdl_boxscore                    # Auto-finds backfill_jobs/scrapers/bdl_boxscore/job-config.env"
     echo "  $0 bdl-boxscore-backfill          # Auto-finds based on job name"
-    echo "  $0 nbac_gamebook                  # Auto-finds backfill/nbac_gamebook/job-config.env"
+    echo "  $0 nbac_gamebook                  # Auto-finds backfill_jobs/scrapers/nbac_gamebook/job-config.env"
     echo ""
     echo "Examples (explicit path - still supported):"
-    echo "  $0 backfill/bdl_boxscore/job-config.env"
+    echo "  $0 backfill_jobs/scrapers/bdl_boxscore/job-config.env"
     echo ""
     echo "Available jobs:"
-    find backfill/ -name "job-config.env" 2>/dev/null | sed 's|backfill/||' | sed 's|/job-config.env||' | sed 's/^/  /' || echo "  No jobs found yet"
+    find backfill_jobs/scrapers/ -name "job-config.env" 2>/dev/null | sed 's|backfill_jobs/scrapers/||' | sed 's|/job-config.env||' | sed 's/^/  /' || echo "  No jobs found yet"
     exit 1
 fi
 
@@ -40,11 +40,11 @@ discover_config_file() {
     
     # Try various patterns to find the config
     local patterns=(
-        "backfill/${input}/job-config.env"                    # bdl_boxscore → backfill/bdl_boxscore/job-config.env
-        "backfill/${input/_/-}/job-config.env"                # bdl_boxscore → backfill/bdl-boxscore/job-config.env  
-        "backfill/${input//-/_}/job-config.env"               # bdl-boxscore → backfill/bdl_boxscore/job-config.env
-        "backfill/${input%-backfill}/job-config.env"          # bdl-boxscore-backfill → backfill/bdl-boxscore/job-config.env
-        "backfill/${input%-backfill}/job-config.env"          # bdl_boxscore_backfill → backfill/bdl_boxscore/job-config.env
+        "backfill_jobs/scrapers/${input}/job-config.env"                    # bdl_boxscore → backfill_jobs/scrapers/bdl_boxscore/job-config.env
+        "backfill_jobs/scrapers/${input/_/-}/job-config.env"                # bdl_boxscore → backfill_jobs/scrapers/bdl-boxscore/job-config.env  
+        "backfill_jobs/scrapers/${input//-/_}/job-config.env"               # bdl-boxscore → backfill_jobs/scrapers/bdl_boxscore/job-config.env
+        "backfill_jobs/scrapers/${input%-backfill}/job-config.env"          # bdl-boxscore-backfill → backfill_jobs/scrapers/bdl-boxscore/job-config.env
+        "backfill_jobs/scrapers/${input%-backfill}/job-config.env"          # bdl_boxscore_backfill → backfill_jobs/scrapers/bdl_boxscore/job-config.env
     )
     
     for pattern in "${patterns[@]}"; do
@@ -65,15 +65,15 @@ if [[ -z "$CONFIG_FILE" ]]; then
     echo "❌ Error: Could not find config file for: $JOB_INPUT"
     echo ""
     echo "Tried looking for:"
-    echo "  backfill/${JOB_INPUT}/job-config.env"
-    echo "  backfill/${JOB_INPUT/_/-}/job-config.env"
-    echo "  backfill/${JOB_INPUT//-/_}/job-config.env"
+    echo "  backfill_jobs/scrapers/${JOB_INPUT}/job-config.env"
+    echo "  backfill_jobs/scrapers/${JOB_INPUT/_/-}/job-config.env"
+    echo "  backfill_jobs/scrapers/${JOB_INPUT//-/_}/job-config.env"
     echo ""
     echo "Available jobs:"
-    find backfill/ -name "job-config.env" 2>/dev/null | sed 's|backfill/||' | sed 's|/job-config.env||' | sed 's/^/  /' || echo "  No jobs found yet"
+    find backfill_jobs/scrapers/ -name "job-config.env" 2>/dev/null | sed 's|backfill_jobs/scrapers/||' | sed 's|/job-config.env||' | sed 's/^/  /' || echo "  No jobs found yet"
     echo ""
     echo "💡 Create the config file or use explicit path:"
-    echo "   $0 backfill/your-job/job-config.env"
+    echo "   $0 backfill_jobs/scrapers/your-job/job-config.env"
     exit 1
 fi
 
@@ -101,7 +101,7 @@ REGION="${REGION:-us-west2}"
 PROJECT_ID="${PROJECT_ID:-nba-props-platform}"
 SERVICE_URL="${SERVICE_URL:-https://nba-scrapers-f7p3g7f6ya-wl.a.run.app}"
 
-echo "🏀 Deploying Backfill Job: $JOB_NAME"
+echo "🏀 Deploying Scraper Backfill Job: $JOB_NAME"
 echo "=============================================="
 echo "Script: $JOB_SCRIPT"
 echo "Description: $JOB_DESCRIPTION"
@@ -191,10 +191,10 @@ echo "🚀 To start the full backfill:"
 echo "   gcloud run jobs execute $JOB_NAME --region=$REGION"
 echo ""
 echo "📊 To monitor progress:"
-echo "   ./bin/backfill/$(echo $JOB_NAME | tr '-' '_')_monitor.sh"
+echo "   ./bin/scrapers/monitoring/$(echo $JOB_NAME | tr '-' '_')_monitor.sh"
 echo ""
 echo "🔍 To validate data:"
-echo "   ./bin/validation/validate_$(echo $JOB_NAME | tr '-' '_').sh recent 5"
+echo "   ./bin/scrapers/validation/validate_$(echo $JOB_NAME | tr '-' '_').sh recent 5"
 echo ""
 echo "🎯 Next time, deploy even faster:"
 echo "   $0 $(basename "$(dirname "$CONFIG_FILE")")"

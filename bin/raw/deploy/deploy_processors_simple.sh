@@ -1,21 +1,30 @@
 #!/bin/bash
-# File: bin/analytics/deploy/deploy_analytics_processors.sh
-# Deploy analytics processor service to Cloud Run (similar to regular processors)
+# deploy_processors_simple.sh - Deploy raw processor service to Cloud Run
+#
+# Similar to deploy_scrapers_simple.sh but for raw data processors
+#
+# WHAT THIS DOES:
+# 1. Copies data_processors/raw/Dockerfile to root temporarily
+# 2. Deploys using `gcloud run deploy --source=.` 
+# 3. Cleans up temporary Dockerfile
+# 4. Tests the health endpoint
+#
+# USAGE: ./bin/raw/deploy/deploy_processors_simple.sh
 
-SERVICE_NAME="nba-analytics-processors"
+SERVICE_NAME="nba-processors"  # Consider "nba-raw-processors" for clarity
 REGION="us-west2"
 
-# Start timing (matching your regular processors pattern)
+# Start timing
 DEPLOY_START_TIME=$(date +%s)
 DEPLOY_START_DISPLAY=$(date '+%Y-%m-%d %H:%M:%S')
 
-echo "🏀 Deploying NBA Analytics Processors Service"
-echo "============================================="
+echo "🚀 Deploying NBA Raw Processors Service"
+echo "========================================"
 echo "⏰ Start time: $DEPLOY_START_DISPLAY"
 
-# Check if analytics processors Dockerfile exists
-if [ ! -f "data_processors/analytics/Dockerfile" ]; then
-    echo "❌ data_processors/analytics/Dockerfile not found!"
+# Check if data_processors/raw/Dockerfile exists
+if [ ! -f "data_processors/raw/Dockerfile" ]; then
+    echo "❌ data_processors/raw/Dockerfile not found!"
     exit 1
 fi
 
@@ -25,10 +34,10 @@ if [ -f "Dockerfile" ]; then
     mv Dockerfile Dockerfile.backup.$(date +%s)
 fi
 
-# Phase 1: Setup (matching your timing pattern)
+# Phase 1: Setup
 SETUP_START=$(date +%s)
-echo "📋 Phase 1: Copying data_processors/analytics/Dockerfile to root..."
-cp data_processors/analytics/Dockerfile ./Dockerfile
+echo "📋 Phase 1: Copying data_processors/raw/Dockerfile to root..."
+cp data_processors/raw/Dockerfile ./Dockerfile
 SETUP_END=$(date +%s)
 SETUP_DURATION=$((SETUP_END - SETUP_START))
 echo "⏱️  Setup completed in ${SETUP_DURATION}s"
@@ -42,12 +51,12 @@ gcloud run deploy $SERVICE_NAME \
     --platform=managed \
     --no-allow-unauthenticated \
     --port=8080 \
-    --memory=8Gi \
-    --cpu=4 \
-    --timeout=3600 \
-    --concurrency=1 \
+    --memory=2Gi \
+    --cpu=1 \
+    --timeout=540 \
+    --concurrency=20 \
     --min-instances=0 \
-    --max-instances=5 \
+    --max-instances=10 \
     --set-env-vars="GCP_PROJECT_ID=nba-props-platform"
 
 DEPLOY_STATUS=$?
@@ -63,12 +72,12 @@ CLEANUP_END=$(date +%s)
 CLEANUP_DURATION=$((CLEANUP_END - CLEANUP_START))
 echo "⏱️  Cleanup completed in ${CLEANUP_DURATION}s"
 
-# Calculate total time (matching your pattern)
+# Calculate total time
 DEPLOY_END_TIME=$(date +%s)
 TOTAL_DURATION=$((DEPLOY_END_TIME - DEPLOY_START_TIME))
 DEPLOY_END_DISPLAY=$(date '+%Y-%m-%d %H:%M:%S')
 
-# Format duration nicely (same as your regular processors)
+# Format duration nicely
 if [ $TOTAL_DURATION -lt 60 ]; then
     DURATION_DISPLAY="${TOTAL_DURATION}s"
 elif [ $TOTAL_DURATION -lt 3600 ]; then
@@ -100,7 +109,7 @@ if [ $DEPLOY_STATUS -eq 0 ]; then
     echo ""
     echo "✅ Deployment completed successfully in $DURATION_DISPLAY!"
     
-    # Phase 4: Testing (enhanced to match your health check pattern)
+    # Phase 4: Testing
     TEST_START=$(date +%s)
     echo "📋 Phase 4: Testing health endpoint..."
     sleep 3
@@ -109,7 +118,7 @@ if [ $DEPLOY_STATUS -eq 0 ]; then
     if [ ! -z "$SERVICE_URL" ]; then
         echo "🔗 Service URL: $SERVICE_URL"
         
-        # Test health endpoint first (consistent with regular processors)
+        # Test health endpoint
         HEALTH_RESPONSE=$(curl -s -X GET "$SERVICE_URL/health" \
             -H "Authorization: Bearer $(gcloud auth print-identity-token)" 2>/dev/null)
         
@@ -141,27 +150,27 @@ if [ $DEPLOY_STATUS -eq 0 ]; then
         
         echo "🎯 TOTAL TIME (including test): $FINAL_DURATION_DISPLAY"
         
-        # Instructions for analytics processing (instead of Pub/Sub)
+        # Instructions for Pub/Sub setup
         echo ""
-        echo "📝 Next Steps - Analytics Processing Commands:"
-        echo "============================================="
-        echo "1. Manual analytics run (single date range):"
-        echo "   curl -X POST \"$SERVICE_URL/process-analytics\" \\"
-        echo "     -H \"Authorization: Bearer \$(gcloud auth print-identity-token)\" \\"
-        echo "     -H \"Content-Type: application/json\" \\"
-        echo "     -d '{\"processor\": \"player_game_summary\", \"start_date\": \"2024-01-01\", \"end_date\": \"2024-01-07\"}'"
+        echo "📝 Next Steps - Set up Pub/Sub:"
+        echo "================================"
+        echo "1. Create Pub/Sub topic (if not exists):"
+        echo "   gcloud pubsub topics create gcs-processor-files --project=nba-props-platform"
         echo ""
-        echo "2. Team offense analytics:"
-        echo "   curl -X POST \"$SERVICE_URL/process-analytics\" \\"
-        echo "     -H \"Authorization: Bearer \$(gcloud auth print-identity-token)\" \\"
-        echo "     -H \"Content-Type: application/json\" \\"
-        echo "     -d '{\"processor\": \"team_offense_game_summary\", \"start_date\": \"2024-01-01\", \"end_date\": \"2024-01-07\"}'"
+        echo "2. Create push subscription:"
+        echo "   gcloud pubsub subscriptions create gcs-to-processors \\"
+        echo "     --topic=gcs-processor-files \\"
+        echo "     --push-endpoint=\"${SERVICE_URL}/process\" \\"
+        echo "     --push-auth-service-account=\"scrapers@nba-props-platform.iam.gserviceaccount.com\" \\"
+        echo "     --project=nba-props-platform"
         echo ""
-        echo "3. Team defense analytics:"
-        echo "   curl -X POST \"$SERVICE_URL/process-analytics\" \\"
-        echo "     -H \"Authorization: Bearer \$(gcloud auth print-identity-token)\" \\"
-        echo "     -H \"Content-Type: application/json\" \\"
-        echo "     -d '{\"processor\": \"team_defense_game_summary\", \"start_date\": \"2024-01-01\", \"end_date\": \"2024-01-07\"}'"
+        echo "3. Set up GCS notifications:"
+        echo "   gsutil notification create \\"
+        echo "     -t gcs-processor-files \\"
+        echo "     -f json \\"
+        echo "     -e OBJECT_FINALIZE \\"
+        echo "     -p basketball_reference/ \\"
+        echo "     gs://nba-scraped-data"
     fi
 else
     echo ""
