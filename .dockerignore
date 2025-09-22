@@ -1,10 +1,21 @@
 # Exclude from Docker builds for maximum speed
 .git/
 .env
+
+# CRITICAL: Exclude virtual environment (likely huge)
+.venv/
+venv/
+env/
+
+# Python cache files (catch all variants)
 __pycache__/
+**/__pycache__/
 *.pyc
 *.pyo
 *.pyd
+*.egg-info/
+
+# Testing and development
 .pytest_cache/
 tests/
 docs/
@@ -28,3 +39,32 @@ workflows/
 # Test data
 tests/samples/
 tests/fixtures/
+
+# Additional exclusions for smaller context
+*.sqlite
+*.sqlite3
+*.db
+.coverage
+htmlcov/
+.tox/
+.cache/
+.mypy_cache/
+.ruff_cache/
+dist/
+build/
+*.egg-info/
+
+# Large data files that might be in your project
+*.csv
+*.json
+*.parquet
+*.pkl
+*.pickle
+zcsv/
+
+# Logs and temporary files
+*.tmp
+*.temp
+temp/
+tmp/
+logs/

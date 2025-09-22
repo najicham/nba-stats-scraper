@@ -1,23 +1,17 @@
 #!/usr/bin/env python3
 """
-File: processors/nba_reference/nba_players_registry_processor.py
+File: data_processors/reference/player_reference/nba_players_registry_processor.py
 
-NBA Players Registry Backfill Processor
+NBA Players Registry Processor
 
 Builds the NBA players registry from existing NBA.com gamebook data.
 This processor reads from the processed gamebook table and creates the
 authoritative player registry for name resolution.
 
-Key Features:
-- Processes historical gamebook data to build player registry
-- Calculates game participation statistics
-- Handles multi-team seasons (trades)
-- Integrates with existing roster data for jersey numbers/positions
-- Provides comprehensive audit trail
-
-Usage:
-- Backfill: Use the backfill job to process all historical data
-- Incremental: Triggered after gamebook processing to update registry
+Three Usage Scenarios:
+1. Historical backfill: Process 4 years of gamebook data
+2. Nightly updates: Triggered after gamebook processing completes
+3. Roster updates: Triggered after morning roster scraping
 """
 
 import json
@@ -29,15 +23,12 @@ from typing import Dict, List, Tuple, Optional
 from collections import defaultdict
 import pandas as pd
 from google.cloud import bigquery
+import pandas as pd
+import numpy as np
+from typing import Dict, Any
 
-# Support both module execution and direct execution
-try:
-    from ..processor_base import ProcessorBase
-except ImportError:
-    import sys
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
-    from processors.processor_base import ProcessorBase
-
+# Fixed import path for new structure
+from data_processors.raw.processor_base import ProcessorBase
 from shared.utils.player_name_normalizer import normalize_name_for_lookup
 
 logger = logging.getLogger(__name__)
@@ -78,17 +69,7 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
     def get_gamebook_player_data(self, season_filter: str = None, 
                                team_filter: str = None, 
                                date_range: Tuple[str, str] = None) -> pd.DataFrame:
-        """
-        Extract player data from processed gamebook table.
-        
-        Args:
-            season_filter: Optional season filter ("2023-24")
-            team_filter: Optional team filter ("LAL")
-            date_range: Optional date range tuple (start_date, end_date)
-            
-        Returns:
-            DataFrame with player participation data
-        """
+        """Extract player data from processed gamebook table."""
         logger.info("Querying gamebook data for registry building...")
         
         # Build the query
@@ -148,15 +129,7 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
             raise e
     
     def get_roster_enhancement_data(self, season_filter: str = None) -> Dict[Tuple[str, str], Dict]:
-        """
-        Get jersey numbers and positions from roster data to enhance registry.
-        
-        Args:
-            season_filter: Optional season filter
-            
-        Returns:
-            Dict mapping (team, player_lookup) -> {jersey_number, position}
-        """
+        """Get jersey numbers and positions from roster data to enhance registry."""
         logger.info("Loading roster enhancement data...")
         
         try:
@@ -205,15 +178,7 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
         return f"{season_year}-{str(season_year + 1)[-2:]}"
     
     def aggregate_player_stats(self, gamebook_df: pd.DataFrame) -> List[Dict]:
-        """
-        Aggregate gamebook data into registry records.
-        
-        Args:
-            gamebook_df: Raw gamebook data
-            
-        Returns:
-            List of registry records ready for BigQuery
-        """
+        """Aggregate gamebook data into registry records."""
         logger.info("Aggregating player statistics for registry...")
         
         # Get roster enhancement data
@@ -260,27 +225,30 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
             enhancement_key = (team_abbr, player_lookup)
             enhancement = enhancement_data.get(enhancement_key, {})
             
-            # Create registry record
+            # Create registry record - FIXED: Keep dates as date objects, not strings
             record = {
                 'player_name': player_name,
                 'player_lookup': player_lookup,
                 'team_abbr': team_abbr,
                 'season': season_str,
-                'first_game_date': first_game.isoformat(),
-                'last_game_date': last_game.isoformat(),
+                'first_game_date': first_game,                    # Keep as date object
+                'last_game_date': last_game,                      # Keep as date object
                 'games_played': active_games,  # Only count active games
                 'total_appearances': total_appearances,  # All appearances including inactive/dnp
                 'inactive_appearances': inactive_games,
                 'dnp_appearances': dnp_games,
                 'jersey_number': enhancement.get('jersey_number'),
                 'position': enhancement.get('position'),
-                'last_roster_update': date.today().isoformat() if enhancement else None,
+                'last_roster_update': date.today() if enhancement else None,  # Keep as date object
                 'source_priority': source_priority,
                 'confidence_score': confidence_score,
-                'created_date': date.today().isoformat(),
-                'updated_date': date.today().isoformat(),
+                'created_date': date.today(),                     # Keep as date object
+                'updated_date': date.today(),                     # Keep as date object
                 'created_by': self.processing_run_id
             }
+            
+            # Convert numpy/pandas types to native Python types for BigQuery
+            record = self._convert_pandas_types_for_json(record)
             
             registry_records.append(record)
             
@@ -291,6 +259,67 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
         
         logger.info(f"Created {len(registry_records)} registry records")
         return registry_records
+
+    def _convert_pandas_types_for_json(self, record: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Convert pandas/numpy types to BigQuery-compatible types.
+        """
+        converted_record = {}
+        
+        # Define fields that should be integers (even if they come as strings)
+        integer_fields = {'games_played', 'total_appearances', 'inactive_appearances', 
+                        'dnp_appearances', 'jersey_number'}
+        
+        for key, value in record.items():
+            # Handle NaN/None values first
+            if pd.isna(value):
+                converted_record[key] = None
+            
+            # Handle numpy scalars
+            elif hasattr(value, 'item'):  
+                converted_record[key] = value.item()
+            
+            # Handle dates - convert to strings for BigQuery
+            elif isinstance(value, (pd.Timestamp, datetime)):
+                if pd.notna(value):
+                    converted_record[key] = value.date().isoformat()
+                else:
+                    converted_record[key] = None
+            
+            # Handle date objects - convert to strings for BigQuery
+            elif isinstance(value, date):
+                converted_record[key] = value.isoformat()
+            
+            # Handle string values that should be integers (like jersey_number)
+            elif key in integer_fields and isinstance(value, str):
+                try:
+                    # Convert string numbers to integers
+                    converted_record[key] = int(value) if value.strip() else None
+                except (ValueError, AttributeError):
+                    converted_record[key] = None
+            
+            # Handle numpy/pandas integer types
+            elif isinstance(value, (np.integer, int)) or (hasattr(value, 'dtype') and np.issubdtype(value.dtype, np.integer)):
+                converted_record[key] = int(value)
+            
+            # Handle numpy/pandas float types  
+            elif isinstance(value, (np.floating, float)) or (hasattr(value, 'dtype') and np.issubdtype(value.dtype, np.floating)):
+                converted_record[key] = float(value)
+            
+            # Handle numpy/pandas boolean types
+            elif isinstance(value, (np.bool_, bool)) or (hasattr(value, 'dtype') and np.issubdtype(value.dtype, np.bool_)):
+                converted_record[key] = bool(value)
+            
+            # Handle pandas Series scalars (common with .get() operations)
+            elif isinstance(value, pd.Series) and len(value) == 1:
+                scalar_value = value.iloc[0]
+                converted_record[key] = self._convert_pandas_types_for_json({'temp': scalar_value})['temp']
+            
+            # Handle regular Python types (pass through)
+            else:
+                converted_record[key] = value
+        
+        return converted_record
     
     def validate_data(self, data: Dict) -> List[str]:
         """Validate registry data structure."""
@@ -335,67 +364,218 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
         return registry_records
     
     def load_data(self, rows: List[Dict], **kwargs) -> Dict:
-        """Load registry data to BigQuery."""
+        """Load registry data to BigQuery with debug logging and better error handling."""
         if not rows:
+            logger.info("No records to insert")
             return {'rows_processed': 0, 'errors': []}
+        
+        # Debug: Log the first record to see exact format
+        logger.info(f"Sample record being sent to BigQuery:")
+        logger.info(f"Record keys: {list(rows[0].keys())}")
+        logger.info(f"Sample record: {json.dumps(rows[0], indent=2, default=str)}")
+        
+        # Validate required fields
+        required_fields = ['player_name', 'player_lookup', 'team_abbr', 'season', 'created_date', 'updated_date', 'created_by']
+        for field in required_fields:
+            if field not in rows[0]:
+                logger.error(f"Missing required field: {field}")
+                return {'rows_processed': 0, 'errors': [f'Missing required field: {field}']}
         
         table_id = f"{self.project_id}.{self.table_name}"
         errors = []
+        total_inserted = 0
         
         try:
             if self.processing_strategy == 'MERGE_UPDATE':
-                # For registry updates, we typically replace data for specific seasons
-                seasons_to_update = set(row['season'] for row in rows)
-                teams_to_update = set(row['team_abbr'] for row in rows)
+                # Get date range from the rows being inserted
+                dates_to_update = set()
+                for row in rows:
+                    if 'first_game_date' in row and row['first_game_date']:
+                        dates_to_update.add(row['first_game_date'])
+                    if 'last_game_date' in row and row['last_game_date']:
+                        dates_to_update.add(row['last_game_date'])
                 
-                logger.info(f"Updating registry for seasons: {seasons_to_update}")
-                logger.info(f"Updating registry for teams: {teams_to_update}")
-                
-                # Delete existing data for these seasons/teams
-                for season in seasons_to_update:
+                if dates_to_update:
+                    min_date = min(dates_to_update)
+                    max_date = max(dates_to_update)
+                    
                     delete_query = f"""
                     DELETE FROM `{table_id}`
-                    WHERE season = '{season}'
+                    WHERE first_game_date BETWEEN '{min_date}' AND '{max_date}'
+                    OR last_game_date BETWEEN '{min_date}' AND '{max_date}'
                     """
                     
-                    # If we're updating specific teams, be more targeted
-                    if len(teams_to_update) < 30:  # Assume full season update if many teams
-                        team_list = "', '".join(teams_to_update)
-                        delete_query += f" AND team_abbr IN ('{team_list}')"
-                    
                     self.bq_client.query(delete_query).result()
-                    logger.info(f"Deleted existing registry data for season {season}")
+                    logger.info(f"Deleted existing registry data for date range {min_date} to {max_date}")
             
-            # Insert new data
-            result = self.bq_client.insert_rows_json(table_id, rows)
-            if result:
-                errors.extend([str(e) for e in result])
-                logger.error(f"BigQuery insert errors: {errors}")
-            else:
-                logger.info(f"Successfully inserted {len(rows)} registry records")
-                self.stats['records_created'] = len(rows)
+            # Insert in smaller batches to isolate issues
+            batch_size = 10  # Start small
+            total_errors = 0
+            
+            for i in range(0, len(rows), batch_size):
+                batch = rows[i:i + batch_size]
+                logger.info(f"Inserting batch {i//batch_size + 1}: records {i+1}-{min(i+batch_size, len(rows))}")
+                
+                result = self.bq_client.insert_rows_json(table_id, batch)
+                
+                if result:
+                    logger.error(f"Batch {i//batch_size + 1} errors: {result}")
+                    total_errors += len(result)
+                    errors.extend([str(e) for e in result])
+                    
+                    # Log the first few problematic records
+                    for j, error in enumerate(result[:3]):
+                        if j < len(batch):
+                            logger.error(f"Problematic record {i+j+1}: {json.dumps(batch[j], indent=2, default=str)}")
+                else:
+                    logger.info(f"Batch {i//batch_size + 1} inserted successfully")
+                    total_inserted += len(batch)
+            
+            logger.info(f"Insertion complete. Success: {total_inserted}, Errors: {total_errors}, Total: {len(rows)}")
+            
+            if total_inserted > 0:
+                self.stats['records_created'] = total_inserted
                 
         except Exception as e:
             error_msg = str(e)
             errors.append(error_msg)
             logger.error(f"Error loading registry data: {error_msg}")
+            logger.error(f"Sample record that failed: {json.dumps(rows[0], indent=2, default=str)}")
         
         return {
-            'rows_processed': len(rows) if not errors else 0,
+            'rows_processed': total_inserted,
             'errors': errors
         }
     
-    def build_registry_for_season(self, season: str, team: str = None) -> Dict:
+    # NEW: Methods for the 3 specific use cases
+    
+    def build_historical_registry(self, seasons: List[str] = None) -> Dict:
         """
-        Build registry for a specific season.
+        Scenario 1: Build registry from 4 years of historical data.
         
         Args:
-            season: Season string ("2023-24")
-            team: Optional team filter
+            seasons: Optional list of seasons to process, defaults to all available
             
         Returns:
             Processing result summary
         """
+        logger.info("Starting historical registry build")
+        
+        if not seasons:
+            # Get all available seasons from gamebook data
+            seasons_query = f"""
+                SELECT DISTINCT season_year
+                FROM `{self.project_id}.nba_raw.nbac_gamebook_player_stats`
+                WHERE season_year IS NOT NULL
+                ORDER BY season_year DESC
+            """
+            
+            seasons_df = self.bq_client.query(seasons_query).to_dataframe()
+            seasons = [f"{int(row['season_year'])}-{str(int(row['season_year']) + 1)[-2:]}" 
+                      for _, row in seasons_df.iterrows()]
+        
+        logger.info(f"Building historical registry for seasons: {seasons}")
+        
+        total_results = []
+        for season in seasons:
+            logger.info(f"Processing season {season}")
+            result = self.build_registry_for_season(season)
+            total_results.append(result)
+        
+        # Summary
+        total_records = sum(r.get('records_processed', 0) for r in total_results)
+        total_errors = sum(len(r.get('errors', [])) for r in total_results)
+        
+        return {
+            'scenario': 'historical_backfill',
+            'seasons_processed': seasons,
+            'total_records_processed': total_records,
+            'total_errors': total_errors,
+            'individual_results': total_results,
+            'processing_run_id': self.processing_run_id
+        }
+    
+    def update_registry_from_gamebook(self, game_date: str, season: str) -> Dict:
+        """
+        Scenario 2: Nightly update after gamebook processing.
+        
+        Args:
+            game_date: Date of games processed (YYYY-MM-DD)
+            season: Season string ("2024-25")
+            
+        Returns:
+            Processing result summary
+        """
+        logger.info(f"Updating registry from gamebook data for {game_date}, season {season}")
+        
+        # Use date range approach for recent games
+        filter_data = {
+            'season_filter': season,
+            'date_range': (game_date, game_date)
+        }
+        
+        # Transform and load
+        rows = self.transform_data(filter_data)
+        result = self.load_data(rows)
+        
+        return {
+            'scenario': 'nightly_gamebook_update',
+            'game_date': game_date,
+            'season': season,
+            'records_processed': result['rows_processed'],
+            'errors': result.get('errors', []),
+            'processing_run_id': self.processing_run_id
+        }
+    
+    def update_registry_from_rosters(self, season: str, teams: List[str] = None) -> Dict:
+        """
+        Scenario 3: Morning update after roster scraping.
+        
+        Args:
+            season: Current season ("2024-25")
+            teams: Optional list of teams to update, defaults to all
+            
+        Returns:
+            Processing result summary
+        """
+        logger.info(f"Updating registry from roster data for season {season}")
+        
+        if teams:
+            # Update specific teams
+            total_results = []
+            for team in teams:
+                filter_data = {
+                    'season_filter': season,
+                    'team_filter': team
+                }
+                rows = self.transform_data(filter_data)
+                result = self.load_data(rows)
+                total_results.append({
+                    'team': team,
+                    'records_processed': result['rows_processed'],
+                    'errors': result.get('errors', [])
+                })
+            
+            total_records = sum(r['records_processed'] for r in total_results)
+            total_errors = sum(len(r['errors']) for r in total_results)
+            
+            return {
+                'scenario': 'morning_roster_update',
+                'season': season,
+                'teams_updated': teams,
+                'total_records_processed': total_records,
+                'total_errors': total_errors,
+                'team_results': total_results,
+                'processing_run_id': self.processing_run_id
+            }
+        else:
+            # Update entire season
+            result = self.build_registry_for_season(season)
+            result['scenario'] = 'morning_roster_update'
+            return result
+    
+    def build_registry_for_season(self, season: str, team: str = None) -> Dict:
+        """Build registry for a specific season."""
         logger.info(f"Building registry for season {season}" + (f", team {team}" if team else ""))
         
         # Create filter data
@@ -426,16 +606,7 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
         }
     
     def build_registry_for_date_range(self, start_date: str, end_date: str) -> Dict:
-        """
-        Build registry for a specific date range.
-        
-        Args:
-            start_date: Start date (YYYY-MM-DD)
-            end_date: End date (YYYY-MM-DD)
-            
-        Returns:
-            Processing result summary
-        """
+        """Build registry for a specific date range across seasons."""
         logger.info(f"Building registry for date range {start_date} to {end_date}")
         
         # Create filter data
@@ -447,18 +618,25 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
         rows = self.transform_data(filter_data)
         result = self.load_data(rows)
         
+        # Determine which seasons were covered
+        seasons_processed = set()
+        if rows:
+            for row in rows:
+                seasons_processed.add(row['season'])
+        
         # Log summary
         logger.info(f"Registry build complete for {start_date} to {end_date}:")
         logger.info(f"  Records processed: {result['rows_processed']}")
         logger.info(f"  Players: {self.stats['players_processed']}")
-        logger.info(f"  Seasons: {len(self.stats['seasons_processed'])}")
+        logger.info(f"  Seasons covered: {len(seasons_processed)}")
         logger.info(f"  Teams: {len(self.stats['teams_processed'])}")
+        logger.info(f"  Errors: {len(result.get('errors', []))}")
         
         return {
             'date_range': (start_date, end_date),
             'records_processed': result['rows_processed'],
             'players_processed': self.stats['players_processed'],
-            'seasons_processed': list(self.stats['seasons_processed']),
+            'seasons_processed': list(seasons_processed),
             'teams_processed': list(self.stats['teams_processed']),
             'errors': result.get('errors', []),
             'processing_run_id': self.processing_run_id
@@ -509,16 +687,22 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
 
 
 # Convenience functions for direct usage
-def build_registry_for_season(season: str, team: str = None) -> Dict:
-    """Convenience function to build registry for a season."""
+def build_historical_registry(seasons: List[str] = None) -> Dict:
+    """Convenience function for 4-year backfill."""
     processor = NbaPlayersRegistryProcessor()
-    return processor.build_registry_for_season(season, team)
+    return processor.build_historical_registry(seasons)
 
 
-def build_registry_for_date_range(start_date: str, end_date: str) -> Dict:
-    """Convenience function to build registry for date range."""
+def update_registry_from_gamebook(game_date: str, season: str) -> Dict:
+    """Convenience function for nightly updates."""
     processor = NbaPlayersRegistryProcessor()
-    return processor.build_registry_for_date_range(start_date, end_date)
+    return processor.update_registry_from_gamebook(game_date, season)
+
+
+def update_registry_from_rosters(season: str, teams: List[str] = None) -> Dict:
+    """Convenience function for morning roster updates."""
+    processor = NbaPlayersRegistryProcessor()
+    return processor.update_registry_from_rosters(season, teams)
 
 
 def get_registry_summary() -> Dict:

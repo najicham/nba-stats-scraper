@@ -36,7 +36,8 @@ from typing import Dict, List
 # Add parent directories to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
-from processors.nba_reference.nba_players_registry_processor import NbaPlayersRegistryProcessor
+from data_processors.reference.player_reference.nba_players_registry_processor import NbaPlayersRegistryProcessor
+
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -205,19 +206,36 @@ class NbaPlayersRegistryBackfill:
                 logging.error(f"Error getting summary: {summary['error']}")
                 return summary
             
+            # Handle None values AND pandas NaN/NaT for empty registry
+            import pandas as pd
+            
+            total_records = summary.get('total_records', 0) or 0
+            unique_players = summary.get('unique_players', 0) or 0
+            seasons_covered = summary.get('seasons_covered', 0) or 0
+            teams_covered = summary.get('teams_covered', 0) or 0
+            total_games = summary.get('total_games_played', 0) or 0
+            
+            # Handle NaN for average games
+            avg_games_raw = summary.get('avg_games_per_record', 0)
+            avg_games = 0.0 if pd.isna(avg_games_raw) else (avg_games_raw or 0.0)
+            
+            # Handle NaT for last updated
+            last_updated_raw = summary.get('last_updated')
+            last_updated = 'Never' if pd.isna(last_updated_raw) else (last_updated_raw or 'Never')
+            
             # Print summary
             logging.info("=" * 60)
             logging.info("NBA PLAYERS REGISTRY SUMMARY:")
-            logging.info(f"  Total Records: {summary['total_records']:,}")
-            logging.info(f"  Unique Players: {summary['unique_players']:,}")
-            logging.info(f"  Seasons Covered: {summary['seasons_covered']}")
-            logging.info(f"  Teams Covered: {summary['teams_covered']}")
-            logging.info(f"  Total Games: {summary['total_games_played']:,}")
-            logging.info(f"  Avg Games/Record: {summary['avg_games_per_record']:.1f}")
-            logging.info(f"  Last Updated: {summary['last_updated']}")
+            logging.info(f"  Total Records: {total_records:,}")
+            logging.info(f"  Unique Players: {unique_players:,}")
+            logging.info(f"  Seasons Covered: {seasons_covered}")
+            logging.info(f"  Teams Covered: {teams_covered}")
+            logging.info(f"  Total Games: {total_games:,}")
+            logging.info(f"  Avg Games/Record: {avg_games:.1f}")
+            logging.info(f"  Last Updated: {last_updated}")
             logging.info("")
             
-            if 'seasons_breakdown' in summary:
+            if 'seasons_breakdown' in summary and summary['seasons_breakdown']:
                 logging.info("Season Breakdown:")
                 for season_info in summary['seasons_breakdown']:
                     logging.info(f"  {season_info['season']}: {season_info['records']} records, {season_info['players']} players, {season_info['teams']} teams")
