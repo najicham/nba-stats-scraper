@@ -19,10 +19,13 @@ Usage Examples:
 4. Recent Date Range:
    gcloud run jobs execute nba-players-registry-processor-backfill --args=--start-date=2024-01-01,--end-date=2024-01-31 --region=us-west2
 
-5. Monitor Logs:
+5. Test Mode (NEW):
+   gcloud run jobs execute nba-players-registry-processor-backfill --args=--start-date=2022-10-01,--end-date=2022-10-31,--test-mode --region=us-west2
+
+6. Monitor Logs:
    gcloud beta run jobs executions logs read [execution-id] --region=us-west2 --follow
 
-6. Registry Summary:
+7. Registry Summary:
    gcloud run jobs execute nba-players-registry-processor-backfill --args=--summary-only --region=us-west2
 """
 
@@ -46,8 +49,8 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 class NbaPlayersRegistryBackfill:
     """Backfill job for building NBA Players Registry from gamebook data."""
     
-    def __init__(self):
-        self.processor = NbaPlayersRegistryProcessor()
+    def __init__(self, test_mode: bool = False):
+        self.processor = NbaPlayersRegistryProcessor(test_mode=test_mode)
         
         # Available seasons based on typical NBA data availability
         self.available_seasons = [
@@ -319,6 +322,10 @@ def main():
     parser.add_argument('--end-date', type=str,
                        help='End date for date range processing (YYYY-MM-DD)')
     
+    # Test mode option
+    parser.add_argument('--test-mode', action='store_true',
+                       help='Run in test mode using test tables')
+    
     args = parser.parse_args()
     
     # Validate date range arguments
@@ -331,7 +338,7 @@ def main():
     logging.info("Starting NBA Players Registry Backfill Job")
     logging.info(f"Arguments: {vars(args)}")
     
-    backfiller = NbaPlayersRegistryBackfill()
+    backfiller = NbaPlayersRegistryBackfill(test_mode=args.test_mode)
     
     try:
         result = backfiller.run_backfill(args)

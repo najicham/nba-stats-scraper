@@ -30,6 +30,7 @@ from typing import Dict, Any
 # Fixed import path for new structure
 from data_processors.raw.processor_base import ProcessorBase
 from shared.utils.player_name_normalizer import normalize_name_for_lookup
+from shared.utils.nba_team_mapper import nba_team_mapper
 
 logger = logging.getLogger(__name__)
 
@@ -45,9 +46,9 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
     - Jersey numbers and positions (when available)
     """
     
-    def __init__(self):
+    def __init__(self, test_mode: bool = False):
         super().__init__()
-        self.table_name = 'nba_reference.nba_players_registry'
+        
         self.processing_strategy = 'MERGE_UPDATE'  # Replace existing season data
         
         # Initialize BigQuery client
@@ -56,12 +57,26 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
         
         # Processing tracking
         self.processing_run_id = f"registry_build_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        
+        # Configure test mode and table names
+        self.test_mode = test_mode
+        if test_mode:
+            self.table_name = 'nba_reference.nba_players_registry_test'
+            self.unresolved_table_name = 'nba_reference.unresolved_player_names_test'
+            self.processing_run_id += "_TEST"
+            logger.info("Running in TEST MODE - using test tables")
+        else:
+            self.table_name = 'nba_reference.nba_players_registry'
+            self.unresolved_table_name = 'nba_reference.unresolved_player_names'
+            logger.info("Running in PRODUCTION MODE")
+        
         self.stats = {
             'players_processed': 0,
             'records_created': 0,
             'records_updated': 0,
             'seasons_processed': set(),
-            'teams_processed': set()
+            'teams_processed': set(),
+            'unresolved_players_found': 0
         }
         
         logger.info(f"Initialized registry processor with run ID: {self.processing_run_id}")
@@ -128,57 +143,12 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
             logger.error(f"Error querying gamebook data: {e}")
             raise e
     
-    def get_roster_enhancement_data(self, season_filter: str = None) -> Dict[Tuple[str, str], Dict]:
-        """Get jersey numbers and positions from roster data to enhance registry."""
-        logger.info("Loading roster enhancement data...")
-        
-        try:
-            # Query Basketball Reference roster data for jersey/position info
-            query = """
-            SELECT DISTINCT
-                team_abbrev as team_abbr,
-                player_lookup,
-                jersey_number,
-                position,
-                season_year
-            FROM `{project}.nba_raw.br_rosters_current`
-            WHERE player_lookup IS NOT NULL
-            AND team_abbrev IS NOT NULL
-            """.format(project=self.project_id)
-            
-            query_params = []
-            
-            if season_filter:
-                season_year = int(season_filter.split('-')[0])
-                query += " AND season_year = @season_year"
-                query_params.append(bigquery.ScalarQueryParameter("season_year", "INT64", season_year))
-            
-            job_config = bigquery.QueryJobConfig(query_parameters=query_params)
-            results = self.bq_client.query(query, job_config=job_config).to_dataframe()
-            
-            # Build lookup dict
-            enhancement_data = {}
-            for _, row in results.iterrows():
-                key = (row['team_abbr'], row['player_lookup'])
-                enhancement_data[key] = {
-                    'jersey_number': row['jersey_number'] if pd.notna(row['jersey_number']) else None,
-                    'position': row['position'] if pd.notna(row['position']) else None,
-                    'season_year': row['season_year']
-                }
-            
-            logger.info(f"Loaded enhancement data for {len(enhancement_data)} player-team combinations")
-            return enhancement_data
-            
-        except Exception as e:
-            logger.warning(f"Could not load roster enhancement data: {e}")
-            return {}
-    
     def calculate_season_string(self, season_year: int) -> str:
         """Convert season year to standard season string format."""
         return f"{season_year}-{str(season_year + 1)[-2:]}"
     
     def aggregate_player_stats(self, gamebook_df: pd.DataFrame) -> List[Dict]:
-        """Aggregate gamebook data into registry records."""
+        """Aggregate gamebook data into registry records and handle unresolved names."""
         logger.info("Aggregating player statistics for registry...")
         
         # Get roster enhancement data
@@ -186,13 +156,20 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
         
         registry_records = []
         
-        # Group by player-team-season combinations
-        groupby_cols = ['player_name', 'player_lookup', 'team_abbr', 'season_year']
+        # FIXED: Group by logical business key only (removed player_name)
+        groupby_cols = ['player_lookup', 'team_abbr', 'season_year']
         grouped = gamebook_df.groupby(groupby_cols)
         
-        for (player_name, player_lookup, team_abbr, season_year), group in grouped:
+        # Track which Basketball Reference players we found in gamebook
+        found_br_players = set()
+        
+        for (player_lookup, team_abbr, season_year), group in grouped:
             # Calculate season string
             season_str = self.calculate_season_string(season_year)
+            
+            # FIXED: Pick the most common player name variant
+            name_counts = group['player_name'].value_counts()
+            player_name = name_counts.index[0]  # Most frequent name
             
             # Calculate game participation stats
             total_appearances = len(group)
@@ -225,31 +202,34 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
             enhancement_key = (team_abbr, player_lookup)
             enhancement = enhancement_data.get(enhancement_key, {})
             
-            # Create registry record - FIXED: Keep dates as date objects, not strings
+            # Track that we found this BR player
+            if enhancement:
+                found_br_players.add(enhancement_key)
+            
+            # Create registry record
             record = {
-                'player_name': player_name,
+                'player_name': player_name,  # Use most common name variant
                 'player_lookup': player_lookup,
                 'team_abbr': team_abbr,
                 'season': season_str,
-                'first_game_date': first_game,                    # Keep as date object
-                'last_game_date': last_game,                      # Keep as date object
-                'games_played': active_games,  # Only count active games
-                'total_appearances': total_appearances,  # All appearances including inactive/dnp
+                'first_game_date': first_game,
+                'last_game_date': last_game,
+                'games_played': active_games,
+                'total_appearances': total_appearances,
                 'inactive_appearances': inactive_games,
                 'dnp_appearances': dnp_games,
                 'jersey_number': enhancement.get('jersey_number'),
                 'position': enhancement.get('position'),
-                'last_roster_update': date.today() if enhancement else None,  # Keep as date object
+                'last_roster_update': date.today() if enhancement else None,
                 'source_priority': source_priority,
                 'confidence_score': confidence_score,
-                'created_date': date.today(),                     # Keep as date object
-                'updated_date': date.today(),                     # Keep as date object
+                'created_date': date.today(),
+                'updated_date': date.today(),
                 'created_by': self.processing_run_id
             }
             
-            # Convert numpy/pandas types to native Python types for BigQuery
+            # Convert types for BigQuery
             record = self._convert_pandas_types_for_json(record)
-            
             registry_records.append(record)
             
             # Update stats
@@ -257,8 +237,128 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
             self.stats['seasons_processed'].add(season_str)
             self.stats['teams_processed'].add(team_abbr)
         
+        # NEW: Handle unresolved Basketball Reference players
+        self._handle_unresolved_br_players(enhancement_data, found_br_players)
+        
         logger.info(f"Created {len(registry_records)} registry records")
         return registry_records
+
+    def _handle_unresolved_br_players(self, enhancement_data: Dict, found_players: set):
+        """Find Basketball Reference players not in gamebook and add to unresolved table."""
+        unresolved_players = []
+        current_date = date.today()
+        
+        for (team_abbr, player_lookup), enhancement in enhancement_data.items():
+            if (team_abbr, player_lookup) not in found_players:
+                # This BR player wasn't found in gamebook data
+                unresolved_record = {
+                    'source': 'basketball_reference',
+                    'original_name': enhancement.get('original_name', 'Unknown'),  # Add this to enhancement data
+                    'normalized_lookup': player_lookup,
+                    'first_seen_date': current_date,
+                    'last_seen_date': current_date,
+                    'team_abbr': team_abbr,
+                    'season': self.calculate_season_string(enhancement.get('season_year', 2024)),
+                    'occurrences': 1,
+                    'example_games': [],  # No games since not in gamebook
+                    'status': 'pending',
+                    'resolution_type': None,
+                    'resolved_to_name': None,
+                    'notes': f"Found in Basketball Reference roster but no NBA.com gamebook entries",
+                    'reviewed_by': None,
+                    'reviewed_date': None,
+                    'created_date': current_date,
+                    'updated_date': current_date
+                }
+                
+                unresolved_players.append(unresolved_record)
+        
+        # Insert unresolved players if any found
+        if unresolved_players:
+            self._insert_unresolved_players(unresolved_players)
+            logger.info(f"Added {len(unresolved_players)} Basketball Reference players to unresolved queue")
+
+    def _insert_unresolved_players(self, unresolved_records: List[Dict]):
+        """Insert unresolved player records into the unresolved_player_names table."""
+        if not unresolved_records:
+            return
+        
+        table_id = f"{self.project_id}.{self.unresolved_table_name}"
+        
+        try:
+            # Convert types for BigQuery
+            processed_records = []
+            for record in unresolved_records:
+                processed_record = self._convert_pandas_types_for_json(record)
+                processed_records.append(processed_record)
+            
+            # Insert into unresolved table
+            result = self.bq_client.insert_rows_json(table_id, processed_records)
+            
+            if result:
+                logger.error(f"Error inserting unresolved players: {result}")
+            else:
+                logger.info(f"Successfully inserted {len(processed_records)} unresolved players")
+                
+        except Exception as e:
+            logger.error(f"Error inserting unresolved players: {e}")
+
+    def get_roster_enhancement_data(self, season_filter: str = None) -> Dict[Tuple[str, str], Dict]:
+        """Get jersey numbers and positions from roster data, including original names."""
+        logger.info("Loading roster enhancement data...")
+        
+        try:
+            # Query Basketball Reference with BR team codes
+            query = """
+            SELECT DISTINCT
+                team_abbrev as br_team_abbr,
+                player_lookup,
+                player_full_name as original_name,
+                jersey_number,
+                position,
+                season_year
+            FROM `{project}.nba_raw.br_rosters_current`
+            WHERE player_lookup IS NOT NULL
+            AND team_abbrev IS NOT NULL
+            """.format(project=self.project_id)
+            
+            query_params = []
+            
+            if season_filter:
+                season_year = int(season_filter.split('-')[0])
+                query += " AND season_year = @season_year"
+                query_params.append(bigquery.ScalarQueryParameter("season_year", "INT64", season_year))
+            
+            job_config = bigquery.QueryJobConfig(query_parameters=query_params)
+            results = self.bq_client.query(query, job_config=job_config).to_dataframe()
+            
+            # Build lookup dict with original names
+            enhancement_data = {}
+            for _, row in results.iterrows():
+                br_team_abbr = row['br_team_abbr']
+                
+                # Convert BR team code to NBA team code
+                nba_team_abbr = None
+                for team in nba_team_mapper.teams_data:
+                    if team.br_tricode == br_team_abbr:
+                        nba_team_abbr = team.nba_tricode
+                        break
+                
+                if nba_team_abbr:  # Only include if we can map to NBA format
+                    key = (nba_team_abbr, row['player_lookup'])  # Use NBA team code
+                    enhancement_data[key] = {
+                        'original_name': row['original_name'],
+                        'jersey_number': row['jersey_number'] if pd.notna(row['jersey_number']) else None,
+                        'position': row['position'] if pd.notna(row['position']) else None,
+                        'season_year': row['season_year']
+                    }
+            
+            logger.info(f"Loaded enhancement data for {len(enhancement_data)} player-team combinations")
+            return enhancement_data
+            
+        except Exception as e:
+            logger.warning(f"Could not load roster enhancement data: {e}")
+            return {}
 
     def _convert_pandas_types_for_json(self, record: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -268,7 +368,7 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
         
         # Define fields that should be integers (even if they come as strings)
         integer_fields = {'games_played', 'total_appearances', 'inactive_appearances', 
-                        'dnp_appearances', 'jersey_number'}
+                'dnp_appearances', 'jersey_number', 'occurrences'}
         
         for key, value in record.items():
             # Handle NaN/None values first
@@ -364,7 +464,7 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
         return registry_records
     
     def load_data(self, rows: List[Dict], **kwargs) -> Dict:
-        """Load registry data to BigQuery with debug logging and better error handling."""
+        """Load registry data to BigQuery with proper deduplication logic."""
         if not rows:
             logger.info("No records to insert")
             return {'rows_processed': 0, 'errors': []}
@@ -387,26 +487,29 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
         
         try:
             if self.processing_strategy == 'MERGE_UPDATE':
-                # Get date range from the rows being inserted
-                dates_to_update = set()
+                # FIXED: Delete based on player-team-season combinations, not date ranges
+                combinations_to_update = set()
                 for row in rows:
-                    if 'first_game_date' in row and row['first_game_date']:
-                        dates_to_update.add(row['first_game_date'])
-                    if 'last_game_date' in row and row['last_game_date']:
-                        dates_to_update.add(row['last_game_date'])
+                    combination = (row['player_lookup'], row['team_abbr'], row['season'])
+                    combinations_to_update.add(combination)
                 
-                if dates_to_update:
-                    min_date = min(dates_to_update)
-                    max_date = max(dates_to_update)
+                if combinations_to_update:
+                    # Build WHERE clause for each combination
+                    where_conditions = []
+                    for player_lookup, team_abbr, season in combinations_to_update:
+                        where_conditions.append(
+                            f"(player_lookup = '{player_lookup}' AND team_abbr = '{team_abbr}' AND season = '{season}')"
+                        )
+                    
+                    where_clause = " OR ".join(where_conditions)
                     
                     delete_query = f"""
                     DELETE FROM `{table_id}`
-                    WHERE first_game_date BETWEEN '{min_date}' AND '{max_date}'
-                    OR last_game_date BETWEEN '{min_date}' AND '{max_date}'
+                    WHERE {where_clause}
                     """
                     
                     self.bq_client.query(delete_query).result()
-                    logger.info(f"Deleted existing registry data for date range {min_date} to {max_date}")
+                    logger.info(f"Deleted existing registry data for {len(combinations_to_update)} player-team-season combinations")
             
             # Insert in smaller batches to isolate issues
             batch_size = 10  # Start small
@@ -446,8 +549,6 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
             'rows_processed': total_inserted,
             'errors': errors
         }
-    
-    # NEW: Methods for the 3 specific use cases
     
     def build_historical_registry(self, seasons: List[str] = None) -> Dict:
         """
