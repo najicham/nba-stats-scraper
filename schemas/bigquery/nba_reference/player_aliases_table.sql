@@ -25,8 +25,8 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_reference.player_aliases` (
     -- Manual tracking
     notes STRING,
     created_by STRING NOT NULL,
-    created_date DATE NOT NULL,
-    updated_at TIMESTAMP NOT NULL
+    created_at TIMESTAMP NOT NULL,      -- When record first created
+    processed_at TIMESTAMP NOT NULL     -- When record last updated
 )
 CLUSTER BY alias_lookup, nba_canonical_lookup
 OPTIONS (

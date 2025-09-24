@@ -27,9 +27,9 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_reference.unresolved_player_n
 
     -- Review tracking
     reviewed_by STRING,
-    reviewed_date DATE,
-    created_date DATE NOT NULL,
-    updated_date DATE NOT NULL
+    reviewed_at TIMESTAMP,
+    created_at TIMESTAMP NOT NULL,      -- When record first created
+    processed_at TIMESTAMP NOT NULL     -- When record last updated
 )
 PARTITION BY first_seen_date
 CLUSTER BY status, source, normalized_lookup

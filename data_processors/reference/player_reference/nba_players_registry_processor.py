@@ -30,7 +30,7 @@ from typing import Dict, Any
 # Fixed import path for new structure
 from data_processors.raw.processor_base import ProcessorBase
 from shared.utils.player_name_normalizer import normalize_name_for_lookup
-from shared.utils.nba_team_mapper import nba_team_mapper
+# from shared.utils.nba_team_mapper import nba_team_mapper
 
 logger = logging.getLogger(__name__)
 
@@ -61,13 +61,17 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
         # Configure test mode and table names
         self.test_mode = test_mode
         if test_mode:
-            self.table_name = 'nba_reference.nba_players_registry_test'
-            self.unresolved_table_name = 'nba_reference.unresolved_player_names_test'
-            self.processing_run_id += "_TEST"
-            logger.info("Running in TEST MODE - using test tables")
+            # Use fixed timestamp for predictable table names during testing
+            timestamp_suffix = "FIXED2"  # Or use date without time: datetime.now().strftime('%Y%m%d')
+            self.table_name = f'nba_reference.nba_players_registry_test_{timestamp_suffix}'
+            self.unresolved_table_name = f'nba_reference.unresolved_player_names_test_{timestamp_suffix}'
+            self.alias_table_name = f'nba_reference.player_aliases_test_{timestamp_suffix}'
+            self.processing_run_id += f"_TEST_{timestamp_suffix}"
+            logger.info(f"Running in TEST MODE with fixed table suffix: {timestamp_suffix}")
         else:
             self.table_name = 'nba_reference.nba_players_registry'
             self.unresolved_table_name = 'nba_reference.unresolved_player_names'
+            self.alias_table_name = 'nba_reference.player_aliases'
             logger.info("Running in PRODUCTION MODE")
         
         self.stats = {
@@ -76,10 +80,42 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
             'records_updated': 0,
             'seasons_processed': set(),
             'teams_processed': set(),
-            'unresolved_players_found': 0
+            'unresolved_players_found': 0,
+            'alias_resolutions': 0
         }
         
         logger.info(f"Initialized registry processor with run ID: {self.processing_run_id}")
+    
+    def date_to_nba_season_years(self, date_range: Tuple[str, str]) -> Tuple[int, int]:
+        """
+        Convert date range to NBA season years.
+        
+        NBA season runs from October to June:
+        - 2022-02-01 is in 2021-22 season (season_year=2021)
+        - 2022-10-15 is in 2022-23 season (season_year=2022)
+        
+        Args:
+            date_range: Tuple of (start_date, end_date) in 'YYYY-MM-DD' format
+            
+        Returns:
+            Tuple of (start_season_year, end_season_year)
+        """
+        start_date = datetime.strptime(date_range[0], '%Y-%m-%d')
+        end_date = datetime.strptime(date_range[1], '%Y-%m-%d')
+        
+        def get_season_year(date_obj):
+            """Convert a date to NBA season year."""
+            if date_obj.month >= 10:  # October-December
+                return date_obj.year
+            else:  # January-September (next calendar year)
+                return date_obj.year - 1
+        
+        start_season_year = get_season_year(start_date)
+        end_season_year = get_season_year(end_date)
+        
+        logger.info(f"Date range {date_range} maps to NBA season years: {start_season_year} to {end_season_year}")
+        
+        return (start_season_year, end_season_year)
     
     def get_gamebook_player_data(self, season_filter: str = None, 
                                team_filter: str = None, 
@@ -147,12 +183,64 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
         """Convert season year to standard season string format."""
         return f"{season_year}-{str(season_year + 1)[-2:]}"
     
-    def aggregate_player_stats(self, gamebook_df: pd.DataFrame) -> List[Dict]:
+    def _check_player_aliases(self, player_lookup: str, team_abbr: str) -> bool:
+        """Check if player exists under an alias in the registry."""
+        alias_query = f"""
+        SELECT r.player_lookup, r.team_abbr, r.games_played
+        FROM `{self.project_id}.{self.alias_table_name}` a
+        JOIN `{self.project_id}.{self.table_name}` r
+        ON a.nba_canonical_lookup = r.player_lookup
+        WHERE a.alias_lookup = @alias_lookup
+        AND r.team_abbr = @team_abbr
+        AND a.is_active = TRUE
+        """
+        
+        job_config = bigquery.QueryJobConfig(query_parameters=[
+            bigquery.ScalarQueryParameter("alias_lookup", "STRING", player_lookup),
+            bigquery.ScalarQueryParameter("team_abbr", "STRING", team_abbr)
+        ])
+        
+        try:
+            results = self.bq_client.query(alias_query, job_config=job_config).to_dataframe()
+            found = not results.empty
+            
+            if found:
+                self.stats['alias_resolutions'] += 1
+                # Add this enhanced logging:
+                logger.info(f"ALIAS RESOLUTION SUCCESS: {player_lookup} for {team_abbr} found via alias mapping")
+                
+                # Debug logging for our specific case
+                if player_lookup == 'kjmartin' and team_abbr == 'HOU':
+                    logger.info(f"DEBUG: kjmartin alias check SUCCESS - found {len(results)} registry records")
+            else:
+                # Debug logging for failed alias checks
+                if player_lookup == 'kjmartin':
+                    logger.info(f"DEBUG: kjmartin alias check FAILED for {team_abbr}")
+            
+            return found
+            
+        except Exception as e:
+            logger.warning(f"Error checking player aliases: {e}")
+            return False
+    
+    def aggregate_player_stats(self, gamebook_df: pd.DataFrame, date_range: Tuple[str, str] = None) -> List[Dict]:
         """Aggregate gamebook data into registry records and handle unresolved names."""
         logger.info("Aggregating player statistics for registry...")
         
-        # Get roster enhancement data
-        enhancement_data = self.get_roster_enhancement_data()
+        # Determine season years for Basketball Reference filtering
+        season_years_filter = None
+        if date_range:
+            start_season_year, end_season_year = self.date_to_nba_season_years(date_range)
+            season_years_filter = (start_season_year, end_season_year)
+        else:
+            # Use seasons present in gamebook data
+            seasons_in_data = gamebook_df['season_year'].unique()
+            if len(seasons_in_data) > 0:
+                season_years_filter = (int(seasons_in_data.min()), int(seasons_in_data.max()))
+                logger.info(f"Using season years from gamebook data: {seasons_in_data.min()} to {seasons_in_data.max()}")
+        
+        # Get roster enhancement data with season constraint
+        enhancement_data = self.get_roster_enhancement_data(season_years_filter=season_years_filter)
         
         registry_records = []
         
@@ -198,15 +286,39 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
                 source_priority = 'nba_gamebook_uncertain'
                 confidence_score = 0.7
             
-            # Look up enhancement data
-            enhancement_key = (team_abbr, player_lookup)
-            enhancement = enhancement_data.get(enhancement_key, {})
-            
-            # Track that we found this BR player
+            # Look up enhancement data (with alias resolution)
+            enhancement, resolved_via_alias = self._resolve_enhancement_via_alias(
+                player_lookup, team_abbr, enhancement_data
+            )
+
+            # Add debug logging
+            if team_abbr in ['BKN', 'CHA', 'PHX']:
+                logger.info(f"Looking up enhancement for ({team_abbr}, {player_lookup})")
+                if enhancement:
+                    resolution_method = "via alias" if resolved_via_alias else "direct"
+                    logger.info(f"Found enhancement {resolution_method}: jersey={enhancement.get('jersey_number')}")
+                else:
+                    logger.info(f"No enhancement found for ({team_abbr}, {player_lookup})")
+                    # Show what keys ARE available for this team
+                    available_keys = [k for k in enhancement_data.keys() if k[0] == team_abbr]
+                    logger.info(f"Available {team_abbr} keys: {available_keys[:5]}")
+
+            # Track that we found this BR player (handle both direct and alias cases)
             if enhancement:
-                found_br_players.add(enhancement_key)
+                if resolved_via_alias:
+                    # For alias resolution, find the original BR key that matched
+                    for br_key, br_data in enhancement_data.items():
+                        if br_key[0] == team_abbr and br_data == enhancement:
+                            found_br_players.add(br_key)
+                            break
+                else:
+                    found_br_players.add((team_abbr, player_lookup))
+
+            # Convert to dict format for compatibility (if it's None)
+            if enhancement is None:
+                enhancement = {}
             
-            # Create registry record
+            # Create registry record with proper timestamp fields
             record = {
                 'player_name': player_name,  # Use most common name variant
                 'player_lookup': player_lookup,
@@ -223,9 +335,9 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
                 'last_roster_update': date.today() if enhancement else None,
                 'source_priority': source_priority,
                 'confidence_score': confidence_score,
-                'created_date': date.today(),
-                'updated_date': date.today(),
-                'created_by': self.processing_run_id
+                'created_by': self.processing_run_id,
+                'created_at': datetime.now(),  # TIMESTAMP field
+                'processed_at': datetime.now()  # TIMESTAMP field
             }
             
             # Convert types for BigQuery
@@ -237,23 +349,80 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
             self.stats['seasons_processed'].add(season_str)
             self.stats['teams_processed'].add(team_abbr)
         
-        # NEW: Handle unresolved Basketball Reference players
+        # UPDATED: Handle unresolved Basketball Reference players with alias checking
         self._handle_unresolved_br_players(enhancement_data, found_br_players)
         
         logger.info(f"Created {len(registry_records)} registry records")
+        logger.info(f"Resolved {self.stats['alias_resolutions']} players via alias system")
         return registry_records
 
+    def _resolve_enhancement_via_alias(self, player_lookup: str, team_abbr: str, enhancement_data: Dict) -> Tuple[Optional[Dict], bool]:
+        """
+        Attempt to resolve enhancement data via alias lookup.
+        """
+        # Add debug logging
+        logger.info(f"ALIAS DEBUG: Checking enhancement for {player_lookup} at {team_abbr}")
+        
+        # Direct lookup first
+        direct_key = (team_abbr, player_lookup)
+        if direct_key in enhancement_data:
+            logger.info(f"ALIAS DEBUG: Found direct enhancement for {direct_key}")
+            return enhancement_data[direct_key], False
+        
+        logger.info(f"ALIAS DEBUG: No direct enhancement, trying alias resolution for {player_lookup}")
+        
+        # Find Basketball Reference aliases that resolve to this canonical player
+        alias_query = f"""
+        SELECT a.alias_lookup as br_alias_lookup
+        FROM `{self.project_id}.{self.alias_table_name}` a
+        WHERE a.nba_canonical_lookup = @canonical_lookup
+        AND a.is_active = TRUE
+        """
+        
+        job_config = bigquery.QueryJobConfig(query_parameters=[
+            bigquery.ScalarQueryParameter("canonical_lookup", "STRING", player_lookup),
+        ])
+        
+        try:
+            results = self.bq_client.query(alias_query, job_config=job_config).to_dataframe()
+            
+            if not results.empty:
+                # Get the Basketball Reference alias name
+                br_alias_lookup = results.iloc[0]['br_alias_lookup']  # Fixed column name
+                br_key = (team_abbr, br_alias_lookup)  # Fixed enhancement key
+                
+                logger.info(f"ALIAS DEBUG: Found alias {br_alias_lookup} for canonical {player_lookup}")
+                
+                if br_key in enhancement_data:
+                    logger.info(f"ALIAS DEBUG: Enhancement resolved via alias: {player_lookup} → {br_alias_lookup} for {team_abbr}")
+                    self.stats['alias_resolutions'] += 1
+                    return enhancement_data[br_key], True  # Use Basketball Reference key
+                else:
+                    logger.info(f"ALIAS DEBUG: No enhancement data found for alias key {br_key}")
+                    
+            return None, False
+            
+        except Exception as e:
+            logger.warning(f"Error resolving enhancement via alias for {player_lookup}: {e}")
+            return None, False
+        
     def _handle_unresolved_br_players(self, enhancement_data: Dict, found_players: set):
         """Find Basketball Reference players not in gamebook and add to unresolved table."""
         unresolved_players = []
-        current_date = date.today()
+        current_datetime = datetime.now()
+        current_date = current_datetime.date()
         
         for (team_abbr, player_lookup), enhancement in enhancement_data.items():
             if (team_abbr, player_lookup) not in found_players:
-                # This BR player wasn't found in gamebook data
+                # NEW: Check aliases before marking as unresolved
+                if self._check_player_aliases(player_lookup, team_abbr):
+                    logger.info(f"Player {player_lookup} found via alias mapping for {team_abbr}")
+                    continue  # Skip - found via alias
+                
+                # Only mark as unresolved if no alias found
                 unresolved_record = {
                     'source': 'basketball_reference',
-                    'original_name': enhancement.get('original_name', 'Unknown'),  # Add this to enhancement data
+                    'original_name': enhancement.get('original_name', 'Unknown'),
                     'normalized_lookup': player_lookup,
                     'first_seen_date': current_date,
                     'last_seen_date': current_date,
@@ -266,9 +435,9 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
                     'resolved_to_name': None,
                     'notes': f"Found in Basketball Reference roster but no NBA.com gamebook entries",
                     'reviewed_by': None,
-                    'reviewed_date': None,
-                    'created_date': current_date,
-                    'updated_date': current_date
+                    'reviewed_at': None,
+                    'created_at': current_datetime,  # TIMESTAMP field
+                    'processed_at': current_datetime  # TIMESTAMP field
                 }
                 
                 unresolved_players.append(unresolved_record)
@@ -276,38 +445,78 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
         # Insert unresolved players if any found
         if unresolved_players:
             self._insert_unresolved_players(unresolved_players)
+            self.stats['unresolved_players_found'] = len(unresolved_players)
             logger.info(f"Added {len(unresolved_players)} Basketball Reference players to unresolved queue")
+        else:
+            logger.info("No unresolved Basketball Reference players found (all resolved via aliases or gamebook)")
 
     def _insert_unresolved_players(self, unresolved_records: List[Dict]):
-        """Insert unresolved player records into the unresolved_player_names table."""
+        """Insert unresolved player records with deduplication."""
         if not unresolved_records:
             return
+        
+        # Group by key fields to deduplicate
+        dedup_dict = {}
+        for record in unresolved_records:
+            key = (
+                record['source'],
+                record['normalized_lookup'], 
+                record['team_abbr'],
+                record['season']
+            )
+            if key not in dedup_dict:
+                dedup_dict[key] = record
+            else:
+                # Update occurrence count if duplicate found
+                dedup_dict[key]['occurrences'] += record.get('occurrences', 1)
+        
+        # Use deduplicated records
+        deduplicated_records = list(dedup_dict.values())
+        
+        if len(deduplicated_records) < len(unresolved_records):
+            logger.info(f"Deduplicated {len(unresolved_records)} → {len(deduplicated_records)} unresolved records")
         
         table_id = f"{self.project_id}.{self.unresolved_table_name}"
         
         try:
             # Convert types for BigQuery
             processed_records = []
-            for record in unresolved_records:
+            for record in deduplicated_records:
                 processed_record = self._convert_pandas_types_for_json(record)
                 processed_records.append(processed_record)
             
-            # Insert into unresolved table
+            # Insert deduplicated records
             result = self.bq_client.insert_rows_json(table_id, processed_records)
             
             if result:
                 logger.error(f"Error inserting unresolved players: {result}")
             else:
-                logger.info(f"Successfully inserted {len(processed_records)} unresolved players")
+                logger.info(f"Successfully inserted {len(processed_records)} deduplicated unresolved players")
                 
         except Exception as e:
             logger.error(f"Error inserting unresolved players: {e}")
 
-    def get_roster_enhancement_data(self, season_filter: str = None) -> Dict[Tuple[str, str], Dict]:
-        """Get jersey numbers and positions from roster data, including original names."""
+    # Replace the existing season filtering logic in get_roster_enhancement_data()
+    def get_roster_enhancement_data(self, season_filter: str = None, season_years_filter: Tuple[int, int] = None) -> Dict[Tuple[str, str], Dict]:
+        """Get jersey numbers and positions from roster data with team mapping."""
         logger.info("Loading roster enhancement data...")
         
         try:
+            # Import team mapper (local import to avoid deployment issues)
+            try:
+                from shared.utils.nba_team_mapper import nba_team_mapper
+                logger.info("Successfully imported nba_team_mapper")
+            except ImportError as e:
+                logger.warning(f"Could not import nba_team_mapper: {e}")
+                # Fallback to hardcoded mapping
+                BR_TO_NBA_MAPPING = {
+                    'BRK': 'BKN',  # Brooklyn
+                    'CHO': 'CHA',  # Charlotte  
+                    'PHO': 'PHX'   # Phoenix
+                }
+                nba_team_mapper = None
+                logger.info("Using fallback hardcoded team mapping")
+            
             # Query Basketball Reference with BR team codes
             query = """
             SELECT DISTINCT
@@ -324,40 +533,113 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
             
             query_params = []
             
+            # FIXED: Prioritize single season filter over range filter
             if season_filter:
-                season_year = int(season_filter.split('-')[0])
+                season_year = int(season_filter.split('-')[0])  # "2021-22" → 2021
                 query += " AND season_year = @season_year"
                 query_params.append(bigquery.ScalarQueryParameter("season_year", "INT64", season_year))
+                logger.info(f"Filtering Basketball Reference data for single season: {season_filter} (season_year: {season_year})")
+                
+            elif season_years_filter:
+                # Only use range filter if no single season specified
+                start_year, end_year = season_years_filter
+                query += " AND season_year BETWEEN @start_season_year AND @end_season_year"
+                query_params.extend([
+                    bigquery.ScalarQueryParameter("start_season_year", "INT64", start_year),
+                    bigquery.ScalarQueryParameter("end_season_year", "INT64", end_year)
+                ])
+                logger.info(f"Filtering Basketball Reference data to season years: {start_year}-{end_year}")
+            
+            # FIXED: Add ORDER BY to ensure consistent data loading
+            query += " ORDER BY season_year, team_abbrev, player_lookup"
             
             job_config = bigquery.QueryJobConfig(query_parameters=query_params)
             results = self.bq_client.query(query, job_config=job_config).to_dataframe()
             
-            # Build lookup dict with original names
+            logger.info(f"Retrieved {len(results)} roster records from Basketball Reference")
+            
+            # DEBUG: Log season years in the data
+            if not results.empty:
+                season_years = results['season_year'].unique()
+                logger.info(f"Basketball Reference data contains season years: {sorted(season_years)}")
+            
+            # Build lookup dict with NBA team code mapping
             enhancement_data = {}
+            mapped_count = 0
+            unmapped_teams = set()
+            team_mapping_log = {}
+            
             for _, row in results.iterrows():
                 br_team_abbr = row['br_team_abbr']
-                
-                # Convert BR team code to NBA team code
                 nba_team_abbr = None
-                for team in nba_team_mapper.teams_data:
-                    if team.br_tricode == br_team_abbr:
-                        nba_team_abbr = team.nba_tricode
-                        break
                 
-                if nba_team_abbr:  # Only include if we can map to NBA format
+                # Try team mapping
+                if nba_team_mapper:
+                    # Use the team mapper utility
+                    for team in nba_team_mapper.teams_data:
+                        if team.br_tricode == br_team_abbr:
+                            nba_team_abbr = team.nba_tricode
+                            if br_team_abbr != nba_team_abbr:
+                                if br_team_abbr not in team_mapping_log:
+                                    logger.info(f"Team mapping: {br_team_abbr} → {nba_team_abbr}")
+                                    team_mapping_log[br_team_abbr] = nba_team_abbr
+                                mapped_count += 1
+                            break
+                else:
+                    # Use hardcoded fallback mapping
+                    nba_team_abbr = BR_TO_NBA_MAPPING.get(br_team_abbr, br_team_abbr)
+                    if br_team_abbr != nba_team_abbr:
+                        if br_team_abbr not in team_mapping_log:
+                            logger.info(f"Fallback team mapping: {br_team_abbr} → {nba_team_abbr}")
+                            team_mapping_log[br_team_abbr] = nba_team_abbr
+                        mapped_count += 1
+                
+                if nba_team_abbr:  # Successfully mapped or no mapping needed
                     key = (nba_team_abbr, row['player_lookup'])  # Use NBA team code
+                    
+                    # FIXED: Warn about overwrites (this should not happen with proper season filtering)
+                    if key in enhancement_data:
+                        logger.warning(f"Overwriting enhancement data for {key}: season {enhancement_data[key]['season_year']} → {row['season_year']}")
+                    
                     enhancement_data[key] = {
                         'original_name': row['original_name'],
                         'jersey_number': row['jersey_number'] if pd.notna(row['jersey_number']) else None,
                         'position': row['position'] if pd.notna(row['position']) else None,
                         'season_year': row['season_year']
                     }
+                    
+                    # DEBUG: Log our problem case
+                    if key == ('HOU', 'kjmartin'):
+                        logger.info(f"DEBUG: Added HOU kjmartin enhancement: season_year={row['season_year']}, jersey={row['jersey_number']}")
+                    
+                else:  # Failed to map
+                    unmapped_teams.add(br_team_abbr)
+                    logger.warning(f"Could not map team code: {br_team_abbr}")
             
+            # Summary logging
             logger.info(f"Loaded enhancement data for {len(enhancement_data)} player-team combinations")
+            logger.info(f"Applied team mapping to {mapped_count} records")
+            
+            # DEBUG: Verify our problem case
+            hou_kjmartin_key = ('HOU', 'kjmartin')
+            if hou_kjmartin_key in enhancement_data:
+                logger.info(f"DEBUG: ✅ Final enhancement data contains {hou_kjmartin_key}: {enhancement_data[hou_kjmartin_key]}")
+            else:
+                logger.info(f"DEBUG: ❌ Final enhancement data missing {hou_kjmartin_key}")
+            
+            if team_mapping_log:
+                logger.info(f"Team mappings applied: {team_mapping_log}")
+            
+            if unmapped_teams:
+                logger.warning(f"Unmapped team codes: {sorted(unmapped_teams)}")
+            
             return enhancement_data
             
         except Exception as e:
-            logger.warning(f"Could not load roster enhancement data: {e}")
+            logger.error(f"Error loading roster enhancement data: {e}")
+            logger.error(f"Exception type: {type(e).__name__}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return {}
 
     def _convert_pandas_types_for_json(self, record: Dict[str, Any]) -> Dict[str, Any]:
@@ -379,14 +661,14 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
             elif hasattr(value, 'item'):  
                 converted_record[key] = value.item()
             
-            # Handle dates - convert to strings for BigQuery
+            # Handle datetime objects - convert to strings for BigQuery TIMESTAMP
             elif isinstance(value, (pd.Timestamp, datetime)):
                 if pd.notna(value):
-                    converted_record[key] = value.date().isoformat()
+                    converted_record[key] = value.isoformat()
                 else:
                     converted_record[key] = None
             
-            # Handle date objects - convert to strings for BigQuery
+            # Handle date objects - convert to strings for BigQuery DATE
             elif isinstance(value, date):
                 converted_record[key] = value.isoformat()
             
@@ -458,8 +740,8 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
             logger.warning("No gamebook data found for specified filters")
             return []
         
-        # Aggregate into registry records
-        registry_records = self.aggregate_player_stats(gamebook_df)
+        # Aggregate into registry records, passing date_range for BR filtering
+        registry_records = self.aggregate_player_stats(gamebook_df, date_range=date_range)
         
         return registry_records
     
@@ -475,7 +757,7 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
         logger.info(f"Sample record: {json.dumps(rows[0], indent=2, default=str)}")
         
         # Validate required fields
-        required_fields = ['player_name', 'player_lookup', 'team_abbr', 'season', 'created_date', 'updated_date', 'created_by']
+        required_fields = ['player_name', 'player_lookup', 'team_abbr', 'season', 'created_at', 'processed_at', 'created_by']
         for field in required_fields:
             if field not in rows[0]:
                 logger.error(f"Missing required field: {field}")
@@ -563,6 +845,12 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
         logger.info("Starting historical registry build")
         
         if not seasons:
+            # Debug environment and query construction
+            logger.info("=== DEBUGGING SEASONS QUERY ===")
+            logger.info(f"os.environ.get('GCP_PROJECT_ID'): {os.environ.get('GCP_PROJECT_ID')}")
+            logger.info(f"self.bq_client.project: {self.bq_client.project}")
+            logger.info(f"self.project_id: {self.project_id}")
+            
             # Get all available seasons from gamebook data
             seasons_query = f"""
                 SELECT DISTINCT season_year
@@ -571,9 +859,25 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
                 ORDER BY season_year DESC
             """
             
-            seasons_df = self.bq_client.query(seasons_query).to_dataframe()
+            # Debug the constructed query
+            logger.info(f"Raw seasons_query: {repr(seasons_query)}")
+            logger.info(f"Seasons query:\n{seasons_query}")
+            logger.info(f"Query length: {len(seasons_query)}")
+            logger.info("=== END DEBUGGING ===")
+            
+            try:
+                seasons_df = self.bq_client.query(seasons_query).to_dataframe()
+                logger.info(f"Query successful, got {len(seasons_df)} seasons")
+            except Exception as e:
+                logger.error(f"Query failed with error: {e}")
+                logger.error(f"Error type: {type(e)}")
+                # Fallback to hardcoded seasons
+                logger.info("Falling back to hardcoded seasons")
+                seasons = ["2021-22", "2022-23", "2023-24", "2024-25"]
+                return self._run_hardcoded_seasons(seasons)
+            
             seasons = [f"{int(row['season_year'])}-{str(int(row['season_year']) + 1)[-2:]}" 
-                      for _, row in seasons_df.iterrows()]
+                    for _, row in seasons_df.iterrows()]
         
         logger.info(f"Building historical registry for seasons: {seasons}")
         
@@ -694,6 +998,8 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
         logger.info(f"  Records processed: {result['rows_processed']}")
         logger.info(f"  Players: {self.stats['players_processed']}")
         logger.info(f"  Teams: {len(self.stats['teams_processed'])}")
+        logger.info(f"  Alias resolutions: {self.stats['alias_resolutions']}")
+        logger.info(f"  Unresolved found: {self.stats['unresolved_players_found']}")
         logger.info(f"  Errors: {len(result.get('errors', []))}")
         
         return {
@@ -702,6 +1008,8 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
             'records_processed': result['rows_processed'],
             'players_processed': self.stats['players_processed'],
             'teams_processed': list(self.stats['teams_processed']),
+            'alias_resolutions': self.stats['alias_resolutions'],
+            'unresolved_found': self.stats['unresolved_players_found'],
             'errors': result.get('errors', []),
             'processing_run_id': self.processing_run_id
         }
@@ -731,6 +1039,8 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
         logger.info(f"  Players: {self.stats['players_processed']}")
         logger.info(f"  Seasons covered: {len(seasons_processed)}")
         logger.info(f"  Teams: {len(self.stats['teams_processed'])}")
+        logger.info(f"  Alias resolutions: {self.stats['alias_resolutions']}")
+        logger.info(f"  Unresolved found: {self.stats['unresolved_players_found']}")
         logger.info(f"  Errors: {len(result.get('errors', []))}")
         
         return {
@@ -739,6 +1049,8 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
             'players_processed': self.stats['players_processed'],
             'seasons_processed': list(seasons_processed),
             'teams_processed': list(self.stats['teams_processed']),
+            'alias_resolutions': self.stats['alias_resolutions'],
+            'unresolved_found': self.stats['unresolved_players_found'],
             'errors': result.get('errors', []),
             'processing_run_id': self.processing_run_id
         }
@@ -754,7 +1066,7 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
                 COUNT(DISTINCT team_abbr) as teams_covered,
                 SUM(games_played) as total_games_played,
                 AVG(games_played) as avg_games_per_record,
-                MAX(updated_date) as last_updated
+                MAX(processed_at) as last_updated
             FROM `{self.project_id}.{self.table_name}`
             """
             

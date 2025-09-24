@@ -1,6 +1,7 @@
 -- File: schemas/bigquery/nba_reference/views.sql
 -- Description: Views for common NBA reference data operations
 -- Created: 2025-01-20
+-- Updated: 2025-01-23 - Fixed UNION ALL type compatibility
 -- Purpose: Provide convenient views for common name resolution and player registry queries
 
 -- =============================================================================
@@ -17,8 +18,8 @@ SELECT
     alias_type,
     alias_source,
     notes,
-    created_date,
-    updated_at
+    created_at,
+    processed_at
 FROM `nba-props-platform.nba_reference.player_aliases`
 WHERE is_active = TRUE;
 
@@ -62,14 +63,14 @@ FROM `nba-props-platform.nba_reference.unresolved_player_names`
 WHERE status = 'pending'
 ORDER BY occurrences DESC, first_seen_date ASC;
 
--- Data quality monitoring view
+-- Data quality monitoring view (FIXED: Consistent TIMESTAMP types)
 CREATE OR REPLACE VIEW `nba-props-platform.nba_reference.data_quality_summary` AS
 SELECT 
     'aliases' as table_name,
     COUNT(*) as total_records,
     COUNT(CASE WHEN is_active THEN 1 END) as active_records,
     COUNT(DISTINCT alias_source) as unique_sources,
-    DATE(MAX(updated_at)) as last_updated
+    MAX(processed_at) as last_updated  -- FIXED: Use TIMESTAMP consistently
 FROM `nba-props-platform.nba_reference.player_aliases`
 
 UNION ALL
@@ -79,7 +80,7 @@ SELECT
     COUNT(*) as total_records,
     COUNT(DISTINCT player_lookup) as unique_players,
     COUNT(DISTINCT season) as seasons_covered,
-    MAX(updated_date) as last_updated
+    MAX(processed_at) as last_updated
 FROM `nba-props-platform.nba_reference.nba_players_registry`
 
 UNION ALL
@@ -89,7 +90,7 @@ SELECT
     COUNT(*) as total_records,
     COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending_review,
     COUNT(DISTINCT source) as unique_sources,
-    MAX(updated_date) as last_updated
+    MAX(processed_at) as last_updated
 FROM `nba-props-platform.nba_reference.unresolved_player_names`;
 
 -- Player name resolution lookup view (for debugging)
@@ -102,7 +103,7 @@ SELECT
     nba_canonical_lookup as normalized_output,
     alias_source as data_source,
     is_active,
-    created_date
+    created_at
 FROM `nba-props-platform.nba_reference.player_aliases`
 
 UNION ALL
@@ -115,7 +116,7 @@ SELECT
     player_lookup as normalized_output,
     source_priority as data_source,
     TRUE as is_active,
-    created_date
+    created_at
 FROM `nba-props-platform.nba_reference.nba_players_registry`
 WHERE season = (SELECT MAX(season) FROM `nba-props-platform.nba_reference.nba_players_registry`);
 

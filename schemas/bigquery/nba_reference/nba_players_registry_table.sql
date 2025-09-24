@@ -30,9 +30,9 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_reference.nba_players_registr
     confidence_score FLOAT64,              -- Data quality confidence (0.0-1.0)
     
     -- Metadata
-    created_date DATE NOT NULL,
-    updated_date DATE NOT NULL,
-    created_by STRING NOT NULL
+    created_by STRING NOT NULL,
+    created_at TIMESTAMP NOT NULL,      -- When record first created
+    processed_at TIMESTAMP NOT NULL     -- When record last updated
 )
 CLUSTER BY player_lookup, season, team_abbr
 OPTIONS (
