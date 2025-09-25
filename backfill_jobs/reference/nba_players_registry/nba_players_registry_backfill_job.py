@@ -8,25 +8,39 @@ Usage Examples:
 =============
 
 1. Deploy Job:
-   ./processor_backfill/nba_players_registry/deploy.sh
+   ./backfill_jobs/reference/nba_players_registry/deploy.sh
 
 2. Test with Single Season:
-   gcloud run jobs execute nba-players-registry-processor-backfill --args=--season=2023-24 --region=us-west2
+   gcloud run jobs execute nba-players-registry-processor-backfill \
+     --args="^|^--season=2023-24" --region=us-west2
 
-3. Full Historical Backfill:
-   gcloud run jobs execute nba-players-registry-processor-backfill --args=--all-seasons --region=us-west2
+3. Full Historical Backfill (Replace Strategy):
+   gcloud run jobs execute nba-players-registry-processor-backfill \
+     --args="^|^--all-seasons|--strategy=replace" --region=us-west2
 
 4. Recent Date Range:
-   gcloud run jobs execute nba-players-registry-processor-backfill --args=--start-date=2024-01-01,--end-date=2024-01-31 --region=us-west2
+   gcloud run jobs execute nba-players-registry-processor-backfill \
+     --args="^|^--start-date=2024-01-01|--end-date=2024-01-31" --region=us-west2
 
-5. Test Mode (NEW):
-   gcloud run jobs execute nba-players-registry-processor-backfill --args=--start-date=2022-10-01,--end-date=2022-10-31,--test-mode --region=us-west2
+5. Test Mode with Strategy:
+   gcloud run jobs execute nba-players-registry-processor-backfill \
+     --args="^|^--start-date=2022-10-01|--end-date=2022-10-31|--test-mode|--strategy=replace" --region=us-west2
 
-6. Monitor Logs:
+6. Production Daily Update (Merge Strategy):
+   gcloud run jobs execute nba-players-registry-processor-backfill \
+     --args="^|^--season=2024-25|--strategy=merge" --region=us-west2
+
+7. Monitor Logs:
    gcloud beta run jobs executions logs read [execution-id] --region=us-west2 --follow
 
-7. Registry Summary:
-   gcloud run jobs execute nba-players-registry-processor-backfill --args=--summary-only --region=us-west2
+8. Registry Summary:
+   gcloud run jobs execute nba-players-registry-processor-backfill \
+     --args="^|^--summary-only" --region=us-west2
+
+Strategy Options:
+================
+- --strategy=replace: DELETE + INSERT (safe for backfill, single execution)
+- --strategy=merge:   Atomic MERGE operations (safe for concurrent daily runs)
 """
 
 import os
@@ -49,8 +63,8 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 class NbaPlayersRegistryBackfill:
     """Backfill job for building NBA Players Registry from gamebook data."""
     
-    def __init__(self, test_mode: bool = False):
-        self.processor = NbaPlayersRegistryProcessor(test_mode=test_mode)
+    def __init__(self, test_mode: bool = False, strategy: str = "replace"):
+        self.processor = NbaPlayersRegistryProcessor(test_mode=test_mode, strategy=strategy)
         
         # Available seasons based on typical NBA data availability
         self.available_seasons = [
@@ -326,6 +340,11 @@ def main():
     parser.add_argument('--test-mode', action='store_true',
                        help='Run in test mode using test tables')
     
+    parser.add_argument('--strategy', 
+                    choices=['replace', 'upsert'], 
+                    default='replace',
+                    help='Processing strategy: replace (backfill) or upsert (production)')
+    
     args = parser.parse_args()
     
     # Validate date range arguments
@@ -338,7 +357,7 @@ def main():
     logging.info("Starting NBA Players Registry Backfill Job")
     logging.info(f"Arguments: {vars(args)}")
     
-    backfiller = NbaPlayersRegistryBackfill(test_mode=args.test_mode)
+    backfiller = NbaPlayersRegistryBackfill(test_mode=args.test_mode, strategy=args.strategy)
     
     try:
         result = backfiller.run_backfill(args)

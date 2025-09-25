@@ -26,6 +26,7 @@ from google.cloud import bigquery
 import pandas as pd
 import numpy as np
 from typing import Dict, Any
+from enum import Enum
 
 # Fixed import path for new structure
 from data_processors.raw.processor_base import ProcessorBase
@@ -34,6 +35,10 @@ from shared.utils.player_name_normalizer import normalize_name_for_lookup
 
 logger = logging.getLogger(__name__)
 
+
+class ProcessingStrategy(Enum):
+    REPLACE = "replace"  # DELETE + INSERT (current implementation)  
+    MERGE = "merge"      # MERGE statement (new implementation)
 
 class NbaPlayersRegistryProcessor(ProcessorBase):
     """
@@ -46,11 +51,14 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
     - Jersey numbers and positions (when available)
     """
     
-    def __init__(self, test_mode: bool = False):
+    def __init__(self, test_mode: bool = False, strategy: str = "replace"):
         super().__init__()
         
-        self.processing_strategy = 'MERGE_UPDATE'  # Replace existing season data
+        # NEW: Configure processing strategy
+        self.processing_strategy = ProcessingStrategy(strategy.lower())
+        logger.info(f"Initialized with processing strategy: {self.processing_strategy.value}")
         
+        # Rest of your existing initialization code stays the same...
         # Initialize BigQuery client
         self.bq_client = bigquery.Client()
         self.project_id = os.environ.get('GCP_PROJECT_ID', self.bq_client.project)
@@ -746,91 +754,238 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
         return registry_records
     
     def load_data(self, rows: List[Dict], **kwargs) -> Dict:
-        """Load registry data to BigQuery with proper deduplication logic."""
+        """Load registry data using configured processing strategy."""
         if not rows:
             logger.info("No records to insert")
             return {'rows_processed': 0, 'errors': []}
         
-        # Debug: Log the first record to see exact format
-        logger.info(f"Sample record being sent to BigQuery:")
-        logger.info(f"Record keys: {list(rows[0].keys())}")
-        logger.info(f"Sample record: {json.dumps(rows[0], indent=2, default=str)}")
-        
-        # Validate required fields
-        required_fields = ['player_name', 'player_lookup', 'team_abbr', 'season', 'created_at', 'processed_at', 'created_by']
-        for field in required_fields:
-            if field not in rows[0]:
-                logger.error(f"Missing required field: {field}")
-                return {'rows_processed': 0, 'errors': [f'Missing required field: {field}']}
+        if self.processing_strategy == ProcessingStrategy.REPLACE:
+            return self._load_data_replace_mode(rows, **kwargs)
+        elif self.processing_strategy == ProcessingStrategy.MERGE:
+            return self._load_data_merge_mode(rows, **kwargs)
+        else:
+            raise ValueError(f"Unknown processing strategy: {self.processing_strategy}")
+    
+    def _load_data_replace_mode(self, rows: List[Dict], **kwargs) -> Dict:
+        """
+        REPLACE mode: DELETE existing data + INSERT new data.
+        Used for backfill operations (single execution, complete rebuilds).
+        """
+        logger.info(f"Using REPLACE mode for {len(rows)} records")
         
         table_id = f"{self.project_id}.{self.table_name}"
         errors = []
-        total_inserted = 0
         
         try:
-            if self.processing_strategy == 'MERGE_UPDATE':
-                # FIXED: Delete based on player-team-season combinations, not date ranges
-                combinations_to_update = set()
-                for row in rows:
-                    combination = (row['player_lookup'], row['team_abbr'], row['season'])
-                    combinations_to_update.add(combination)
-                
-                if combinations_to_update:
-                    # Build WHERE clause for each combination
-                    where_conditions = []
-                    for player_lookup, team_abbr, season in combinations_to_update:
-                        where_conditions.append(
-                            f"(player_lookup = '{player_lookup}' AND team_abbr = '{team_abbr}' AND season = '{season}')"
-                        )
-                    
-                    where_clause = " OR ".join(where_conditions)
-                    
-                    delete_query = f"""
-                    DELETE FROM `{table_id}`
-                    WHERE {where_clause}
-                    """
-                    
-                    self.bq_client.query(delete_query).result()
-                    logger.info(f"Deleted existing registry data for {len(combinations_to_update)} player-team-season combinations")
+            # Step 1: Delete existing data (if any)
+            delete_query = f"DELETE FROM `{table_id}` WHERE TRUE"
+            delete_job = self.bq_client.query(delete_query)
+            delete_result = delete_job.result()
+            logger.info(f"Deleted existing records from {self.table_name}")
             
-            # Insert in smaller batches to isolate issues
-            batch_size = 10  # Start small
-            total_errors = 0
+            # Step 2: Insert new records
+            rows_to_insert = []
+            for row in rows:
+                converted_row = self._convert_pandas_types_for_json(row)
+                rows_to_insert.append(converted_row)
             
-            for i in range(0, len(rows), batch_size):
-                batch = rows[i:i + batch_size]
-                logger.info(f"Inserting batch {i//batch_size + 1}: records {i+1}-{min(i+batch_size, len(rows))}")
+            # Insert in batches if needed (BigQuery has 10MB limit per insert)
+            batch_size = 1000
+            total_inserted = 0
+            
+            for i in range(0, len(rows_to_insert), batch_size):
+                batch = rows_to_insert[i:i+batch_size]
                 
-                result = self.bq_client.insert_rows_json(table_id, batch)
+                # Insert batch
+                insert_errors = self.bq_client.insert_rows_json(table_id, batch)
                 
-                if result:
-                    logger.error(f"Batch {i//batch_size + 1} errors: {result}")
-                    total_errors += len(result)
-                    errors.extend([str(e) for e in result])
-                    
-                    # Log the first few problematic records
-                    for j, error in enumerate(result[:3]):
-                        if j < len(batch):
-                            logger.error(f"Problematic record {i+j+1}: {json.dumps(batch[j], indent=2, default=str)}")
+                if insert_errors:
+                    error_msg = f"Batch {i//batch_size + 1} insertion errors: {insert_errors}"
+                    logger.error(error_msg)
+                    errors.extend(insert_errors)
                 else:
-                    logger.info(f"Batch {i//batch_size + 1} inserted successfully")
                     total_inserted += len(batch)
+                    logger.info(f"Successfully inserted batch {i//batch_size + 1}: {len(batch)} records")
             
-            logger.info(f"Insertion complete. Success: {total_inserted}, Errors: {total_errors}, Total: {len(rows)}")
+            logger.info(f"REPLACE mode completed. Total inserted: {total_inserted}")
             
-            if total_inserted > 0:
-                self.stats['records_created'] = total_inserted
-                
+            return {
+                'rows_processed': total_inserted,
+                'errors': errors
+            }
+            
         except Exception as e:
             error_msg = str(e)
             errors.append(error_msg)
-            logger.error(f"Error loading registry data: {error_msg}")
-            logger.error(f"Sample record that failed: {json.dumps(rows[0], indent=2, default=str)}")
+            logger.error(f"Error in REPLACE mode: {error_msg}")
+            
+            return {
+                'rows_processed': 0,
+                'errors': errors
+            }
         
-        return {
-            'rows_processed': total_inserted,
-            'errors': errors
-        }
+    def _load_data_merge_mode(self, rows: List[Dict], **kwargs) -> Dict:
+        """
+        MERGE mode: MERGE data atomically.
+        Used for production operations with potential concurrent access.
+        """
+        logger.info(f"Using MERGE mode for {len(rows)} records")
+        
+        table_id = f"{self.project_id}.{self.table_name}"
+        errors = []
+        
+        try:
+            # Prepare data for MERGE operation
+            rows_param = [self._convert_pandas_types_for_json(row) for row in rows]
+            
+            # Build MERGE statement
+            merge_query = f"""
+            MERGE `{table_id}` AS target
+            USING UNNEST(@rows) AS source
+            ON target.player_lookup = source.player_lookup 
+            AND target.team_abbr = source.team_abbr 
+            AND target.season = source.season
+            WHEN MATCHED THEN
+            UPDATE SET 
+                player_name = source.player_name,
+                first_game_date = source.first_game_date,
+                last_game_date = source.last_game_date,
+                games_played = source.games_played,
+                total_appearances = source.total_appearances,
+                inactive_appearances = source.inactive_appearances,
+                dnp_appearances = source.dnp_appearances,
+                jersey_number = source.jersey_number,
+                position = source.position,
+                last_roster_update = source.last_roster_update,
+                source_priority = source.source_priority,
+                confidence_score = source.confidence_score,
+                processed_at = source.processed_at
+            WHEN NOT MATCHED THEN
+            INSERT (
+                player_name, player_lookup, team_abbr, season, first_game_date,
+                last_game_date, games_played, total_appearances, inactive_appearances,
+                dnp_appearances, jersey_number, position, last_roster_update,
+                source_priority, confidence_score, created_by, created_at, processed_at
+            )
+            VALUES (
+                source.player_name, source.player_lookup, source.team_abbr, source.season,
+                source.first_game_date, source.last_game_date, source.games_played,
+                source.total_appearances, source.inactive_appearances, source.dnp_appearances,
+                source.jersey_number, source.position, source.last_roster_update,
+                source.source_priority, source.confidence_score, source.created_by,
+                source.created_at, source.processed_at
+            )
+            """
+            
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ArrayQueryParameter("rows", "STRUCT", rows_param)
+                ]
+            )
+            
+            query_job = self.bq_client.query(merge_query, job_config=job_config)
+            result = query_job.result()
+            
+            num_dml_affected_rows = query_job.num_dml_affected_rows or 0
+            
+            logger.info(f"MERGE mode completed. Affected rows: {num_dml_affected_rows}")
+            
+            return {
+                'rows_processed': num_dml_affected_rows,
+                'errors': []
+            }
+            
+        except Exception as e:
+            error_msg = str(e)
+            errors.append(error_msg)
+            logger.error(f"Error in MERGE mode: {error_msg}")
+            
+            return {
+                'rows_processed': 0,
+                'errors': errors
+            }
+    
+    def _load_data_upsert_mode(self, rows: List[Dict], **kwargs) -> Dict:
+        """
+        UPSERT mode: MERGE data atomically.
+        Used for production operations with potential concurrent access.
+        """
+        logger.info(f"Using UPSERT mode for {len(rows)} records")
+        
+        table_id = f"{self.project_id}.{self.table_name}"
+        errors = []
+        
+        try:
+            # Prepare data for MERGE operation
+            rows_param = [self._convert_pandas_types_for_json(row) for row in rows]
+            
+            # Build MERGE statement for your table structure
+            merge_query = f"""
+            MERGE `{table_id}` AS target
+            USING UNNEST(@rows) AS source
+            ON target.player_lookup = source.player_lookup 
+            AND target.team_abbr = source.team_abbr 
+            AND target.season = source.season
+            WHEN MATCHED THEN
+            UPDATE SET 
+                player_name = source.player_name,
+                first_game_date = source.first_game_date,
+                last_game_date = source.last_game_date,
+                games_played = source.games_played,
+                total_appearances = source.total_appearances,
+                inactive_appearances = source.inactive_appearances,
+                dnp_appearances = source.dnp_appearances,
+                jersey_number = source.jersey_number,
+                position = source.position,
+                last_roster_update = source.last_roster_update,
+                source_priority = source.source_priority,
+                confidence_score = source.confidence_score,
+                processed_at = source.processed_at
+            WHEN NOT MATCHED THEN
+            INSERT (
+                player_name, player_lookup, team_abbr, season, first_game_date,
+                last_game_date, games_played, total_appearances, inactive_appearances,
+                dnp_appearances, jersey_number, position, last_roster_update,
+                source_priority, confidence_score, created_by, created_at, processed_at
+            )
+            VALUES (
+                source.player_name, source.player_lookup, source.team_abbr, source.season,
+                source.first_game_date, source.last_game_date, source.games_played,
+                source.total_appearances, source.inactive_appearances, source.dnp_appearances,
+                source.jersey_number, source.position, source.last_roster_update,
+                source.source_priority, source.confidence_score, source.created_by,
+                source.created_at, source.processed_at
+            )
+            """
+            
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ArrayQueryParameter("rows", "STRUCT", rows_param)
+                ]
+            )
+            
+            query_job = self.bq_client.query(merge_query, job_config=job_config)
+            result = query_job.result()
+            
+            # Get merge statistics
+            num_dml_affected_rows = query_job.num_dml_affected_rows or 0
+            
+            logger.info(f"UPSERT mode completed. Affected rows: {num_dml_affected_rows}")
+            
+            return {
+                'rows_processed': num_dml_affected_rows,
+                'errors': []
+            }
+            
+        except Exception as e:
+            error_msg = str(e)
+            errors.append(error_msg)
+            logger.error(f"Error in UPSERT mode: {error_msg}")
+            
+            return {
+                'rows_processed': 0,
+                'errors': errors
+            }
     
     def build_historical_registry(self, seasons: List[str] = None) -> Dict:
         """
@@ -1099,26 +1254,23 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
             return {'error': str(e)}
 
 
-# Convenience functions for direct usage
-def build_historical_registry(seasons: List[str] = None) -> Dict:
+def build_historical_registry(seasons: List[str] = None, strategy: str = "replace") -> Dict:
     """Convenience function for 4-year backfill."""
-    processor = NbaPlayersRegistryProcessor()
+    processor = NbaPlayersRegistryProcessor(strategy=strategy)
     return processor.build_historical_registry(seasons)
 
-
-def update_registry_from_gamebook(game_date: str, season: str) -> Dict:
+def update_registry_from_gamebook(game_date: str, season: str, strategy: str = "merge") -> Dict:
     """Convenience function for nightly updates."""
-    processor = NbaPlayersRegistryProcessor()
+    processor = NbaPlayersRegistryProcessor(strategy=strategy)
     return processor.update_registry_from_gamebook(game_date, season)
 
-
-def update_registry_from_rosters(season: str, teams: List[str] = None) -> Dict:
+def update_registry_from_rosters(season: str, teams: List[str] = None, strategy: str = "merge") -> Dict:
     """Convenience function for morning roster updates."""
-    processor = NbaPlayersRegistryProcessor()
+    processor = NbaPlayersRegistryProcessor(strategy=strategy)
     return processor.update_registry_from_rosters(season, teams)
-
 
 def get_registry_summary() -> Dict:
     """Convenience function to get registry summary."""
-    processor = NbaPlayersRegistryProcessor()
+    processor = NbaPlayersRegistryProcessor()  # No strategy needed for read-only
     return processor.get_registry_summary()
+
