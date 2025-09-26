@@ -10,37 +10,30 @@ Usage Examples:
 1. Deploy Job:
    ./backfill_jobs/reference/nba_players_registry/deploy.sh
 
-2. Test with Single Season:
+2. Test with Single Season (MERGE - safe):
    gcloud run jobs execute nba-players-registry-processor-backfill \
-     --args="^|^--season=2023-24" --region=us-west2
+     --args="^|^--season=2023-24|--strategy=merge" --region=us-west2
 
-3. Full Historical Backfill (Replace Strategy):
+3. Full Historical Backfill (REPLACE - requires confirmation):
    gcloud run jobs execute nba-players-registry-processor-backfill \
-     --args="^|^--all-seasons|--strategy=replace" --region=us-west2
+     --args="^|^--all-seasons|--strategy=replace|--confirm-full-delete" --region=us-west2
 
 4. Recent Date Range:
    gcloud run jobs execute nba-players-registry-processor-backfill \
-     --args="^|^--start-date=2024-01-01|--end-date=2024-01-31" --region=us-west2
+     --args="^|^--start-date=2024-01-01|--end-date=2024-01-31|--strategy=merge" --region=us-west2
 
 5. Test Mode with Strategy:
    gcloud run jobs execute nba-players-registry-processor-backfill \
-     --args="^|^--start-date=2022-10-01|--end-date=2022-10-31|--test-mode|--strategy=replace" --region=us-west2
+     --args="^|^--season=2022-23|--test-mode|--strategy=replace|--confirm-full-delete" --region=us-west2
 
-6. Production Daily Update (Merge Strategy):
+6. Production Daily Update (MERGE Strategy - no confirmation needed):
    gcloud run jobs execute nba-players-registry-processor-backfill \
      --args="^|^--season=2024-25|--strategy=merge" --region=us-west2
 
-7. Monitor Logs:
-   gcloud beta run jobs executions logs read [execution-id] --region=us-west2 --follow
-
-8. Registry Summary:
-   gcloud run jobs execute nba-players-registry-processor-backfill \
-     --args="^|^--summary-only" --region=us-west2
-
 Strategy Options:
 ================
-- --strategy=replace: DELETE + INSERT (safe for backfill, single execution)
-- --strategy=merge:   Atomic MERGE operations (safe for concurrent daily runs)
+- --strategy=replace: DELETE entire tables + INSERT (requires --confirm-full-delete flag)
+- --strategy=merge:   Atomic MERGE operations (safe for daily operations, no confirmation needed)
 """
 
 import os
@@ -62,9 +55,12 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 class NbaPlayersRegistryBackfill:
     """Backfill job for building NBA Players Registry from gamebook data."""
-    
-    def __init__(self, test_mode: bool = False, strategy: str = "replace"):
-        self.processor = NbaPlayersRegistryProcessor(test_mode=test_mode, strategy=strategy)
+    def __init__(self, test_mode: bool = False, strategy: str = "merge", confirm_full_delete: bool = False):
+        self.processor = NbaPlayersRegistryProcessor(
+            test_mode=test_mode, 
+            strategy=strategy, 
+            confirm_full_delete=confirm_full_delete
+        )
         
         # Available seasons based on typical NBA data availability
         self.available_seasons = [
@@ -74,8 +70,10 @@ class NbaPlayersRegistryBackfill:
     def get_available_seasons_from_data(self) -> List[str]:
         """Query the database to find available seasons in gamebook data."""
         try:
+            # FIXED: Include season_year in SELECT so it can be used in ORDER BY
             query = f"""
             SELECT DISTINCT 
+                season_year,
                 CONCAT(CAST(season_year AS STRING), '-', LPAD(CAST(season_year + 1 - 2000 AS STRING), 2, '0')) as season
             FROM `{self.processor.project_id}.nba_raw.nbac_gamebook_player_stats`
             WHERE season_year IS NOT NULL
@@ -321,7 +319,7 @@ class NbaPlayersRegistryBackfill:
 def main():
     parser = argparse.ArgumentParser(description='NBA Players Registry Backfill Job')
     
-    # Mutually exclusive group for different modes
+    # Existing arguments stay the same...
     mode_group = parser.add_mutually_exclusive_group()
     mode_group.add_argument('--all-seasons', action='store_true', 
                            help='Build registry for all available seasons')
@@ -330,24 +328,26 @@ def main():
     mode_group.add_argument('--summary-only', action='store_true',
                            help='Show registry summary without building')
     
-    # Date range options (used together)
     parser.add_argument('--start-date', type=str, 
                        help='Start date for date range processing (YYYY-MM-DD)')
     parser.add_argument('--end-date', type=str,
                        help='End date for date range processing (YYYY-MM-DD)')
     
-    # Test mode option
     parser.add_argument('--test-mode', action='store_true',
                        help='Run in test mode using test tables')
     
     parser.add_argument('--strategy', 
-                    choices=['replace', 'upsert'], 
-                    default='replace',
-                    help='Processing strategy: replace (backfill) or upsert (production)')
+                choices=['replace', 'merge'], 
+                default='replace',
+                help='Processing strategy: replace (DELETE+INSERT for backfill) or merge (atomic MERGE for production)')
+    
+    # NEW: Add the safety confirmation flag
+    parser.add_argument('--confirm-full-delete', action='store_true',
+                       help='Required flag to confirm REPLACE strategy will delete entire tables')
     
     args = parser.parse_args()
     
-    # Validate date range arguments
+    # Existing validation stays the same...
     if (args.start_date and not args.end_date) or (args.end_date and not args.start_date):
         parser.error("Both --start-date and --end-date must be provided together")
     
@@ -357,7 +357,12 @@ def main():
     logging.info("Starting NBA Players Registry Backfill Job")
     logging.info(f"Arguments: {vars(args)}")
     
-    backfiller = NbaPlayersRegistryBackfill(test_mode=args.test_mode, strategy=args.strategy)
+    # NEW: Pass the confirmation flag to the backfiller
+    backfiller = NbaPlayersRegistryBackfill(
+        test_mode=args.test_mode, 
+        strategy=args.strategy,
+        confirm_full_delete=args.confirm_full_delete
+    )
     
     try:
         result = backfiller.run_backfill(args)

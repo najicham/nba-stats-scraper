@@ -51,18 +51,32 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
     - Jersey numbers and positions (when available)
     """
     
-    def __init__(self, test_mode: bool = False, strategy: str = "replace"):
+    def __init__(self, test_mode: bool = False, strategy: str = "merge", confirm_full_delete: bool = False):
         super().__init__()
-        
-        # NEW: Configure processing strategy
+    
+        # Configure processing strategy
         self.processing_strategy = ProcessingStrategy(strategy.lower())
+        self.confirm_full_delete = confirm_full_delete
+        
+        # Safety check for REPLACE mode
+        if self.processing_strategy == ProcessingStrategy.REPLACE and not confirm_full_delete:
+            raise ValueError(
+                "REPLACE strategy requires --confirm-full-delete flag to prevent accidental data loss. "
+                "This will DELETE entire tables and rebuild from scratch. "
+                "Use 'merge' strategy for incremental updates, or add --confirm-full-delete if full rebuild is intended."
+            )
+        
+        if self.processing_strategy == ProcessingStrategy.REPLACE and confirm_full_delete:
+            logger.warning("🚨 REPLACE mode with FULL DELETE confirmation - this will rebuild tables from scratch")
+            logger.warning("Main registry will be completely rebuilt")
+            logger.warning("Unresolved players table will be completely rebuilt") 
+        
         logger.info(f"Initialized with processing strategy: {self.processing_strategy.value}")
         
-        # Rest of your existing initialization code stays the same...
-        # Initialize BigQuery client
+        # Rest of existing initialization code...
         self.bq_client = bigquery.Client()
         self.project_id = os.environ.get('GCP_PROJECT_ID', self.bq_client.project)
-        
+
         # Processing tracking
         self.processing_run_id = f"registry_build_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         
@@ -459,11 +473,11 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
             logger.info("No unresolved Basketball Reference players found (all resolved via aliases or gamebook)")
 
     def _insert_unresolved_players(self, unresolved_records: List[Dict]):
-        """Insert unresolved player records with deduplication."""
+        """Insert unresolved player records respecting the processing strategy."""
         if not unresolved_records:
             return
         
-        # Group by key fields to deduplicate
+        # Group by key fields to deduplicate within this run (existing logic)
         dedup_dict = {}
         for record in unresolved_records:
             key = (
@@ -482,27 +496,335 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
         deduplicated_records = list(dedup_dict.values())
         
         if len(deduplicated_records) < len(unresolved_records):
-            logger.info(f"Deduplicated {len(unresolved_records)} → {len(deduplicated_records)} unresolved records")
+            logger.info(f"Within-run deduplication: {len(unresolved_records)} → {len(deduplicated_records)} records")
         
+        # Convert types for BigQuery
+        processed_records = []
+        for record in deduplicated_records:
+            processed_record = self._convert_pandas_types_for_json(record)
+            processed_records.append(processed_record)
+        
+        # Respect the main processing strategy for consistency
+        if self.processing_strategy == ProcessingStrategy.REPLACE:
+            logger.info(f"Using REPLACE strategy for {len(processed_records)} unresolved players")
+            self._replace_unresolved_players(processed_records)
+        else:
+            logger.info(f"Using MERGE strategy for {len(processed_records)} unresolved players") 
+            self._merge_unresolved_players(processed_records)
+
+    def _replace_unresolved_players(self, processed_records: List[Dict]):
+        """REPLACE mode: DELETE existing unresolved players + INSERT new ones."""
         table_id = f"{self.project_id}.{self.unresolved_table_name}"
         
         try:
-            # Convert types for BigQuery
-            processed_records = []
-            for record in deduplicated_records:
-                processed_record = self._convert_pandas_types_for_json(record)
-                processed_records.append(processed_record)
+            # Step 1: Delete existing records
+            logger.info(f"Deleting existing unresolved players from {self.unresolved_table_name}")
+            delete_query = f"DELETE FROM `{table_id}` WHERE TRUE"
+            delete_job = self.bq_client.query(delete_query)
+            delete_result = delete_job.result()
+            deleted_count = delete_job.num_dml_affected_rows or 0
+            logger.info(f"Deleted {deleted_count} existing unresolved player records")
             
-            # Insert deduplicated records
-            result = self.bq_client.insert_rows_json(table_id, processed_records)
-            
-            if result:
-                logger.error(f"Error inserting unresolved players: {result}")
+            # Step 2: Insert new records
+            if processed_records:
+                logger.info(f"Inserting {len(processed_records)} new unresolved player records")
+                insert_errors = self.bq_client.insert_rows_json(table_id, processed_records)
+                
+                if insert_errors:
+                    logger.error(f"Unresolved players insertion errors: {insert_errors}")
+                else:
+                    logger.info(f"Successfully inserted {len(processed_records)} unresolved player records")
             else:
-                logger.info(f"Successfully inserted {len(processed_records)} deduplicated unresolved players")
+                logger.info("No new unresolved players to insert")
                 
         except Exception as e:
-            logger.error(f"Error inserting unresolved players: {e}")
+            logger.error(f"Error in REPLACE mode for unresolved players: {e}")
+
+    def _merge_unresolved_players(self, processed_records: List[Dict]):
+        """
+        MERGE mode: Schema-enforced approach based on ChatGPT's excellent analysis.
+        
+        Key fixes:
+        1. Force loader to use table's exact schema (no autodetect)
+        2. Guarantee all REQUIRED fields are present/non-null
+        3. Use native datetime objects for proper type coercion
+        """
+        if not processed_records:
+            return
+        
+        table_id = f"{self.project_id}.{self.unresolved_table_name}"
+        
+        logger.info(f"Using schema-enforced MERGE strategy for {len(processed_records)} unresolved players")
+        
+        try:
+            from datetime import timezone
+            
+            # Create temporary table for MERGE operation
+            import uuid
+            temp_table_suffix = uuid.uuid4().hex[:8]
+            temp_table_id = f"{table_id}_temp_{temp_table_suffix}"
+            
+            logger.info(f"Creating temporary table: {temp_table_id}")
+            
+            # Get main table schema
+            main_table = self.bq_client.get_table(table_id)
+            
+            # Debug: Log REQUIRED fields to understand schema expectations
+            required_fields = [(f.name, f.field_type) for f in main_table.schema if f.mode == "REQUIRED"]
+            logger.info(f"Target table REQUIRED fields: {required_fields}")
+            
+            # Create temp table with identical schema
+            temp_table = bigquery.Table(temp_table_id, schema=main_table.schema)
+            temp_table = self.bq_client.create_table(temp_table)
+            logger.info("✅ Temporary table created with enforced schema")
+            
+            # Get required field names for validation
+            required_field_names = {f.name for f in main_table.schema if f.mode == "REQUIRED"}
+            
+            def ensure_required_defaults(rec: dict) -> dict:
+                """Ensure all REQUIRED fields have non-null values."""
+                out = dict(rec)
+                current_utc = datetime.now(timezone.utc)
+                current_date = current_utc.date()
+                
+                # Handle common REQUIRED fields based on typical unresolved_players schema
+                if "created_at" in required_field_names and out.get("created_at") is None:
+                    out["created_at"] = current_utc
+                    logger.debug("Set default created_at for REQUIRED field")
+                    
+                if "processed_at" in required_field_names and out.get("processed_at") is None:
+                    out["processed_at"] = current_utc
+                    logger.debug("Set default processed_at for REQUIRED field")
+                    
+                if "first_seen_date" in required_field_names and out.get("first_seen_date") is None:
+                    out["first_seen_date"] = current_date
+                    logger.debug("Set default first_seen_date for REQUIRED field")
+                    
+                if "last_seen_date" in required_field_names and out.get("last_seen_date") is None:
+                    out["last_seen_date"] = current_date
+                    logger.debug("Set default last_seen_date for REQUIRED field")
+                    
+                if "occurrences" in required_field_names and out.get("occurrences") is None:
+                    out["occurrences"] = 1
+                    logger.debug("Set default occurrences for REQUIRED field")
+                    
+                if "status" in required_field_names and out.get("status") is None:
+                    out["status"] = "pending"
+                    logger.debug("Set default status for REQUIRED field")
+                    
+                if "example_games" in required_field_names and out.get("example_games") is None:
+                    out["example_games"] = []
+                    logger.debug("Set default example_games for REQUIRED field")
+                
+                return out
+            
+            # Prepare records with schema enforcement
+            converted_records = []
+            for record in processed_records:
+                # Convert pandas types but keep native datetime objects
+                r = self._convert_pandas_types_for_json(record, for_table_load=True)
+                
+                # Handle NULLABLE reviewed_at properly (keep as None, don't remove)
+                if r.get("reviewed_at") is None:
+                    r["reviewed_at"] = None  # Explicit None for NULLABLE field
+                
+                # Ensure all REQUIRED fields have values
+                r = ensure_required_defaults(r)
+                
+                converted_records.append(r)
+            
+            # Load with enforced schema (ChatGPT's key insight)
+            job_config = bigquery.LoadJobConfig(
+                schema=main_table.schema,  # Force exact schema match
+                write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
+                source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+                autodetect=False,  # Critical: no schema inference
+                ignore_unknown_values=True
+            )
+            
+            logger.info(f"Loading {len(converted_records)} records with enforced schema")
+            load_job = self.bq_client.load_table_from_json(
+                converted_records, 
+                temp_table_id, 
+                job_config=job_config
+            )
+            load_result = load_job.result()
+            logger.info(f"✅ Data loaded to temp table: {load_job.output_rows} rows (schema enforced)")
+            
+            # Execute MERGE with REQUIRED field safety
+            logger.info("Executing schema-safe MERGE operation")
+            merge_query = f"""
+            MERGE `{table_id}` AS target
+            USING `{temp_table_id}` AS source
+            ON target.normalized_lookup = source.normalized_lookup 
+            AND target.team_abbr = source.team_abbr 
+            AND target.season = source.season
+            AND target.source = source.source
+            WHEN MATCHED THEN 
+            UPDATE SET 
+                occurrences = target.occurrences + source.occurrences,
+                last_seen_date = GREATEST(target.last_seen_date, source.last_seen_date),
+                notes = CASE 
+                    WHEN COALESCE(target.notes, '') != COALESCE(source.notes, '')
+                    THEN CONCAT(COALESCE(target.notes, ''), '; ', COALESCE(source.notes, ''))
+                    ELSE COALESCE(target.notes, source.notes)
+                END,
+                processed_at = source.processed_at
+            WHEN NOT MATCHED THEN 
+            INSERT (
+                source, original_name, normalized_lookup, first_seen_date, last_seen_date,
+                team_abbr, season, occurrences, example_games, status, resolution_type,
+                resolved_to_name, notes, reviewed_by, reviewed_at, created_at, processed_at
+            )
+            VALUES (
+                source.source, source.original_name, source.normalized_lookup, 
+                source.first_seen_date, source.last_seen_date, source.team_abbr, source.season,
+                source.occurrences, source.example_games, source.status, source.resolution_type,
+                source.resolved_to_name, source.notes, source.reviewed_by, source.reviewed_at,
+                COALESCE(source.created_at, CURRENT_TIMESTAMP()), source.processed_at
+            )
+            """
+            
+            merge_job = self.bq_client.query(merge_query)
+            merge_result = merge_job.result()
+            
+            num_affected = merge_job.num_dml_affected_rows or 0
+            logger.info(f"✅ MERGE completed successfully: {num_affected} rows affected")
+            
+            # Clean up temporary table
+            self.bq_client.delete_table(temp_table_id, not_found_ok=True)
+            logger.info("✅ Temporary table cleaned up successfully")
+            
+            logger.info("Schema-enforced MERGE strategy completed successfully")
+            
+        except Exception as e:
+            logger.error(f"Schema-enforced MERGE strategy failed: {str(e)}")
+            logger.error(f"Error details: {type(e).__name__}")
+            
+            # Enhanced fallback with REQUIRED field validation
+            logger.info(f"Fallback: Using schema-validated streaming insert")
+            
+            fallback_records = []
+            current_utc = datetime.now(timezone.utc)
+            
+            for record in processed_records:
+                converted_record = self._convert_pandas_types_for_json(record)
+                
+                # Ensure REQUIRED fields for streaming insert (string format for insert_rows_json)
+                if converted_record.get('created_at') is None:
+                    converted_record['created_at'] = current_utc.isoformat()
+                if converted_record.get('processed_at') is None:
+                    converted_record['processed_at'] = current_utc.isoformat()
+                if converted_record.get('first_seen_date') is None:
+                    converted_record['first_seen_date'] = current_utc.date().isoformat()
+                if converted_record.get('last_seen_date') is None:
+                    converted_record['last_seen_date'] = current_utc.date().isoformat()
+                if converted_record.get('occurrences') is None:
+                    converted_record['occurrences'] = 1
+                if converted_record.get('status') is None:
+                    converted_record['status'] = 'pending'
+                if converted_record.get('example_games') is None:
+                    converted_record['example_games'] = []
+                
+                # Remove None nullable fields for streaming insert
+                for field in ['reviewed_at', 'reviewed_by', 'resolved_to_name', 'resolution_type']:
+                    if converted_record.get(field) is None:
+                        converted_record.pop(field, None)
+                
+                fallback_records.append(converted_record)
+            
+            insert_errors = self.bq_client.insert_rows_json(table_id, fallback_records)
+            
+            if insert_errors:
+                logger.error(f"Schema-validated streaming insert errors: {insert_errors}")
+                raise Exception(f"Both MERGE and streaming insert failed: {insert_errors}")
+            else:
+                logger.info(f"✅ Schema-validated streaming insert succeeded for {len(fallback_records)} records")
+            
+            # Clean up temp table if it exists
+            if 'temp_table_id' in locals():
+                try:
+                    self.bq_client.delete_table(temp_table_id, not_found_ok=True)
+                    logger.info("Temporary table cleaned up after fallback")
+                except Exception as cleanup_error:
+                    logger.warning(f"Failed to cleanup temp table: {cleanup_error}")
+
+    def _insert_unresolved_players_temp_table(self, processed_records: List[Dict], table_id: str):
+        """Fallback method using temporary table approach for unresolved players."""
+        import uuid
+        temp_table_suffix = uuid.uuid4().hex[:8]
+        temp_table_id = f"{table_id}_temp_{temp_table_suffix}"
+        
+        try:
+            logger.info(f"Using temporary table approach for unresolved players: {temp_table_id}")
+            
+            # Get main table schema
+            main_table = self.bq_client.get_table(table_id)
+            
+            # Create temp table with same schema
+            temp_table = bigquery.Table(temp_table_id, schema=main_table.schema)
+            temp_table = self.bq_client.create_table(temp_table)
+            
+            # Load data to temp table
+            load_job = self.bq_client.load_table_from_json(processed_records, temp_table_id)
+            load_result = load_job.result()
+            
+            # MERGE from temp table
+            merge_query = f"""
+            MERGE `{table_id}` AS target
+            USING `{temp_table_id}` AS source
+            ON target.normalized_lookup = source.normalized_lookup 
+            AND target.team_abbr = source.team_abbr 
+            AND target.season = source.season
+            WHEN MATCHED THEN 
+            UPDATE SET 
+                occurrences = target.occurrences + source.occurrences,
+                last_seen_date = GREATEST(target.last_seen_date, source.last_seen_date),
+                notes = CASE 
+                    WHEN target.notes != source.notes 
+                    THEN CONCAT(target.notes, '; ', source.notes)
+                    ELSE target.notes 
+                END,
+                processed_at = source.processed_at
+            WHEN NOT MATCHED THEN 
+            INSERT (
+                source, original_name, normalized_lookup, first_seen_date, last_seen_date,
+                team_abbr, season, occurrences, example_games, status, resolution_type,
+                resolved_to_name, notes, reviewed_by, reviewed_at, created_at, processed_at
+            )
+            VALUES (
+                source.source, source.original_name, source.normalized_lookup, 
+                source.first_seen_date, source.last_seen_date, source.team_abbr, source.season,
+                source.occurrences, source.example_games, source.status, source.resolution_type,
+                source.resolved_to_name, source.notes, source.reviewed_by, source.reviewed_at,
+                source.created_at, source.processed_at
+            )
+            """
+            
+            merge_job = self.bq_client.query(merge_query)
+            merge_result = merge_job.result()
+            
+            num_affected = merge_job.num_dml_affected_rows or 0
+            logger.info(f"Temporary table approach succeeded: {num_affected} rows affected")
+            
+        except Exception as e:
+            logger.error(f"Temporary table approach also failed: {e}")
+            # Final fallback to original INSERT method (will create duplicates but won't crash)
+            logger.warning("Using original INSERT method - will create duplicates")
+            result = self.bq_client.insert_rows_json(table_id, processed_records)
+            if result:
+                logger.error(f"INSERT fallback errors: {result}")
+            else:
+                logger.info(f"INSERT fallback succeeded for {len(processed_records)} records")
+                
+        finally:
+            # Cleanup temp table
+            if temp_table_id:
+                try:
+                    self.bq_client.delete_table(temp_table_id, not_found_ok=True)
+                    logger.info("Temp table cleaned up successfully")
+                except Exception as cleanup_error:
+                    logger.warning(f"Failed to cleanup temp table: {cleanup_error}")
 
     # Replace the existing season filtering logic in get_roster_enhancement_data()
     def get_roster_enhancement_data(self, season_filter: str = None, season_years_filter: Tuple[int, int] = None) -> Dict[Tuple[str, str], Dict]:
@@ -650,15 +972,23 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
             logger.error(f"Traceback: {traceback.format_exc()}")
             return {}
 
-    def _convert_pandas_types_for_json(self, record: Dict[str, Any]) -> Dict[str, Any]:
+    def _convert_pandas_types_for_json(self, record: Dict[str, Any], for_table_load: bool = False) -> Dict[str, Any]:
         """
         Convert pandas/numpy types to BigQuery-compatible types.
+        
+        Args:
+            record: Dictionary with potentially problematic pandas/numpy types
+            for_table_load: If True, prepare for load_table_from_json (preserve datetime objects)
+                        If False, prepare for insert_rows_json (convert to strings)
         """
         converted_record = {}
         
         # Define fields that should be integers (even if they come as strings)
         integer_fields = {'games_played', 'total_appearances', 'inactive_appearances', 
                 'dnp_appearances', 'jersey_number', 'occurrences'}
+        
+        # Define TIMESTAMP fields that need special handling
+        timestamp_fields = {'created_at', 'processed_at', 'reviewed_at'}
         
         for key, value in record.items():
             # Handle NaN/None values first
@@ -669,10 +999,15 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
             elif hasattr(value, 'item'):  
                 converted_record[key] = value.item()
             
-            # Handle datetime objects - convert to strings for BigQuery TIMESTAMP
+            # Handle datetime objects - different logic based on usage
             elif isinstance(value, (pd.Timestamp, datetime)):
                 if pd.notna(value):
-                    converted_record[key] = value.isoformat()
+                    if for_table_load and key in timestamp_fields:
+                        # For load_table_from_json: keep as datetime object
+                        converted_record[key] = value
+                    else:
+                        # For insert_rows_json: convert to ISO string
+                        converted_record[key] = value.isoformat()
                 else:
                     converted_record[key] = None
             
@@ -703,7 +1038,7 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
             # Handle pandas Series scalars (common with .get() operations)
             elif isinstance(value, pd.Series) and len(value) == 1:
                 scalar_value = value.iloc[0]
-                converted_record[key] = self._convert_pandas_types_for_json({'temp': scalar_value})['temp']
+                converted_record[key] = self._convert_pandas_types_for_json({'temp': scalar_value}, for_table_load)['temp']
             
             # Handle regular Python types (pass through)
             else:
@@ -767,47 +1102,45 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
             raise ValueError(f"Unknown processing strategy: {self.processing_strategy}")
     
     def _load_data_replace_mode(self, rows: List[Dict], **kwargs) -> Dict:
-        """
-        REPLACE mode: DELETE existing data + INSERT new data.
-        Used for backfill operations (single execution, complete rebuilds).
-        """
+        """REPLACE mode: DELETE existing data + INSERT new data."""
         logger.info(f"Using REPLACE mode for {len(rows)} records")
         
         table_id = f"{self.project_id}.{self.table_name}"
         errors = []
         
         try:
-            # Step 1: Delete existing data (if any)
+            # Step 1: Delete with better error handling
+            logger.info(f"Step 1: Deleting existing records from {self.table_name}")
             delete_query = f"DELETE FROM `{table_id}` WHERE TRUE"
             delete_job = self.bq_client.query(delete_query)
             delete_result = delete_job.result()
-            logger.info(f"Deleted existing records from {self.table_name}")
+            deleted_count = delete_job.num_dml_affected_rows or 0
+            logger.info(f"Deleted {deleted_count} existing records")
             
-            # Step 2: Insert new records
-            rows_to_insert = []
-            for row in rows:
-                converted_row = self._convert_pandas_types_for_json(row)
-                rows_to_insert.append(converted_row)
+            # Step 2: Insert with detailed batch logging
+            logger.info(f"Step 2: Inserting {len(rows)} new records")
+            rows_to_insert = [self._convert_pandas_types_for_json(row) for row in rows]
             
-            # Insert in batches if needed (BigQuery has 10MB limit per insert)
             batch_size = 1000
             total_inserted = 0
+            batch_count = (len(rows_to_insert) + batch_size - 1) // batch_size
             
             for i in range(0, len(rows_to_insert), batch_size):
                 batch = rows_to_insert[i:i+batch_size]
+                batch_num = i//batch_size + 1
                 
-                # Insert batch
+                logger.info(f"Inserting batch {batch_num}/{batch_count}: {len(batch)} records")
                 insert_errors = self.bq_client.insert_rows_json(table_id, batch)
                 
                 if insert_errors:
-                    error_msg = f"Batch {i//batch_size + 1} insertion errors: {insert_errors}"
+                    error_msg = f"Batch {batch_num} insertion errors: {insert_errors}"
                     logger.error(error_msg)
                     errors.extend(insert_errors)
                 else:
                     total_inserted += len(batch)
-                    logger.info(f"Successfully inserted batch {i//batch_size + 1}: {len(batch)} records")
+                    logger.info(f"✅ Batch {batch_num} success: {len(batch)} records")
             
-            logger.info(f"REPLACE mode completed. Total inserted: {total_inserted}")
+            logger.info(f"REPLACE mode completed: {total_inserted}/{len(rows)} records inserted")
             
             return {
                 'rows_processed': total_inserted,
@@ -815,9 +1148,9 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
             }
             
         except Exception as e:
-            error_msg = str(e)
+            error_msg = f"REPLACE mode failed: {str(e)}"
+            logger.error(error_msg)
             errors.append(error_msg)
-            logger.error(f"Error in REPLACE mode: {error_msg}")
             
             return {
                 'rows_processed': 0,
@@ -826,22 +1159,68 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
         
     def _load_data_merge_mode(self, rows: List[Dict], **kwargs) -> Dict:
         """
-        MERGE mode: MERGE data atomically.
+        MERGE mode: MERGE data atomically using temporary table approach.
+        
+        This avoids STRUCT parameter complexity by:
+        1. Creating temporary table with same schema
+        2. Loading data to temp table (handles type conversion gracefully)
+        3. MERGE from temp table to main table (no STRUCT parameters)
+        4. Cleanup temp table
+        
         Used for production operations with potential concurrent access.
         """
-        logger.info(f"Using MERGE mode for {len(rows)} records")
+        logger.info(f"Using MERGE mode (temp table approach) for {len(rows)} records")
         
         table_id = f"{self.project_id}.{self.table_name}"
         errors = []
+        temp_table_id = None
         
         try:
-            # Prepare data for MERGE operation
-            rows_param = [self._convert_pandas_types_for_json(row) for row in rows]
+            # Step 1: Create temporary table with same schema as main table
+            import uuid
+            temp_table_suffix = uuid.uuid4().hex[:8]
+            temp_table_id = f"{table_id}_temp_{temp_table_suffix}"
             
-            # Build MERGE statement
+            logger.info(f"Creating temporary table: {temp_table_id}")
+            
+            # Get main table schema
+            main_table = self.bq_client.get_table(table_id)
+            
+            # Create temp table with same schema
+            temp_table = bigquery.Table(temp_table_id, schema=main_table.schema)
+            temp_table = self.bq_client.create_table(temp_table)
+            
+            logger.info(f"✅ Temporary table created successfully")
+            
+            # Step 2: Load data to temp table using load_table_from_json
+            # This handles type conversion gracefully without STRUCT parameters
+            logger.info(f"Loading {len(rows)} records to temporary table")
+            
+            # Convert rows for BigQuery (this should work fine with load_table_from_json)
+            rows_for_loading = [self._convert_pandas_types_for_json(row) for row in rows]
+            
+            # Load to temp table - this is much more robust than STRUCT parameters
+            load_job = self.bq_client.load_table_from_json(
+                rows_for_loading, 
+                temp_table_id,
+                job_config=bigquery.LoadJobConfig(
+                    # Let BigQuery auto-detect and handle schema matching
+                    autodetect=False,  # We're using the explicit schema from main table
+                    write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE
+                )
+            )
+            
+            # Wait for load job to complete
+            load_result = load_job.result()
+            logger.info(f"✅ Data loaded to temp table: {load_job.output_rows} rows")
+            
+            # Step 3: MERGE from temp table to main table
+            # This avoids all STRUCT parameter issues entirely
+            logger.info("Executing MERGE from temporary table to main table")
+            
             merge_query = f"""
             MERGE `{table_id}` AS target
-            USING UNNEST(@rows) AS source
+            USING `{temp_table_id}` AS source
             ON target.player_lookup = source.player_lookup 
             AND target.team_abbr = source.team_abbr 
             AND target.season = source.season
@@ -877,18 +1256,13 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
             )
             """
             
-            job_config = bigquery.QueryJobConfig(
-                query_parameters=[
-                    bigquery.ArrayQueryParameter("rows", "STRUCT", rows_param)
-                ]
-            )
+            # Execute MERGE - no query parameters needed!
+            merge_job = self.bq_client.query(merge_query)
+            merge_result = merge_job.result()
             
-            query_job = self.bq_client.query(merge_query, job_config=job_config)
-            result = query_job.result()
-            
-            num_dml_affected_rows = query_job.num_dml_affected_rows or 0
-            
-            logger.info(f"MERGE mode completed. Affected rows: {num_dml_affected_rows}")
+            # Get merge statistics
+            num_dml_affected_rows = merge_job.num_dml_affected_rows or 0
+            logger.info(f"✅ MERGE completed successfully: {num_dml_affected_rows} rows affected")
             
             return {
                 'rows_processed': num_dml_affected_rows,
@@ -896,14 +1270,31 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
             }
             
         except Exception as e:
-            error_msg = str(e)
+            error_msg = f"MERGE mode (temp table) failed: {str(e)}"
+            logger.error(error_msg)
+            logger.error(f"Exception details: {type(e).__name__}: {str(e)}")
+            
+            # Log more details for debugging
+            import traceback
+            logger.error(f"Full traceback: {traceback.format_exc()}")
+            
             errors.append(error_msg)
-            logger.error(f"Error in MERGE mode: {error_msg}")
             
             return {
                 'rows_processed': 0,
                 'errors': errors
             }
+            
+        finally:
+            # Step 4: Always cleanup temp table
+            if temp_table_id:
+                try:
+                    logger.info(f"Cleaning up temporary table: {temp_table_id}")
+                    self.bq_client.delete_table(temp_table_id, not_found_ok=True)
+                    logger.info("✅ Temporary table cleaned up successfully")
+                except Exception as cleanup_error:
+                    logger.warning(f"Failed to cleanup temp table {temp_table_id}: {cleanup_error}")
+                    # Don't fail the whole operation for cleanup issues
     
     def _load_data_upsert_mode(self, rows: List[Dict], **kwargs) -> Dict:
         """
@@ -1055,6 +1446,81 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
             'processing_run_id': self.processing_run_id
         }
     
+    def get_available_seasons_from_data(self) -> List[str]:
+        """Query the database to find available seasons in gamebook data."""
+        try:
+            # FIXED: Include season_year in SELECT so it can be used in ORDER BY
+            query = f"""
+            SELECT DISTINCT 
+                season_year,
+                CONCAT(CAST(season_year AS STRING), '-', LPAD(CAST(season_year + 1 - 2000 AS STRING), 2, '0')) as season
+            FROM `{self.processor.project_id}.nba_raw.nbac_gamebook_player_stats`
+            WHERE season_year IS NOT NULL
+            ORDER BY season_year DESC
+            """
+            
+            results = self.processor.bq_client.query(query).to_dataframe()
+            
+            if not results.empty:
+                seasons = results['season'].tolist()
+                logging.info(f"Found {len(seasons)} seasons in gamebook data: {seasons}")
+                return seasons
+            else:
+                logging.warning("No seasons found in gamebook data, using default list")
+                return self.available_seasons
+                
+        except Exception as e:
+            logging.error(f"Error querying available seasons: {e}")
+            return self.available_seasons
+        
+    def build_registry_for_season(self, season: str, team: str = None) -> Dict:
+        """Build registry for a specific season."""
+        logger.info(f"Building registry for season {season}" + (f", team {team}" if team else ""))
+        
+        # Reset stats for each season to avoid accumulation issues
+        self.stats = {
+            'players_processed': 0,
+            'records_created': 0,
+            'records_updated': 0,
+            'seasons_processed': set(),
+            'teams_processed': set(),
+            'unresolved_players_found': 0,
+            'alias_resolutions': 0
+        }
+        
+        # Create filter data
+        filter_data = {
+            'season_filter': season,
+            'team_filter': team
+        }
+        
+        # Transform and load
+        rows = self.transform_data(filter_data)
+        result = self.load_data(rows)
+        
+        # Log summary with more accurate information
+        logger.info(f"Registry build complete for {season}:")
+        logger.info(f"  Records created: {len(rows)}")
+        logger.info(f"  Records loaded: {result['rows_processed']}")
+        logger.info(f"  Load errors: {len(result.get('errors', []))}")
+        logger.info(f"  Players processed: {self.stats['players_processed']}")
+        logger.info(f"  Teams: {len(self.stats['teams_processed'])}")
+        logger.info(f"  Alias resolutions: {self.stats['alias_resolutions']}")
+        logger.info(f"  Unresolved found: {self.stats['unresolved_players_found']}")
+        
+        return {
+            'season': season,
+            'team_filter': team,
+            'records_processed': result['rows_processed'],
+            'records_created': len(rows),
+            'players_processed': self.stats['players_processed'],
+            'teams_processed': list(self.stats['teams_processed']),
+            'alias_resolutions': self.stats['alias_resolutions'],
+            'unresolved_found': self.stats['unresolved_players_found'],
+            'errors': result.get('errors', []),
+            'processing_run_id': self.processing_run_id
+        }
+    
     def update_registry_from_gamebook(self, game_date: str, season: str) -> Dict:
         """
         Scenario 2: Nightly update after gamebook processing.
@@ -1134,40 +1600,91 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
             result['scenario'] = 'morning_roster_update'
             return result
     
-    def build_registry_for_season(self, season: str, team: str = None) -> Dict:
-        """Build registry for a specific season."""
-        logger.info(f"Building registry for season {season}" + (f", team {team}" if team else ""))
+    def build_registry_for_all_seasons(self) -> Dict:
+        """Build registry for all available seasons."""
+        logger.info("Starting full registry backfill for all seasons")
         
-        # Create filter data
-        filter_data = {
-            'season_filter': season,
-            'team_filter': team
+        seasons = self.get_available_seasons_from_data()
+        
+        if not seasons:
+            logger.error("No seasons available for processing")
+            return {'error': 'No seasons found'}
+        
+        results = {
+            'seasons_processed': [],
+            'seasons_failed': [],
+            'total_records': 0,
+            'total_players': 0,
+            'errors': [],
+            'start_time': datetime.now().isoformat(),
+            'end_time': None
         }
         
-        # Transform and load
-        rows = self.transform_data(filter_data)
-        result = self.load_data(rows)
+        for i, season in enumerate(seasons, 1):
+            logger.info(f"Processing season {i}/{len(seasons)}: {season}")
+            
+            try:
+                season_result = self.processor.build_registry_for_season(season)
+                
+                # IMPROVED: Check if season actually loaded data
+                if season_result['records_processed'] > 0:
+                    results['seasons_processed'].append({
+                        'season': season,
+                        'records_loaded': season_result['records_processed'],
+                        'records_created': season_result.get('records_created', 0),
+                        'players_processed': season_result['players_processed'],
+                        'teams_processed': len(season_result['teams_processed']),
+                        'errors': season_result['errors']
+                    })
+                    
+                    results['total_records'] += season_result['records_processed']
+                    results['total_players'] += season_result['players_processed']
+                    
+                    logger.info(f"✅ {season}: {season_result['records_processed']} records loaded, {season_result['players_processed']} players")
+                else:
+                    # Season failed to load data
+                    results['seasons_failed'].append({
+                        'season': season,
+                        'error_count': len(season_result['errors']),
+                        'errors': season_result['errors']
+                    })
+                    logger.error(f"❌ {season}: Failed to load data - {len(season_result['errors'])} errors")
+                
+                if season_result['errors']:
+                    results['errors'].extend([f"{season}: {err}" for err in season_result['errors']])
+                    
+            except Exception as e:
+                error_msg = f"Error processing season {season}: {str(e)}"
+                logger.error(error_msg)
+                results['errors'].append(error_msg)
+                results['seasons_failed'].append({
+                    'season': season,
+                    'error': str(e)
+                })
         
-        # Log summary
-        logger.info(f"Registry build complete for {season}:")
-        logger.info(f"  Records processed: {result['rows_processed']}")
-        logger.info(f"  Players: {self.stats['players_processed']}")
-        logger.info(f"  Teams: {len(self.stats['teams_processed'])}")
-        logger.info(f"  Alias resolutions: {self.stats['alias_resolutions']}")
-        logger.info(f"  Unresolved found: {self.stats['unresolved_players_found']}")
-        logger.info(f"  Errors: {len(result.get('errors', []))}")
+        results['end_time'] = datetime.now().isoformat()
         
-        return {
-            'season': season,
-            'team_filter': team,
-            'records_processed': result['rows_processed'],
-            'players_processed': self.stats['players_processed'],
-            'teams_processed': list(self.stats['teams_processed']),
-            'alias_resolutions': self.stats['alias_resolutions'],
-            'unresolved_found': self.stats['unresolved_players_found'],
-            'errors': result.get('errors', []),
-            'processing_run_id': self.processing_run_id
-        }
+        # IMPROVED: Accurate final summary
+        logger.info("=" * 60)
+        logger.info("REGISTRY BACKFILL SUMMARY:")
+        logger.info(f"  Seasons successful: {len(results['seasons_processed'])}")
+        logger.info(f"  Seasons failed: {len(results['seasons_failed'])}")
+        logger.info(f"  Total registry records loaded: {results['total_records']}")
+        logger.info(f"  Total players processed: {results['total_players']}")
+        logger.info(f"  Total errors: {len(results['errors'])}")
+        
+        if results['seasons_failed']:
+            logger.error("  Failed seasons:")
+            for failed in results['seasons_failed']:
+                logger.error(f"    - {failed['season']}")
+        
+        start_time = datetime.fromisoformat(results['start_time'])
+        end_time = datetime.fromisoformat(results['end_time'])
+        duration = (end_time - start_time).total_seconds() / 60
+        logger.info(f"  Duration: {duration:.1f} minutes")
+        logger.info("=" * 60)
+        
+        return results
     
     def build_registry_for_date_range(self, start_date: str, end_date: str) -> Dict:
         """Build registry for a specific date range across seasons."""
