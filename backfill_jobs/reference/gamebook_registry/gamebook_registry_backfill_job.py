@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-File: processor_backfill/nba_players_registry/nba_players_registry_backfill_job.py
+File: processor_backfill/gamebook_registry/gamebook_registry_backfill_job.py
 
 Backfill job for building NBA Players Registry from historical gamebook data
 
@@ -8,26 +8,26 @@ Usage Examples:
 =============
 
 1. Deploy Job:
-   ./backfill_jobs/reference/nba_players_registry/deploy.sh
+   ./backfill_jobs/reference/gamebook_registry/deploy.sh
 
 2. Test with Single Season (MERGE - safe):
-   gcloud run jobs execute nba-players-registry-processor-backfill \
+   gcloud run jobs execute gamebook-registry-processor-backfill \
      --args="^|^--season=2023-24|--strategy=merge" --region=us-west2
 
 3. Full Historical Backfill (REPLACE - requires confirmation):
-   gcloud run jobs execute nba-players-registry-processor-backfill \
+   gcloud run jobs execute gamebook-registry-processor-backfill \
      --args="^|^--all-seasons|--strategy=replace|--confirm-full-delete" --region=us-west2
 
 4. Recent Date Range:
-   gcloud run jobs execute nba-players-registry-processor-backfill \
+   gcloud run jobs execute gamebook-registry-processor-backfill \
      --args="^|^--start-date=2024-01-01|--end-date=2024-01-31|--strategy=merge" --region=us-west2
 
 5. Test Mode with Strategy:
-   gcloud run jobs execute nba-players-registry-processor-backfill \
+   gcloud run jobs execute gamebook-registry-processor-backfill \
      --args="^|^--season=2022-23|--test-mode|--strategy=replace|--confirm-full-delete" --region=us-west2
 
 6. Production Daily Update (MERGE Strategy - no confirmation needed):
-   gcloud run jobs execute nba-players-registry-processor-backfill \
+   gcloud run jobs execute gamebook-registry-processor-backfill \
      --args="^|^--season=2024-25|--strategy=merge" --region=us-west2
 
 Strategy Options:
@@ -46,20 +46,24 @@ from typing import Dict, List
 # Add parent directories to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
-from data_processors.reference.player_reference.nba_players_registry_processor import NbaPlayersRegistryProcessor
+# FIXED: Import from the new gamebook processor
+from data_processors.reference.player_reference.gamebook_registry_processor import GamebookRegistryProcessor
 
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 
-class NbaPlayersRegistryBackfill:
+class GamebookRegistryBackfill:
     """Backfill job for building NBA Players Registry from gamebook data."""
-    def __init__(self, test_mode: bool = False, strategy: str = "merge", confirm_full_delete: bool = False):
-        self.processor = NbaPlayersRegistryProcessor(
+    def __init__(self, test_mode: bool = False, strategy: str = "merge", 
+                 confirm_full_delete: bool = False, enable_name_change_detection: bool = False):
+        # FIXED: Use GamebookRegistryProcessor and add enable_name_change_detection parameter
+        self.processor = GamebookRegistryProcessor(
             test_mode=test_mode, 
             strategy=strategy, 
-            confirm_full_delete=confirm_full_delete
+            confirm_full_delete=confirm_full_delete,
+            enable_name_change_detection=enable_name_change_detection  # Disable for backfill by default
         )
         
         # Available seasons based on typical NBA data availability
@@ -96,7 +100,7 @@ class NbaPlayersRegistryBackfill:
     
     def build_registry_for_all_seasons(self) -> Dict:
         """Build registry for all available seasons."""
-        logging.info("Starting full registry backfill for all seasons")
+        logging.info("Starting full gamebook registry backfill for all seasons")
         
         seasons = self.get_available_seasons_from_data()
         
@@ -144,7 +148,7 @@ class NbaPlayersRegistryBackfill:
         
         # Final summary
         logging.info("=" * 60)
-        logging.info("REGISTRY BACKFILL SUMMARY:")
+        logging.info("GAMEBOOK REGISTRY BACKFILL SUMMARY:")
         logging.info(f"  Seasons processed: {len(results['seasons_processed'])}")
         logging.info(f"  Total registry records: {results['total_records']}")
         logging.info(f"  Total unique players: {results['total_players']}")
@@ -160,7 +164,7 @@ class NbaPlayersRegistryBackfill:
     
     def build_registry_for_season(self, season: str) -> Dict:
         """Build registry for a specific season."""
-        logging.info(f"Building registry for season: {season}")
+        logging.info(f"Building gamebook registry for season: {season}")
         
         # Validate season format
         if not self.validate_season_format(season):
@@ -171,7 +175,7 @@ class NbaPlayersRegistryBackfill:
         try:
             result = self.processor.build_registry_for_season(season)
             
-            logging.info(f"Registry build complete for {season}:")
+            logging.info(f"Gamebook registry build complete for {season}:")
             logging.info(f"  Records: {result['records_processed']}")
             logging.info(f"  Players: {result['players_processed']}")
             logging.info(f"  Teams: {len(result['teams_processed'])}")
@@ -179,40 +183,60 @@ class NbaPlayersRegistryBackfill:
             return result
             
         except Exception as e:
-            error_msg = f"Error building registry for season {season}: {str(e)}"
+            error_msg = f"Error building gamebook registry for season {season}: {str(e)}"
             logging.error(error_msg)
             return {'error': error_msg}
     
     def build_registry_for_date_range(self, start_date: str, end_date: str) -> Dict:
         """Build registry for a specific date range."""
-        logging.info(f"Building registry for date range: {start_date} to {end_date}")
+        logging.info(f"Building gamebook registry for date range: {start_date} to {end_date}")
         
         try:
             # Validate dates
             datetime.strptime(start_date, '%Y-%m-%d')
             datetime.strptime(end_date, '%Y-%m-%d')
             
-            result = self.processor.build_registry_for_date_range(start_date, end_date)
+            # Create filter data for transform_data method
+            filter_data = {
+                'date_range': (start_date, end_date)
+            }
             
-            logging.info(f"Registry build complete for {start_date} to {end_date}:")
-            logging.info(f"  Records: {result['records_processed']}")
-            logging.info(f"  Players: {result['players_processed']}")
-            logging.info(f"  Seasons: {len(result['seasons_processed'])}")
+            # Transform and load
+            rows = self.processor.transform_data(filter_data)
+            result = self.processor.load_data(rows)
             
-            return result
+            # Calculate stats similar to build_registry_for_season
+            processed_records = result['rows_processed']
+            unique_players = len(set(row['player_lookup'] for row in rows)) if rows else 0
+            seasons_in_data = set(row['season'] for row in rows) if rows else set()
+            
+            logging.info(f"Gamebook registry build complete for {start_date} to {end_date}:")
+            logging.info(f"  Records: {processed_records}")
+            logging.info(f"  Players: {unique_players}")
+            logging.info(f"  Seasons: {len(seasons_in_data)}")
+            
+            return {
+                'scenario': 'date_range_processing',
+                'date_range': (start_date, end_date),
+                'records_processed': processed_records,
+                'players_processed': unique_players,
+                'seasons_processed': list(seasons_in_data),
+                'errors': result.get('errors', []),
+                'processing_run_id': self.processor.processing_run_id
+            }
             
         except ValueError as e:
             error_msg = f"Invalid date format: {e}. Expected YYYY-MM-DD"
             logging.error(error_msg)
             return {'error': error_msg}
         except Exception as e:
-            error_msg = f"Error building registry for date range: {str(e)}"
+            error_msg = f"Error building gamebook registry for date range: {str(e)}"
             logging.error(error_msg)
             return {'error': error_msg}
     
     def get_registry_summary(self) -> Dict:
         """Get summary of current registry state."""
-        logging.info("Getting registry summary...")
+        logging.info("Getting gamebook registry summary...")
         
         try:
             summary = self.processor.get_registry_summary()
@@ -240,7 +264,7 @@ class NbaPlayersRegistryBackfill:
             
             # Print summary
             logging.info("=" * 60)
-            logging.info("NBA PLAYERS REGISTRY SUMMARY:")
+            logging.info("NBA GAMEBOOK REGISTRY SUMMARY:")
             logging.info(f"  Total Records: {total_records:,}")
             logging.info(f"  Unique Players: {unique_players:,}")
             logging.info(f"  Seasons Covered: {seasons_covered}")
@@ -260,7 +284,7 @@ class NbaPlayersRegistryBackfill:
             return summary
             
         except Exception as e:
-            error_msg = f"Error getting registry summary: {str(e)}"
+            error_msg = f"Error getting gamebook registry summary: {str(e)}"
             logging.error(error_msg)
             return {'error': error_msg}
     
@@ -317,9 +341,9 @@ class NbaPlayersRegistryBackfill:
 
 
 def main():
-    parser = argparse.ArgumentParser(description='NBA Players Registry Backfill Job')
+    parser = argparse.ArgumentParser(description='NBA Gamebook Registry Backfill Job')
     
-    # Existing arguments stay the same...
+    # Mode selection arguments
     mode_group = parser.add_mutually_exclusive_group()
     mode_group.add_argument('--all-seasons', action='store_true', 
                            help='Build registry for all available seasons')
@@ -341,27 +365,31 @@ def main():
                 default='replace',
                 help='Processing strategy: replace (DELETE+INSERT for backfill) or merge (atomic MERGE for production)')
     
-    # NEW: Add the safety confirmation flag
     parser.add_argument('--confirm-full-delete', action='store_true',
                        help='Required flag to confirm REPLACE strategy will delete entire tables')
     
+    # NEW: Add name change detection control for backfill
+    parser.add_argument('--enable-name-change-detection', action='store_true',
+                       help='Enable enhanced name change detection (disabled by default for backfill performance)')
+    
     args = parser.parse_args()
     
-    # Existing validation stays the same...
+    # Validation
     if (args.start_date and not args.end_date) or (args.end_date and not args.start_date):
         parser.error("Both --start-date and --end-date must be provided together")
     
     if args.start_date and args.end_date and (args.all_seasons or args.season):
         parser.error("Date range cannot be used with --all-seasons or --season")
     
-    logging.info("Starting NBA Players Registry Backfill Job")
+    logging.info("Starting NBA Gamebook Registry Backfill Job")
     logging.info(f"Arguments: {vars(args)}")
     
-    # NEW: Pass the confirmation flag to the backfiller
-    backfiller = NbaPlayersRegistryBackfill(
+    # Create backfiller with all necessary parameters
+    backfiller = GamebookRegistryBackfill(
         test_mode=args.test_mode, 
         strategy=args.strategy,
-        confirm_full_delete=args.confirm_full_delete
+        confirm_full_delete=args.confirm_full_delete,
+        enable_name_change_detection=args.enable_name_change_detection
     )
     
     try:
@@ -371,7 +399,7 @@ def main():
             logging.error(f"Backfill failed: {result['error']}")
             return 1
         else:
-            logging.info("Backfill completed successfully")
+            logging.info("Gamebook registry backfill completed successfully")
             return 0
             
     except Exception as e:

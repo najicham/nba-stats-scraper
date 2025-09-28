@@ -1,14 +1,19 @@
 -- File: schemas/bigquery/nba_reference/nba_players_registry_table.sql
 -- Description: NBA players registry table for authoritative player validation
 -- Created: 2025-01-20
+-- Updated: 2025-09-27 - Added universal_player_id for cross-table player identification
 -- Purpose: Authoritative registry of valid NBA players built from gamebook data
 
 -- =============================================================================
 -- Table: NBA Players Registry - Authoritative player validation
 -- =============================================================================
 CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_reference.nba_players_registry` (
+    -- Universal player identification
+    universal_player_id STRING,            -- Universal player ID (e.g., "kjmartin_001")
+    
+    -- Basic player identification  
     player_name STRING NOT NULL,           -- Official NBA.com name
-    player_lookup STRING NOT NULL,        -- Normalized lookup key
+    player_lookup STRING NOT NULL,         -- Normalized lookup key
     team_abbr STRING NOT NULL,             -- Team affiliation
     season STRING NOT NULL,                -- "2023-24" format
     
@@ -31,10 +36,10 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_reference.nba_players_registr
     
     -- Metadata
     created_by STRING NOT NULL,
-    created_at TIMESTAMP NOT NULL,      -- When record first created
-    processed_at TIMESTAMP NOT NULL     -- When record last updated
+    created_at TIMESTAMP NOT NULL,         -- When record first created
+    processed_at TIMESTAMP NOT NULL       -- When record last updated
 )
-CLUSTER BY player_lookup, season, team_abbr
+CLUSTER BY universal_player_id, player_lookup, season, team_abbr
 OPTIONS (
-  description = "Authoritative registry of valid NBA players built from gamebook data"
+  description = "Authoritative registry of valid NBA players with universal IDs for cross-table identification"
 );

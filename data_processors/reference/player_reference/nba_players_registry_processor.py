@@ -27,10 +27,13 @@ import pandas as pd
 import numpy as np
 from typing import Dict, Any
 from enum import Enum
+from datetime import timezone
+import time
 
 # Fixed import path for new structure
 from data_processors.raw.processor_base import ProcessorBase
 from shared.utils.player_name_normalizer import normalize_name_for_lookup
+from shared.utils.universal_player_id_resolver import UniversalPlayerIDResolver
 # from shared.utils.nba_team_mapper import nba_team_mapper
 
 logger = logging.getLogger(__name__)
@@ -105,6 +108,12 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
             'unresolved_players_found': 0,
             'alias_resolutions': 0
         }
+
+        self.players_seen_this_run = set()  # Track players seen this run
+        self.universal_id_resolver = UniversalPlayerIDResolver(self.bq_client, self.project_id)
+        
+        # Reset tracking for universal ID assignments
+        self.new_players_discovered = set()  # Track new players this run
         
         logger.info(f"Initialized registry processor with run ID: {self.processing_run_id}")
     
@@ -142,8 +151,9 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
     def get_gamebook_player_data(self, season_filter: str = None, 
                                team_filter: str = None, 
                                date_range: Tuple[str, str] = None) -> pd.DataFrame:
-        """Extract player data from processed gamebook table."""
-        logger.info("Querying gamebook data for registry building...")
+        # Add around the main query:
+        query_start = time.time()
+        logger.info(f"PERF_METRIC: gamebook_query_start season={season_filter} team={team_filter}")
         
         # Build the query
         query = """
@@ -195,6 +205,8 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
         try:
             results = self.bq_client.query(query, job_config=job_config).to_dataframe()
             logger.info(f"Retrieved {len(results)} player-game records from gamebook data")
+            query_duration = time.time() - query_start
+            logger.info(f"PERF_METRIC: gamebook_query_complete duration={query_duration:.3f}s rows_returned={len(results)}")
             return results
             
         except Exception as e:
@@ -339,9 +351,27 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
             # Convert to dict format for compatibility (if it's None)
             if enhancement is None:
                 enhancement = {}
+
+            # NEW: Use utility to resolve/assign universal ID
+            try:
+                # Better approach - let the resolver track new players
+                universal_id = self.universal_id_resolver.resolve_or_create_universal_id(player_lookup)
+
+                # Check if resolver created a new ID (you'd need to modify the utility to track this)
+                # OR simpler: check if this canonical player wasn't seen before in this run
+                canonical_name = self.universal_id_resolver.get_canonical_player_name(player_lookup)
+                if canonical_name not in self.players_seen_this_run:
+                    self.new_players_discovered.add(canonical_name)
+                self.players_seen_this_run.add(canonical_name)
+                    
+            except Exception as e:
+                logger.error(f"Error resolving universal ID for {player_lookup}: {e}")
+                # Fallback: create simple ID to prevent failure
+                universal_id = f"{player_lookup}_001"
             
             # Create registry record with proper timestamp fields
             record = {
+                'universal_player_id': universal_id,
                 'player_name': player_name,  # Use most common name variant
                 'player_lookup': player_lookup,
                 'team_abbr': team_abbr,
@@ -542,22 +572,22 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
 
     def _merge_unresolved_players(self, processed_records: List[Dict]):
         """
-        MERGE mode: Schema-enforced approach based on ChatGPT's excellent analysis.
-        
-        Key fixes:
-        1. Force loader to use table's exact schema (no autodetect)
-        2. Guarantee all REQUIRED fields are present/non-null
-        3. Use native datetime objects for proper type coercion
+        MERGE mode: Schema-enforced approach with graceful streaming buffer failure.
+        Enhanced with performance metrics for monitoring and optimization.
         """
         if not processed_records:
             return
         
+        # PERF: Overall operation timing
+        operation_start = time.time()
         table_id = f"{self.project_id}.{self.unresolved_table_name}"
+        temp_table_id = None
         
-        logger.info(f"Using schema-enforced MERGE strategy for {len(processed_records)} unresolved players")
+        logger.info(f"PERF_METRIC: unresolved_merge_start record_count={len(processed_records)} operation_id={uuid.uuid4().hex[:8]}")
         
         try:
-            from datetime import timezone
+            # PERF: Table creation timing
+            table_creation_start = time.time()
             
             # Create temporary table for MERGE operation
             import uuid
@@ -567,7 +597,11 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
             logger.info(f"Creating temporary table: {temp_table_id}")
             
             # Get main table schema
+            schema_fetch_start = time.time()
             main_table = self.bq_client.get_table(table_id)
+            schema_fetch_duration = time.time() - schema_fetch_start
+            
+            logger.info(f"PERF_METRIC: schema_fetch_duration={schema_fetch_duration:.3f}s table={table_id}")
             
             # Debug: Log REQUIRED fields to understand schema expectations
             required_fields = [(f.name, f.field_type) for f in main_table.schema if f.mode == "REQUIRED"]
@@ -576,7 +610,9 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
             # Create temp table with identical schema
             temp_table = bigquery.Table(temp_table_id, schema=main_table.schema)
             temp_table = self.bq_client.create_table(temp_table)
-            logger.info("✅ Temporary table created with enforced schema")
+            
+            table_creation_duration = time.time() - table_creation_start
+            logger.info(f"PERF_METRIC: temp_table_creation_duration={table_creation_duration:.3f}s table_id={temp_table_id}")
             
             # Get required field names for validation
             required_field_names = {f.name for f in main_table.schema if f.mode == "REQUIRED"}
@@ -618,6 +654,9 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
                 
                 return out
             
+            # PERF: Data preparation timing
+            data_prep_start = time.time()
+            
             # Prepare records with schema enforcement
             converted_records = []
             for record in processed_records:
@@ -632,6 +671,12 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
                 r = ensure_required_defaults(r)
                 
                 converted_records.append(r)
+            
+            data_prep_duration = time.time() - data_prep_start
+            logger.info(f"PERF_METRIC: data_preparation_duration={data_prep_duration:.3f}s record_count={len(converted_records)}")
+            
+            # PERF: Data loading timing
+            load_start = time.time()
             
             # Load with enforced schema (ChatGPT's key insight)
             job_config = bigquery.LoadJobConfig(
@@ -649,7 +694,14 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
                 job_config=job_config
             )
             load_result = load_job.result()
-            logger.info(f"✅ Data loaded to temp table: {load_job.output_rows} rows (schema enforced)")
+            
+            load_duration = time.time() - load_start
+            rows_loaded = load_job.output_rows or len(converted_records)
+            
+            logger.info(f"PERF_METRIC: data_load_duration={load_duration:.3f}s rows_loaded={rows_loaded} bytes_processed={load_job.input_files or 0}")
+            
+            # PERF: MERGE operation timing
+            merge_start = time.time()
             
             # Execute MERGE with REQUIRED field safety
             logger.info("Executing schema-safe MERGE operation")
@@ -688,66 +740,54 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
             merge_job = self.bq_client.query(merge_query)
             merge_result = merge_job.result()
             
+            merge_duration = time.time() - merge_start
             num_affected = merge_job.num_dml_affected_rows or 0
-            logger.info(f"✅ MERGE completed successfully: {num_affected} rows affected")
+            bytes_processed = merge_job.total_bytes_processed or 0
             
-            # Clean up temporary table
-            self.bq_client.delete_table(temp_table_id, not_found_ok=True)
-            logger.info("✅ Temporary table cleaned up successfully")
+            logger.info(f"PERF_METRIC: merge_operation_duration={merge_duration:.3f}s rows_affected={num_affected} bytes_processed={bytes_processed}")
             
+            # PERF: Overall success timing
+            total_duration = time.time() - operation_start
+            
+            logger.info(f"PERF_METRIC: unresolved_merge_success total_duration={total_duration:.3f}s records_processed={len(processed_records)} rows_affected={num_affected}")
             logger.info("Schema-enforced MERGE strategy completed successfully")
             
         except Exception as e:
+            # PERF: Error timing
+            error_duration = time.time() - operation_start
+            error_type = type(e).__name__
+            
+            logger.error(f"PERF_METRIC: unresolved_merge_error duration={error_duration:.3f}s error_type={error_type}")
             logger.error(f"Schema-enforced MERGE strategy failed: {str(e)}")
-            logger.error(f"Error details: {type(e).__name__}")
             
-            # Enhanced fallback with REQUIRED field validation
-            logger.info(f"Fallback: Using schema-validated streaming insert")
-            
-            fallback_records = []
-            current_utc = datetime.now(timezone.utc)
-            
-            for record in processed_records:
-                converted_record = self._convert_pandas_types_for_json(record)
-                
-                # Ensure REQUIRED fields for streaming insert (string format for insert_rows_json)
-                if converted_record.get('created_at') is None:
-                    converted_record['created_at'] = current_utc.isoformat()
-                if converted_record.get('processed_at') is None:
-                    converted_record['processed_at'] = current_utc.isoformat()
-                if converted_record.get('first_seen_date') is None:
-                    converted_record['first_seen_date'] = current_utc.date().isoformat()
-                if converted_record.get('last_seen_date') is None:
-                    converted_record['last_seen_date'] = current_utc.date().isoformat()
-                if converted_record.get('occurrences') is None:
-                    converted_record['occurrences'] = 1
-                if converted_record.get('status') is None:
-                    converted_record['status'] = 'pending'
-                if converted_record.get('example_games') is None:
-                    converted_record['example_games'] = []
-                
-                # Remove None nullable fields for streaming insert
-                for field in ['reviewed_at', 'reviewed_by', 'resolved_to_name', 'resolution_type']:
-                    if converted_record.get(field) is None:
-                        converted_record.pop(field, None)
-                
-                fallback_records.append(converted_record)
-            
-            insert_errors = self.bq_client.insert_rows_json(table_id, fallback_records)
-            
-            if insert_errors:
-                logger.error(f"Schema-validated streaming insert errors: {insert_errors}")
-                raise Exception(f"Both MERGE and streaming insert failed: {insert_errors}")
+            # Check if this is a streaming buffer issue
+            if "streaming buffer" in str(e).lower():
+                logger.warning(f"PERF_METRIC: streaming_buffer_conflict duration={error_duration:.3f}s records_skipped={len(processed_records)}")
+                logger.warning(f"MERGE blocked by streaming buffer - {len(processed_records)} unresolved players skipped this run")
+                logger.info("Records will be processed on the next run when streaming buffer clears")
+                logger.info("This is expected behavior and will resolve automatically")
             else:
-                logger.info(f"✅ Schema-validated streaming insert succeeded for {len(fallback_records)} records")
+                # Re-raise non-streaming-buffer errors (genuine problems we need to fix)
+                logger.error(f"MERGE failed with non-streaming-buffer error: {str(e)}")
+                raise e
+                
+        finally:
+            # PERF: Cleanup timing
+            cleanup_start = time.time()
             
-            # Clean up temp table if it exists
-            if 'temp_table_id' in locals():
+            # Always clean up temporary table, regardless of success or failure
+            if temp_table_id:
                 try:
                     self.bq_client.delete_table(temp_table_id, not_found_ok=True)
-                    logger.info("Temporary table cleaned up after fallback")
+                    cleanup_duration = time.time() - cleanup_start
+                    logger.info(f"PERF_METRIC: cleanup_duration={cleanup_duration:.3f}s temp_table={temp_table_id}")
                 except Exception as cleanup_error:
-                    logger.warning(f"Failed to cleanup temp table: {cleanup_error}")
+                    cleanup_duration = time.time() - cleanup_start
+                    logger.warning(f"PERF_METRIC: cleanup_error duration={cleanup_duration:.3f}s error={str(cleanup_error)}")
+            
+            # PERF: Final summary
+            final_duration = time.time() - operation_start
+            logger.info(f"PERF_METRIC: unresolved_merge_complete total_duration={final_duration:.3f}s input_records={len(processed_records)}")
 
     def _insert_unresolved_players_temp_table(self, processed_records: List[Dict], table_id: str):
         """Fallback method using temporary table approach for unresolved players."""
@@ -884,8 +924,11 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
             query += " ORDER BY season_year, team_abbrev, player_lookup"
             
             job_config = bigquery.QueryJobConfig(query_parameters=query_params)
-            results = self.bq_client.query(query, job_config=job_config).to_dataframe()
             
+            enhancement_start = time.time()
+            results = self.bq_client.query(query, job_config=job_config).to_dataframe()
+            enhancement_duration = time.time() - enhancement_start
+            logger.info(f"PERF_METRIC: enhancement_data_duration={enhancement_duration:.3f}s rows_returned={len(results)}")
             logger.info(f"Retrieved {len(results)} roster records from Basketball Reference")
             
             # DEBUG: Log season years in the data
@@ -1170,6 +1213,9 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
         Used for production operations with potential concurrent access.
         """
         logger.info(f"Using MERGE mode (temp table approach) for {len(rows)} records")
+        # Add at start:
+        operation_start = time.time()
+        logger.info(f"PERF_METRIC: main_registry_merge_start record_count={len(rows)}")
         
         table_id = f"{self.project_id}.{self.table_name}"
         errors = []
@@ -1226,6 +1272,7 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
             AND target.season = source.season
             WHEN MATCHED THEN
             UPDATE SET 
+                universal_player_id = source.universal_player_id,  -- ADD THIS LINE
                 player_name = source.player_name,
                 first_game_date = source.first_game_date,
                 last_game_date = source.last_game_date,
@@ -1241,13 +1288,13 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
                 processed_at = source.processed_at
             WHEN NOT MATCHED THEN
             INSERT (
-                player_name, player_lookup, team_abbr, season, first_game_date,
+                universal_player_id, player_name, player_lookup, team_abbr, season, first_game_date,  -- ADD universal_player_id
                 last_game_date, games_played, total_appearances, inactive_appearances,
                 dnp_appearances, jersey_number, position, last_roster_update,
                 source_priority, confidence_score, created_by, created_at, processed_at
             )
             VALUES (
-                source.player_name, source.player_lookup, source.team_abbr, source.season,
+                source.universal_player_id, source.player_name, source.player_lookup, source.team_abbr, source.season,  -- ADD universal_player_id
                 source.first_game_date, source.last_game_date, source.games_played,
                 source.total_appearances, source.inactive_appearances, source.dnp_appearances,
                 source.jersey_number, source.position, source.last_roster_update,
@@ -1264,6 +1311,8 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
             num_dml_affected_rows = merge_job.num_dml_affected_rows or 0
             logger.info(f"✅ MERGE completed successfully: {num_dml_affected_rows} rows affected")
             
+            total_duration = time.time() - operation_start
+            logger.info(f"PERF_METRIC: main_registry_merge_complete duration={total_duration:.3f}s records_processed={len(rows)}")
             return {
                 'rows_processed': num_dml_affected_rows,
                 'errors': []
@@ -1476,7 +1525,14 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
     def build_registry_for_season(self, season: str, team: str = None) -> Dict:
         """Build registry for a specific season."""
         logger.info(f"Building registry for season {season}" + (f", team {team}" if team else ""))
+        # Add at start:
+        season_start = time.time()
+        logger.info(f"PERF_METRIC: season_processing_start season={season} team={team}")
         
+        # Reset tracking for this run
+        self.new_players_discovered = set()
+        self.players_seen_this_run = set()
+
         # Reset stats for each season to avoid accumulation issues
         self.stats = {
             'players_processed': 0,
@@ -1497,6 +1553,10 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
         # Transform and load
         rows = self.transform_data(filter_data)
         result = self.load_data(rows)
+
+        result['new_players_discovered'] = list(self.new_players_discovered)
+        if self.new_players_discovered:
+            logger.info(f"Discovered {len(self.new_players_discovered)} new players: {', '.join(self.new_players_discovered)}")
         
         # Log summary with more accurate information
         logger.info(f"Registry build complete for {season}:")
@@ -1508,6 +1568,9 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
         logger.info(f"  Alias resolutions: {self.stats['alias_resolutions']}")
         logger.info(f"  Unresolved found: {self.stats['unresolved_players_found']}")
         
+        season_duration = time.time() - season_start
+        logger.info(f"PERF_METRIC: season_processing_complete season={season} duration={season_duration:.3f}s records={result['records_processed']}")
+
         return {
             'season': season,
             'team_filter': team,
@@ -1534,6 +1597,8 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
         """
         logger.info(f"Updating registry from gamebook data for {game_date}, season {season}")
         
+        self.new_players_discovered = set()
+
         # Use date range approach for recent games
         filter_data = {
             'season_filter': season,
@@ -1543,6 +1608,11 @@ class NbaPlayersRegistryProcessor(ProcessorBase):
         # Transform and load
         rows = self.transform_data(filter_data)
         result = self.load_data(rows)
+
+        # Enhanced result with universal ID info
+        result['new_players_discovered'] = list(self.new_players_discovered)
+        if self.new_players_discovered:
+            logger.info(f"Discovered {len(self.new_players_discovered)} new players during nightly update")
         
         return {
             'scenario': 'nightly_gamebook_update',

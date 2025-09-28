@@ -4,21 +4,184 @@ import json
 import logging
 import os
 from datetime import datetime, date
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional
 from flask import Flask, request, jsonify
 
-from .player_reference.nba_players_registry_processor import (
-    NbaPlayersRegistryProcessor,
-    update_registry_from_gamebook,
-    update_registry_from_rosters,
-    get_registry_summary
-)
+# FIXED: Import from the new split processors
+from .player_reference.gamebook_registry_processor import GamebookRegistryProcessor
+from .player_reference.roster_registry_processor import RosterRegistryProcessor
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
+
+
+def update_registry_from_gamebook(game_date: str, season: str) -> Dict[str, Any]:
+    """
+    Update registry after gamebook processing.
+    
+    Args:
+        game_date: Date of games processed (YYYY-MM-DD)
+        season: NBA season (e.g., 2024-25)
+    
+    Returns:
+        Processing result dictionary
+    """
+    try:
+        logger.info(f"Updating gamebook registry for {game_date}, season {season}")
+        
+        # Use gamebook processor with name change detection enabled for daily updates
+        processor = GamebookRegistryProcessor(
+            test_mode=False,
+            strategy="merge",  # Safe MERGE strategy for daily updates
+            enable_name_change_detection=True  # Enable for production daily runs
+        )
+        
+        # Build registry for the specific season
+        result = processor.build_registry_for_season(season)
+        
+        logger.info(f"Gamebook registry update complete: {result['records_processed']} records processed")
+        
+        return {
+            'scenario': 'gamebook_processed_update',
+            'game_date': game_date,
+            'season': season,
+            'success': True,
+            'records_processed': result['records_processed'],
+            'players_processed': result['players_processed'],
+            'teams_processed': result['teams_processed'],
+            'errors': result.get('errors', []),
+            'processing_run_id': result['processing_run_id']
+        }
+        
+    except Exception as e:
+        error_msg = f"Error updating registry from gamebook: {str(e)}"
+        logger.error(error_msg)
+        return {
+            'scenario': 'gamebook_processed_update',
+            'game_date': game_date,
+            'season': season,
+            'success': False,
+            'error': error_msg
+        }
+
+
+def update_registry_from_rosters(season: str, teams: Optional[List[str]] = None) -> Dict[str, Any]:
+    """
+    Update registry after roster scraping.
+    
+    Args:
+        season: NBA season (e.g., 2024-25)
+        teams: Optional list of specific teams to update
+    
+    Returns:
+        Processing result dictionary
+    """
+    try:
+        logger.info(f"Updating roster registry for season {season}")
+        if teams:
+            logger.info(f"Specific teams: {teams}")
+        
+        # Use roster processor with name change detection enabled for daily updates
+        processor = RosterRegistryProcessor(
+            test_mode=False,
+            strategy="merge",  # Safe MERGE strategy for daily updates
+            enable_name_change_detection=True  # Enable for production daily runs
+        )
+        
+        if teams:
+            # Process specific teams
+            results = []
+            total_records = 0
+            total_players = 0
+            all_errors = []
+            
+            for team in teams:
+                logger.info(f"Processing roster data for team: {team}")
+                result = processor.build_registry_for_season(season, team)
+                results.append({
+                    'team': team,
+                    'records_processed': result['records_processed'],
+                    'players_processed': result['players_processed'],
+                    'errors': result.get('errors', [])
+                })
+                total_records += result['records_processed']
+                total_players += result['players_processed']
+                all_errors.extend(result.get('errors', []))
+            
+            return {
+                'scenario': 'roster_scraped_update',
+                'season': season,
+                'teams': teams,
+                'success': True,
+                'total_records_processed': total_records,
+                'total_players_processed': total_players,
+                'team_results': results,
+                'errors': all_errors
+            }
+        else:
+            # Process entire season
+            result = processor.build_registry_for_season(season)
+            
+            logger.info(f"Roster registry update complete: {result['records_processed']} records processed")
+            
+            return {
+                'scenario': 'roster_scraped_update',
+                'season': season,
+                'teams': None,
+                'success': True,
+                'records_processed': result['records_processed'],
+                'players_processed': result['players_processed'],
+                'teams_processed': result['teams_processed'],
+                'errors': result.get('errors', []),
+                'processing_run_id': result['processing_run_id']
+            }
+        
+    except Exception as e:
+        error_msg = f"Error updating registry from rosters: {str(e)}"
+        logger.error(error_msg)
+        return {
+            'scenario': 'roster_scraped_update',
+            'season': season,
+            'teams': teams,
+            'success': False,
+            'error': error_msg
+        }
+
+
+def get_registry_summary() -> Dict[str, Any]:
+    """
+    Get registry statistics from both gamebook and roster sources.
+    
+    Returns:
+        Registry summary dictionary
+    """
+    try:
+        # Get gamebook registry summary
+        gamebook_processor = GamebookRegistryProcessor()
+        gamebook_summary = gamebook_processor.get_registry_summary()
+        
+        # Get roster registry summary
+        roster_processor = RosterRegistryProcessor()
+        roster_summary = roster_processor.get_registry_summary()
+        
+        return {
+            'summary_type': 'combined_registry_summary',
+            'gamebook_registry': gamebook_summary,
+            'roster_registry': roster_summary,
+            'generated_at': datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        error_msg = f"Error getting registry summary: {str(e)}"
+        logger.error(error_msg)
+        return {
+            'summary_type': 'combined_registry_summary',
+            'error': error_msg,
+            'generated_at': datetime.now().isoformat()
+        }
 
 
 def process_pub_sub_message(message_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -78,22 +241,41 @@ def process_pub_sub_message(message_data: Dict[str, Any]) -> Dict[str, Any]:
             }
         
         elif trigger_type == 'manual_refresh':
-            # Manual registry refresh
+            # Manual registry refresh - FIXED to work with split architecture
             season = message_data.get('season')
             team = message_data.get('team')
+            processor_type = message_data.get('processor_type', 'gamebook')  # Default to gamebook
             
-            processor = NbaPlayersRegistryProcessor()
-            
-            if season:
-                logger.info(f"Manual refresh for season {season}")
-                result = processor.build_registry_for_season(season, team)
+            if processor_type == 'gamebook':
+                processor = GamebookRegistryProcessor(enable_name_change_detection=True)
+                
+                if season:
+                    logger.info(f"Manual gamebook refresh for season {season}")
+                    result = processor.build_registry_for_season(season, team)
+                else:
+                    logger.info("Manual gamebook refresh for all seasons")
+                    result = processor.build_historical_registry()
+                    
+            elif processor_type == 'roster':
+                processor = RosterRegistryProcessor(enable_name_change_detection=True)
+                
+                if season:
+                    logger.info(f"Manual roster refresh for season {season}")
+                    result = processor.build_registry_for_season(season, team)
+                else:
+                    logger.info("Manual roster refresh for all seasons")
+                    result = processor.build_historical_registry()
+                
             else:
-                logger.info("Manual refresh for all seasons")
-                result = processor.build_historical_registry()
+                return {
+                    'status': 'error',
+                    'message': f'Unknown processor_type: {processor_type}. Use "gamebook" or "roster"'
+                }
             
             return {
                 'status': 'success',
                 'trigger_type': trigger_type,
+                'processor_type': processor_type,
                 'result': result
             }
         
@@ -117,7 +299,11 @@ def health_check():
     return jsonify({
         'status': 'healthy',
         'service': 'reference-processor',
-        'timestamp': datetime.now().isoformat()
+        'timestamp': datetime.now().isoformat(),
+        'processors_available': {
+            'gamebook_registry': True,
+            'roster_registry': True
+        }
     })
 
 
@@ -201,7 +387,42 @@ def get_stats():
         }), 500
 
 
+@app.route('/trigger/gamebook/<action>', methods=['POST'])
+def gamebook_specific_trigger(action: str):
+    """Gamebook-specific trigger endpoints."""
+    try:
+        params = request.get_json() or {}
+        
+        if action == 'refresh':
+            message_data = {
+                'trigger_type': 'manual_refresh',
+                'processor_type': 'gamebook',
+                **params
+            }
+        elif action == 'summary':
+            processor = GamebookRegistryProcessor()
+            summary = processor.get_registry_summary()
+            return jsonify({
+                'status': 'success',
+                'summary': summary
+            })
+        else:
+            return jsonify({
+                'status': 'error',
+                'message': f'Unknown gamebook action: {action}'
+            }), 400
+        
+        result = process_pub_sub_message(message_data)
+        return jsonify(result)
+    
+    except Exception as e:
+        logger.error(f"Error in gamebook trigger: {e}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))
     app.run(host='0.0.0.0', port=port)
-    
