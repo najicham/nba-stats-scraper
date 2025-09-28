@@ -5,12 +5,12 @@ File: data_processors/reference/player_reference/gamebook_registry_processor.py
 Gamebook Registry Processor
 
 Builds the NBA players registry from NBA.com gamebook data.
-Refactored version that inherits from base classes for shared functionality.
+Simplified version with conflict prevention removed and bulk universal ID resolution.
 
 Three Usage Scenarios:
 1. Historical backfill: Process 4 years of gamebook data
 2. Nightly updates: Triggered after gamebook processing completes
-3. Enhanced name change detection: Optional investigation reporting
+3. Basic name change detection: Simple unresolved player tracking
 """
 
 import logging
@@ -35,13 +35,16 @@ class GamebookRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin,
     - Player game participation statistics
     - Team assignments and season tracking
     - Jersey numbers and positions from Basketball Reference enhancement
-    - Enhanced name change detection and investigation reporting
+    - Basic unresolved player tracking (simplified name change detection)
     """
     
     def __init__(self, test_mode: bool = False, strategy: str = "merge", 
                  confirm_full_delete: bool = False,
                  enable_name_change_detection: bool = True):
         super().__init__(test_mode, strategy, confirm_full_delete, enable_name_change_detection)
+        
+        # Set processor type for source tracking
+        self.processor_type = 'gamebook'
         
         logger.info("Initialized Gamebook Registry Processor")
     
@@ -277,7 +280,7 @@ class GamebookRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin,
 
     def aggregate_player_stats(self, gamebook_df: pd.DataFrame, 
                              date_range: Tuple[str, str] = None) -> List[Dict]:
-        """Aggregate gamebook data into registry records."""
+        """Aggregate gamebook data into registry records with bulk universal ID resolution."""
         logger.info("Aggregating player statistics for registry...")
         
         # Determine season years for Basketball Reference filtering
@@ -293,14 +296,21 @@ class GamebookRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin,
         # Get roster enhancement data
         enhancement_data = self.get_roster_enhancement_data(season_years_filter=season_years_filter)
         
-        registry_records = []
-        
         # Group by logical business key
         groupby_cols = ['player_lookup', 'team_abbr', 'season_year']
         grouped = gamebook_df.groupby(groupby_cols)
         
         # Track which Basketball Reference players we found in gamebook
         found_br_players = set()
+        
+        # BULK RESOLUTION: Collect all unique player_lookup values first
+        unique_player_lookups = list(gamebook_df['player_lookup'].unique())
+        logger.info(f"Performing bulk universal ID resolution for {len(unique_player_lookups)} unique players")
+        
+        # Get all universal IDs in one operation
+        universal_id_mappings = self.bulk_resolve_universal_player_ids(unique_player_lookups)
+        
+        registry_records = []
         
         for (player_lookup, team_abbr, season_year), group in grouped:
             # Calculate season string
@@ -325,17 +335,11 @@ class GamebookRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin,
             inactive_games = status_counts.get('inactive', 0)
             dnp_games = status_counts.get('dnp', 0)
             
-            # Determine source priority and confidence
+            # Determine source priority and confidence with dynamic logic
             resolution_statuses = group['name_resolution_status'].value_counts()
-            if 'original' in resolution_statuses:
-                source_priority = 'nba_gamebook'
-                confidence_score = 1.0
-            elif 'resolved' in resolution_statuses:
-                source_priority = 'nba_gamebook_resolved'
-                confidence_score = 0.9
-            else:
-                source_priority = 'nba_gamebook_uncertain'
-                confidence_score = 0.7
+            source_priority, confidence_score = self._determine_gamebook_source_priority_and_confidence(
+                resolution_statuses, active_games, total_appearances
+            )
             
             # Look up enhancement data (with alias resolution)
             enhancement, resolved_via_alias = self._resolve_enhancement_via_alias(
@@ -355,10 +359,10 @@ class GamebookRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin,
             if enhancement is None:
                 enhancement = {}
 
-            # Resolve universal player ID
-            universal_id = self.resolve_universal_player_id(player_lookup)
+            # Get universal player ID from bulk resolution
+            universal_id = universal_id_mappings.get(player_lookup, f"{player_lookup}_001")
             
-            # Create registry record
+            # Create base registry record
             record = {
                 'universal_player_id': universal_id,
                 'player_name': player_name,
@@ -381,32 +385,62 @@ class GamebookRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin,
                 'processed_at': datetime.now()
             }
             
+            # Enhance record with source tracking
+            enhanced_record = self.enhance_record_with_source_tracking(record, self.processor_type)
+            
             # Convert types for BigQuery
-            record = self._convert_pandas_types_for_json(record)
-            registry_records.append(record)
+            enhanced_record = self._convert_pandas_types_for_json(enhanced_record)
+            registry_records.append(enhanced_record)
             
             # Update stats
             self.stats['players_processed'] += 1
             self.stats['seasons_processed'].add(season_str)
             self.stats['teams_processed'].add(team_abbr)
         
-        # Handle unresolved Basketball Reference players
-        self._handle_unresolved_br_players(enhancement_data, found_br_players)
+        # Handle unresolved Basketball Reference players (simplified)
+        self._handle_unresolved_br_players_simple(enhancement_data, found_br_players)
         
         logger.info(f"Created {len(registry_records)} registry records")
         logger.info(f"Resolved {self.stats['alias_resolutions']} players via alias system")
         
         return registry_records
 
-    def _handle_unresolved_br_players(self, enhancement_data: Dict, found_players: set):
-        """Handle unresolved Basketball Reference players with conditional enhancement."""
-        if self.enable_name_change_detection:
-            return self._handle_unresolved_br_players_enhanced(enhancement_data, found_players)
+    def _determine_gamebook_source_priority_and_confidence(self, resolution_statuses: pd.Series, 
+                                                         active_games: int, total_appearances: int) -> Tuple[str, float]:
+        """Determine source priority and confidence with dynamic logic."""
+        # Base source priority determination
+        if 'original' in resolution_statuses:
+            source_priority = 'nba_gamebook'
+            base_confidence = 1.0
+        elif 'resolved' in resolution_statuses:
+            source_priority = 'nba_gamebook_resolved'
+            base_confidence = 0.9
         else:
-            return self._handle_unresolved_br_players_original(enhancement_data, found_players)
+            source_priority = 'nba_gamebook_uncertain'
+            base_confidence = 0.7
+        
+        # Dynamic confidence adjustments
+        confidence_score = base_confidence
+        
+        # More games played = higher confidence
+        if active_games >= 50:
+            confidence_score = min(confidence_score + 0.1, 1.0)
+        elif active_games >= 20:
+            confidence_score = min(confidence_score + 0.05, 1.0)
+        elif active_games < 5:
+            confidence_score = max(confidence_score - 0.1, 0.1)
+        
+        # High participation rate = higher confidence
+        participation_rate = active_games / max(total_appearances, 1)
+        if participation_rate >= 0.8:
+            confidence_score = min(confidence_score + 0.05, 1.0)
+        elif participation_rate < 0.3:
+            confidence_score = max(confidence_score - 0.05, 0.1)
+        
+        return source_priority, confidence_score
 
-    def _handle_unresolved_br_players_original(self, enhancement_data: Dict, found_players: set):
-        """Original simple unresolved player handling (for backfill)."""
+    def _handle_unresolved_br_players_simple(self, enhancement_data: Dict, found_players: set):
+        """Simplified unresolved player handling - just log unresolved players."""
         unresolved_players = []
         current_datetime = datetime.now()
         current_date = current_datetime.date()
@@ -442,79 +476,6 @@ class GamebookRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin,
             self.stats['unresolved_players_found'] = len(unresolved_players)
             logger.info(f"Added {len(unresolved_players)} Basketball Reference players to unresolved queue")
 
-    def _handle_unresolved_br_players_enhanced(self, enhancement_data: Dict, found_players: set):
-        """Enhanced unresolved player handling with investigation reports."""
-        unresolved_players = []
-        investigation_report = {
-            'detection_date': date.today().isoformat(),
-            'processor_type': 'gamebook_registry_processor',
-            'total_br_players': len(enhancement_data),
-            'found_in_gamebook': len(found_players),
-            'investigations': [],
-            'summary': {}
-        }
-        
-        current_datetime = datetime.now()
-        current_date = current_datetime.date()
-        
-        for (team_abbr, player_lookup), enhancement in enhancement_data.items():
-            if (team_abbr, player_lookup) not in found_players:
-                
-                # Enhanced alias checking
-                alias_check_result = self._check_player_aliases_detailed(player_lookup, team_abbr)
-                
-                if alias_check_result['found']:
-                    logger.info(f"Player {player_lookup} found via alias mapping for {team_abbr}")
-                    continue
-                
-                # Create investigation if warranted
-                if self._should_investigate_player(player_lookup):
-                    investigation = self._create_enhanced_investigation(
-                        player_lookup, team_abbr, enhancement, alias_check_result
-                    )
-                    
-                    if investigation['confidence_score'] > 0.3:
-                        investigation_report['investigations'].append(investigation)
-                
-                # Create unresolved record with enhanced data
-                status = 'pending_name_change_review' if investigation['confidence_score'] > 0.5 else 'pending'
-                notes = f"Potential name change - confidence: {investigation['confidence_score']:.2f}. {investigation['evidence_notes']}"
-                
-                unresolved_record = {
-                    'source': 'basketball_reference',
-                    'original_name': enhancement.get('original_name', 'Unknown'),
-                    'normalized_lookup': player_lookup,
-                    'first_seen_date': current_date,
-                    'last_seen_date': current_date,
-                    'team_abbr': team_abbr,
-                    'season': self.calculate_season_string(enhancement.get('season_year', 2024)),
-                    'occurrences': 1,
-                    'example_games': [],
-                    'status': status,
-                    'resolution_type': None,
-                    'resolved_to_name': None,
-                    'notes': notes,
-                    'reviewed_by': None,
-                    'reviewed_at': None,
-                    'created_at': current_datetime,
-                    'processed_at': current_datetime
-                }
-                unresolved_players.append(unresolved_record)
-        
-        # Save investigation report if investigations found
-        investigation_report['total_investigations'] = len(investigation_report['investigations'])
-        if investigation_report['investigations']:
-            self._save_investigation_report(investigation_report)
-            logger.info(f"Saved investigation report with {len(investigation_report['investigations'])} potential name changes")
-        
-        # Insert unresolved players
-        if unresolved_players:
-            self._insert_unresolved_players(unresolved_players)
-            self.stats['unresolved_players_found'] = len(unresolved_players)
-            logger.info(f"Added {len(unresolved_players)} Basketball Reference players to unresolved queue")
-        else:
-            logger.info("No unresolved Basketball Reference players found")
-
     def transform_data(self, raw_data: Dict, file_path: str = None) -> List[Dict]:
         """Transform data for this processor."""
         # Extract filters from raw_data
@@ -540,11 +501,8 @@ class GamebookRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin,
         
         return registry_records
     
-    # High-level convenience methods
-    def build_registry_for_season(self, season: str, team: str = None) -> Dict:
-        """Build registry for a specific season."""
-        logger.info(f"Building registry for season {season}" + (f", team {team}" if team else ""))
-        
+    def _build_registry_for_season_impl(self, season: str, team: str = None) -> Dict:
+        """Implementation of season building."""
         season_start = time.time()
         logger.info(f"PERF_METRIC: season_processing_start season={season} team={team}")
         
@@ -629,7 +587,7 @@ class GamebookRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin,
         total_results = []
         for season in seasons:
             logger.info(f"Processing season {season}")
-            result = self.build_registry_for_season(season)
+            result = self._build_registry_for_season_impl(season)
             total_results.append(result)
         
         # Summary

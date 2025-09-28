@@ -4,6 +4,7 @@ File: data_processors/reference/base/registry_processor_base.py
 
 Base class for NBA registry processors.
 Provides shared functionality for both gamebook and roster registry processors.
+Enhanced with update source tracking and Universal Player ID integration.
 """
 
 import json
@@ -28,7 +29,35 @@ class ProcessingStrategy(Enum):
     MERGE = "merge"      # MERGE statement
 
 
-class RegistryProcessorBase(ProcessorBase):
+class UpdateSourceTrackingMixin:
+    """Mixin to track which processor last updated each registry record."""
+    
+    def enhance_record_with_source_tracking(self, record: Dict, processor_type: str) -> Dict:
+        """Add source tracking fields to registry record using actual schema field names."""
+        current_time = datetime.now()
+        
+        # Update existing processed_at field and add new tracking fields
+        record.update({
+            'processed_at': current_time,  # Use existing field
+            'last_processor': processor_type,  # 'gamebook' or 'roster'
+            
+            # Processor-specific timestamps
+            f'last_{processor_type}_update': current_time,
+            f'{processor_type}_update_count': record.get(f'{processor_type}_update_count', 0) + 1,
+            
+            # Update sequence for ordering
+            'update_sequence_number': self._get_next_sequence_number()
+        })
+        
+        return record
+    
+    def _get_next_sequence_number(self) -> int:
+        """Generate sequence number for update ordering."""
+        # Simple timestamp-based sequence
+        return int(datetime.now().timestamp() * 1000)
+
+
+class RegistryProcessorBase(ProcessorBase, UpdateSourceTrackingMixin):
     """
     Base class for NBA registry processors.
     
@@ -37,6 +66,7 @@ class RegistryProcessorBase(ProcessorBase):
     - Type conversion utilities
     - Season calculations
     - Universal Player ID integration
+    - Update source tracking
     - Basic validation and error handling
     """
     
@@ -102,6 +132,9 @@ class RegistryProcessorBase(ProcessorBase):
         self.new_players_discovered = set()
         self.players_seen_this_run = set()
         
+        # Processor type (set by subclasses for source tracking)
+        self.processor_type = None  # Must be set by subclasses
+        
         logger.info(f"Initialized registry processor with run ID: {self.processing_run_id}")
     
     def calculate_season_string(self, season_year: int) -> str:
@@ -145,10 +178,12 @@ class RegistryProcessorBase(ProcessorBase):
         
         # Define fields that should be integers
         integer_fields = {'games_played', 'total_appearances', 'inactive_appearances', 
-                'dnp_appearances', 'jersey_number', 'occurrences'}
+                'dnp_appearances', 'jersey_number', 'occurrences', 'gamebook_update_count', 
+                'roster_update_count', 'update_sequence_number'}
         
         # Define TIMESTAMP fields that need special handling
-        timestamp_fields = {'created_at', 'processed_at', 'reviewed_at'}
+        timestamp_fields = {'created_at', 'processed_at', 'reviewed_at',
+                          'last_gamebook_update', 'last_roster_update'}
         
         for key, value in record.items():
             # Handle NaN/None values first
@@ -248,6 +283,15 @@ class RegistryProcessorBase(ProcessorBase):
             # Fallback: create simple ID to prevent failure
             return f"{player_lookup}_001"
     
+    def bulk_resolve_universal_player_ids(self, player_lookups: List[str]) -> Dict[str, str]:
+        """Resolve or create universal player IDs for a batch of players."""
+        try:
+            return self.universal_id_resolver.bulk_resolve_or_create_universal_ids(player_lookups)
+        except Exception as e:
+            logger.error(f"Error in bulk universal ID resolution: {e}")
+            # Fallback: create simple mappings
+            return {lookup: f"{lookup}_001" for lookup in player_lookups}
+    
     def validate_data(self, data: Dict) -> List[str]:
         """Validate registry data structure."""
         errors = []
@@ -260,17 +304,25 @@ class RegistryProcessorBase(ProcessorBase):
         return errors
     
     def get_registry_summary(self) -> Dict:
-        """Get summary statistics of the current registry."""
+        """Get summary statistics of the current registry with processor tracking."""
         try:
             query = f"""
             SELECT 
                 COUNT(*) as total_records,
                 COUNT(DISTINCT player_lookup) as unique_players,
+                COUNT(DISTINCT universal_player_id) as unique_universal_ids,
                 COUNT(DISTINCT season) as seasons_covered,
                 COUNT(DISTINCT team_abbr) as teams_covered,
                 SUM(games_played) as total_games_played,
                 AVG(games_played) as avg_games_per_record,
-                MAX(processed_at) as last_updated
+                MAX(processed_at) as last_updated,
+                
+                -- Processor activity summary using actual field names
+                COUNT(DISTINCT last_processor) as active_processors,
+                COUNTIF(last_processor = 'gamebook') as gamebook_records,
+                COUNTIF(last_processor = 'roster') as roster_records,
+                MAX(last_gamebook_update) as last_gamebook_update,
+                MAX(last_roster_update) as last_roster_update
             FROM `{self.project_id}.{self.table_name}`
             """
             
@@ -281,13 +333,16 @@ class RegistryProcessorBase(ProcessorBase):
             
             summary = result.iloc[0].to_dict()
             
-            # Get season breakdown
+            # Get season breakdown with processor info
             season_query = f"""
             SELECT 
                 season,
                 COUNT(*) as records,
                 COUNT(DISTINCT player_lookup) as players,
-                COUNT(DISTINCT team_abbr) as teams
+                COUNT(DISTINCT team_abbr) as teams,
+                COUNT(DISTINCT last_processor) as processors_used,
+                COUNTIF(last_processor = 'gamebook') as gamebook_records,
+                COUNTIF(last_processor = 'roster') as roster_records
             FROM `{self.project_id}.{self.table_name}`
             GROUP BY season
             ORDER BY season DESC
@@ -301,3 +356,24 @@ class RegistryProcessorBase(ProcessorBase):
         except Exception as e:
             logger.error(f"Error getting registry summary: {e}")
             return {'error': str(e)}
+    
+    def build_registry_for_season(self, season: str, team: str = None) -> Dict:
+        """
+        Build registry for a specific season.
+        
+        Args:
+            season: NBA season string (e.g., '2024-25')
+            team: Optional team filter
+        """
+        logger.info(f"Building registry for season {season}" + (f", team {team}" if team else ""))
+        
+        # Continue with season building - no conflict prevention
+        return self._build_registry_for_season_impl(season, team)
+    
+    def _build_registry_for_season_impl(self, season: str, team: str = None) -> Dict:
+        """Implementation of season building (to be overridden by subclasses)."""
+        raise NotImplementedError("Subclasses must implement _build_registry_for_season_impl")
+    
+    def build_historical_registry(self, seasons: List[str] = None) -> Dict:
+        """Build registry from historical data (implementation varies by processor)."""
+        raise NotImplementedError("Subclasses must implement build_historical_registry")

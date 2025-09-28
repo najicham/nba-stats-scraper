@@ -1,7 +1,7 @@
 -- File: schemas/bigquery/nba_reference/nba_players_registry_table.sql
 -- Description: NBA players registry table for authoritative player validation
 -- Created: 2025-01-20
--- Updated: 2025-09-27 - Added universal_player_id for cross-table player identification
+-- Updated: 2025-09-28 - Added processor tracking fields for conflict prevention
 -- Purpose: Authoritative registry of valid NBA players built from gamebook data
 
 -- =============================================================================
@@ -28,11 +28,18 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_reference.nba_players_registr
     -- Roster enhancement (from morning scrapes)
     jersey_number INT64,                   -- Current jersey number
     position STRING,                       -- Listed position
-    last_roster_update DATE,               -- When roster data was last updated
     
     -- Data source tracking
     source_priority STRING,                -- 'nba_gamebook', 'br_roster', 'espn_roster'
     confidence_score FLOAT64,              -- Data quality confidence (0.0-1.0)
+    
+    -- Processor tracking (for conflict prevention)
+    last_processor STRING,                 -- Which processor last updated ('gamebook' or 'roster')
+    last_gamebook_update TIMESTAMP,        -- When gamebook processor last updated this record
+    last_roster_update TIMESTAMP,          -- When roster processor last updated this record (converted from DATE)
+    gamebook_update_count INT64 DEFAULT 0, -- Number of times gamebook processor updated this record
+    roster_update_count INT64 DEFAULT 0,   -- Number of times roster processor updated this record
+    update_sequence_number INT64,          -- Sequence number for ordering updates
     
     -- Metadata
     created_by STRING NOT NULL,
@@ -41,5 +48,25 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_reference.nba_players_registr
 )
 CLUSTER BY universal_player_id, player_lookup, season, team_abbr
 OPTIONS (
-  description = "Authoritative registry of valid NBA players with universal IDs for cross-table identification"
+  description = "Authoritative registry of valid NBA players with universal IDs and processor tracking for cross-table identification"
 );
+
+-- =============================================================================
+-- Index suggestions for processor tracking queries
+-- =============================================================================
+
+-- Query to check recent processor activity (used for conflict prevention)
+-- SELECT last_processor, MAX(processed_at) as last_update_time, COUNT(*) as records_updated
+-- FROM `nba-props-platform.nba_reference.nba_players_registry`
+-- WHERE processed_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 30 MINUTE)
+-- GROUP BY last_processor;
+
+-- Query to get processor update statistics
+-- SELECT 
+--   COUNT(*) as total_records,
+--   COUNT(DISTINCT universal_player_id) as unique_players,
+--   COUNTIF(last_processor = 'gamebook') as gamebook_records,
+--   COUNTIF(last_processor = 'roster') as roster_records,
+--   MAX(last_gamebook_update) as last_gamebook_update,
+--   MAX(last_roster_update) as last_roster_update
+-- FROM `nba-props-platform.nba_reference.nba_players_registry`;

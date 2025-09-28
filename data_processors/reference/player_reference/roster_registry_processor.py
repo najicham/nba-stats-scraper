@@ -2,10 +2,10 @@
 """
 File: data_processors/reference/player_reference/roster_registry_processor.py
 
-Roster Registry Processor - COMPLETE IMPLEMENTATION
+Roster Registry Processor - Simplified Implementation
 
 Maintains the NBA players registry from roster assignment data.
-This processor creates registry entries when players join rosters (before games played).
+Simplified version with conflict prevention removed and bulk universal ID resolution.
 
 Usage Scenarios:
 1. Daily roster updates: Triggered after roster scrapers complete
@@ -14,7 +14,7 @@ Usage Scenarios:
 """
 
 import logging
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from typing import Dict, List, Set
 import pandas as pd
 from google.cloud import bigquery
@@ -42,6 +42,9 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
                  confirm_full_delete: bool = False,
                  enable_name_change_detection: bool = True):
         super().__init__(test_mode, strategy, confirm_full_delete, enable_name_change_detection)
+        
+        # Set processor type for source tracking
+        self.processor_type = 'roster'
         
         logger.info("Initialized Roster Registry Processor")
     
@@ -168,7 +171,7 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
     
     def aggregate_roster_assignments(self, roster_data: Dict[str, Set[str]], season_year: int) -> List[Dict]:
         """
-        Aggregate roster data into registry records.
+        Aggregate roster data into registry records with bulk universal ID resolution.
         
         Args:
             roster_data: Dict of roster sources and their players
@@ -207,6 +210,12 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
                 if 'player_full_name' in details and details['player_full_name']:
                     player_details[player_lookup]['enhancement_data']['player_full_name'] = details['player_full_name']
         
+        # BULK RESOLUTION: Get all universal IDs in one operation
+        unique_player_lookups = list(all_roster_players)
+        logger.info(f"Performing bulk universal ID resolution for {len(unique_player_lookups)} roster players")
+        
+        universal_id_mappings = self.bulk_resolve_universal_player_ids(unique_player_lookups)
+        
         registry_records = []
         season_str = self.calculate_season_string(season_year)
         
@@ -216,14 +225,15 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
             sources = details.get('sources', [])
             enhancement = details.get('enhancement_data', {})
             
-            # Determine source priority based on data sources
-            source_priority = self._determine_source_priority(sources)
-            confidence_score = self._calculate_roster_confidence(sources, enhancement)
+            # Determine source priority and confidence with dynamic logic
+            source_priority, confidence_score = self._determine_roster_source_priority_and_confidence(
+                sources, enhancement, season_year
+            )
             
-            # Resolve universal player ID
-            universal_id = self.resolve_universal_player_id(player_lookup)
+            # Get universal player ID from bulk resolution
+            universal_id = universal_id_mappings.get(player_lookup, f"{player_lookup}_001")
             
-            # Create registry record
+            # Create base registry record
             record = {
                 'universal_player_id': universal_id,
                 'player_name': enhancement.get('player_full_name', player_lookup.title()),
@@ -252,12 +262,57 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
                 'processed_at': datetime.now()
             }
             
+            # Enhance record with source tracking
+            enhanced_record = self.enhance_record_with_source_tracking(record, self.processor_type)
+            
             # Convert types for BigQuery
-            record = self._convert_pandas_types_for_json(record)
-            registry_records.append(record)
+            enhanced_record = self._convert_pandas_types_for_json(enhanced_record)
+            registry_records.append(enhanced_record)
         
         logger.info(f"Created {len(registry_records)} registry records from roster data")
         return registry_records
+    
+    def _determine_roster_source_priority_and_confidence(self, sources: List[str], 
+                                                       enhancement: Dict, season_year: int) -> Tuple[str, float]:
+        """Determine source priority and confidence with dynamic logic for roster data."""
+        current_year = date.today().year
+        data_recency_days = (date.today() - date(season_year, 10, 1)).days
+        
+        # Base source priority (ESPN is most reliable for current rosters)
+        if 'espn_rosters' in sources:
+            source_priority = 'roster_espn'
+            base_confidence = 0.8
+        elif 'nba_player_list' in sources:
+            source_priority = 'roster_nba_com'
+            base_confidence = 0.7
+        elif 'basketball_reference' in sources:
+            source_priority = 'roster_br'
+            base_confidence = 0.6
+        else:
+            source_priority = 'roster_unknown'
+            base_confidence = 0.3
+        
+        confidence_score = base_confidence
+        
+        # Multiple sources increase confidence
+        if len(sources) >= 3:
+            confidence_score = min(confidence_score + 0.15, 1.0)
+        elif len(sources) >= 2:
+            confidence_score = min(confidence_score + 0.1, 1.0)
+        
+        # Having detailed roster info increases confidence
+        if enhancement.get('jersey_number'):
+            confidence_score = min(confidence_score + 0.05, 1.0)
+        if enhancement.get('position'):
+            confidence_score = min(confidence_score + 0.05, 1.0)
+        
+        # Recent data is more reliable during current season
+        if data_recency_days < 30:  # Very recent data
+            confidence_score = min(confidence_score + 0.1, 1.0)
+        elif data_recency_days > 365:  # Old data
+            confidence_score = max(confidence_score - 0.1, 0.1)
+        
+        return source_priority, confidence_score
     
     def _get_detailed_roster_data(self, source: str, season_year: int) -> Dict[str, Dict]:
         """Get detailed roster data for a specific source."""
@@ -379,37 +434,6 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
             logger.warning(f"Error getting Basketball Reference detailed data: {e}")
             return {}
     
-    def _determine_source_priority(self, sources: List[str]) -> str:
-        """Map data sources to priority level for roster data."""
-        # Roster sources have lower priority than gamebook data
-        # ESPN is typically most reliable for current rosters
-        if 'espn_rosters' in sources:
-            return 'roster_espn'
-        elif 'nba_player_list' in sources:
-            return 'roster_nba_com'
-        elif 'basketball_reference' in sources:
-            return 'roster_br'
-        else:
-            return 'roster_unknown'
-    
-    def _calculate_roster_confidence(self, sources: List[str], enhancement: Dict) -> float:
-        """Calculate confidence score for roster assignment."""
-        score = 0.5  # Base score for roster data
-        
-        # Multiple sources increase confidence
-        if len(sources) >= 2:
-            score += 0.3
-        elif len(sources) >= 3:
-            score += 0.4
-        
-        # Having detailed info increases confidence
-        if enhancement.get('jersey_number'):
-            score += 0.1
-        if enhancement.get('position'):
-            score += 0.1
-        
-        return min(score, 1.0)
-    
     def get_player_team_assignment(self, player_lookup: str, roster_data: Dict[str, Set[str]] = None) -> str:
         """Find team assignment for a player from roster data."""
         if not roster_data:
@@ -443,46 +467,6 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
         
         return 'UNK'  # Unknown team
     
-    def investigate_unknown_players(self, unknown_players: Set[str]) -> List[Dict]:
-        """
-        Investigate unknown players for potential name changes.
-        
-        Args:
-            unknown_players: Set of player_lookup values not in registry
-            
-        Returns:
-            List of investigation records
-        """
-        investigations = []
-        
-        for player_lookup in unknown_players:
-            if not self._should_investigate_player(player_lookup):
-                continue
-            
-            # Find team assignment for player
-            team_abbr = self.get_player_team_assignment(player_lookup)
-            
-            # Enhanced alias checking
-            alias_check_result = self._check_player_aliases_detailed(player_lookup, team_abbr)
-            
-            if alias_check_result['found']:
-                logger.info(f"Player {player_lookup} found via alias mapping for {team_abbr}")
-                continue
-            
-            # Create investigation using inherited methods
-            investigation = self._create_enhanced_investigation(
-                player_lookup, 
-                team_abbr, 
-                enhancement={},  # No Basketball Reference enhancement for roster-only players
-                alias_check=alias_check_result
-            )
-            
-            if investigation['confidence_score'] > 0.3:
-                investigations.append(investigation)
-        
-        logger.info(f"Created {len(investigations)} investigations for unknown players")
-        return investigations
-    
     def transform_data(self, raw_data: Dict, file_path: str = None) -> List[Dict]:
         """Transform roster data into registry records."""
         # Extract filters from raw_data
@@ -504,52 +488,38 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
         
         logger.info(f"Found {len(all_roster_players)} total players across all roster sources")
         
-        # Step 4: Detect unknown players
+        # Step 4: Detect unknown players (simplified - just log them)
         unknown_players = all_roster_players - existing_players
-        logger.info(f"Found {len(unknown_players)} unknown players not in registry")
+        if unknown_players:
+            logger.info(f"Found {len(unknown_players)} unknown players not in registry: {list(unknown_players)[:10]}{'...' if len(unknown_players) > 10 else ''}")
         
-        # Step 5: Investigate unknown players (if name change detection enabled)
-        investigations = []
-        if self.enable_name_change_detection and unknown_players:
-            investigations = self.investigate_unknown_players(unknown_players)
-            
-            # Save investigation report
-            if investigations:
-                investigation_report = {
-                    'detection_date': date.today().isoformat(),
-                    'processor_type': 'roster_registry_processor',
-                    'total_roster_players': len(all_roster_players),
-                    'existing_registry_players': len(existing_players),
-                    'unknown_players_found': len(unknown_players),
-                    'investigations': investigations,
-                    'total_investigations': len(investigations)
-                }
-                self._save_investigation_report(investigation_report)
-        
-        # Step 6: Create registry records for all roster players
+        # Step 5: Create registry records for all roster players
         registry_records = self.aggregate_roster_assignments(roster_data, season_year)
         
         logger.info(f"Created {len(registry_records)} registry records from roster data")
         return registry_records
     
-    def process_daily_rosters(self, season_year: int = None) -> Dict:
-        """
-        Process daily roster updates.
+    def _build_registry_for_season_impl(self, season: str, team: str = None) -> Dict:
+        """Implementation of season building."""
+        logger.info(f"Building roster registry for season {season}" + (f", team {team}" if team else ""))
         
-        Main entry point for daily processing after roster scrapers complete.
-        """
-        if not season_year:
-            current_month = date.today().month
-            if current_month >= 10:  # Oct-Dec = new season starting
-                season_year = date.today().year
-            else:  # Jan-Sep = season ending
-                season_year = date.today().year - 1
-        
-        logger.info(f"Processing daily rosters for {season_year}-{season_year+1} season")
-        
-        # Reset tracking
+        # Reset tracking for this run
         self.new_players_discovered = set()
         self.players_seen_this_run = set()
+        
+        # Reset stats
+        self.stats = {
+            'players_processed': 0,
+            'records_created': 0,
+            'records_updated': 0,
+            'seasons_processed': set(),
+            'teams_processed': set(),
+            'unresolved_players_found': 0,
+            'alias_resolutions': 0
+        }
+        
+        # Parse season year
+        season_year = int(season.split('-')[0])
         
         # Create filter data
         filter_data = {
@@ -564,17 +534,58 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
         if self.new_players_discovered:
             logger.info(f"Discovered {len(self.new_players_discovered)} new players from rosters")
         
-        logger.info(f"Daily roster processing complete:")
+        logger.info(f"Roster registry build complete for {season}:")
         logger.info(f"  Records processed: {result['rows_processed']}")
+        logger.info(f"  Records created: {len(rows)}")
         logger.info(f"  Errors: {len(result.get('errors', []))}")
         
         return {
-            'scenario': 'daily_roster_processing',
-            'season_year': season_year,
+            'season': season,
+            'team_filter': team,
             'records_processed': result['rows_processed'],
+            'records_created': len(rows),
+            'players_processed': len(rows),  # For roster, each record is one player
+            'teams_processed': list(set(row['team_abbr'] for row in rows)) if rows else [],
             'new_players_discovered': result['new_players_discovered'],
             'errors': result.get('errors', []),
             'processing_run_id': self.processing_run_id
+        }
+    
+    def process_daily_rosters(self, season_year: int = None) -> Dict:
+        """
+        Process daily roster updates.
+        
+        Main entry point for daily processing after roster scrapers complete.
+        """
+        if not season_year:
+            current_month = date.today().month
+            if current_month >= 10:  # Oct-Dec = new season starting
+                season_year = date.today().year
+            else:  # Jan-Sep = season ending
+                season_year = date.today().year - 1
+        
+        season_str = self.calculate_season_string(season_year)
+        logger.info(f"Processing daily rosters for {season_str} season")
+        
+        return self._build_registry_for_season_impl(season_str)
+
+    def build_historical_registry(self, seasons: List[str] = None) -> Dict:
+        """Build registry from historical roster data (simplified - current season only)."""
+        logger.info("Roster processor handles current data only - building for current season")
+        
+        current_season_year = date.today().year if date.today().month >= 10 else date.today().year - 1
+        current_season = self.calculate_season_string(current_season_year)
+        
+        result = self._build_registry_for_season_impl(current_season)
+        
+        return {
+            'scenario': 'current_roster_processing',
+            'seasons_processed': [current_season],
+            'total_records_processed': result['records_processed'],
+            'total_errors': len(result.get('errors', [])),
+            'individual_results': [result],
+            'processing_run_id': self.processing_run_id,
+            'note': 'Roster processor handles current data only'
         }
 
 
@@ -583,51 +594,3 @@ def process_daily_rosters(season_year: int = None, strategy: str = "merge") -> D
     """Convenience function for daily roster processing."""
     processor = RosterRegistryProcessor(strategy=strategy)
     return processor.process_daily_rosters(season_year)
-
-
-def detect_roster_name_changes(season_year: int = None) -> Dict:
-    """Convenience function for name change detection only."""
-    processor = RosterRegistryProcessor(
-        strategy="merge",
-        enable_name_change_detection=True
-    )
-    
-    # Create filter data
-    filter_data = {
-        'season_year': season_year or (date.today().year if date.today().month >= 10 else date.today().year - 1)
-    }
-    
-    # Get roster data and find unknowns
-    roster_data = processor.get_current_roster_data(filter_data['season_year'])
-    season_str = processor.calculate_season_string(filter_data['season_year'])
-    existing_players = processor.get_existing_registry_players(season_str)
-    
-    all_roster_players = set()
-    for source, players in roster_data.items():
-        all_roster_players.update(players)
-    
-    unknown_players = all_roster_players - existing_players
-    
-    # Run investigations only
-    investigations = processor.investigate_unknown_players(unknown_players)
-    
-    # Save investigation report
-    if investigations:
-        investigation_report = {
-            'detection_date': date.today().isoformat(),
-            'processor_type': 'roster_registry_processor_detection_only',
-            'total_roster_players': len(all_roster_players),
-            'existing_registry_players': len(existing_players),
-            'unknown_players_found': len(unknown_players),
-            'investigations': investigations,
-            'total_investigations': len(investigations)
-        }
-        processor._save_investigation_report(investigation_report)
-    
-    return {
-        'detection_only': True,
-        'investigations_generated': len(investigations),
-        'total_roster_players': len(all_roster_players),
-        'unknown_players_found': len(unknown_players),
-        'processing_run_id': processor.processing_run_id
-    }

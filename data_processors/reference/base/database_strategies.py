@@ -4,6 +4,7 @@ File: data_processors/reference/base/database_strategies.py
 
 Database operation strategies for registry processors.
 Provides MERGE and REPLACE strategies with performance optimization and error handling.
+Enhanced with processor tracking field support using actual schema field names.
 """
 
 import logging
@@ -26,6 +27,7 @@ class DatabaseStrategiesMixin:
     - Performance monitoring and metrics
     - Error handling with graceful degradation
     - Schema enforcement and type safety
+    - Enhanced with processor tracking fields using actual schema
     """
     
     def load_data(self, rows: List[Dict], **kwargs) -> Dict:
@@ -191,7 +193,7 @@ class DatabaseStrategiesMixin:
                     logger.warning(f"Failed to cleanup temp table {temp_table_id}: {cleanup_error}")
 
     def _build_merge_query(self, table_id: str, temp_table_id: str) -> str:
-        """Build MERGE query for registry table."""
+        """Build MERGE query for registry table with actual schema field names."""
         return f"""
         MERGE `{table_id}` AS target
         USING `{temp_table_id}` AS source
@@ -210,16 +212,44 @@ class DatabaseStrategiesMixin:
             dnp_appearances = source.dnp_appearances,
             jersey_number = source.jersey_number,
             position = source.position,
-            last_roster_update = source.last_roster_update,
+            last_roster_update = CASE 
+                WHEN source.last_processor = 'roster' THEN source.last_roster_update
+                ELSE target.last_roster_update
+            END,
             source_priority = source.source_priority,
             confidence_score = source.confidence_score,
-            processed_at = source.processed_at
+            processed_at = source.processed_at,
+            
+            -- Processor tracking fields using actual schema names
+            last_processor = source.last_processor,
+            last_gamebook_update = CASE 
+                WHEN source.last_processor = 'gamebook' THEN source.last_gamebook_update
+                ELSE target.last_gamebook_update
+            END,
+            last_roster_update = CASE 
+                WHEN source.last_processor = 'roster' THEN source.last_roster_update
+                ELSE target.last_roster_update
+            END,
+            gamebook_update_count = CASE 
+                WHEN source.last_processor = 'gamebook' THEN COALESCE(target.gamebook_update_count, 0) + 1
+                ELSE COALESCE(target.gamebook_update_count, 0)
+            END,
+            roster_update_count = CASE 
+                WHEN source.last_processor = 'roster' THEN COALESCE(target.roster_update_count, 0) + 1
+                ELSE COALESCE(target.roster_update_count, 0)
+            END,
+            update_sequence_number = source.update_sequence_number
+            
         WHEN NOT MATCHED THEN
         INSERT (
             universal_player_id, player_name, player_lookup, team_abbr, season, first_game_date,
             last_game_date, games_played, total_appearances, inactive_appearances,
             dnp_appearances, jersey_number, position, last_roster_update,
-            source_priority, confidence_score, created_by, created_at, processed_at
+            source_priority, confidence_score, created_by, created_at, processed_at,
+            
+            -- Processor tracking fields using actual schema names
+            last_processor, last_gamebook_update, last_roster_update,
+            gamebook_update_count, roster_update_count, update_sequence_number
         )
         VALUES (
             source.universal_player_id, source.player_name, source.player_lookup, source.team_abbr, source.season,
@@ -227,7 +257,15 @@ class DatabaseStrategiesMixin:
             source.total_appearances, source.inactive_appearances, source.dnp_appearances,
             source.jersey_number, source.position, source.last_roster_update,
             source.source_priority, source.confidence_score, source.created_by,
-            source.created_at, source.processed_at
+            source.created_at, source.processed_at,
+            
+            -- Processor tracking fields using actual schema names
+            source.last_processor,
+            CASE WHEN source.last_processor = 'gamebook' THEN source.last_gamebook_update ELSE NULL END,
+            CASE WHEN source.last_processor = 'roster' THEN source.last_roster_update ELSE NULL END,
+            CASE WHEN source.last_processor = 'gamebook' THEN 1 ELSE 0 END,
+            CASE WHEN source.last_processor = 'roster' THEN 1 ELSE 0 END,
+            source.update_sequence_number
         )
         """
 
@@ -339,7 +377,7 @@ class DatabaseStrategiesMixin:
             )
             load_result = load_job.result()
             
-            # Execute MERGE
+            # Execute MERGE using actual field names
             merge_query = f"""
             MERGE `{table_id}` AS target
             USING `{temp_table_id}` AS source
