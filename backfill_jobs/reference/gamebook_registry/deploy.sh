@@ -5,6 +5,13 @@
 
 set -e
 
+# Source shared wrapper functions
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/../../../bin/shared/deploy_wrapper_common.sh"
+
+# Start deployment timing
+start_deployment_timer
+
 echo "Deploying NBA Gamebook Registry Processor Backfill Job..."
 
 # Use standardized reference processors backfill deployment script
@@ -12,7 +19,8 @@ echo "Deploying NBA Gamebook Registry Processor Backfill Job..."
 
 echo "Deployment complete!"
 echo ""
-echo "Test Commands (Gamebook Registry Building):"
+
+print_section_header "Test Commands (Gamebook Registry Building)"
 echo "  # Safe first test (summary only):"
 echo "  gcloud run jobs execute gamebook-registry-processor-backfill --args=--summary-only --region=us-west2"
 echo ""
@@ -31,26 +39,31 @@ echo ""
 echo "  # Production daily update (MERGE strategy - no confirmation needed):"
 echo "  gcloud run jobs execute gamebook-registry-processor-backfill --args=--season=2024-25,--strategy=merge,--enable-name-change-detection --region=us-west2"
 echo ""
-echo "Monitor logs:"
+
+print_section_header "Monitor logs"
 echo "  gcloud beta run jobs executions logs read [execution-id] --region=us-west2 --follow"
 echo ""
-echo "Strategy Options:"
+
+print_section_header "Strategy Options"
 echo "  • --strategy=merge:   Atomic MERGE operations (safe for daily operations, no confirmation needed)"
 echo "  • --strategy=replace: DELETE entire tables + INSERT (requires --confirm-full-delete flag for safety)"
 echo ""
-echo "Usage Scenarios:"
+
+print_section_header "Usage Scenarios"
 echo "  • Summary Only: Check current gamebook registry status without processing"
 echo "  • Single Season: Build/update registry for specific season from gamebook data"
 echo "  • Historical Backfill: Process all available NBA.com gamebook data (recommended first run)"
 echo "  • Date Range: Incremental updates for specific dates"
 echo "  • Daily Updates: Nightly processing with name change detection enabled"
 echo ""
-echo "Name Change Detection:"
+
+print_section_header "Name Change Detection"
 echo "  • --enable-name-change-detection: Enable enhanced investigation reporting"
 echo "  • Default: Disabled for backfill performance, enable for daily production runs"
 echo "  • Generates investigation reports for potential player name changes"
 echo ""
-echo "Notes:"
+
+print_section_header "Notes"
 echo "  • Processes NBA.com gamebook data specifically (player game participation)"
 echo "  • Integrates with Universal Player ID system for consistent player identification"
 echo "  • Registry supports downstream analytics and prop betting analysis"
@@ -58,7 +71,8 @@ echo "  • Job has 2-hour timeout and 8GB memory for large dataset processing"
 echo "  • Args use equals syntax (--param=value) with no spaces or quotes"
 echo "  • REPLACE strategy requires --confirm-full-delete flag to prevent accidental data loss"
 echo ""
-echo "Validate results:"
+
+print_section_header "Validate results"
 echo "  # Check gamebook registry summary"
 echo "  gcloud run jobs execute gamebook-registry-processor-backfill --args=--summary-only --region=us-west2"
 echo ""
@@ -67,3 +81,6 @@ echo "  bq query --use_legacy_sql=false \"SELECT COUNT(*) as total_records, COUN
 echo ""
 echo "  # Check universal ID distribution"
 echo "  bq query --use_legacy_sql=false \"SELECT universal_player_id, COUNT(*) as records FROM \\\`nba-props-platform.nba_reference.nba_players_registry\\\` GROUP BY universal_player_id ORDER BY records DESC LIMIT 10\\\`\""
+
+# Print final timing summary
+print_deployment_summary

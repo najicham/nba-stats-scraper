@@ -6,6 +6,15 @@
 
 set -e
 
+# Load environment variables from .env file
+if [ -f ".env" ]; then
+    echo "📄 Loading environment variables from .env file..."
+    export $(grep -v '^#' .env | grep -v '^$' | xargs)
+    echo "✅ Environment variables loaded"
+else
+    echo "⚠️  No .env file found - email alerting may not work"
+fi
+
 # Check if job name provided
 if [[ -z "$1" ]]; then
     echo "Usage: $0 <job-name-or-config-path>"
@@ -101,6 +110,33 @@ REGION="${REGION:-us-west2}"
 PROJECT_ID="${PROJECT_ID:-nba-props-platform}"
 SERVICE_URL="${SERVICE_URL:-https://nba-scrapers-f7p3g7f6ya-wl.a.run.app}"
 
+# Build environment variables for the job
+ENV_VARS="SCRAPER_SERVICE_URL=$SERVICE_URL"
+
+# Add email configuration if available
+if [[ -n "$BREVO_SMTP_PASSWORD" && -n "$EMAIL_ALERTS_TO" ]]; then
+    echo "✅ Adding email alerting configuration..."
+    
+    ENV_VARS="$ENV_VARS,BREVO_SMTP_HOST=${BREVO_SMTP_HOST:-smtp-relay.brevo.com}"
+    ENV_VARS="$ENV_VARS,BREVO_SMTP_PORT=${BREVO_SMTP_PORT:-587}"
+    ENV_VARS="$ENV_VARS,BREVO_SMTP_USERNAME=${BREVO_SMTP_USERNAME}"
+    ENV_VARS="$ENV_VARS,BREVO_SMTP_PASSWORD=${BREVO_SMTP_PASSWORD}"
+    ENV_VARS="$ENV_VARS,BREVO_FROM_EMAIL=${BREVO_FROM_EMAIL}"
+    ENV_VARS="$ENV_VARS,BREVO_FROM_NAME=${BREVO_FROM_NAME:-NBA Scrapers Backfill}"
+    ENV_VARS="$ENV_VARS,EMAIL_ALERTS_TO=${EMAIL_ALERTS_TO}"
+    ENV_VARS="$ENV_VARS,EMAIL_CRITICAL_TO=${EMAIL_CRITICAL_TO:-$EMAIL_ALERTS_TO}"
+    
+    # Alert thresholds
+    ENV_VARS="$ENV_VARS,EMAIL_ALERT_UNRESOLVED_COUNT_THRESHOLD=${EMAIL_ALERT_UNRESOLVED_COUNT_THRESHOLD:-50}"
+    ENV_VARS="$ENV_VARS,EMAIL_ALERT_SUCCESS_RATE_THRESHOLD=${EMAIL_ALERT_SUCCESS_RATE_THRESHOLD:-90.0}"
+    ENV_VARS="$ENV_VARS,EMAIL_ALERT_MAX_PROCESSING_TIME=${EMAIL_ALERT_MAX_PROCESSING_TIME:-30}"
+    
+    EMAIL_STATUS="ENABLED"
+else
+    echo "⚠️  Email configuration missing - email alerting will be disabled"
+    EMAIL_STATUS="DISABLED"
+fi
+
 echo "🏀 Deploying Scraper Backfill Job: $JOB_NAME"
 echo "=============================================="
 echo "Script: $JOB_SCRIPT"
@@ -178,11 +214,20 @@ gcloud run jobs create "$JOB_NAME" \
     --cpu="$CPU" \
     --max-retries=1 \
     --tasks=1 \
-    --set-env-vars="SCRAPER_SERVICE_URL=$SERVICE_URL" \
+    --set-env-vars="$ENV_VARS" \
     --quiet
 
 echo ""
 echo "✅ Job deployed successfully!"
+
+echo ""
+echo "📧 Email Alerting Status: $EMAIL_STATUS"
+if [[ "$EMAIL_STATUS" = "ENABLED" ]]; then
+    echo "   Alert Recipients: ${EMAIL_ALERTS_TO}"
+    echo "   Critical Recipients: ${EMAIL_CRITICAL_TO:-$EMAIL_ALERTS_TO}"
+    echo "   From Email: ${BREVO_FROM_EMAIL}"
+fi
+
 echo ""
 echo "🧪 To test with dry run:"
 echo "   gcloud run jobs execute $JOB_NAME --args=\"--dry-run\" --region=$REGION"

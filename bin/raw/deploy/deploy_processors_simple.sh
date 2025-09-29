@@ -1,31 +1,42 @@
 #!/bin/bash
-# deploy_processors_simple.sh - Deploy raw processor service to Cloud Run
+# deploy_processors_simple.sh - Deploy raw processor service to Cloud Run with Email Alerting
 #
-# Similar to deploy_scrapers_simple.sh but for raw data processors
-#
-# WHAT THIS DOES:
-# 1. Copies data_processors/raw/Dockerfile to root temporarily
-# 2. Deploys using `gcloud run deploy --source=.` 
-# 3. Cleans up temporary Dockerfile
-# 4. Tests the health endpoint
-#
-# USAGE: ./bin/raw/deploy/deploy_processors_simple.sh
+# Updated to include email alerting environment variables
 
-SERVICE_NAME="nba-processors"  # Consider "nba-raw-processors" for clarity
+SERVICE_NAME="nba-processors"
 REGION="us-west2"
+
+# Load environment variables from .env file
+if [ -f ".env" ]; then
+    echo "📄 Loading environment variables from .env file..."
+    export $(grep -v '^#' .env | grep -v '^$' | xargs)
+else
+    echo "⚠️  No .env file found - email alerting may not work"
+fi
 
 # Start timing
 DEPLOY_START_TIME=$(date +%s)
 DEPLOY_START_DISPLAY=$(date '+%Y-%m-%d %H:%M:%S')
 
-echo "🚀 Deploying NBA Raw Processors Service"
-echo "========================================"
+echo "🚀 Deploying NBA Raw Processors Service with Email Alerting"
+echo "==========================================================="
 echo "⏰ Start time: $DEPLOY_START_DISPLAY"
 
 # Check if data_processors/raw/Dockerfile exists
 if [ ! -f "data_processors/raw/Dockerfile" ]; then
     echo "❌ data_processors/raw/Dockerfile not found!"
     exit 1
+fi
+
+# Check required email variables
+EMAIL_VARS_MISSING=false
+if [ -z "$BREVO_SMTP_PASSWORD" ]; then
+    echo "⚠️  BREVO_SMTP_PASSWORD not found - email alerts will be disabled"
+    EMAIL_VARS_MISSING=true
+fi
+if [ -z "$EMAIL_ALERTS_TO" ]; then
+    echo "⚠️  EMAIL_ALERTS_TO not found - email alerts will be disabled"
+    EMAIL_VARS_MISSING=true
 fi
 
 # Backup existing root Dockerfile if it exists
@@ -45,6 +56,30 @@ echo "⏱️  Setup completed in ${SETUP_DURATION}s"
 # Phase 2: Deployment
 DEPLOY_PHASE_START=$(date +%s)
 echo "📋 Phase 2: Deploying to Cloud Run..."
+
+# Build environment variables string
+ENV_VARS="GCP_PROJECT_ID=nba-props-platform"
+
+# Add email configuration if available
+if [ "$EMAIL_VARS_MISSING" = false ]; then
+    ENV_VARS="$ENV_VARS,BREVO_SMTP_HOST=${BREVO_SMTP_HOST:-smtp-relay.brevo.com}"
+    ENV_VARS="$ENV_VARS,BREVO_SMTP_PORT=${BREVO_SMTP_PORT:-587}"
+    ENV_VARS="$ENV_VARS,BREVO_SMTP_USERNAME=${BREVO_SMTP_USERNAME}"
+    ENV_VARS="$ENV_VARS,BREVO_SMTP_PASSWORD=${BREVO_SMTP_PASSWORD}"
+    ENV_VARS="$ENV_VARS,BREVO_FROM_EMAIL=${BREVO_FROM_EMAIL}"
+    ENV_VARS="$ENV_VARS,BREVO_FROM_NAME=${BREVO_FROM_NAME:-NBA Registry System}"
+    ENV_VARS="$ENV_VARS,EMAIL_ALERTS_TO=${EMAIL_ALERTS_TO}"
+    ENV_VARS="$ENV_VARS,EMAIL_CRITICAL_TO=${EMAIL_CRITICAL_TO:-$EMAIL_ALERTS_TO}"
+    
+    # Optional alert thresholds
+    ENV_VARS="$ENV_VARS,EMAIL_ALERT_UNRESOLVED_COUNT_THRESHOLD=${EMAIL_ALERT_UNRESOLVED_COUNT_THRESHOLD:-50}"
+    ENV_VARS="$ENV_VARS,EMAIL_ALERT_SUCCESS_RATE_THRESHOLD=${EMAIL_ALERT_SUCCESS_RATE_THRESHOLD:-90.0}"
+    
+    echo "✅ Email alerting configuration included"
+else
+    echo "⚠️  Email alerting configuration skipped - missing required variables"
+fi
+
 gcloud run deploy $SERVICE_NAME \
     --source=. \
     --region=$REGION \
@@ -57,7 +92,7 @@ gcloud run deploy $SERVICE_NAME \
     --concurrency=20 \
     --min-instances=0 \
     --max-instances=10 \
-    --set-env-vars="GCP_PROJECT_ID=nba-props-platform"
+    --set-env-vars="$ENV_VARS"
 
 DEPLOY_STATUS=$?
 DEPLOY_PHASE_END=$(date +%s)
@@ -133,44 +168,17 @@ if [ $DEPLOY_STATUS -eq 0 ]; then
         TEST_DURATION=$((TEST_END - TEST_START))
         echo "⏱️  Health test completed in ${TEST_DURATION}s"
         
-        # Update total with test time
-        FINAL_TOTAL=$((TEST_END - DEPLOY_START_TIME))
-        if [ $FINAL_TOTAL -lt 60 ]; then
-            FINAL_DURATION_DISPLAY="${FINAL_TOTAL}s"
-        elif [ $FINAL_TOTAL -lt 3600 ]; then
-            MINUTES=$((FINAL_TOTAL / 60))
-            SECONDS=$((FINAL_TOTAL % 60))
-            FINAL_DURATION_DISPLAY="${MINUTES}m ${SECONDS}s"
+        # Display email alerting status
+        echo ""
+        if [ "$EMAIL_VARS_MISSING" = false ]; then
+            echo "📧 Email Alerting Status: ENABLED"
+            echo "   Alert Recipients: ${EMAIL_ALERTS_TO}"
+            echo "   Critical Recipients: ${EMAIL_CRITICAL_TO:-$EMAIL_ALERTS_TO}"
+            echo "   From Email: ${BREVO_FROM_EMAIL}"
         else
-            HOURS=$((FINAL_TOTAL / 3600))
-            MINUTES=$(((FINAL_TOTAL % 3600) / 60))
-            SECONDS=$((FINAL_TOTAL % 60))
-            FINAL_DURATION_DISPLAY="${HOURS}h ${MINUTES}m ${SECONDS}s"
+            echo "📧 Email Alerting Status: DISABLED"
+            echo "   Missing required environment variables in .env file"
         fi
-        
-        echo "🎯 TOTAL TIME (including test): $FINAL_DURATION_DISPLAY"
-        
-        # Instructions for Pub/Sub setup
-        echo ""
-        echo "📝 Next Steps - Set up Pub/Sub:"
-        echo "================================"
-        echo "1. Create Pub/Sub topic (if not exists):"
-        echo "   gcloud pubsub topics create gcs-processor-files --project=nba-props-platform"
-        echo ""
-        echo "2. Create push subscription:"
-        echo "   gcloud pubsub subscriptions create gcs-to-processors \\"
-        echo "     --topic=gcs-processor-files \\"
-        echo "     --push-endpoint=\"${SERVICE_URL}/process\" \\"
-        echo "     --push-auth-service-account=\"scrapers@nba-props-platform.iam.gserviceaccount.com\" \\"
-        echo "     --project=nba-props-platform"
-        echo ""
-        echo "3. Set up GCS notifications:"
-        echo "   gsutil notification create \\"
-        echo "     -t gcs-processor-files \\"
-        echo "     -f json \\"
-        echo "     -e OBJECT_FINALIZE \\"
-        echo "     -p basketball_reference/ \\"
-        echo "     gs://nba-scraped-data"
     fi
 else
     echo ""

@@ -5,6 +5,15 @@
 SERVICE_NAME="nba-reference-processors"
 REGION="us-west2"
 
+# Load environment variables from .env file
+if [ -f ".env" ]; then
+    echo "📄 Loading environment variables from .env file..."
+    export $(grep -v '^#' .env | grep -v '^$' | xargs)
+    echo "✅ Environment variables loaded"
+else
+    echo "⚠️  No .env file found - email alerting may not work"
+fi
+
 # Start timing
 DEPLOY_START_TIME=$(date +%s)
 DEPLOY_START_DISPLAY=$(date '+%Y-%m-%d %H:%M:%S')
@@ -12,6 +21,33 @@ DEPLOY_START_DISPLAY=$(date '+%Y-%m-%d %H:%M:%S')
 echo "Deploying NBA Reference Processors Service"
 echo "=========================================="
 echo "Start time: $DEPLOY_START_DISPLAY"
+
+# Build environment variables string
+ENV_VARS="GCP_PROJECT_ID=nba-props-platform,BUCKET_NAME=nba-scraped-data"
+
+# Add email configuration if available
+if [[ -n "$BREVO_SMTP_PASSWORD" && -n "$EMAIL_ALERTS_TO" ]]; then
+    echo "✅ Adding email alerting configuration..."
+    
+    ENV_VARS="$ENV_VARS,BREVO_SMTP_HOST=${BREVO_SMTP_HOST:-smtp-relay.brevo.com}"
+    ENV_VARS="$ENV_VARS,BREVO_SMTP_PORT=${BREVO_SMTP_PORT:-587}"
+    ENV_VARS="$ENV_VARS,BREVO_SMTP_USERNAME=${BREVO_SMTP_USERNAME}"
+    ENV_VARS="$ENV_VARS,BREVO_SMTP_PASSWORD=${BREVO_SMTP_PASSWORD}"
+    ENV_VARS="$ENV_VARS,BREVO_FROM_EMAIL=${BREVO_FROM_EMAIL}"
+    ENV_VARS="$ENV_VARS,BREVO_FROM_NAME=${BREVO_FROM_NAME:-NBA Reference System}"
+    ENV_VARS="$ENV_VARS,EMAIL_ALERTS_TO=${EMAIL_ALERTS_TO}"
+    ENV_VARS="$ENV_VARS,EMAIL_CRITICAL_TO=${EMAIL_CRITICAL_TO:-$EMAIL_ALERTS_TO}"
+    
+    # Alert thresholds
+    ENV_VARS="$ENV_VARS,EMAIL_ALERT_UNRESOLVED_COUNT_THRESHOLD=${EMAIL_ALERT_UNRESOLVED_COUNT_THRESHOLD:-50}"
+    ENV_VARS="$ENV_VARS,EMAIL_ALERT_SUCCESS_RATE_THRESHOLD=${EMAIL_ALERT_SUCCESS_RATE_THRESHOLD:-90.0}"
+    ENV_VARS="$ENV_VARS,EMAIL_ALERT_MAX_PROCESSING_TIME=${EMAIL_ALERT_MAX_PROCESSING_TIME:-30}"
+    
+    EMAIL_STATUS="ENABLED"
+else
+    echo "⚠️  Email configuration missing - email alerting will be disabled"
+    EMAIL_STATUS="DISABLED"
+fi
 
 # Function to show elapsed time
 show_elapsed_time() {
@@ -83,7 +119,7 @@ echo "$(show_elapsed_time $DEPLOY_START_TIME) Phase 2: Cloud Run deployment star
         --concurrency=1 \
         --min-instances=0 \
         --max-instances=3 \
-        --set-env-vars="GCP_PROJECT_ID=nba-props-platform,BUCKET_NAME=nba-scraped-data" \
+        --set-env-vars="$ENV_VARS" \
         > /tmp/deploy_output.log 2>&1
     echo $? > /tmp/deploy_status.txt
 ) &
@@ -148,6 +184,14 @@ echo "  Setup:      ${SETUP_DURATION}s"
 echo "  Deployment: ${DEPLOY_PHASE_DURATION}s"
 echo "  Cleanup:    ${CLEANUP_DURATION}s"
 echo "  Total:      ${TOTAL_DURATION}s"
+
+echo ""
+echo "📧 Email Alerting Status: $EMAIL_STATUS"
+if [[ "$EMAIL_STATUS" = "ENABLED" ]]; then
+    echo "   Alert Recipients: ${EMAIL_ALERTS_TO}"
+    echo "   Critical Recipients: ${EMAIL_CRITICAL_TO:-$EMAIL_ALERTS_TO}"
+    echo "   From Email: ${BREVO_FROM_EMAIL}"
+fi
 
 # Check deployment result
 if [ $DEPLOY_STATUS -eq 0 ]; then
