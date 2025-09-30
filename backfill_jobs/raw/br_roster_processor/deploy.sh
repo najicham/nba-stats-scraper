@@ -1,56 +1,72 @@
 #!/bin/bash
-# FILE: processor_backfill/br_roster_processor/deploy.sh
+# FILE: backfill_jobs/raw/br_roster_processor/deploy.sh
 
 # Deploy Basketball Reference Roster Processor Backfill Job
 
 set -e
 
+# Source shared wrapper functions
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/../../../bin/shared/deploy_wrapper_common.sh"
+
+# Start deployment timing
+start_deployment_timer
+
 echo "Deploying Basketball Reference Roster Processor Backfill Job..."
 
-# Use standardized processor backfill deployment script
-./bin/processors/deploy/deploy_processor_backfill_job.sh br_roster_processor
+# Use standardized raw processors backfill deployment script
+./bin/raw/deploy/deploy_processor_backfill_job.sh br_roster_processor
 
 echo "Deployment complete!"
 echo ""
-echo "Test Commands:"
-echo "  # Dry run (current season with a few teams):"
-echo "  gcloud run jobs execute br-roster-processor-backfill --args=--season=2024,--teams=LAL,GSW,BOS,MIA,--dry-run --region=us-west2"
+
+print_section_header "Test Commands"
+echo "  # Dry run (check data availability for current season):"
+echo "  gcloud run jobs execute br-roster-processor-backfill --args=--dry-run,--season=2024 --region=us-west2"
 echo ""
-echo "  # Small test (current season, specific teams):"
-echo "  gcloud run jobs execute br-roster-processor-backfill --args=--season=2024,--teams=LAL,GSW,BOS,MIA --region=us-west2"
+echo "  # Dry run for specific teams:"
+echo "  gcloud run jobs execute br-roster-processor-backfill --args=\"^|^--dry-run|--season=2024|--teams=LAL,GSW,BOS\" --region=us-west2"
 echo ""
-echo "  # Single season, all teams:"
+echo "  # Process single season (all teams):"
 echo "  gcloud run jobs execute br-roster-processor-backfill --args=--season=2024 --region=us-west2"
 echo ""
-echo "  # Multiple seasons (last 3 seasons):"
-echo "  for season in 2022 2023 2024; do"
-echo "    echo \"Processing season \$season...\""
-echo "    gcloud run jobs execute br-roster-processor-backfill --args=--season=\$season --region=us-west2"
-echo "  done"
+echo "  # Process single season (specific teams):"
+echo "  gcloud run jobs execute br-roster-processor-backfill --args=\"^|^--season=2024|--teams=LAL,GSW,BOS,MIA\" --region=us-west2"
 echo ""
-echo "  # Historical backfill (2021-2024 seasons):"
-echo "  for season in 2021 2022 2023 2024; do"
-echo "    echo \"Processing season \$season...\""
-echo "    gcloud run jobs execute br-roster-processor-backfill --args=--season=\$season --region=us-west2"
-echo "  done"
+echo "  # Process single team across one season:"
+echo "  gcloud run jobs execute br-roster-processor-backfill --args=\"^|^--season=2023|--teams=LAL\" --region=us-west2"
 echo ""
-echo "  # Specific teams across multiple seasons:"
-echo "  for season in 2022 2023 2024; do"
-echo "    gcloud run jobs execute br-roster-processor-backfill --args=--season=\$season,--teams=LAL,GSW,BOS --region=us-west2"
-echo "  done"
+echo "  # Full historical backfill (requires manual execution per season):"
+echo "  # Note: Must run separately for each season (2021, 2022, 2023, 2024)"
+echo "  gcloud run jobs execute br-roster-processor-backfill --args=--season=2021 --region=us-west2"
+echo "  gcloud run jobs execute br-roster-processor-backfill --args=--season=2022 --region=us-west2"
+echo "  gcloud run jobs execute br-roster-processor-backfill --args=--season=2023 --region=us-west2"
+echo "  gcloud run jobs execute br-roster-processor-backfill --args=--season=2024 --region=us-west2"
 echo ""
-echo "Monitor logs:"
-echo "  ./bin/processor_backfill/br_roster_processor_backfill_monitor.sh"
+
+print_section_header "Monitor logs"
+echo "  gcloud beta run jobs executions logs read [execution-id] --region=us-west2 --follow"
 echo ""
-echo "Or monitor specific execution:"
-echo "  gcloud run jobs executions logs [execution-id] --region=us-west2 --follow"
+
+print_section_header "Notes"
+echo "  • Processes Basketball Reference roster data by NBA season"
+echo "  • Season format: Use year season starts (e.g., 2023 for 2023-24 season)"
+echo "  • Processes 30 NBA teams per season (or specified teams)"
+echo "  • Path: basketball-ref/season-rosters/{season}/{team}.json"
+echo "  • Job has 1-hour timeout with 2GB memory and 1 CPU"
+echo "  • Valid teams: ATL, BOS, BRK, CHO, CHI, CLE, DAL, DEN, DET, GSW,"
+echo "    HOU, IND, LAC, LAL, MEM, MIA, MIL, MIN, NOP, NYK, OKC, ORL,"
+echo "    PHI, PHX, POR, SAC, SAS, TOR, UTA, WAS"
+echo "  • For comma-separated teams, use pipe delimiter: --args=\"^|^--teams=LAL,GSW|--season=2024\""
+echo "  • Unlike other processors, this uses --season (not --start-date/--end-date)"
 echo ""
-echo "Validate results:"
-echo "  # Check roster data processing stats"
-echo "  bq query --use_legacy_sql=false \"SELECT season_year, team_abbrev, COUNT(*) as player_count FROM \\\`nba_raw.basketball_ref_rosters\\\` WHERE DATE(_PARTITIONTIME) >= CURRENT_DATE() - 7 GROUP BY 1,2 ORDER BY 1,2\""
+
+print_section_header "Validate results"
+echo "  # Check recent data in BigQuery"
+echo "  bq query --use_legacy_sql=false \"SELECT COUNT(*) as total_records, COUNT(DISTINCT season_year) as seasons, COUNT(DISTINCT team) as teams, MIN(season_year) as earliest_season, MAX(season_year) as latest_season FROM \\\`nba-props-platform.nba_raw.br_rosters_current\\\`\""
 echo ""
-echo "  # Check recent processing results"
-echo "  bq query --use_legacy_sql=false \"SELECT * FROM \\\`nba_processing.resolution_performance\\\` WHERE processor_name LIKE '%roster%' ORDER BY processing_timestamp DESC LIMIT 10\""
-echo ""
-echo "  # Verify roster completeness by season"
-echo "  bq query --use_legacy_sql=false \"SELECT season_year, COUNT(DISTINCT team_abbrev) as teams_processed, COUNT(*) as total_players FROM \\\`nba_raw.basketball_ref_rosters\\\` GROUP BY 1 ORDER BY 1 DESC\""
+echo "  # Check specific season"
+echo "  bq query --use_legacy_sql=false \"SELECT team, COUNT(*) as players FROM \\\`nba-props-platform.nba_raw.br_rosters_current\\\` WHERE season_year = 2024 GROUP BY team ORDER BY team\""
+
+# Print final timing summary
+print_deployment_summary

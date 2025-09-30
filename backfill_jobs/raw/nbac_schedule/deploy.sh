@@ -1,58 +1,68 @@
 #!/bin/bash
-# FILE: processor_backfill/nbac_schedule/deploy.sh
+# FILE: backfill_jobs/raw/nbac_schedule/deploy.sh
 
 # Deploy NBA.com Schedule Processor Backfill Job
 
 set -e
 
+# Source shared wrapper functions
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/../../../bin/shared/deploy_wrapper_common.sh"
+
+# Start deployment timing
+start_deployment_timer
+
 echo "Deploying NBA.com Schedule Processor Backfill Job..."
 
-# Use standardized processor backfill deployment script
-./bin/processors/deploy/deploy_processor_backfill_job.sh nbac_schedule
+# Use standardized raw processors backfill deployment script
+./bin/raw/deploy/deploy_processor_backfill_job.sh nbac_schedule
 
 echo "Deployment complete!"
 echo ""
-echo "Test Commands:"
-echo "  # Dry run (2 seasons test):"
+
+print_section_header "Test Commands"
+echo "  # Dry run (check all seasons):"
+echo "  gcloud run jobs execute nbac-schedule-processor-backfill --args=--dry-run --region=us-west2"
+echo ""
+echo "  # Dry run with limit:"
 echo "  gcloud run jobs execute nbac-schedule-processor-backfill --args=--dry-run,--limit=2 --region=us-west2"
 echo ""
-echo "  # Single season test (current season):"
+echo "  # Process single season (2023-24):"
+echo "  gcloud run jobs execute nbac-schedule-processor-backfill --args=--season=2023-24 --region=us-west2"
+echo ""
+echo "  # Process single season (2024-25):"
 echo "  gcloud run jobs execute nbac-schedule-processor-backfill --args=--season=2024-25 --region=us-west2"
 echo ""
-echo "  # Recent seasons test (last 2 seasons):"
-echo "  gcloud run jobs execute nbac-schedule-processor-backfill --args=--limit=2 --region=us-west2"
-echo ""
-echo "  # Full historical backfill (all 5 seasons):"
+echo "  # Process all available seasons (default behavior):"
 echo "  gcloud run jobs execute nbac-schedule-processor-backfill --region=us-west2"
 echo ""
-echo "  # Specific season processing:"
-echo "  gcloud run jobs execute nbac-schedule-processor-backfill --args=--season=2023-24 --region=us-west2"
-echo "  gcloud run jobs execute nbac-schedule-processor-backfill --args=--season=2022-23 --region=us-west2"
-echo "  gcloud run jobs execute nbac-schedule-processor-backfill --args=--season=2021-22 --region=us-west2"
+echo "  # Process with limit (first N seasons):"
+echo "  gcloud run jobs execute nbac-schedule-processor-backfill --args=--limit=3 --region=us-west2"
 echo ""
-echo "Monitor logs:"
-echo "  # Get recent execution"
-echo "  gcloud run jobs executions list --job=nbac-schedule-processor-backfill --region=us-west2 --limit=1"
+
+print_section_header "Monitor logs"
+echo "  gcloud beta run jobs executions logs read [execution-id] --region=us-west2 --follow"
 echo ""
-echo "  # Follow specific execution logs"
-echo "  gcloud run jobs executions logs [execution-id] --region=us-west2 --follow"
+
+print_section_header "Notes"
+echo "  • Processes NBA.com schedule data from GCS to BigQuery (season-based only)"
+echo "  • Uses latest file per season (enhanced data from Sept 18, 2025+ has 15 analytical fields)"
+echo "  • Data sourced from gs://nba-scraped-data/nba-com/schedule/{season}/"
+echo "  • Available seasons: 2021-22, 2022-23, 2023-24, 2024-25, 2025-26"
+echo "  • Season format uses dash: --season=2023-24 (NOT 2023 or 2023-2024)"
+echo "  • If no season specified, processes all available seasons"
+echo "  • Job has 30-minute timeout with 4GB memory and 2 CPUs (sufficient for all seasons)"
+echo "  • Enhanced data includes: game metadata, team info, broadcast details, arena capacity, etc."
+echo "  • Each season file contains full season schedule (~1,230 regular season games + playoffs)"
+echo "  • Args use equals syntax (--param=value) with no spaces or quotes"
 echo ""
-echo "Validate results:"
-echo "  # Check enhanced schedule data coverage"
-echo "  bq query --use_legacy_sql=false \"SELECT season_nba_format, COUNT(*) as games, COUNT(CASE WHEN is_primetime THEN 1 END) as primetime_games, ROUND(COUNT(CASE WHEN is_primetime THEN 1 END) * 100.0 / COUNT(*), 1) as primetime_pct FROM \\\`nba_raw.nbac_schedule\\\` GROUP BY season_nba_format ORDER BY season_nba_format DESC\""
+
+print_section_header "Validate results"
+echo "  # Check recent data in BigQuery"
+echo "  bq query --use_legacy_sql=false \"SELECT COUNT(*) as total_games, MIN(game_date_est) as earliest_date, MAX(game_date_est) as latest_date, COUNT(DISTINCT season_year) as unique_seasons, COUNT(DISTINCT game_id) as unique_games FROM \\\`nba-props-platform.nba_raw.nbac_schedule\\\`\""
 echo ""
-echo "  # Check data quality and filtering"
-echo "  bq query --use_legacy_sql=false \"SELECT is_regular_season, is_playoffs, is_all_star, COUNT(*) as game_count FROM \\\`nba_raw.nbac_schedule\\\` WHERE game_date >= '2021-01-01' GROUP BY 1,2,3 ORDER BY game_count DESC\""
-echo ""
-echo "  # Verify enhanced fields are populated"
-echo "  bq query --use_legacy_sql=false \"SELECT COUNT(*) as total_games, COUNT(CASE WHEN primary_network IS NOT NULL THEN 1 END) as games_with_network, COUNT(CASE WHEN day_of_week IS NOT NULL THEN 1 END) as games_with_day FROM \\\`nba_raw.nbac_schedule\\\` WHERE game_date >= '2021-01-01'\""
-echo ""
-echo "  # Network distribution analysis"
-echo "  bq query --use_legacy_sql=false \"SELECT primary_network, COUNT(*) as games FROM \\\`nba_raw.nbac_schedule\\\` WHERE is_primetime = TRUE AND season_nba_format = '2024-25' GROUP BY primary_network ORDER BY games DESC\""
-echo ""
-echo "Use analytics views:"
-echo "  # Season analytics summary"
-echo "  bq query --use_legacy_sql=false \"SELECT * FROM \\\`nba_raw.nbac_schedule_analytics\\\`\""
-echo ""
-echo "  # Recent primetime games"
-echo "  bq query --use_legacy_sql=false \"SELECT game_date, home_team_tricode, away_team_tricode, primary_network FROM \\\`nba_raw.nbac_schedule_primetime\\\` WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY) ORDER BY game_date DESC LIMIT 10\""
+echo "  # Check games by season:"
+echo "  bq query --use_legacy_sql=false \"SELECT season_year, COUNT(*) as game_count FROM \\\`nba-props-platform.nba_raw.nbac_schedule\\\` GROUP BY season_year ORDER BY season_year DESC\""
+
+# Print final timing summary
+print_deployment_summary
