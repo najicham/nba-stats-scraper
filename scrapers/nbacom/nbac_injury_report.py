@@ -1,4 +1,6 @@
 """
+File: scrapers/nbacom/nbac_injury_report.py
+
 NBA.com Injury Report PDF scraper - SIMPLIFIED v15 - 2025-08-28
 ----------------------------------------------------------------
 Two-file approach using validated parser module for 99-100% accuracy.
@@ -49,6 +51,13 @@ except ImportError:
     # Fallback for development - assume injury_parser.py is in same directory
     sys.path.insert(0, os.path.dirname(__file__))
     from injury_parser import InjuryReportParser
+
+# Notification system imports
+from shared.utils.notification_system import (
+    notify_error,
+    notify_warning,
+    notify_info
+)
 
 logger = logging.getLogger("scraper_base")
 
@@ -151,8 +160,41 @@ class GetNbaComInjuryReport(ScraperBase, ScraperFlaskMixin):
 
         # Basic PDF validation
         if b"not accessible in this region" in content.lower():
+            logger.error("PDF blocked in region for gamedate %s", self.opts["gamedate"])
+            try:
+                notify_error(
+                    title="NBA.com Injury Report Region Blocked",
+                    message=f"Injury report PDF not accessible in this region for {self.opts['gamedate']}",
+                    details={
+                        'gamedate': self.opts['gamedate'],
+                        'hour': self.opts['hour'],
+                        'period': self.opts['period'],
+                        'url': self.url
+                    },
+                    processor_name="NBA.com Injury Report Scraper"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
             raise InvalidRegionDecodeException("PDF blocked in this region.")
+            
         if b"%PDF" not in content[:1024]:
+            logger.error("Response is not a PDF for gamedate %s", self.opts["gamedate"])
+            try:
+                notify_error(
+                    title="NBA.com Injury Report Invalid PDF",
+                    message=f"Response is not a valid PDF for {self.opts['gamedate']}",
+                    details={
+                        'gamedate': self.opts['gamedate'],
+                        'hour': self.opts['hour'],
+                        'period': self.opts['period'],
+                        'url': self.url,
+                        'content_size': len(content),
+                        'content_preview': content[:200].decode('utf-8', errors='ignore')
+                    },
+                    processor_name="NBA.com Injury Report Scraper"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
             raise InvalidRegionDecodeException("Response is not a PDF.")
 
         logger.info("PDF Content size: %d bytes", len(content))
@@ -180,6 +222,25 @@ class GetNbaComInjuryReport(ScraperBase, ScraperFlaskMixin):
                 records = self.injury_parser.parse_text_content(full_text)
                 logger.info("Parsing complete: %d records found", len(records))
 
+        except Exception as e:
+            logger.error("Failed to extract text from PDF for gamedate %s: %s", self.opts["gamedate"], e)
+            try:
+                notify_error(
+                    title="NBA.com Injury Report PDF Extraction Failed",
+                    message=f"pdfplumber failed to extract text for {self.opts['gamedate']}: {str(e)}",
+                    details={
+                        'gamedate': self.opts['gamedate'],
+                        'hour': self.opts['hour'],
+                        'period': self.opts['period'],
+                        'pdf_size_bytes': len(content),
+                        'error': str(e),
+                        'error_type': type(e).__name__
+                    },
+                    processor_name="NBA.com Injury Report Scraper"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            raise DownloadDataException(f"PDF text extraction failed: {e}") from e
         finally:
             os.unlink(temp_file_path)
 
@@ -213,6 +274,22 @@ class GetNbaComInjuryReport(ScraperBase, ScraperFlaskMixin):
             logger.warning("Failed to save debug text: %s", e)
 
         if not records:
+            logger.error("Parsed 0 records from PDF for gamedate %s", self.opts["gamedate"])
+            try:
+                notify_error(
+                    title="NBA.com Injury Report No Records",
+                    message=f"Parsed 0 injury records for {self.opts['gamedate']} - PDF may be empty or parsing failed",
+                    details={
+                        'gamedate': self.opts['gamedate'],
+                        'hour': self.opts['hour'],
+                        'period': self.opts['period'],
+                        'text_length': len(full_text),
+                        'parser_stats': self.injury_parser.get_parsing_stats()
+                    },
+                    processor_name="NBA.com Injury Report Scraper"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
             raise DownloadDataException("Parsed 0 records from PDF.")
 
         # Calculate additional useful stats from records
@@ -250,6 +327,56 @@ class GetNbaComInjuryReport(ScraperBase, ScraperFlaskMixin):
         
         self.data = enhanced_output
         self.decoded_data = enhanced_output
+        
+        # Check parsing quality and send notifications if needed
+        overall_confidence = enhanced_output['parsing_stats']['overall_confidence']
+        parser_stats = self.injury_parser.get_parsing_stats()
+        
+        # Warning for low overall confidence
+        confidence_threshold = float(os.environ.get('INJURY_REPORT_CONFIDENCE_THRESHOLD', '0.6'))
+        if overall_confidence < confidence_threshold:
+            logger.warning("Low overall confidence (%.3f) for gamedate %s", overall_confidence, self.opts["gamedate"])
+            try:
+                notify_warning(
+                    title="NBA.com Injury Report Low Confidence",
+                    message=f"Low parsing confidence ({overall_confidence:.3f}) for {self.opts['gamedate']}",
+                    details={
+                        'gamedate': self.opts['gamedate'],
+                        'hour': self.opts['hour'],
+                        'period': self.opts['period'],
+                        'overall_confidence': overall_confidence,
+                        'threshold': confidence_threshold,
+                        'total_records': len(records),
+                        'unparsed_count': parser_stats['parsing_stats']['unparsed_count'],
+                        'confidence_distribution': confidence_distribution
+                    }
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+        
+        # Warning for high unparsed line count
+        unparsed_threshold = int(os.environ.get('INJURY_REPORT_UNPARSED_THRESHOLD', '20'))
+        unparsed_count = parser_stats['parsing_stats']['unparsed_count']
+        if unparsed_count > unparsed_threshold:
+            logger.warning("High unparsed line count (%d) for gamedate %s", unparsed_count, self.opts["gamedate"])
+            try:
+                notify_warning(
+                    title="NBA.com Injury Report High Unparsed Lines",
+                    message=f"High unparsed line count ({unparsed_count}) for {self.opts['gamedate']}",
+                    details={
+                        'gamedate': self.opts['gamedate'],
+                        'hour': self.opts['hour'],
+                        'period': self.opts['period'],
+                        'unparsed_count': unparsed_count,
+                        'threshold': unparsed_threshold,
+                        'total_lines': parser_stats['parsing_stats']['total_lines'],
+                        'total_records': len(records),
+                        'unparsed_sample': parser_stats.get('unparsed_lines_sample', [])[:5]
+                    }
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+        
         logger.info("Successfully parsed %d injury records with enhanced metadata", len(records))
 
     def _calculate_overall_confidence_for_records(self, records: List[Dict]) -> float:
@@ -400,16 +527,79 @@ class GetNbaComInjuryReport(ScraperBase, ScraperFlaskMixin):
             records = self.data if isinstance(self.data, list) else []
         
         if not isinstance(records, list):
-            raise DownloadDataException("Records should be a list of injury records")
+            error_msg = "Records should be a list of injury records"
+            logger.error(error_msg)
+            try:
+                notify_error(
+                    title="NBA.com Injury Report Validation Failed",
+                    message=f"Invalid data structure for {self.opts['gamedate']}: {error_msg}",
+                    details={
+                        'gamedate': self.opts['gamedate'],
+                        'hour': self.opts['hour'],
+                        'period': self.opts['period'],
+                        'data_type': type(self.data).__name__
+                    },
+                    processor_name="NBA.com Injury Report Scraper"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            raise DownloadDataException(error_msg)
         
         if len(records) == 0:
-            raise DownloadDataException("No injury records found - PDF may be empty or parsing failed")
+            error_msg = "No injury records found - PDF may be empty or parsing failed"
+            logger.error(error_msg)
+            try:
+                notify_error(
+                    title="NBA.com Injury Report No Records",
+                    message=f"No injury records found for {self.opts['gamedate']}",
+                    details={
+                        'gamedate': self.opts['gamedate'],
+                        'hour': self.opts['hour'],
+                        'period': self.opts['period']
+                    },
+                    processor_name="NBA.com Injury Report Scraper"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            raise DownloadDataException(error_msg)
         
         record_count = len(records)
         if record_count < 1:
-            raise DownloadDataException(f"Suspiciously low record count: {record_count}")
+            error_msg = f"Suspiciously low record count: {record_count}"
+            logger.error(error_msg)
+            try:
+                notify_error(
+                    title="NBA.com Injury Report Low Record Count",
+                    message=f"Suspiciously low record count ({record_count}) for {self.opts['gamedate']}",
+                    details={
+                        'gamedate': self.opts['gamedate'],
+                        'hour': self.opts['hour'],
+                        'period': self.opts['period'],
+                        'record_count': record_count
+                    },
+                    processor_name="NBA.com Injury Report Scraper"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            raise DownloadDataException(error_msg)
         elif record_count > 1000:
-            raise DownloadDataException(f"Suspiciously high record count: {record_count}")
+            error_msg = f"Suspiciously high record count: {record_count}"
+            logger.error(error_msg)
+            try:
+                notify_error(
+                    title="NBA.com Injury Report High Record Count",
+                    message=f"Suspiciously high record count ({record_count}) for {self.opts['gamedate']}",
+                    details={
+                        'gamedate': self.opts['gamedate'],
+                        'hour': self.opts['hour'],
+                        'period': self.opts['period'],
+                        'record_count': record_count
+                    },
+                    processor_name="NBA.com Injury Report Scraper"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            raise DownloadDataException(error_msg)
         
         # Validate key fields
         valid_records = []

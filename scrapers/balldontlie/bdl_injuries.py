@@ -1,4 +1,6 @@
 """
+File: scrapers/balldontlie/bdl_injuries.py
+
 BALLDONTLIE - Player Injuries endpoint                       v1.1 - 2025-06-24
 -------------------------------------------------------------------------------
 Current injuries:
@@ -44,6 +46,19 @@ except ImportError:
     from scrapers.scraper_flask_mixin import ScraperFlaskMixin
     from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
     from scrapers.utils.gcs_path_builder import GCSPathBuilder
+
+# Notification system imports
+try:
+    from shared.utils.notification_system import (
+        notify_error,
+        notify_warning,
+        notify_info
+    )
+except ImportError:
+    # Graceful fallback if notification system not available
+    def notify_error(*args, **kwargs): pass
+    def notify_warning(*args, **kwargs): pass
+    def notify_info(*args, **kwargs): pass
 
 logger = logging.getLogger(__name__)
 
@@ -146,37 +161,133 @@ class BdlInjuriesScraper(ScraperBase, ScraperFlaskMixin):
     # Validation                                                         #
     # ------------------------------------------------------------------ #
     def validate_download_data(self) -> None:
-        if not isinstance(self.decoded_data, dict) or "data" not in self.decoded_data:
-            raise ValueError("Injuries response malformed: missing 'data' key")
+        try:
+            if not isinstance(self.decoded_data, dict) or "data" not in self.decoded_data:
+                raise ValueError("Injuries response malformed: missing 'data' key")
+        except Exception as e:
+            # Send error notification for validation failure
+            try:
+                notify_error(
+                    title="BDL Injuries - Validation Failed",
+                    message=f"Data validation failed for {self.opts.get('ident', 'unknown')}: {str(e)}",
+                    details={
+                        'scraper': 'bdl_injuries',
+                        'ident': self.opts.get('ident'),
+                        'error_type': type(e).__name__,
+                        'url': self.url,
+                        'has_data': self.decoded_data is not None
+                    },
+                    processor_name="Ball Don't Lie Injuries"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send validation error notification: {notify_ex}")
+            raise
 
     # ------------------------------------------------------------------ #
     # Transform                                                          #
     # ------------------------------------------------------------------ #
     def transform_data(self) -> None:
-        injuries: List[Dict[str, Any]] = list(self.decoded_data["data"])
-        cursor: Optional[str] = self.decoded_data.get("meta", {}).get("next_cursor")
+        try:
+            injuries: List[Dict[str, Any]] = list(self.decoded_data["data"])
+            cursor: Optional[str] = self.decoded_data.get("meta", {}).get("next_cursor")
+            pages_fetched = 1
 
-        while cursor:
-            resp = self.http_downloader.get(
-                self.base_url,
-                headers=self.headers,
-                params={"cursor": cursor, "per_page": 100},
-                timeout=self.timeout_http,
-            )
-            resp.raise_for_status()
-            page_json: Dict[str, Any] = resp.json()
-            injuries.extend(page_json.get("data", []))
-            cursor = page_json.get("meta", {}).get("next_cursor")
+            # Paginate through all results
+            while cursor:
+                try:
+                    resp = self.http_downloader.get(
+                        self.base_url,
+                        headers=self.headers,
+                        params={"cursor": cursor, "per_page": 100},
+                        timeout=self.timeout_http,
+                    )
+                    resp.raise_for_status()
+                    page_json: Dict[str, Any] = resp.json()
+                    injuries.extend(page_json.get("data", []))
+                    cursor = page_json.get("meta", {}).get("next_cursor")
+                    pages_fetched += 1
+                except Exception as e:
+                    # Pagination failure
+                    try:
+                        notify_error(
+                            title="BDL Injuries - Pagination Failed",
+                            message=f"Failed to fetch page {pages_fetched + 1} for {self.opts.get('ident', 'unknown')}: {str(e)}",
+                            details={
+                                'scraper': 'bdl_injuries',
+                                'ident': self.opts.get('ident'),
+                                'pages_fetched': pages_fetched,
+                                'injuries_so_far': len(injuries),
+                                'error_type': type(e).__name__,
+                                'cursor': cursor
+                            },
+                            processor_name="Ball Don't Lie Injuries"
+                        )
+                    except Exception as notify_ex:
+                        logger.warning(f"Failed to send pagination error notification: {notify_ex}")
+                    raise
 
-        injuries.sort(key=lambda r: (r.get("team", {}).get("id"), r.get("player_id")))
+            injuries.sort(key=lambda r: (r.get("team", {}).get("id"), r.get("player_id")))
 
-        self.data = {
-            "ident": self.opts["ident"],
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "rowCount": len(injuries),
-            "injuries": injuries,
-        }
-        logger.info("Fetched %d injury rows for %s", len(injuries), self.opts["ident"])
+            self.data = {
+                "ident": self.opts["ident"],
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "rowCount": len(injuries),
+                "injuries": injuries,
+            }
+            
+            logger.info("Fetched %d injury rows for %s across %d pages", 
+                       len(injuries), self.opts["ident"], pages_fetched)
+
+            # Data quality checks
+            if self.opts["ident"] == "league" and len(injuries) > 150:
+                # Unusually high league-wide injury count (might indicate data issue)
+                try:
+                    notify_warning(
+                        title="BDL Injuries - High Injury Count",
+                        message=f"Unusually high injury count: {len(injuries)} injuries reported league-wide",
+                        details={
+                            'scraper': 'bdl_injuries',
+                            'ident': 'league',
+                            'injury_count': len(injuries),
+                            'note': 'Verify if this is accurate or a data quality issue'
+                        }
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send high count warning: {notify_ex}")
+            
+            # Success notification (injuries can be 0, which is normal)
+            try:
+                notify_info(
+                    title="BDL Injuries - Success",
+                    message=f"Successfully scraped {len(injuries)} injury records ({self.opts.get('ident', 'unknown')})",
+                    details={
+                        'scraper': 'bdl_injuries',
+                        'ident': self.opts.get('ident'),
+                        'injury_count': len(injuries),
+                        'pages_fetched': pages_fetched,
+                        'note': 'Zero injuries is normal if no players are currently injured'
+                    }
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send success notification: {notify_ex}")
+
+        except Exception as e:
+            # General transformation error
+            try:
+                notify_error(
+                    title="BDL Injuries - Transform Failed",
+                    message=f"Data transformation failed for {self.opts.get('ident', 'unknown')}: {str(e)}",
+                    details={
+                        'scraper': 'bdl_injuries',
+                        'ident': self.opts.get('ident'),
+                        'error_type': type(e).__name__,
+                        'has_decoded_data': self.decoded_data is not None
+                    },
+                    processor_name="Ball Don't Lie Injuries"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send transform error notification: {notify_ex}")
+            raise
 
     # ------------------------------------------------------------------ #
     # Stats                                                              #
@@ -196,4 +307,3 @@ create_app = convert_existing_flask_scraper(BdlInjuriesScraper)
 if __name__ == "__main__":
     main = BdlInjuriesScraper.create_cli_and_flask_main()
     main()
-    

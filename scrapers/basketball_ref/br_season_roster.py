@@ -1,3 +1,4 @@
+# File: scrapers/basketball_ref/br_season_roster.py
 """
 Basketball Reference Season Roster scraper               v1.1 - 2025-08-06
 ------------------------------------------------------------------------
@@ -60,6 +61,13 @@ except ImportError:
     # Direct execution
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
     from shared.config.nba_teams import BASKETBALL_REF_TEAMS
+
+# Notification system imports
+from shared.utils.notification_system import (
+    notify_error,
+    notify_warning,
+    notify_info
+)
 
 logger = logging.getLogger("scraper_base")
 
@@ -142,7 +150,26 @@ class BasketballRefSeasonRoster(ScraperBase, ScraperFlaskMixin):
         # Validate team abbreviation against shared config
         team_abbr = self.opts["teamAbbr"].upper()
         if team_abbr not in BASKETBALL_REF_TEAMS:
-            raise ValueError(f"Invalid team abbreviation: {team_abbr}. Must be one of: {BASKETBALL_REF_TEAMS}")
+            error_msg = f"Invalid team abbreviation: {team_abbr}. Must be one of: {BASKETBALL_REF_TEAMS}"
+            
+            # Send error notification
+            try:
+                notify_error(
+                    title="Basketball Reference Invalid Team",
+                    message=error_msg,
+                    details={
+                        'scraper': 'br_season_roster',
+                        'invalid_team': team_abbr,
+                        'valid_teams': list(BASKETBALL_REF_TEAMS),
+                        'year': self.opts.get('year')
+                    },
+                    processor_name="Basketball Reference Season Roster"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            
+            raise ValueError(error_msg)
+            
         self.opts["teamAbbr"] = team_abbr
         
         # Add full team name
@@ -178,24 +205,69 @@ class BasketballRefSeasonRoster(ScraperBase, ScraperFlaskMixin):
                    self.CRAWL_DELAY_SECONDS)
         time.sleep(self.CRAWL_DELAY_SECONDS)
         
-        super().download_data()
+        try:
+            super().download_data()
+        except Exception as e:
+            logger.error(f"Failed to download roster data: {e}")
+            
+            # Send error notification
+            try:
+                notify_error(
+                    title="Basketball Reference Download Failed",
+                    message=f"Failed to download roster for {self.opts['teamAbbr']} {self.opts['season']}: {str(e)}",
+                    details={
+                        'scraper': 'br_season_roster',
+                        'error_type': type(e).__name__,
+                        'team': self.opts['teamAbbr'],
+                        'season': self.opts['season'],
+                        'url': self.url
+                    },
+                    processor_name="Basketball Reference Season Roster"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            
+            raise
 
     def validate_download_data(self) -> None:
         """Validate that we received a proper Basketball Reference roster page."""
-        if not isinstance(self.decoded_data, str):
-            raise ValueError("Expected HTML string but got different data type")
-        
-        html_lower = self.decoded_data.lower()
-        if "<html" not in html_lower:
-            raise ValueError("Response doesn't appear to be HTML")
+        try:
+            if not isinstance(self.decoded_data, str):
+                raise ValueError("Expected HTML string but got different data type")
             
-        # Check for Basketball Reference specific markers
-        if "basketball-reference.com" not in html_lower:
-            raise ValueError("Response doesn't appear to be from Basketball Reference") 
+            html_lower = self.decoded_data.lower()
+            if "<html" not in html_lower:
+                raise ValueError("Response doesn't appear to be HTML")
+                
+            # Check for Basketball Reference specific markers
+            if "basketball-reference.com" not in html_lower:
+                raise ValueError("Response doesn't appear to be from Basketball Reference") 
+                
+            # Check for roster table or team data
+            if "roster" not in html_lower and self.opts["teamAbbr"].lower() not in html_lower:
+                raise ValueError(f"Page doesn't appear to contain roster data for {self.opts['teamAbbr']}")
+                
+        except Exception as e:
+            logger.error(f"Validation failed: {e}")
             
-        # Check for roster table or team data
-        if "roster" not in html_lower and self.opts["teamAbbr"].lower() not in html_lower:
-            raise ValueError(f"Page doesn't appear to contain roster data for {self.opts['teamAbbr']}")
+            # Send error notification
+            try:
+                notify_error(
+                    title="Basketball Reference Data Validation Failed",
+                    message=f"Downloaded data validation failed: {str(e)}",
+                    details={
+                        'scraper': 'br_season_roster',
+                        'error_type': type(e).__name__,
+                        'team': self.opts['teamAbbr'],
+                        'season': self.opts['season'],
+                        'data_length': len(self.decoded_data) if self.decoded_data else 0
+                    },
+                    processor_name="Basketball Reference Season Roster"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            
+            raise
 
     def safe_extract_text(self, element) -> str:
         """
@@ -322,12 +394,29 @@ class BasketballRefSeasonRoster(ScraperBase, ScraperFlaskMixin):
                     break
         
         if not roster_table:
-            logger.warning("Could not find roster table for %s %s", 
-                          self.opts["teamAbbr"], self.opts["year"])
+            warning_msg = f"Could not find roster table for {self.opts['teamAbbr']} {self.opts['year']}"
+            logger.warning(warning_msg)
             sentry_sdk.capture_message(
                 f"No roster table found for {self.opts['teamAbbr']} {self.opts['year']}", 
                 level="warning"
             )
+            
+            # Send warning notification
+            try:
+                notify_warning(
+                    title="Basketball Reference No Roster Table",
+                    message=warning_msg,
+                    details={
+                        'scraper': 'br_season_roster',
+                        'team': self.opts['teamAbbr'],
+                        'season': self.opts['season'],
+                        'year': self.opts['year'],
+                        'url': self.url
+                    }
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            
             self.data = self._create_empty_roster()
             return
 
@@ -385,6 +474,39 @@ class BasketballRefSeasonRoster(ScraperBase, ScraperFlaskMixin):
                         sample.get("last_name", ""),
                         sample.get("normalized", ""),
                         sample.get("suffix", ""))
+            
+            # Send success notification
+            try:
+                notify_info(
+                    title="Basketball Reference Roster Scraped Successfully",
+                    message=f"Successfully scraped roster for {self.opts['teamAbbr']} {self.opts['season']}",
+                    details={
+                        'scraper': 'br_season_roster',
+                        'team': self.opts['teamAbbr'],
+                        'team_name': self.opts['teamName'],
+                        'season': self.opts['season'],
+                        'player_count': len(players),
+                        'sample_player': sample.get('full_name')
+                    }
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+        else:
+            # Send warning if no players found
+            try:
+                notify_warning(
+                    title="Basketball Reference No Players Found",
+                    message=f"Roster table found but no players extracted for {self.opts['teamAbbr']} {self.opts['season']}",
+                    details={
+                        'scraper': 'br_season_roster',
+                        'team': self.opts['teamAbbr'],
+                        'season': self.opts['season'],
+                        'rows_found': len(rows),
+                        'url': self.url
+                    }
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
 
     def _extract_player_from_row(self, cells) -> Dict[str, str]:
         """Extract player data from a single table row - FIXED FOR MULTIPLE JERSEY NUMBERS."""

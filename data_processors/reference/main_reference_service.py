@@ -7,6 +7,13 @@ from datetime import datetime, date
 from typing import Dict, Any, List, Optional
 from flask import Flask, request, jsonify
 
+# Import notification system
+from shared.utils.notification_system import (
+    notify_error,
+    notify_warning,
+    notify_info
+)
+
 # FIXED: Import from the new split processors
 from .player_reference.gamebook_registry_processor import GamebookRegistryProcessor
 from .player_reference.roster_registry_processor import RosterRegistryProcessor
@@ -59,6 +66,26 @@ def update_registry_from_gamebook(game_date: str, season: str) -> Dict[str, Any]
     except Exception as e:
         error_msg = f"Error updating registry from gamebook: {str(e)}"
         logger.error(error_msg)
+        
+        # Note: registry_processor_base already sent detailed error notification
+        # This is just for orchestration context
+        try:
+            notify_error(
+                title="Registry Service: Gamebook Update Failed",
+                message=f"Failed to update registry from gamebook data: {str(e)}",
+                details={
+                    'service': 'reference-processor-orchestration',
+                    'scenario': 'gamebook_processed_update',
+                    'game_date': game_date,
+                    'season': season,
+                    'error_type': type(e).__name__,
+                    'error': str(e)
+                },
+                processor_name="Reference Service Orchestration"
+            )
+        except Exception as notify_ex:
+            logger.warning(f"Failed to send notification: {notify_ex}")
+        
         return {
             'scenario': 'gamebook_processed_update',
             'game_date': game_date,
@@ -142,6 +169,26 @@ def update_registry_from_rosters(season: str, teams: Optional[List[str]] = None)
     except Exception as e:
         error_msg = f"Error updating registry from rosters: {str(e)}"
         logger.error(error_msg)
+        
+        # Note: registry_processor_base already sent detailed error notification
+        # This is just for orchestration context
+        try:
+            notify_error(
+                title="Registry Service: Roster Update Failed",
+                message=f"Failed to update registry from roster data: {str(e)}",
+                details={
+                    'service': 'reference-processor-orchestration',
+                    'scenario': 'roster_scraped_update',
+                    'season': season,
+                    'teams': teams,
+                    'error_type': type(e).__name__,
+                    'error': str(e)
+                },
+                processor_name="Reference Service Orchestration"
+            )
+        except Exception as notify_ex:
+            logger.warning(f"Failed to send notification: {notify_ex}")
+        
         return {
             'scenario': 'roster_scraped_update',
             'season': season,
@@ -177,6 +224,22 @@ def get_registry_summary() -> Dict[str, Any]:
     except Exception as e:
         error_msg = f"Error getting registry summary: {str(e)}"
         logger.error(error_msg)
+        
+        try:
+            notify_error(
+                title="Registry Service: Summary Query Failed",
+                message="Unable to retrieve registry statistics",
+                details={
+                    'service': 'reference-processor-orchestration',
+                    'operation': 'get_registry_summary',
+                    'error_type': type(e).__name__,
+                    'error': str(e)
+                },
+                processor_name="Reference Service Orchestration"
+            )
+        except Exception as notify_ex:
+            logger.warning(f"Failed to send notification: {notify_ex}")
+        
         return {
             'summary_type': 'combined_registry_summary',
             'error': error_msg,
@@ -203,9 +266,26 @@ def process_pub_sub_message(message_data: Dict[str, Any]) -> Dict[str, Any]:
             season = message_data.get('season')
             
             if not game_date or not season:
+                error_msg = 'Missing game_date or season for gamebook_processed trigger'
+                try:
+                    notify_error(
+                        title="Registry Service: Missing Parameters",
+                        message=error_msg,
+                        details={
+                            'service': 'reference-processor-orchestration',
+                            'trigger_type': trigger_type,
+                            'game_date': game_date,
+                            'season': season,
+                            'required_fields': ['game_date', 'season']
+                        },
+                        processor_name="Reference Service Orchestration"
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                
                 return {
                     'status': 'error',
-                    'message': 'Missing game_date or season for gamebook_processed trigger'
+                    'message': error_msg
                 }
             
             logger.info(f"Updating registry for gamebook processing: {game_date}, season {season}")
@@ -223,9 +303,25 @@ def process_pub_sub_message(message_data: Dict[str, Any]) -> Dict[str, Any]:
             teams = message_data.get('teams')  # Optional list of teams
             
             if not season:
+                error_msg = 'Missing season for roster_scraped trigger'
+                try:
+                    notify_error(
+                        title="Registry Service: Missing Parameters",
+                        message=error_msg,
+                        details={
+                            'service': 'reference-processor-orchestration',
+                            'trigger_type': trigger_type,
+                            'season': season,
+                            'required_fields': ['season']
+                        },
+                        processor_name="Reference Service Orchestration"
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                
                 return {
                     'status': 'error', 
-                    'message': 'Missing season for roster_scraped trigger'
+                    'message': error_msg
                 }
             
             logger.info(f"Updating registry for roster scraping: season {season}")
@@ -267,9 +363,25 @@ def process_pub_sub_message(message_data: Dict[str, Any]) -> Dict[str, Any]:
                     result = processor.build_historical_registry()
                 
             else:
+                error_msg = f'Unknown processor_type: {processor_type}. Use "gamebook" or "roster"'
+                try:
+                    notify_error(
+                        title="Registry Service: Invalid Processor Type",
+                        message=error_msg,
+                        details={
+                            'service': 'reference-processor-orchestration',
+                            'trigger_type': trigger_type,
+                            'processor_type': processor_type,
+                            'valid_types': ['gamebook', 'roster']
+                        },
+                        processor_name="Reference Service Orchestration"
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                
                 return {
                     'status': 'error',
-                    'message': f'Unknown processor_type: {processor_type}. Use "gamebook" or "roster"'
+                    'message': error_msg
                 }
             
             return {
@@ -280,13 +392,44 @@ def process_pub_sub_message(message_data: Dict[str, Any]) -> Dict[str, Any]:
             }
         
         else:
+            error_msg = f'Unknown trigger type: {trigger_type}'
+            try:
+                notify_warning(
+                    title="Registry Service: Unknown Trigger Type",
+                    message=error_msg,
+                    details={
+                        'service': 'reference-processor-orchestration',
+                        'trigger_type': trigger_type,
+                        'valid_types': ['gamebook_processed', 'roster_scraped', 'manual_refresh'],
+                        'action': 'Check message format or add new trigger handler'
+                    }
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            
             return {
                 'status': 'error',
-                'message': f'Unknown trigger type: {trigger_type}'
+                'message': error_msg
             }
     
     except Exception as e:
         logger.error(f"Error processing message: {e}")
+        try:
+            notify_error(
+                title="Registry Service: Message Processing Failed",
+                message=f"Unexpected error processing registry message: {str(e)}",
+                details={
+                    'service': 'reference-processor-orchestration',
+                    'trigger_type': message_data.get('trigger_type', 'unknown'),
+                    'error_type': type(e).__name__,
+                    'error': str(e),
+                    'message_data': str(message_data)[:500]  # Truncate for safety
+                },
+                processor_name="Reference Service Orchestration"
+            )
+        except Exception as notify_ex:
+            logger.warning(f"Failed to send notification: {notify_ex}")
+        
         return {
             'status': 'error',
             'message': str(e)
@@ -315,16 +458,60 @@ def process_message():
         envelope = request.get_json()
         
         if not envelope:
+            try:
+                notify_error(
+                    title="Registry Service: Empty Pub/Sub Message",
+                    message="No Pub/Sub message received",
+                    details={
+                        'service': 'reference-processor-orchestration',
+                        'endpoint': '/process',
+                        'issue': 'Empty request body'
+                    },
+                    processor_name="Reference Service Orchestration"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
             return jsonify({'error': 'No message received'}), 400
         
         if 'message' not in envelope:
+            try:
+                notify_error(
+                    title="Registry Service: Invalid Pub/Sub Format",
+                    message="Missing 'message' field in Pub/Sub envelope",
+                    details={
+                        'service': 'reference-processor-orchestration',
+                        'endpoint': '/process',
+                        'envelope_keys': list(envelope.keys()),
+                        'issue': 'Invalid message format'
+                    },
+                    processor_name="Reference Service Orchestration"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
             return jsonify({'error': 'Invalid Pub/Sub format'}), 400
         
         # Decode the message
         import base64
-        message_data = json.loads(
-            base64.b64decode(envelope['message']['data']).decode('utf-8')
-        )
+        try:
+            message_data = json.loads(
+                base64.b64decode(envelope['message']['data']).decode('utf-8')
+            )
+        except (KeyError, json.JSONDecodeError, Exception) as e:
+            try:
+                notify_error(
+                    title="Registry Service: Message Decode Failed",
+                    message=f"Could not decode Pub/Sub message: {str(e)}",
+                    details={
+                        'service': 'reference-processor-orchestration',
+                        'endpoint': '/process',
+                        'error_type': type(e).__name__,
+                        'error': str(e)
+                    },
+                    processor_name="Reference Service Orchestration"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            return jsonify({'error': f'Message decode failed: {str(e)}'}), 400
         
         # Process the message
         result = process_pub_sub_message(message_data)
@@ -337,6 +524,21 @@ def process_message():
     
     except Exception as e:
         logger.error(f"Error in process endpoint: {e}")
+        try:
+            notify_error(
+                title="Registry Service: Endpoint Error",
+                message=f"Unexpected error in /process endpoint: {str(e)}",
+                details={
+                    'service': 'reference-processor-orchestration',
+                    'endpoint': '/process',
+                    'error_type': type(e).__name__,
+                    'error': str(e)
+                },
+                processor_name="Reference Service Orchestration"
+            )
+        except Exception as notify_ex:
+            logger.warning(f"Failed to send notification: {notify_ex}")
+        
         return jsonify({
             'status': 'error',
             'message': str(e)

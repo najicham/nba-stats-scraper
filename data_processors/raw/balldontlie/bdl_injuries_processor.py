@@ -16,6 +16,11 @@ from datetime import datetime, date
 from typing import Dict, List, Optional
 from google.cloud import bigquery
 from data_processors.raw.processor_base import ProcessorBase
+from shared.utils.notification_system import (
+    notify_error,
+    notify_warning,
+    notify_info
+)
 
 logger = logging.getLogger(__name__)
 
@@ -238,15 +243,49 @@ class BdlInjuriesProcessor(ProcessorBase):
 
     def transform_data(self, raw_data: Dict, file_path: str) -> List[Dict]:
         """Transform Ball Don't Lie injuries data to BigQuery rows."""
-        if self.validate_data(raw_data):
-            logger.error(f"Invalid data structure in {file_path}")
+        validation_errors = self.validate_data(raw_data)
+        if validation_errors:
+            logger.error(f"Invalid data structure in {file_path}: {validation_errors}")
+            
+            # Notify about invalid data structure
+            try:
+                notify_error(
+                    title="Invalid Injuries Data Structure",
+                    message=f"BDL injuries data has invalid structure",
+                    details={
+                        'file_path': file_path,
+                        'validation_errors': validation_errors,
+                        'processor': 'BDL Injuries'
+                    },
+                    processor_name="BDL Injuries Processor"
+                )
+            except Exception as e:
+                logger.warning(f"Failed to send notification: {e}")
+            
             return []
         
         rows = []
+        unknown_teams = []
+        low_confidence_records = []
         
         # Extract scrape timestamp from file path
         # Expected: gs://nba-scraped-data/ball-dont-lie/injuries/2024-01-15/20240115_143022.json
         scrape_timestamp = self._extract_timestamp_from_path(file_path)
+        if not scrape_timestamp:
+            # Notify about timestamp extraction failure
+            try:
+                notify_warning(
+                    title="Failed to Extract Timestamp",
+                    message=f"Could not extract timestamp from file path",
+                    details={
+                        'file_path': file_path,
+                        'processor': 'BDL Injuries',
+                        'impact': 'using_current_date_as_fallback'
+                    }
+                )
+            except Exception as e:
+                logger.warning(f"Failed to send notification: {e}")
+        
         scrape_date = scrape_timestamp.date() if scrape_timestamp else date.today()
         
         # Current NBA season
@@ -270,6 +309,12 @@ class BdlInjuriesProcessor(ProcessorBase):
             team_abbr = self.team_mapping.get(bdl_team_id, 'UNK')
             team_mapped = bdl_team_id in self.team_mapping
             
+            if not team_mapped:
+                unknown_teams.append({
+                    'bdl_team_id': bdl_team_id,
+                    'player_name': player_full_name
+                })
+            
             # Injury details
             status = injury_record.get('status', '')
             status_normalized = self.normalize_status(status)
@@ -286,6 +331,13 @@ class BdlInjuriesProcessor(ProcessorBase):
             confidence, issues = self.calculate_confidence(
                 injury_record, return_date_parsed, return_date_confidence, team_mapped
             )
+            
+            if confidence < 0.6:
+                low_confidence_records.append({
+                    'player_name': player_full_name,
+                    'confidence': confidence,
+                    'issues': issues
+                })
             
             row = {
                 # Core identifiers
@@ -321,13 +373,60 @@ class BdlInjuriesProcessor(ProcessorBase):
             }
             
             rows.append(row)
-            
+        
         logger.info(f"Transformed {len(rows)} injury records from {file_path}")
+        
+        # Notify about unknown teams
+        if unknown_teams:
+            try:
+                notify_warning(
+                    title="Unknown Team IDs in Injuries",
+                    message=f"Found {len(unknown_teams)} injury records with unknown team IDs",
+                    details={
+                        'unknown_count': len(unknown_teams),
+                        'sample_records': unknown_teams[:5],
+                        'file_path': file_path,
+                        'processor': 'BDL Injuries'
+                    }
+                )
+            except Exception as e:
+                logger.warning(f"Failed to send notification: {e}")
+        
+        # Notify about low confidence records
+        if len(low_confidence_records) > len(rows) * 0.3:  # More than 30% low confidence
+            try:
+                notify_warning(
+                    title="High Rate of Low Confidence Records",
+                    message=f"{len(low_confidence_records)} injury records ({len(low_confidence_records)/len(rows)*100:.1f}%) have low parsing confidence",
+                    details={
+                        'total_records': len(rows),
+                        'low_confidence_count': len(low_confidence_records),
+                        'rate_pct': round(len(low_confidence_records)/len(rows)*100, 1),
+                        'sample_records': low_confidence_records[:3],
+                        'file_path': file_path,
+                        'processor': 'BDL Injuries'
+                    }
+                )
+            except Exception as e:
+                logger.warning(f"Failed to send notification: {e}")
+        
         return rows
 
     def load_data(self, rows: List[Dict], **kwargs) -> Dict:
         """Load data to BigQuery using APPEND_ALWAYS strategy."""
         if not rows:
+            # Notify about empty data
+            try:
+                notify_warning(
+                    title="No Injury Records to Process",
+                    message="BDL injuries data is empty",
+                    details={
+                        'processor': 'BDL Injuries'
+                    }
+                )
+            except Exception as e:
+                logger.warning(f"Failed to send notification: {e}")
+            
             return {'rows_processed': 0, 'errors': []}
         
         table_id = f"{os.environ['GCP_PROJECT_ID']}.{self.table_name}"
@@ -339,13 +438,75 @@ class BdlInjuriesProcessor(ProcessorBase):
             if result:
                 errors.extend([str(e) for e in result])
                 logger.error(f"BigQuery insert errors: {result}")
+                
+                # Notify about BigQuery insert errors
+                try:
+                    notify_error(
+                        title="BigQuery Insert Failed",
+                        message=f"Failed to insert injuries data into BigQuery",
+                        details={
+                            'error_count': len(result),
+                            'sample_errors': [str(e) for e in result[:3]],
+                            'rows_attempted': len(rows),
+                            'table': self.table_name,
+                            'processor': 'BDL Injuries'
+                        },
+                        processor_name="BDL Injuries Processor"
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to send notification: {e}")
             else:
                 logger.info(f"Successfully inserted {len(rows)} rows to {table_id}")
+                
+                # Calculate summary statistics
+                avg_confidence = sum(row['parsing_confidence'] for row in rows) / len(rows)
+                records_with_flags = sum(1 for row in rows if row['data_quality_flags'])
+                unknown_teams = sum(1 for row in rows if row['team_abbr'] == 'UNK')
+                
+                # Count by status
+                status_counts = {}
+                for row in rows:
+                    status = row['injury_status_normalized']
+                    status_counts[status] = status_counts.get(status, 0) + 1
+                
+                # Send success notification
+                try:
+                    notify_info(
+                        title="BDL Injuries Processing Complete",
+                        message=f"Successfully processed {len(rows)} injury records",
+                        details={
+                            'total_records': len(rows),
+                            'avg_parsing_confidence': round(avg_confidence, 3),
+                            'records_with_quality_flags': records_with_flags,
+                            'unknown_teams': unknown_teams,
+                            'status_distribution': status_counts,
+                            'table': self.table_name,
+                            'processor': 'BDL Injuries'
+                        }
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to send notification: {e}")
                 
         except Exception as e:
             error_msg = f"Failed to insert data: {str(e)}"
             errors.append(error_msg)
             logger.error(error_msg)
+            
+            # Notify about general processing error
+            try:
+                notify_error(
+                    title="BDL Injuries Processing Failed",
+                    message=f"Unexpected error during injuries processing: {str(e)}",
+                    details={
+                        'error': str(e),
+                        'error_type': type(e).__name__,
+                        'rows_attempted': len(rows),
+                        'processor': 'BDL Injuries'
+                    },
+                    processor_name="BDL Injuries Processor"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
         
         return {
             'rows_processed': len(rows) if not errors else 0,

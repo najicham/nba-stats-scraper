@@ -44,6 +44,22 @@ except ImportError:
     from scrapers.utils.exceptions import DownloadDataException
     from scrapers.utils.gcs_path_builder import GCSPathBuilder
 
+# Import notification system
+try:
+    from shared.utils.notification_system import (
+        notify_error,
+        notify_warning,
+        notify_info
+    )
+except ImportError:
+    # Fallback if shared module not available
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+    from shared.utils.notification_system import (
+        notify_error,
+        notify_warning,
+        notify_info
+    )
+
 logger = logging.getLogger("scraper_base")
 
 
@@ -122,6 +138,19 @@ class GetNbaComRefereeAssignments(ScraperBase, ScraperFlaskMixin):
             self.opts["formatted_date"] = self.opts["date"]
             
         except ValueError:
+            try:
+                notify_error(
+                    title="NBA.com Referee Assignments - Invalid Date",
+                    message=f"Invalid date format: {self.opts.get('date')}. Expected YYYY-MM-DD",
+                    details={
+                        'scraper': 'nbac_referee_assignments',
+                        'date': self.opts.get('date'),
+                        'expected_format': 'YYYY-MM-DD'
+                    },
+                    processor_name="NBA.com Referee Assignments Scraper"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
             raise DownloadDataException("Invalid date format. Expected YYYY-MM-DD")
 
     # ------------------------------------------------------------------ #
@@ -139,22 +168,101 @@ class GetNbaComRefereeAssignments(ScraperBase, ScraperFlaskMixin):
     # Validation
     # ------------------------------------------------------------------ #
     def validate_download_data(self) -> None:
-        if not isinstance(self.decoded_data, dict):
-            raise DownloadDataException("Referee response is not a valid JSON object")
-            
-        # Check for main league data (NBA)
-        nba_data = self.decoded_data.get("nba")
-        if nba_data is None:
-            raise DownloadDataException("Response missing 'nba' key")
-            
-        # Check for table structure
-        table_data = nba_data.get("Table")
-        if table_data is None:
-            raise DownloadDataException("NBA data missing 'Table' key")
-            
-        rows = table_data.get("rows", [])
-        if not isinstance(rows, list):
-            raise DownloadDataException("Table.rows is not a list")
+        try:
+            if not isinstance(self.decoded_data, dict):
+                try:
+                    notify_error(
+                        title="NBA.com Referee Assignments - Invalid Response",
+                        message=f"Response is not a valid JSON object for date {self.opts['formatted_date']}",
+                        details={
+                            'scraper': 'nbac_referee_assignments',
+                            'date': self.opts['formatted_date'],
+                            'response_type': type(self.decoded_data).__name__,
+                            'url': self.url
+                        },
+                        processor_name="NBA.com Referee Assignments Scraper"
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                raise DownloadDataException("Referee response is not a valid JSON object")
+                
+            # Check for main league data (NBA)
+            nba_data = self.decoded_data.get("nba")
+            if nba_data is None:
+                try:
+                    notify_error(
+                        title="NBA.com Referee Assignments - Missing NBA Data",
+                        message=f"Response missing 'nba' key for date {self.opts['formatted_date']}",
+                        details={
+                            'scraper': 'nbac_referee_assignments',
+                            'date': self.opts['formatted_date'],
+                            'available_keys': list(self.decoded_data.keys()),
+                            'url': self.url
+                        },
+                        processor_name="NBA.com Referee Assignments Scraper"
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                raise DownloadDataException("Response missing 'nba' key")
+                
+            # Check for table structure
+            table_data = nba_data.get("Table")
+            if table_data is None:
+                try:
+                    notify_error(
+                        title="NBA.com Referee Assignments - Missing Table",
+                        message=f"NBA data missing 'Table' key for date {self.opts['formatted_date']}",
+                        details={
+                            'scraper': 'nbac_referee_assignments',
+                            'date': self.opts['formatted_date'],
+                            'nba_keys': list(nba_data.keys()),
+                            'url': self.url
+                        },
+                        processor_name="NBA.com Referee Assignments Scraper"
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                raise DownloadDataException("NBA data missing 'Table' key")
+                
+            rows = table_data.get("rows", [])
+            if not isinstance(rows, list):
+                try:
+                    notify_error(
+                        title="NBA.com Referee Assignments - Invalid Rows",
+                        message=f"Table.rows is not a list for date {self.opts['formatted_date']}",
+                        details={
+                            'scraper': 'nbac_referee_assignments',
+                            'date': self.opts['formatted_date'],
+                            'rows_type': type(rows).__name__,
+                            'url': self.url
+                        },
+                        processor_name="NBA.com Referee Assignments Scraper"
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                raise DownloadDataException("Table.rows is not a list")
+                
+        except DownloadDataException:
+            # Re-raise validation exceptions (already notified above)
+            raise
+        except Exception as e:
+            # Catch any unexpected validation errors
+            try:
+                notify_error(
+                    title="NBA.com Referee Assignments - Validation Failed",
+                    message=f"Unexpected validation error for date {self.opts['formatted_date']}: {str(e)}",
+                    details={
+                        'scraper': 'nbac_referee_assignments',
+                        'date': self.opts['formatted_date'],
+                        'error_type': type(e).__name__,
+                        'error': str(e),
+                        'url': self.url
+                    },
+                    processor_name="NBA.com Referee Assignments Scraper"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            raise
 
     # ------------------------------------------------------------------ #
     # Enhanced validation for production use
@@ -163,53 +271,194 @@ class GetNbaComRefereeAssignments(ScraperBase, ScraperFlaskMixin):
         """
         Production validation for referee assignment data quality.
         """
-        nba_data = self.data["refereeAssignments"]["nba"]
-        rows = nba_data["Table"]["rows"]
-        
-        # 1. GAME COUNT CHECK
-        game_count = len(rows)
-        if game_count == 0:
-            logger.warning("No NBA games found for this date - could be off-season or all-star break")
-        elif game_count > 20:
-            raise DownloadDataException(f"Suspiciously high game count: {game_count} (expected 1-15)")
-        
-        # 2. BASIC DATA STRUCTURE VALIDATION  
-        required_table_keys = ['rows', 'columns']
-        for key in required_table_keys:
-            if key not in nba_data["Table"]:
-                raise DownloadDataException(f"Missing required table key: {key}")
-        
-        # 3. SAMPLE GAME VALIDATION (check referee assignments)
-        sample_size = min(5, len(rows))
-        for i, game in enumerate(rows[:sample_size]):
-            if not isinstance(game, dict):
-                raise DownloadDataException(f"Game {i} is not a dict: {type(game)}")
-                
-            # Check for essential game fields
-            required_fields = ['game_id', 'home_team', 'away_team', 'official1']
-            for field in required_fields:
-                if field not in game:
-                    raise DownloadDataException(f"Game {i} missing required field: {field}")
+        try:
+            nba_data = self.data["refereeAssignments"]["nba"]
+            rows = nba_data["Table"]["rows"]
             
-            # Validate referee assignments (should have at least official1)
-            if not game.get('official1'):
-                raise DownloadDataException(f"Game {i} missing primary official assignment")
-        
-        # 4. DATE CONSISTENCY
-        expected_date = self.opts['formatted_date']
-        for i, game in enumerate(rows[:sample_size]):
-            game_date = game.get('game_date', '')
-            # Convert MM/DD/YYYY to YYYY-MM-DD for comparison
-            if game_date:
+            # 1. GAME COUNT CHECK
+            game_count = len(rows)
+            if game_count == 0:
+                # No games - could be off-season or all-star break (INFO, not error)
                 try:
-                    parsed_date = datetime.strptime(game_date, "%m/%d/%Y")
-                    formatted_game_date = parsed_date.strftime("%Y-%m-%d")
-                    if formatted_game_date != expected_date:
-                        logger.warning(f"Game {i} date mismatch: expected {expected_date}, got {formatted_game_date}")
-                except ValueError:
-                    logger.warning(f"Game {i} has invalid date format: {game_date}")
-        
-        logger.info(f"✅ Referee validation passed: {game_count} games")
+                    notify_info(
+                        title="NBA.com Referee Assignments - No Games",
+                        message=f"No NBA games found for date {self.opts['formatted_date']} (off-season or break)",
+                        details={
+                            'scraper': 'nbac_referee_assignments',
+                            'date': self.opts['formatted_date'],
+                            'season': self.opts['season'],
+                            'game_count': 0
+                        }
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                logger.warning("No NBA games found for this date - could be off-season or all-star break")
+            elif game_count > 20:
+                try:
+                    notify_error(
+                        title="NBA.com Referee Assignments - High Game Count",
+                        message=f"Suspiciously high game count: {game_count} for date {self.opts['formatted_date']}",
+                        details={
+                            'scraper': 'nbac_referee_assignments',
+                            'date': self.opts['formatted_date'],
+                            'game_count': game_count,
+                            'threshold_max': 20
+                        },
+                        processor_name="NBA.com Referee Assignments Scraper"
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                raise DownloadDataException(f"Suspiciously high game count: {game_count} (expected 1-15)")
+            
+            # 2. BASIC DATA STRUCTURE VALIDATION  
+            required_table_keys = ['rows', 'columns']
+            for key in required_table_keys:
+                if key not in nba_data["Table"]:
+                    try:
+                        notify_error(
+                            title="NBA.com Referee Assignments - Missing Table Key",
+                            message=f"Missing required table key '{key}' for date {self.opts['formatted_date']}",
+                            details={
+                                'scraper': 'nbac_referee_assignments',
+                                'date': self.opts['formatted_date'],
+                                'missing_key': key,
+                                'available_keys': list(nba_data["Table"].keys())
+                            },
+                            processor_name="NBA.com Referee Assignments Scraper"
+                        )
+                    except Exception as notify_ex:
+                        logger.warning(f"Failed to send notification: {notify_ex}")
+                    raise DownloadDataException(f"Missing required table key: {key}")
+            
+            # 3. SAMPLE GAME VALIDATION (check referee assignments)
+            sample_size = min(5, len(rows))
+            for i, game in enumerate(rows[:sample_size]):
+                if not isinstance(game, dict):
+                    try:
+                        notify_error(
+                            title="NBA.com Referee Assignments - Invalid Game Type",
+                            message=f"Game {i} has invalid type for date {self.opts['formatted_date']}",
+                            details={
+                                'scraper': 'nbac_referee_assignments',
+                                'date': self.opts['formatted_date'],
+                                'game_index': i,
+                                'game_type': type(game).__name__
+                            },
+                            processor_name="NBA.com Referee Assignments Scraper"
+                        )
+                    except Exception as notify_ex:
+                        logger.warning(f"Failed to send notification: {notify_ex}")
+                    raise DownloadDataException(f"Game {i} is not a dict: {type(game)}")
+                    
+                # Check for essential game fields
+                required_fields = ['game_id', 'home_team', 'away_team', 'official1']
+                for field in required_fields:
+                    if field not in game:
+                        try:
+                            notify_error(
+                                title="NBA.com Referee Assignments - Missing Game Field",
+                                message=f"Game {i} missing required field '{field}' for date {self.opts['formatted_date']}",
+                                details={
+                                    'scraper': 'nbac_referee_assignments',
+                                    'date': self.opts['formatted_date'],
+                                    'game_index': i,
+                                    'missing_field': field,
+                                    'available_fields': list(game.keys())[:10]
+                                },
+                                processor_name="NBA.com Referee Assignments Scraper"
+                            )
+                        except Exception as notify_ex:
+                            logger.warning(f"Failed to send notification: {notify_ex}")
+                        raise DownloadDataException(f"Game {i} missing required field: {field}")
+                
+                # Validate referee assignments (should have at least official1)
+                if not game.get('official1'):
+                    try:
+                        notify_error(
+                            title="NBA.com Referee Assignments - Missing Official",
+                            message=f"Game {i} missing primary official assignment for date {self.opts['formatted_date']}",
+                            details={
+                                'scraper': 'nbac_referee_assignments',
+                                'date': self.opts['formatted_date'],
+                                'game_index': i,
+                                'game_id': game.get('game_id'),
+                                'matchup': f"{game.get('away_team')} @ {game.get('home_team')}"
+                            },
+                            processor_name="NBA.com Referee Assignments Scraper"
+                        )
+                    except Exception as notify_ex:
+                        logger.warning(f"Failed to send notification: {notify_ex}")
+                    raise DownloadDataException(f"Game {i} missing primary official assignment")
+            
+            # 4. DATE CONSISTENCY
+            expected_date = self.opts['formatted_date']
+            date_mismatches = 0
+            for i, game in enumerate(rows[:sample_size]):
+                game_date = game.get('game_date', '')
+                # Convert MM/DD/YYYY to YYYY-MM-DD for comparison
+                if game_date:
+                    try:
+                        parsed_date = datetime.strptime(game_date, "%m/%d/%Y")
+                        formatted_game_date = parsed_date.strftime("%Y-%m-%d")
+                        if formatted_game_date != expected_date:
+                            date_mismatches += 1
+                            logger.warning(f"Game {i} date mismatch: expected {expected_date}, got {formatted_game_date}")
+                    except ValueError:
+                        logger.warning(f"Game {i} has invalid date format: {game_date}")
+            
+            if date_mismatches > 0:
+                try:
+                    notify_warning(
+                        title="NBA.com Referee Assignments - Date Mismatches",
+                        message=f"{date_mismatches} games have date mismatches for expected date {expected_date}",
+                        details={
+                            'scraper': 'nbac_referee_assignments',
+                            'date': expected_date,
+                            'mismatches': date_mismatches,
+                            'sample_size': sample_size
+                        }
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+            
+            logger.info(f"✅ Referee validation passed: {game_count} games")
+            
+            # Send success notification
+            try:
+                notify_info(
+                    title="NBA.com Referee Assignments - Download Complete",
+                    message=f"Successfully downloaded referee assignments for date {self.opts['formatted_date']}",
+                    details={
+                        'scraper': 'nbac_referee_assignments',
+                        'date': self.opts['formatted_date'],
+                        'season': self.opts['season'],
+                        'game_count': game_count,
+                        'url': self.url
+                    }
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+                
+        except DownloadDataException:
+            # Re-raise validation exceptions (already notified above)
+            raise
+        except Exception as e:
+            # Catch any unexpected validation errors
+            try:
+                notify_error(
+                    title="NBA.com Referee Assignments - Enhanced Validation Failed",
+                    message=f"Unexpected enhanced validation error for date {self.opts['formatted_date']}: {str(e)}",
+                    details={
+                        'scraper': 'nbac_referee_assignments',
+                        'date': self.opts['formatted_date'],
+                        'error_type': type(e).__name__,
+                        'error': str(e)
+                    },
+                    processor_name="NBA.com Referee Assignments Scraper"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            raise
 
     # ------------------------------------------------------------------ #
     # Transform (wrap with metadata)

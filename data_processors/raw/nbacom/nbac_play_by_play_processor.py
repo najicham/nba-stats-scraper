@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # File: processors/nbacom/nbac_play_by_play_processor.py
 # Description: Processor for NBA.com play-by-play data transformation
+# Integrated notification system for monitoring and alerts
 
 import json
 import logging
@@ -11,6 +12,11 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 from google.cloud import bigquery, storage
 from data_processors.raw.processor_base import ProcessorBase
+from shared.utils.notification_system import (
+    notify_error,
+    notify_warning,
+    notify_info
+)
 
 class NbacPlayByPlayProcessor(ProcessorBase):
     def __init__(self):
@@ -191,6 +197,21 @@ class NbacPlayByPlayProcessor(ProcessorBase):
         actions = data['playByPlay']['game']['actions']
         if not actions:
             errors.append("Empty actions array")
+            
+            # Notify about empty actions
+            try:
+                notify_warning(
+                    title="Empty Play-by-Play Actions",
+                    message="Play-by-play data contains no actions",
+                    details={
+                        'has_playByPlay': 'playByPlay' in data,
+                        'has_game': 'game' in data.get('playByPlay', {}),
+                        'game_id': data.get('playByPlay', {}).get('game', {}).get('gameId')
+                    }
+                )
+            except Exception as notify_ex:
+                logging.warning(f"Failed to send notification: {notify_ex}")
+            
             return errors
         
         # Validate key fields in first few actions
@@ -199,6 +220,21 @@ class NbacPlayByPlayProcessor(ProcessorBase):
                 errors.append(f"Missing actionNumber in action {i}")
             if 'period' not in action:
                 errors.append(f"Missing period in action {i}")
+        
+        # Notify about validation failures
+        if errors:
+            try:
+                notify_warning(
+                    title="Play-by-Play Data Validation Failed",
+                    message=f"Found {len(errors)} validation errors",
+                    details={
+                        'errors': errors[:5],  # First 5 errors
+                        'total_errors': len(errors),
+                        'total_actions': len(actions)
+                    }
+                )
+            except Exception as notify_ex:
+                logging.warning(f"Failed to send notification: {notify_ex}")
         
         return errors
     
@@ -225,6 +261,19 @@ class NbacPlayByPlayProcessor(ProcessorBase):
                     game_date_str = part
                     break
             
+            if not game_date_str:
+                try:
+                    notify_warning(
+                        title="Missing Game Date in Path",
+                        message="Could not extract game date from file path",
+                        details={
+                            'file_path': file_path,
+                            'nba_game_id': nba_game_id
+                        }
+                    )
+                except Exception as notify_ex:
+                    logging.warning(f"Failed to send notification: {notify_ex}")
+            
             # Process actions
             actions = game_info.get('actions', [])
             
@@ -239,6 +288,22 @@ class NbacPlayByPlayProcessor(ProcessorBase):
                     teams_in_game.add(action['teamTricode'])
             
             teams_list = list(teams_in_game)
+            
+            if len(teams_list) < 2:
+                try:
+                    notify_warning(
+                        title="Insufficient Teams Found",
+                        message=f"Only found {len(teams_list)} team(s) in play-by-play data",
+                        details={
+                            'teams_found': teams_list,
+                            'nba_game_id': nba_game_id,
+                            'file_path': file_path,
+                            'total_actions': len(actions)
+                        }
+                    )
+                except Exception as notify_ex:
+                    logging.warning(f"Failed to send notification: {notify_ex}")
+            
             # For now, assign teams arbitrarily - this needs schedule cross-reference
             team_1 = teams_list[0] if len(teams_list) > 0 else None
             team_2 = teams_list[1] if len(teams_list) > 1 else None
@@ -338,9 +403,47 @@ class NbacPlayByPlayProcessor(ProcessorBase):
                 }
                 
                 rows.append(row)
+            
+            logging.info(f"Transformed {len(rows)} play-by-play events")
         
+        except KeyError as e:
+            logging.error(f"Missing required field in play-by-play data: {e}")
+            
+            # Notify about missing field
+            try:
+                notify_error(
+                    title="Play-by-Play Data Structure Error",
+                    message=f"Missing required field: {str(e)}",
+                    details={
+                        'file_path': file_path,
+                        'error_type': 'KeyError',
+                        'missing_field': str(e)
+                    },
+                    processor_name="NBA.com Play-by-Play Processor"
+                )
+            except Exception as notify_ex:
+                logging.warning(f"Failed to send notification: {notify_ex}")
+            
+            return []
+            
         except Exception as e:
             logging.error(f"Error transforming play-by-play data: {e}")
+            
+            # Notify about transformation failure
+            try:
+                notify_error(
+                    title="Play-by-Play Transformation Failed",
+                    message=f"Failed to transform play-by-play data: {str(e)}",
+                    details={
+                        'file_path': file_path,
+                        'error_type': type(e).__name__,
+                        'events_transformed': len(rows)
+                    },
+                    processor_name="NBA.com Play-by-Play Processor"
+                )
+            except Exception as notify_ex:
+                logging.warning(f"Failed to send notification: {notify_ex}")
+            
             return []
         
         return rows
@@ -357,7 +460,24 @@ class NbacPlayByPlayProcessor(ProcessorBase):
             blob = bucket.blob(blob_name)
             
             if not blob.exists():
-                return {'errors': [f'File not found: {file_path}'], 'rows_processed': 0}
+                error_msg = f'File not found: {file_path}'
+                
+                # Notify about missing file
+                try:
+                    notify_error(
+                        title="Play-by-Play File Not Found",
+                        message=f"File does not exist in GCS: {file_path}",
+                        details={
+                            'file_path': file_path,
+                            'bucket': self.bucket_name,
+                            'blob_name': blob_name
+                        },
+                        processor_name="NBA.com Play-by-Play Processor"
+                    )
+                except Exception as notify_ex:
+                    logging.warning(f"Failed to send notification: {notify_ex}")
+                
+                return {'errors': [error_msg], 'rows_processed': 0}
             
             # Download and parse JSON
             json_content = blob.download_as_text()
@@ -371,10 +491,40 @@ class NbacPlayByPlayProcessor(ProcessorBase):
             # Transform data
             rows = self.transform_data(raw_data, file_path)
             if not rows:
-                return {'errors': ['No events extracted from file'], 'rows_processed': 0}
+                error_msg = 'No events extracted from file'
+                
+                # Notify about no events
+                try:
+                    notify_warning(
+                        title="No Play-by-Play Events Extracted",
+                        message="Transformation resulted in zero events",
+                        details={
+                            'file_path': file_path,
+                            'validation_passed': len(validation_errors) == 0
+                        }
+                    )
+                except Exception as notify_ex:
+                    logging.warning(f"Failed to send notification: {notify_ex}")
+                
+                return {'errors': [error_msg], 'rows_processed': 0}
             
             # Load to BigQuery
             load_result = self.load_data(rows)
+            
+            # Send success notification if no errors
+            if not load_result.get('errors'):
+                try:
+                    notify_info(
+                        title="Play-by-Play Processing Complete",
+                        message=f"Successfully processed {len(rows)} play-by-play events",
+                        details={
+                            'file_path': file_path,
+                            'events_processed': len(rows),
+                            'game_id': rows[0].get('game_id') if rows else None
+                        }
+                    )
+                except Exception as notify_ex:
+                    logging.warning(f"Failed to send notification: {notify_ex}")
             
             return {
                 'rows_processed': load_result.get('rows_processed', 0),
@@ -383,9 +533,41 @@ class NbacPlayByPlayProcessor(ProcessorBase):
             }
             
         except json.JSONDecodeError as e:
-            return {'errors': [f'Invalid JSON: {str(e)}'], 'rows_processed': 0}
+            error_msg = f'Invalid JSON: {str(e)}'
+            
+            # Notify about JSON parsing failure
+            try:
+                notify_error(
+                    title="Play-by-Play JSON Parse Error",
+                    message=f"Failed to parse JSON file: {str(e)}",
+                    details={
+                        'file_path': file_path,
+                        'error_type': 'JSONDecodeError'
+                    },
+                    processor_name="NBA.com Play-by-Play Processor"
+                )
+            except Exception as notify_ex:
+                logging.warning(f"Failed to send notification: {notify_ex}")
+            
+            return {'errors': [error_msg], 'rows_processed': 0}
+            
         except Exception as e:
             logging.error(f"Error processing file {file_path}: {str(e)}")
+            
+            # Notify about general processing failure
+            try:
+                notify_error(
+                    title="Play-by-Play File Processing Failed",
+                    message=f"Error processing play-by-play file: {str(e)}",
+                    details={
+                        'file_path': file_path,
+                        'error_type': type(e).__name__
+                    },
+                    processor_name="NBA.com Play-by-Play Processor"
+                )
+            except Exception as notify_ex:
+                logging.warning(f"Failed to send notification: {notify_ex}")
+            
             return {'errors': [str(e)], 'rows_processed': 0}
 
     def load_data(self, rows: List[Dict], **kwargs) -> Dict:
@@ -400,21 +582,76 @@ class NbacPlayByPlayProcessor(ProcessorBase):
             if self.processing_strategy == 'MERGE_UPDATE':
                 # Delete existing data for this game - MUST include game_date for partition elimination
                 game_id = rows[0]['game_id']
-                game_date = rows[0]['game_date']  # Add this line
-                delete_query = f"DELETE FROM `{table_id}` WHERE game_id = '{game_id}' AND game_date = '{game_date}'"  # Add game_date filter
-                self.bq_client.query(delete_query).result()
-                logging.info(f"Deleted existing data for game_id: {game_id}")
+                game_date = rows[0]['game_date']
+                delete_query = f"DELETE FROM `{table_id}` WHERE game_id = '{game_id}' AND game_date = '{game_date}'"
+                
+                try:
+                    self.bq_client.query(delete_query).result()
+                    logging.info(f"Deleted existing data for game_id: {game_id}")
+                except Exception as e:
+                    logging.error(f"Error deleting existing data: {e}")
+                    
+                    # Notify about delete failure
+                    try:
+                        notify_error(
+                            title="BigQuery Delete Failed",
+                            message=f"Failed to delete existing play-by-play data: {str(e)}",
+                            details={
+                                'game_id': game_id,
+                                'game_date': game_date,
+                                'table_id': table_id,
+                                'error_type': type(e).__name__
+                            },
+                            processor_name="NBA.com Play-by-Play Processor"
+                        )
+                    except Exception as notify_ex:
+                        logging.warning(f"Failed to send notification: {notify_ex}")
+                    
+                    raise e
             
             # Insert new data
             result = self.bq_client.insert_rows_json(table_id, rows)
             if result:
                 errors.extend([str(e) for e in result])
+                
+                # Notify about insert errors
+                try:
+                    notify_error(
+                        title="BigQuery Insert Errors",
+                        message=f"Encountered {len(result)} errors inserting play-by-play data",
+                        details={
+                            'table_id': table_id,
+                            'events_attempted': len(rows),
+                            'error_count': len(result),
+                            'errors': str(result)[:500],
+                            'game_id': rows[0].get('game_id') if rows else None
+                        },
+                        processor_name="NBA.com Play-by-Play Processor"
+                    )
+                except Exception as notify_ex:
+                    logging.warning(f"Failed to send notification: {notify_ex}")
             else:
                 logging.info(f"Successfully inserted {len(rows)} play-by-play events")
         
         except Exception as e:
             errors.append(str(e))
             logging.error(f"Error loading play-by-play data: {e}")
+            
+            # Notify about load failure
+            try:
+                notify_error(
+                    title="Play-by-Play Load Failed",
+                    message=f"Failed to load play-by-play data to BigQuery: {str(e)}",
+                    details={
+                        'table_id': table_id,
+                        'events_attempted': len(rows),
+                        'error_type': type(e).__name__,
+                        'game_id': rows[0].get('game_id') if rows else None
+                    },
+                    processor_name="NBA.com Play-by-Play Processor"
+                )
+            except Exception as notify_ex:
+                logging.warning(f"Failed to send notification: {notify_ex}")
         
         return {
             'rows_processed': len(rows) if not errors else 0,

@@ -1,4 +1,6 @@
 """
+File: scrapers/balldontlie/bdl_player_box_scores.py
+
 BALLDONTLIE - Player Box Scores (stats endpoint)           v1.3 (2025-06-24)
 ------------------------------------------------------------------------------
 Collect per-player box-score rows from
@@ -54,6 +56,19 @@ except ImportError:
     from scrapers.scraper_flask_mixin import ScraperFlaskMixin
     from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
     from scrapers.utils.gcs_path_builder import GCSPathBuilder
+
+# Notification system imports
+try:
+    from shared.utils.notification_system import (
+        notify_error,
+        notify_warning,
+        notify_info
+    )
+except ImportError:
+    # Graceful fallback if notification system not available
+    def notify_error(*args, **kwargs): pass
+    def notify_warning(*args, **kwargs): pass
+    def notify_info(*args, **kwargs): pass
 
 logger = logging.getLogger("scraper_base")
 
@@ -224,76 +239,199 @@ class BdlPlayerBoxScoresScraper(ScraperBase, ScraperFlaskMixin):
     # Validation                                                         #
     # ------------------------------------------------------------------ #
     def validate_download_data(self) -> None:
-        if not isinstance(self.decoded_data, dict) or "data" not in self.decoded_data:
-            raise ValueError("Stats response malformed: missing 'data' key")
+        try:
+            if not isinstance(self.decoded_data, dict) or "data" not in self.decoded_data:
+                raise ValueError("Stats response malformed: missing 'data' key")
+        except Exception as e:
+            # Send error notification for validation failure
+            try:
+                notify_error(
+                    title="BDL Player Box Scores - Validation Failed",
+                    message=f"Data validation failed for {self.opts.get('startDate')} to {self.opts.get('endDate')}: {str(e)}",
+                    details={
+                        'scraper': 'bdl_player_box_scores',
+                        'start_date': self.opts.get('startDate'),
+                        'end_date': self.opts.get('endDate'),
+                        'error_type': type(e).__name__,
+                        'url': self.url,
+                        'has_data': self.decoded_data is not None
+                    },
+                    processor_name="Ball Don't Lie Player Box Scores"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send validation error notification: {notify_ex}")
+            raise
 
     # ------------------------------------------------------------------ #
     # Transform                                                          #
     # ------------------------------------------------------------------ #
     def transform_data(self) -> None:
-        rows: List[Dict[str, Any]] = []
-        dates_done: List[str] = []
+        try:
+            rows: List[Dict[str, Any]] = []
+            dates_done: List[str] = []
+            pages_fetched = 1
 
-        def add_page(js: Dict[str, Any]) -> Optional[str]:
-            rows.extend(js.get("data", []))
-            return js.get("meta", {}).get("next_cursor")
+            def add_page(js: Dict[str, Any]) -> Optional[str]:
+                rows.extend(js.get("data", []))
+                return js.get("meta", {}).get("next_cursor")
 
-        # first response
-        next_cursor = add_page(self.decoded_data)
-        date_param = (
-            self.decoded_data.get("meta", {}).get("request_params", {}).get("dates[]")
-        )
-        if date_param:
-            dates_done.append(date_param)
-
-        while next_cursor:
-            resp = self.http_downloader.get(
-                self.base_url,
-                headers=self.headers,
-                params=self._build_query({"cursor": next_cursor}),
-                timeout=self.timeout_http,
+            # first response
+            next_cursor = add_page(self.decoded_data)
+            date_param = (
+                self.decoded_data.get("meta", {}).get("request_params", {}).get("dates[]")
             )
-            resp.raise_for_status()
-            next_cursor = add_page(resp.json())
+            if date_param:
+                dates_done.append(date_param)
 
-        for dt in self._date_iter:
-            dates_done.append(dt)
-            resp = self.http_downloader.get(
-                self.base_url,
-                headers=self.headers,
-                params=self._build_query({"dates[]": dt}),
-                timeout=self.timeout_http,
-            )
-            resp.raise_for_status()
-            next_cursor = add_page(resp.json())
-
+            # cursor pagination
             while next_cursor:
-                resp = self.http_downloader.get(
-                    self.base_url,
-                    headers=self.headers,
-                    params=self._build_query({"cursor": next_cursor}),
-                    timeout=self.timeout_http,
+                try:
+                    resp = self.http_downloader.get(
+                        self.base_url,
+                        headers=self.headers,
+                        params=self._build_query({"cursor": next_cursor}),
+                        timeout=self.timeout_http,
+                    )
+                    resp.raise_for_status()
+                    next_cursor = add_page(resp.json())
+                    pages_fetched += 1
+                except Exception as e:
+                    # Pagination failure
+                    try:
+                        notify_error(
+                            title="BDL Player Box Scores - Pagination Failed",
+                            message=f"Failed to fetch page {pages_fetched + 1}: {str(e)}",
+                            details={
+                                'scraper': 'bdl_player_box_scores',
+                                'start_date': self.opts.get('startDate'),
+                                'end_date': self.opts.get('endDate'),
+                                'pages_fetched': pages_fetched,
+                                'rows_so_far': len(rows),
+                                'error_type': type(e).__name__
+                            },
+                            processor_name="Ball Don't Lie Player Box Scores"
+                        )
+                    except Exception as notify_ex:
+                        logger.warning(f"Failed to send pagination error notification: {notify_ex}")
+                    raise
+
+            # additional dates (window mode only)
+            for dt in self._date_iter:
+                dates_done.append(dt)
+                try:
+                    resp = self.http_downloader.get(
+                        self.base_url,
+                        headers=self.headers,
+                        params=self._build_query({"dates[]": dt}),
+                        timeout=self.timeout_http,
+                    )
+                    resp.raise_for_status()
+                    next_cursor = add_page(resp.json())
+                    pages_fetched += 1
+                except Exception as e:
+                    # Date fetch failure
+                    try:
+                        notify_error(
+                            title="BDL Player Box Scores - Date Fetch Failed",
+                            message=f"Failed to fetch data for date {dt}: {str(e)}",
+                            details={
+                                'scraper': 'bdl_player_box_scores',
+                                'date': dt,
+                                'dates_fetched': len(dates_done) - 1,
+                                'rows_so_far': len(rows),
+                                'error_type': type(e).__name__
+                            },
+                            processor_name="Ball Don't Lie Player Box Scores"
+                        )
+                    except Exception as notify_ex:
+                        logger.warning(f"Failed to send date fetch error notification: {notify_ex}")
+                    raise
+
+                while next_cursor:
+                    try:
+                        resp = self.http_downloader.get(
+                            self.base_url,
+                            headers=self.headers,
+                            params=self._build_query({"cursor": next_cursor}),
+                            timeout=self.timeout_http,
+                        )
+                        resp.raise_for_status()
+                        next_cursor = add_page(resp.json())
+                        pages_fetched += 1
+                    except Exception as e:
+                        # Date pagination failure
+                        try:
+                            notify_error(
+                                title="BDL Player Box Scores - Date Pagination Failed",
+                                message=f"Failed to fetch page for date {dt}: {str(e)}",
+                                details={
+                                    'scraper': 'bdl_player_box_scores',
+                                    'date': dt,
+                                    'pages_fetched': pages_fetched,
+                                    'rows_so_far': len(rows),
+                                    'error_type': type(e).__name__
+                                },
+                                processor_name="Ball Don't Lie Player Box Scores"
+                            )
+                        except Exception as notify_ex:
+                            logger.warning(f"Failed to send date pagination error notification: {notify_ex}")
+                        raise
+
+            rows.sort(key=lambda r: (r.get("game", {}).get("id"), r.get("player_id")))
+
+            self.data = {
+                "startDate": self.opts["startDate"],
+                "endDate": self.opts["endDate"],
+                "datesProcessed": dates_done,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "rowCount": len(rows),
+                "stats": rows,
+            }
+            
+            logger.info(
+                "Fetched %d player box-score rows across %d dates (%s -> %s, %d pages)",
+                len(rows),
+                len(dates_done),
+                self.opts["startDate"],
+                self.opts["endDate"],
+                pages_fetched
+            )
+
+            # Success notification
+            try:
+                notify_info(
+                    title="BDL Player Box Scores - Success",
+                    message=f"Successfully scraped {len(rows)} player box score rows ({self.opts.get('startDate')} to {self.opts.get('endDate')})",
+                    details={
+                        'scraper': 'bdl_player_box_scores',
+                        'start_date': self.opts.get('startDate'),
+                        'end_date': self.opts.get('endDate'),
+                        'row_count': len(rows),
+                        'dates_processed': len(dates_done),
+                        'pages_fetched': pages_fetched
+                    }
                 )
-                resp.raise_for_status()
-                next_cursor = add_page(resp.json())
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send success notification: {notify_ex}")
 
-        rows.sort(key=lambda r: (r.get("game", {}).get("id"), r.get("player_id")))
-
-        self.data = {
-            "startDate": self.opts["startDate"],
-            "endDate": self.opts["endDate"],
-            "datesProcessed": dates_done,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "rowCount": len(rows),
-            "stats": rows,
-        }
-        logger.info(
-            "Fetched %d player box-score rows across %d dates (%s -> %s)",
-            len(rows),
-            len(dates_done),
-            self.opts["startDate"],
-            self.opts["endDate"],
-        )
+        except Exception as e:
+            # General transformation error
+            try:
+                notify_error(
+                    title="BDL Player Box Scores - Transform Failed",
+                    message=f"Data transformation failed for {self.opts.get('startDate')} to {self.opts.get('endDate')}: {str(e)}",
+                    details={
+                        'scraper': 'bdl_player_box_scores',
+                        'start_date': self.opts.get('startDate'),
+                        'end_date': self.opts.get('endDate'),
+                        'error_type': type(e).__name__,
+                        'has_decoded_data': self.decoded_data is not None
+                    },
+                    processor_name="Ball Don't Lie Player Box Scores"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send transform error notification: {notify_ex}")
+            raise
 
     def get_scraper_stats(self) -> dict:
         return {
@@ -314,4 +452,3 @@ create_app = convert_existing_flask_scraper(BdlPlayerBoxScoresScraper)
 if __name__ == "__main__":
     main = BdlPlayerBoxScoresScraper.create_cli_and_flask_main()
     main()
-    

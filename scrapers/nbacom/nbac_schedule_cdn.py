@@ -48,6 +48,22 @@ except ImportError:
     from scrapers.utils.exceptions import DownloadDataException
     from scrapers.utils.gcs_path_builder import GCSPathBuilder
 
+# Import notification system
+try:
+    from shared.utils.notification_system import (
+        notify_error,
+        notify_warning,
+        notify_info
+    )
+except ImportError:
+    # Fallback if shared module not available
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+    from shared.utils.notification_system import (
+        notify_error,
+        notify_warning,
+        notify_info
+    )
+
 logger = logging.getLogger("scraper_base")
 
 
@@ -124,35 +140,157 @@ class GetNbaComScheduleCdn(ScraperBase, ScraperFlaskMixin):
     
     def validate_download_data(self) -> None:
         """Validate the NBA.com CDN response"""
-        if not isinstance(self.decoded_data, dict):
-            raise DownloadDataException("Response is not a JSON object")
-        
-        # Check for the expected structure (might be similar to API version)
-        if "leagueSchedule" in self.decoded_data:
-            # Same structure as API version
-            league_schedule = self.decoded_data["leagueSchedule"]
-            if "gameDates" not in league_schedule:
-                raise DownloadDataException("Missing 'gameDates' in leagueSchedule")
+        try:
+            if not isinstance(self.decoded_data, dict):
+                try:
+                    notify_error(
+                        title="NBA.com CDN Schedule - Invalid Response",
+                        message="Response is not a valid JSON object",
+                        details={
+                            'scraper': 'nbac_schedule_cdn',
+                            'response_type': type(self.decoded_data).__name__,
+                            'url': self.url
+                        },
+                        processor_name="NBA.com CDN Schedule Scraper"
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                raise DownloadDataException("Response is not a JSON object")
             
-            game_dates = league_schedule["gameDates"]
-            if not isinstance(game_dates, list):
-                raise DownloadDataException("gameDates is not a list")
-            
-            logger.info("Validation passed: %d game dates found (leagueSchedule format)", len(game_dates))
-            
-        elif "gameDates" in self.decoded_data:
-            # Direct gameDates format
-            game_dates = self.decoded_data["gameDates"]
-            if not isinstance(game_dates, list):
-                raise DownloadDataException("gameDates is not a list")
-            
-            logger.info("Validation passed: %d game dates found (direct format)", len(game_dates))
-            
-        else:
-            # Log the keys to help debug the structure
-            keys = list(self.decoded_data.keys()) if isinstance(self.decoded_data, dict) else []
-            logger.warning("Unexpected response structure. Keys found: %s", keys)
-            raise DownloadDataException(f"Expected 'leagueSchedule' or 'gameDates', found keys: {keys}")
+            # Check for the expected structure (might be similar to API version)
+            if "leagueSchedule" in self.decoded_data:
+                # Same structure as API version
+                league_schedule = self.decoded_data["leagueSchedule"]
+                if "gameDates" not in league_schedule:
+                    try:
+                        notify_error(
+                            title="NBA.com CDN Schedule - Missing Game Dates",
+                            message="Missing 'gameDates' in leagueSchedule structure",
+                            details={
+                                'scraper': 'nbac_schedule_cdn',
+                                'available_keys': list(league_schedule.keys()),
+                                'url': self.url
+                            },
+                            processor_name="NBA.com CDN Schedule Scraper"
+                        )
+                    except Exception as notify_ex:
+                        logger.warning(f"Failed to send notification: {notify_ex}")
+                    raise DownloadDataException("Missing 'gameDates' in leagueSchedule")
+                
+                game_dates = league_schedule["gameDates"]
+                if not isinstance(game_dates, list):
+                    try:
+                        notify_error(
+                            title="NBA.com CDN Schedule - Invalid Game Dates Type",
+                            message="gameDates is not a list (leagueSchedule format)",
+                            details={
+                                'scraper': 'nbac_schedule_cdn',
+                                'game_dates_type': type(game_dates).__name__,
+                                'url': self.url
+                            },
+                            processor_name="NBA.com CDN Schedule Scraper"
+                        )
+                    except Exception as notify_ex:
+                        logger.warning(f"Failed to send notification: {notify_ex}")
+                    raise DownloadDataException("gameDates is not a list")
+                
+                logger.info("Validation passed: %d game dates found (leagueSchedule format)", len(game_dates))
+                
+                # Send success notification
+                try:
+                    notify_info(
+                        title="NBA.com CDN Schedule - Download Complete",
+                        message=f"Successfully downloaded schedule with {len(game_dates)} game dates (leagueSchedule format)",
+                        details={
+                            'scraper': 'nbac_schedule_cdn',
+                            'format': 'leagueSchedule',
+                            'game_dates_count': len(game_dates),
+                            'season': league_schedule.get('seasonYear', 'Unknown'),
+                            'url': self.url
+                        }
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                
+            elif "gameDates" in self.decoded_data:
+                # Direct gameDates format
+                game_dates = self.decoded_data["gameDates"]
+                if not isinstance(game_dates, list):
+                    try:
+                        notify_error(
+                            title="NBA.com CDN Schedule - Invalid Game Dates Type",
+                            message="gameDates is not a list (direct format)",
+                            details={
+                                'scraper': 'nbac_schedule_cdn',
+                                'game_dates_type': type(game_dates).__name__,
+                                'url': self.url
+                            },
+                            processor_name="NBA.com CDN Schedule Scraper"
+                        )
+                    except Exception as notify_ex:
+                        logger.warning(f"Failed to send notification: {notify_ex}")
+                    raise DownloadDataException("gameDates is not a list")
+                
+                logger.info("Validation passed: %d game dates found (direct format)", len(game_dates))
+                
+                # Send success notification
+                try:
+                    notify_info(
+                        title="NBA.com CDN Schedule - Download Complete",
+                        message=f"Successfully downloaded schedule with {len(game_dates)} game dates (direct format)",
+                        details={
+                            'scraper': 'nbac_schedule_cdn',
+                            'format': 'direct_gameDates',
+                            'game_dates_count': len(game_dates),
+                            'season': self.decoded_data.get('seasonYear', 'Unknown'),
+                            'url': self.url
+                        }
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                
+            else:
+                # Log the keys to help debug the structure
+                keys = list(self.decoded_data.keys()) if isinstance(self.decoded_data, dict) else []
+                logger.warning("Unexpected response structure. Keys found: %s", keys)
+                
+                try:
+                    notify_error(
+                        title="NBA.com CDN Schedule - Unexpected Structure",
+                        message=f"Expected 'leagueSchedule' or 'gameDates', found unexpected keys",
+                        details={
+                            'scraper': 'nbac_schedule_cdn',
+                            'found_keys': keys,
+                            'expected_keys': ['leagueSchedule', 'gameDates'],
+                            'url': self.url
+                        },
+                        processor_name="NBA.com CDN Schedule Scraper"
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                    
+                raise DownloadDataException(f"Expected 'leagueSchedule' or 'gameDates', found keys: {keys}")
+                
+        except DownloadDataException:
+            # Re-raise validation exceptions (already notified above)
+            raise
+        except Exception as e:
+            # Catch any unexpected validation errors
+            try:
+                notify_error(
+                    title="NBA.com CDN Schedule - Validation Failed",
+                    message=f"Unexpected validation error: {str(e)}",
+                    details={
+                        'scraper': 'nbac_schedule_cdn',
+                        'error_type': type(e).__name__,
+                        'error': str(e),
+                        'url': self.url
+                    },
+                    processor_name="NBA.com CDN Schedule Scraper"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            raise
     
     def transform_data(self) -> None:
         """Transform NBA.com CDN response into structured data"""
@@ -238,6 +376,23 @@ class GetNbaComScheduleCdn(ScraperBase, ScraperFlaskMixin):
         
         logger.info("Processed %d games across %d dates for %s season (CDN static)", 
                    len(all_games), len(game_dates), season_year)
+        
+        # Check for suspiciously low game count
+        if len(all_games) < 50:
+            try:
+                notify_warning(
+                    title="NBA.com CDN Schedule - Low Game Count",
+                    message=f"Suspiciously low game count: {len(all_games)} games for season {season_year}",
+                    details={
+                        'scraper': 'nbac_schedule_cdn',
+                        'game_count': len(all_games),
+                        'date_count': len(game_dates),
+                        'season': season_year,
+                        'threshold_min': 50
+                    }
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
     
     def get_scraper_stats(self) -> dict:
         """Return scraper statistics"""
@@ -261,4 +416,3 @@ create_app = convert_existing_flask_scraper(GetNbaComScheduleCdn)
 if __name__ == "__main__":
     main = GetNbaComScheduleCdn.create_cli_and_flask_main()
     main()
-    

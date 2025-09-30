@@ -1,4 +1,6 @@
 """
+File: scrapers/balldontlie/bdl_active_players.py
+
 BALLDONTLIE - Active Players endpoint                         v1.1 - 2025-06-24
 -------------------------------------------------------------------------------
 Lists players flagged "active" this season.
@@ -47,6 +49,19 @@ except ImportError:
     from scrapers.scraper_flask_mixin import ScraperFlaskMixin
     from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
     from scrapers.utils.gcs_path_builder import GCSPathBuilder
+
+# Notification system imports
+try:
+    from shared.utils.notification_system import (
+        notify_error,
+        notify_warning,
+        notify_info
+    )
+except ImportError:
+    # Graceful fallback if notification system not available
+    def notify_error(*args, **kwargs): pass
+    def notify_warning(*args, **kwargs): pass
+    def notify_info(*args, **kwargs): pass
 
 logger = logging.getLogger(__name__)
 
@@ -154,37 +169,147 @@ class BdlActivePlayersScraper(ScraperBase, ScraperFlaskMixin):
     # Validation                                                         #
     # ------------------------------------------------------------------ #
     def validate_download_data(self) -> None:
-        if not isinstance(self.decoded_data, dict) or "data" not in self.decoded_data:
-            raise ValueError("Unexpected active‑players JSON structure")
+        try:
+            if not isinstance(self.decoded_data, dict) or "data" not in self.decoded_data:
+                raise ValueError("Unexpected active‑players JSON structure")
+        except Exception as e:
+            # Send error notification for validation failure
+            try:
+                notify_error(
+                    title="BDL Active Players - Validation Failed",
+                    message=f"Data validation failed for {self.opts.get('ident', 'unknown')}: {str(e)}",
+                    details={
+                        'scraper': 'bdl_active_players',
+                        'ident': self.opts.get('ident'),
+                        'error_type': type(e).__name__,
+                        'url': self.url,
+                        'has_data': self.decoded_data is not None
+                    },
+                    processor_name="Ball Don't Lie Active Players"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send validation error notification: {notify_ex}")
+            raise
 
     # ------------------------------------------------------------------ #
     # Transform (cursor walk)                                            #
     # ------------------------------------------------------------------ #
     def transform_data(self) -> None:
-        players: List[Dict[str, Any]] = list(self.decoded_data["data"])
-        cursor: Optional[str] = self.decoded_data.get("meta", {}).get("next_cursor")
+        try:
+            players: List[Dict[str, Any]] = list(self.decoded_data["data"])
+            cursor: Optional[str] = self.decoded_data.get("meta", {}).get("next_cursor")
+            pages_fetched = 1
 
-        while cursor:
-            resp = self.http_downloader.get(
-                self.base_url,
-                headers=self.headers,
-                params={"cursor": cursor, "per_page": 100},
-                timeout=self.timeout_http,
-            )
-            resp.raise_for_status()
-            page_json: Dict[str, Any] = resp.json()
-            players.extend(page_json.get("data", []))
-            cursor = page_json.get("meta", {}).get("next_cursor")
+            # Paginate through all results
+            while cursor:
+                try:
+                    resp = self.http_downloader.get(
+                        self.base_url,
+                        headers=self.headers,
+                        params={"cursor": cursor, "per_page": 100},
+                        timeout=self.timeout_http,
+                    )
+                    resp.raise_for_status()
+                    page_json: Dict[str, Any] = resp.json()
+                    players.extend(page_json.get("data", []))
+                    cursor = page_json.get("meta", {}).get("next_cursor")
+                    pages_fetched += 1
+                except Exception as e:
+                    # Pagination failure
+                    try:
+                        notify_error(
+                            title="BDL Active Players - Pagination Failed",
+                            message=f"Failed to fetch page {pages_fetched + 1} for {self.opts.get('ident', 'unknown')}: {str(e)}",
+                            details={
+                                'scraper': 'bdl_active_players',
+                                'ident': self.opts.get('ident'),
+                                'pages_fetched': pages_fetched,
+                                'players_so_far': len(players),
+                                'error_type': type(e).__name__,
+                                'cursor': cursor
+                            },
+                            processor_name="Ball Don't Lie Active Players"
+                        )
+                    except Exception as notify_ex:
+                        logger.warning(f"Failed to send pagination error notification: {notify_ex}")
+                    raise
 
-        players.sort(key=lambda p: p["id"])
+            players.sort(key=lambda p: p["id"])
 
-        self.data = {
-            "ident": self.opts["ident"],
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "playerCount": len(players),
-            "activePlayers": players,
-        }
-        logger.info("Fetched %d active players (%s)", len(players), self.opts["ident"])
+            self.data = {
+                "ident": self.opts["ident"],
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "playerCount": len(players),
+                "activePlayers": players,
+            }
+            
+            logger.info("Fetched %d active players (%s) across %d pages", 
+                       len(players), self.opts["ident"], pages_fetched)
+
+            # Check for unexpectedly low player counts
+            if len(players) == 0:
+                try:
+                    notify_warning(
+                        title="BDL Active Players - No Players Found",
+                        message=f"No active players returned for {self.opts.get('ident', 'unknown')}",
+                        details={
+                            'scraper': 'bdl_active_players',
+                            'ident': self.opts.get('ident'),
+                            'teamId': self.opts.get('teamId'),
+                            'playerId': self.opts.get('playerId'),
+                            'search': self.opts.get('search')
+                        }
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send empty data warning: {notify_ex}")
+            elif self.opts["ident"] == "league" and len(players) < 400:
+                # League-wide scrape should have 400+ players
+                try:
+                    notify_warning(
+                        title="BDL Active Players - Low Player Count",
+                        message=f"Only {len(players)} players returned for league-wide scrape (expected 400+)",
+                        details={
+                            'scraper': 'bdl_active_players',
+                            'ident': 'league',
+                            'player_count': len(players),
+                            'expected_minimum': 400
+                        }
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send low count warning: {notify_ex}")
+            else:
+                # Success notification
+                try:
+                    notify_info(
+                        title="BDL Active Players - Success",
+                        message=f"Successfully scraped {len(players)} active players ({self.opts.get('ident', 'unknown')})",
+                        details={
+                            'scraper': 'bdl_active_players',
+                            'ident': self.opts.get('ident'),
+                            'player_count': len(players),
+                            'pages_fetched': pages_fetched
+                        }
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send success notification: {notify_ex}")
+
+        except Exception as e:
+            # General transformation error
+            try:
+                notify_error(
+                    title="BDL Active Players - Transform Failed",
+                    message=f"Data transformation failed for {self.opts.get('ident', 'unknown')}: {str(e)}",
+                    details={
+                        'scraper': 'bdl_active_players',
+                        'ident': self.opts.get('ident'),
+                        'error_type': type(e).__name__,
+                        'has_decoded_data': self.decoded_data is not None
+                    },
+                    processor_name="Ball Don't Lie Active Players"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send transform error notification: {notify_ex}")
+            raise
 
     # ------------------------------------------------------------------ #
     # Stats                                                              #

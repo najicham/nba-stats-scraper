@@ -9,6 +9,11 @@ from typing import Dict, List, Optional
 from datetime import datetime, date, timezone
 from google.cloud import bigquery
 from data_processors.raw.processor_base import ProcessorBase
+from shared.utils.notification_system import (
+    notify_error,
+    notify_warning,
+    notify_info
+)
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +66,21 @@ class BdlBoxscoresProcessor(ProcessorBase):
             # Fallback: use first 3 characters of team name in uppercase
             fallback_abbrev = team_name.upper()[:3]
             logger.warning(f"Unknown team name '{team_name}', using fallback abbreviation '{fallback_abbrev}'")
+            
+            # Notify about unknown team name
+            try:
+                notify_warning(
+                    title="Unknown Team Name",
+                    message=f"Unknown team name encountered: {team_name}",
+                    details={
+                        'team_name': team_name,
+                        'fallback_abbrev': fallback_abbrev,
+                        'processor': 'BDL Box Scores'
+                    }
+                )
+            except Exception as e:
+                logger.warning(f"Failed to send notification: {e}")
+            
             return fallback_abbrev
             
         return mapped_abbrev
@@ -156,6 +176,7 @@ class BdlBoxscoresProcessor(ProcessorBase):
     def transform_data(self, raw_data: Dict, file_path: str) -> List[Dict]:
         """Transform BDL box scores JSON to BigQuery rows."""
         rows = []
+        skipped_games = []
         
         box_scores = raw_data.get('boxScores', [])
         
@@ -164,6 +185,7 @@ class BdlBoxscoresProcessor(ProcessorBase):
             game_date_str = game.get('date')
             if not game_date_str:
                 logger.warning(f"Skipping game {game_idx} with no date in {file_path}")
+                skipped_games.append({'reason': 'no_date', 'game_idx': game_idx})
                 continue
                 
             game_date = datetime.strptime(game_date_str, '%Y-%m-%d').date()
@@ -182,6 +204,31 @@ class BdlBoxscoresProcessor(ProcessorBase):
                 logger.error(f"Failed to extract team abbreviations for game {game_idx} in {file_path}")
                 logger.error(f"Home team data: {home_team}")
                 logger.error(f"Away team data: {away_team}")
+                
+                skipped_games.append({
+                    'reason': 'team_extraction_failed',
+                    'game_idx': game_idx,
+                    'home_team': home_team.get('full_name', 'unknown'),
+                    'away_team': away_team.get('full_name', 'unknown')
+                })
+                
+                # Notify about team extraction failure
+                try:
+                    notify_error(
+                        title="Team Extraction Failed",
+                        message=f"Failed to extract team abbreviations for game {game_idx}",
+                        details={
+                            'file_path': file_path,
+                            'game_idx': game_idx,
+                            'home_team_data': str(home_team)[:200],
+                            'away_team_data': str(away_team)[:200],
+                            'processor': 'BDL Box Scores'
+                        },
+                        processor_name="BDL Box Scores Processor"
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to send notification: {e}")
+                
                 continue
             
             # CRITICAL FIX: Create game_id in CORRECT format: YYYYMMDD_AWAY_HOME
@@ -190,6 +237,30 @@ class BdlBoxscoresProcessor(ProcessorBase):
             # Validate game ID format
             if not self.validate_game_id_format(game_id):
                 logger.error(f"Invalid game_id format generated: {game_id}")
+                
+                skipped_games.append({
+                    'reason': 'invalid_game_id',
+                    'game_id': game_id,
+                    'game_idx': game_idx
+                })
+                
+                # Notify about invalid game ID
+                try:
+                    notify_error(
+                        title="Invalid Game ID Format",
+                        message=f"Generated invalid game_id: {game_id}",
+                        details={
+                            'game_id': game_id,
+                            'file_path': file_path,
+                            'game_idx': game_idx,
+                            'expected_format': 'YYYYMMDD_AWAY_HOME',
+                            'processor': 'BDL Box Scores'
+                        },
+                        processor_name="BDL Box Scores Processor"
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to send notification: {e}")
+                
                 continue
             
             logger.info(f"Processing game {game_id} ({away_team_abbr} @ {home_team_abbr})")
@@ -247,6 +318,24 @@ class BdlBoxscoresProcessor(ProcessorBase):
                     rows.append(row)
         
         logger.info(f"Generated {len(rows)} player records from {len(box_scores)} games in {file_path}")
+        
+        # Send warning if games were skipped
+        if skipped_games:
+            try:
+                notify_warning(
+                    title="Games Skipped During Processing",
+                    message=f"Skipped {len(skipped_games)} games during BDL box scores processing",
+                    details={
+                        'file_path': file_path,
+                        'skipped_count': len(skipped_games),
+                        'total_games': len(box_scores),
+                        'skip_reasons': [g['reason'] for g in skipped_games[:5]],
+                        'sample_games': skipped_games[:3]
+                    }
+                )
+            except Exception as e:
+                logger.warning(f"Failed to send notification: {e}")
+        
         return rows
     
     def create_player_row(self, **kwargs) -> Optional[Dict]:
@@ -379,6 +468,23 @@ class BdlBoxscoresProcessor(ProcessorBase):
                 
                 if check_result.total_rows > 0 and check_result.recent_rows > 0:
                     logger.warning(f"Game {game_id} has {check_result.recent_rows} recent rows in streaming buffer")
+                    
+                    # Notify about streaming buffer conflict
+                    try:
+                        notify_warning(
+                            title="Streaming Buffer Conflict",
+                            message=f"Game {game_id} has recent data in streaming buffer",
+                            details={
+                                'game_id': game_id,
+                                'game_date': game_date,
+                                'recent_rows': check_result.recent_rows,
+                                'total_rows': check_result.total_rows,
+                                'processor': 'BDL Box Scores'
+                            }
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to send notification: {e}")
+                    
                     return {'success': False, 'rows_deleted': 0, 'streaming_conflict': True, 
                            'recent_rows': check_result.recent_rows}
                 else:
@@ -391,6 +497,24 @@ class BdlBoxscoresProcessor(ProcessorBase):
                 return {'success': False, 'rows_deleted': 0, 'streaming_conflict': True, 'error': str(e)}
             else:
                 logger.error(f"Unexpected deletion error for {game_id}: {e}")
+                
+                # Notify about unexpected deletion error
+                try:
+                    notify_error(
+                        title="Unexpected Deletion Error",
+                        message=f"Unexpected error deleting data for game {game_id}",
+                        details={
+                            'game_id': game_id,
+                            'game_date': game_date,
+                            'error': str(e),
+                            'error_type': type(e).__name__,
+                            'processor': 'BDL Box Scores'
+                        },
+                        processor_name="BDL Box Scores Processor"
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                
                 raise e
     
     def load_data(self, rows: List[Dict], **kwargs) -> Dict:
@@ -413,6 +537,23 @@ class BdlBoxscoresProcessor(ProcessorBase):
                 error_msg = f"Invalid game_id formats detected: {invalid_game_ids[:5]}"
                 errors.append(error_msg)
                 logger.error(error_msg)
+                
+                # Notify about invalid game IDs
+                try:
+                    notify_error(
+                        title="Invalid Game IDs Detected",
+                        message=f"Found {len(invalid_game_ids)} invalid game_id formats",
+                        details={
+                            'invalid_count': len(invalid_game_ids),
+                            'sample_ids': invalid_game_ids[:5],
+                            'expected_format': 'YYYYMMDD_AWAY_HOME',
+                            'processor': 'BDL Box Scores'
+                        },
+                        processor_name="BDL Box Scores Processor"
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to send notification: {e}")
+                
                 return {'rows_processed': 0, 'errors': errors}
             
             if self.processing_strategy == 'MERGE_UPDATE':
@@ -439,6 +580,23 @@ class BdlBoxscoresProcessor(ProcessorBase):
                     errors.append(error_msg)
                     logger.error(error_msg)
                     logger.error("Aborting processing to prevent duplicate data creation")
+                    
+                    # Notify about streaming conflicts aborting processing
+                    try:
+                        notify_error(
+                            title="Streaming Buffer Conflicts - Processing Aborted",
+                            message=f"Aborting due to {len(streaming_conflicts)} streaming buffer conflicts",
+                            details={
+                                'conflict_count': len(streaming_conflicts),
+                                'affected_games': [c['game_id'] for c in streaming_conflicts[:5]],
+                                'action_taken': 'aborted_to_prevent_duplicates',
+                                'processor': 'BDL Box Scores'
+                            },
+                            processor_name="BDL Box Scores Processor"
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to send notification: {e}")
+                    
                     return {'rows_processed': 0, 'errors': errors, 'streaming_conflicts': streaming_conflicts}
             
             # Insert new data only if no streaming conflicts
@@ -448,6 +606,23 @@ class BdlBoxscoresProcessor(ProcessorBase):
             if result:
                 errors.extend([str(e) for e in result])
                 logger.error(f"BigQuery insert errors: {result}")
+                
+                # Notify about BigQuery insert errors
+                try:
+                    notify_error(
+                        title="BigQuery Insert Failed",
+                        message=f"Failed to insert box score data into BigQuery",
+                        details={
+                            'error_count': len(result),
+                            'sample_errors': [str(e) for e in result[:3]],
+                            'rows_attempted': len(rows),
+                            'table': self.table_name,
+                            'processor': 'BDL Box Scores'
+                        },
+                        processor_name="BDL Box Scores Processor"
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to send notification: {e}")
             else:
                 game_ids = set(row['game_id'] for row in rows)
                 logger.info(f"Successfully inserted {len(rows)} rows for {len(game_ids)} games")
@@ -456,10 +631,42 @@ class BdlBoxscoresProcessor(ProcessorBase):
                 sample_game_ids = list(game_ids)[:3]
                 logger.info(f"Sample game IDs inserted (AWAY_HOME format): {sample_game_ids}")
                 
+                # Send success notification
+                try:
+                    notify_info(
+                        title="BDL Box Scores Processing Complete",
+                        message=f"Successfully processed {len(rows)} player box scores from {len(game_ids)} games",
+                        details={
+                            'player_records': len(rows),
+                            'games_processed': len(game_ids),
+                            'sample_game_ids': sample_game_ids,
+                            'table': self.table_name,
+                            'processor': 'BDL Box Scores'
+                        }
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to send notification: {e}")
+                
         except Exception as e:
             error_msg = str(e)
             errors.append(error_msg)
             logger.error(f"Error loading data: {error_msg}")
+            
+            # Notify about general processing error
+            try:
+                notify_error(
+                    title="BDL Box Scores Processing Failed",
+                    message=f"Unexpected error during box scores processing: {str(e)}",
+                    details={
+                        'error': error_msg,
+                        'error_type': type(e).__name__,
+                        'rows_attempted': len(rows),
+                        'processor': 'BDL Box Scores'
+                    },
+                    processor_name="BDL Box Scores Processor"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
         
         return {
             'rows_processed': len(rows) if not errors else 0,

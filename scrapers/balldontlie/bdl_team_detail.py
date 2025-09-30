@@ -1,4 +1,6 @@
 """
+File: scrapers/balldontlie/bdl_team_detail.py
+
 BALLDONTLIE - Team Detail endpoint                         v1.2  2025-06-24
 ---------------------------------------------------------------------------
 Fetch a single NBA franchise record:
@@ -40,6 +42,19 @@ except ImportError:
     from scrapers.scraper_flask_mixin import ScraperFlaskMixin
     from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
     from scrapers.utils.gcs_path_builder import GCSPathBuilder
+
+# Notification system imports
+try:
+    from shared.utils.notification_system import (
+        notify_error,
+        notify_warning,
+        notify_info
+    )
+except ImportError:
+    # Graceful fallback if notification system not available
+    def notify_error(*args, **kwargs): pass
+    def notify_warning(*args, **kwargs): pass
+    def notify_info(*args, **kwargs): pass
 
 logger = logging.getLogger(__name__)
 
@@ -118,29 +133,85 @@ class BdlTeamDetailScraper(ScraperBase, ScraperFlaskMixin):
     # Validation                                                         #
     # ------------------------------------------------------------------ #
     def validate_download_data(self) -> None:
-        if not isinstance(self.decoded_data, dict):
-            raise ValueError("Team detail response is not a JSON object")
+        try:
+            if not isinstance(self.decoded_data, dict):
+                raise ValueError("Team detail response is not a JSON object")
 
-        # BallDontLie wraps single objects in {"data": {...}}
-        payload = self.decoded_data.get("data", self.decoded_data)
-        if payload.get("id") != int(self.opts["teamId"]):
-            raise ValueError(
-                f"Returned teamId {payload.get('id')} does not match requested {self.opts['teamId']}"
-            )
+            # BallDontLie wraps single objects in {"data": {...}}
+            payload = self.decoded_data.get("data", self.decoded_data)
+            if payload.get("id") != int(self.opts["teamId"]):
+                raise ValueError(
+                    f"Returned teamId {payload.get('id')} does not match requested {self.opts['teamId']}"
+                )
 
-        # Cache for transform
-        self._team_obj = payload
+            # Cache for transform
+            self._team_obj = payload
+
+        except Exception as e:
+            # Send error notification for validation failure
+            try:
+                notify_error(
+                    title="BDL Team Detail - Validation Failed",
+                    message=f"Data validation failed for teamId {self.opts.get('teamId', 'unknown')}: {str(e)}",
+                    details={
+                        'scraper': 'bdl_team_detail',
+                        'team_id': self.opts.get('teamId'),
+                        'error_type': type(e).__name__,
+                        'url': self.url,
+                        'has_data': self.decoded_data is not None,
+                        'note': 'Team may not exist or API format changed'
+                    },
+                    processor_name="Ball Don't Lie Team Detail"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send validation error notification: {notify_ex}")
+            raise
 
     # ------------------------------------------------------------------ #
     # Transform                                                          #
     # ------------------------------------------------------------------ #
     def transform_data(self) -> None:
-        self.data = {
-            "teamId": self.opts["teamId"],
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "team": self._team_obj,
-        }
-        logger.info("Fetched team detail for teamId=%s", self.opts["teamId"])
+        try:
+            self.data = {
+                "teamId": self.opts["teamId"],
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "team": self._team_obj,
+            }
+            logger.info("Fetched team detail for teamId=%s", self.opts["teamId"])
+
+            # Success notification
+            try:
+                notify_info(
+                    title="BDL Team Detail - Success",
+                    message=f"Successfully fetched team detail for teamId {self.opts.get('teamId', 'unknown')}",
+                    details={
+                        'scraper': 'bdl_team_detail',
+                        'team_id': self.opts.get('teamId'),
+                        'team_name': self._team_obj.get('full_name', 'unknown'),
+                        'abbreviation': self._team_obj.get('abbreviation', 'unknown'),
+                        'conference': self._team_obj.get('conference', 'unknown')
+                    }
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send success notification: {notify_ex}")
+
+        except Exception as e:
+            # General transformation error
+            try:
+                notify_error(
+                    title="BDL Team Detail - Transform Failed",
+                    message=f"Data transformation failed for teamId {self.opts.get('teamId', 'unknown')}: {str(e)}",
+                    details={
+                        'scraper': 'bdl_team_detail',
+                        'team_id': self.opts.get('teamId'),
+                        'error_type': type(e).__name__,
+                        'has_team_obj': hasattr(self, '_team_obj')
+                    },
+                    processor_name="Ball Don't Lie Team Detail"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send transform error notification: {notify_ex}")
+            raise
 
     # ------------------------------------------------------------------ #
     # Stats                                                              #
@@ -160,4 +231,3 @@ create_app = convert_existing_flask_scraper(BdlTeamDetailScraper)
 if __name__ == "__main__":
     main = BdlTeamDetailScraper.create_cli_and_flask_main()
     main()
-    

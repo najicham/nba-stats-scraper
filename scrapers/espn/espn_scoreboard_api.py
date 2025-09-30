@@ -62,6 +62,22 @@ except ImportError:
     from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
     from scrapers.utils.gcs_path_builder import GCSPathBuilder
 
+# Notification system imports
+try:
+    from shared.utils.notification_system import (
+        notify_error,
+        notify_warning,
+        notify_info
+    )
+except ImportError:
+    # Fallback if notification system not available
+    def notify_error(*args, **kwargs):
+        pass
+    def notify_warning(*args, **kwargs):
+        pass
+    def notify_info(*args, **kwargs):
+        pass
+
 logger = logging.getLogger("scraper_base")
 
 
@@ -134,10 +150,52 @@ class GetEspnScoreboard(ScraperBase, ScraperFlaskMixin):
     # Validation
     # ------------------------------------------------------------------ #
     def validate_download_data(self) -> None:
-        if not isinstance(self.decoded_data, dict):
-            raise ValueError("Scoreboard response is not JSON dict.")
-        if "events" not in self.decoded_data:
-            raise ValueError("'events' key missing in JSON.")
+        try:
+            if not isinstance(self.decoded_data, dict):
+                error_msg = "Scoreboard response is not JSON dict."
+                
+                # Send error notification
+                try:
+                    notify_error(
+                        title="ESPN Scoreboard Validation Failed",
+                        message=f"Invalid response format for {self.opts['gamedate']}: {error_msg}",
+                        details={
+                            'scraper': 'espn_scoreboard_api',
+                            'gamedate': self.opts['gamedate'],
+                            'error': error_msg,
+                            'response_type': type(self.decoded_data).__name__
+                        },
+                        processor_name="ESPN Scoreboard Scraper"
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                
+                raise ValueError(error_msg)
+                
+            if "events" not in self.decoded_data:
+                error_msg = "'events' key missing in JSON."
+                
+                # Send error notification
+                try:
+                    notify_error(
+                        title="ESPN Scoreboard Data Missing",
+                        message=f"Missing 'events' key for {self.opts['gamedate']}",
+                        details={
+                            'scraper': 'espn_scoreboard_api',
+                            'gamedate': self.opts['gamedate'],
+                            'error': error_msg,
+                            'available_keys': list(self.decoded_data.keys()) if isinstance(self.decoded_data, dict) else []
+                        },
+                        processor_name="ESPN Scoreboard Scraper"
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                
+                raise ValueError(error_msg)
+                
+        except Exception as e:
+            # Re-raise the original exception
+            raise
 
     # ------------------------------------------------------------------ #
     # Transform -> self.data
@@ -145,6 +203,21 @@ class GetEspnScoreboard(ScraperBase, ScraperFlaskMixin):
     def transform_data(self) -> None:
         events: List[dict] = self.decoded_data.get("events", [])
         logger.info("Found %d events for %s", len(events), self.opts["gamedate"])
+
+        # Warn if no games found (might be expected on some dates, but worth noting)
+        if len(events) == 0:
+            try:
+                notify_warning(
+                    title="ESPN Scoreboard: No Games Found",
+                    message=f"No games found for {self.opts['gamedate']}",
+                    details={
+                        'scraper': 'espn_scoreboard_api',
+                        'gamedate': self.opts['gamedate'],
+                        'event_count': 0
+                    }
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
 
         games: List[Dict[str, Any]] = []
         for event in events:
@@ -182,6 +255,20 @@ class GetEspnScoreboard(ScraperBase, ScraperFlaskMixin):
             "games": games,
         }
 
+        # Send success notification for successful scraping
+        try:
+            notify_info(
+                title="ESPN Scoreboard Scraped Successfully",
+                message=f"Successfully scraped {len(games)} games for {self.opts['gamedate']}",
+                details={
+                    'scraper': 'espn_scoreboard_api',
+                    'gamedate': self.opts['gamedate'],
+                    'game_count': len(games)
+                }
+            )
+        except Exception as notify_ex:
+            logger.warning(f"Failed to send notification: {notify_ex}")
+
     # ------------------------------------------------------------------ #
     # Stats line
     # ------------------------------------------------------------------ #
@@ -200,4 +287,3 @@ create_app = convert_existing_flask_scraper(GetEspnScoreboard)
 if __name__ == "__main__":
     main = GetEspnScoreboard.create_cli_and_flask_main()
     main()
-    

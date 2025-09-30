@@ -11,6 +11,7 @@ A base class 'ScraperBase' that handles:
  - Capturing a short run ID for correlation
  - Providing hooks for child classes to override
  - Enhanced Sentry integration for monitoring
+ - Multi-channel notifications (Email + Slack) for critical errors
 """
 
 import sentry_sdk
@@ -83,6 +84,13 @@ from .utils.nba_header_utils import (
     cdn_nba_headers,
     stats_api_headers,
     bettingpros_headers,
+)
+
+# Import notification system
+from shared.utils.notification_system import (
+    notify_error,
+    notify_warning,
+    notify_info
 )
 
 ##############################################################################
@@ -212,11 +220,12 @@ class ScraperBase:
         self.stats["run_id"] = self.run_id
 
 ##########################################################################
-    # Main Entrypoint for the Lifecycle (Enhanced with Sentry)
+    # Main Entrypoint for the Lifecycle (Enhanced with Sentry + Notifications)
     ##########################################################################
     def run(self, opts=None):
         """
-        Enhanced run method with comprehensive Sentry tracking and error handling.
+        Enhanced run method with comprehensive Sentry tracking, error handling,
+        and multi-channel notifications.
         """
         if opts is None:
             opts = {}
@@ -308,6 +317,29 @@ class ScraperBase:
                 
                 # Capture exception in Sentry
                 sentry_sdk.capture_exception(e)
+
+                # Send notification for scraper failure
+                try:
+                    notify_error(
+                        title=f"Scraper Failed: {self.__class__.__name__}",
+                        message=f"Scraper run failed at {self._get_current_step()} step: {str(e)}",
+                        details={
+                            'scraper': self.__class__.__name__,
+                            'run_id': self.run_id,
+                            'error_type': type(e).__name__,
+                            'url': getattr(self, 'url', 'unknown'),
+                            'retry_count': self.download_retry_count,
+                            'step': self._get_current_step(),
+                            'opts': {
+                                'date': opts.get('date'),
+                                'group': opts.get('group'),
+                                'sport': opts.get('sport')
+                            }
+                        },
+                        processor_name=self.__class__.__name__
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
 
                 # If we want to save partial data or raw data on error
                 if self.save_data_on_error:
@@ -415,7 +447,25 @@ class ScraperBase:
         """
         for required_opt in self.required_opts:
             if required_opt not in self.opts:
-                raise DownloadDataException(f"Missing required option [{required_opt}].")
+                error_msg = f"Missing required option [{required_opt}]."
+                
+                try:
+                    notify_error(
+                        title=f"Scraper Configuration Error: {self.__class__.__name__}",
+                        message=f"Missing required option: {required_opt}",
+                        details={
+                            'scraper': self.__class__.__name__,
+                            'run_id': self.run_id,
+                            'missing_option': required_opt,
+                            'required_opts': self.required_opts,
+                            'provided_opts': list(self.opts.keys())
+                        },
+                        processor_name=self.__class__.__name__
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                
+                raise DownloadDataException(error_msg)
 
     def set_exporter_group_to_opts(self):
         """
@@ -503,9 +553,8 @@ class ScraperBase:
             self.headers = {"User-Agent": _ua()}
 
     ##########################################################################
-    # Download & Decode (Enhanced with Sentry)
+    # Download & Decode (Enhanced with Sentry + Notifications)
     ##########################################################################
-    # Complete download_and_decode method for scraper_base.py
     def download_and_decode(self):
         """
         Download with loop-based retry (avoids recursive stack growth).
@@ -538,21 +587,29 @@ class ScraperBase:
                             self.sleep_before_retry()
                             logger.warning("[Retry %s] after %s: %s", self.download_retry_count, type(err).__name__, err)
 
-                        except InvalidHttpStatusCodeException:
+                        except InvalidHttpStatusCodeException as e:
+                            # Send notification for invalid HTTP status
+                            try:
+                                notify_error(
+                                    title=f"Scraper HTTP Error: {self.__class__.__name__}",
+                                    message=f"Invalid HTTP status code: {getattr(self.raw_response, 'status_code', 'unknown')}",
+                                    details={
+                                        'scraper': self.__class__.__name__,
+                                        'run_id': self.run_id,
+                                        'url': getattr(self, 'url', 'unknown'),
+                                        'status_code': getattr(self.raw_response, 'status_code', 'unknown'),
+                                        'retry_count': self.download_retry_count,
+                                        'error': str(e)
+                                    },
+                                    processor_name=self.__class__.__name__
+                                )
+                            except Exception as notify_ex:
+                                logger.warning(f"Failed to send notification: {notify_ex}")
                             raise
 
-                        # Failsafe: stop if we somehow fell out of the retry bucket
-                        # if self.download_retry_count >= self.max_retries_decode:
-                        #     raise DownloadDecodeMaxRetryException(
-                        #         f"Reached max retries ({self.max_retries_decode}) without success."
-                        #     )
-
                 except DownloadDecodeMaxRetryException as e:
-                    print(f"🔍 DEBUG: Caught DownloadDecodeMaxRetryException: {e}")
-                    
                     # SIMPLE FIX: If scraper has the property, treat as success
                     if hasattr(self, 'treat_max_retries_as_success') and getattr(self, 'treat_max_retries_as_success', []):
-                        print(f"🔍 DEBUG: Scraper configured for 'no data' success - treating as success")
                         logger.info("✅ Treating max retries as 'no data available' success")
                         
                         # Set up successful "no data" response
@@ -569,7 +626,23 @@ class ScraperBase:
                         
                         return  # Success exit with no data
                     else:
-                        print(f"🔍 DEBUG: Normal scraper - re-raising exception")
+                        # Send notification for max retry failure
+                        try:
+                            notify_error(
+                                title=f"Scraper Max Retries Failed: {self.__class__.__name__}",
+                                message=f"Reached maximum retry attempts ({self.max_retries_decode})",
+                                details={
+                                    'scraper': self.__class__.__name__,
+                                    'run_id': self.run_id,
+                                    'url': getattr(self, 'url', 'unknown'),
+                                    'retry_count': self.download_retry_count,
+                                    'max_retries': self.max_retries_decode,
+                                    'last_error': str(e)
+                                },
+                                processor_name=self.__class__.__name__
+                            )
+                        except Exception as notify_ex:
+                            logger.warning(f"Failed to send notification: {notify_ex}")
                         # Re-raise for normal max retry failures
                         raise
 
@@ -648,6 +721,20 @@ class ScraperBase:
             # Lazy import to avoid dependency issues
             from google.cloud import storage
         except ImportError as e:
+            try:
+                notify_error(
+                    title=f"Scraper Dependency Missing: {self.__class__.__name__}",
+                    message="google-cloud-storage library not available",
+                    details={
+                        'scraper': self.__class__.__name__,
+                        'run_id': self.run_id,
+                        'missing_dependency': 'google-cloud-storage',
+                        'install_command': 'pip install google-cloud-storage'
+                    },
+                    processor_name=self.__class__.__name__
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
             raise DownloadDataException("google-cloud-storage not available - install with pip install google-cloud-storage") from e
         
         self.step_info("gcs_download", "Reading from GCS bucket", 
@@ -661,6 +748,21 @@ class ScraperBase:
             # Find the blob (either exact path or search pattern)
             blob = self._find_gcs_blob(bucket, self.gcs_path)
             if not blob:
+                try:
+                    notify_error(
+                        title=f"Scraper GCS File Not Found: {self.__class__.__name__}",
+                        message=f"File not found in GCS bucket",
+                        details={
+                            'scraper': self.__class__.__name__,
+                            'run_id': self.run_id,
+                            'bucket': self.gcs_bucket,
+                            'path': self.gcs_path,
+                            'action': 'Check if file exists and path is correct'
+                        },
+                        processor_name=self.__class__.__name__
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
                 raise DownloadDataException(f"File not found in GCS: {self.gcs_bucket}/{self.gcs_path}")
             
             # Download content
@@ -670,14 +772,31 @@ class ScraperBase:
             
             # Create mock response object that works with existing decode logic
             class MockResponse:
-                def __init__(self, content):
+                def __init__(self, content, download_type):
                     self.content = content
                     self.status_code = 200
-                    self.text = content.decode('utf-8', errors='ignore') if self.download_type == DownloadType.HTML else "Binary content from GCS"
+                    self.text = content.decode('utf-8', errors='ignore') if download_type == DownloadType.HTML else "Binary content from GCS"
                     
-            self.raw_response = MockResponse(content)
+            self.raw_response = MockResponse(content, self.download_type)
             
         except Exception as e:
+            if not isinstance(e, DownloadDataException):
+                try:
+                    notify_error(
+                        title=f"Scraper GCS Download Failed: {self.__class__.__name__}",
+                        message=f"Failed to download from GCS: {str(e)}",
+                        details={
+                            'scraper': self.__class__.__name__,
+                            'run_id': self.run_id,
+                            'bucket': self.gcs_bucket,
+                            'path': self.gcs_path,
+                            'error_type': type(e).__name__,
+                            'error': str(e)
+                        },
+                        processor_name=self.__class__.__name__
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
             raise DownloadDataException(f"GCS download failed: {e}") from e
         
     def _find_gcs_blob(self, bucket, path_pattern):
@@ -715,9 +834,6 @@ class ScraperBase:
         # Simple substring match
         return pattern in blob_name
 
-# ------------------------------------------------------------------ #
-    # Playwright helper – runs **headless only** when browser_enabled == True
-    # ------------------------------------------------------------------ #
     def download_via_browser(self) -> None:
         """
         Headless Playwright path used *only* when a scraper sets
@@ -727,6 +843,20 @@ class ScraperBase:
         requests-based download.  No UI is ever shown.
         """
         if not _PLAYWRIGHT_AVAILABLE:
+            try:
+                notify_error(
+                    title=f"Scraper Dependency Missing: {self.__class__.__name__}",
+                    message="Playwright package not installed",
+                    details={
+                        'scraper': self.__class__.__name__,
+                        'run_id': self.run_id,
+                        'missing_dependency': 'playwright',
+                        'install_command': 'pip install playwright && playwright install chromium'
+                    },
+                    processor_name=self.__class__.__name__
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
             raise DownloadDataException("Playwright package not installed")
 
         harvest_url = self.browser_url or self.url
@@ -772,6 +902,19 @@ class ScraperBase:
 
         # sanity
         if not cookie_map:
+            try:
+                notify_warning(
+                    title=f"Scraper Browser Warning: {self.__class__.__name__}",
+                    message="Playwright did not return any cookies",
+                    details={
+                        'scraper': self.__class__.__name__,
+                        'run_id': self.run_id,
+                        'harvest_url': harvest_url,
+                        'warning': 'No cookies harvested from browser'
+                    }
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
             raise DownloadDataException("Playwright did not return any cookies")
 
         # inject into requests.Session
@@ -788,14 +931,11 @@ class ScraperBase:
             **self._common_requests_kwargs(),
         )
 
-    # ------------------------------------------------------------------ #
-    # requests.get kwargs helpers
-    # ------------------------------------------------------------------ #
     def get_requests_kwargs(self) -> dict:
         """Child scrapers override to inject extra requests.get kwargs."""
         return {}
 
-    def _common_requests_kwargs(self) -> dict:  # noqa: D401 (private)
+    def _common_requests_kwargs(self) -> dict:
         kw = {"headers": self.headers, **self.get_requests_kwargs()}
         if self.proxy_url:
             kw["proxies"] = {"https": self.proxy_url, "http": self.proxy_url}
@@ -821,6 +961,8 @@ class ScraperBase:
             random.shuffle(proxy_pool)
 
         self.mark_time("proxy")
+        proxy_errors = []
+        
         for proxy in proxy_pool:
             try:
                 self.step_info("download_proxy", f"Attempting proxy {proxy}")
@@ -838,11 +980,30 @@ class ScraperBase:
                 else:
                     logger.warning("Proxy failed: %s, status=%s, took=%ss",
                                    proxy, self.raw_response.status_code, elapsed)
+                    proxy_errors.append({'proxy': proxy, 'status': self.raw_response.status_code})
 
             except (ProxyError, ConnectTimeout, ConnectionError) as ex:
                 elapsed = self.mark_time("proxy")
                 logger.warning("Proxy error with %s, %s, took=%ss",
                                proxy, type(ex).__name__, elapsed)
+                proxy_errors.append({'proxy': proxy, 'error': type(ex).__name__})
+        
+        # If all proxies failed, send notification
+        if proxy_errors and len(proxy_errors) == len(proxy_pool):
+            try:
+                notify_warning(
+                    title=f"Scraper Proxy Exhaustion: {self.__class__.__name__}",
+                    message=f"All {len(proxy_pool)} proxies failed",
+                    details={
+                        'scraper': self.__class__.__name__,
+                        'run_id': self.run_id,
+                        'url': getattr(self, 'url', 'unknown'),
+                        'proxy_count': len(proxy_pool),
+                        'failures': proxy_errors
+                    }
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
 
     def check_download_status(self):
         """
@@ -873,6 +1034,20 @@ class ScraperBase:
             try:
                 self.decoded_data = json.loads(self.raw_response.content)
             except json.JSONDecodeError as ex:
+                try:
+                    notify_warning(
+                        title=f"Scraper JSON Decode Failed: {self.__class__.__name__}",
+                        message="Failed to parse JSON response",
+                        details={
+                            'scraper': self.__class__.__name__,
+                            'run_id': self.run_id,
+                            'url': getattr(self, 'url', 'unknown'),
+                            'retry_count': self.download_retry_count,
+                            'content_preview': self.raw_response.content[:200].decode('utf-8', errors='ignore')
+                        }
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
                 # eligible for retry
                 raise DownloadDataException(f"JSON decode failed: {ex}") from ex
         elif self.download_type == DownloadType.HTML:
@@ -909,7 +1084,7 @@ class ScraperBase:
                         self.raw_response.status_code)
                 
                 # Raise a special exception that the download loop can catch
-                from .utils.exceptions import NoDataAvailableSuccess  # You'll need to create this
+                from .utils.exceptions import NoDataAvailableSuccess
                 raise NoDataAvailableSuccess(
                     f"No data available (HTTP {self.raw_response.status_code}) - treating as success"
                 )
@@ -944,6 +1119,19 @@ class ScraperBase:
         
         # EXISTING validation logic:
         if not self.decoded_data:
+            try:
+                notify_warning(
+                    title=f"Scraper Validation Warning: {self.__class__.__name__}",
+                    message="Downloaded data is empty",
+                    details={
+                        'scraper': self.__class__.__name__,
+                        'run_id': self.run_id,
+                        'url': getattr(self, 'url', 'unknown'),
+                        'decoded_data': str(self.decoded_data)[:200]
+                    }
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
             raise DownloadDataException("Downloaded data is empty or None.")
 
     def extract_opts_from_data(self):
@@ -967,7 +1155,7 @@ class ScraperBase:
         pass
 
     ##########################################################################
-    # Export (Enhanced with Sentry)
+    # Export (Enhanced with Sentry + Notifications)
     ##########################################################################
     def should_save_data(self):
         """
@@ -979,7 +1167,7 @@ class ScraperBase:
     def export_data(self):
         """
         Evaluate each exporter config in self.exporters.
-        Enhanced with Sentry span tracking.
+        Enhanced with Sentry span tracking and notifications.
         """
         with sentry_sdk.start_span(op="data.export", description="Export scraper data") as span:
             span.set_tag("export.group", self.opts.get("group", "unknown"))
@@ -1042,6 +1230,25 @@ class ScraperBase:
             except Exception as e:
                 span.set_tag("export.status", "error")
                 span.set_tag("error.type", type(e).__name__)
+                
+                # Send notification for export failure
+                try:
+                    notify_error(
+                        title=f"Scraper Export Failed: {self.__class__.__name__}",
+                        message=f"Failed to export data: {str(e)}",
+                        details={
+                            'scraper': self.__class__.__name__,
+                            'run_id': self.run_id,
+                            'export_group': self.opts.get('group'),
+                            'exporters_count': len(self.exporters),
+                            'error_type': type(e).__name__,
+                            'error': str(e)
+                        },
+                        processor_name=self.__class__.__name__
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                
                 raise
 
     def post_export(self):
@@ -1110,4 +1317,3 @@ class ScraperBase:
         start_time = self.time_markers[label]["start"]
         now_time = datetime.now()
         return (now_time - start_time).total_seconds()
-    

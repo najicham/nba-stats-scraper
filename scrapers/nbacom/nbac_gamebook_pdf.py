@@ -1,4 +1,6 @@
 """
+File: scrapers/nbacom/nbac_gamebook_pdf.py
+
 NBA.com Gamebook PDF scraper - Enhanced with GCS source support        v1.2 - 2025-08-23
 ---------------------------------------------------------------------------
 * Downloads and parses NBA gamebook PDFs from NBA.com OR reads from GCS
@@ -47,6 +49,13 @@ except ImportError:
     from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
     from scrapers.utils.exceptions import DownloadDataException, InvalidRegionDecodeException
     from scrapers.utils.gcs_path_builder import GCSPathBuilder
+
+# Notification system imports
+from shared.utils.notification_system import (
+    notify_error,
+    notify_warning,
+    notify_info
+)
 
 logger = logging.getLogger("scraper_base")
 
@@ -127,7 +136,7 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
             "unbalanced_parentheses": [],
             "failed_stat_lines": [],
             "unknown_player_categories": [],
-            "parsing_failure": [],  # ADD THIS LINE
+            "parsing_failure": [],
             "warnings": []
         }
 
@@ -258,12 +267,71 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
         Enhanced download method that supports both NBA.com and GCS sources.
         Routing logic based on pdf_source parameter.
         """
-        if self.opts["pdf_source"] == "gcs":
-            # NEW: Read PDF from GCS instead of downloading
-            self._download_pdf_from_gcs()
-        else:
-            # EXISTING: Download from NBA.com (unchanged behavior)
-            super().download_and_decode()
+        try:
+            if self.opts["pdf_source"] == "gcs":
+                # NEW: Read PDF from GCS instead of downloading
+                self._download_pdf_from_gcs()
+            else:
+                # EXISTING: Download from NBA.com (unchanged behavior)
+                super().download_and_decode()
+        except InvalidRegionDecodeException as e:
+            # Region-blocked PDFs
+            logger.error("PDF blocked in region for game %s: %s", self.opts["game_code"], e)
+            try:
+                notify_error(
+                    title="NBA.com Gamebook PDF Region Blocked",
+                    message=f"PDF not accessible in this region for game {self.opts['game_code']}",
+                    details={
+                        'game_code': self.opts['game_code'],
+                        'matchup': self.opts['matchup'],
+                        'pdf_source': self.opts['pdf_source'],
+                        'error': str(e)
+                    },
+                    processor_name="NBA.com Gamebook PDF Scraper"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            raise
+        except DownloadDataException as e:
+            # Download/GCS failures
+            logger.error("Failed to get PDF for game %s: %s", self.opts["game_code"], e)
+            try:
+                notify_error(
+                    title="NBA.com Gamebook PDF Download Failed",
+                    message=f"Failed to retrieve PDF for game {self.opts['game_code']}: {str(e)}",
+                    details={
+                        'game_code': self.opts['game_code'],
+                        'matchup': self.opts['matchup'],
+                        'pdf_source': self.opts['pdf_source'],
+                        'url': self.url if self.opts['pdf_source'] == 'download' else None,
+                        'gcs_path': self.gcs_path if self.opts['pdf_source'] == 'gcs' else None,
+                        'error_type': type(e).__name__,
+                        'error': str(e)
+                    },
+                    processor_name="NBA.com Gamebook PDF Scraper"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            raise
+        except Exception as e:
+            # Unexpected failures
+            logger.error("Unexpected error downloading/parsing PDF for game %s: %s", self.opts["game_code"], e)
+            try:
+                notify_error(
+                    title="NBA.com Gamebook PDF Unexpected Error",
+                    message=f"Unexpected error processing game {self.opts['game_code']}: {str(e)}",
+                    details={
+                        'game_code': self.opts['game_code'],
+                        'matchup': self.opts['matchup'],
+                        'pdf_source': self.opts['pdf_source'],
+                        'error_type': type(e).__name__,
+                        'error': str(e)
+                    },
+                    processor_name="NBA.com Gamebook PDF Scraper"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            raise
     
     def _download_pdf_from_gcs(self) -> None:
         """
@@ -280,9 +348,40 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
                     self.gcs_client = storage.Client()
                     logger.info("✅ GCS client initialized successfully")
                 except ImportError as e:
-                    raise DownloadDataException("google-cloud-storage not available in scraper service") from e
+                    error_msg = "google-cloud-storage not available in scraper service"
+                    logger.error(error_msg)
+                    try:
+                        notify_error(
+                            title="GCS Client Initialization Failed",
+                            message=f"Cannot initialize GCS client for game {self.opts['game_code']}",
+                            details={
+                                'game_code': self.opts['game_code'],
+                                'error': error_msg,
+                                'bucket': self.opts['bucket_name']
+                            },
+                            processor_name="NBA.com Gamebook PDF Scraper"
+                        )
+                    except Exception as notify_ex:
+                        logger.warning(f"Failed to send notification: {notify_ex}")
+                    raise DownloadDataException(error_msg) from e
                 except Exception as e:
-                    raise DownloadDataException(f"Failed to initialize GCS client: {e}") from e
+                    error_msg = f"Failed to initialize GCS client: {e}"
+                    logger.error(error_msg)
+                    try:
+                        notify_error(
+                            title="GCS Client Initialization Failed",
+                            message=f"GCS client initialization error for game {self.opts['game_code']}",
+                            details={
+                                'game_code': self.opts['game_code'],
+                                'error': str(e),
+                                'error_type': type(e).__name__,
+                                'bucket': self.opts['bucket_name']
+                            },
+                            processor_name="NBA.com Gamebook PDF Scraper"
+                        )
+                    except Exception as notify_ex:
+                        logger.warning(f"Failed to send notification: {notify_ex}")
+                    raise DownloadDataException(error_msg) from e
             
             # Construct GCS path based on expected structure from original scraper
             gcs_pdf_path = self._construct_gcs_pdf_path()
@@ -291,7 +390,22 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
             # Find the PDF in GCS
             pdf_blob = self._find_pdf_blob(gcs_pdf_path)
             if not pdf_blob:
-                raise DownloadDataException(f"PDF not found in GCS path: {gcs_pdf_path}")
+                error_msg = f"PDF not found in GCS path: {gcs_pdf_path}"
+                logger.error(error_msg)
+                try:
+                    notify_warning(
+                        title="NBA.com Gamebook PDF Not Found in GCS",
+                        message=f"PDF not found in GCS for game {self.opts['game_code']}",
+                        details={
+                            'game_code': self.opts['game_code'],
+                            'matchup': self.opts['matchup'],
+                            'gcs_path': gcs_pdf_path,
+                            'bucket': self.opts['bucket_name']
+                        }
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                raise DownloadDataException(error_msg)
             
             # Download PDF content from GCS
             pdf_content = pdf_blob.download_as_bytes()
@@ -313,9 +427,29 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
             
             logger.info("✅ Successfully processed PDF from GCS")
             
+        except DownloadDataException:
+            # Already handled above, just re-raise
+            raise
         except Exception as e:
+            error_msg = f"GCS PDF reading failed: {e}"
             logger.error("Failed to read PDF from GCS: %s", e)
-            raise DownloadDataException(f"GCS PDF reading failed: {e}") from e
+            try:
+                notify_error(
+                    title="GCS PDF Read Failed",
+                    message=f"Error reading PDF from GCS for game {self.opts['game_code']}",
+                    details={
+                        'game_code': self.opts['game_code'],
+                        'matchup': self.opts['matchup'],
+                        'gcs_path': self._construct_gcs_pdf_path(),
+                        'bucket': self.opts['bucket_name'],
+                        'error': str(e),
+                        'error_type': type(e).__name__
+                    },
+                    processor_name="NBA.com Gamebook PDF Scraper"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            raise DownloadDataException(error_msg) from e
 
     def _construct_gcs_pdf_path(self) -> str:
         """
@@ -449,11 +583,45 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
             logger.debug("pdfplumber extracted %d characters", len(full_text))
             logger.debug("Text sample (first 500 chars):\n%s", full_text[:500])
             
+        except Exception as e:
+            logger.error("pdfplumber failed to extract text: %s", e)
+            try:
+                notify_error(
+                    title="NBA.com Gamebook PDF Parsing Failed",
+                    message=f"pdfplumber failed to extract text for game {self.opts['game_code']}",
+                    details={
+                        'game_code': self.opts['game_code'],
+                        'matchup': self.opts['matchup'],
+                        'pdf_source': self.opts['pdf_source'],
+                        'pdf_size_bytes': len(content),
+                        'error': str(e),
+                        'error_type': type(e).__name__
+                    },
+                    processor_name="NBA.com Gamebook PDF Scraper"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            raise DownloadDataException(f"pdfplumber failed: {e}") from e
         finally:
             # Clean up temp file
             os.unlink(temp_file_path)
         
         if not full_text:
+            logger.error("pdfplumber extracted no text from PDF")
+            try:
+                notify_error(
+                    title="NBA.com Gamebook PDF Empty",
+                    message=f"No text extracted from PDF for game {self.opts['game_code']}",
+                    details={
+                        'game_code': self.opts['game_code'],
+                        'matchup': self.opts['matchup'],
+                        'pdf_source': self.opts['pdf_source'],
+                        'pdf_size_bytes': len(content)
+                    },
+                    processor_name="NBA.com Gamebook PDF Scraper"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
             raise DownloadDataException("pdfplumber failed to extract any text from PDF")
 
         # Save debug text
@@ -466,7 +634,27 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
             logger.warning("Failed to save debug text: %s", e)
 
         # Parse the clean text with corrected categories
-        self._parse_clean_text(full_text, active_players, dnp_players, inactive_players, game_info)
+        try:
+            self._parse_clean_text(full_text, active_players, dnp_players, inactive_players, game_info)
+        except Exception as e:
+            logger.error("Failed to parse PDF text for game %s: %s", self.opts["game_code"], e)
+            try:
+                notify_error(
+                    title="NBA.com Gamebook PDF Parse Error",
+                    message=f"Error parsing PDF text for game {self.opts['game_code']}: {str(e)}",
+                    details={
+                        'game_code': self.opts['game_code'],
+                        'matchup': self.opts['matchup'],
+                        'pdf_source': self.opts['pdf_source'],
+                        'text_length': len(full_text),
+                        'error': str(e),
+                        'error_type': type(e).__name__
+                    },
+                    processor_name="NBA.com Gamebook PDF Scraper"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            raise
 
         # Calculate issue summary for monitoring
         total_issues = sum(len(issues) for issues in self.parsing_issues.values())
@@ -493,6 +681,48 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
         }
         
         self.decoded_data = self.data
+        
+        # CRITICAL: Check for no active players - major data quality issue
+        if len(active_players) == 0:
+            logger.warning("No active players found in game %s", self.opts["game_code"])
+            try:
+                notify_warning(
+                    title="NBA.com Gamebook PDF - No Active Players",
+                    message=f"No active players found for game {self.opts['game_code']}",
+                    details={
+                        'game_code': self.opts['game_code'],
+                        'matchup': self.opts['matchup'],
+                        'pdf_source': self.opts['pdf_source'],
+                        'dnp_count': len(dnp_players),
+                        'inactive_count': len(inactive_players),
+                        'parsing_issues': total_issues,
+                        'arena': game_info.get('arena', 'unknown')
+                    }
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+        
+        # Warning for high parsing issues
+        parsing_issue_threshold = int(os.environ.get('PDF_PARSING_ISSUE_THRESHOLD', '10'))
+        if total_issues > parsing_issue_threshold:
+            logger.warning("High parsing issue count (%d) for game %s", total_issues, self.opts["game_code"])
+            try:
+                notify_warning(
+                    title="NBA.com Gamebook PDF - High Parsing Issues",
+                    message=f"Game {self.opts['game_code']} had {total_issues} parsing issues",
+                    details={
+                        'game_code': self.opts['game_code'],
+                        'matchup': self.opts['matchup'],
+                        'pdf_source': self.opts['pdf_source'],
+                        'total_issues': total_issues,
+                        'issue_breakdown': {k: len(v) for k, v in self.parsing_issues.items()},
+                        'active_count': len(active_players),
+                        'dnp_count': len(dnp_players),
+                        'inactive_count': len(inactive_players)
+                    }
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
         
         # Log summary with issue count for monitoring
         if total_issues > 0:
@@ -1297,10 +1527,6 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
         
         return sections
 
-    def _normalize_team_name(self, team_name: str) -> str:
-        """Normalize team name for comparison by removing spaces, lowercasing, and removing punctuation."""
-        return re.sub(r'[^a-z]', '', team_name.lower())
-
     def _detect_team_section_fallback(self, line: str, team_sections: Dict, 
                                     away_abbr: str, home_abbr: str) -> Optional[Dict]:
         """
@@ -1314,7 +1540,7 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
         
         if match:
             team_full_name = match.group(1).strip()
-            normalized_pdf_name = self._normalize_team_name(team_full_name)
+            normalized_pdf_name = self._normalize_team_name_for_comparison(team_full_name)
             
             # Clean team name lookup (only one version of each)
             team_name_to_abbr = {
@@ -1358,7 +1584,7 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
             matched_team_name = None
             
             for lookup_name, abbr in team_name_to_abbr.items():
-                normalized_lookup = self._normalize_team_name(lookup_name)
+                normalized_lookup = self._normalize_team_name_for_comparison(lookup_name)
                 if normalized_pdf_name == normalized_lookup:
                     team_abbr = abbr
                     matched_team_name = lookup_name
@@ -1377,6 +1603,10 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
                 logger.debug("Unknown team name: %s (normalized: %s)", team_full_name, normalized_pdf_name)
         
         return None
+
+    def _normalize_team_name_for_comparison(self, team_name: str) -> str:
+        """Normalize team name for comparison by removing spaces, lowercasing, and removing punctuation."""
+        return re.sub(r'[^a-z]', '', team_name.lower())
 
     def _parse_player_line(self, line: str, current_team: str, active_players: List[Dict], 
                         dnp_players: List[Dict], inactive_players: List[Dict], 
@@ -1446,7 +1676,6 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
             "parsing_issues_count": total_issues,
             "has_parsing_issues": total_issues > 0,
         }
-
 
 
 # --------------------------------------------------------------------------- #

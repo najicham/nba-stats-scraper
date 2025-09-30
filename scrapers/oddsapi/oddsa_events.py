@@ -54,6 +54,13 @@ except ImportError:
     from scrapers.utils.exceptions import DownloadDataException
     from scrapers.utils.gcs_path_builder import GCSPathBuilder
 
+# Notification system imports
+from shared.utils.notification_system import (
+    notify_error,
+    notify_warning,
+    notify_info
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -127,9 +134,24 @@ class GetOddsApiEvents(ScraperBase, ScraperFlaskMixin):
     def set_url(self) -> None:
         api_key = self.opts.get("api_key") or os.getenv("ODDS_API_KEY")
         if not api_key:
-            raise DownloadDataException(
-                "Missing api_key and env var ODDS_API_KEY not set."
-            )
+            error_msg = "Missing api_key and env var ODDS_API_KEY not set."
+            
+            # Send critical notification - API key missing prevents all scraping
+            try:
+                notify_error(
+                    title="Odds API Key Missing",
+                    message="Cannot scrape events - API key not configured",
+                    details={
+                        'scraper': 'oddsa_events',
+                        'sport': self.opts.get('sport', 'unknown'),
+                        'error': 'ODDS_API_KEY environment variable not set'
+                    },
+                    processor_name="Odds API Events Scraper"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            
+            raise DownloadDataException(error_msg)
 
         base = self._API_ROOT_TMPL.format(sport=self.opts["sport"])
 
@@ -148,6 +170,35 @@ class GetOddsApiEvents(ScraperBase, ScraperFlaskMixin):
         self.headers = {"Accept": "application/json"}
 
     # ------------------------------------------------------------------ #
+    # HTTP status handling                                               #
+    # ------------------------------------------------------------------ #
+    def check_download_status(self) -> None:
+        """Handle HTTP errors with notifications."""
+        if self.raw_response.status_code == 200:
+            return
+        
+        # Non-success status code - send error notification
+        status_code = self.raw_response.status_code
+        try:
+            notify_error(
+                title="Odds API HTTP Error",
+                message=f"Events scraping failed with HTTP {status_code}",
+                details={
+                    'scraper': 'oddsa_events',
+                    'sport': self.opts.get('sport', 'unknown'),
+                    'status_code': status_code,
+                    'commence_time_from': self.opts.get('commenceTimeFrom', 'not specified'),
+                    'commence_time_to': self.opts.get('commenceTimeTo', 'not specified'),
+                    'response_text': self.raw_response.text[:500] if hasattr(self.raw_response, 'text') else 'N/A'
+                },
+                processor_name="Odds API Events Scraper"
+            )
+        except Exception as notify_ex:
+            logger.warning(f"Failed to send notification: {notify_ex}")
+        
+        super().check_download_status()
+
+    # ------------------------------------------------------------------ #
     # Validation                                                         #
     # ------------------------------------------------------------------ #
     def validate_download_data(self) -> None:
@@ -155,9 +206,42 @@ class GetOddsApiEvents(ScraperBase, ScraperFlaskMixin):
         Expect a *list* of events.  Handle API error messages.
         """
         if isinstance(self.decoded_data, dict) and "message" in self.decoded_data:
-            raise DownloadDataException(f"API error: {self.decoded_data['message']}")
+            error_msg = self.decoded_data['message']
+            
+            # API returned an error message
+            try:
+                notify_error(
+                    title="Odds API Error Response",
+                    message=f"Events API returned error: {error_msg}",
+                    details={
+                        'scraper': 'oddsa_events',
+                        'sport': self.opts.get('sport', 'unknown'),
+                        'api_error': error_msg
+                    },
+                    processor_name="Odds API Events Scraper"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            
+            raise DownloadDataException(f"API error: {error_msg}")
 
         if not isinstance(self.decoded_data, list):
+            # Unexpected data format
+            try:
+                notify_error(
+                    title="Odds API Invalid Response Format",
+                    message="Events API returned unexpected data format",
+                    details={
+                        'scraper': 'oddsa_events',
+                        'sport': self.opts.get('sport', 'unknown'),
+                        'received_type': type(self.decoded_data).__name__,
+                        'expected_type': 'list'
+                    },
+                    processor_name="Odds API Events Scraper"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            
             raise DownloadDataException("Expected a list of events.")
 
     # ------------------------------------------------------------------ #
@@ -172,6 +256,46 @@ class GetOddsApiEvents(ScraperBase, ScraperFlaskMixin):
             "rowCount": len(events),
             "events": events,
         }
+        
+        # Check for no events returned
+        if len(events) == 0:
+            try:
+                notify_warning(
+                    title="No Events Available",
+                    message="Odds API returned zero events",
+                    details={
+                        'scraper': 'oddsa_events',
+                        'sport': self.opts.get('sport', 'unknown'),
+                        'commence_time_from': self.opts.get('commenceTimeFrom', 'not specified'),
+                        'commence_time_to': self.opts.get('commenceTimeTo', 'not specified'),
+                        'note': 'May be expected if no games scheduled in specified time range'
+                    }
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+        else:
+            # Success! Send info notification with metrics
+            try:
+                # Extract earliest and latest commence times for context
+                earliest_time = events[0].get("commence_time", "unknown") if events else "unknown"
+                latest_time = events[-1].get("commence_time", "unknown") if events else "unknown"
+                
+                notify_info(
+                    title="Events Scraped Successfully",
+                    message=f"Retrieved {len(events)} events from Odds API",
+                    details={
+                        'scraper': 'oddsa_events',
+                        'sport': self.opts.get('sport', 'unknown'),
+                        'event_count': len(events),
+                        'earliest_commence_time': earliest_time,
+                        'latest_commence_time': latest_time,
+                        'commence_time_from': self.opts.get('commenceTimeFrom', 'not specified'),
+                        'commence_time_to': self.opts.get('commenceTimeTo', 'not specified')
+                    }
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+        
         logger.info("Fetched %d events for %s", len(events), self.opts["sport"])
 
     # ------------------------------------------------------------------ #
@@ -201,4 +325,3 @@ create_app = convert_existing_flask_scraper(GetOddsApiEvents)
 if __name__ == "__main__":
     main = GetOddsApiEvents.create_cli_and_flask_main()
     main()
-    

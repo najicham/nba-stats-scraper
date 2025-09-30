@@ -12,6 +12,11 @@ from google.cloud import bigquery
 
 from data_processors.raw.processor_base import ProcessorBase
 from shared.utils.nba_team_mapper import NBATeamMapper
+from shared.utils.notification_system import (
+    notify_error,
+    notify_warning,
+    notify_info
+)
 
 class EspnBoxscoreProcessor(ProcessorBase):
     def __init__(self):
@@ -212,6 +217,21 @@ class EspnBoxscoreProcessor(ProcessorBase):
         validation_errors = self.validate_data(raw_data)
         if validation_errors:
             logging.error(f"Validation failed for {file_path}: {validation_errors}")
+            
+            # Send warning for validation failures
+            try:
+                notify_warning(
+                    title="ESPN Boxscore: Validation Failed",
+                    message=f"Data validation found {len(validation_errors)} critical issues",
+                    details={
+                        'file_path': file_path,
+                        'error_count': len(validation_errors),
+                        'errors': validation_errors[:5]  # First 5 errors
+                    }
+                )
+            except Exception as e:
+                logging.warning(f"Failed to send notification: {e}")
+            
             return []
         
         try:
@@ -238,6 +258,24 @@ class EspnBoxscoreProcessor(ProcessorBase):
             # Process players
             rows = []
             players = raw_data.get('players', [])
+            total_players = len(players)
+            failed_players = 0
+            
+            # Check for no players
+            if total_players == 0:
+                try:
+                    notify_warning(
+                        title="ESPN Boxscore: No Player Data",
+                        message=f"No players found in boxscore data",
+                        details={
+                            'file_path': file_path,
+                            'game_id': game_id,
+                            'game_date': game_date,
+                            'espn_game_id': espn_game_id
+                        }
+                    )
+                except Exception as e:
+                    logging.warning(f"Failed to send notification: {e}")
             
             for player_data in players:
                 try:
@@ -317,13 +355,49 @@ class EspnBoxscoreProcessor(ProcessorBase):
                     
                 except Exception as e:
                     logging.warning(f"Error processing player {player_data.get('playerName', 'Unknown')}: {str(e)}")
+                    failed_players += 1
                     continue
+            
+            # Send warning if high player failure rate
+            if total_players > 0 and failed_players >= total_players * 0.3:  # 30% threshold
+                try:
+                    notify_warning(
+                        title="ESPN Boxscore: High Player Processing Failure Rate",
+                        message=f"Failed to process {failed_players} of {total_players} players",
+                        details={
+                            'file_path': file_path,
+                            'game_id': game_id,
+                            'game_date': game_date,
+                            'total_players': total_players,
+                            'failed_players': failed_players,
+                            'success_players': len(rows),
+                            'failure_rate': f"{(failed_players/total_players)*100:.1f}%"
+                        }
+                    )
+                except Exception as e:
+                    logging.warning(f"Failed to send notification: {e}")
             
             logging.info(f"Transformed {len(rows)} player records from {file_path}")
             return rows
             
         except Exception as e:
             logging.error(f"Error transforming data from {file_path}: {str(e)}")
+            
+            # Send error notification for transformation failures
+            try:
+                notify_error(
+                    title="ESPN Boxscore: Transformation Failed",
+                    message=f"Failed to transform boxscore data: {str(e)}",
+                    details={
+                        'file_path': file_path,
+                        'error_type': type(e).__name__,
+                        'error_message': str(e)
+                    },
+                    processor_name="ESPN Boxscore Processor"
+                )
+            except Exception as notify_ex:
+                logging.warning(f"Failed to send notification: {notify_ex}")
+            
             return []
     
     def load_data(self, rows: List[Dict], **kwargs) -> Dict:
@@ -339,8 +413,8 @@ class EspnBoxscoreProcessor(ProcessorBase):
                 # Delete existing data for this game first
                 # MUST include game_date filter for partitioned table
                 game_id = rows[0]['game_id']
-                game_date = rows[0]['game_date']  # ADD THIS LINE
-                delete_query = f"DELETE FROM `{table_id}` WHERE game_id = '{game_id}' AND game_date = '{game_date}'"  # ADD game_date filter
+                game_date = rows[0]['game_date']
+                delete_query = f"DELETE FROM `{table_id}` WHERE game_id = '{game_id}' AND game_date = '{game_date}'"
                 logging.info(f"Deleting existing data for game_id: {game_id}, game_date: {game_date}")
                 self.bq_client.query(delete_query).result()
             
@@ -351,6 +425,24 @@ class EspnBoxscoreProcessor(ProcessorBase):
             if result:
                 errors.extend([str(e) for e in result])
                 logging.error(f"BigQuery insert errors: {errors}")
+                
+                # Send error notification for BigQuery insert failures
+                try:
+                    notify_error(
+                        title="ESPN Boxscore: BigQuery Insert Failed",
+                        message=f"Failed to insert {len(rows)} player records into BigQuery",
+                        details={
+                            'table': self.table_name,
+                            'rows_attempted': len(rows),
+                            'error_count': len(errors),
+                            'errors': errors[:5],  # First 5 errors
+                            'game_id': rows[0].get('game_id') if rows else 'unknown',
+                            'game_date': rows[0].get('game_date') if rows else 'unknown'
+                        },
+                        processor_name="ESPN Boxscore Processor"
+                    )
+                except Exception as e:
+                    logging.warning(f"Failed to send notification: {e}")
             else:
                 logging.info(f"Successfully loaded {len(rows)} rows")
         
@@ -358,6 +450,24 @@ class EspnBoxscoreProcessor(ProcessorBase):
             error_msg = str(e)
             errors.append(error_msg)
             logging.error(f"Error loading data: {error_msg}")
+            
+            # Send error notification for general BigQuery failures
+            try:
+                notify_error(
+                    title="ESPN Boxscore: BigQuery Load Failed",
+                    message=f"Database operation failed: {error_msg}",
+                    details={
+                        'table': self.table_name,
+                        'rows_attempted': len(rows),
+                        'error_type': type(e).__name__,
+                        'error_message': error_msg,
+                        'game_id': rows[0].get('game_id') if rows else 'unknown',
+                        'game_date': rows[0].get('game_date') if rows else 'unknown'
+                    },
+                    processor_name="ESPN Boxscore Processor"
+                )
+            except Exception as notify_ex:
+                logging.warning(f"Failed to send notification: {notify_ex}")
         
         return {
             'rows_processed': len(rows) if not errors else 0,

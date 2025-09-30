@@ -57,6 +57,13 @@ except ImportError:
     sys.path.insert(0, os.path.dirname(__file__))
     from bp_events import BettingProsEvents
 
+# Notification system imports
+from shared.utils.notification_system import (
+    notify_error,
+    notify_warning,
+    notify_info
+)
+
 logger = logging.getLogger("scraper_base")
 
 # BettingPros API Mappings (from original research)
@@ -227,6 +234,23 @@ class BettingProsPlayerProps(ScraperBase, ScraperFlaskMixin):
         
         if market_type not in MARKET_ID_BY_KEYWORD:
             valid_markets = ", ".join(MARKET_ID_BY_KEYWORD.keys())
+            
+            # Invalid market type - send error notification
+            try:
+                notify_error(
+                    title="Invalid Market Type",
+                    message=f"Invalid market_type specified: {market_type}",
+                    details={
+                        'scraper': 'bp_player_props',
+                        'date': self.opts.get('date', 'unknown'),
+                        'invalid_market_type': market_type,
+                        'valid_market_types': list(MARKET_ID_BY_KEYWORD.keys())
+                    },
+                    processor_name="BettingPros Player Props Scraper"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            
             raise DownloadDataException(f"Invalid market_type: {market_type}. Valid options: {valid_markets}")
         
         self.opts["market_id"] = MARKET_ID_BY_KEYWORD[market_type]
@@ -262,9 +286,42 @@ class BettingProsPlayerProps(ScraperBase, ScraperFlaskMixin):
                 logger.info("Fetched %d event IDs from date %s: %s", 
                            len(event_ids), date, event_ids[:3])
             else:
+                # No events found for date
+                try:
+                    notify_error(
+                        title="No Events Found for Date",
+                        message=f"Failed to fetch events for date {date}",
+                        details={
+                            'scraper': 'bp_player_props',
+                            'date': date,
+                            'sport': self.opts.get('sport', 'NBA'),
+                            'error': 'Events scraper returned no events'
+                        },
+                        processor_name="BettingPros Player Props Scraper"
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                
                 raise DownloadDataException(f"No events found for date: {date}")
                 
         except Exception as e:
+            # Failed to fetch events
+            try:
+                notify_error(
+                    title="Failed to Fetch Events",
+                    message=f"Error fetching events for date {date}: {str(e)}",
+                    details={
+                        'scraper': 'bp_player_props',
+                        'date': date,
+                        'sport': self.opts.get('sport', 'NBA'),
+                        'error': str(e),
+                        'error_type': type(e).__name__
+                    },
+                    processor_name="BettingPros Player Props Scraper"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            
             raise DownloadDataException(f"Failed to fetch events for date {date}: {e}")
     
     def set_url(self) -> None:
@@ -315,6 +372,23 @@ class BettingProsPlayerProps(ScraperBase, ScraperFlaskMixin):
                 # Check if response is empty or invalid
                 if not self.raw_response or not self.raw_response.content:
                     logger.warning("Empty response on page %d, stopping pagination", page)
+                    
+                    # Warning for empty response
+                    if page == 1:
+                        try:
+                            notify_warning(
+                                title="Empty API Response",
+                                message="BettingPros API returned empty response on first page",
+                                details={
+                                    'scraper': 'bp_player_props',
+                                    'date': self.opts.get('date', 'unknown'),
+                                    'market_type': self.opts.get('market_type', 'points'),
+                                    'event_ids_count': len(self.opts.get('event_ids_list', [])),
+                                    'page': page
+                                }
+                            )
+                        except Exception as notify_ex:
+                            logger.warning(f"Failed to send notification: {notify_ex}")
                     break
                     
                 # Log response details for debugging
@@ -354,6 +428,27 @@ class BettingProsPlayerProps(ScraperBase, ScraperFlaskMixin):
                     
             except DownloadDataException as e:
                 logger.error("Failed to fetch page %d: %s", page, e)
+                
+                # Send error notification
+                try:
+                    notify_error(
+                        title="Pagination Download Failed",
+                        message=f"Failed to fetch page {page} of player props",
+                        details={
+                            'scraper': 'bp_player_props',
+                            'date': self.opts.get('date', 'unknown'),
+                            'market_type': self.opts.get('market_type', 'points'),
+                            'page': page,
+                            'total_pages': total_pages or 'unknown',
+                            'offers_fetched_so_far': len(all_offers),
+                            'error': str(e),
+                            'error_type': type(e).__name__
+                        },
+                        processor_name="BettingPros Player Props Scraper"
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                
                 # If it's the first page, re-raise the error
                 if page == 1:
                     raise
@@ -366,6 +461,23 @@ class BettingProsPlayerProps(ScraperBase, ScraperFlaskMixin):
             # Safety check to prevent infinite loops
             if page > 50:  # Reasonable upper limit
                 logger.warning("Reached maximum page limit (50), stopping pagination")
+                
+                # Warning for max pages
+                try:
+                    notify_warning(
+                        title="Maximum Page Limit Reached",
+                        message="Stopped pagination after 50 pages (safety limit)",
+                        details={
+                            'scraper': 'bp_player_props',
+                            'date': self.opts.get('date', 'unknown'),
+                            'market_type': self.opts.get('market_type', 'points'),
+                            'pages_fetched': page - 1,
+                            'offers_fetched': len(all_offers),
+                            'note': 'Increase limit if more pages expected'
+                        }
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
                 break
         
         # Store combined data
@@ -397,6 +509,22 @@ class BettingProsPlayerProps(ScraperBase, ScraperFlaskMixin):
                 self.decoded_data = json.loads(self.raw_response.content)
             except UnicodeDecodeError as e:
                 logger.warning("UTF-8 decode failed, trying latin-1: %s", e)
+                
+                # Warning for encoding fallback
+                try:
+                    notify_warning(
+                        title="Encoding Fallback Required",
+                        message="UTF-8 decoding failed, falling back to latin-1",
+                        details={
+                            'scraper': 'bp_player_props',
+                            'date': self.opts.get('date', 'unknown'),
+                            'error': str(e),
+                            'note': 'May indicate unusual characters in response'
+                        }
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                
                 try:
                     # Fallback to latin-1 encoding for problematic responses
                     content_str = self.raw_response.content.decode('latin-1')
@@ -406,6 +534,24 @@ class BettingProsPlayerProps(ScraperBase, ScraperFlaskMixin):
                     # Log first 200 chars of raw content for debugging
                     raw_preview = self.raw_response.content[:200]
                     logger.error("Raw content preview: %r", raw_preview)
+                    
+                    # Error for encoding failure
+                    try:
+                        notify_error(
+                            title="Response Encoding Failed",
+                            message="Could not decode BettingPros API response",
+                            details={
+                                'scraper': 'bp_player_props',
+                                'date': self.opts.get('date', 'unknown'),
+                                'error': str(e2),
+                                'attempted_encodings': ['utf-8', 'latin-1'],
+                                'content_preview': raw_preview.decode('utf-8', errors='replace')[:200]
+                            },
+                            processor_name="BettingPros Player Props Scraper"
+                        )
+                    except Exception as notify_ex:
+                        logger.warning(f"Failed to send notification: {notify_ex}")
+                    
                     raise DownloadDataException(f"Response encoding failed: {e2}") from e2
             except json.JSONDecodeError as ex:
                 # Log content for debugging
@@ -455,37 +601,6 @@ class BettingProsPlayerProps(ScraperBase, ScraperFlaskMixin):
         
         logger.debug("Updated URL for page %d: %s", page, self.url)
     
-    def decode_download_content(self):
-        """Override to handle potential encoding issues from BettingPros API"""
-        logger.debug("Decoding raw response as '%s'", self.download_type)
-        if self.download_type == DownloadType.JSON:
-            try:
-                # Try standard UTF-8 decoding first
-                self.decoded_data = json.loads(self.raw_response.content)
-            except UnicodeDecodeError as e:
-                logger.warning("UTF-8 decode failed, trying latin-1: %s", e)
-                try:
-                    # Fallback to latin-1 encoding for problematic responses
-                    content_str = self.raw_response.content.decode('latin-1')
-                    self.decoded_data = json.loads(content_str)
-                except (UnicodeDecodeError, json.JSONDecodeError) as e2:
-                    logger.error("All encoding attempts failed: %s", e2)
-                    raise DownloadDataException(f"Response encoding failed: {e2}") from e2
-            except json.JSONDecodeError as ex:
-                # Standard JSON decode error (eligible for retry)
-                raise DownloadDataException(f"JSON decode failed: {ex}") from ex
-        elif self.download_type == DownloadType.HTML:
-            try:
-                self.decoded_data = self.raw_response.text
-            except UnicodeDecodeError:
-                # Fallback for HTML content
-                self.decoded_data = self.raw_response.content.decode('latin-1')
-        elif self.download_type == DownloadType.BINARY:
-            # Still place the bytes in decoded_data so ExportMode.DECODED works
-            self.decoded_data = self.raw_response.content
-        else:
-            pass
-    
     def validate_download_data(self) -> None:
         """Validate the combined paginated response"""
         if not isinstance(self.decoded_data, dict):
@@ -503,6 +618,41 @@ class BettingProsPlayerProps(ScraperBase, ScraperFlaskMixin):
         if self.opts["market_id"] not in markets:
             logger.warning("Market %s not found in response markets: %s", 
                          self.opts["market_id"], markets)
+            
+            # Warning for missing market
+            try:
+                notify_warning(
+                    title="Market Not in Response",
+                    message=f"Requested market {self.opts['market_id']} not found in API response",
+                    details={
+                        'scraper': 'bp_player_props',
+                        'date': self.opts.get('date', 'unknown'),
+                        'market_type': self.opts.get('market_type', 'points'),
+                        'requested_market_id': self.opts['market_id'],
+                        'response_markets': markets,
+                        'offers_count': len(all_offers)
+                    }
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+        
+        # Check for no offers
+        if len(all_offers) == 0:
+            try:
+                notify_warning(
+                    title="No Player Props Available",
+                    message="BettingPros API returned zero player props",
+                    details={
+                        'scraper': 'bp_player_props',
+                        'date': self.opts.get('date', 'unknown'),
+                        'market_type': self.opts.get('market_type', 'points'),
+                        'event_ids_count': len(self.opts.get('event_ids_list', [])),
+                        'pages_fetched': self.decoded_data.get('pages_fetched', 0),
+                        'note': 'May be expected if no props available for these events'
+                    }
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
         
         logger.info("Validation passed: %d total offers found", len(all_offers))
 
@@ -512,6 +662,7 @@ class BettingProsPlayerProps(ScraperBase, ScraperFlaskMixin):
         
         processed_props = []
         players_summary = {}
+        failed_offers = 0
         
         for offer in all_offers:
             prop_data = self._process_single_offer(offer)
@@ -526,6 +677,8 @@ class BettingProsPlayerProps(ScraperBase, ScraperFlaskMixin):
                         "props_count": 0
                     }
                 players_summary[player_name]["props_count"] += 1
+            else:
+                failed_offers += 1
         
         # Store processed data
         self.data = {
@@ -544,9 +697,56 @@ class BettingProsPlayerProps(ScraperBase, ScraperFlaskMixin):
             },
             "props_count": len(processed_props),
             "players_count": len(players_summary),
+            "failed_offers": failed_offers,
             "players_summary": players_summary,
             "props": processed_props,
         }
+        
+        # Warning if many offers failed to process
+        if failed_offers > 0 and failed_offers / max(len(all_offers), 1) > 0.1:  # More than 10% failure
+            try:
+                notify_warning(
+                    title="High Offer Processing Failure Rate",
+                    message=f"Failed to process {failed_offers} of {len(all_offers)} offers",
+                    details={
+                        'scraper': 'bp_player_props',
+                        'date': self.opts.get('date', 'unknown'),
+                        'market_type': self.opts.get('market_type', 'points'),
+                        'total_offers': len(all_offers),
+                        'failed_offers': failed_offers,
+                        'success_rate': f"{((len(all_offers) - failed_offers) / len(all_offers) * 100):.1f}%",
+                        'successfully_processed': len(processed_props)
+                    }
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+        
+        # Success notification
+        if len(processed_props) > 0:
+            try:
+                # Get top players
+                top_players = sorted(players_summary.items(), 
+                                   key=lambda x: x[1]["props_count"], 
+                                   reverse=True)[:5]
+                
+                notify_info(
+                    title="Player Props Scraped Successfully",
+                    message=f"Retrieved {len(processed_props)} player props for {len(players_summary)} players",
+                    details={
+                        'scraper': 'bp_player_props',
+                        'date': self.opts.get('date', 'unknown'),
+                        'market_type': self.opts.get('market_type', 'points'),
+                        'event_ids_count': len(self.opts.get('event_ids_list', [])),
+                        'props_count': len(processed_props),
+                        'players_count': len(players_summary),
+                        'pages_fetched': self.decoded_data.get('pages_fetched', 0),
+                        'failed_offers': failed_offers,
+                        'top_players': [f"{name} ({info['props_count']} props)" 
+                                       for name, info in top_players]
+                    }
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
         
         logger.info("Processed %d props for %d players", 
                    len(processed_props), len(players_summary))

@@ -15,13 +15,18 @@ Usage Scenarios:
 
 import logging
 from datetime import datetime, date, timedelta
-from typing import Dict, List, Set
+from typing import Dict, List, Set, Tuple
 import pandas as pd
 from google.cloud import bigquery
 
 from data_processors.reference.base.registry_processor_base import RegistryProcessorBase
 from data_processors.reference.base.name_change_detection_mixin import NameChangeDetectionMixin
 from data_processors.reference.base.database_strategies import DatabaseStrategiesMixin
+from shared.utils.notification_system import (
+    notify_error,
+    notify_warning,
+    notify_info
+)
 
 logger = logging.getLogger(__name__)
 
@@ -74,8 +79,38 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
         }
         
         # Log summary
+        total_players = sum(len(players) for players in roster_sources.values())
         for source, players in roster_sources.items():
             logger.info(f"{source}: {len(players)} players")
+        
+        # Check for concerning data issues
+        if total_players == 0:
+            try:
+                notify_warning(
+                    title="No Roster Data Found",
+                    message=f"No roster data found for {season_year}-{season_year+1} season from any source",
+                    details={
+                        'season_year': season_year,
+                        'sources_checked': list(roster_sources.keys()),
+                        'processor': 'roster_registry'
+                    }
+                )
+            except Exception as e:
+                logger.warning(f"Failed to send notification: {e}")
+        elif total_players < 400:  # NBA typically has 450+ players
+            try:
+                notify_warning(
+                    title="Low Roster Data Count",
+                    message=f"Found only {total_players} total players for {season_year}-{season_year+1} season (expected 450+)",
+                    details={
+                        'season_year': season_year,
+                        'total_players': total_players,
+                        'source_counts': {k: len(v) for k, v in roster_sources.items()},
+                        'processor': 'roster_registry'
+                    }
+                )
+            except Exception as e:
+                logger.warning(f"Failed to send notification: {e}")
         
         return roster_sources
     
@@ -103,6 +138,19 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
             return players
         except Exception as e:
             logger.warning(f"Error querying ESPN roster data: {e}")
+            try:
+                notify_error(
+                    title="ESPN Roster Query Failed",
+                    message=f"Failed to query ESPN roster data: {str(e)}",
+                    details={
+                        'season_year': season_year,
+                        'error_type': type(e).__name__,
+                        'processor': 'roster_registry'
+                    },
+                    processor_name="Roster Registry Processor"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
             return set()
     
     def _get_nba_official_players(self, season_year: int) -> Set[str]:
@@ -125,6 +173,19 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
             return players
         except Exception as e:
             logger.warning(f"Error querying NBA.com player list: {e}")
+            try:
+                notify_error(
+                    title="NBA.com Player List Query Failed",
+                    message=f"Failed to query NBA.com player list: {str(e)}",
+                    details={
+                        'season_year': season_year,
+                        'error_type': type(e).__name__,
+                        'processor': 'roster_registry'
+                    },
+                    processor_name="Roster Registry Processor"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
             return set()
     
     def _get_basketball_reference_players(self, season_year: int) -> Set[str]:
@@ -146,6 +207,19 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
             return players
         except Exception as e:
             logger.warning(f"Error querying Basketball Reference roster data: {e}")
+            try:
+                notify_error(
+                    title="Basketball Reference Query Failed",
+                    message=f"Failed to query Basketball Reference roster data: {str(e)}",
+                    details={
+                        'season_year': season_year,
+                        'error_type': type(e).__name__,
+                        'processor': 'roster_registry'
+                    },
+                    processor_name="Roster Registry Processor"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
             return set()
     
     def get_existing_registry_players(self, season: str) -> Set[str]:
@@ -167,6 +241,19 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
             return existing_players
         except Exception as e:
             logger.warning(f"Error querying existing registry players: {e}")
+            try:
+                notify_error(
+                    title="Registry Query Failed",
+                    message=f"Failed to query existing registry players: {str(e)}",
+                    details={
+                        'season': season,
+                        'error_type': type(e).__name__,
+                        'processor': 'roster_registry'
+                    },
+                    processor_name="Roster Registry Processor"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
             return set()
     
     def aggregate_roster_assignments(self, roster_data: Dict[str, Set[str]], season_year: int) -> List[Dict]:
@@ -182,95 +269,114 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
         """
         logger.info("Aggregating roster assignments into registry records...")
         
-        # Combine all roster sources and collect detailed data
-        all_roster_players = set()
-        player_details = {}  # player_lookup -> {team_abbr, sources, enhancement_data}
-        
-        for source, players in roster_data.items():
-            all_roster_players.update(players)
+        try:
+            # Combine all roster sources and collect detailed data
+            all_roster_players = set()
+            player_details = {}  # player_lookup -> {team_abbr, sources, enhancement_data}
             
-            # Get detailed data for each source
-            detailed_data = self._get_detailed_roster_data(source, season_year)
-            
-            for player_lookup, details in detailed_data.items():
-                if player_lookup not in player_details:
-                    player_details[player_lookup] = {
-                        'team_abbr': details['team_abbr'],
-                        'sources': [],
-                        'enhancement_data': {}
-                    }
+            for source, players in roster_data.items():
+                all_roster_players.update(players)
                 
-                player_details[player_lookup]['sources'].append(source)
+                # Get detailed data for each source
+                detailed_data = self._get_detailed_roster_data(source, season_year)
                 
-                # Merge enhancement data (jersey_number, position, etc.)
-                if 'jersey_number' in details and details['jersey_number']:
-                    player_details[player_lookup]['enhancement_data']['jersey_number'] = details['jersey_number']
-                if 'position' in details and details['position']:
-                    player_details[player_lookup]['enhancement_data']['position'] = details['position']
-                if 'player_full_name' in details and details['player_full_name']:
-                    player_details[player_lookup]['enhancement_data']['player_full_name'] = details['player_full_name']
-        
-        # BULK RESOLUTION: Get all universal IDs in one operation
-        unique_player_lookups = list(all_roster_players)
-        logger.info(f"Performing bulk universal ID resolution for {len(unique_player_lookups)} roster players")
-        
-        universal_id_mappings = self.bulk_resolve_universal_player_ids(unique_player_lookups)
-        
-        registry_records = []
-        season_str = self.calculate_season_string(season_year)
-        
-        for player_lookup in all_roster_players:
-            details = player_details.get(player_lookup, {})
-            team_abbr = details.get('team_abbr', 'UNK')
-            sources = details.get('sources', [])
-            enhancement = details.get('enhancement_data', {})
+                for player_lookup, details in detailed_data.items():
+                    if player_lookup not in player_details:
+                        player_details[player_lookup] = {
+                            'team_abbr': details['team_abbr'],
+                            'sources': [],
+                            'enhancement_data': {}
+                        }
+                    
+                    player_details[player_lookup]['sources'].append(source)
+                    
+                    # Merge enhancement data (jersey_number, position, etc.)
+                    if 'jersey_number' in details and details['jersey_number']:
+                        player_details[player_lookup]['enhancement_data']['jersey_number'] = details['jersey_number']
+                    if 'position' in details and details['position']:
+                        player_details[player_lookup]['enhancement_data']['position'] = details['position']
+                    if 'player_full_name' in details and details['player_full_name']:
+                        player_details[player_lookup]['enhancement_data']['player_full_name'] = details['player_full_name']
             
-            # Determine source priority and confidence with dynamic logic
-            source_priority, confidence_score = self._determine_roster_source_priority_and_confidence(
-                sources, enhancement, season_year
-            )
+            # BULK RESOLUTION: Get all universal IDs in one operation
+            unique_player_lookups = list(all_roster_players)
+            logger.info(f"Performing bulk universal ID resolution for {len(unique_player_lookups)} roster players")
             
-            # Get universal player ID from bulk resolution
-            universal_id = universal_id_mappings.get(player_lookup, f"{player_lookup}_001")
+            universal_id_mappings = self.bulk_resolve_universal_player_ids(unique_player_lookups)
             
-            # Create base registry record
-            record = {
-                'universal_player_id': universal_id,
-                'player_name': enhancement.get('player_full_name', player_lookup.title()),
-                'player_lookup': player_lookup,
-                'team_abbr': team_abbr,
-                'season': season_str,
+            registry_records = []
+            season_str = self.calculate_season_string(season_year)
+            
+            for player_lookup in all_roster_players:
+                details = player_details.get(player_lookup, {})
+                team_abbr = details.get('team_abbr', 'UNK')
+                sources = details.get('sources', [])
+                enhancement = details.get('enhancement_data', {})
                 
-                # No game data yet (roster processor runs pre-game)
-                'first_game_date': None,
-                'last_game_date': None,
-                'games_played': 0,
-                'total_appearances': 0,
-                'inactive_appearances': 0,
-                'dnp_appearances': 0,
+                # Determine source priority and confidence with dynamic logic
+                source_priority, confidence_score = self._determine_roster_source_priority_and_confidence(
+                    sources, enhancement, season_year
+                )
                 
-                # Roster-specific fields
-                'jersey_number': enhancement.get('jersey_number'),
-                'position': enhancement.get('position'),
-                'last_roster_update': date.today(),
+                # Get universal player ID from bulk resolution
+                universal_id = universal_id_mappings.get(player_lookup, f"{player_lookup}_001")
                 
-                # Source metadata
-                'source_priority': source_priority,
-                'confidence_score': confidence_score,
-                'created_by': self.processing_run_id,
-                'created_at': datetime.now(),
-                'processed_at': datetime.now()
-            }
+                # Create base registry record
+                record = {
+                    'universal_player_id': universal_id,
+                    'player_name': enhancement.get('player_full_name', player_lookup.title()),
+                    'player_lookup': player_lookup,
+                    'team_abbr': team_abbr,
+                    'season': season_str,
+                    
+                    # No game data yet (roster processor runs pre-game)
+                    'first_game_date': None,
+                    'last_game_date': None,
+                    'games_played': 0,
+                    'total_appearances': 0,
+                    'inactive_appearances': 0,
+                    'dnp_appearances': 0,
+                    
+                    # Roster-specific fields
+                    'jersey_number': enhancement.get('jersey_number'),
+                    'position': enhancement.get('position'),
+                    'last_roster_update': date.today(),
+                    
+                    # Source metadata
+                    'source_priority': source_priority,
+                    'confidence_score': confidence_score,
+                    'created_by': self.processing_run_id,
+                    'created_at': datetime.now(),
+                    'processed_at': datetime.now()
+                }
+                
+                # Enhance record with source tracking
+                enhanced_record = self.enhance_record_with_source_tracking(record, self.processor_type)
+                
+                # Convert types for BigQuery
+                enhanced_record = self._convert_pandas_types_for_json(enhanced_record)
+                registry_records.append(enhanced_record)
             
-            # Enhance record with source tracking
-            enhanced_record = self.enhance_record_with_source_tracking(record, self.processor_type)
+            logger.info(f"Created {len(registry_records)} registry records from roster data")
+            return registry_records
             
-            # Convert types for BigQuery
-            enhanced_record = self._convert_pandas_types_for_json(enhanced_record)
-            registry_records.append(enhanced_record)
-        
-        logger.info(f"Created {len(registry_records)} registry records from roster data")
-        return registry_records
+        except Exception as e:
+            logger.error(f"Failed to aggregate roster assignments: {e}")
+            try:
+                notify_error(
+                    title="Roster Aggregation Failed",
+                    message=f"Failed to aggregate roster assignments: {str(e)}",
+                    details={
+                        'season_year': season_year,
+                        'error_type': type(e).__name__,
+                        'players_attempted': len(all_roster_players) if 'all_roster_players' in locals() else 0,
+                        'processor': 'roster_registry'
+                    },
+                    processor_name="Roster Registry Processor"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            raise
     
     def _determine_roster_source_priority_and_confidence(self, sources: List[str], 
                                                        enhancement: Dict, season_year: int) -> Tuple[str, float]:
@@ -469,87 +575,157 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
     
     def transform_data(self, raw_data: Dict, file_path: str = None) -> List[Dict]:
         """Transform roster data into registry records."""
-        # Extract filters from raw_data
-        season_year = raw_data.get('season_year', date.today().year)
-        
-        logger.info(f"Processing roster data for season {season_year}")
-        
-        # Step 1: Get current roster data from all sources
-        roster_data = self.get_current_roster_data(season_year)
-        
-        # Step 2: Get existing registry players
-        season_str = self.calculate_season_string(season_year)
-        existing_players = self.get_existing_registry_players(season_str)
-        
-        # Step 3: Find all roster players
-        all_roster_players = set()
-        for source, players in roster_data.items():
-            all_roster_players.update(players)
-        
-        logger.info(f"Found {len(all_roster_players)} total players across all roster sources")
-        
-        # Step 4: Detect unknown players (simplified - just log them)
-        unknown_players = all_roster_players - existing_players
-        if unknown_players:
-            logger.info(f"Found {len(unknown_players)} unknown players not in registry: {list(unknown_players)[:10]}{'...' if len(unknown_players) > 10 else ''}")
-        
-        # Step 5: Create registry records for all roster players
-        registry_records = self.aggregate_roster_assignments(roster_data, season_year)
-        
-        logger.info(f"Created {len(registry_records)} registry records from roster data")
-        return registry_records
+        try:
+            # Extract filters from raw_data
+            season_year = raw_data.get('season_year', date.today().year)
+            
+            logger.info(f"Processing roster data for season {season_year}")
+            
+            # Step 1: Get current roster data from all sources
+            roster_data = self.get_current_roster_data(season_year)
+            
+            # Step 2: Get existing registry players
+            season_str = self.calculate_season_string(season_year)
+            existing_players = self.get_existing_registry_players(season_str)
+            
+            # Step 3: Find all roster players
+            all_roster_players = set()
+            for source, players in roster_data.items():
+                all_roster_players.update(players)
+            
+            logger.info(f"Found {len(all_roster_players)} total players across all roster sources")
+            
+            # Step 4: Detect unknown players and send notification if significant
+            unknown_players = all_roster_players - existing_players
+            if unknown_players:
+                logger.info(f"Found {len(unknown_players)} unknown players not in registry: {list(unknown_players)[:10]}{'...' if len(unknown_players) > 10 else ''}")
+                
+                # Send notification if many unknown players (might indicate new season or data issue)
+                if len(unknown_players) > 50:
+                    try:
+                        notify_warning(
+                            title="High Unknown Player Count in Rosters",
+                            message=f"Found {len(unknown_players)} players in rosters not in registry for {season_str}",
+                            details={
+                                'season': season_str,
+                                'unknown_count': len(unknown_players),
+                                'total_roster_players': len(all_roster_players),
+                                'existing_in_registry': len(existing_players),
+                                'sample_unknown': list(unknown_players)[:20],
+                                'processor': 'roster_registry'
+                            }
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to send notification: {e}")
+                elif len(unknown_players) > 0:
+                    # Info notification for new players (normal operation)
+                    try:
+                        notify_info(
+                            title="New Players Detected in Rosters",
+                            message=f"Found {len(unknown_players)} new players in roster data for {season_str}",
+                            details={
+                                'season': season_str,
+                                'new_player_count': len(unknown_players),
+                                'sample_players': list(unknown_players)[:10],
+                                'processor': 'roster_registry'
+                            }
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to send notification: {e}")
+            
+            # Step 5: Create registry records for all roster players
+            registry_records = self.aggregate_roster_assignments(roster_data, season_year)
+            
+            logger.info(f"Created {len(registry_records)} registry records from roster data")
+            return registry_records
+            
+        except Exception as e:
+            logger.error(f"Transform data failed: {e}")
+            try:
+                notify_error(
+                    title="Roster Registry Transform Failed",
+                    message=f"Failed to transform roster data: {str(e)}",
+                    details={
+                        'season_year': raw_data.get('season_year') if raw_data else None,
+                        'error_type': type(e).__name__,
+                        'processor': 'roster_registry'
+                    },
+                    processor_name="Roster Registry Processor"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            raise
     
     def _build_registry_for_season_impl(self, season: str, team: str = None) -> Dict:
         """Implementation of season building."""
         logger.info(f"Building roster registry for season {season}" + (f", team {team}" if team else ""))
         
-        # Reset tracking for this run
-        self.new_players_discovered = set()
-        self.players_seen_this_run = set()
-        
-        # Reset stats
-        self.stats = {
-            'players_processed': 0,
-            'records_created': 0,
-            'records_updated': 0,
-            'seasons_processed': set(),
-            'teams_processed': set(),
-            'unresolved_players_found': 0,
-            'alias_resolutions': 0
-        }
-        
-        # Parse season year
-        season_year = int(season.split('-')[0])
-        
-        # Create filter data
-        filter_data = {
-            'season_year': season_year
-        }
-        
-        # Transform and load
-        rows = self.transform_data(filter_data)
-        result = self.load_data(rows)
-        
-        result['new_players_discovered'] = list(self.new_players_discovered)
-        if self.new_players_discovered:
-            logger.info(f"Discovered {len(self.new_players_discovered)} new players from rosters")
-        
-        logger.info(f"Roster registry build complete for {season}:")
-        logger.info(f"  Records processed: {result['rows_processed']}")
-        logger.info(f"  Records created: {len(rows)}")
-        logger.info(f"  Errors: {len(result.get('errors', []))}")
-        
-        return {
-            'season': season,
-            'team_filter': team,
-            'records_processed': result['rows_processed'],
-            'records_created': len(rows),
-            'players_processed': len(rows),  # For roster, each record is one player
-            'teams_processed': list(set(row['team_abbr'] for row in rows)) if rows else [],
-            'new_players_discovered': result['new_players_discovered'],
-            'errors': result.get('errors', []),
-            'processing_run_id': self.processing_run_id
-        }
+        try:
+            # Reset tracking for this run
+            self.new_players_discovered = set()
+            self.players_seen_this_run = set()
+            
+            # Reset stats
+            self.stats = {
+                'players_processed': 0,
+                'records_created': 0,
+                'records_updated': 0,
+                'seasons_processed': set(),
+                'teams_processed': set(),
+                'unresolved_players_found': 0,
+                'alias_resolutions': 0
+            }
+            
+            # Parse season year
+            season_year = int(season.split('-')[0])
+            
+            # Create filter data
+            filter_data = {
+                'season_year': season_year
+            }
+            
+            # Transform and load
+            rows = self.transform_data(filter_data)
+            result = self.load_data(rows)
+            
+            result['new_players_discovered'] = list(self.new_players_discovered)
+            if self.new_players_discovered:
+                logger.info(f"Discovered {len(self.new_players_discovered)} new players from rosters")
+            
+            logger.info(f"Roster registry build complete for {season}:")
+            logger.info(f"  Records processed: {result['rows_processed']}")
+            logger.info(f"  Records created: {len(rows)}")
+            logger.info(f"  Errors: {len(result.get('errors', []))}")
+            
+            return {
+                'season': season,
+                'team_filter': team,
+                'records_processed': result['rows_processed'],
+                'records_created': len(rows),
+                'players_processed': len(rows),  # For roster, each record is one player
+                'teams_processed': list(set(row['team_abbr'] for row in rows)) if rows else [],
+                'new_players_discovered': result['new_players_discovered'],
+                'errors': result.get('errors', []),
+                'processing_run_id': self.processing_run_id
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to build roster registry for {season}: {e}")
+            try:
+                notify_error(
+                    title="Roster Registry Build Failed",
+                    message=f"Failed to build roster registry for season {season}: {str(e)}",
+                    details={
+                        'season': season,
+                        'team_filter': team,
+                        'error_type': type(e).__name__,
+                        'processor': 'roster_registry'
+                    },
+                    processor_name="Roster Registry Processor"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            raise
     
     def process_daily_rosters(self, season_year: int = None) -> Dict:
         """
@@ -567,26 +743,82 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
         season_str = self.calculate_season_string(season_year)
         logger.info(f"Processing daily rosters for {season_str} season")
         
-        return self._build_registry_for_season_impl(season_str)
+        try:
+            result = self._build_registry_for_season_impl(season_str)
+            
+            # Send success notification with summary
+            try:
+                notify_info(
+                    title="Daily Roster Processing Complete",
+                    message=f"Successfully processed daily rosters for {season_str} season",
+                    details={
+                        'season': season_str,
+                        'records_processed': result['records_processed'],
+                        'players_processed': result['players_processed'],
+                        'new_players_discovered': len(result.get('new_players_discovered', [])),
+                        'errors': len(result.get('errors', [])),
+                        'processor': 'roster_registry',
+                        'processing_run_id': self.processing_run_id
+                    }
+                )
+            except Exception as e:
+                logger.warning(f"Failed to send notification: {e}")
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Daily roster processing failed: {e}")
+            try:
+                notify_error(
+                    title="Daily Roster Processing Failed",
+                    message=f"Failed to process daily rosters for {season_str}: {str(e)}",
+                    details={
+                        'season': season_str,
+                        'season_year': season_year,
+                        'error_type': type(e).__name__,
+                        'processor': 'roster_registry'
+                    },
+                    processor_name="Roster Registry Processor"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            raise
 
     def build_historical_registry(self, seasons: List[str] = None) -> Dict:
         """Build registry from historical roster data (simplified - current season only)."""
         logger.info("Roster processor handles current data only - building for current season")
         
-        current_season_year = date.today().year if date.today().month >= 10 else date.today().year - 1
-        current_season = self.calculate_season_string(current_season_year)
-        
-        result = self._build_registry_for_season_impl(current_season)
-        
-        return {
-            'scenario': 'current_roster_processing',
-            'seasons_processed': [current_season],
-            'total_records_processed': result['records_processed'],
-            'total_errors': len(result.get('errors', [])),
-            'individual_results': [result],
-            'processing_run_id': self.processing_run_id,
-            'note': 'Roster processor handles current data only'
-        }
+        try:
+            current_season_year = date.today().year if date.today().month >= 10 else date.today().year - 1
+            current_season = self.calculate_season_string(current_season_year)
+            
+            result = self._build_registry_for_season_impl(current_season)
+            
+            return {
+                'scenario': 'current_roster_processing',
+                'seasons_processed': [current_season],
+                'total_records_processed': result['records_processed'],
+                'total_errors': len(result.get('errors', [])),
+                'individual_results': [result],
+                'processing_run_id': self.processing_run_id,
+                'note': 'Roster processor handles current data only'
+            }
+            
+        except Exception as e:
+            logger.error(f"Historical registry build failed: {e}")
+            try:
+                notify_error(
+                    title="Historical Roster Registry Build Failed",
+                    message=f"Failed to build historical roster registry: {str(e)}",
+                    details={
+                        'error_type': type(e).__name__,
+                        'processor': 'roster_registry'
+                    },
+                    processor_name="Roster Registry Processor"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            raise
 
 
 # Convenience functions

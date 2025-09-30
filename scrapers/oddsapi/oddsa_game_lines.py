@@ -57,6 +57,13 @@ except ImportError:
     from scrapers.utils.gcs_path_builder import GCSPathBuilder
     from scrapers.utils.nba_team_mapper import build_event_teams_suffix
 
+# Notification system imports
+from shared.utils.notification_system import (
+    notify_error,
+    notify_warning,
+    notify_info
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -151,9 +158,25 @@ class GetOddsApiCurrentGameLines(ScraperBase, ScraperFlaskMixin):
     def set_url(self) -> None:
         api_key = self.opts.get("api_key") or os.getenv("ODDS_API_KEY")
         if not api_key:
-            raise DownloadDataException(
-                "Missing api_key and env var ODDS_API_KEY not set."
-            )
+            error_msg = "Missing api_key and env var ODDS_API_KEY not set."
+            
+            # Send critical notification - API key missing prevents all scraping
+            try:
+                notify_error(
+                    title="Odds API Key Missing",
+                    message="Cannot scrape game lines - API key not configured",
+                    details={
+                        'scraper': 'oddsa_game_lines',
+                        'event_id': self.opts.get('event_id', 'unknown'),
+                        'game_date': self.opts.get('game_date', 'unknown'),
+                        'error': 'ODDS_API_KEY environment variable not set'
+                    },
+                    processor_name="Odds API Game Lines Scraper"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            
+            raise DownloadDataException(error_msg)
 
         base = self._API_ROOT_TMPL.format(
             sport=self.opts["sport"],
@@ -184,6 +207,27 @@ class GetOddsApiCurrentGameLines(ScraperBase, ScraperFlaskMixin):
         """
         if self.raw_response.status_code in (200, 204):
             return
+        
+        # Non-success status code - send error notification
+        status_code = self.raw_response.status_code
+        try:
+            notify_error(
+                title="Odds API HTTP Error",
+                message=f"Game lines scraping failed with HTTP {status_code}",
+                details={
+                    'scraper': 'oddsa_game_lines',
+                    'event_id': self.opts.get('event_id', 'unknown'),
+                    'game_date': self.opts.get('game_date', 'unknown'),
+                    'markets': self.opts.get('markets', 'spreads,totals'),
+                    'status_code': status_code,
+                    'url': self.url.replace(self.opts.get("api_key", ""), "***") if hasattr(self, 'url') else 'unknown',
+                    'response_text': self.raw_response.text[:500] if hasattr(self.raw_response, 'text') else 'N/A'
+                },
+                processor_name="Odds API Game Lines Scraper"
+            )
+        except Exception as notify_ex:
+            logger.warning(f"Failed to send notification: {notify_ex}")
+        
         super().check_download_status()
 
     # ------------------------------------------------------------------ #
@@ -194,9 +238,46 @@ class GetOddsApiCurrentGameLines(ScraperBase, ScraperFlaskMixin):
         Success is an **object** with bookmakers[], or an empty list/dict if no odds.
         """
         if isinstance(self.decoded_data, dict) and "message" in self.decoded_data:
-            raise DownloadDataException(f"API error: {self.decoded_data['message']}")
+            error_msg = self.decoded_data['message']
+            
+            # API returned an error message
+            try:
+                notify_error(
+                    title="Odds API Error Response",
+                    message=f"Game lines API returned error: {error_msg}",
+                    details={
+                        'scraper': 'oddsa_game_lines',
+                        'event_id': self.opts.get('event_id', 'unknown'),
+                        'game_date': self.opts.get('game_date', 'unknown'),
+                        'markets': self.opts.get('markets', 'spreads,totals'),
+                        'api_error': error_msg
+                    },
+                    processor_name="Odds API Game Lines Scraper"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            
+            raise DownloadDataException(f"API error: {error_msg}")
 
         if not isinstance(self.decoded_data, (dict, list)):
+            # Unexpected data format
+            try:
+                notify_error(
+                    title="Odds API Invalid Response Format",
+                    message="Game lines API returned unexpected data format",
+                    details={
+                        'scraper': 'oddsa_game_lines',
+                        'event_id': self.opts.get('event_id', 'unknown'),
+                        'game_date': self.opts.get('game_date', 'unknown'),
+                        'markets': self.opts.get('markets', 'spreads,totals'),
+                        'received_type': type(self.decoded_data).__name__,
+                        'expected_types': 'dict or list'
+                    },
+                    processor_name="Odds API Game Lines Scraper"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            
             raise DownloadDataException("Expected dict or list for odds payload.")
 
     # ------------------------------------------------------------------ #
@@ -238,6 +319,23 @@ class GetOddsApiCurrentGameLines(ScraperBase, ScraperFlaskMixin):
         if teams_suffix:
             self.opts["teams"] = teams_suffix
             logger.debug("Built teams suffix for GCS path: %s", teams_suffix)
+        else:
+            # Warning: Could not extract team data (affects GCS path)
+            try:
+                notify_warning(
+                    title="Missing Team Data in Game Lines Response",
+                    message="Could not extract team information from game lines response",
+                    details={
+                        'scraper': 'oddsa_game_lines',
+                        'event_id': self.opts.get('event_id', 'unknown'),
+                        'game_date': self.opts.get('game_date', 'unknown'),
+                        'markets': self.opts.get('markets', 'spreads,totals'),
+                        'impact': 'GCS path will not include team suffix',
+                        'available_keys': list(event_data.keys()) if event_data else []
+                    }
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
 
         # Extract current time as snap time for filename consistency
         current_utc = datetime.now(timezone.utc)
@@ -255,6 +353,78 @@ class GetOddsApiCurrentGameLines(ScraperBase, ScraperFlaskMixin):
             "totalsCount": totals_count,
             "odds": self.decoded_data,
         }
+        
+        # Check for no lines available (might be expected but worth tracking)
+        if row_count == 0:
+            try:
+                notify_warning(
+                    title="No Game Lines Available",
+                    message="Odds API returned zero game lines for event",
+                    details={
+                        'scraper': 'oddsa_game_lines',
+                        'event_id': self.opts.get('event_id', 'unknown'),
+                        'game_date': self.opts.get('game_date', 'unknown'),
+                        'markets': self.opts.get('markets', 'spreads,totals'),
+                        'bookmakers_count': len(bookmakers),
+                        'teams': teams_suffix or 'unknown',
+                        'note': 'May be expected if game has not opened for betting yet'
+                    }
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+        else:
+            # Check for missing markets (if requested spreads but got 0, or totals but got 0)
+            requested_markets = self.opts.get('markets', 'spreads,totals').split(',')
+            missing_markets = []
+            
+            if 'spreads' in requested_markets and spreads_count == 0:
+                missing_markets.append('spreads')
+            if 'totals' in requested_markets and totals_count == 0:
+                missing_markets.append('totals')
+            
+            if missing_markets:
+                try:
+                    notify_warning(
+                        title="Missing Game Line Markets",
+                        message=f"Requested markets returned zero outcomes: {', '.join(missing_markets)}",
+                        details={
+                            'scraper': 'oddsa_game_lines',
+                            'event_id': self.opts.get('event_id', 'unknown'),
+                            'game_date': self.opts.get('game_date', 'unknown'),
+                            'requested_markets': requested_markets,
+                            'missing_markets': missing_markets,
+                            'spreads_count': spreads_count,
+                            'totals_count': totals_count,
+                            'total_rows': row_count,
+                            'teams': teams_suffix or 'unknown'
+                        }
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+            
+            # Success! Send info notification with metrics
+            try:
+                notify_info(
+                    title="Game Lines Scraped Successfully",
+                    message=f"Retrieved {row_count} game line outcomes ({spreads_count} spreads, {totals_count} totals)",
+                    details={
+                        'scraper': 'oddsa_game_lines',
+                        'event_id': self.opts.get('event_id', 'unknown'),
+                        'game_date': self.opts.get('game_date', 'unknown'),
+                        'markets': self.opts.get('markets', 'spreads,totals'),
+                        'regions': self.opts.get('regions', 'us'),
+                        'bookmakers': self.opts.get('bookmakers', 'draftkings,fanduel'),
+                        'row_count': row_count,
+                        'spreads_count': spreads_count,
+                        'totals_count': totals_count,
+                        'bookmakers_count': len(bookmakers),
+                        'teams': teams_suffix or 'unknown',
+                        'snap_time': snap_hour
+                    }
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+        
         logger.info(
             "Fetched %d game lines rows (%d spreads, %d totals) for event %s",
             row_count, spreads_count, totals_count, self.opts["event_id"],
@@ -351,4 +521,3 @@ create_app = convert_existing_flask_scraper(GetOddsApiCurrentGameLines)
 if __name__ == "__main__":
     main = GetOddsApiCurrentGameLines.create_cli_and_flask_main()
     main()
-    

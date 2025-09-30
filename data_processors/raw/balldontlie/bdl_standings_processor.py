@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# File: data_processors/raw/balldontlie/bdl_standings_processor.py
+
 import json
 import logging
 import re
@@ -7,6 +9,11 @@ from typing import Dict, List, Optional, Tuple
 from datetime import datetime, date
 from google.cloud import bigquery
 from data_processors.raw.processor_base import ProcessorBase
+from shared.utils.notification_system import (
+    notify_error,
+    notify_warning,
+    notify_info
+)
 
 class BdlStandingsProcessor(ProcessorBase):
     def __init__(self):
@@ -63,7 +70,30 @@ class BdlStandingsProcessor(ProcessorBase):
     
     def transform_data(self, raw_data: Dict, file_path: str) -> List[Dict]:
         """Transform BDL standings JSON into BigQuery rows."""
+        # Validate data structure first
+        validation_errors = self.validate_data(raw_data)
+        if validation_errors:
+            logging.error(f"Invalid data structure in {file_path}: {validation_errors}")
+            
+            # Notify about invalid data structure
+            try:
+                notify_error(
+                    title="Invalid Standings Data Structure",
+                    message=f"BDL standings data has invalid structure",
+                    details={
+                        'file_path': file_path,
+                        'validation_errors': validation_errors,
+                        'processor': 'BDL Standings'
+                    },
+                    processor_name="BDL Standings Processor"
+                )
+            except Exception as e:
+                logging.warning(f"Failed to send notification: {e}")
+            
+            return []
+        
         rows = []
+        parse_failures = []
         
         # Extract metadata
         season_year = raw_data.get('season')
@@ -80,12 +110,44 @@ class BdlStandingsProcessor(ProcessorBase):
         
         if not date_str:
             logging.error(f"Could not extract date from file path: {file_path}")
+            
+            # Notify about date extraction failure
+            try:
+                notify_error(
+                    title="Failed to Extract Date from Path",
+                    message=f"Could not extract date from standings file path",
+                    details={
+                        'file_path': file_path,
+                        'processor': 'BDL Standings'
+                    },
+                    processor_name="BDL Standings Processor"
+                )
+            except Exception as e:
+                logging.warning(f"Failed to send notification: {e}")
+            
             return rows
         
         try:
             date_recorded = datetime.strptime(date_str, '%Y-%m-%d').date()
         except ValueError:
             logging.error(f"Invalid date format in path: {date_str}")
+            
+            # Notify about invalid date format
+            try:
+                notify_error(
+                    title="Invalid Date Format in Path",
+                    message=f"Date string '{date_str}' has invalid format",
+                    details={
+                        'date_string': date_str,
+                        'file_path': file_path,
+                        'expected_format': 'YYYY-MM-DD',
+                        'processor': 'BDL Standings'
+                    },
+                    processor_name="BDL Standings Processor"
+                )
+            except Exception as e:
+                logging.warning(f"Failed to send notification: {e}")
+            
             return rows
         
         # Process each team's standing
@@ -97,6 +159,14 @@ class BdlStandingsProcessor(ProcessorBase):
             div_wins, div_losses = self.parse_record_string(standing.get('division_record'))
             home_wins, home_losses = self.parse_record_string(standing.get('home_record'))
             road_wins, road_losses = self.parse_record_string(standing.get('road_record'))
+            
+            # Track parse failures
+            if standing.get('conference_record') and (conf_wins == 0 and conf_losses == 0):
+                parse_failures.append({
+                    'team': team_data.get('abbreviation'),
+                    'field': 'conference_record',
+                    'value': standing.get('conference_record')
+                })
             
             # Calculate derived fields
             wins = standing.get('wins', 0)
@@ -155,11 +225,56 @@ class BdlStandingsProcessor(ProcessorBase):
             rows.append(row)
         
         logging.info(f"Transformed {len(rows)} team standings for {date_recorded}")
+        
+        # Warn if unexpected number of teams (NBA has 30 teams)
+        if len(rows) != 30:
+            try:
+                notify_warning(
+                    title="Unexpected Number of Teams",
+                    message=f"Expected 30 teams in standings, got {len(rows)}",
+                    details={
+                        'team_count': len(rows),
+                        'expected_count': 30,
+                        'date_recorded': date_recorded.isoformat(),
+                        'season_year': season_year,
+                        'processor': 'BDL Standings'
+                    }
+                )
+            except Exception as e:
+                logging.warning(f"Failed to send notification: {e}")
+        
+        # Warn about record parsing failures
+        if parse_failures:
+            try:
+                notify_warning(
+                    title="Record String Parsing Failures",
+                    message=f"Failed to parse {len(parse_failures)} record strings",
+                    details={
+                        'failure_count': len(parse_failures),
+                        'sample_failures': parse_failures[:5],
+                        'processor': 'BDL Standings'
+                    }
+                )
+            except Exception as e:
+                logging.warning(f"Failed to send notification: {e}")
+        
         return rows
     
     def load_data(self, rows: List[Dict], **kwargs) -> Dict:
         """Load standings data using MERGE_UPDATE strategy."""
         if not rows:
+            # Notify about empty data
+            try:
+                notify_warning(
+                    title="No Standings Data to Process",
+                    message="BDL standings data is empty",
+                    details={
+                        'processor': 'BDL Standings'
+                    }
+                )
+            except Exception as e:
+                logging.warning(f"Failed to send notification: {e}")
+            
             return {'rows_processed': 0, 'errors': []}
         
         table_id = f"{self.project_id}.{self.table_name}"
@@ -177,7 +292,31 @@ class BdlStandingsProcessor(ProcessorBase):
             """
             
             logging.info(f"Deleting existing data for {date_recorded}, season {season_year}")
-            self.bq_client.query(delete_query).result()
+            
+            try:
+                self.bq_client.query(delete_query).result()
+            except Exception as delete_error:
+                logging.error(f"Failed to delete existing standings: {delete_error}")
+                
+                # Notify about deletion failure
+                try:
+                    notify_error(
+                        title="Failed to Delete Existing Standings",
+                        message=f"Could not delete existing standings data for {date_recorded}",
+                        details={
+                            'date_recorded': date_recorded,
+                            'season_year': season_year,
+                            'error': str(delete_error),
+                            'error_type': type(delete_error).__name__,
+                            'processor': 'BDL Standings',
+                            'impact': 'may_create_duplicate_data'
+                        },
+                        processor_name="BDL Standings Processor"
+                    )
+                except Exception as e:
+                    logging.warning(f"Failed to send notification: {e}")
+                
+                raise delete_error
             
             # Update created_at for existing records (set to current time for new records)
             for row in rows:
@@ -188,10 +327,80 @@ class BdlStandingsProcessor(ProcessorBase):
             if result:
                 errors.extend([str(e) for e in result])
                 
+                # Notify about BigQuery insert errors
+                try:
+                    notify_error(
+                        title="BigQuery Insert Failed",
+                        message=f"Failed to insert standings data into BigQuery",
+                        details={
+                            'error_count': len(result),
+                            'sample_errors': [str(e) for e in result[:3]],
+                            'rows_attempted': len(rows),
+                            'date_recorded': date_recorded,
+                            'season_year': season_year,
+                            'table': self.table_name,
+                            'processor': 'BDL Standings'
+                        },
+                        processor_name="BDL Standings Processor"
+                    )
+                except Exception as e:
+                    logging.warning(f"Failed to send notification: {e}")
+            else:
+                logging.info(f"Successfully inserted {len(rows)} standings for {date_recorded}")
+                
+                # Calculate summary statistics
+                east_teams = sum(1 for row in rows if row['conference'] == 'East')
+                west_teams = sum(1 for row in rows if row['conference'] == 'West')
+                avg_games_played = sum(row['games_played'] for row in rows) / len(rows)
+                
+                # Get top teams by conference
+                east_leader = next((row for row in sorted(rows, key=lambda x: x['conference_rank'] or 99) 
+                                   if row['conference'] == 'East'), None)
+                west_leader = next((row for row in sorted(rows, key=lambda x: x['conference_rank'] or 99) 
+                                   if row['conference'] == 'West'), None)
+                
+                # Send success notification
+                try:
+                    notify_info(
+                        title="BDL Standings Processing Complete",
+                        message=f"Successfully processed standings for {len(rows)} teams on {date_recorded}",
+                        details={
+                            'total_teams': len(rows),
+                            'date_recorded': date_recorded,
+                            'season_year': season_year,
+                            'season_display': rows[0]['season_display'],
+                            'east_teams': east_teams,
+                            'west_teams': west_teams,
+                            'avg_games_played': round(avg_games_played, 1),
+                            'east_leader': f"{east_leader['team_abbr']} ({east_leader['wins']}-{east_leader['losses']})" if east_leader else 'N/A',
+                            'west_leader': f"{west_leader['team_abbr']} ({west_leader['wins']}-{west_leader['losses']})" if west_leader else 'N/A',
+                            'table': self.table_name,
+                            'processor': 'BDL Standings'
+                        }
+                    )
+                except Exception as e:
+                    logging.warning(f"Failed to send notification: {e}")
+                
         except Exception as e:
             error_msg = f"Error loading standings data: {str(e)}"
             logging.error(error_msg)
             errors.append(error_msg)
+            
+            # Notify about general processing error
+            try:
+                notify_error(
+                    title="BDL Standings Processing Failed",
+                    message=f"Unexpected error during standings processing: {str(e)}",
+                    details={
+                        'error': str(e),
+                        'error_type': type(e).__name__,
+                        'rows_attempted': len(rows),
+                        'processor': 'BDL Standings'
+                    },
+                    processor_name="BDL Standings Processor"
+                )
+            except Exception as notify_ex:
+                logging.warning(f"Failed to send notification: {notify_ex}")
         
         return {
             'rows_processed': len(rows) if not errors else 0,

@@ -7,6 +7,11 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional
 from google.cloud import bigquery
 from data_processors.raw.processor_base import ProcessorBase
+from shared.utils.notification_system import (
+    notify_error,
+    notify_warning,
+    notify_info
+)
 
 class OddsGameLinesProcessor(ProcessorBase):
     def __init__(self):
@@ -17,6 +22,7 @@ class OddsGameLinesProcessor(ProcessorBase):
         # CRITICAL: Initialize BigQuery client and project_id
         self.project_id = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
         self.bq_client = bigquery.Client(project=self.project_id)
+        self.unknown_teams = set()  # Track unknown teams for batch warning
     
     def normalize_team_name(self, team_name: str) -> str:
         """Aggressive normalization for team name consistency."""
@@ -69,7 +75,14 @@ class OddsGameLinesProcessor(ProcessorBase):
         }
         
         normalized = self.normalize_team_name(team_name)
-        return team_mapping.get(normalized, team_name[:3].upper())
+        abbr = team_mapping.get(normalized)
+        
+        if not abbr:
+            # Team not in mapping - use fallback and track
+            self.unknown_teams.add(team_name)
+            abbr = team_name[:3].upper()
+        
+        return abbr
     
     def parse_timestamp(self, timestamp_str: str) -> Optional[str]:
         """Parse ISO timestamp string to proper format."""
@@ -108,93 +121,142 @@ class OddsGameLinesProcessor(ProcessorBase):
     def transform_data(self, raw_data: Dict, file_path: str) -> List[Dict]:
         """Transform nested odds data into flat rows for BigQuery."""
         rows = []
-        now = datetime.now(timezone.utc).isoformat()
         
-        # Parse timestamps
-        snapshot_timestamp = self.parse_timestamp(raw_data.get('timestamp'))
-        previous_timestamp = self.parse_timestamp(raw_data.get('previous_timestamp'))
-        next_timestamp = self.parse_timestamp(raw_data.get('next_timestamp'))
-        
-        game_data = raw_data['data']
-        
-        # Game-level data
-        game_id = game_data['id']
-        sport_key = game_data['sport_key']
-        sport_title = game_data['sport_title']
-        commence_time = self.parse_timestamp(game_data['commence_time'])
-        home_team = game_data['home_team']
-        away_team = game_data['away_team']
-        
-        # Extract game date from commence_time
-        game_date = None
-        if commence_time:
-            try:
-                dt = datetime.fromisoformat(commence_time)
-                game_date = dt.date().isoformat()
-            except:
-                pass
-        
-        # Get team abbreviations
-        home_team_abbr = self.get_team_abbreviation(home_team)
-        away_team_abbr = self.get_team_abbreviation(away_team)
-        
-        # Process each bookmaker
-        for bookmaker in game_data.get('bookmakers', []):
-            bookmaker_key = bookmaker.get('key', '')
-            bookmaker_title = bookmaker.get('title', '')
-            bookmaker_last_update = self.parse_timestamp(bookmaker.get('last_update'))
-            
-            # Process each market (spreads, totals, etc.)
-            for market in bookmaker.get('markets', []):
-                market_key = market.get('key', '')
-                market_last_update = self.parse_timestamp(market.get('last_update'))
+        try:
+            # Validate data first
+            errors = self.validate_data(raw_data)
+            if errors:
+                logger = logging.getLogger(__name__)
+                logger.error(f"Validation errors for {file_path}: {errors}")
                 
-                # Process each outcome
-                for outcome in market.get('outcomes', []):
-                    row = {
-                        # Snapshot metadata
-                        'snapshot_timestamp': snapshot_timestamp,
-                        'previous_snapshot_timestamp': previous_timestamp,
-                        'next_snapshot_timestamp': next_timestamp,
-                        
-                        # Game identifiers
-                        'game_id': game_id,
-                        'sport_key': sport_key,
-                        'sport_title': sport_title,
-                        'commence_time': commence_time,
-                        'game_date': game_date,
-                        
-                        # Teams
-                        'home_team': home_team,
-                        'away_team': away_team,
-                        'home_team_abbr': home_team_abbr,
-                        'away_team_abbr': away_team_abbr,
-                        
-                        # Bookmaker info
-                        'bookmaker_key': bookmaker_key,
-                        'bookmaker_title': bookmaker_title,
-                        'bookmaker_last_update': bookmaker_last_update,
-                        
-                        # Market info
-                        'market_key': market_key,
-                        'market_last_update': market_last_update,
-                        
-                        # Outcome info
-                        'outcome_name': outcome.get('name', ''),
-                        'outcome_price': float(outcome.get('price', 0)),
-                        'outcome_point': float(outcome.get('point', 0)) if outcome.get('point') is not None else None,
-                        
-                        # Processing metadata
-                        'source_file_path': file_path,
-                        'created_at': now,
-                        'processed_at': now
-                    }
-                    rows.append(row)
+                # Send warning notification for validation errors
+                try:
+                    notify_warning(
+                        title="Game Lines Data Validation Errors",
+                        message=f"Validation errors found in odds API game lines data: {', '.join(errors[:3])}",
+                        details={
+                            'processor': 'OddsGameLinesProcessor',
+                            'file_path': file_path,
+                            'error_count': len(errors),
+                            'errors': errors[:5]  # First 5 errors
+                        }
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                
+                return rows
+            
+            now = datetime.now(timezone.utc).isoformat()
+            
+            # Parse timestamps
+            snapshot_timestamp = self.parse_timestamp(raw_data.get('timestamp'))
+            previous_timestamp = self.parse_timestamp(raw_data.get('previous_timestamp'))
+            next_timestamp = self.parse_timestamp(raw_data.get('next_timestamp'))
+            
+            game_data = raw_data['data']
+            
+            # Game-level data
+            game_id = game_data['id']
+            sport_key = game_data['sport_key']
+            sport_title = game_data['sport_title']
+            commence_time = self.parse_timestamp(game_data['commence_time'])
+            home_team = game_data['home_team']
+            away_team = game_data['away_team']
+            
+            # Extract game date from commence_time
+            game_date = None
+            if commence_time:
+                try:
+                    dt = datetime.fromisoformat(commence_time)
+                    game_date = dt.date().isoformat()
+                except:
+                    pass
+            
+            # Get team abbreviations
+            home_team_abbr = self.get_team_abbreviation(home_team)
+            away_team_abbr = self.get_team_abbreviation(away_team)
+            
+            # Process each bookmaker
+            for bookmaker in game_data.get('bookmakers', []):
+                bookmaker_key = bookmaker.get('key', '')
+                bookmaker_title = bookmaker.get('title', '')
+                bookmaker_last_update = self.parse_timestamp(bookmaker.get('last_update'))
+                
+                # Process each market (spreads, totals, etc.)
+                for market in bookmaker.get('markets', []):
+                    market_key = market.get('key', '')
+                    market_last_update = self.parse_timestamp(market.get('last_update'))
+                    
+                    # Process each outcome
+                    for outcome in market.get('outcomes', []):
+                        row = {
+                            # Snapshot metadata
+                            'snapshot_timestamp': snapshot_timestamp,
+                            'previous_snapshot_timestamp': previous_timestamp,
+                            'next_snapshot_timestamp': next_timestamp,
+                            
+                            # Game identifiers
+                            'game_id': game_id,
+                            'sport_key': sport_key,
+                            'sport_title': sport_title,
+                            'commence_time': commence_time,
+                            'game_date': game_date,
+                            
+                            # Teams
+                            'home_team': home_team,
+                            'away_team': away_team,
+                            'home_team_abbr': home_team_abbr,
+                            'away_team_abbr': away_team_abbr,
+                            
+                            # Bookmaker info
+                            'bookmaker_key': bookmaker_key,
+                            'bookmaker_title': bookmaker_title,
+                            'bookmaker_last_update': bookmaker_last_update,
+                            
+                            # Market info
+                            'market_key': market_key,
+                            'market_last_update': market_last_update,
+                            
+                            # Outcome info
+                            'outcome_name': outcome.get('name', ''),
+                            'outcome_price': float(outcome.get('price', 0)),
+                            'outcome_point': float(outcome.get('point', 0)) if outcome.get('point') is not None else None,
+                            
+                            # Processing metadata
+                            'source_file_path': file_path,
+                            'created_at': now,
+                            'processed_at': now
+                        }
+                        rows.append(row)
+            
+        except Exception as e:
+            logger = logging.getLogger(__name__)
+            logger.error(f"Transform failed for {file_path}: {e}", exc_info=True)
+            
+            # Send error notification
+            try:
+                notify_error(
+                    title="Game Lines Transform Failed",
+                    message=f"Failed to transform odds API game lines data: {str(e)}",
+                    details={
+                        'processor': 'OddsGameLinesProcessor',
+                        'file_path': file_path,
+                        'error_type': type(e).__name__,
+                        'error_message': str(e)
+                    },
+                    processor_name="Odds API Game Lines Processor"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            
+            raise
         
         return rows
     
     def load_data(self, rows: List[Dict], **kwargs) -> Dict:
         """Load data into BigQuery with MERGE_UPDATE strategy."""
+        logger = logging.getLogger(__name__)
+        
         if not rows:
             return {'rows_processed': 0, 'errors': []}
         
@@ -214,13 +276,107 @@ class OddsGameLinesProcessor(ProcessorBase):
                 AND game_id = '{game_id}' 
                 AND snapshot_timestamp = '{snapshot_timestamp}'
                 """
-                self.bq_client.query(delete_query).result()
+                
+                try:
+                    self.bq_client.query(delete_query).result()
+                except Exception as delete_error:
+                    error_msg = f"Failed to delete existing records: {str(delete_error)}"
+                    logger.error(error_msg)
+                    errors.append(error_msg)
+                    
+                    # Send error notification for delete failure
+                    try:
+                        notify_error(
+                            title="Game Lines Delete Failed",
+                            message=f"Failed to delete existing game lines records before insert",
+                            details={
+                                'processor': 'OddsGameLinesProcessor',
+                                'table': self.table_name,
+                                'game_id': game_id,
+                                'game_date': game_date,
+                                'error_type': type(delete_error).__name__,
+                                'error_message': str(delete_error)
+                            },
+                            processor_name="Odds API Game Lines Processor"
+                        )
+                    except Exception as notify_ex:
+                        logger.warning(f"Failed to send notification: {notify_ex}")
+                    
+                    # Don't proceed with insert if delete failed
+                    return {'rows_processed': 0, 'errors': errors}
             
             # Insert new data
             result = self.bq_client.insert_rows_json(table_id, rows)
             if result:
                 errors.extend([str(e) for e in result])
+                logger.error(f"BigQuery insert errors: {result}")
+                
+                # Send error notification for insert failures
+                try:
+                    notify_error(
+                        title="Game Lines BigQuery Insert Failed",
+                        message=f"Failed to insert {len(rows)} game line records into BigQuery",
+                        details={
+                            'processor': 'OddsGameLinesProcessor',
+                            'table': self.table_name,
+                            'rows_attempted': len(rows),
+                            'error_count': len(result),
+                            'errors': [str(e) for e in result[:3]]  # First 3 errors
+                        },
+                        processor_name="Odds API Game Lines Processor"
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+            else:
+                # Success - send info notification
+                try:
+                    notify_info(
+                        title="Game Lines Processing Complete",
+                        message=f"Successfully processed {len(rows)} game line records",
+                        details={
+                            'processor': 'OddsGameLinesProcessor',
+                            'rows_processed': len(rows),
+                            'table': self.table_name,
+                            'strategy': self.processing_strategy
+                        }
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                
+                # Warn about unknown teams if any were found
+                if self.unknown_teams:
+                    try:
+                        notify_warning(
+                            title="Unknown Team Names Detected",
+                            message=f"Found {len(self.unknown_teams)} unknown team names in game lines data",
+                            details={
+                                'processor': 'OddsGameLinesProcessor',
+                                'unknown_teams': list(self.unknown_teams)
+                            }
+                        )
+                    except Exception as notify_ex:
+                        logger.warning(f"Failed to send notification: {notify_ex}")
+                        
         except Exception as e:
-            errors.append(str(e))
+            error_msg = str(e)
+            errors.append(error_msg)
+            logger.error(f"Failed to load data: {e}", exc_info=True)
+            
+            # Send critical error notification
+            try:
+                notify_error(
+                    title="Game Lines Load Exception",
+                    message=f"Critical failure loading game lines data: {str(e)}",
+                    details={
+                        'processor': 'OddsGameLinesProcessor',
+                        'table': self.table_name,
+                        'rows_attempted': len(rows),
+                        'error_type': type(e).__name__,
+                        'error_message': str(e)
+                    },
+                    processor_name="Odds API Game Lines Processor"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
         
         return {'rows_processed': len(rows) if not errors else 0, 'errors': errors}

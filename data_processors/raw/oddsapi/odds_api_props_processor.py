@@ -8,6 +8,11 @@ from typing import Dict, List, Optional, Tuple
 from google.cloud import bigquery
 from data_processors.raw.processor_base import ProcessorBase
 from data_processors.raw.utils.name_utils import normalize_name
+from shared.utils.notification_system import (
+    notify_error,
+    notify_warning,
+    notify_info
+)
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +62,7 @@ class OddsApiPropsProcessor(ProcessorBase):
         self.bq_client = bigquery.Client(project=self.project_id)
         self.table_name = 'nba_raw.odds_api_player_points_props'
         self.processing_strategy = 'APPEND_ALWAYS'
+        self.unknown_teams = set()  # Track unknown teams for batch warning
         
     def get_team_abbr(self, team_name: str) -> str:
         """Get team abbreviation from full name."""
@@ -71,6 +77,7 @@ class OddsApiPropsProcessor(ProcessorBase):
                 return abbr
         
         logger.warning(f"Unknown team name: {team_name}")
+        self.unknown_teams.add(team_name)  # Track for notification
         return team_name  # Return as-is if not found
     
     def decimal_to_american(self, decimal_odds: float) -> int:
@@ -166,144 +173,186 @@ class OddsApiPropsProcessor(ProcessorBase):
         """Transform Odds API props data to BigQuery rows."""
         rows = []
         
-        # Validate data first
-        errors = self.validate_data(raw_data)
-        if errors:
-            logger.error(f"Validation errors for {file_path}: {errors}")
-            return rows
-        
-        # Extract metadata from file path
-        metadata = self.extract_metadata_from_path(file_path)
-        
-        # Get main data
-        game_data = raw_data.get('data', {})
-        
-        # Parse timestamps
-        snapshot_timestamp = raw_data.get('timestamp')
-        if snapshot_timestamp:
-            snapshot_dt = datetime.fromisoformat(snapshot_timestamp.replace('Z', '+00:00'))
-        else:
-            logger.warning(f"No snapshot timestamp in {file_path}")
-            snapshot_dt = datetime.now()
-        
-        game_date = datetime.strptime(metadata['game_date'], '%Y-%m-%d').date()
-        
-        commence_time_str = game_data.get('commence_time')
-        if commence_time_str:
-            game_start_dt = datetime.fromisoformat(commence_time_str.replace('Z', '+00:00'))
-        else:
-            game_start_dt = None
-        
-        # Calculate minutes before tipoff
-        minutes_before = None
-        if game_start_dt:
-            minutes_before = self.calculate_minutes_before_tipoff(game_start_dt, snapshot_dt)
-        
-        # Get team abbreviations
-        home_team_abbr = self.get_team_abbr(game_data.get('home_team', ''))
-        away_team_abbr = self.get_team_abbr(game_data.get('away_team', ''))
-        
-        # Create game_id in format YYYYMMDD_AWAY_HOME
-        game_id = f"{metadata['game_date'].replace('-', '')}_{away_team_abbr}_{home_team_abbr}"
-        
-        # Parse capture timestamp
-        capture_dt = None
-        if metadata.get('capture_timestamp'):
-            # Format: 20250812_035909
-            try:
-                capture_dt = datetime.strptime(metadata['capture_timestamp'], '%Y%m%d_%H%M%S')
-            except:
-                logger.warning(f"Could not parse capture timestamp: {metadata.get('capture_timestamp')}")
-        
-        # Process each bookmaker
-        for bookmaker in game_data.get('bookmakers', []):
-            bookmaker_key = bookmaker.get('key', '')
-            bookmaker_title = bookmaker.get('title', bookmaker_key)
-            bookmaker_last_update = bookmaker.get('last_update')
-            
-            if bookmaker_last_update:
-                bookmaker_update_dt = datetime.fromisoformat(bookmaker_last_update.replace('Z', '+00:00'))
-            else:
-                bookmaker_update_dt = None
-            
-            # Find player_points market
-            for market in bookmaker.get('markets', []):
-                if market.get('key') != 'player_points':
-                    continue
+        try:
+            # Validate data first
+            errors = self.validate_data(raw_data)
+            if errors:
+                logger.error(f"Validation errors for {file_path}: {errors}")
                 
-                # Process outcomes - group by player
-                player_props = {}
-                for outcome in market.get('outcomes', []):
-                    player_name = outcome.get('description', '')
-                    outcome_type = outcome.get('name', '')  # 'Over' or 'Under'
-                    price = outcome.get('price', 0)
-                    points_line = outcome.get('point', 0)
-                    
-                    if not player_name:
+                # Send warning notification for validation errors
+                try:
+                    notify_warning(
+                        title="Props Data Validation Errors",
+                        message=f"Validation errors found in odds API props data: {', '.join(errors[:3])}",
+                        details={
+                            'processor': 'OddsApiPropsProcessor',
+                            'file_path': file_path,
+                            'error_count': len(errors),
+                            'errors': errors[:5]  # First 5 errors
+                        }
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                
+                return rows
+            
+            # Extract metadata from file path
+            metadata = self.extract_metadata_from_path(file_path)
+            
+            # Get main data
+            game_data = raw_data.get('data', {})
+            
+            # Parse timestamps
+            snapshot_timestamp = raw_data.get('timestamp')
+            if snapshot_timestamp:
+                snapshot_dt = datetime.fromisoformat(snapshot_timestamp.replace('Z', '+00:00'))
+            else:
+                logger.warning(f"No snapshot timestamp in {file_path}")
+                snapshot_dt = datetime.now()
+            
+            game_date = datetime.strptime(metadata['game_date'], '%Y-%m-%d').date()
+            
+            commence_time_str = game_data.get('commence_time')
+            if commence_time_str:
+                game_start_dt = datetime.fromisoformat(commence_time_str.replace('Z', '+00:00'))
+            else:
+                game_start_dt = None
+            
+            # Calculate minutes before tipoff
+            minutes_before = None
+            if game_start_dt:
+                minutes_before = self.calculate_minutes_before_tipoff(game_start_dt, snapshot_dt)
+            
+            # Get team abbreviations
+            home_team_abbr = self.get_team_abbr(game_data.get('home_team', ''))
+            away_team_abbr = self.get_team_abbr(game_data.get('away_team', ''))
+            
+            # Create game_id in format YYYYMMDD_AWAY_HOME
+            game_id = f"{metadata['game_date'].replace('-', '')}_{away_team_abbr}_{home_team_abbr}"
+            
+            # Parse capture timestamp
+            capture_dt = None
+            if metadata.get('capture_timestamp'):
+                # Format: 20250812_035909
+                try:
+                    capture_dt = datetime.strptime(metadata['capture_timestamp'], '%Y%m%d_%H%M%S')
+                except:
+                    logger.warning(f"Could not parse capture timestamp: {metadata.get('capture_timestamp')}")
+            
+            # Process each bookmaker
+            for bookmaker in game_data.get('bookmakers', []):
+                bookmaker_key = bookmaker.get('key', '')
+                bookmaker_title = bookmaker.get('title', bookmaker_key)
+                bookmaker_last_update = bookmaker.get('last_update')
+                
+                if bookmaker_last_update:
+                    bookmaker_update_dt = datetime.fromisoformat(bookmaker_last_update.replace('Z', '+00:00'))
+                else:
+                    bookmaker_update_dt = None
+                
+                # Find player_points market
+                for market in bookmaker.get('markets', []):
+                    if market.get('key') != 'player_points':
                         continue
                     
-                    if player_name not in player_props:
-                        player_props[player_name] = {
-                            'points_line': points_line,
-                            'over_price': None,
-                            'under_price': None
+                    # Process outcomes - group by player
+                    player_props = {}
+                    for outcome in market.get('outcomes', []):
+                        player_name = outcome.get('description', '')
+                        outcome_type = outcome.get('name', '')  # 'Over' or 'Under'
+                        price = outcome.get('price', 0)
+                        points_line = outcome.get('point', 0)
+                        
+                        if not player_name:
+                            continue
+                        
+                        if player_name not in player_props:
+                            player_props[player_name] = {
+                                'points_line': points_line,
+                                'over_price': None,
+                                'under_price': None
+                            }
+                        
+                        if outcome_type == 'Over':
+                            player_props[player_name]['over_price'] = price
+                        elif outcome_type == 'Under':
+                            player_props[player_name]['under_price'] = price
+                    
+                    # Create a row for each player
+                    for player_name, props in player_props.items():
+                        row = {
+                            # Game identifiers
+                            'game_id': game_id,
+                            'odds_api_event_id': game_data.get('id', ''),
+                            'game_date': game_date.isoformat() if hasattr(game_date, "isoformat") else game_date,
+                            'game_start_time': game_start_dt,
+                            
+                            # Teams
+                            'home_team_abbr': home_team_abbr,
+                            'away_team_abbr': away_team_abbr,
+                            
+                            # Snapshot tracking
+                            'snapshot_timestamp': snapshot_dt,
+                            'snapshot_tag': metadata.get('snapshot_tag'),
+                            'capture_timestamp': capture_dt,
+                            'minutes_before_tipoff': minutes_before,
+                            
+                            # Prop details
+                            'bookmaker': bookmaker_key,
+                            'player_name': player_name,
+                            'player_lookup': normalize_name(player_name),
+                            
+                            # Points line
+                            'points_line': props['points_line'],
+                            'over_price': props['over_price'],
+                            'over_price_american': self.decimal_to_american(props['over_price']) if props['over_price'] else None,
+                            'under_price': props['under_price'],
+                            'under_price_american': self.decimal_to_american(props['under_price']) if props['under_price'] else None,
+                            
+                            # Metadata
+                            'bookmaker_last_update': bookmaker_update_dt,
+                            'source_file_path': file_path
                         }
-                    
-                    if outcome_type == 'Over':
-                        player_props[player_name]['over_price'] = price
-                    elif outcome_type == 'Under':
-                        player_props[player_name]['under_price'] = price
-                
-                # Create a row for each player
-                for player_name, props in player_props.items():
-                    row = {
-                        # Game identifiers
-                        'game_id': game_id,
-                        'odds_api_event_id': game_data.get('id', ''),
-                        'game_date': game_date.isoformat() if hasattr(game_date, "isoformat") else game_date,
-                        'game_start_time': game_start_dt,
                         
-                        # Teams
-                        'home_team_abbr': home_team_abbr,
-                        'away_team_abbr': away_team_abbr,
-                        
-                        # Snapshot tracking
-                        'snapshot_timestamp': snapshot_dt,
-                        'snapshot_tag': metadata.get('snapshot_tag'),
-                        'capture_timestamp': capture_dt,
-                        'minutes_before_tipoff': minutes_before,
-                        
-                        # Prop details
-                        'bookmaker': bookmaker_key,
-                        'player_name': player_name,
-                        'player_lookup': normalize_name(player_name),
-                        
-                        # Points line
-                        'points_line': props['points_line'],
-                        'over_price': props['over_price'],
-                        'over_price_american': self.decimal_to_american(props['over_price']) if props['over_price'] else None,
-                        'under_price': props['under_price'],
-                        'under_price_american': self.decimal_to_american(props['under_price']) if props['under_price'] else None,
-                        
-                        # Metadata
-                        'bookmaker_last_update': bookmaker_update_dt,
-                        'source_file_path': file_path
-                    }
-                    
-                    rows.append(row)
+                        rows.append(row)
+            
+            logger.info(f"Processed {len(rows)} prop records from {file_path}")
+            
+        except Exception as e:
+            logger.error(f"Transform failed for {file_path}: {e}", exc_info=True)
+            
+            # Send error notification
+            try:
+                notify_error(
+                    title="Props Transform Failed",
+                    message=f"Failed to transform odds API props data: {str(e)}",
+                    details={
+                        'processor': 'OddsApiPropsProcessor',
+                        'file_path': file_path,
+                        'error_type': type(e).__name__,
+                        'error_message': str(e)
+                    },
+                    processor_name="Odds API Props Processor"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            
+            raise
         
-        logger.info(f"Processed {len(rows)} prop records from {file_path}")
         return rows
     
     def load_data(self, rows: List[Dict], **kwargs) -> Dict:
+        """Load data to BigQuery using APPEND_ALWAYS strategy."""
         import datetime
+        
+        if not rows:
+            return {'rows_processed': 0, 'errors': []}
+        
+        # Convert datetime objects to ISO format strings
         for row in rows:
             for key, value in row.items():
                 if isinstance(value, (datetime.date, datetime.datetime)):
                     row[key] = value.isoformat()
-        """Load data to BigQuery using APPEND_ALWAYS strategy."""
-        if not rows:
-            return {'rows_processed': 0, 'errors': []}
         
         table_id = f"{self.project_id}.{self.table_name}"
         
@@ -314,11 +363,74 @@ class OddsApiPropsProcessor(ProcessorBase):
             if result:
                 errors.extend(result)
                 logger.error(f"BigQuery insert errors: {result}")
+                
+                # Send error notification for BigQuery failures
+                try:
+                    notify_error(
+                        title="Props BigQuery Insert Failed",
+                        message=f"Failed to insert {len(rows)} prop records into BigQuery",
+                        details={
+                            'processor': 'OddsApiPropsProcessor',
+                            'table': self.table_name,
+                            'rows_attempted': len(rows),
+                            'error_count': len(result),
+                            'errors': result[:3]  # First 3 errors
+                        },
+                        processor_name="Odds API Props Processor"
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+            else:
+                # Success - send info notification
+                try:
+                    notify_info(
+                        title="Props Processing Complete",
+                        message=f"Successfully processed {len(rows)} prop records",
+                        details={
+                            'processor': 'OddsApiPropsProcessor',
+                            'rows_processed': len(rows),
+                            'table': self.table_name
+                        }
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                    
+                # Warn about unknown teams if any were found
+                if self.unknown_teams:
+                    try:
+                        notify_warning(
+                            title="Unknown Team Names Detected",
+                            message=f"Found {len(self.unknown_teams)} unknown team names in props data",
+                            details={
+                                'processor': 'OddsApiPropsProcessor',
+                                'unknown_teams': list(self.unknown_teams)
+                            }
+                        )
+                    except Exception as notify_ex:
+                        logger.warning(f"Failed to send notification: {notify_ex}")
+                    
         except Exception as e:
-            logger.error(f"Failed to insert rows: {e}")
+            logger.error(f"Failed to insert rows: {e}", exc_info=True)
             errors.append(str(e))
+            
+            # Send critical error notification
+            try:
+                notify_error(
+                    title="Props BigQuery Insert Exception",
+                    message=f"Critical failure inserting props data: {str(e)}",
+                    details={
+                        'processor': 'OddsApiPropsProcessor',
+                        'table': self.table_name,
+                        'rows_attempted': len(rows),
+                        'error_type': type(e).__name__,
+                        'error_message': str(e)
+                    },
+                    processor_name="Odds API Props Processor"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
         
         return {
-            'rows_processed': len(rows),
+            'rows_processed': len(rows) if not errors else 0,
             'errors': errors
         }

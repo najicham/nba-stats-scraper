@@ -1,4 +1,5 @@
 """
+FILE: scrapers/espn/espn_game_boxscore.py
 ESPN - Game Boxscore scraper                                v1.1 - 2025-06-24
 -------------------------------------------------------------------------------
 Scraper to extract NBA boxscore from ESPN game page.
@@ -67,6 +68,22 @@ try:
 except ImportError:
     # Fallback if config not available
     TEAM_ABBR_MAP = {}
+
+# Notification system imports
+try:
+    from shared.utils.notification_system import (
+        notify_error,
+        notify_warning,
+        notify_info
+    )
+except ImportError:
+    # Fallback if notification system not available
+    def notify_error(*args, **kwargs):
+        pass
+    def notify_warning(*args, **kwargs):
+        pass
+    def notify_info(*args, **kwargs):
+        pass
 
 logger = logging.getLogger("scraper_base")
 
@@ -150,7 +167,25 @@ class GetEspnBoxscore(ScraperBase, ScraperFlaskMixin):
 
     def validate_download_data(self):
         if not self.decoded_data:
-            raise DownloadDataException("No HTML returned from ESPN boxscore page.")
+            error_msg = "No HTML returned from ESPN boxscore page."
+            
+            # Send error notification
+            try:
+                notify_error(
+                    title="ESPN Boxscore Download Failed",
+                    message=f"No HTML returned for game {self.opts['game_id']}",
+                    details={
+                        'scraper': 'espn_game_boxscore',
+                        'game_id': self.opts['game_id'],
+                        'gamedate': self.opts.get('gamedate'),
+                        'error': error_msg
+                    },
+                    processor_name="ESPN Boxscore Scraper"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            
+            raise DownloadDataException(error_msg)
 
     # In scrapers/espn/espn_game_boxscore.py
     def transform_data(self):
@@ -170,6 +205,23 @@ class GetEspnBoxscore(ScraperBase, ScraperFlaskMixin):
             team_data = self.parse_boxscore_json(embedded_data)
         else:
             logger.warning("No embedded JSON found (or skipJson=1). Falling back to HTML.")
+            
+            # Notify about JSON parsing fallback (only if not intentionally skipped)
+            if not self.skip_json:
+                try:
+                    notify_warning(
+                        title="ESPN Boxscore: JSON Fallback",
+                        message=f"No embedded JSON found for game {self.opts['game_id']}, using HTML parsing",
+                        details={
+                            'scraper': 'espn_game_boxscore',
+                            'game_id': self.opts['game_id'],
+                            'gamedate': self.opts.get('gamedate'),
+                            'skip_json': self.skip_json
+                        }
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+            
             team_data = self.scrape_html_boxscore(html)
 
         # Convert team-based structure to player-based structure
@@ -187,6 +239,23 @@ class GetEspnBoxscore(ScraperBase, ScraperFlaskMixin):
             "playerCount": player_structure["playerCount"], 
             "players": player_structure["players"]  # Large array last
         }
+
+        # Send success notification
+        try:
+            notify_info(
+                title="ESPN Boxscore Scraped Successfully",
+                message=f"Successfully scraped {player_structure['playerCount']} players for game {self.opts['game_id']}",
+                details={
+                    'scraper': 'espn_game_boxscore',
+                    'game_id': self.opts['game_id'],
+                    'gamedate': self.opts.get('gamedate'),
+                    'player_count': player_structure['playerCount'],
+                    'teams': player_structure['teams'],
+                    'used_json': bool(embedded_data)
+                }
+            )
+        except Exception as notify_ex:
+            logger.warning(f"Failed to send notification: {notify_ex}")
 
     def _convert_to_player_structure(self, team_data):
         """Convert team-keyed data to player-centric structure"""
@@ -235,8 +304,25 @@ class GetEspnBoxscore(ScraperBase, ScraperFlaskMixin):
             match = re.search(pattern, html, flags=re.DOTALL)
             if match:
                 return json.loads(match.group(1))
-        except Exception:
+        except Exception as e:
             logger.exception("Error extracting 'bxscr' embedded JSON.")
+            
+            # Notify about JSON extraction failure
+            try:
+                notify_warning(
+                    title="ESPN Boxscore: JSON Extraction Error",
+                    message=f"Failed to extract embedded JSON for game {self.opts['game_id']}: {str(e)}",
+                    details={
+                        'scraper': 'espn_game_boxscore',
+                        'game_id': self.opts['game_id'],
+                        'gamedate': self.opts.get('gamedate'),
+                        'error_type': type(e).__name__,
+                        'error': str(e)
+                    }
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+        
         return None
 
     def parse_boxscore_json(self, bxscr_list):
@@ -308,6 +394,26 @@ class GetEspnBoxscore(ScraperBase, ScraperFlaskMixin):
         # Each "Boxscore flex flex-column" is one team's boxscore chunk
         sections = soup.select(".Boxscore.flex.flex-column")
 
+        # Check if we found any boxscore sections
+        if not sections:
+            error_msg = "No boxscore sections found in HTML"
+            logger.error(error_msg)
+            
+            try:
+                notify_error(
+                    title="ESPN Boxscore: No Data Found",
+                    message=f"No boxscore sections found for game {self.opts['game_id']}",
+                    details={
+                        'scraper': 'espn_game_boxscore',
+                        'game_id': self.opts['game_id'],
+                        'gamedate': self.opts.get('gamedate'),
+                        'error': error_msg
+                    },
+                    processor_name="ESPN Boxscore Scraper"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+
         # We'll store final output in a dict
         output = {}
 
@@ -322,7 +428,26 @@ class GetEspnBoxscore(ScraperBase, ScraperFlaskMixin):
 
             all_tables = section.select("table.Table")
             if len(all_tables) < 2:
-                logger.warning(f"Boxscore section for {abbr} has <2 tables. Found {len(all_tables)}. Skipping.")
+                warning_msg = f"Boxscore section for {abbr} has <2 tables. Found {len(all_tables)}."
+                logger.warning(f"{warning_msg} Skipping.")
+                
+                # Notify about incomplete data
+                try:
+                    notify_warning(
+                        title="ESPN Boxscore: Incomplete Table Data",
+                        message=f"{warning_msg} for game {self.opts['game_id']}",
+                        details={
+                            'scraper': 'espn_game_boxscore',
+                            'game_id': self.opts['game_id'],
+                            'gamedate': self.opts.get('gamedate'),
+                            'team': abbr,
+                            'tables_found': len(all_tables),
+                            'tables_expected': 2
+                        }
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                
                 continue
 
             left_table = all_tables[0]   # The 'fixed/left' table (names)
@@ -557,4 +682,3 @@ create_app = convert_existing_flask_scraper(GetEspnBoxscore)
 if __name__ == "__main__":
     main = GetEspnBoxscore.create_cli_and_flask_main()
     main()
-    

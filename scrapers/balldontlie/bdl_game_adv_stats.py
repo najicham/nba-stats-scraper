@@ -1,4 +1,6 @@
 """
+File: scrapers/balldontlie/bdl_game_adv_stats.py
+
 BALLDONTLIE - Game Advanced Stats endpoint                 v2.0 (2025-06-25)
 ------------------------------------------------------------------------------
 Per-player advanced box-score rows from
@@ -50,6 +52,19 @@ except ImportError:
         InvalidHttpStatusCodeException,
     )
     from scrapers.utils.gcs_path_builder import GCSPathBuilder
+
+# Notification system imports
+try:
+    from shared.utils.notification_system import (
+        notify_error,
+        notify_warning,
+        notify_info
+    )
+except ImportError:
+    # Graceful fallback if notification system not available
+    def notify_error(*args, **kwargs): pass
+    def notify_warning(*args, **kwargs): pass
+    def notify_info(*args, **kwargs): pass
 
 logger = logging.getLogger(__name__)
 
@@ -127,6 +142,24 @@ class BdlGameAdvStatsScraper(ScraperBase, ScraperFlaskMixin):
                     detail = self.raw_response.json().get("message", "")
                 except (ValueError, json.JSONDecodeError):
                     detail = self.raw_response.text[:200].strip()
+            
+            # Send error notification for API errors
+            try:
+                notify_error(
+                    title="BDL Game Advanced Stats - API Error",
+                    message=f"API returned {code}: {detail or self.raw_response.reason}",
+                    details={
+                        'scraper': 'bdl_game_adv_stats',
+                        'ident': self.opts.get('ident', 'unknown'),
+                        'status_code': code,
+                        'error_detail': detail,
+                        'url': self.url
+                    },
+                    processor_name="Ball Don't Lie Advanced Stats"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send API error notification: {notify_ex}")
+            
             raise InvalidHttpStatusCodeException(
                 f"{code} {self.raw_response.reason} - {detail or 'see docs'}"
             )
@@ -286,70 +319,190 @@ class BdlGameAdvStatsScraper(ScraperBase, ScraperFlaskMixin):
     # Validation                                                         #
     # ------------------------------------------------------------------ #
     def validate_download_data(self) -> None:
-        if not isinstance(self.decoded_data, dict) or "data" not in self.decoded_data:
-            raise ValueError("Advanced-stats response malformed: missing 'data' key")
+        try:
+            if not isinstance(self.decoded_data, dict) or "data" not in self.decoded_data:
+                raise ValueError("Advanced-stats response malformed: missing 'data' key")
+        except Exception as e:
+            # Send error notification for validation failure
+            try:
+                notify_error(
+                    title="BDL Game Advanced Stats - Validation Failed",
+                    message=f"Data validation failed for {self.opts.get('ident', 'unknown')}: {str(e)}",
+                    details={
+                        'scraper': 'bdl_game_adv_stats',
+                        'ident': self.opts.get('ident'),
+                        'error_type': type(e).__name__,
+                        'url': self.url,
+                        'has_data': self.decoded_data is not None
+                    },
+                    processor_name="Ball Don't Lie Advanced Stats"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send validation error notification: {notify_ex}")
+            raise
 
     # ------------------------------------------------------------------ #
     # Transform (cursor walk, optional date loop)                        #
     # ------------------------------------------------------------------ #
     def transform_data(self) -> None:
-        rows: List[Dict[str, object]] = []
-        seen_dates: List[str] = []
+        try:
+            rows: List[Dict[str, object]] = []
+            seen_dates: List[str] = []
+            pages_fetched = 1
 
-        def add_page(js: Dict[str, object]) -> Optional[str]:
-            rows.extend(js.get("data", []))
-            return js.get("meta", {}).get("next_cursor")
+            def add_page(js: Dict[str, object]) -> Optional[str]:
+                rows.extend(js.get("data", []))
+                return js.get("meta", {}).get("next_cursor")
 
-        # first response
-        next_cursor = add_page(self.decoded_data)
-        date_in_meta = (
-            self.decoded_data.get("meta", {}).get("request_params", {}).get("dates[]")
-        )
-        if isinstance(date_in_meta, str):
-            seen_dates.append(date_in_meta)
-
-        # cursor pagination
-        while next_cursor:
-            resp = self.http_downloader.get(
-                self.base_url,
-                headers=self.headers,
-                params=self._build_params({"cursor": next_cursor}),
-                timeout=self.timeout_http,
+            # first response
+            next_cursor = add_page(self.decoded_data)
+            date_in_meta = (
+                self.decoded_data.get("meta", {}).get("request_params", {}).get("dates[]")
             )
-            resp.raise_for_status()
-            next_cursor = add_page(resp.json())
+            if isinstance(date_in_meta, str):
+                seen_dates.append(date_in_meta)
 
-        # additional dates (window mode only)
-        for dt in self._date_iter:
-            seen_dates.append(dt)
-            resp = self.http_downloader.get(
-                self.base_url,
-                headers=self.headers,
-                params=self._build_params({"dates[]": dt}),
-                timeout=self.timeout_http,
-            )
-            resp.raise_for_status()
-            next_cursor = add_page(resp.json())
-
+            # cursor pagination
             while next_cursor:
-                resp = self.http_downloader.get(
-                    self.base_url,
-                    headers=self.headers,
-                    params=self._build_params({"cursor": next_cursor}),
-                    timeout=self.timeout_http,
+                try:
+                    resp = self.http_downloader.get(
+                        self.base_url,
+                        headers=self.headers,
+                        params=self._build_params({"cursor": next_cursor}),
+                        timeout=self.timeout_http,
+                    )
+                    resp.raise_for_status()
+                    next_cursor = add_page(resp.json())
+                    pages_fetched += 1
+                except Exception as e:
+                    # Pagination failure
+                    try:
+                        notify_error(
+                            title="BDL Game Advanced Stats - Pagination Failed",
+                            message=f"Failed to fetch page {pages_fetched + 1} for {self.opts.get('ident', 'unknown')}: {str(e)}",
+                            details={
+                                'scraper': 'bdl_game_adv_stats',
+                                'ident': self.opts.get('ident'),
+                                'pages_fetched': pages_fetched,
+                                'rows_so_far': len(rows),
+                                'error_type': type(e).__name__
+                            },
+                            processor_name="Ball Don't Lie Advanced Stats"
+                        )
+                    except Exception as notify_ex:
+                        logger.warning(f"Failed to send pagination error notification: {notify_ex}")
+                    raise
+
+            # additional dates (window mode only)
+            for dt in self._date_iter:
+                seen_dates.append(dt)
+                try:
+                    resp = self.http_downloader.get(
+                        self.base_url,
+                        headers=self.headers,
+                        params=self._build_params({"dates[]": dt}),
+                        timeout=self.timeout_http,
+                    )
+                    resp.raise_for_status()
+                    next_cursor = add_page(resp.json())
+                    pages_fetched += 1
+                except Exception as e:
+                    # Date fetch failure
+                    try:
+                        notify_error(
+                            title="BDL Game Advanced Stats - Date Fetch Failed",
+                            message=f"Failed to fetch data for date {dt}: {str(e)}",
+                            details={
+                                'scraper': 'bdl_game_adv_stats',
+                                'ident': self.opts.get('ident'),
+                                'date': dt,
+                                'dates_fetched': len(seen_dates) - 1,
+                                'rows_so_far': len(rows),
+                                'error_type': type(e).__name__
+                            },
+                            processor_name="Ball Don't Lie Advanced Stats"
+                        )
+                    except Exception as notify_ex:
+                        logger.warning(f"Failed to send date fetch error notification: {notify_ex}")
+                    raise
+
+                while next_cursor:
+                    try:
+                        resp = self.http_downloader.get(
+                            self.base_url,
+                            headers=self.headers,
+                            params=self._build_params({"cursor": next_cursor}),
+                            timeout=self.timeout_http,
+                        )
+                        resp.raise_for_status()
+                        next_cursor = add_page(resp.json())
+                        pages_fetched += 1
+                    except Exception as e:
+                        # Pagination failure in date loop
+                        try:
+                            notify_error(
+                                title="BDL Game Advanced Stats - Date Pagination Failed",
+                                message=f"Failed to fetch page for date {dt}: {str(e)}",
+                                details={
+                                    'scraper': 'bdl_game_adv_stats',
+                                    'ident': self.opts.get('ident'),
+                                    'date': dt,
+                                    'pages_fetched': pages_fetched,
+                                    'rows_so_far': len(rows),
+                                    'error_type': type(e).__name__
+                                },
+                                processor_name="Ball Don't Lie Advanced Stats"
+                            )
+                        except Exception as notify_ex:
+                            logger.warning(f"Failed to send date pagination error notification: {notify_ex}")
+                        raise
+
+            rows.sort(key=lambda r: (r.get("game", {}).get("id"), r.get("player_id")))
+
+            self.data = {
+                "ident": self.opts["ident"],
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "rowCount": len(rows),
+                "advancedStats": rows,
+            }
+            
+            logger.info("Fetched %d advanced-stat rows (%s) across %d pages", 
+                       len(rows), self.opts["ident"], pages_fetched)
+
+            # Success notification
+            try:
+                notify_info(
+                    title="BDL Game Advanced Stats - Success",
+                    message=f"Successfully scraped {len(rows)} advanced stat rows ({self.opts.get('ident', 'unknown')})",
+                    details={
+                        'scraper': 'bdl_game_adv_stats',
+                        'ident': self.opts.get('ident'),
+                        'row_count': len(rows),
+                        'pages_fetched': pages_fetched,
+                        'dates_processed': len(seen_dates) if seen_dates else 'filter mode'
+                    }
                 )
-                resp.raise_for_status()
-                next_cursor = add_page(resp.json())
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send success notification: {notify_ex}")
 
-        rows.sort(key=lambda r: (r.get("game", {}).get("id"), r.get("player_id")))
-
-        self.data = {
-            "ident": self.opts["ident"],
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "rowCount": len(rows),
-            "advancedStats": rows,
-        }
-        logger.info("Fetched %d advanced-stat rows (%s)", len(rows), self.opts["ident"])
+        except Exception as e:
+            # General transformation error (not already caught above)
+            if "pagination" not in str(e).lower() and "date" not in str(e).lower():
+                try:
+                    notify_error(
+                        title="BDL Game Advanced Stats - Transform Failed",
+                        message=f"Data transformation failed for {self.opts.get('ident', 'unknown')}: {str(e)}",
+                        details={
+                            'scraper': 'bdl_game_adv_stats',
+                            'ident': self.opts.get('ident'),
+                            'error_type': type(e).__name__,
+                            'has_decoded_data': self.decoded_data is not None
+                        },
+                        processor_name="Ball Don't Lie Advanced Stats"
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send transform error notification: {notify_ex}")
+            raise
 
     # ------------------------------------------------------------------ #
     # Stats                                                              #
@@ -369,4 +522,3 @@ create_app = convert_existing_flask_scraper(BdlGameAdvStatsScraper)
 if __name__ == "__main__":
     main = BdlGameAdvStatsScraper.create_cli_and_flask_main()
     main()
-    

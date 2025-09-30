@@ -1,4 +1,6 @@
 """
+File: scrapers/balldontlie/bdl_live_box_scores.py
+
 BALLDONTLIE - Live Box-Scores endpoint                      v1.1 - 2025-06-24
 -------------------------------------------------------------------------------
 Continuously updated box scores:
@@ -41,6 +43,19 @@ except ImportError:
     from scrapers.scraper_flask_mixin import ScraperFlaskMixin
     from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
     from scrapers.utils.gcs_path_builder import GCSPathBuilder
+
+# Notification system imports
+try:
+    from shared.utils.notification_system import (
+        notify_error,
+        notify_warning,
+        notify_info
+    )
+except ImportError:
+    # Graceful fallback if notification system not available
+    def notify_error(*args, **kwargs): pass
+    def notify_warning(*args, **kwargs): pass
+    def notify_info(*args, **kwargs): pass
 
 logger = logging.getLogger(__name__)
 
@@ -129,37 +144,118 @@ class BdlLiveBoxScoresScraper(ScraperBase, ScraperFlaskMixin):
     # Validation                                                         #
     # ------------------------------------------------------------------ #
     def validate_download_data(self) -> None:
-        if not isinstance(self.decoded_data, dict) or "data" not in self.decoded_data:
-            raise ValueError("Live boxes response malformed: missing 'data' key")
+        try:
+            if not isinstance(self.decoded_data, dict) or "data" not in self.decoded_data:
+                raise ValueError("Live boxes response malformed: missing 'data' key")
+        except Exception as e:
+            # Send error notification for validation failure
+            try:
+                notify_error(
+                    title="BDL Live Box Scores - Validation Failed",
+                    message=f"Data validation failed: {str(e)}",
+                    details={
+                        'scraper': 'bdl_live_box_scores',
+                        'poll_id': self.opts.get('ts'),
+                        'error_type': type(e).__name__,
+                        'url': self.url,
+                        'has_data': self.decoded_data is not None
+                    },
+                    processor_name="Ball Don't Lie Live Box Scores"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send validation error notification: {notify_ex}")
+            raise
 
     # ------------------------------------------------------------------ #
     # Transform                                                          #
     # ------------------------------------------------------------------ #
     def transform_data(self) -> None:
-        live_boxes: List[Dict[str, Any]] = list(self.decoded_data["data"])
-        cursor: Optional[str] = self.decoded_data.get("meta", {}).get("next_cursor")
+        try:
+            live_boxes: List[Dict[str, Any]] = list(self.decoded_data["data"])
+            cursor: Optional[str] = self.decoded_data.get("meta", {}).get("next_cursor")
+            pages_fetched = 1
 
-        while cursor:
-            resp = self.http_downloader.get(
-                self.base_url,
-                headers=self.headers,
-                params={"cursor": cursor, "per_page": 100},
-                timeout=self.timeout_http,
-            )
-            resp.raise_for_status()
-            page_json: Dict[str, Any] = resp.json()
-            live_boxes.extend(page_json.get("data", []))
-            cursor = page_json.get("meta", {}).get("next_cursor")
+            # Paginate through all results (unlikely for live games, but possible)
+            while cursor:
+                try:
+                    resp = self.http_downloader.get(
+                        self.base_url,
+                        headers=self.headers,
+                        params={"cursor": cursor, "per_page": 100},
+                        timeout=self.timeout_http,
+                    )
+                    resp.raise_for_status()
+                    page_json: Dict[str, Any] = resp.json()
+                    live_boxes.extend(page_json.get("data", []))
+                    cursor = page_json.get("meta", {}).get("next_cursor")
+                    pages_fetched += 1
+                except Exception as e:
+                    # Pagination failure
+                    try:
+                        notify_error(
+                            title="BDL Live Box Scores - Pagination Failed",
+                            message=f"Failed to fetch page {pages_fetched + 1}: {str(e)}",
+                            details={
+                                'scraper': 'bdl_live_box_scores',
+                                'poll_id': self.opts.get('ts'),
+                                'pages_fetched': pages_fetched,
+                                'games_so_far': len(live_boxes),
+                                'error_type': type(e).__name__,
+                                'cursor': cursor
+                            },
+                            processor_name="Ball Don't Lie Live Box Scores"
+                        )
+                    except Exception as notify_ex:
+                        logger.warning(f"Failed to send pagination error notification: {notify_ex}")
+                    raise
 
-        live_boxes.sort(key=lambda g: g.get("game", {}).get("id"))
+            live_boxes.sort(key=lambda g: g.get("game", {}).get("id"))
 
-        self.data = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "pollId": self.opts["ts"],
-            "gameCount": len(live_boxes),
-            "liveBoxes": live_boxes,
-        }
-        logger.info("Fetched live box-scores for %d in-progress games", len(live_boxes))
+            self.data = {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "pollId": self.opts["ts"],
+                "gameCount": len(live_boxes),
+                "liveBoxes": live_boxes,
+            }
+            
+            logger.info("Fetched live box-scores for %d in-progress games (poll: %s)", 
+                       len(live_boxes), self.opts["ts"])
+
+            # Success notification - note that 0 games is normal for off-hours
+            # Only send INFO notifications when games are actually in progress
+            # to avoid notification spam during off-hours
+            if len(live_boxes) > 0:
+                try:
+                    notify_info(
+                        title="BDL Live Box Scores - Success",
+                        message=f"Successfully scraped live data for {len(live_boxes)} in-progress games",
+                        details={
+                            'scraper': 'bdl_live_box_scores',
+                            'poll_id': self.opts.get('ts'),
+                            'game_count': len(live_boxes),
+                            'pages_fetched': pages_fetched
+                        }
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send success notification: {notify_ex}")
+
+        except Exception as e:
+            # General transformation error
+            try:
+                notify_error(
+                    title="BDL Live Box Scores - Transform Failed",
+                    message=f"Data transformation failed: {str(e)}",
+                    details={
+                        'scraper': 'bdl_live_box_scores',
+                        'poll_id': self.opts.get('ts'),
+                        'error_type': type(e).__name__,
+                        'has_decoded_data': self.decoded_data is not None
+                    },
+                    processor_name="Ball Don't Lie Live Box Scores"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send transform error notification: {notify_ex}")
+            raise
 
     # ------------------------------------------------------------------ #
     # Stats                                                              #
@@ -179,4 +275,3 @@ create_app = convert_existing_flask_scraper(BdlLiveBoxScoresScraper)
 if __name__ == "__main__":
     main = BdlLiveBoxScoresScraper.create_cli_and_flask_main()
     main()
-    

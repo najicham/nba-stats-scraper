@@ -1,5 +1,6 @@
-# scrapers/nbacom/nbac_player_boxscore.py
 """
+File: scrapers/nbacom/nbac_player_boxscore.py
+
 Player box-score scraper (leaguegamelog)                 v2 - 2025-06-16
 -----------------------------------------------------------------------
 Downloads per-player rows for a single game-date via
@@ -50,6 +51,13 @@ except ImportError:
     from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
     from scrapers.utils.exceptions import DownloadDataException
     from scrapers.utils.gcs_path_builder import GCSPathBuilder
+
+# Notification system imports
+from shared.utils.notification_system import (
+    notify_error,
+    notify_warning,
+    notify_info
+)
 
 logger = logging.getLogger("scraper_base")
 
@@ -157,14 +165,137 @@ class GetNbaComPlayerBoxscore(ScraperBase, ScraperFlaskMixin):
     # Validation
     # ------------------------------------------------------------------ #
     def validate_download_data(self) -> None:
-        rs = self.decoded_data.get("resultSets", [])
-        if not rs or "rowSet" not in rs[0] or not rs[0]["rowSet"]:
-            raise DownloadDataException("No player rows in leaguegamelog JSON.")
-        logger.info(
-            "Found %d players in rowSet for gamedate=%s.",
-            len(rs[0]["rowSet"]),
-            self.opts["gamedate"],
-        )
+        """Validate the leaguegamelog response"""
+        try:
+            # Check basic response structure
+            if not isinstance(self.decoded_data, dict):
+                error_msg = "Response is not a JSON object"
+                logger.error("%s for gamedate %s", error_msg, self.opts["gamedate"])
+                try:
+                    notify_error(
+                        title="NBA.com Player Boxscore Invalid Response",
+                        message=f"Response is not a JSON object for gamedate {self.opts['gamedate']}",
+                        details={
+                            'gamedate': self.opts['gamedate'],
+                            'season': self.opts['season'],
+                            'season_type': self.opts['season_type'],
+                            'response_type': type(self.decoded_data).__name__,
+                            'url': self.url
+                        },
+                        processor_name="NBA.com Player Boxscore Scraper"
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                raise DownloadDataException(error_msg)
+            
+            # Check for resultSets
+            rs = self.decoded_data.get("resultSets", [])
+            if not rs:
+                error_msg = "No resultSets in leaguegamelog JSON"
+                logger.error("%s for gamedate %s", error_msg, self.opts["gamedate"])
+                try:
+                    notify_error(
+                        title="NBA.com Player Boxscore Missing ResultSets",
+                        message=f"No resultSets in response for gamedate {self.opts['gamedate']}",
+                        details={
+                            'gamedate': self.opts['gamedate'],
+                            'season': self.opts['season'],
+                            'season_type': self.opts['season_type'],
+                            'response_keys': list(self.decoded_data.keys()),
+                            'url': self.url
+                        },
+                        processor_name="NBA.com Player Boxscore Scraper"
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                raise DownloadDataException(error_msg)
+            
+            # Check for rowSet in first result
+            if "rowSet" not in rs[0]:
+                error_msg = "Missing rowSet in leaguegamelog resultSets"
+                logger.error("%s for gamedate %s", error_msg, self.opts["gamedate"])
+                try:
+                    notify_error(
+                        title="NBA.com Player Boxscore Missing RowSet",
+                        message=f"Missing rowSet in response for gamedate {self.opts['gamedate']}",
+                        details={
+                            'gamedate': self.opts['gamedate'],
+                            'season': self.opts['season'],
+                            'season_type': self.opts['season_type'],
+                            'result_set_keys': list(rs[0].keys()) if rs and isinstance(rs[0], dict) else [],
+                            'url': self.url
+                        },
+                        processor_name="NBA.com Player Boxscore Scraper"
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                raise DownloadDataException(error_msg)
+            
+            # Check if rowSet is empty
+            if not rs[0]["rowSet"]:
+                error_msg = "No player rows in leaguegamelog JSON"
+                logger.error("%s for gamedate %s", error_msg, self.opts["gamedate"])
+                try:
+                    notify_error(
+                        title="NBA.com Player Boxscore No Players",
+                        message=f"No player rows found for gamedate {self.opts['gamedate']}",
+                        details={
+                            'gamedate': self.opts['gamedate'],
+                            'season': self.opts['season'],
+                            'season_type': self.opts['season_type'],
+                            'url': self.url
+                        },
+                        processor_name="NBA.com Player Boxscore Scraper"
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                raise DownloadDataException(error_msg)
+            
+            player_count = len(rs[0]["rowSet"])
+            logger.info("Found %d players in rowSet for gamedate=%s.", player_count, self.opts["gamedate"])
+            
+            # Warning for suspiciously low player count (typical NBA game has 20-30 players)
+            min_players = int(os.environ.get('PLAYER_BOXSCORE_MIN_PLAYERS', '10'))
+            if player_count < min_players:
+                logger.warning("Low player count (%d) for gamedate %s", player_count, self.opts["gamedate"])
+                try:
+                    notify_warning(
+                        title="NBA.com Player Boxscore Low Player Count",
+                        message=f"Low player count ({player_count}) for gamedate {self.opts['gamedate']}",
+                        details={
+                            'gamedate': self.opts['gamedate'],
+                            'season': self.opts['season'],
+                            'season_type': self.opts['season_type'],
+                            'player_count': player_count,
+                            'threshold': min_players,
+                            'url': self.url
+                        }
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+            
+        except DownloadDataException:
+            # Already handled and notified above
+            raise
+        except Exception as e:
+            logger.error("Unexpected validation error for gamedate %s: %s", self.opts["gamedate"], e)
+            try:
+                notify_error(
+                    title="NBA.com Player Boxscore Validation Error",
+                    message=f"Unexpected validation error for gamedate {self.opts['gamedate']}: {str(e)}",
+                    details={
+                        'gamedate': self.opts['gamedate'],
+                        'season': self.opts['season'],
+                        'season_type': self.opts['season_type'],
+                        'error': str(e),
+                        'error_type': type(e).__name__,
+                        'url': self.url
+                    },
+                    processor_name="NBA.com Player Boxscore Scraper"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            raise DownloadDataException(f"Validation failed: {e}") from e
 
     # ------------------------------------------------------------------ #
     # should_save_data mirrors original logic
@@ -214,4 +345,3 @@ create_app = convert_existing_flask_scraper(GetNbaComPlayerBoxscore)
 if __name__ == "__main__":
     main = GetNbaComPlayerBoxscore.create_cli_and_flask_main()
     main()
-    

@@ -1,3 +1,4 @@
+# File: scrapers/bigdataball/bigdataball_discovery.py
 """
 BIGDATABALL DISCOVERY - Game ID Discovery endpoint (OPTIMIZED)  v2.0 - 2025-07-22
 -------------------------------------------------------------------------------
@@ -40,6 +41,13 @@ except ImportError:
     from scrapers.scraper_flask_mixin import ScraperFlaskMixin
     from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
     from scrapers.utils.gcs_path_builder import GCSPathBuilder
+
+# Notification system imports
+from shared.utils.notification_system import (
+    notify_error,
+    notify_warning,
+    notify_info
+)
 
 logger = logging.getLogger(__name__)
 
@@ -155,6 +163,22 @@ class BigDataBallDiscoveryScraper(ScraperBase, ScraperFlaskMixin):
             
         except Exception as e:
             logger.error(f"Failed to initialize Google Drive service: {e}")
+            
+            # Send error notification
+            try:
+                notify_error(
+                    title="BigDataBall Discovery Drive Service Failed",
+                    message=f"Failed to initialize Google Drive API: {str(e)}",
+                    details={
+                        'scraper': 'bigdataball_discovery',
+                        'error_type': type(e).__name__,
+                        'service_account_key_exists': bool(service_account_key_path and os.path.exists(service_account_key_path))
+                    },
+                    processor_name="BigDataBall Discovery Scraper"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            
             raise
 
     # ------------------------------------------------------------------ #
@@ -168,6 +192,25 @@ class BigDataBallDiscoveryScraper(ScraperBase, ScraperFlaskMixin):
             
             # Simple date-based discovery only
             files = self._discover_games_by_date(date_str)
+            
+            # Check if any games were found
+            if not files:
+                warning_msg = f"No games found for date {date_str}"
+                logger.warning(warning_msg)
+                
+                # Send warning notification
+                try:
+                    notify_warning(
+                        title="BigDataBall No Games Found",
+                        message=warning_msg,
+                        details={
+                            'scraper': 'bigdataball_discovery',
+                            'date': date_str,
+                            'teams_filter': self.opts.get('teams')
+                        }
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
             
             # Process into simple game ID list
             discovery_results = self._process_game_files(files)
@@ -188,6 +231,23 @@ class BigDataBallDiscoveryScraper(ScraperBase, ScraperFlaskMixin):
             
         except Exception as e:
             logger.error(f"Error in BigDataBall discovery: {e}")
+            
+            # Send error notification
+            try:
+                notify_error(
+                    title="BigDataBall Discovery Failed",
+                    message=f"Game discovery failed: {str(e)}",
+                    details={
+                        'scraper': 'bigdataball_discovery',
+                        'error_type': type(e).__name__,
+                        'date': self.opts.get('date'),
+                        'teams_filter': self.opts.get('teams')
+                    },
+                    processor_name="BigDataBall Discovery Scraper"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            
             raise
 
     def _discover_games_by_date(self, date_str: str) -> List[Dict]:
@@ -220,6 +280,23 @@ class BigDataBallDiscoveryScraper(ScraperBase, ScraperFlaskMixin):
             
         except Exception as e:
             logger.error(f"Error searching Drive files: {e}")
+            
+            # Send error notification
+            try:
+                notify_error(
+                    title="BigDataBall Drive Search Failed",
+                    message=f"Failed to search Google Drive: {str(e)}",
+                    details={
+                        'scraper': 'bigdataball_discovery',
+                        'error_type': type(e).__name__,
+                        'query': query,
+                        'date': self.opts.get('date')
+                    },
+                    processor_name="BigDataBall Discovery Scraper"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            
             raise
 
     def _process_game_files(self, files: List[Dict]) -> Dict:
@@ -300,11 +377,32 @@ class BigDataBallDiscoveryScraper(ScraperBase, ScraperFlaskMixin):
     # ------------------------------------------------------------------ #
     def validate_download_data(self) -> None:
         """Validate that discovery completed successfully"""
-        if not isinstance(self.decoded_data, dict):
-            raise ValueError("Discovery failed: missing results data")
-        
-        if "count" not in self.decoded_data:
-            raise ValueError("Discovery failed: missing count data")
+        try:
+            if not isinstance(self.decoded_data, dict):
+                raise ValueError("Discovery failed: missing results data")
+            
+            if "count" not in self.decoded_data:
+                raise ValueError("Discovery failed: missing count data")
+        except Exception as e:
+            logger.error(f"Validation failed: {e}")
+            
+            # Send error notification
+            try:
+                notify_error(
+                    title="BigDataBall Discovery Validation Failed",
+                    message=f"Discovery data validation failed: {str(e)}",
+                    details={
+                        'scraper': 'bigdataball_discovery',
+                        'error_type': type(e).__name__,
+                        'has_decoded_data': bool(self.decoded_data),
+                        'date': self.opts.get('date')
+                    },
+                    processor_name="BigDataBall Discovery Scraper"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            
+            raise
 
     # ------------------------------------------------------------------ #
     # Transform                                                          #
@@ -323,6 +421,22 @@ class BigDataBallDiscoveryScraper(ScraperBase, ScraperFlaskMixin):
         
         total_games = discovery_results.get("count", 0)
         logger.info("Discovery transformation complete: %d games catalogued", total_games)
+        
+        # Send success notification
+        try:
+            notify_info(
+                title="BigDataBall Game Discovery Complete",
+                message=f"Successfully discovered {total_games} games for {self.opts['date']}",
+                details={
+                    'scraper': 'bigdataball_discovery',
+                    'date': self.opts['date'],
+                    'total_games': total_games,
+                    'teams_filter': self.opts.get('teams'),
+                    'games': discovery_results.get('games', [])
+                }
+            )
+        except Exception as notify_ex:
+            logger.warning(f"Failed to send notification: {notify_ex}")
 
     # ------------------------------------------------------------------ #
     # Stats                                                              #
@@ -351,4 +465,3 @@ create_app = convert_existing_flask_scraper(BigDataBallDiscoveryScraper)
 if __name__ == "__main__":
     main = BigDataBallDiscoveryScraper.create_cli_and_flask_main()
     main()
-    

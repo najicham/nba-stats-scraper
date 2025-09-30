@@ -3,6 +3,7 @@
 File: processors/nbacom/nbac_injury_report_processor.py
 
 Process NBA.com Injury Report data for player availability tracking.
+Integrated notification system for monitoring and alerts.
 """
 
 import json
@@ -12,6 +13,11 @@ from datetime import datetime, date
 from typing import Dict, List, Optional
 from google.cloud import bigquery
 from data_processors.raw.processor_base import ProcessorBase
+from shared.utils.notification_system import (
+    notify_error,
+    notify_warning,
+    notify_info
+)
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +30,8 @@ class NbacInjuryReportProcessor(ProcessorBase):
         self.processing_strategy = 'APPEND_ALWAYS'  # Keep all reports for history
         self.project_id = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
         self.bq_client = bigquery.Client(project=self.project_id)
+        self.records_processed = 0
+        self.records_failed = 0
         
     def validate_data(self, data: Dict) -> List[str]:
         """Validate the JSON data structure."""
@@ -46,6 +54,22 @@ class NbacInjuryReportProcessor(ProcessorBase):
             for field in required_fields:
                 if field not in first_record:
                     errors.append(f"Missing required field in record: {field}")
+        
+        # Notify about validation failures
+        if errors:
+            try:
+                notify_warning(
+                    title="Injury Report Data Validation Failed",
+                    message=f"Found {len(errors)} validation errors in injury report data",
+                    details={
+                        'errors': errors,
+                        'has_metadata': 'metadata' in data,
+                        'has_records': 'records' in data,
+                        'record_count': len(data.get('records', []))
+                    }
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
                     
         return errors
     
@@ -79,26 +103,31 @@ class NbacInjuryReportProcessor(ProcessorBase):
         Parse matchup string like "MIA@DET" to extract teams and create game_id.
         Returns dict with away_team, home_team, and game_id
         """
-        parts = matchup.split('@')
-        if len(parts) != 2:
-            return {'away_team': '', 'home_team': '', 'game_id': ''}
-            
-        away_team = parts[0].strip()
-        home_team = parts[1].strip()
-        
-        # Parse date to create game_id
         try:
-            date_obj = datetime.strptime(game_date, '%m/%d/%Y')
-            date_str = date_obj.strftime('%Y%m%d')
-            game_id = f"{date_str}_{away_team}_{home_team}"
-        except:
-            game_id = f"{game_date}_{away_team}_{home_team}"
+            parts = matchup.split('@')
+            if len(parts) != 2:
+                logger.warning(f"Invalid matchup format: {matchup}")
+                return {'away_team': '', 'home_team': '', 'game_id': ''}
+                
+            away_team = parts[0].strip()
+            home_team = parts[1].strip()
             
-        return {
-            'away_team': away_team,
-            'home_team': home_team,
-            'game_id': game_id
-        }
+            # Parse date to create game_id
+            try:
+                date_obj = datetime.strptime(game_date, '%m/%d/%Y')
+                date_str = date_obj.strftime('%Y%m%d')
+                game_id = f"{date_str}_{away_team}_{home_team}"
+            except:
+                game_id = f"{game_date}_{away_team}_{home_team}"
+                
+            return {
+                'away_team': away_team,
+                'home_team': home_team,
+                'game_id': game_id
+            }
+        except Exception as e:
+            logger.error(f"Error parsing matchup '{matchup}': {e}")
+            return {'away_team': '', 'home_team': '', 'game_id': ''}
     
     def _parse_game_time(self, gametime: str) -> Optional[str]:
         """Parse gametime like '07:00 (ET)' to standard format."""
@@ -134,88 +163,206 @@ class NbacInjuryReportProcessor(ProcessorBase):
         """Transform injury report data to BigQuery rows."""
         rows = []
         
-        # Extract metadata
-        metadata = raw_data.get('metadata', {})
-        report_date = metadata.get('gamedate', '')
-        report_hour = metadata.get('hour24', metadata.get('hour', ''))
-        season = self._get_nba_season(report_date_obj)
-        scrape_time = metadata.get('scrape_time', '')
-        run_id = metadata.get('run_id', '')
-        
-        # Parse report date
         try:
-            report_date_obj = datetime.strptime(report_date, '%Y%m%d').date()
-        except:
-            report_date_obj = date.today()
+            # Extract metadata
+            metadata = raw_data.get('metadata', {})
             
-        # Get parsing stats
-        parsing_stats = raw_data.get('parsing_stats', {})
-        overall_confidence = parsing_stats.get('overall_confidence', 1.0)
-        
-        # Process each injury record
-        for record in raw_data.get('records', []):
+            if not metadata:
+                try:
+                    notify_warning(
+                        title="Missing Injury Report Metadata",
+                        message="Injury report data missing metadata section",
+                        details={
+                            'file_path': file_path,
+                            'has_records': 'records' in raw_data,
+                            'record_count': len(raw_data.get('records', []))
+                        }
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+            
+            report_date = metadata.get('gamedate', '')
+            report_hour = metadata.get('hour24', metadata.get('hour', ''))
+            scrape_time = metadata.get('scrape_time', '')
+            run_id = metadata.get('run_id', '')
+            
+            # Parse report date
             try:
-                # Parse player name
-                player_full_name, player_lookup = self._normalize_player_name(record['player'])
-                
-                # Parse matchup
-                matchup_info = self._parse_matchup(record['matchup'], record['date'])
-                
-                # Parse game time
-                game_time = self._parse_game_time(record.get('gametime', ''))
-                
-                # Categorize reason
-                reason_category = self._categorize_reason(record.get('reason', ''))
-                
-                row = {
-                    'report_date': report_date_obj.isoformat(),
-                    'report_hour': int(report_hour) if report_hour else None,
-                    'season': season,
-                    'game_date': datetime.strptime(record['date'], '%m/%d/%Y').date().isoformat(),
-                    'game_time': game_time,
-                    'game_id': matchup_info['game_id'],
-                    'matchup': record['matchup'],
-                    'away_team': matchup_info['away_team'],
-                    'home_team': matchup_info['home_team'],
-                    'team': record['team'],
-                    'player_name_original': record['player'],
-                    'player_full_name': player_full_name,
-                    'player_lookup': player_lookup,
-                    'injury_status': record['status'].lower(),
-                    'reason': record.get('reason', ''),
-                    'reason_category': reason_category,
-                    'confidence_score': record.get('confidence', 1.0),
-                    'overall_report_confidence': overall_confidence,
-                    'scrape_time': scrape_time,
-                    'run_id': run_id,
-                    'source_file_path': file_path,
-                    'processed_at': datetime.utcnow().isoformat()
-                }
-                
-                rows.append(row)
-                
+                report_date_obj = datetime.strptime(report_date, '%Y%m%d').date()
             except Exception as e:
-                logger.error(f"Error processing injury record: {e}")
-                continue
-        
-        logger.info(f"Transformed {len(rows)} injury records")
-        return rows
+                logger.error(f"Error parsing report date '{report_date}': {e}")
+                report_date_obj = date.today()
+                
+                try:
+                    notify_warning(
+                        title="Invalid Report Date Format",
+                        message=f"Could not parse report date, using today's date",
+                        details={
+                            'report_date': report_date,
+                            'file_path': file_path,
+                            'fallback_date': report_date_obj.isoformat()
+                        }
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+            
+            season = self._get_nba_season(report_date_obj)
+            
+            # Get parsing stats
+            parsing_stats = raw_data.get('parsing_stats', {})
+            overall_confidence = parsing_stats.get('overall_confidence', 1.0)
+            
+            # Check for low confidence scores
+            if overall_confidence < 0.85:
+                try:
+                    notify_warning(
+                        title="Low Injury Report Confidence",
+                        message=f"Injury report has low confidence score: {overall_confidence:.2%}",
+                        details={
+                            'overall_confidence': overall_confidence,
+                            'file_path': file_path,
+                            'report_date': report_date,
+                            'record_count': len(raw_data.get('records', []))
+                        }
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+            
+            # Process each injury record
+            self.records_processed = 0
+            self.records_failed = 0
+            
+            for record in raw_data.get('records', []):
+                try:
+                    # Parse player name
+                    player_full_name, player_lookup = self._normalize_player_name(record['player'])
+                    
+                    # Parse matchup
+                    matchup_info = self._parse_matchup(record['matchup'], record['date'])
+                    
+                    # Parse game time
+                    game_time = self._parse_game_time(record.get('gametime', ''))
+                    
+                    # Categorize reason
+                    reason_category = self._categorize_reason(record.get('reason', ''))
+                    
+                    row = {
+                        'report_date': report_date_obj.isoformat(),
+                        'report_hour': int(report_hour) if report_hour else None,
+                        'season': season,
+                        'game_date': datetime.strptime(record['date'], '%m/%d/%Y').date().isoformat(),
+                        'game_time': game_time,
+                        'game_id': matchup_info['game_id'],
+                        'matchup': record['matchup'],
+                        'away_team': matchup_info['away_team'],
+                        'home_team': matchup_info['home_team'],
+                        'team': record['team'],
+                        'player_name_original': record['player'],
+                        'player_full_name': player_full_name,
+                        'player_lookup': player_lookup,
+                        'injury_status': record['status'].lower(),
+                        'reason': record.get('reason', ''),
+                        'reason_category': reason_category,
+                        'confidence_score': record.get('confidence', 1.0),
+                        'overall_report_confidence': overall_confidence,
+                        'scrape_time': scrape_time,
+                        'run_id': run_id,
+                        'source_file_path': file_path,
+                        'processed_at': datetime.utcnow().isoformat()
+                    }
+                    
+                    rows.append(row)
+                    self.records_processed += 1
+                    
+                except Exception as e:
+                    self.records_failed += 1
+                    logger.error(f"Error processing injury record: {e}")
+                    logger.error(f"Record data: {record}")
+                    
+                    # Notify about individual record failure if it seems significant
+                    if self.records_failed == 1:  # First failure
+                        try:
+                            notify_error(
+                                title="Injury Record Processing Failed",
+                                message=f"Failed to process injury record: {str(e)}",
+                                details={
+                                    'file_path': file_path,
+                                    'error_type': type(e).__name__,
+                                    'record': str(record)[:200],
+                                    'player': record.get('player', 'unknown')
+                                },
+                                processor_name="NBA.com Injury Report Processor"
+                            )
+                        except Exception as notify_ex:
+                            logger.warning(f"Failed to send notification: {notify_ex}")
+                    continue
+            
+            # Check for high failure rate
+            total_records = len(raw_data.get('records', []))
+            if total_records > 0:
+                failure_rate = self.records_failed / total_records
+                if failure_rate > 0.1:  # More than 10% failures
+                    try:
+                        notify_warning(
+                            title="High Injury Record Failure Rate",
+                            message=f"Failed to process {failure_rate:.1%} of injury records",
+                            details={
+                                'file_path': file_path,
+                                'total_records': total_records,
+                                'records_failed': self.records_failed,
+                                'records_processed': self.records_processed,
+                                'failure_rate': f"{failure_rate:.1%}"
+                            }
+                        )
+                    except Exception as notify_ex:
+                        logger.warning(f"Failed to send notification: {notify_ex}")
+            
+            logger.info(f"Transformed {len(rows)} injury records (failed: {self.records_failed})")
+            return rows
+            
+        except Exception as e:
+            logger.error(f"Critical error in transform_data: {e}")
+            
+            # Notify about critical transformation failure
+            try:
+                notify_error(
+                    title="Injury Report Transformation Failed",
+                    message=f"Critical error transforming injury report data: {str(e)}",
+                    details={
+                        'file_path': file_path,
+                        'error_type': type(e).__name__,
+                        'records_processed': self.records_processed,
+                        'records_failed': self.records_failed
+                    },
+                    processor_name="NBA.com Injury Report Processor"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            
+            raise e
     
     def _get_nba_season(self, report_date_obj: date) -> str:
         """Determine NBA season from date. Season runs Oct-June."""
-        year = report_date_obj.year
-        month = report_date_obj.month
-        
-        # October-December is start of season
-        if month >= 10:
-            return f"{year}-{str(year+1)[2:]}"  # e.g., "2021-22"
-        # January-September is end of season
-        else:
-            return f"{year-1}-{str(year)[2:]}"  # e.g., "2021-22"
+        try:
+            year = report_date_obj.year
+            month = report_date_obj.month
+            
+            # October-December is start of season
+            if month >= 10:
+                return f"{year}-{str(year+1)[2:]}"  # e.g., "2021-22"
+            # January-September is end of season
+            else:
+                return f"{year-1}-{str(year)[2:]}"  # e.g., "2021-22"
+        except Exception as e:
+            logger.error(f"Error determining NBA season: {e}")
+            # Return current year as fallback
+            current_year = datetime.now().year
+            return f"{current_year-1}-{str(current_year)[2:]}"
     
     def load_data(self, rows: List[Dict], **kwargs) -> Dict:
         """Load data to BigQuery using APPEND_ALWAYS strategy."""
         if not rows:
+            logger.warning("No rows to load")
             return {'rows_processed': 0, 'errors': []}
         
         errors = []
@@ -230,11 +377,57 @@ class NbacInjuryReportProcessor(ProcessorBase):
             if errors_result:
                 errors.extend([str(e) for e in errors_result])
                 logger.error(f"Insert errors: {errors_result}")
+                
+                # Notify about insert errors
+                try:
+                    notify_error(
+                        title="BigQuery Insert Errors",
+                        message=f"Encountered {len(errors_result)} errors inserting injury report data",
+                        details={
+                            'table': 'nba_raw.nbac_injury_report',
+                            'rows_attempted': len(rows),
+                            'error_count': len(errors_result),
+                            'errors': str(errors_result)[:500]
+                        },
+                        processor_name="NBA.com Injury Report Processor"
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
             else:
                 logger.info(f"Successfully appended {len(rows)} injury records")
+                
+                # Send success notification
+                try:
+                    notify_info(
+                        title="Injury Report Processing Complete",
+                        message=f"Successfully processed {len(rows)} injury records",
+                        details={
+                            'records_inserted': len(rows),
+                            'records_failed': self.records_failed,
+                            'table': 'nba_raw.nbac_injury_report'
+                        }
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
                 
         except Exception as e:
             errors.append(str(e))
             logger.error(f"Error loading data: {e}")
+            
+            # Notify about critical load failure
+            try:
+                notify_error(
+                    title="Injury Report Load Failed",
+                    message=f"Failed to load injury report data to BigQuery: {str(e)}",
+                    details={
+                        'table': 'nba_raw.nbac_injury_report',
+                        'rows_attempted': len(rows),
+                        'error_type': type(e).__name__,
+                        'error': str(e)
+                    },
+                    processor_name="NBA.com Injury Report Processor"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
         
         return {'rows_processed': len(rows), 'errors': errors}

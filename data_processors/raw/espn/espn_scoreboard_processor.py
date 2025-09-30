@@ -10,6 +10,11 @@ from datetime import datetime, date
 from typing import Dict, List, Optional
 from google.cloud import bigquery
 from data_processors.raw.processor_base import ProcessorBase
+from shared.utils.notification_system import (
+    notify_error,
+    notify_warning,
+    notify_info
+)
 
 class EspnScoreboardProcessor(ProcessorBase):
     def __init__(self):
@@ -100,10 +105,26 @@ class EspnScoreboardProcessor(ProcessorBase):
         game_date = self.extract_game_date_from_path(file_path)
         if not game_date:
             logging.error(f"Could not extract game date from path: {file_path}")
+            
+            # Send warning notification for missing game date
+            try:
+                notify_warning(
+                    title="ESPN Scoreboard: Missing Game Date",
+                    message=f"Could not extract game date from file path",
+                    details={
+                        'file_path': file_path,
+                        'processor': 'ESPN Scoreboard'
+                    }
+                )
+            except Exception as e:
+                logging.warning(f"Failed to send notification: {e}")
+            
             return rows
         
         season_year = self.parse_season_year(game_date)
         scrape_timestamp = raw_data.get('timestamp')
+        games_in_file = len(raw_data.get('games', []))
+        skipped_games = 0
         
         for game in raw_data.get('games', []):
             try:
@@ -128,6 +149,7 @@ class EspnScoreboardProcessor(ProcessorBase):
                 
                 if not home_team or not away_team:
                     logging.warning(f"Could not identify home/away teams for game {game.get('gameId')}")
+                    skipped_games += 1
                     continue
                 
                 # Construct standardized game_id
@@ -190,7 +212,26 @@ class EspnScoreboardProcessor(ProcessorBase):
                 
             except Exception as e:
                 logging.error(f"Error processing game {game.get('gameId', 'unknown')}: {str(e)}")
+                skipped_games += 1
                 continue
+        
+        # Send warning if significant games were skipped
+        if skipped_games > 0 and skipped_games >= games_in_file * 0.3:  # 30% threshold
+            try:
+                notify_warning(
+                    title="ESPN Scoreboard: High Game Skip Rate",
+                    message=f"Skipped {skipped_games} of {games_in_file} games during transformation",
+                    details={
+                        'games_total': games_in_file,
+                        'games_skipped': skipped_games,
+                        'games_processed': len(rows),
+                        'skip_rate': f"{(skipped_games/games_in_file)*100:.1f}%",
+                        'game_date': game_date.isoformat(),
+                        'file_path': file_path
+                    }
+                )
+            except Exception as e:
+                logging.warning(f"Failed to send notification: {e}")
         
         logging.info(f"Transformed {len(rows)} games from ESPN scoreboard data")
         return rows
@@ -216,6 +257,23 @@ class EspnScoreboardProcessor(ProcessorBase):
             if result:
                 errors.extend([str(e) for e in result])
                 logging.error(f"BigQuery insert errors: {errors}")
+                
+                # Send error notification for BigQuery insert failures
+                try:
+                    notify_error(
+                        title="ESPN Scoreboard: BigQuery Insert Failed",
+                        message=f"Failed to insert {len(rows)} rows into BigQuery",
+                        details={
+                            'table': self.table_name,
+                            'rows_attempted': len(rows),
+                            'error_count': len(errors),
+                            'errors': errors[:5],  # First 5 errors
+                            'game_date': rows[0].get('game_date') if rows else 'unknown'
+                        },
+                        processor_name="ESPN Scoreboard Processor"
+                    )
+                except Exception as e:
+                    logging.warning(f"Failed to send notification: {e}")
             else:
                 logging.info(f"Successfully loaded {len(rows)} rows to {self.table_name}")
         
@@ -223,6 +281,23 @@ class EspnScoreboardProcessor(ProcessorBase):
             error_msg = str(e)
             errors.append(error_msg)
             logging.error(f"Error loading data to BigQuery: {error_msg}")
+            
+            # Send error notification for general BigQuery failures
+            try:
+                notify_error(
+                    title="ESPN Scoreboard: BigQuery Load Failed",
+                    message=f"Database operation failed: {error_msg}",
+                    details={
+                        'table': self.table_name,
+                        'rows_attempted': len(rows),
+                        'error_type': type(e).__name__,
+                        'error_message': error_msg,
+                        'game_date': rows[0].get('game_date') if rows else 'unknown'
+                    },
+                    processor_name="ESPN Scoreboard Processor"
+                )
+            except Exception as notify_ex:
+                logging.warning(f"Failed to send notification: {notify_ex}")
         
         return {
             'rows_processed': len(rows) if not errors else 0,
@@ -239,6 +314,20 @@ class EspnScoreboardProcessor(ProcessorBase):
             errors = self.validate_data(raw_data)
             if errors:
                 logging.warning(f"Validation errors for {file_path}: {errors}")
+                
+                # Send warning for validation issues
+                try:
+                    notify_warning(
+                        title="ESPN Scoreboard: Validation Issues",
+                        message=f"Data validation found {len(errors)} issues",
+                        details={
+                            'file_path': file_path,
+                            'error_count': len(errors),
+                            'errors': errors[:5]  # First 5 errors
+                        }
+                    )
+                except Exception as e:
+                    logging.warning(f"Failed to send notification: {e}")
             
             # Transform data
             rows = self.transform_data(raw_data, file_path)
@@ -251,7 +340,44 @@ class EspnScoreboardProcessor(ProcessorBase):
                 'errors': errors + load_result.get('errors', [])
             }
             
+        except json.JSONDecodeError as e:
+            error_msg = f"Invalid JSON in file {file_path}: {str(e)}"
+            logging.error(error_msg)
+            
+            # Send error notification for JSON parse failures
+            try:
+                notify_error(
+                    title="ESPN Scoreboard: JSON Parse Failed",
+                    message=f"Failed to parse JSON content",
+                    details={
+                        'file_path': file_path,
+                        'error_type': 'JSONDecodeError',
+                        'error_message': str(e)
+                    },
+                    processor_name="ESPN Scoreboard Processor"
+                )
+            except Exception as notify_ex:
+                logging.warning(f"Failed to send notification: {notify_ex}")
+            
+            return {'rows_processed': 0, 'errors': [error_msg]}
+            
         except Exception as e:
             error_msg = f"Error processing file {file_path}: {str(e)}"
             logging.error(error_msg)
+            
+            # Send error notification for general processing failures
+            try:
+                notify_error(
+                    title="ESPN Scoreboard: Processing Failed",
+                    message=f"Unexpected processing failure: {str(e)}",
+                    details={
+                        'file_path': file_path,
+                        'error_type': type(e).__name__,
+                        'error_message': str(e)
+                    },
+                    processor_name="ESPN Scoreboard Processor"
+                )
+            except Exception as notify_ex:
+                logging.warning(f"Failed to send notification: {notify_ex}")
+            
             return {'rows_processed': 0, 'errors': [error_msg]}

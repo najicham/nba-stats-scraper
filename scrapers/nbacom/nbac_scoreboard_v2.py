@@ -1,5 +1,6 @@
-# scrapers/nbacom/nbac_scoreboard_v2.py
 """
+File: scrapers/nbacom/nbac_scoreboard_v2.py
+
 NBA.com Scoreboard V2 scraper                           v3.2 – 2025‑07‑17
 ---------------------------------------------------------------------------
 * URL: https://stats.nba.com/stats/scoreboardV2
@@ -45,6 +46,13 @@ except ImportError:
     from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
     from scrapers.utils.exceptions import DownloadDataException
     from scrapers.utils.gcs_path_builder import GCSPathBuilder
+
+# Notification system imports
+from shared.utils.notification_system import (
+    notify_error,
+    notify_warning,
+    notify_info
+)
 
 logger = logging.getLogger("scraper_base")
 
@@ -161,10 +169,45 @@ class GetNbaComScoreboardV2(ScraperBase, ScraperFlaskMixin):
                 self.decoded_data = self._v2_to_v3(self.decoded_data)
                 logger.info("Successfully converted V2 response to V3 format")
             else:
-                raise DownloadDataException("Invalid V2 response structure")
+                error_msg = "Invalid V2 response structure"
+                logger.error("%s for gamedate %s", error_msg, self.opts["gamedate"])
+                try:
+                    notify_error(
+                        title="NBA.com Scoreboard V2 Invalid Response",
+                        message=f"Invalid V2 response structure for gamedate {self.opts['gamedate']}",
+                        details={
+                            'gamedate': self.opts['gamedate'],
+                            'url': self.url,
+                            'has_result_sets': 'resultSets' in self.decoded_data if isinstance(self.decoded_data, dict) else False,
+                            'response_type': type(self.decoded_data).__name__
+                        },
+                        processor_name="NBA.com Scoreboard V2 Scraper"
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                raise DownloadDataException(error_msg)
                 
+        except DownloadDataException:
+            # Already handled above
+            raise
         except Exception as e:
-            raise DownloadDataException(f"Both V3 and V2 download attempts failed: {e}")
+            error_msg = f"Both V3 and V2 download attempts failed: {e}"
+            logger.error("Download failed for gamedate %s: %s", self.opts["gamedate"], e)
+            try:
+                notify_error(
+                    title="NBA.com Scoreboard V2 Download Failed",
+                    message=f"All download attempts failed for gamedate {self.opts['gamedate']}: {str(e)}",
+                    details={
+                        'gamedate': self.opts['gamedate'],
+                        'v2_url': self.url,
+                        'error': str(e),
+                        'error_type': type(e).__name__
+                    },
+                    processor_name="NBA.com Scoreboard V2 Scraper"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            raise DownloadDataException(error_msg)
 
     # Also update set_url to start with V2 directly since V3 doesn't work:
     def set_url(self) -> None:
@@ -280,8 +323,40 @@ class GetNbaComScoreboardV2(ScraperBase, ScraperFlaskMixin):
 
             return {"scoreboard": {"games": games}}
             
+        except KeyError as e:
+            logger.error("V2 to V3 conversion failed - missing key %s for gamedate %s", e, self.opts["gamedate"])
+            try:
+                notify_error(
+                    title="NBA.com Scoreboard V2 Conversion Failed",
+                    message=f"V2 to V3 conversion failed - missing expected key for gamedate {self.opts['gamedate']}: {str(e)}",
+                    details={
+                        'gamedate': self.opts['gamedate'],
+                        'missing_key': str(e),
+                        'error_type': 'KeyError',
+                        'url': self.url
+                    },
+                    processor_name="NBA.com Scoreboard V2 Scraper"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            # Fallback to minimal conversion if detailed fails
+            return self._v2_to_v3_minimal(v2)
         except Exception as e:
-            logger.error("V2 to V3 conversion failed: %s", e)
+            logger.error("V2 to V3 conversion failed for gamedate %s: %s", self.opts["gamedate"], e)
+            try:
+                notify_error(
+                    title="NBA.com Scoreboard V2 Conversion Error",
+                    message=f"V2 to V3 conversion error for gamedate {self.opts['gamedate']}: {str(e)}",
+                    details={
+                        'gamedate': self.opts['gamedate'],
+                        'error': str(e),
+                        'error_type': type(e).__name__,
+                        'url': self.url
+                    },
+                    processor_name="NBA.com Scoreboard V2 Scraper"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
             # Fallback to minimal conversion if detailed fails
             return self._v2_to_v3_minimal(v2)
 
@@ -314,36 +389,174 @@ class GetNbaComScoreboardV2(ScraperBase, ScraperFlaskMixin):
                     "gameCode": row[idx_gh["GAMECODE"]],
                 })
 
+            logger.info("Used minimal V2 to V3 conversion for gamedate %s", self.opts["gamedate"])
             return {"scoreboard": {"games": games}}
         except Exception as e:
-            raise DownloadDataException(f"Both detailed and minimal V2 conversion failed: {e}")
+            error_msg = f"Both detailed and minimal V2 conversion failed: {e}"
+            logger.error("Minimal conversion also failed for gamedate %s: %s", self.opts["gamedate"], e)
+            try:
+                notify_error(
+                    title="NBA.com Scoreboard V2 All Conversions Failed",
+                    message=f"Both detailed and minimal V2 conversions failed for gamedate {self.opts['gamedate']}: {str(e)}",
+                    details={
+                        'gamedate': self.opts['gamedate'],
+                        'error': str(e),
+                        'error_type': type(e).__name__,
+                        'url': self.url
+                    },
+                    processor_name="NBA.com Scoreboard V2 Scraper"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            raise DownloadDataException(error_msg)
         
     # ------------------------------------------------------------------ #
     # Validation - Updated to use base class patterns
     # ------------------------------------------------------------------ #
     def validate_download_data(self) -> None:
         """Validate the scoreboard response"""
-        if not isinstance(self.decoded_data, dict):
-            raise DownloadDataException("Response is not a JSON object")
-            
-        if "scoreboard" not in self.decoded_data:
-            raise DownloadDataException("Missing 'scoreboard' in response")
-            
-        scoreboard = self.decoded_data["scoreboard"]
-        if not isinstance(scoreboard, dict):
-            raise DownloadDataException("Scoreboard is not an object")
-            
-        if "games" not in scoreboard:
-            raise DownloadDataException("Missing 'games' in scoreboard")
-            
-        games = scoreboard["games"]
-        if not isinstance(games, list):
-            raise DownloadDataException("Games is not a list")
-            
-        if not games:
-            logger.warning("No games on %s (possible off‑day).", self.opts["gamedate"])
-        else:
-            logger.info("Validation passed: %d games found", len(games))
+        try:
+            if not isinstance(self.decoded_data, dict):
+                error_msg = "Response is not a JSON object"
+                logger.error("%s for gamedate %s", error_msg, self.opts["gamedate"])
+                try:
+                    notify_error(
+                        title="NBA.com Scoreboard V2 Invalid Response Type",
+                        message=f"Response is not a JSON object for gamedate {self.opts['gamedate']}",
+                        details={
+                            'gamedate': self.opts['gamedate'],
+                            'response_type': type(self.decoded_data).__name__,
+                            'url': self.url
+                        },
+                        processor_name="NBA.com Scoreboard V2 Scraper"
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                raise DownloadDataException(error_msg)
+                
+            if "scoreboard" not in self.decoded_data:
+                error_msg = "Missing 'scoreboard' in response"
+                logger.error("%s for gamedate %s", error_msg, self.opts["gamedate"])
+                try:
+                    notify_error(
+                        title="NBA.com Scoreboard V2 Missing Scoreboard",
+                        message=f"Response missing 'scoreboard' key for gamedate {self.opts['gamedate']}",
+                        details={
+                            'gamedate': self.opts['gamedate'],
+                            'response_keys': list(self.decoded_data.keys()),
+                            'url': self.url
+                        },
+                        processor_name="NBA.com Scoreboard V2 Scraper"
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                raise DownloadDataException(error_msg)
+                
+            scoreboard = self.decoded_data["scoreboard"]
+            if not isinstance(scoreboard, dict):
+                error_msg = "Scoreboard is not an object"
+                logger.error("%s for gamedate %s", error_msg, self.opts["gamedate"])
+                try:
+                    notify_error(
+                        title="NBA.com Scoreboard V2 Invalid Scoreboard Type",
+                        message=f"Scoreboard is not an object for gamedate {self.opts['gamedate']}",
+                        details={
+                            'gamedate': self.opts['gamedate'],
+                            'scoreboard_type': type(scoreboard).__name__,
+                            'url': self.url
+                        },
+                        processor_name="NBA.com Scoreboard V2 Scraper"
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                raise DownloadDataException(error_msg)
+                
+            if "games" not in scoreboard:
+                error_msg = "Missing 'games' in scoreboard"
+                logger.error("%s for gamedate %s", error_msg, self.opts["gamedate"])
+                try:
+                    notify_error(
+                        title="NBA.com Scoreboard V2 Missing Games",
+                        message=f"Scoreboard missing 'games' key for gamedate {self.opts['gamedate']}",
+                        details={
+                            'gamedate': self.opts['gamedate'],
+                            'scoreboard_keys': list(scoreboard.keys()),
+                            'url': self.url
+                        },
+                        processor_name="NBA.com Scoreboard V2 Scraper"
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                raise DownloadDataException(error_msg)
+                
+            games = scoreboard["games"]
+            if not isinstance(games, list):
+                error_msg = "Games is not a list"
+                logger.error("%s for gamedate %s", error_msg, self.opts["gamedate"])
+                try:
+                    notify_error(
+                        title="NBA.com Scoreboard V2 Invalid Games Type",
+                        message=f"Games is not a list for gamedate {self.opts['gamedate']}",
+                        details={
+                            'gamedate': self.opts['gamedate'],
+                            'games_type': type(games).__name__,
+                            'url': self.url
+                        },
+                        processor_name="NBA.com Scoreboard V2 Scraper"
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                raise DownloadDataException(error_msg)
+                
+            if not games:
+                logger.warning("No games on %s (possible off‑day).", self.opts["gamedate"])
+                # This is a warning, not an error - NBA has off-days
+                # Only notify if it's unusual (e.g., during regular season)
+                # Check if it's a typical off-day (Monday or day after Sunday)
+                try:
+                    from datetime import datetime
+                    game_date = datetime.strptime(self.opts["gamedate"], "%Y%m%d")
+                    day_of_week = game_date.weekday()  # Monday=0, Sunday=6
+                    
+                    # Only alert if it's NOT a typical off-day (Tuesday-Saturday)
+                    if day_of_week not in [0, 6]:  # Not Monday or Sunday
+                        try:
+                            notify_warning(
+                                title="NBA.com Scoreboard V2 No Games",
+                                message=f"No games found for gamedate {self.opts['gamedate']} (unusual for this day of week)",
+                                details={
+                                    'gamedate': self.opts['gamedate'],
+                                    'day_of_week': ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][day_of_week],
+                                    'url': self.url
+                                }
+                            )
+                        except Exception as notify_ex:
+                            logger.warning(f"Failed to send notification: {notify_ex}")
+                except Exception as date_ex:
+                    logger.debug("Could not parse date for off-day check: %s", date_ex)
+            else:
+                logger.info("Validation passed: %d games found", len(games))
+                
+        except DownloadDataException:
+            # Already handled and notified above
+            raise
+        except Exception as e:
+            logger.error("Unexpected validation error for gamedate %s: %s", self.opts["gamedate"], e)
+            try:
+                notify_error(
+                    title="NBA.com Scoreboard V2 Validation Error",
+                    message=f"Unexpected validation error for gamedate {self.opts['gamedate']}: {str(e)}",
+                    details={
+                        'gamedate': self.opts['gamedate'],
+                        'error': str(e),
+                        'error_type': type(e).__name__,
+                        'url': self.url
+                    },
+                    processor_name="NBA.com Scoreboard V2 Scraper"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            raise DownloadDataException(f"Validation failed: {e}") from e
 
     # ------------------------------------------------------------------ #
     # Transform - Same logic as before
@@ -355,46 +568,80 @@ class GetNbaComScoreboardV2(ScraperBase, ScraperFlaskMixin):
 
     def transform_data(self) -> None:
         """Transform scoreboard data with rich NBA.com details"""
-        games_raw: List[Dict[str, Any]] = self.decoded_data["scoreboard"]["games"]
-        
-        # Also extract rich data from the original V2 response if available
-        rich_games = []
-        
-        # Check if we have access to the original V2 data for enrichment
-        if hasattr(self, '_original_v2_data') and self._original_v2_data:
-            rich_games = self._extract_rich_game_data(self._original_v2_data)
-        
-        # Process the converted V3-format games
-        parsed_games = []
-        for i, g in enumerate(games_raw):
-            status = g.get("gameStatus")
+        try:
+            games_raw: List[Dict[str, Any]] = self.decoded_data["scoreboard"]["games"]
             
-            # Base game data
-            game_data = {
-                "gameId": g.get("gameId"),
-                "home": g.get("homeTeam", {}).get("teamTricode"),
-                "away": g.get("awayTeam", {}).get("teamTricode"),
-                "gameStatus": status,
-                "state": self._status_to_state(status),
-                "startTimeET": g.get("gameEt"),
-                "gameCode": g.get("gameCode"),
+            # Also extract rich data from the original V2 response if available
+            rich_games = []
+            
+            # Check if we have access to the original V2 data for enrichment
+            if hasattr(self, '_original_v2_data') and self._original_v2_data:
+                rich_games = self._extract_rich_game_data(self._original_v2_data)
+            
+            # Process the converted V3-format games
+            parsed_games = []
+            for i, g in enumerate(games_raw):
+                status = g.get("gameStatus")
+                
+                # Base game data
+                game_data = {
+                    "gameId": g.get("gameId"),
+                    "home": g.get("homeTeam", {}).get("teamTricode"),
+                    "away": g.get("awayTeam", {}).get("teamTricode"),
+                    "gameStatus": status,
+                    "state": self._status_to_state(status),
+                    "startTimeET": g.get("gameEt"),
+                    "gameCode": g.get("gameCode"),
+                }
+                
+                # Enrich with detailed data if available
+                if i < len(rich_games):
+                    game_data.update(rich_games[i])
+                
+                parsed_games.append(game_data)
+
+            self.data = {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "gamedate": self.opts["gamedate"],
+                "gameCount": len(parsed_games),
+                "games": parsed_games,
+                "source": "nba_scoreboard_v2_enriched"
             }
             
-            # Enrich with detailed data if available
-            if i < len(rich_games):
-                game_data.update(rich_games[i])
+            logger.info("Processed %d enriched games for %s", len(parsed_games), self.opts["gamedate"])
             
-            parsed_games.append(game_data)
-
-        self.data = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "gamedate": self.opts["gamedate"],
-            "gameCount": len(parsed_games),
-            "games": parsed_games,
-            "source": "nba_scoreboard_v2_enriched"
-        }
-        
-        logger.info("Processed %d enriched games for %s", len(parsed_games), self.opts["gamedate"])
+        except KeyError as e:
+            logger.error("Transformation failed - missing key %s for gamedate %s", e, self.opts["gamedate"])
+            try:
+                notify_error(
+                    title="NBA.com Scoreboard V2 Transformation Failed",
+                    message=f"Data transformation failed - missing expected key for gamedate {self.opts['gamedate']}: {str(e)}",
+                    details={
+                        'gamedate': self.opts['gamedate'],
+                        'missing_key': str(e),
+                        'error_type': 'KeyError'
+                    },
+                    processor_name="NBA.com Scoreboard V2 Scraper"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            raise DownloadDataException(f"Transformation failed: missing key {e}") from e
+        except Exception as e:
+            logger.error("Transformation failed for gamedate %s: %s", self.opts["gamedate"], e)
+            try:
+                notify_error(
+                    title="NBA.com Scoreboard V2 Transformation Error",
+                    message=f"Unexpected transformation error for gamedate {self.opts['gamedate']}: {str(e)}",
+                    details={
+                        'gamedate': self.opts['gamedate'],
+                        'error': str(e),
+                        'error_type': type(e).__name__
+                    },
+                    processor_name="NBA.com Scoreboard V2 Scraper"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            raise DownloadDataException(f"Transformation failed: {e}") from e
 
     def _extract_rich_game_data(self, v2_data: dict) -> List[Dict[str, Any]]:
         """Extract rich game data from original V2 response"""
@@ -512,4 +759,3 @@ create_app = convert_existing_flask_scraper(GetNbaComScoreboardV2)
 if __name__ == "__main__":
     main = GetNbaComScoreboardV2.create_cli_and_flask_main()
     main()
-    

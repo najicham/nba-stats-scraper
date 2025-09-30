@@ -6,6 +6,7 @@ Base class for analytics processors that handles:
  - Calculating analytics metrics
  - Loading to analytics tables
  - Error handling and quality tracking
+ - Multi-channel notifications (Email + Slack)
  - Matches ProcessorBase patterns
 """
 
@@ -17,6 +18,13 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional
 from google.cloud import bigquery
 import sentry_sdk
+
+# Import notification system
+from shared.utils.notification_system import (
+    notify_error,
+    notify_warning,
+    notify_info
+)
 
 # Configure logging to match processor_base pattern
 logging.basicConfig(
@@ -74,6 +82,7 @@ class AnalyticsProcessorBase:
         """
         Main entry point - matches ProcessorBase.run() pattern.
         Returns True on success, False on failure.
+        Enhanced with notifications.
         """
         if opts is None:
             opts = {}
@@ -132,6 +141,25 @@ class AnalyticsProcessorBase:
             logger.error("AnalyticsProcessorBase Error: %s", e, exc_info=True)
             sentry_sdk.capture_exception(e)
             
+            # Send notification for analytics processor failure
+            try:
+                notify_error(
+                    title=f"Analytics Processor Failed: {self.__class__.__name__}",
+                    message=f"Analytics calculation failed: {str(e)}",
+                    details={
+                        'processor': self.__class__.__name__,
+                        'run_id': self.run_id,
+                        'error_type': type(e).__name__,
+                        'step': self._get_current_step(),
+                        'date_range': f"{opts.get('start_date')} to {opts.get('end_date')}",
+                        'table': self.table_name,
+                        'stats': self.stats
+                    },
+                    processor_name=self.__class__.__name__
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            
             # Log failed processing run
             self.log_processing_run(success=False, error=str(e))
             
@@ -140,6 +168,17 @@ class AnalyticsProcessorBase:
                 
             self.report_error(e)
             return False
+    
+    def _get_current_step(self) -> str:
+        """Helper to determine current processing step for error context."""
+        if not self.bq_client:
+            return "initialization"
+        elif not self.raw_data:
+            return "extract"
+        elif not self.transformed_data:
+            return "calculate"
+        else:
+            return "save"
     
     def set_opts(self, opts: Dict) -> None:
         """Set options - matches processor pattern."""
@@ -150,7 +189,25 @@ class AnalyticsProcessorBase:
         """Validate required options - matches processor pattern."""
         for required_opt in self.required_opts:
             if required_opt not in self.opts:
-                raise ValueError(f"Missing required option [{required_opt}]")
+                error_msg = f"Missing required option [{required_opt}]"
+                
+                try:
+                    notify_error(
+                        title=f"Analytics Processor Configuration Error: {self.__class__.__name__}",
+                        message=f"Missing required option: {required_opt}",
+                        details={
+                            'processor': self.__class__.__name__,
+                            'run_id': self.run_id,
+                            'missing_option': required_opt,
+                            'required_opts': self.required_opts,
+                            'provided_opts': list(self.opts.keys())
+                        },
+                        processor_name=self.__class__.__name__
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                
+                raise ValueError(error_msg)
     
     def set_additional_opts(self) -> None:
         """Add additional options - child classes override and call super()."""
@@ -163,9 +220,28 @@ class AnalyticsProcessorBase:
         pass
     
     def init_clients(self) -> None:
-        """Initialize GCP clients."""
-        self.project_id = self.opts.get("project_id", "nba-props-platform")
-        self.bq_client = bigquery.Client(project=self.project_id)
+        """Initialize GCP clients with error notification."""
+        try:
+            self.project_id = self.opts.get("project_id", "nba-props-platform")
+            self.bq_client = bigquery.Client(project=self.project_id)
+        except Exception as e:
+            logger.error(f"Failed to initialize BigQuery client: {e}")
+            try:
+                notify_error(
+                    title=f"Analytics Processor Client Initialization Failed: {self.__class__.__name__}",
+                    message="Unable to initialize BigQuery client",
+                    details={
+                        'processor': self.__class__.__name__,
+                        'run_id': self.run_id,
+                        'project_id': self.opts.get('project_id', 'nba-props-platform'),
+                        'error_type': type(e).__name__,
+                        'error': str(e)
+                    },
+                    processor_name=self.__class__.__name__
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            raise
     
     # Abstract methods for child classes (matching processor pattern)
     def extract_raw_data(self) -> None:
@@ -175,6 +251,19 @@ class AnalyticsProcessorBase:
     def validate_extracted_data(self) -> None:
         """Validate extracted data - child classes override."""
         if self.raw_data is None or (hasattr(self.raw_data, 'empty') and self.raw_data.empty):
+            try:
+                notify_warning(
+                    title=f"Analytics Processor No Data Extracted: {self.__class__.__name__}",
+                    message="No data extracted from raw tables",
+                    details={
+                        'processor': self.__class__.__name__,
+                        'run_id': self.run_id,
+                        'table': self.table_name,
+                        'date_range': f"{self.opts.get('start_date')} to {self.opts.get('end_date')}"
+                    }
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
             raise ValueError("No data extracted")
     
     def calculate_analytics(self) -> None:
@@ -182,9 +271,23 @@ class AnalyticsProcessorBase:
         raise NotImplementedError("Child classes must implement calculate_analytics()")
     
     def save_analytics(self) -> None:
-        """Save to analytics BigQuery table - base implementation provided."""
+        """Save to analytics BigQuery table - base implementation provided with notifications."""
         if not self.transformed_data:
             logger.warning("No transformed data to save")
+            try:
+                notify_warning(
+                    title=f"Analytics Processor No Data to Save: {self.__class__.__name__}",
+                    message="No analytics data calculated to save",
+                    details={
+                        'processor': self.__class__.__name__,
+                        'run_id': self.run_id,
+                        'table': self.table_name,
+                        'raw_data_exists': self.raw_data is not None,
+                        'date_range': f"{self.opts.get('start_date')} to {self.opts.get('end_date')}"
+                    }
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
             return
             
         table_id = f"{self.project_id}.{self.dataset_id}.{self.table_name}"
@@ -195,22 +298,113 @@ class AnalyticsProcessorBase:
         elif isinstance(self.transformed_data, dict):
             rows = [self.transformed_data]
         else:
-            raise ValueError(f"Unexpected data type: {type(self.transformed_data)}")
+            error_msg = f"Unexpected data type: {type(self.transformed_data)}"
+            try:
+                notify_error(
+                    title=f"Analytics Processor Data Type Error: {self.__class__.__name__}",
+                    message=error_msg,
+                    details={
+                        'processor': self.__class__.__name__,
+                        'run_id': self.run_id,
+                        'table': self.table_name,
+                        'data_type': str(type(self.transformed_data)),
+                        'expected_types': ['list', 'dict']
+                    },
+                    processor_name=self.__class__.__name__
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            raise ValueError(error_msg)
         
         if not rows:
             logger.warning("No rows to insert")
+            try:
+                notify_warning(
+                    title=f"Analytics Processor Empty Dataset: {self.__class__.__name__}",
+                    message="No rows to insert after analytics calculation",
+                    details={
+                        'processor': self.__class__.__name__,
+                        'run_id': self.run_id,
+                        'table': self.table_name,
+                        'raw_data_size': len(str(self.raw_data)) if self.raw_data is not None else 0
+                    }
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
             return
         
         # Apply processing strategy
         if self.processing_strategy == 'MERGE_UPDATE':
-            self._delete_existing_data(rows)
+            try:
+                self._delete_existing_data(rows)
+            except Exception as e:
+                logger.error(f"Failed to delete existing data: {e}")
+                try:
+                    notify_error(
+                        title=f"Analytics Processor Delete Failed: {self.__class__.__name__}",
+                        message=f"Failed to delete existing data for MERGE_UPDATE: {str(e)}",
+                        details={
+                            'processor': self.__class__.__name__,
+                            'run_id': self.run_id,
+                            'table': table_id,
+                            'strategy': self.processing_strategy,
+                            'date_range': f"{self.opts.get('start_date')} to {self.opts.get('end_date')}",
+                            'error_type': type(e).__name__,
+                            'error': str(e)
+                        },
+                        processor_name=self.__class__.__name__
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                raise
             
         # Insert to BigQuery
         logger.info(f"Inserting {len(rows)} rows to {table_id}")
-        errors = self.bq_client.insert_rows_json(table_id, rows)
         
-        if errors:
-            raise Exception(f"BigQuery insert errors: {errors}")
+        try:
+            errors = self.bq_client.insert_rows_json(table_id, rows)
+            
+            if errors:
+                error_msg = f"BigQuery insert errors: {errors}"
+                try:
+                    notify_error(
+                        title=f"Analytics Processor BigQuery Insert Failed: {self.__class__.__name__}",
+                        message=f"Failed to insert {len(rows)} analytics rows",
+                        details={
+                            'processor': self.__class__.__name__,
+                            'run_id': self.run_id,
+                            'table': table_id,
+                            'rows_attempted': len(rows),
+                            'errors': errors[:5] if len(errors) > 5 else errors,
+                            'error_count': len(errors),
+                            'date_range': f"{self.opts.get('start_date')} to {self.opts.get('end_date')}"
+                        },
+                        processor_name=self.__class__.__name__
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                raise Exception(error_msg)
+                
+        except Exception as e:
+            # Catch any other BigQuery errors
+            if "BigQuery insert errors:" not in str(e):
+                try:
+                    notify_error(
+                        title=f"Analytics Processor BigQuery Error: {self.__class__.__name__}",
+                        message=f"BigQuery operation failed: {str(e)}",
+                        details={
+                            'processor': self.__class__.__name__,
+                            'run_id': self.run_id,
+                            'table': table_id,
+                            'rows_attempted': len(rows),
+                            'error_type': type(e).__name__,
+                            'error': str(e)
+                        },
+                        processor_name=self.__class__.__name__
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+            raise
             
         self.stats["rows_processed"] = len(rows)
         logger.info(f"Successfully inserted {len(rows)} rows")
@@ -256,7 +450,10 @@ class AnalyticsProcessorBase:
             logger.warning(f"Failed to log processing run: {e}")
     
     def log_quality_issue(self, issue_type: str, severity: str, identifier: str, details: Dict):
-        """Log data quality issues for review."""
+        """
+        Log data quality issues for review.
+        Enhanced to send notifications for CRITICAL and HIGH severity issues.
+        """
         issue_record = {
             'issue_id': str(uuid.uuid4()),
             'processor_name': self.__class__.__name__,
@@ -272,8 +469,47 @@ class AnalyticsProcessorBase:
         try:
             table_id = f"{self.project_id}.nba_processing.analytics_data_issues"
             self.bq_client.insert_rows_json(table_id, [issue_record])
+            
+            # Send notification for high-severity quality issues
+            if severity in ['CRITICAL', 'HIGH']:
+                try:
+                    notify_func = notify_error if severity == 'CRITICAL' else notify_warning
+                    notify_func(
+                        title=f"Analytics Data Quality Issue: {self.__class__.__name__}",
+                        message=f"{severity} severity {issue_type} detected for {identifier}",
+                        details={
+                            'processor': self.__class__.__name__,
+                            'run_id': self.run_id,
+                            'issue_type': issue_type,
+                            'severity': severity,
+                            'identifier': identifier,
+                            'issue_details': details,
+                            'table': self.table_name
+                        }
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                    
         except Exception as e:
             logger.warning(f"Failed to log quality issue: {e}")
+            # Also try to notify on logging failure for critical issues
+            if severity == 'CRITICAL':
+                try:
+                    notify_error(
+                        title=f"Analytics Quality Issue Logging Failed: {self.__class__.__name__}",
+                        message=f"Failed to log CRITICAL quality issue: {str(e)}",
+                        details={
+                            'processor': self.__class__.__name__,
+                            'run_id': self.run_id,
+                            'issue_type': issue_type,
+                            'severity': severity,
+                            'identifier': identifier,
+                            'logging_error': str(e)
+                        },
+                        processor_name=self.__class__.__name__
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
     
     # Time tracking methods (copied exactly from ProcessorBase)
     def mark_time(self, label: str) -> str:

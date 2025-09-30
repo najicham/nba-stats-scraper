@@ -50,6 +50,13 @@ except ImportError:
     from scrapers.utils.exceptions import DownloadDataException
     from scrapers.utils.gcs_path_builder import GCSPathBuilder
 
+# Notification system imports
+from shared.utils.notification_system import (
+    notify_error,
+    notify_warning,
+    notify_info
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -126,9 +133,25 @@ class GetOddsApiTeamPlayers(ScraperBase, ScraperFlaskMixin):
     def set_url(self) -> None:
         api_key = self.opts.get("api_key") or os.getenv("ODDS_API_KEY")
         if not api_key:
-            raise DownloadDataException(
-                "Missing api_key and env var ODDS_API_KEY not set."
-            )
+            error_msg = "Missing api_key and env var ODDS_API_KEY not set."
+            
+            # Send critical notification - API key missing prevents all scraping
+            try:
+                notify_error(
+                    title="Odds API Key Missing",
+                    message="Cannot scrape team players - API key not configured",
+                    details={
+                        'scraper': 'oddsa_team_players',
+                        'sport': self.opts.get('sport', 'unknown'),
+                        'participant_id': self.opts.get('participant_id', 'unknown'),
+                        'error': 'ODDS_API_KEY environment variable not set'
+                    },
+                    processor_name="Odds API Team Players Scraper"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            
+            raise DownloadDataException(error_msg)
 
         base = self._API_ROOT_TMPL.format(
             sport=self.opts["sport"],
@@ -149,7 +172,30 @@ class GetOddsApiTeamPlayers(ScraperBase, ScraperFlaskMixin):
         Consider 200 and 204 as successful.
         """
         if self.raw_response.status_code in (200, 204):
+            # 204 is expected for teams with no roster data
+            if self.raw_response.status_code == 204:
+                logger.info("204 response - no roster data for participant %s", 
+                           self.opts.get("participant_id"))
             return
+        
+        # Non-success status code - send error notification
+        status_code = self.raw_response.status_code
+        try:
+            notify_error(
+                title="Odds API HTTP Error",
+                message=f"Team players scraping failed with HTTP {status_code}",
+                details={
+                    'scraper': 'oddsa_team_players',
+                    'sport': self.opts.get('sport', 'unknown'),
+                    'participant_id': self.opts.get('participant_id', 'unknown'),
+                    'status_code': status_code,
+                    'response_text': self.raw_response.text[:500] if hasattr(self.raw_response, 'text') else 'N/A'
+                },
+                processor_name="Odds API Team Players Scraper"
+            )
+        except Exception as notify_ex:
+            logger.warning(f"Failed to send notification: {notify_ex}")
+        
         super().check_download_status()
 
     # ------------------------------------------------------------------ #
@@ -157,9 +203,44 @@ class GetOddsApiTeamPlayers(ScraperBase, ScraperFlaskMixin):
     # ------------------------------------------------------------------ #
     def validate_download_data(self) -> None:
         if isinstance(self.decoded_data, dict) and "message" in self.decoded_data:
-            raise DownloadDataException(f"API error: {self.decoded_data['message']}")
+            error_msg = self.decoded_data['message']
+            
+            # API returned an error message
+            try:
+                notify_error(
+                    title="Odds API Error Response",
+                    message=f"Team players API returned error: {error_msg}",
+                    details={
+                        'scraper': 'oddsa_team_players',
+                        'sport': self.opts.get('sport', 'unknown'),
+                        'participant_id': self.opts.get('participant_id', 'unknown'),
+                        'api_error': error_msg
+                    },
+                    processor_name="Odds API Team Players Scraper"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            
+            raise DownloadDataException(f"API error: {error_msg}")
 
         if not isinstance(self.decoded_data, (list, dict)):
+            # Unexpected data format
+            try:
+                notify_error(
+                    title="Odds API Invalid Response Format",
+                    message="Team players API returned unexpected data format",
+                    details={
+                        'scraper': 'oddsa_team_players',
+                        'sport': self.opts.get('sport', 'unknown'),
+                        'participant_id': self.opts.get('participant_id', 'unknown'),
+                        'received_type': type(self.decoded_data).__name__,
+                        'expected_types': 'list or dict'
+                    },
+                    processor_name="Odds API Team Players Scraper"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            
             raise DownloadDataException("Expected list or dict payload.")
 
     # ------------------------------------------------------------------ #
@@ -181,6 +262,38 @@ class GetOddsApiTeamPlayers(ScraperBase, ScraperFlaskMixin):
             "rowCount": len(players),
             "players": players,
         }
+        
+        # Check for no players returned
+        if len(players) == 0:
+            try:
+                notify_warning(
+                    title="No Team Players Available",
+                    message="Odds API returned zero players for team",
+                    details={
+                        'scraper': 'oddsa_team_players',
+                        'sport': self.opts.get('sport', 'unknown'),
+                        'participant_id': self.opts.get('participant_id', 'unknown'),
+                        'note': 'Team may not exist or roster data not available yet'
+                    }
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+        else:
+            # Success! Send info notification with metrics
+            try:
+                notify_info(
+                    title="Team Players Scraped Successfully",
+                    message=f"Retrieved {len(players)} players for team roster",
+                    details={
+                        'scraper': 'oddsa_team_players',
+                        'sport': self.opts.get('sport', 'unknown'),
+                        'participant_id': self.opts.get('participant_id', 'unknown'),
+                        'player_count': len(players)
+                    }
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+        
         logger.info(
             "Fetched %d players for participantId=%s",
             len(players),
@@ -215,4 +328,3 @@ create_app = convert_existing_flask_scraper(GetOddsApiTeamPlayers)
 if __name__ == "__main__":
     main = GetOddsApiTeamPlayers.create_cli_and_flask_main()
     main()
-    

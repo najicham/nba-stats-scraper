@@ -2,6 +2,7 @@
 # File: processors/nbacom/nbac_referee_processor.py
 # Description: Processor for NBA.com referee assignments data transformation
 # Enhanced with monitoring to detect duplication issues
+# Integrated notification system for monitoring and alerts
 
 import json
 import logging
@@ -11,6 +12,11 @@ from datetime import datetime
 from typing import Dict, List, Optional
 from google.cloud import bigquery
 from data_processors.raw.processor_base import ProcessorBase
+from shared.utils.notification_system import (
+    notify_error,
+    notify_warning,
+    notify_info
+)
 
 class NbacRefereeProcessor(ProcessorBase):
     def __init__(self):
@@ -66,6 +72,21 @@ class NbacRefereeProcessor(ProcessorBase):
         nba_data = data['refereeAssignments']['nba']
         if 'Table' not in nba_data or 'rows' not in nba_data['Table']:
             errors.append("Missing Table/rows in NBA referee data")
+        
+        # Notify about validation failures
+        if errors:
+            try:
+                notify_warning(
+                    title="Referee Data Validation Failed",
+                    message=f"Found {len(errors)} validation errors in referee data",
+                    details={
+                        'errors': errors,
+                        'has_refereeAssignments': 'refereeAssignments' in data,
+                        'has_nba': 'nba' in data.get('refereeAssignments', {})
+                    }
+                )
+            except Exception as notify_ex:
+                logging.warning(f"Failed to send notification: {notify_ex}")
             
         return errors
     
@@ -73,64 +94,125 @@ class NbacRefereeProcessor(ProcessorBase):
         """Transform game referee assignments into normalized rows."""
         rows = []
         
-        # Extract scrape timestamp
-        scrape_timestamp = self.extract_scrape_timestamp(raw_data)
-        
-        nba_assignments = raw_data['refereeAssignments']['nba']['Table']['rows']
-        
-        for game_row in nba_assignments:
-            # Extract game information
-            game_id = game_row.get('game_id', '')
-            game_date_str = game_row.get('game_date', '')
+        try:
+            # Extract scrape timestamp
+            scrape_timestamp = self.extract_scrape_timestamp(raw_data)
             
-            # Parse game date
-            game_date = None
-            if game_date_str:
-                try:
-                    game_date = datetime.strptime(game_date_str, '%m/%d/%Y').date()
-                except (ValueError, TypeError):
-                    logging.warning(f"Invalid game_date format: {game_date_str}")
-                    continue
+            nba_assignments = raw_data['refereeAssignments']['nba']['Table']['rows']
+            
+            for game_row in nba_assignments:
+                # Extract game information
+                game_id = game_row.get('game_id', '')
+                game_date_str = game_row.get('game_date', '')
+                
+                # Parse game date
+                game_date = None
+                if game_date_str:
+                    try:
+                        game_date = datetime.strptime(game_date_str, '%m/%d/%Y').date()
+                    except (ValueError, TypeError):
+                        logging.warning(f"Invalid game_date format: {game_date_str}")
+                        continue
+                        
+                # Extract season info
+                season = game_row.get('season', '')
+                
+                # Process each official (1-4 officials per game)
+                for official_num in range(1, 5):  # officials 1-4
+                    official_key = f'official{official_num}'
+                    official_code_key = f'official{official_num}_code'
+                    official_jnum_key = f'official{official_num}_JNum'
                     
-            # Extract season info
-            season = game_row.get('season', '')
+                    official_name = game_row.get(official_key)
+                    official_code = game_row.get(official_code_key)
+                    official_jersey = game_row.get(official_jnum_key)
+                    
+                    # Skip if no official assigned to this position
+                    if not official_name or not official_code:
+                        continue
+                    
+                    row = {
+                        # Game identifiers
+                        'game_id': game_id,
+                        'game_date': game_date.isoformat() if game_date else None,
+                        'season': season,
+                        'game_code': game_row.get('game_code', ''),
+                        
+                        # Team information
+                        'home_team_id': game_row.get('home_team_id'),
+                        'home_team': self.normalize_text(game_row.get('home_team', '')),
+                        'home_team_abbr': game_row.get('home_team_abbr', ''),
+                        'away_team_id': game_row.get('away_team_id'),
+                        'away_team': self.normalize_text(game_row.get('away_team', '')),
+                        'away_team_abbr': game_row.get('away_team_abbr', ''),
+                        
+                        # Official information
+                        'official_position': official_num,
+                        'official_name': self.normalize_text(official_name),
+                        'official_code': official_code,
+                        'official_jersey_number': official_jersey,
+                        
+                        # Processing metadata
+                        'source_file_path': file_path,
+                        'scrape_timestamp': scrape_timestamp.isoformat() if scrape_timestamp else None,
+                        'created_at': datetime.utcnow().isoformat(),
+                        'processed_at': datetime.utcnow().isoformat()
+                    }
+                    
+                    rows.append(row)
             
-            # Process each official (1-4 officials per game)
-            for official_num in range(1, 5):  # officials 1-4
-                official_key = f'official{official_num}'
-                official_code_key = f'official{official_num}_code'
-                official_jnum_key = f'official{official_num}_JNum'
+            return rows
+            
+        except Exception as e:
+            logging.error(f"Error in transform_data: {e}")
+            
+            # Notify about transformation failure
+            try:
+                notify_error(
+                    title="Referee Data Transformation Failed",
+                    message=f"Failed to transform referee data: {str(e)}",
+                    details={
+                        'file_path': file_path,
+                        'error_type': type(e).__name__
+                    },
+                    processor_name="NBA.com Referee Processor"
+                )
+            except Exception as notify_ex:
+                logging.warning(f"Failed to send notification: {notify_ex}")
+            
+            raise e
+    
+    def transform_replay_center_data(self, raw_data: Dict, file_path: str) -> List[Dict]:
+        """Transform replay center officials data."""
+        rows = []
+        
+        try:
+            # Extract scrape timestamp
+            scrape_timestamp = self.extract_scrape_timestamp(raw_data)
+            
+            # Check if replay center data exists
+            nba_data = raw_data.get('refereeAssignments', {}).get('nba', {})
+            if 'Table1' not in nba_data or 'rows' not in nba_data['Table1']:
+                return rows
                 
-                official_name = game_row.get(official_key)
-                official_code = game_row.get(official_code_key)
-                official_jersey = game_row.get(official_jnum_key)
+            replay_rows = nba_data['Table1']['rows']
+            
+            for replay_row in replay_rows:
+                game_date_str = replay_row.get('game_date', '')
                 
-                # Skip if no official assigned to this position
-                if not official_name or not official_code:
-                    continue
+                # Parse game date
+                game_date = None
+                if game_date_str:
+                    try:
+                        game_date = datetime.strptime(game_date_str, '%m/%d/%Y').date()
+                    except (ValueError, TypeError):
+                        logging.warning(f"Invalid replay center game_date format: {game_date_str}")
+                        continue
                 
                 row = {
-                    # Game identifiers
-                    'game_id': game_id,
                     'game_date': game_date.isoformat() if game_date else None,
-                    'season': season,
-                    'game_code': game_row.get('game_code', ''),
-                    
-                    # Team information
-                    'home_team_id': game_row.get('home_team_id'),
-                    'home_team': self.normalize_text(game_row.get('home_team', '')),
-                    'home_team_abbr': game_row.get('home_team_abbr', ''),
-                    'away_team_id': game_row.get('away_team_id'),
-                    'away_team': self.normalize_text(game_row.get('away_team', '')),
-                    'away_team_abbr': game_row.get('away_team_abbr', ''),
-                    
-                    # Official information
-                    'official_position': official_num,
-                    'official_name': self.normalize_text(official_name),
-                    'official_code': official_code,
-                    'official_jersey_number': official_jersey,
-                    
-                    # Processing metadata
+                    'official_code': replay_row.get('official_code'),
+                    'official_name': self.normalize_text(replay_row.get('replaycenter_official', '')),
                     'source_file_path': file_path,
                     'scrape_timestamp': scrape_timestamp.isoformat() if scrape_timestamp else None,
                     'created_at': datetime.utcnow().isoformat(),
@@ -138,48 +220,27 @@ class NbacRefereeProcessor(ProcessorBase):
                 }
                 
                 rows.append(row)
-        
-        return rows
-    
-    def transform_replay_center_data(self, raw_data: Dict, file_path: str) -> List[Dict]:
-        """Transform replay center officials data."""
-        rows = []
-        
-        # Extract scrape timestamp
-        scrape_timestamp = self.extract_scrape_timestamp(raw_data)
-        
-        # Check if replay center data exists
-        nba_data = raw_data.get('refereeAssignments', {}).get('nba', {})
-        if 'Table1' not in nba_data or 'rows' not in nba_data['Table1']:
+            
             return rows
             
-        replay_rows = nba_data['Table1']['rows']
-        
-        for replay_row in replay_rows:
-            game_date_str = replay_row.get('game_date', '')
+        except Exception as e:
+            logging.error(f"Error in transform_replay_center_data: {e}")
             
-            # Parse game date
-            game_date = None
-            if game_date_str:
-                try:
-                    game_date = datetime.strptime(game_date_str, '%m/%d/%Y').date()
-                except (ValueError, TypeError):
-                    logging.warning(f"Invalid replay center game_date format: {game_date_str}")
-                    continue
+            # Notify about replay center transformation failure
+            try:
+                notify_error(
+                    title="Replay Center Data Transformation Failed",
+                    message=f"Failed to transform replay center data: {str(e)}",
+                    details={
+                        'file_path': file_path,
+                        'error_type': type(e).__name__
+                    },
+                    processor_name="NBA.com Referee Processor"
+                )
+            except Exception as notify_ex:
+                logging.warning(f"Failed to send notification: {notify_ex}")
             
-            row = {
-                'game_date': game_date.isoformat() if game_date else None,
-                'official_code': replay_row.get('official_code'),
-                'official_name': self.normalize_text(replay_row.get('replaycenter_official', '')),
-                'source_file_path': file_path,
-                'scrape_timestamp': scrape_timestamp.isoformat() if scrape_timestamp else None,
-                'created_at': datetime.utcnow().isoformat(),
-                'processed_at': datetime.utcnow().isoformat()
-            }
-            
-            rows.append(row)
-        
-        return rows
+            return rows
     
     def load_data(self, rows: List[Dict], **kwargs) -> Dict:
         """Load game assignment data into BigQuery with duplicate detection and verification."""
@@ -197,6 +258,20 @@ class NbacRefereeProcessor(ProcessorBase):
         
         if duplicates:
             logging.warning(f"Found {len(duplicates)} duplicate keys in input data: {duplicates[:3]}...")
+            
+            # Notify about duplicates
+            try:
+                notify_warning(
+                    title="Referee Assignment Duplicates Detected",
+                    message=f"Found {len(duplicates)} duplicate referee assignments in input data",
+                    details={
+                        'duplicate_count': len(duplicates),
+                        'sample_duplicates': str(duplicates[:3]),
+                        'total_rows': len(rows)
+                    }
+                )
+            except Exception as notify_ex:
+                logging.warning(f"Failed to send notification: {notify_ex}")
         
         table_id = f"{self.project_id}.{self.table_name}"
         errors = []
@@ -214,9 +289,30 @@ class NbacRefereeProcessor(ProcessorBase):
                     DELETE FROM `{table_id}` 
                     WHERE game_date = '{game_date}'
                     """
-                    self.bq_client.query(delete_query).result()
-                    delete_duration = (datetime.utcnow() - delete_start).total_seconds()
-                    logging.info(f"Deleted existing referee assignments for {game_date} ({delete_duration:.2f}s)")
+                    
+                    try:
+                        self.bq_client.query(delete_query).result()
+                        delete_duration = (datetime.utcnow() - delete_start).total_seconds()
+                        logging.info(f"Deleted existing referee assignments for {game_date} ({delete_duration:.2f}s)")
+                    except Exception as e:
+                        logging.error(f"Error deleting existing data: {e}")
+                        
+                        # Notify about delete failure
+                        try:
+                            notify_error(
+                                title="BigQuery Delete Failed",
+                                message=f"Failed to delete existing referee data: {str(e)}",
+                                details={
+                                    'game_date': game_date,
+                                    'table_id': table_id,
+                                    'error_type': type(e).__name__
+                                },
+                                processor_name="NBA.com Referee Processor"
+                            )
+                        except Exception as notify_ex:
+                            logging.warning(f"Failed to send notification: {notify_ex}")
+                        
+                        raise e
             
             # Log insert operation with timing
             insert_start = datetime.utcnow()
@@ -229,10 +325,27 @@ class NbacRefereeProcessor(ProcessorBase):
             if result:
                 errors.extend([str(e) for e in result])
                 logging.error(f"BigQuery insert errors: {errors}")
+                
+                # Notify about insert errors
+                try:
+                    notify_error(
+                        title="BigQuery Insert Errors",
+                        message=f"Encountered {len(result)} errors inserting referee data",
+                        details={
+                            'table_id': table_id,
+                            'rows_attempted': len(rows),
+                            'error_count': len(result),
+                            'errors': str(result)[:500]
+                        },
+                        processor_name="NBA.com Referee Processor"
+                    )
+                except Exception as notify_ex:
+                    logging.warning(f"Failed to send notification: {notify_ex}")
             else:
                 logging.info(f"Successfully inserted {len(rows)} rows to {self.table_name} ({insert_duration:.2f}s)")
                 
                 # Verify row count post-insertion
+                game_date = rows[0].get('game_date') if rows else None
                 verify_query = f"""
                 SELECT COUNT(*) as count 
                 FROM `{table_id}` 
@@ -243,6 +356,21 @@ class NbacRefereeProcessor(ProcessorBase):
                     actual_count = list(self.bq_client.query(verify_query))[0].count
                     if actual_count != len(rows):
                         logging.error(f"ROW COUNT MISMATCH! Expected {len(rows)}, got {actual_count}")
+                        
+                        # Notify about row count mismatch
+                        try:
+                            notify_warning(
+                                title="Referee Row Count Mismatch",
+                                message=f"Row count mismatch after insert: expected {len(rows)}, got {actual_count}",
+                                details={
+                                    'expected': len(rows),
+                                    'actual': actual_count,
+                                    'difference': abs(len(rows) - actual_count),
+                                    'game_date': game_date
+                                }
+                            )
+                        except Exception as notify_ex:
+                            logging.warning(f"Failed to send notification: {notify_ex}")
                     else:
                         logging.info(f"Row count verified: {actual_count} rows")
                 except Exception as verify_error:
@@ -252,6 +380,21 @@ class NbacRefereeProcessor(ProcessorBase):
             error_msg = str(e)
             errors.append(error_msg)
             logging.error(f"Error loading referee assignments data: {error_msg}")
+            
+            # Notify about load failure
+            try:
+                notify_error(
+                    title="Referee Data Load Failed",
+                    message=f"Failed to load referee assignment data: {error_msg}",
+                    details={
+                        'table_id': table_id,
+                        'rows_attempted': len(rows),
+                        'error_type': type(e).__name__
+                    },
+                    processor_name="NBA.com Referee Processor"
+                )
+            except Exception as notify_ex:
+                logging.warning(f"Failed to send notification: {notify_ex}")
         
         return {'rows_processed': len(rows) if not errors else 0, 'errors': errors}
     
@@ -271,6 +414,20 @@ class NbacRefereeProcessor(ProcessorBase):
         
         if duplicates:
             logging.warning(f"Found {len(duplicates)} duplicate replay center keys: {duplicates}")
+            
+            # Notify about replay center duplicates
+            try:
+                notify_warning(
+                    title="Replay Center Duplicates Detected",
+                    message=f"Found {len(duplicates)} duplicate replay center records",
+                    details={
+                        'duplicate_count': len(duplicates),
+                        'sample_duplicates': str(duplicates[:3]),
+                        'total_rows': len(replay_rows)
+                    }
+                )
+            except Exception as notify_ex:
+                logging.warning(f"Failed to send notification: {notify_ex}")
         
         table_id = f"{self.project_id}.{self.replay_table_name}"
         errors = []
@@ -287,9 +444,30 @@ class NbacRefereeProcessor(ProcessorBase):
                     DELETE FROM `{table_id}` 
                     WHERE game_date = '{game_date}'
                     """
-                    self.bq_client.query(delete_query).result()
-                    delete_duration = (datetime.utcnow() - delete_start).total_seconds()
-                    logging.info(f"Deleted existing replay center data for {game_date} ({delete_duration:.2f}s)")
+                    
+                    try:
+                        self.bq_client.query(delete_query).result()
+                        delete_duration = (datetime.utcnow() - delete_start).total_seconds()
+                        logging.info(f"Deleted existing replay center data for {game_date} ({delete_duration:.2f}s)")
+                    except Exception as e:
+                        logging.error(f"Error deleting replay center data: {e}")
+                        
+                        # Notify about delete failure
+                        try:
+                            notify_error(
+                                title="Replay Center Delete Failed",
+                                message=f"Failed to delete existing replay center data: {str(e)}",
+                                details={
+                                    'game_date': game_date,
+                                    'table_id': table_id,
+                                    'error_type': type(e).__name__
+                                },
+                                processor_name="NBA.com Referee Processor"
+                            )
+                        except Exception as notify_ex:
+                            logging.warning(f"Failed to send notification: {notify_ex}")
+                        
+                        raise e
             
             # Enhanced insert logging with timing
             insert_start = datetime.utcnow()
@@ -302,6 +480,22 @@ class NbacRefereeProcessor(ProcessorBase):
             if result:
                 errors.extend([str(e) for e in result])
                 logging.error(f"BigQuery replay center insert errors: {errors}")
+                
+                # Notify about replay center insert errors
+                try:
+                    notify_error(
+                        title="Replay Center Insert Errors",
+                        message=f"Encountered {len(result)} errors inserting replay center data",
+                        details={
+                            'table_id': table_id,
+                            'rows_attempted': len(replay_rows),
+                            'error_count': len(result),
+                            'errors': str(result)[:500]
+                        },
+                        processor_name="NBA.com Referee Processor"
+                    )
+                except Exception as notify_ex:
+                    logging.warning(f"Failed to send notification: {notify_ex}")
             else:
                 logging.info(f"Successfully inserted {len(replay_rows)} rows to {self.replay_table_name} ({insert_duration:.2f}s)")
                 
@@ -315,6 +509,20 @@ class NbacRefereeProcessor(ProcessorBase):
                     actual_count = list(self.bq_client.query(verify_query))[0].count
                     if actual_count != len(replay_rows):
                         logging.error(f"REPLAY CENTER ROW COUNT MISMATCH! Expected {len(replay_rows)}, got {actual_count}")
+                        
+                        # Notify about replay center row count mismatch
+                        try:
+                            notify_warning(
+                                title="Replay Center Row Count Mismatch",
+                                message=f"Row count mismatch: expected {len(replay_rows)}, got {actual_count}",
+                                details={
+                                    'expected': len(replay_rows),
+                                    'actual': actual_count,
+                                    'difference': abs(len(replay_rows) - actual_count)
+                                }
+                            )
+                        except Exception as notify_ex:
+                            logging.warning(f"Failed to send notification: {notify_ex}")
                     else:
                         logging.info(f"Replay center row count verified: {actual_count} rows")
                 except Exception as verify_error:
@@ -324,6 +532,21 @@ class NbacRefereeProcessor(ProcessorBase):
             error_msg = str(e)
             errors.append(error_msg)
             logging.error(f"Error loading replay center data: {error_msg}")
+            
+            # Notify about replay center load failure
+            try:
+                notify_error(
+                    title="Replay Center Load Failed",
+                    message=f"Failed to load replay center data: {error_msg}",
+                    details={
+                        'table_id': table_id,
+                        'rows_attempted': len(replay_rows),
+                        'error_type': type(e).__name__
+                    },
+                    processor_name="NBA.com Referee Processor"
+                )
+            except Exception as notify_ex:
+                logging.warning(f"Failed to send notification: {notify_ex}")
         
         return {'rows_processed': len(replay_rows) if not errors else 0, 'errors': errors}
     
@@ -395,6 +618,21 @@ class NbacRefereeProcessor(ProcessorBase):
             # Enhanced completion logging
             logging.info(f"Processed {file_path}: {game_processed} game assignments, {replay_processed} replay center records (status: {status})")
             
+            # Send success notification if no errors
+            if status == 'success':
+                try:
+                    notify_info(
+                        title="Referee Processing Complete",
+                        message=f"Successfully processed referee data",
+                        details={
+                            'file_path': file_path,
+                            'game_assignments': game_processed,
+                            'replay_center': replay_processed
+                        }
+                    )
+                except Exception as notify_ex:
+                    logging.warning(f"Failed to send notification: {notify_ex}")
+            
             return {
                 'file_path': file_path,
                 'status': status,
@@ -408,6 +646,21 @@ class NbacRefereeProcessor(ProcessorBase):
         except Exception as e:
             error_msg = str(e)
             logging.error(f"Error processing referee file {file_path}: {error_msg}")
+            
+            # Notify about file processing failure
+            try:
+                notify_error(
+                    title="Referee File Processing Failed",
+                    message=f"Error processing referee file: {error_msg}",
+                    details={
+                        'file_path': file_path,
+                        'error_type': type(e).__name__
+                    },
+                    processor_name="NBA.com Referee Processor"
+                )
+            except Exception as notify_ex:
+                logging.warning(f"Failed to send notification: {notify_ex}")
+            
             return {
                 'file_path': file_path,
                 'status': 'error',

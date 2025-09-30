@@ -1,6 +1,7 @@
 """
 Main processor service for Cloud Run
 Handles Pub/Sub messages when scrapers complete
+Enhanced with notifications for orchestration issues
 """
 
 import os
@@ -10,6 +11,13 @@ from flask import Flask, request, jsonify
 from datetime import datetime, timezone
 import base64
 import re
+
+# Import notification system
+from shared.utils.notification_system import (
+    notify_error,
+    notify_warning,
+    notify_info
+)
 
 # Import processors
 from data_processors.raw.basketball_ref.br_roster_processor import BasketballRefRosterProcessor
@@ -100,10 +108,37 @@ def process_pubsub():
     envelope = request.get_json()
     
     if not envelope:
+        try:
+            notify_error(
+                title="Processor Service: Empty Pub/Sub Message",
+                message="No Pub/Sub message received",
+                details={
+                    'service': 'processor-orchestration',
+                    'endpoint': '/process',
+                    'issue': 'Empty request body'
+                },
+                processor_name="Processor Orchestration"
+            )
+        except Exception as notify_ex:
+            logger.warning(f"Failed to send notification: {notify_ex}")
         return jsonify({"error": "No Pub/Sub message received"}), 400
     
     # Decode Pub/Sub message
     if 'message' not in envelope:
+        try:
+            notify_error(
+                title="Processor Service: Invalid Pub/Sub Format",
+                message="Missing 'message' field in Pub/Sub envelope",
+                details={
+                    'service': 'processor-orchestration',
+                    'endpoint': '/process',
+                    'envelope_keys': list(envelope.keys()),
+                    'issue': 'Invalid message format'
+                },
+                processor_name="Processor Orchestration"
+            )
+        except Exception as notify_ex:
+            logger.warning(f"Failed to send notification: {notify_ex}")
         return jsonify({"error": "Invalid Pub/Sub message format"}), 400
     
     try:
@@ -114,6 +149,19 @@ def process_pubsub():
             data = base64.b64decode(pubsub_message['data']).decode('utf-8')
             message = json.loads(data)
         else:
+            try:
+                notify_error(
+                    title="Processor Service: Missing Message Data",
+                    message="No data field in Pub/Sub message",
+                    details={
+                        'service': 'processor-orchestration',
+                        'message_keys': list(pubsub_message.keys()),
+                        'issue': 'Missing data field'
+                    },
+                    processor_name="Processor Orchestration"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
             return jsonify({"error": "No data in Pub/Sub message"}), 400
         
         # Extract file info
@@ -131,10 +179,47 @@ def process_pubsub():
         
         if not processor_class:
             logger.warning(f"No processor found for file: {file_path}")
+            
+            # Send notification for unregistered file type
+            try:
+                notify_warning(
+                    title="Processor Service: No Processor Found",
+                    message=f"No processor registered for file path pattern",
+                    details={
+                        'service': 'processor-orchestration',
+                        'file_path': file_path,
+                        'bucket': bucket,
+                        'registered_patterns': list(PROCESSOR_REGISTRY.keys()),
+                        'action': 'Add processor to PROCESSOR_REGISTRY if this is a new data source'
+                    }
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            
             return jsonify({"status": "skipped", "reason": "No processor for file type"}), 200
         
         # Extract metadata from file path
-        opts = extract_opts_from_path(file_path)
+        try:
+            opts = extract_opts_from_path(file_path)
+        except Exception as e:
+            logger.error(f"Failed to extract opts from path: {file_path}", exc_info=True)
+            try:
+                notify_warning(
+                    title="Processor Service: Path Extraction Failed",
+                    message=f"Could not extract options from file path: {str(e)}",
+                    details={
+                        'service': 'processor-orchestration',
+                        'file_path': file_path,
+                        'processor': processor_class.__name__,
+                        'error': str(e),
+                        'action': 'Check file naming convention'
+                    }
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            # Continue with empty opts rather than failing
+            opts = {}
+        
         opts['bucket'] = bucket
         opts['file_path'] = file_path
         opts['project_id'] = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
@@ -152,14 +237,68 @@ def process_pubsub():
                 "stats": stats
             }), 200
         else:
+            # Note: ProcessorBase already sent detailed error notification
+            # This is just for orchestration logging
             logger.error(f"Failed to process {file_path}")
             return jsonify({
                 "status": "error",
                 "file": file_path
             }), 500
             
+    except KeyError as e:
+        # Missing required field in message
+        logger.error(f"Missing required field in message: {e}", exc_info=True)
+        try:
+            notify_error(
+                title="Processor Service: Message Format Error",
+                message=f"Missing required field in message: {str(e)}",
+                details={
+                    'service': 'processor-orchestration',
+                    'error': str(e),
+                    'message_data': str(message) if 'message' in locals() else 'unavailable'
+                },
+                processor_name="Processor Orchestration"
+            )
+        except Exception as notify_ex:
+            logger.warning(f"Failed to send notification: {notify_ex}")
+        return jsonify({"error": f"Missing required field: {str(e)}"}), 400
+        
+    except json.JSONDecodeError as e:
+        # Invalid JSON in message data
+        logger.error(f"Invalid JSON in message data: {e}", exc_info=True)
+        try:
+            notify_error(
+                title="Processor Service: Invalid JSON",
+                message=f"Could not decode JSON from Pub/Sub message: {str(e)}",
+                details={
+                    'service': 'processor-orchestration',
+                    'error': str(e),
+                    'raw_data': data[:200] if 'data' in locals() else 'unavailable'
+                },
+                processor_name="Processor Orchestration"
+            )
+        except Exception as notify_ex:
+            logger.warning(f"Failed to send notification: {notify_ex}")
+        return jsonify({"error": f"Invalid JSON: {str(e)}"}), 400
+        
     except Exception as e:
+        # Unexpected orchestration error
         logger.error(f"Error processing message: {e}", exc_info=True)
+        try:
+            notify_error(
+                title="Processor Service: Orchestration Error",
+                message=f"Unexpected error in processor orchestration: {str(e)}",
+                details={
+                    'service': 'processor-orchestration',
+                    'error_type': type(e).__name__,
+                    'error': str(e),
+                    'file_path': file_path if 'file_path' in locals() else 'unknown',
+                    'processor': processor_class.__name__ if 'processor_class' in locals() else 'not_determined'
+                },
+                processor_name="Processor Orchestration"
+            )
+        except Exception as notify_ex:
+            logger.warning(f"Failed to send notification: {notify_ex}")
         return jsonify({"error": str(e)}), 500
 
 

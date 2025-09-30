@@ -7,6 +7,11 @@ from typing import Dict, List, Optional
 from datetime import datetime, timezone, date
 from google.cloud import bigquery
 from data_processors.raw.processor_base import ProcessorBase
+from shared.utils.notification_system import (
+    notify_error,
+    notify_warning,
+    notify_info
+)
 
 class EspnTeamRosterProcessor(ProcessorBase):
     def __init__(self):
@@ -140,6 +145,22 @@ class EspnTeamRosterProcessor(ProcessorBase):
             # Handle actual ESPN JSON structure
             if 'players' not in raw_data:
                 logging.error(f"Expected 'players' field not found in {file_path}")
+                
+                # Send error notification for missing players field
+                try:
+                    notify_error(
+                        title="ESPN Roster: Missing Players Field",
+                        message=f"Critical field 'players' not found in roster data",
+                        details={
+                            'file_path': file_path,
+                            'roster_date': roster_date.isoformat(),
+                            'available_fields': list(raw_data.keys())[:10]  # First 10 fields
+                        },
+                        processor_name="ESPN Team Roster Processor"
+                    )
+                except Exception as e:
+                    logging.warning(f"Failed to send notification: {e}")
+                
                 return rows
                 
             players_data = raw_data['players']
@@ -153,17 +174,23 @@ class EspnTeamRosterProcessor(ProcessorBase):
                 # Fallback: try to map team name to abbreviation
                 team_abbr = self.map_team_to_abbr(team_display_name)
             
+            total_players = len(players_data)
+            skipped_players = 0
+            
             for player_data in players_data:
                 if not isinstance(player_data, dict):
+                    skipped_players += 1
                     continue
                 
                 # Extract player information from actual ESPN structure
                 espn_player_id = player_data.get('playerId')
                 if not espn_player_id:
+                    skipped_players += 1
                     continue  # Skip players without IDs
                 
                 full_name = player_data.get('fullName', '')
                 if not full_name:
+                    skipped_players += 1
                     continue  # Skip players without names
                 
                 player_lookup = self.normalize_player_name(full_name)
@@ -226,11 +253,66 @@ class EspnTeamRosterProcessor(ProcessorBase):
                 }
                 
                 rows.append(row)
+            
+            # Check for low player count (NBA teams typically have 15+ players)
+            if len(rows) < 5:
+                try:
+                    notify_warning(
+                        title="ESPN Roster: Low Player Count",
+                        message=f"Team {team_abbr} roster has only {len(rows)} players",
+                        details={
+                            'team_abbr': team_abbr,
+                            'team_name': team_display_name,
+                            'player_count': len(rows),
+                            'total_in_data': total_players,
+                            'skipped_players': skipped_players,
+                            'roster_date': roster_date.isoformat(),
+                            'file_path': file_path
+                        }
+                    )
+                except Exception as e:
+                    logging.warning(f"Failed to send notification: {e}")
+            
+            # Check for high skip rate
+            if total_players > 0 and skipped_players >= total_players * 0.3:  # 30% threshold
+                try:
+                    notify_warning(
+                        title="ESPN Roster: High Player Skip Rate",
+                        message=f"Skipped {skipped_players} of {total_players} players for team {team_abbr}",
+                        details={
+                            'team_abbr': team_abbr,
+                            'team_name': team_display_name,
+                            'total_players': total_players,
+                            'skipped_players': skipped_players,
+                            'processed_players': len(rows),
+                            'skip_rate': f"{(skipped_players/total_players)*100:.1f}%",
+                            'roster_date': roster_date.isoformat(),
+                            'file_path': file_path
+                        }
+                    )
+                except Exception as e:
+                    logging.warning(f"Failed to send notification: {e}")
                 
             logging.info(f"Transformed {len(rows)} players from {team_abbr} roster")
         
         except Exception as e:
             logging.error(f"Error transforming ESPN roster data from {file_path}: {str(e)}")
+            
+            # Send error notification for transformation failures
+            try:
+                notify_error(
+                    title="ESPN Roster: Transformation Failed",
+                    message=f"Failed to transform roster data: {str(e)}",
+                    details={
+                        'file_path': file_path,
+                        'error_type': type(e).__name__,
+                        'error_message': str(e)
+                    },
+                    processor_name="ESPN Team Roster Processor"
+                )
+            except Exception as notify_ex:
+                logging.warning(f"Failed to send notification: {notify_ex}")
+            
             raise
         
         return rows
@@ -264,12 +346,48 @@ class EspnTeamRosterProcessor(ProcessorBase):
             result = self.bq_client.insert_rows_json(table_id, rows)
             if result:
                 errors.extend([str(e) for e in result])
+                
+                # Send error notification for BigQuery insert failures
+                try:
+                    notify_error(
+                        title="ESPN Roster: BigQuery Insert Failed",
+                        message=f"Failed to insert {len(rows)} roster records into BigQuery",
+                        details={
+                            'table': self.table_name,
+                            'rows_attempted': len(rows),
+                            'error_count': len(errors),
+                            'errors': errors[:5],  # First 5 errors
+                            'team_abbr': rows[0].get('team_abbr') if rows else 'unknown',
+                            'roster_date': rows[0].get('roster_date') if rows else 'unknown'
+                        },
+                        processor_name="ESPN Team Roster Processor"
+                    )
+                except Exception as e:
+                    logging.warning(f"Failed to send notification: {e}")
             else:
                 logging.info(f"Successfully loaded {len(rows)} ESPN roster records for {team_abbr}")
                 
         except Exception as e:
             errors.append(f"BigQuery load error: {str(e)}")
             logging.error(f"Failed to load ESPN roster data: {str(e)}")
+            
+            # Send error notification for general BigQuery failures
+            try:
+                notify_error(
+                    title="ESPN Roster: BigQuery Load Failed",
+                    message=f"Database operation failed: {str(e)}",
+                    details={
+                        'table': self.table_name,
+                        'rows_attempted': len(rows),
+                        'error_type': type(e).__name__,
+                        'error_message': str(e),
+                        'team_abbr': rows[0].get('team_abbr') if rows else 'unknown',
+                        'roster_date': rows[0].get('roster_date') if rows else 'unknown'
+                    },
+                    processor_name="ESPN Team Roster Processor"
+                )
+            except Exception as notify_ex:
+                logging.warning(f"Failed to send notification: {notify_ex}")
         
         return {
             'rows_processed': len(rows) if not errors else 0, 

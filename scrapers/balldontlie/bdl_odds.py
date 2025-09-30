@@ -1,4 +1,6 @@
 """
+File: scrapers/balldontlie/bdl_odds.py
+
 BALLDONTLIE - Odds endpoint                                   v1.2 - 2025-06-24
 -------------------------------------------------------------------------------
 Fetch betting odds either by calendar **date** or by **game_id**.
@@ -41,6 +43,19 @@ except ImportError:
     from scrapers.scraper_flask_mixin import ScraperFlaskMixin
     from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
     from scrapers.utils.gcs_path_builder import GCSPathBuilder
+
+# Notification system imports
+try:
+    from shared.utils.notification_system import (
+        notify_error,
+        notify_warning,
+        notify_info
+    )
+except ImportError:
+    # Graceful fallback if notification system not available
+    def notify_error(*args, **kwargs): pass
+    def notify_warning(*args, **kwargs): pass
+    def notify_info(*args, **kwargs): pass
 
 logger = logging.getLogger(__name__)
 
@@ -140,45 +155,131 @@ class BdlOddsScraper(ScraperBase, ScraperFlaskMixin):
     # Validation                                                         #
     # ------------------------------------------------------------------ #
     def validate_download_data(self) -> None:
-        if not isinstance(self.decoded_data, dict) or "data" not in self.decoded_data:
-            raise ValueError("Odds response malformed: no 'data' key")
+        try:
+            if not isinstance(self.decoded_data, dict) or "data" not in self.decoded_data:
+                raise ValueError("Odds response malformed: no 'data' key")
+        except Exception as e:
+            # Send error notification for validation failure
+            try:
+                notify_error(
+                    title="BDL Odds - Validation Failed",
+                    message=f"Data validation failed for {self.opts.get('ident', 'unknown')}: {str(e)}",
+                    details={
+                        'scraper': 'bdl_odds',
+                        'ident': self.opts.get('ident'),
+                        'game_id': self.opts.get('gameId'),
+                        'date': self.opts.get('date'),
+                        'error_type': type(e).__name__,
+                        'url': self.url,
+                        'has_data': self.decoded_data is not None
+                    },
+                    processor_name="Ball Don't Lie Odds"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send validation error notification: {notify_ex}")
+            raise
 
     # ------------------------------------------------------------------ #
     # Transform                                                          #
     # ------------------------------------------------------------------ #
     def transform_data(self) -> None:
-        rows: List[Dict[str, Any]] = list(self.decoded_data["data"])
-        cursor: Optional[str] = self.decoded_data.get("meta", {}).get("next_cursor")
+        try:
+            rows: List[Dict[str, Any]] = list(self.decoded_data["data"])
+            cursor: Optional[str] = self.decoded_data.get("meta", {}).get("next_cursor")
+            pages_fetched = 1
 
-        while cursor:
-            r = self.http_downloader.get(
-                self.base_url,
-                headers=self.headers,
-                params={"cursor": cursor, "per_page": 100},
-                timeout=self.timeout_http,
-            )
-            r.raise_for_status()
-            j = r.json()
-            rows.extend(j.get("data", []))
-            cursor = j.get("meta", {}).get("next_cursor")
+            # Paginate through all results
+            while cursor:
+                try:
+                    r = self.http_downloader.get(
+                        self.base_url,
+                        headers=self.headers,
+                        params={"cursor": cursor, "per_page": 100},
+                        timeout=self.timeout_http,
+                    )
+                    r.raise_for_status()
+                    j = r.json()
+                    rows.extend(j.get("data", []))
+                    cursor = j.get("meta", {}).get("next_cursor")
+                    pages_fetched += 1
+                except Exception as e:
+                    # Pagination failure
+                    try:
+                        notify_error(
+                            title="BDL Odds - Pagination Failed",
+                            message=f"Failed to fetch page {pages_fetched + 1} for {self.opts.get('ident', 'unknown')}: {str(e)}",
+                            details={
+                                'scraper': 'bdl_odds',
+                                'ident': self.opts.get('ident'),
+                                'game_id': self.opts.get('gameId'),
+                                'date': self.opts.get('date'),
+                                'pages_fetched': pages_fetched,
+                                'rows_so_far': len(rows),
+                                'error_type': type(e).__name__,
+                                'cursor': cursor
+                            },
+                            processor_name="Ball Don't Lie Odds"
+                        )
+                    except Exception as notify_ex:
+                        logger.warning(f"Failed to send pagination error notification: {notify_ex}")
+                    raise
 
-        def _sort_key(r):
-            return (
-                r.get("game_id", 0),
-                r.get("type", ""),
-                r.get("vendor", ""),
-                r.get("updated_at", ""),
-            )
+            def _sort_key(r):
+                return (
+                    r.get("game_id", 0),
+                    r.get("type", ""),
+                    r.get("vendor", ""),
+                    r.get("updated_at", ""),
+                )
 
-        rows.sort(key=_sort_key)
+            rows.sort(key=_sort_key)
 
-        self.data = {
-            "ident": self.opts["ident"],
-            "timestamp": _dt.datetime.now(_dt.timezone.utc).isoformat(),
-            "rowCount": len(rows),
-            "odds": rows,
-        }
-        logger.info("Fetched %d odds rows for %s", len(rows), self.opts["ident"])
+            self.data = {
+                "ident": self.opts["ident"],
+                "timestamp": _dt.datetime.now(_dt.timezone.utc).isoformat(),
+                "rowCount": len(rows),
+                "odds": rows,
+            }
+            
+            logger.info("Fetched %d odds rows for %s across %d pages", 
+                       len(rows), self.opts["ident"], pages_fetched)
+
+            # Success notification
+            try:
+                notify_info(
+                    title="BDL Odds - Success",
+                    message=f"Successfully scraped {len(rows)} odds rows ({self.opts.get('ident', 'unknown')})",
+                    details={
+                        'scraper': 'bdl_odds',
+                        'ident': self.opts.get('ident'),
+                        'game_id': self.opts.get('gameId'),
+                        'date': self.opts.get('date'),
+                        'row_count': len(rows),
+                        'pages_fetched': pages_fetched
+                    }
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send success notification: {notify_ex}")
+
+        except Exception as e:
+            # General transformation error
+            try:
+                notify_error(
+                    title="BDL Odds - Transform Failed",
+                    message=f"Data transformation failed for {self.opts.get('ident', 'unknown')}: {str(e)}",
+                    details={
+                        'scraper': 'bdl_odds',
+                        'ident': self.opts.get('ident'),
+                        'game_id': self.opts.get('gameId'),
+                        'date': self.opts.get('date'),
+                        'error_type': type(e).__name__,
+                        'has_decoded_data': self.decoded_data is not None
+                    },
+                    processor_name="Ball Don't Lie Odds"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send transform error notification: {notify_ex}")
+            raise
 
     # ------------------------------------------------------------------ #
     # Stats                                                              #
@@ -198,4 +299,3 @@ create_app = convert_existing_flask_scraper(BdlOddsScraper)
 if __name__ == "__main__":
     main = BdlOddsScraper.create_cli_and_flask_main()
     main()
-    

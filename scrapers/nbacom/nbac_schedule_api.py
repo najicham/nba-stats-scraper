@@ -1,5 +1,6 @@
-# scrapers/nbacom/nbac_schedule_api.py
 """
+File: scrapers/nbacom/nbac_schedule_api.py
+
 NBA.com stats API schedule scraper                       v2 - 2025-09-17
 ------------------------------------------------------------------------
 Uses the current NBA.com stats API endpoint to get season schedules.
@@ -45,6 +46,13 @@ except ImportError:
     from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
     from scrapers.utils.exceptions import DownloadDataException
     from scrapers.utils.gcs_path_builder import GCSPathBuilder
+
+# Notification system imports
+from shared.utils.notification_system import (
+    notify_error,
+    notify_warning,
+    notify_info
+)
 
 logger = logging.getLogger("scraper_base")
 
@@ -178,106 +186,284 @@ class GetNbaComScheduleApi(ScraperBase, ScraperFlaskMixin):
     
     def validate_download_data(self) -> None:
         """Validate the NBA.com API response"""
-        if not isinstance(self.decoded_data, dict):
-            raise DownloadDataException("Response is not a JSON object")
-        
-        # The actual response has 'leagueSchedule' not 'resultSets'
-        if "leagueSchedule" not in self.decoded_data:
-            raise DownloadDataException("Missing 'leagueSchedule' in response")
-        
-        league_schedule = self.decoded_data["leagueSchedule"]
-        if not isinstance(league_schedule, dict):
-            raise DownloadDataException("leagueSchedule is not an object")
-        
-        if "gameDates" not in league_schedule:
-            raise DownloadDataException("Missing 'gameDates' in leagueSchedule")
-        
-        game_dates = league_schedule["gameDates"]
-        if not isinstance(game_dates, list):
-            raise DownloadDataException("gameDates is not a list")
-        
-        logger.info("Validation passed: %d game dates found", len(game_dates))
+        try:
+            if not isinstance(self.decoded_data, dict):
+                error_msg = "Response is not a JSON object"
+                logger.error("%s for season %s", error_msg, self.opts["season"])
+                try:
+                    notify_error(
+                        title="NBA.com Schedule API Invalid Response",
+                        message=f"API response is not a JSON object for season {self.opts['season']}",
+                        details={
+                            'season': self.opts['season'],
+                            'season_nba_format': self.opts['season_nba_format'],
+                            'response_type': type(self.decoded_data).__name__,
+                            'url': self.url
+                        },
+                        processor_name="NBA.com Schedule API Scraper"
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                raise DownloadDataException(error_msg)
+            
+            # The actual response has 'leagueSchedule' not 'resultSets'
+            if "leagueSchedule" not in self.decoded_data:
+                error_msg = "Missing 'leagueSchedule' in response"
+                logger.error("%s for season %s", error_msg, self.opts["season"])
+                try:
+                    notify_error(
+                        title="NBA.com Schedule API Missing Data",
+                        message=f"API response missing 'leagueSchedule' for season {self.opts['season']}",
+                        details={
+                            'season': self.opts['season'],
+                            'season_nba_format': self.opts['season_nba_format'],
+                            'response_keys': list(self.decoded_data.keys()),
+                            'url': self.url
+                        },
+                        processor_name="NBA.com Schedule API Scraper"
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                raise DownloadDataException(error_msg)
+            
+            league_schedule = self.decoded_data["leagueSchedule"]
+            if not isinstance(league_schedule, dict):
+                error_msg = "leagueSchedule is not an object"
+                logger.error("%s for season %s", error_msg, self.opts["season"])
+                try:
+                    notify_error(
+                        title="NBA.com Schedule API Invalid Structure",
+                        message=f"leagueSchedule is not an object for season {self.opts['season']}",
+                        details={
+                            'season': self.opts['season'],
+                            'season_nba_format': self.opts['season_nba_format'],
+                            'league_schedule_type': type(league_schedule).__name__,
+                            'url': self.url
+                        },
+                        processor_name="NBA.com Schedule API Scraper"
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                raise DownloadDataException(error_msg)
+            
+            if "gameDates" not in league_schedule:
+                error_msg = "Missing 'gameDates' in leagueSchedule"
+                logger.error("%s for season %s", error_msg, self.opts["season"])
+                try:
+                    notify_error(
+                        title="NBA.com Schedule API Missing Game Dates",
+                        message=f"Missing 'gameDates' in API response for season {self.opts['season']}",
+                        details={
+                            'season': self.opts['season'],
+                            'season_nba_format': self.opts['season_nba_format'],
+                            'league_schedule_keys': list(league_schedule.keys()),
+                            'url': self.url
+                        },
+                        processor_name="NBA.com Schedule API Scraper"
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                raise DownloadDataException(error_msg)
+            
+            game_dates = league_schedule["gameDates"]
+            if not isinstance(game_dates, list):
+                error_msg = "gameDates is not a list"
+                logger.error("%s for season %s", error_msg, self.opts["season"])
+                try:
+                    notify_error(
+                        title="NBA.com Schedule API Invalid Game Dates",
+                        message=f"gameDates is not a list for season {self.opts['season']}",
+                        details={
+                            'season': self.opts['season'],
+                            'season_nba_format': self.opts['season_nba_format'],
+                            'game_dates_type': type(game_dates).__name__,
+                            'url': self.url
+                        },
+                        processor_name="NBA.com Schedule API Scraper"
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                raise DownloadDataException(error_msg)
+            
+            # Warning for suspiciously low game date count
+            min_game_dates = int(os.environ.get('SCHEDULE_MIN_GAME_DATES', '50'))
+            if len(game_dates) < min_game_dates:
+                logger.warning("Low game date count (%d) for season %s", len(game_dates), self.opts["season"])
+                try:
+                    notify_warning(
+                        title="NBA.com Schedule API Low Game Date Count",
+                        message=f"Low game date count ({len(game_dates)}) for season {self.opts['season']}",
+                        details={
+                            'season': self.opts['season'],
+                            'season_nba_format': self.opts['season_nba_format'],
+                            'game_date_count': len(game_dates),
+                            'threshold': min_game_dates,
+                            'url': self.url
+                        }
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+            
+            logger.info("Validation passed: %d game dates found", len(game_dates))
+            
+        except DownloadDataException:
+            # Already handled and notified above
+            raise
+        except Exception as e:
+            # Unexpected validation errors
+            logger.error("Unexpected validation error for season %s: %s", self.opts["season"], e)
+            try:
+                notify_error(
+                    title="NBA.com Schedule API Validation Error",
+                    message=f"Unexpected validation error for season {self.opts['season']}: {str(e)}",
+                    details={
+                        'season': self.opts['season'],
+                        'season_nba_format': self.opts['season_nba_format'],
+                        'error': str(e),
+                        'error_type': type(e).__name__,
+                        'url': self.url
+                    },
+                    processor_name="NBA.com Schedule API Scraper"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            raise DownloadDataException(f"Validation failed: {e}") from e
 
     def transform_data(self) -> None:
         """Transform NBA.com API response into structured data with enhanced flags"""
-        league_schedule = self.decoded_data["leagueSchedule"]
-        meta = self.decoded_data.get("meta", {})
+        try:
+            league_schedule = self.decoded_data["leagueSchedule"]
+            meta = self.decoded_data.get("meta", {})
 
-        actual_season = league_schedule.get('seasonYear') or self.opts.get('season_nba_format')
-        if actual_season:
-            # If seasonYear is just a year (like "2025"), convert to NBA format
-            if actual_season.isdigit() and len(actual_season) == 4:
-                season_year = int(actual_season)
-                next_year = (season_year + 1) % 100
-                self.opts['actual_season_nba_format'] = f"{season_year}-{next_year:02d}"
+            actual_season = league_schedule.get('seasonYear') or self.opts.get('season_nba_format')
+            if actual_season:
+                # If seasonYear is just a year (like "2025"), convert to NBA format
+                if actual_season.isdigit() and len(actual_season) == 4:
+                    season_year = int(actual_season)
+                    next_year = (season_year + 1) % 100
+                    self.opts['actual_season_nba_format'] = f"{season_year}-{next_year:02d}"
+                else:
+                    # Already in NBA format (like "2025-26")
+                    self.opts['actual_season_nba_format'] = actual_season
             else:
-                # Already in NBA format (like "2025-26")
-                self.opts['actual_season_nba_format'] = actual_season
-        else:
-            # Fallback to the season we computed in set_additional_opts
-            self.opts['actual_season_nba_format'] = self.opts['season_nba_format']
-        
-        game_dates = league_schedule.get("gameDates", [])
-        
-        # Flatten all games from all dates
-        all_games = []
-        for game_date_obj in game_dates:
-            game_date = game_date_obj.get("gameDate", "")
-            games = game_date_obj.get("games", [])
+                # Fallback to the season we computed in set_additional_opts
+                self.opts['actual_season_nba_format'] = self.opts['season_nba_format']
             
-            for game in games:
-                # Remove bulky data to keep files lean
-                if 'tickets' in game:
-                    del game['tickets']
-                if 'links' in game:
-                    del game['links']
-                if 'promotions' in game:
-                    del game['promotions']
-                if 'seriesText' in game:
-                    del game['seriesText']
-                if 'pointsLeaders' in game:
-                    del game['pointsLeaders']
+            game_dates = league_schedule.get("gameDates", [])
+            
+            # Flatten all games from all dates
+            all_games = []
+            for game_date_obj in game_dates:
+                game_date = game_date_obj.get("gameDate", "")
+                games = game_date_obj.get("games", [])
                 
-                # Add enhanced flags and context
-                enhanced_game = self._enhance_game_with_flags(game, game_date)
-                
-                # Remove broadcaster data after extracting flags (storage optimization)
-                if 'broadcasters' in enhanced_game:
-                    del enhanced_game['broadcasters']
-                
-                # Add the game date to each game for easier processing
-                enhanced_game.update({
-                    "gameDate": game_date,
-                    "gameDateObj": game_date_obj.get("gameDate", "")
-                })
-                
-                all_games.append(enhanced_game)
-        
-        # Sort games by date and game sequence
-        all_games.sort(key=lambda x: (x.get("gameDateEst", ""), x.get("gameSequence", 0)))
-        
-        # Generate season metadata
-        metadata = self._generate_season_metadata(all_games)
-        
-        # Store both schedule data and metadata
-        self.data = {
-            "season": self.opts["season"],
-            "season_nba_format": self.opts["season_nba_format"],
-            "seasonYear": league_schedule.get("seasonYear"),
-            "leagueId": league_schedule.get("leagueId"),
-            "timestamp": self.opts["timestamp"],
-            "meta": meta,
-            "game_count": len(all_games),
-            "date_count": len(game_dates),
-            "games": all_games,
-            # "gameDates": game_dates,  # Keep original structure too
-            "metadata": metadata  # Store metadata here for the exporter
-        }
-        
-        logger.info("Processed %d games across %d dates for %s season", 
-                len(all_games), len(game_dates), self.opts["season_nba_format"])
-        logger.info("Generated metadata: %d total games, %d backfill eligible", 
-                metadata["total_games"], metadata["backfill"]["total_games"])
+                for game in games:
+                    # Remove bulky data to keep files lean
+                    if 'tickets' in game:
+                        del game['tickets']
+                    if 'links' in game:
+                        del game['links']
+                    if 'promotions' in game:
+                        del game['promotions']
+                    if 'seriesText' in game:
+                        del game['seriesText']
+                    if 'pointsLeaders' in game:
+                        del game['pointsLeaders']
+                    
+                    # Add enhanced flags and context
+                    enhanced_game = self._enhance_game_with_flags(game, game_date)
+                    
+                    # Remove broadcaster data after extracting flags (storage optimization)
+                    if 'broadcasters' in enhanced_game:
+                        del enhanced_game['broadcasters']
+                    
+                    # Add the game date to each game for easier processing
+                    enhanced_game.update({
+                        "gameDate": game_date,
+                        "gameDateObj": game_date_obj.get("gameDate", "")
+                    })
+                    
+                    all_games.append(enhanced_game)
+            
+            # Sort games by date and game sequence
+            all_games.sort(key=lambda x: (x.get("gameDateEst", ""), x.get("gameSequence", 0)))
+            
+            # Generate season metadata
+            metadata = self._generate_season_metadata(all_games)
+            
+            # Warning for suspiciously low game count
+            min_games = int(os.environ.get('SCHEDULE_MIN_GAMES', '100'))
+            if len(all_games) < min_games:
+                logger.warning("Low total game count (%d) for season %s", len(all_games), self.opts["season"])
+                try:
+                    notify_warning(
+                        title="NBA.com Schedule API Low Game Count",
+                        message=f"Low total game count ({len(all_games)}) for season {self.opts['season']}",
+                        details={
+                            'season': self.opts['season'],
+                            'season_nba_format': self.opts['season_nba_format'],
+                            'game_count': len(all_games),
+                            'threshold': min_games,
+                            'metadata': metadata
+                        }
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+            
+            # Store both schedule data and metadata
+            self.data = {
+                "season": self.opts["season"],
+                "season_nba_format": self.opts["season_nba_format"],
+                "seasonYear": league_schedule.get("seasonYear"),
+                "leagueId": league_schedule.get("leagueId"),
+                "timestamp": self.opts["timestamp"],
+                "meta": meta,
+                "game_count": len(all_games),
+                "date_count": len(game_dates),
+                "games": all_games,
+                # "gameDates": game_dates,  # Keep original structure too
+                "metadata": metadata  # Store metadata here for the exporter
+            }
+            
+            logger.info("Processed %d games across %d dates for %s season", 
+                    len(all_games), len(game_dates), self.opts["season_nba_format"])
+            logger.info("Generated metadata: %d total games, %d backfill eligible", 
+                    metadata["total_games"], metadata["backfill"]["total_games"])
+                    
+        except KeyError as e:
+            logger.error("Missing expected key during transformation for season %s: %s", self.opts["season"], e)
+            try:
+                notify_error(
+                    title="NBA.com Schedule API Transformation Failed",
+                    message=f"Missing expected key during data transformation for season {self.opts['season']}: {str(e)}",
+                    details={
+                        'season': self.opts['season'],
+                        'season_nba_format': self.opts['season_nba_format'],
+                        'missing_key': str(e),
+                        'error_type': type(e).__name__
+                    },
+                    processor_name="NBA.com Schedule API Scraper"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            raise DownloadDataException(f"Data transformation failed: missing key {e}") from e
+        except Exception as e:
+            logger.error("Unexpected error during transformation for season %s: %s", self.opts["season"], e)
+            try:
+                notify_error(
+                    title="NBA.com Schedule API Transformation Error",
+                    message=f"Unexpected error during data transformation for season {self.opts['season']}: {str(e)}",
+                    details={
+                        'season': self.opts['season'],
+                        'season_nba_format': self.opts['season_nba_format'],
+                        'error': str(e),
+                        'error_type': type(e).__name__
+                    },
+                    processor_name="NBA.com Schedule API Scraper"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            raise DownloadDataException(f"Data transformation failed: {e}") from e
 
     def _enhance_game_with_flags(self, game: dict, game_date: str) -> dict:
         """Add computed flags for fast querying while preserving raw data"""

@@ -45,6 +45,22 @@ except ImportError:
     from scrapers.utils.exceptions import DownloadDataException
     from scrapers.utils.gcs_path_builder import GCSPathBuilder
 
+# Import notification system
+try:
+    from shared.utils.notification_system import (
+        notify_error,
+        notify_warning,
+        notify_info
+    )
+except ImportError:
+    # Fallback if shared module not available
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+    from shared.utils.notification_system import (
+        notify_error,
+        notify_warning,
+        notify_info
+    )
+
 logger = logging.getLogger("scraper_base")
 
 
@@ -125,24 +141,117 @@ class GetNbaComPlayerMovement(ScraperBase, ScraperFlaskMixin):
     # Validation
     # ------------------------------------------------------------------ #
     def validate_download_data(self) -> None:
-        if not isinstance(self.decoded_data, dict):
-            raise DownloadDataException("Player movement response is not a valid JSON object")
+        try:
+            if not isinstance(self.decoded_data, dict):
+                try:
+                    notify_error(
+                        title="NBA.com Player Movement - Invalid Response",
+                        message=f"Response is not a valid JSON object for year {self.opts['year']}",
+                        details={
+                            'scraper': 'nbac_player_movement',
+                            'year': self.opts['year'],
+                            'response_type': type(self.decoded_data).__name__,
+                            'url': self.url
+                        },
+                        processor_name="NBA.com Player Movement Scraper"
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                raise DownloadDataException("Player movement response is not a valid JSON object")
+                
+            root = self.decoded_data.get("NBA_Player_Movement")
+            if root is None:
+                try:
+                    notify_error(
+                        title="NBA.com Player Movement - Missing Key",
+                        message=f"Missing 'NBA_Player_Movement' key for year {self.opts['year']}",
+                        details={
+                            'scraper': 'nbac_player_movement',
+                            'year': self.opts['year'],
+                            'available_keys': list(self.decoded_data.keys())[:10],
+                            'url': self.url
+                        },
+                        processor_name="NBA.com Player Movement Scraper"
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                raise DownloadDataException("Missing 'NBA_Player_Movement' key in response")
+                
+            if not isinstance(root, dict):
+                try:
+                    notify_error(
+                        title="NBA.com Player Movement - Invalid Structure",
+                        message=f"NBA_Player_Movement is not a valid object for year {self.opts['year']}",
+                        details={
+                            'scraper': 'nbac_player_movement',
+                            'year': self.opts['year'],
+                            'root_type': type(root).__name__,
+                            'url': self.url
+                        },
+                        processor_name="NBA.com Player Movement Scraper"
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                raise DownloadDataException("NBA_Player_Movement is not a valid object")
+                
+            rows = root.get("rows", [])
+            if not isinstance(rows, list):
+                try:
+                    notify_error(
+                        title="NBA.com Player Movement - Invalid Rows",
+                        message=f"NBA_Player_Movement.rows is not a list for year {self.opts['year']}",
+                        details={
+                            'scraper': 'nbac_player_movement',
+                            'year': self.opts['year'],
+                            'rows_type': type(rows).__name__,
+                            'url': self.url
+                        },
+                        processor_name="NBA.com Player Movement Scraper"
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                raise DownloadDataException("NBA_Player_Movement.rows is not a list")
+                
+            if len(rows) == 0:
+                try:
+                    notify_error(
+                        title="NBA.com Player Movement - No Data",
+                        message=f"No movement data found for year {self.opts['year']}",
+                        details={
+                            'scraper': 'nbac_player_movement',
+                            'year': self.opts['year'],
+                            'rows_count': 0,
+                            'url': self.url
+                        },
+                        processor_name="NBA.com Player Movement Scraper"
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                raise DownloadDataException("NBA_Player_Movement.rows is empty - no movement data found")
+                
+            logger.info("Found %d movement rows for year=%s", len(rows), self.opts["year"])
             
-        root = self.decoded_data.get("NBA_Player_Movement")
-        if root is None:
-            raise DownloadDataException("Missing 'NBA_Player_Movement' key in response")
-            
-        if not isinstance(root, dict):
-            raise DownloadDataException("NBA_Player_Movement is not a valid object")
-            
-        rows = root.get("rows", [])
-        if not isinstance(rows, list):
-            raise DownloadDataException("NBA_Player_Movement.rows is not a list")
-            
-        if len(rows) == 0:
-            raise DownloadDataException("NBA_Player_Movement.rows is empty - no movement data found")
-            
-        logger.info("Found %d movement rows for year=%s", len(rows), self.opts["year"])
+        except DownloadDataException:
+            # Re-raise validation exceptions (already notified above)
+            raise
+        except Exception as e:
+            # Catch any unexpected validation errors
+            try:
+                notify_error(
+                    title="NBA.com Player Movement - Validation Failed",
+                    message=f"Unexpected validation error for year {self.opts['year']}: {str(e)}",
+                    details={
+                        'scraper': 'nbac_player_movement',
+                        'year': self.opts['year'],
+                        'error_type': type(e).__name__,
+                        'error': str(e),
+                        'url': self.url
+                    },
+                    processor_name="NBA.com Player Movement Scraper"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            raise
 
     # ------------------------------------------------------------------ #
     # Enhanced validation for production use
@@ -151,76 +260,159 @@ class GetNbaComPlayerMovement(ScraperBase, ScraperFlaskMixin):
         """
         Production validation for player movement data quality.
         """
-        rows = self.data["rows"]
-        
-        # 1. REASONABLE RECORD COUNT CHECK
-        record_count = len(rows)
-        if record_count < 10:
-            raise DownloadDataException(f"Suspiciously low record count: {record_count} (expected 100-15000)")
-        elif record_count > 20000:
-            raise DownloadDataException(f"Suspiciously high record count: {record_count} (expected 100-15000)")
-        
-        # 2. SAMPLE RECORD VALIDATION (check first few records)
-        sample_size = min(5, len(rows))
-        for i, row in enumerate(rows[:sample_size]):
-            if not isinstance(row, (dict, list)):
-                raise DownloadDataException(f"Row {i} is not a dict or list: {type(row)}")
-                
-            # For dictionary rows, check for reasonable keys
-            if isinstance(row, dict):
-                if len(row) < 2:
-                    logger.warning(f"Row {i} has fewer keys than expected: {len(row)}")
-                # Log sample keys for first row
-                if i == 0:
-                    sample_keys = list(row.keys())[:5]  # First 5 keys
-                    logger.info(f"Sample row keys: {sample_keys}")
+        try:
+            rows = self.data["rows"]
             
-            # For list rows, check for reasonable columns  
-            elif isinstance(row, list):
-                if len(row) < 3:
-                    logger.warning(f"Row {i} has fewer columns than expected: {len(row)}")
-        
-        # 3. YEAR CONSISTENCY CHECK
-        current_year = int(self.opts["year"])
-        current_season_years = [current_year - 1, current_year, current_year + 1]
-        
-        # Look for year patterns in sample data (movement data often contains dates)
-        found_years = set()
-        for row in rows[:10]:  # Check first 10 rows
-            if isinstance(row, dict):
-                # For dictionary rows, check all values
-                for value in row.values():
-                    if isinstance(value, str) and len(value) >= 4:
-                        for year in current_season_years:
-                            if str(year) in value:
-                                found_years.add(year)
-            elif isinstance(row, list):
-                # For list rows, check all cells
-                for cell in row:
-                    if isinstance(cell, str) and len(cell) >= 4:
-                        for year in current_season_years:
-                            if str(year) in cell:
-                                found_years.add(year)
-        
-        if found_years:
-            logger.info(f"Found year references in data: {sorted(found_years)}")
-        else:
-            logger.info("No specific year references found in sample data")
-        
-        # 4. DATA STRUCTURE INSIGHTS
-        if rows:
-            first_row = rows[0]
-            if isinstance(first_row, dict):
-                logger.info(f"Dictionary-based data with {len(first_row)} fields per record")
-            elif isinstance(first_row, list):
-                logger.info(f"List-based data with {len(first_row)} columns per record")
-        
-        # Check for headers in original data structure
-        data_headers = self.decoded_data.get("NBA_Player_Movement", {}).get("headers", [])
-        if data_headers:
-            logger.info(f"Movement data has {len(data_headers)} headers: {data_headers[:5]}")  # Show first 5
-        
-        logger.info(f"✅ Player movement validation passed: {record_count} records")
+            # 1. REASONABLE RECORD COUNT CHECK
+            record_count = len(rows)
+            if record_count < 10:
+                try:
+                    notify_error(
+                        title="NBA.com Player Movement - Low Record Count",
+                        message=f"Suspiciously low record count: {record_count} (expected 100-15000)",
+                        details={
+                            'scraper': 'nbac_player_movement',
+                            'year': self.opts['year'],
+                            'record_count': record_count,
+                            'threshold_min': 10,
+                            'url': self.url
+                        },
+                        processor_name="NBA.com Player Movement Scraper"
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                raise DownloadDataException(f"Suspiciously low record count: {record_count} (expected 100-15000)")
+            elif record_count > 20000:
+                try:
+                    notify_warning(
+                        title="NBA.com Player Movement - High Record Count",
+                        message=f"Suspiciously high record count: {record_count} (expected 100-15000)",
+                        details={
+                            'scraper': 'nbac_player_movement',
+                            'year': self.opts['year'],
+                            'record_count': record_count,
+                            'threshold_max': 20000,
+                            'url': self.url
+                        }
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                raise DownloadDataException(f"Suspiciously high record count: {record_count} (expected 100-15000)")
+            
+            # 2. SAMPLE RECORD VALIDATION (check first few records)
+            sample_size = min(5, len(rows))
+            for i, row in enumerate(rows[:sample_size]):
+                if not isinstance(row, (dict, list)):
+                    try:
+                        notify_error(
+                            title="NBA.com Player Movement - Invalid Row Type",
+                            message=f"Row {i} has invalid type: {type(row).__name__}",
+                            details={
+                                'scraper': 'nbac_player_movement',
+                                'year': self.opts['year'],
+                                'row_index': i,
+                                'row_type': type(row).__name__,
+                                'expected_types': ['dict', 'list']
+                            },
+                            processor_name="NBA.com Player Movement Scraper"
+                        )
+                    except Exception as notify_ex:
+                        logger.warning(f"Failed to send notification: {notify_ex}")
+                    raise DownloadDataException(f"Row {i} is not a dict or list: {type(row)}")
+                    
+                # For dictionary rows, check for reasonable keys
+                if isinstance(row, dict):
+                    if len(row) < 2:
+                        logger.warning(f"Row {i} has fewer keys than expected: {len(row)}")
+                    # Log sample keys for first row
+                    if i == 0:
+                        sample_keys = list(row.keys())[:5]  # First 5 keys
+                        logger.info(f"Sample row keys: {sample_keys}")
+                
+                # For list rows, check for reasonable columns  
+                elif isinstance(row, list):
+                    if len(row) < 3:
+                        logger.warning(f"Row {i} has fewer columns than expected: {len(row)}")
+            
+            # 3. YEAR CONSISTENCY CHECK
+            current_year = int(self.opts["year"])
+            current_season_years = [current_year - 1, current_year, current_year + 1]
+            
+            # Look for year patterns in sample data (movement data often contains dates)
+            found_years = set()
+            for row in rows[:10]:  # Check first 10 rows
+                if isinstance(row, dict):
+                    # For dictionary rows, check all values
+                    for value in row.values():
+                        if isinstance(value, str) and len(value) >= 4:
+                            for year in current_season_years:
+                                if str(year) in value:
+                                    found_years.add(year)
+                elif isinstance(row, list):
+                    # For list rows, check all cells
+                    for cell in row:
+                        if isinstance(cell, str) and len(cell) >= 4:
+                            for year in current_season_years:
+                                if str(year) in cell:
+                                    found_years.add(year)
+            
+            if found_years:
+                logger.info(f"Found year references in data: {sorted(found_years)}")
+            else:
+                logger.info("No specific year references found in sample data")
+            
+            # 4. DATA STRUCTURE INSIGHTS
+            if rows:
+                first_row = rows[0]
+                if isinstance(first_row, dict):
+                    logger.info(f"Dictionary-based data with {len(first_row)} fields per record")
+                elif isinstance(first_row, list):
+                    logger.info(f"List-based data with {len(first_row)} columns per record")
+            
+            # Check for headers in original data structure
+            data_headers = self.decoded_data.get("NBA_Player_Movement", {}).get("headers", [])
+            if data_headers:
+                logger.info(f"Movement data has {len(data_headers)} headers: {data_headers[:5]}")  # Show first 5
+            
+            logger.info(f"✅ Player movement validation passed: {record_count} records")
+            
+            # Send success notification
+            try:
+                notify_info(
+                    title="NBA.com Player Movement - Download Complete",
+                    message=f"Successfully downloaded player movement data for year {self.opts['year']}",
+                    details={
+                        'scraper': 'nbac_player_movement',
+                        'year': self.opts['year'],
+                        'record_count': record_count,
+                        'column_count': len(data_headers) if data_headers else 0,
+                        'url': self.url
+                    }
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+                
+        except DownloadDataException:
+            # Re-raise validation exceptions (already notified above)
+            raise
+        except Exception as e:
+            # Catch any unexpected validation errors
+            try:
+                notify_error(
+                    title="NBA.com Player Movement - Enhanced Validation Failed",
+                    message=f"Unexpected enhanced validation error for year {self.opts['year']}: {str(e)}",
+                    details={
+                        'scraper': 'nbac_player_movement',
+                        'year': self.opts['year'],
+                        'error_type': type(e).__name__,
+                        'error': str(e),
+                        'record_count': len(self.data.get('rows', [])) if hasattr(self, 'data') else 0
+                    },
+                    processor_name="NBA.com Player Movement Scraper"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            raise
 
     # ------------------------------------------------------------------ #
     # Transform (pass-through but add meta)
@@ -273,4 +465,3 @@ create_app = convert_existing_flask_scraper(GetNbaComPlayerMovement)
 if __name__ == "__main__":
     main = GetNbaComPlayerMovement.create_cli_and_flask_main()
     main()
-    

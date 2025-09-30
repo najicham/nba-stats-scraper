@@ -4,6 +4,7 @@ File: data_processors/reference/base/name_change_detection_mixin.py
 
 Mixin for enhanced name change detection capabilities.
 Provides investigation and similarity analysis for potential player name changes.
+Enhanced with notifications for investigation system health and urgent cases.
 """
 
 import json
@@ -13,6 +14,13 @@ from datetime import datetime, date
 from typing import Dict, List
 from difflib import SequenceMatcher
 from google.cloud import bigquery, storage
+
+# Import notification system
+from shared.utils.notification_system import (
+    notify_error,
+    notify_warning,
+    notify_info
+)
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +80,7 @@ class NameChangeDetectionMixin:
                 
         except Exception as e:
             logger.warning(f"Error checking player aliases: {e}")
+            # Don't notify here - registry_processor_base handles alias check failures
             return {
                 'found': False,
                 'resolution_method': 'error',
@@ -110,7 +119,7 @@ class NameChangeDetectionMixin:
             player_lookup, similar_players, enhancement, alias_check
         )
         
-        return {
+        investigation = {
             'new_player_lookup': player_lookup,
             'team_abbr': team_abbr,
             'original_name': enhancement.get('original_name', 'Unknown'),
@@ -122,6 +131,28 @@ class NameChangeDetectionMixin:
             'alias_check_result': alias_check,
             'detection_method': 'basketball_reference_registry_comparison'
         }
+        
+        # Notify on high-confidence name changes that need urgent review
+        if confidence_score >= 0.7:
+            try:
+                notify_warning(
+                    title=f"Name Change Investigation: High Confidence Detection",
+                    message=f"High-confidence name change detected for {player_lookup} on {team_abbr}",
+                    details={
+                        'component': 'NameChangeDetectionMixin',
+                        'player_lookup': player_lookup,
+                        'team': team_abbr,
+                        'confidence_score': round(confidence_score, 2),
+                        'most_similar_player': similar_players[0]['player_lookup'] if similar_players else None,
+                        'similarity': round(similar_players[0]['similarity_score'], 2) if similar_players else None,
+                        'evidence': evidence_notes,
+                        'action': 'Review investigation report and create alias if needed'
+                    }
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+        
+        return investigation
 
     def _get_recent_team_players(self, team_abbr: str, seasons: int = 2) -> List[Dict]:
         """Get recent players from the same team."""
@@ -148,6 +179,7 @@ class NameChangeDetectionMixin:
             return results.to_dict('records')
         except Exception as e:
             logger.warning(f"Error getting recent team players: {e}")
+            # Don't notify on single query failures - normal operation
             return []
 
     def _calculate_name_similarity(self, name1: str, name2: str) -> float:
@@ -254,7 +286,7 @@ class NameChangeDetectionMixin:
                 ])
             }
             
-            bucket = storage_client.bucket('nba-props-platform-investigations')
+            bucket = storage_client.bucket(self._get_investigation_bucket_name())
             blob = bucket.blob(filename)
             
             blob.upload_from_string(
@@ -262,20 +294,58 @@ class NameChangeDetectionMixin:
                 content_type='application/json'
             )
             
-            logger.info(f"Investigation report saved: gs://nba-props-platform-investigations/{filename}")
+            logger.info(f"Investigation report saved: gs://{self._get_investigation_bucket_name()}/{filename}")
             
             # Log summary for operational awareness
             total_investigations = investigation_report.get('total_investigations', 0)
             high_confidence = investigation_report['report_metadata']['high_confidence_count']
             
             if total_investigations > 0:
-                logger.info(f"🔍 Generated {total_investigations} investigations ({high_confidence} high-confidence)")
+                logger.info(f"Generated {total_investigations} investigations ({high_confidence} high-confidence)")
                 if high_confidence > 0:
-                    logger.info("⚠️  High-confidence cases require immediate manual review")
+                    logger.info("High-confidence cases require immediate manual review")
+                    
+                    # Send notification for investigation reports with urgent cases
+                    try:
+                        notify_info(
+                            title="Name Change Investigation Report Generated",
+                            message=f"Investigation report with {high_confidence} high-confidence cases",
+                            details={
+                                'component': 'NameChangeDetectionMixin',
+                                'processor_type': processor_type,
+                                'total_investigations': total_investigations,
+                                'high_confidence_count': high_confidence,
+                                'report_location': f"gs://{self._get_investigation_bucket_name()}/{filename}",
+                                'action': 'Review high-confidence cases in investigation report'
+                            }
+                        )
+                    except Exception as notify_ex:
+                        logger.warning(f"Failed to send notification: {notify_ex}")
             
         except Exception as e:
             logger.warning(f"Could not save investigation report: {e}")
-            # Don't fail the whole process for investigation report issues
+            
+            # Notify on investigation report save failures - these affect manual review workflow
+            try:
+                notify_error(
+                    title="Name Change Investigation: Report Save Failed",
+                    message=f"Unable to save investigation report to GCS: {str(e)}",
+                    details={
+                        'component': 'NameChangeDetectionMixin',
+                        'processor_type': investigation_report.get('processor_type', 'unknown'),
+                        'total_investigations': investigation_report.get('total_investigations', 0),
+                        'high_confidence_count': len([
+                            inv for inv in investigation_report.get('investigations', []) 
+                            if inv.get('confidence_score', 0) > 0.7
+                        ]),
+                        'error_type': type(e).__name__,
+                        'error': str(e),
+                        'impact': 'Manual review workflow affected - investigations not saved'
+                    },
+                    processor_name="Name Change Detection"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
 
     def _get_investigation_bucket_name(self) -> str:
         """Get the GCS bucket name for investigation reports."""
@@ -300,4 +370,3 @@ class NameChangeDetectionMixin:
                 return False
         
         return True
-    

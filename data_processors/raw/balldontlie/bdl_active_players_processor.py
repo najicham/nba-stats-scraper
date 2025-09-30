@@ -5,6 +5,11 @@ from datetime import datetime
 from google.cloud import bigquery
 from data_processors.raw.processor_base import ProcessorBase
 from data_processors.raw.utils.name_utils import normalize_name
+from shared.utils.notification_system import (
+    notify_error,
+    notify_warning,
+    notify_info
+)
 
 class BdlActivePlayersProcessor(ProcessorBase):
     def __init__(self):
@@ -35,13 +40,63 @@ class BdlActivePlayersProcessor(ProcessorBase):
                 }
             else:
                 logging.error(f"No 'activePlayers' field found in {file_path}")
+                
+                # Notify about missing activePlayers field
+                try:
+                    notify_error(
+                        title="Invalid BDL Active Players Data",
+                        message=f"Missing 'activePlayers' field in data",
+                        details={
+                            'file_path': file_path,
+                            'available_fields': list(data.keys()) if isinstance(data, dict) else 'not_a_dict',
+                            'processor': 'BDL Active Players'
+                        },
+                        processor_name="BDL Active Players Processor"
+                    )
+                except Exception as e:
+                    logging.warning(f"Failed to send notification: {e}")
+                
                 return None
                 
         except json.JSONDecodeError as e:
             logging.error(f"JSON decode error in {file_path}: {e}")
+            
+            # Notify about JSON parsing failure
+            try:
+                notify_error(
+                    title="JSON Parsing Failed",
+                    message=f"Failed to parse BDL active players JSON",
+                    details={
+                        'file_path': file_path,
+                        'error': str(e),
+                        'error_type': 'JSONDecodeError',
+                        'processor': 'BDL Active Players'
+                    },
+                    processor_name="BDL Active Players Processor"
+                )
+            except Exception as notify_ex:
+                logging.warning(f"Failed to send notification: {notify_ex}")
+            
             return None
         except Exception as e:
             logging.error(f"Error parsing JSON from {file_path}: {e}")
+            
+            # Notify about unexpected parsing error
+            try:
+                notify_error(
+                    title="Unexpected Parsing Error",
+                    message=f"Unexpected error parsing active players data: {str(e)}",
+                    details={
+                        'file_path': file_path,
+                        'error': str(e),
+                        'error_type': type(e).__name__,
+                        'processor': 'BDL Active Players'
+                    },
+                    processor_name="BDL Active Players Processor"
+                )
+            except Exception as notify_ex:
+                logging.warning(f"Failed to send notification: {notify_ex}")
+            
             return None
     
     def _load_nba_com_players(self) -> Dict[str, Dict]:
@@ -49,6 +104,21 @@ class BdlActivePlayersProcessor(ProcessorBase):
         try:
             if not self.bq_client:
                 logging.error("BigQuery client not initialized")
+                
+                # Notify about missing BigQuery client
+                try:
+                    notify_error(
+                        title="BigQuery Client Not Initialized",
+                        message="Cannot load NBA.com players for validation",
+                        details={
+                            'processor': 'BDL Active Players',
+                            'impact': 'validation_disabled'
+                        },
+                        processor_name="BDL Active Players Processor"
+                    )
+                except Exception as e:
+                    logging.warning(f"Failed to send notification: {e}")
+                
                 return {}
                 
             query = """
@@ -66,9 +136,42 @@ class BdlActivePlayersProcessor(ProcessorBase):
                     'player_id': row.player_id
                 }
             logging.info(f"Loaded {len(players)} NBA.com players for validation")
+            
+            # Warn if very few players loaded
+            if len(players) < 400:  # NBA typically has 450+ active players
+                try:
+                    notify_warning(
+                        title="Low NBA.com Player Count",
+                        message=f"Only loaded {len(players)} NBA.com players for validation",
+                        details={
+                            'player_count': len(players),
+                            'expected_minimum': 400,
+                            'processor': 'BDL Active Players',
+                            'impact': 'validation_may_be_incomplete'
+                        }
+                    )
+                except Exception as e:
+                    logging.warning(f"Failed to send notification: {e}")
+            
             return players
         except Exception as e:
             logging.warning(f"Could not load NBA.com players for validation: {e}")
+            
+            # Notify about validation data loading failure
+            try:
+                notify_warning(
+                    title="Failed to Load Validation Data",
+                    message=f"Could not load NBA.com players for validation: {str(e)}",
+                    details={
+                        'error': str(e),
+                        'error_type': type(e).__name__,
+                        'processor': 'BDL Active Players',
+                        'impact': 'validation_disabled'
+                    }
+                )
+            except Exception as notify_ex:
+                logging.warning(f"Failed to send notification: {notify_ex}")
+            
             return {}
     
     def normalize_text(self, text: str) -> str:
@@ -212,6 +315,19 @@ class BdlActivePlayersProcessor(ProcessorBase):
     
     def load_data(self, rows: List[Dict], **kwargs) -> Dict:
         if not rows:
+            # Notify about empty data
+            try:
+                notify_warning(
+                    title="No Active Players to Process",
+                    message="BDL active players data is empty",
+                    details={
+                        'processor': 'BDL Active Players',
+                        'expected_minimum': 400
+                    }
+                )
+            except Exception as e:
+                logging.warning(f"Failed to send notification: {e}")
+            
             return {'rows_processed': 0, 'errors': []}
         
         table_id = f"{self.project_id}.{self.table_name}"
@@ -220,22 +336,118 @@ class BdlActivePlayersProcessor(ProcessorBase):
         try:
             if self.processing_strategy == 'MERGE_UPDATE':
                 # For current-state data, clear existing data before inserting
-                delete_query = f"DELETE FROM `{table_id}` WHERE TRUE"
-                self.bq_client.query(delete_query).result()
-                logging.info(f"Cleared existing data from {table_id}")
+                try:
+                    delete_query = f"DELETE FROM `{table_id}` WHERE TRUE"
+                    self.bq_client.query(delete_query).result()
+                    logging.info(f"Cleared existing data from {table_id}")
+                except Exception as delete_error:
+                    logging.error(f"Failed to clear existing data: {delete_error}")
+                    
+                    # Notify about deletion failure
+                    try:
+                        notify_error(
+                            title="Failed to Clear Existing Data",
+                            message=f"Could not clear existing active players data: {str(delete_error)}",
+                            details={
+                                'table': self.table_name,
+                                'error': str(delete_error),
+                                'error_type': type(delete_error).__name__,
+                                'processor': 'BDL Active Players',
+                                'impact': 'may_create_duplicate_data'
+                            },
+                            processor_name="BDL Active Players Processor"
+                        )
+                    except Exception as e:
+                        logging.warning(f"Failed to send notification: {e}")
+                    
+                    raise delete_error
             
             result = self.bq_client.insert_rows_json(table_id, rows)
             if result:
                 errors.extend([str(e) for e in result])
                 logging.error(f"BigQuery insert errors: {errors}")
+                
+                # Notify about BigQuery insert errors
+                try:
+                    notify_error(
+                        title="BigQuery Insert Failed",
+                        message=f"Failed to insert active players data into BigQuery",
+                        details={
+                            'error_count': len(result),
+                            'sample_errors': [str(e) for e in result[:3]],
+                            'rows_attempted': len(rows),
+                            'table': self.table_name,
+                            'processor': 'BDL Active Players'
+                        },
+                        processor_name="BDL Active Players Processor"
+                    )
+                except Exception as e:
+                    logging.warning(f"Failed to send notification: {e}")
             else:
                 logging.info(f"Successfully inserted {len(rows)} rows into {table_id}")
+                
+                # Log validation summary
+                total_issues = sum(1 for row in rows if row['has_validation_issues'])
+                missing_nba_com = sum(1 for row in rows if row['validation_status'] == 'missing_nba_com')
+                team_mismatches = sum(1 for row in rows if row['validation_status'] == 'team_mismatch')
+                
+                logging.info(f"Validation summary: {total_issues}/{len(rows)} players have validation issues")
+                
+                # Notify about high validation issue rate
+                validation_issue_rate = (total_issues / len(rows)) * 100 if rows else 0
+                if validation_issue_rate > 20:  # More than 20% have issues
+                    try:
+                        notify_warning(
+                            title="High Validation Issue Rate",
+                            message=f"{validation_issue_rate:.1f}% of active players have validation issues",
+                            details={
+                                'total_players': len(rows),
+                                'total_issues': total_issues,
+                                'missing_nba_com': missing_nba_com,
+                                'team_mismatches': team_mismatches,
+                                'issue_rate_pct': round(validation_issue_rate, 1),
+                                'processor': 'BDL Active Players'
+                            }
+                        )
+                    except Exception as e:
+                        logging.warning(f"Failed to send notification: {e}")
+                
+                # Send success notification
+                try:
+                    notify_info(
+                        title="BDL Active Players Processing Complete",
+                        message=f"Successfully processed {len(rows)} active players",
+                        details={
+                            'total_players': len(rows),
+                            'validation_issues': total_issues,
+                            'missing_from_nba_com': missing_nba_com,
+                            'team_mismatches': team_mismatches,
+                            'validated_clean': len(rows) - total_issues,
+                            'table': self.table_name,
+                            'processor': 'BDL Active Players'
+                        }
+                    )
+                except Exception as e:
+                    logging.warning(f"Failed to send notification: {e}")
+                    
         except Exception as e:
             errors.append(str(e))
             logging.error(f"Error loading data: {e}")
-        
-        # Log validation summary
-        total_issues = sum(1 for row in rows if row['has_validation_issues'])
-        logging.info(f"Validation summary: {total_issues}/{len(rows)} players have validation issues")
+            
+            # Notify about general processing error
+            try:
+                notify_error(
+                    title="BDL Active Players Processing Failed",
+                    message=f"Unexpected error during active players processing: {str(e)}",
+                    details={
+                        'error': str(e),
+                        'error_type': type(e).__name__,
+                        'rows_attempted': len(rows),
+                        'processor': 'BDL Active Players'
+                    },
+                    processor_name="BDL Active Players Processor"
+                )
+            except Exception as notify_ex:
+                logging.warning(f"Failed to send notification: {notify_ex}")
         
         return {'rows_processed': len(rows) if not errors else 0, 'errors': errors}

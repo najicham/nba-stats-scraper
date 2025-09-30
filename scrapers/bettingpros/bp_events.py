@@ -47,6 +47,13 @@ except ImportError:
     from scrapers.utils.exceptions import DownloadDataException
     from scrapers.utils.gcs_path_builder import GCSPathBuilder
 
+# Notification system imports
+from shared.utils.notification_system import (
+    notify_error,
+    notify_warning,
+    notify_info
+)
+
 logger = logging.getLogger("scraper_base")
 
 
@@ -130,7 +137,25 @@ class BettingProsEvents(ScraperBase, ScraperFlaskMixin):
         try:
             datetime.strptime(date_str, "%Y-%m-%d")
         except ValueError:
-            raise DownloadDataException(f"Invalid date format: {date_str}. Use YYYY-MM-DD")
+            error_msg = f"Invalid date format: {date_str}. Use YYYY-MM-DD"
+            
+            # Invalid date format notification
+            try:
+                notify_error(
+                    title="Invalid Date Format",
+                    message=f"Date format invalid: {date_str}",
+                    details={
+                        'scraper': 'bp_events',
+                        'date': date_str,
+                        'expected_format': 'YYYY-MM-DD',
+                        'error': 'Date validation failed'
+                    },
+                    processor_name="BettingPros Events Scraper"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            
+            raise DownloadDataException(error_msg)
         
         # Set sport default
         if "sport" not in self.opts:
@@ -167,16 +192,90 @@ class BettingProsEvents(ScraperBase, ScraperFlaskMixin):
         # Call parent download method
         super().download_data()
     
+    def check_download_status(self) -> None:
+        """Handle HTTP errors with notifications."""
+        if self.raw_response.status_code == 200:
+            return
+        
+        # Non-success status code - send error notification
+        status_code = self.raw_response.status_code
+        try:
+            notify_error(
+                title="BettingPros API HTTP Error",
+                message=f"Events scraping failed with HTTP {status_code}",
+                details={
+                    'scraper': 'bp_events',
+                    'date': self.opts.get('date', 'unknown'),
+                    'sport': self.opts.get('sport', 'NBA'),
+                    'status_code': status_code,
+                    'response_text': self.raw_response.text[:500] if hasattr(self.raw_response, 'text') else 'N/A'
+                },
+                processor_name="BettingPros Events Scraper"
+            )
+        except Exception as notify_ex:
+            logger.warning(f"Failed to send notification: {notify_ex}")
+        
+        super().check_download_status()
+    
     def validate_download_data(self) -> None:
         """Validate the BettingPros API response"""
         if not isinstance(self.decoded_data, dict):
+            # Invalid response format
+            try:
+                notify_error(
+                    title="Invalid Response Format",
+                    message="BettingPros events API returned unexpected data format",
+                    details={
+                        'scraper': 'bp_events',
+                        'date': self.opts.get('date', 'unknown'),
+                        'sport': self.opts.get('sport', 'NBA'),
+                        'received_type': type(self.decoded_data).__name__,
+                        'expected_type': 'dict'
+                    },
+                    processor_name="BettingPros Events Scraper"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            
             raise DownloadDataException("Response is not a JSON object")
         
         if "events" not in self.decoded_data:
+            # Missing events key
+            try:
+                notify_error(
+                    title="Missing Events in Response",
+                    message="BettingPros API response missing 'events' key",
+                    details={
+                        'scraper': 'bp_events',
+                        'date': self.opts.get('date', 'unknown'),
+                        'sport': self.opts.get('sport', 'NBA'),
+                        'response_keys': list(self.decoded_data.keys())
+                    },
+                    processor_name="BettingPros Events Scraper"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            
             raise DownloadDataException("Missing 'events' in response")
         
         events = self.decoded_data["events"]
         if not isinstance(events, list):
+            # Events not a list
+            try:
+                notify_error(
+                    title="Invalid Events Format",
+                    message="BettingPros API 'events' is not a list",
+                    details={
+                        'scraper': 'bp_events',
+                        'date': self.opts.get('date', 'unknown'),
+                        'sport': self.opts.get('sport', 'NBA'),
+                        'events_type': type(events).__name__
+                    },
+                    processor_name="BettingPros Events Scraper"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            
             raise DownloadDataException("'events' is not a list")
         
         # Check for _parameters to ensure we got the right response
@@ -185,9 +284,58 @@ class BettingProsEvents(ScraperBase, ScraperFlaskMixin):
             if params.get("sport") != self.opts["sport"]:
                 logger.warning("Response sport (%s) differs from requested (%s)", 
                              params.get("sport"), self.opts["sport"])
+                
+                # Warning for sport mismatch
+                try:
+                    notify_warning(
+                        title="Response Parameter Mismatch",
+                        message="API returned different sport than requested",
+                        details={
+                            'scraper': 'bp_events',
+                            'date': self.opts.get('date', 'unknown'),
+                            'requested_sport': self.opts["sport"],
+                            'response_sport': params.get("sport"),
+                            'event_count': len(events)
+                        }
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                    
             if params.get("date") != self.opts["date"]:
                 logger.warning("Response date (%s) differs from requested (%s)", 
                              params.get("date"), self.opts["date"])
+                
+                # Warning for date mismatch
+                try:
+                    notify_warning(
+                        title="Response Parameter Mismatch",
+                        message="API returned different date than requested",
+                        details={
+                            'scraper': 'bp_events',
+                            'requested_date': self.opts["date"],
+                            'response_date': params.get("date"),
+                            'requested_sport': self.opts["sport"],
+                            'event_count': len(events)
+                        }
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+        
+        # Check for no events
+        if len(events) == 0:
+            try:
+                notify_warning(
+                    title="No Events Available",
+                    message="BettingPros API returned zero events for date",
+                    details={
+                        'scraper': 'bp_events',
+                        'date': self.opts.get('date', 'unknown'),
+                        'sport': self.opts.get('sport', 'NBA'),
+                        'note': 'May be expected if no games scheduled for this date'
+                    }
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
         
         logger.info("Validation passed: %d events found for %s", 
                    len(events), self.opts["date"])
@@ -239,6 +387,24 @@ class BettingProsEvents(ScraperBase, ScraperFlaskMixin):
             "events": processed_events,
             # "raw_events": events_data,  # Keep original data for debugging
         }
+        
+        # Success notification
+        if len(processed_events) > 0:
+            try:
+                notify_info(
+                    title="Events Scraped Successfully",
+                    message=f"Retrieved {len(processed_events)} events from BettingPros",
+                    details={
+                        'scraper': 'bp_events',
+                        'date': self.opts.get('date', 'unknown'),
+                        'sport': self.opts.get('sport', 'NBA'),
+                        'event_count': len(processed_events),
+                        'games_preview': game_summary[:5],
+                        'total_games': len(game_summary)
+                    }
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
         
         logger.info("Processed %d events for %s: %s", 
                 len(processed_events), self.opts["date"], 

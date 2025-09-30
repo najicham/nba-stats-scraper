@@ -13,6 +13,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Dict, List
 from google.cloud import bigquery
+from shared.utils.notification_system import notify_error, NotificationLevel, NotificationType, NotificationRouter
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +94,23 @@ class DatabaseStrategiesMixin:
             error_msg = f"REPLACE mode failed: {str(e)}"
             logger.error(error_msg)
             errors.append(error_msg)
+            
+            # Send error notification
+            try:
+                notify_error(
+                    title="Database REPLACE Operation Failed",
+                    message=f"Registry REPLACE mode failed: {str(e)}",
+                    details={
+                        'operation': 'REPLACE',
+                        'table': self.table_name,
+                        'records_attempted': len(rows),
+                        'error_type': type(e).__name__,
+                        'processing_run_id': getattr(self, 'processing_run_id', 'unknown')
+                    },
+                    processor_name="Registry Database Operations"
+                )
+            except Exception as notify_error_ex:
+                logger.warning(f"Failed to send error notification: {notify_error_ex}")
             
             return {
                 'rows_processed': 0,
@@ -176,6 +194,24 @@ class DatabaseStrategiesMixin:
             logger.error(f"Exception details: {type(e).__name__}: {str(e)}")
             
             errors.append(error_msg)
+            
+            # Send error notification
+            try:
+                notify_error(
+                    title="Database MERGE Operation Failed",
+                    message=f"Registry MERGE mode failed: {str(e)}",
+                    details={
+                        'operation': 'MERGE',
+                        'table': self.table_name,
+                        'records_attempted': len(rows),
+                        'error_type': type(e).__name__,
+                        'temp_table': temp_table_id,
+                        'processing_run_id': getattr(self, 'processing_run_id', 'unknown')
+                    },
+                    processor_name="Registry Database Operations"
+                )
+            except Exception as notify_error_ex:
+                logger.warning(f"Failed to send error notification: {notify_error_ex}")
             
             return {
                 'rows_processed': 0,
@@ -332,6 +368,23 @@ class DatabaseStrategiesMixin:
                     
         except Exception as e:
             logger.error(f"Error in REPLACE mode for unresolved players: {e}")
+            
+            # Send error notification
+            try:
+                notify_error(
+                    title="Unresolved Players REPLACE Failed",
+                    message=f"Failed to replace unresolved players: {str(e)}",
+                    details={
+                        'operation': 'REPLACE_UNRESOLVED',
+                        'table': self.unresolved_table_name,
+                        'records_attempted': len(processed_records),
+                        'error_type': type(e).__name__,
+                        'processing_run_id': getattr(self, 'processing_run_id', 'unknown')
+                    },
+                    processor_name="Registry Database Operations"
+                )
+            except Exception as notify_error_ex:
+                logger.warning(f"Failed to send error notification: {notify_error_ex}")
 
     def _merge_unresolved_players(self, processed_records: List[Dict]):
         """MERGE mode for unresolved players with graceful error handling."""
@@ -430,6 +483,25 @@ class DatabaseStrategiesMixin:
                 logger.info("Records will be processed on the next run when streaming buffer clears")
             else:
                 logger.error(f"MERGE failed with error: {str(e)}")
+                
+                # Send error notification (only for non-streaming-buffer errors)
+                try:
+                    notify_error(
+                        title="Unresolved Players MERGE Failed",
+                        message=f"Failed to merge unresolved players: {str(e)}",
+                        details={
+                            'operation': 'MERGE_UNRESOLVED',
+                            'table': self.unresolved_table_name,
+                            'records_attempted': len(processed_records),
+                            'error_type': error_type,
+                            'duration_seconds': error_duration,
+                            'processing_run_id': getattr(self, 'processing_run_id', 'unknown')
+                        },
+                        processor_name="Registry Database Operations"
+                    )
+                except Exception as notify_error_ex:
+                    logger.warning(f"Failed to send error notification: {notify_error_ex}")
+                
                 raise e
                 
         finally:

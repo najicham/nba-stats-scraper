@@ -1,4 +1,6 @@
 """
+File: scrapers/balldontlie/bdl_standings.py
+
 BALLDONTLIE - Standings endpoint                              v1.1 - 2025-06-24
 -------------------------------------------------------------------------------
 Conference / division standings
@@ -46,6 +48,19 @@ except ImportError:
     from scrapers.scraper_flask_mixin import ScraperFlaskMixin
     from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
     from scrapers.utils.gcs_path_builder import GCSPathBuilder
+
+# Notification system imports
+try:
+    from shared.utils.notification_system import (
+        notify_error,
+        notify_warning,
+        notify_info
+    )
+except ImportError:
+    # Graceful fallback if notification system not available
+    def notify_error(*args, **kwargs): pass
+    def notify_warning(*args, **kwargs): pass
+    def notify_info(*args, **kwargs): pass
 
 logger = logging.getLogger(__name__)
 
@@ -145,38 +160,147 @@ class BdlStandingsScraper(ScraperBase, ScraperFlaskMixin):
     # Validation                                                         #
     # ------------------------------------------------------------------ #
     def validate_download_data(self) -> None:
-        if not isinstance(self.decoded_data, dict) or "data" not in self.decoded_data:
-            raise ValueError("Unexpected standings JSON structure")
+        try:
+            if not isinstance(self.decoded_data, dict) or "data" not in self.decoded_data:
+                raise ValueError("Unexpected standings JSON structure")
+        except Exception as e:
+            # Send error notification for validation failure
+            try:
+                notify_error(
+                    title="BDL Standings - Validation Failed",
+                    message=f"Data validation failed for season {self.opts.get('season', 'unknown')}: {str(e)}",
+                    details={
+                        'scraper': 'bdl_standings',
+                        'season': self.opts.get('season'),
+                        'error_type': type(e).__name__,
+                        'url': self.url,
+                        'has_data': self.decoded_data is not None
+                    },
+                    processor_name="Ball Don't Lie Standings"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send validation error notification: {notify_ex}")
+            raise
 
     # ------------------------------------------------------------------ #
     # Transform (cursor-aware)                                           #
     # ------------------------------------------------------------------ #
     def transform_data(self) -> None:
-        rows: List[Dict[str, Any]] = list(self.decoded_data["data"])
-        cursor: Optional[str] = self.decoded_data.get("meta", {}).get("next_cursor")
+        try:
+            rows: List[Dict[str, Any]] = list(self.decoded_data["data"])
+            cursor: Optional[str] = self.decoded_data.get("meta", {}).get("next_cursor")
+            pages_fetched = 1
 
-        while cursor:
-            resp = self.http_downloader.get(
-                self.base_url,
-                headers=self.headers,
-                params={"cursor": cursor, "per_page": 100},
-                timeout=self.timeout_http,
-            )
-            resp.raise_for_status()
-            page_json: Dict[str, Any] = resp.json()
-            rows.extend(page_json.get("data", []))
-            cursor = page_json.get("meta", {}).get("next_cursor")
+            # Paginate through all results
+            while cursor:
+                try:
+                    resp = self.http_downloader.get(
+                        self.base_url,
+                        headers=self.headers,
+                        params={"cursor": cursor, "per_page": 100},
+                        timeout=self.timeout_http,
+                    )
+                    resp.raise_for_status()
+                    page_json: Dict[str, Any] = resp.json()
+                    rows.extend(page_json.get("data", []))
+                    cursor = page_json.get("meta", {}).get("next_cursor")
+                    pages_fetched += 1
+                except Exception as e:
+                    # Pagination failure
+                    try:
+                        notify_error(
+                            title="BDL Standings - Pagination Failed",
+                            message=f"Failed to fetch page {pages_fetched + 1} for season {self.opts.get('season', 'unknown')}: {str(e)}",
+                            details={
+                                'scraper': 'bdl_standings',
+                                'season': self.opts.get('season'),
+                                'pages_fetched': pages_fetched,
+                                'teams_so_far': len(rows),
+                                'error_type': type(e).__name__,
+                                'cursor': cursor
+                            },
+                            processor_name="Ball Don't Lie Standings"
+                        )
+                    except Exception as notify_ex:
+                        logger.warning(f"Failed to send pagination error notification: {notify_ex}")
+                    raise
 
-        rows.sort(key=lambda r: (r.get("conference"), r.get("conference_rank")))
+            rows.sort(key=lambda r: (r.get("conference"), r.get("conference_rank")))
 
-        self.data = {
-            "season": self.opts["season"],
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "teamCount": len(rows),
-            "standings": rows,
-        }
-        logger.info("Fetched standings for %d teams (season %s)",
-                    len(rows), self.opts["season"])
+            self.data = {
+                "season": self.opts["season"],
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "teamCount": len(rows),
+                "standings": rows,
+            }
+            
+            logger.info("Fetched standings for %d teams (season %s) across %d pages",
+                       len(rows), self.opts["season"], pages_fetched)
+
+            # Data quality checks - NBA should have exactly 30 teams
+            if len(rows) == 0:
+                try:
+                    notify_error(
+                        title="BDL Standings - No Data",
+                        message=f"No standings data returned for season {self.opts.get('season', 'unknown')}",
+                        details={
+                            'scraper': 'bdl_standings',
+                            'season': self.opts.get('season'),
+                            'note': 'This is unusual - standings should always have 30 teams'
+                        },
+                        processor_name="Ball Don't Lie Standings"
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send empty data error: {notify_ex}")
+            elif len(rows) != 30:
+                # NBA has exactly 30 teams, so any other count indicates a data issue
+                try:
+                    notify_warning(
+                        title="BDL Standings - Incorrect Team Count",
+                        message=f"Standings returned {len(rows)} teams for season {self.opts.get('season', 'unknown')} (expected 30)",
+                        details={
+                            'scraper': 'bdl_standings',
+                            'season': self.opts.get('season'),
+                            'team_count': len(rows),
+                            'expected_count': 30,
+                            'note': 'May indicate incomplete data or API issue'
+                        }
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send incorrect count warning: {notify_ex}")
+            else:
+                # Success notification - correct team count
+                try:
+                    notify_info(
+                        title="BDL Standings - Success",
+                        message=f"Successfully scraped standings for all 30 teams (season {self.opts.get('season', 'unknown')})",
+                        details={
+                            'scraper': 'bdl_standings',
+                            'season': self.opts.get('season'),
+                            'team_count': len(rows),
+                            'pages_fetched': pages_fetched
+                        }
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send success notification: {notify_ex}")
+
+        except Exception as e:
+            # General transformation error
+            try:
+                notify_error(
+                    title="BDL Standings - Transform Failed",
+                    message=f"Data transformation failed for season {self.opts.get('season', 'unknown')}: {str(e)}",
+                    details={
+                        'scraper': 'bdl_standings',
+                        'season': self.opts.get('season'),
+                        'error_type': type(e).__name__,
+                        'has_decoded_data': self.decoded_data is not None
+                    },
+                    processor_name="Ball Don't Lie Standings"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send transform error notification: {notify_ex}")
+            raise
 
     # ------------------------------------------------------------------ #
     # Stats                                                              #
@@ -199,4 +323,3 @@ create_app = convert_existing_flask_scraper(BdlStandingsScraper)
 if __name__ == "__main__":
     main = BdlStandingsScraper.create_cli_and_flask_main()
     main()
-    

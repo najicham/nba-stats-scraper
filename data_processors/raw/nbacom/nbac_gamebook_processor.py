@@ -12,6 +12,7 @@ Key Features:
 - Data quality indicators and flags
 - Enhanced audit trail
 - DEBUG LOGGING for cache resolution issues
+- Integrated notification system for monitoring and alerts
 """
 
 import json
@@ -25,6 +26,11 @@ from typing import Dict, List, Tuple, Optional
 from collections import defaultdict
 from google.cloud import bigquery
 from shared.utils.player_name_normalizer import normalize_name_for_lookup, extract_suffix
+from shared.utils.notification_system import (
+    notify_error,
+    notify_warning,
+    notify_info
+)
 
 # Support both module execution and direct execution
 try:
@@ -96,6 +102,21 @@ class NbacGamebookProcessor(ProcessorBase):
             
             if results.empty:
                 logger.warning(f"No roster data found for season {season_year}")
+                
+                # Notify about missing roster data
+                try:
+                    notify_warning(
+                        title="Missing Roster Data",
+                        message=f"No Basketball Reference roster data found for season {season_year}",
+                        details={
+                            'season_year': season_year,
+                            'processing_run_id': self.processing_run_id,
+                            'impact': 'Player name resolution may fail for this season'
+                        }
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                
                 self.br_roster_cache[season_year] = {}
                 return
             
@@ -168,6 +189,23 @@ class NbacGamebookProcessor(ProcessorBase):
         except Exception as e:
             logger.error(f"CRITICAL ERROR loading BR rosters for {season_year}: {e}")
             logger.error(f"Query was: {query}")
+            
+            # Notify about critical roster loading failure
+            try:
+                notify_error(
+                    title="Roster Cache Loading Failed",
+                    message=f"Failed to load Basketball Reference rosters for season {season_year}: {str(e)}",
+                    details={
+                        'season_year': season_year,
+                        'processing_run_id': self.processing_run_id,
+                        'error_type': type(e).__name__,
+                        'query': query[:200]  # First 200 chars
+                    },
+                    processor_name="NBA.com Gamebook Processor"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            
             # Don't set empty cache on error - let it fail loudly
             raise e
     
@@ -218,6 +256,21 @@ class NbacGamebookProcessor(ProcessorBase):
             
             if errors:
                 logger.error(f"Failed to insert resolution logs: {errors}")
+                
+                # Notify about logging failure
+                try:
+                    notify_error(
+                        title="Resolution Log Insert Failed",
+                        message=f"Failed to insert {len(self.resolution_logs)} resolution logs to BigQuery",
+                        details={
+                            'processing_run_id': self.processing_run_id,
+                            'log_count': len(self.resolution_logs),
+                            'errors': str(errors)[:500]
+                        },
+                        processor_name="NBA.com Gamebook Processor"
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
             else:
                 logger.info(f"Inserted {len(self.resolution_logs)} resolution logs")
             
@@ -226,6 +279,21 @@ class NbacGamebookProcessor(ProcessorBase):
             
         except Exception as e:
             logger.error(f"Error flushing resolution logs: {e}")
+            
+            # Notify about critical logging error
+            try:
+                notify_error(
+                    title="Resolution Logging System Error",
+                    message=f"Error flushing resolution logs: {str(e)}",
+                    details={
+                        'processing_run_id': self.processing_run_id,
+                        'error_type': type(e).__name__,
+                        'pending_logs': len(self.resolution_logs)
+                    },
+                    processor_name="NBA.com Gamebook Processor"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
 
     def log_processing_performance(self, date_range_start: str = None, date_range_end: str = None):
         """Log overall processing performance summary with enhanced metrics - FIXED VERSION."""
@@ -313,8 +381,41 @@ class NbacGamebookProcessor(ProcessorBase):
                 logger.info(f"  Active: {resolution_stats['active_total']}, Inactive: {resolution_stats['inactive_total']}, DNP: {resolution_stats['dnp_total']}")
                 logger.info(f"  Inactive resolved: {inactive_resolved}/{inactive_needing_resolution} = {resolution_rate:.2%}")
                 
+                # Check for concerning resolution rates
+                if inactive_needing_resolution > 0 and resolution_rate < 0.80:
+                    try:
+                        notify_warning(
+                            title="Low Player Resolution Rate",
+                            message=f"Player name resolution rate below 80%: {resolution_rate:.1%}",
+                            details={
+                                'processing_run_id': self.processing_run_id,
+                                'resolution_rate': f"{resolution_rate:.2%}",
+                                'inactive_resolved': inactive_resolved,
+                                'inactive_total': inactive_needing_resolution,
+                                'not_found': resolution_stats['not_found'],
+                                'multiple_matches': resolution_stats['multiple_matches']
+                            }
+                        )
+                    except Exception as notify_ex:
+                        logger.warning(f"Failed to send notification: {notify_ex}")
+                
             except Exception as e:
                 logger.error(f"Error querying performance stats: {e}")
+                
+                # Notify about performance query failure
+                try:
+                    notify_error(
+                        title="Performance Stats Query Failed",
+                        message=f"Failed to query processing performance stats: {str(e)}",
+                        details={
+                            'processing_run_id': self.processing_run_id,
+                            'error_type': type(e).__name__
+                        },
+                        processor_name="NBA.com Gamebook Processor"
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                
                 # Fallback to original method if database query fails
                 logger.warning("Falling back to in-memory resolution logs for performance calculation")
                 
@@ -374,6 +475,20 @@ class NbacGamebookProcessor(ProcessorBase):
             
             if errors:
                 logger.error(f"Failed to log performance summary: {errors}")
+                
+                # Notify about performance logging failure
+                try:
+                    notify_error(
+                        title="Performance Summary Insert Failed",
+                        message=f"Failed to log performance summary to BigQuery",
+                        details={
+                            'processing_run_id': self.processing_run_id,
+                            'errors': str(errors)[:500]
+                        },
+                        processor_name="NBA.com Gamebook Processor"
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
             else:
                 logger.info(f"Logged performance summary for run {self.processing_run_id}")
                 logger.info(f"Total players processed: {performance_summary['total_players_processed']}")
@@ -385,6 +500,20 @@ class NbacGamebookProcessor(ProcessorBase):
                     
         except Exception as e:
             logger.error(f"Error logging performance: {e}")
+            
+            # Notify about critical performance logging error
+            try:
+                notify_error(
+                    title="Performance Logging System Error",
+                    message=f"Critical error in performance logging system: {str(e)}",
+                    details={
+                        'processing_run_id': self.processing_run_id,
+                        'error_type': type(e).__name__
+                    },
+                    processor_name="NBA.com Gamebook Processor"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
 
     def finalize_processing(self):
         """Call this at the end of processing to flush remaining logs."""
@@ -393,6 +522,21 @@ class NbacGamebookProcessor(ProcessorBase):
         
         # Log final performance summary
         self.log_processing_performance()
+        
+        # Send success notification with summary
+        try:
+            notify_info(
+                title="Gamebook Processing Complete",
+                message=f"Successfully completed processing run {self.processing_run_id}",
+                details={
+                    'processing_run_id': self.processing_run_id,
+                    'files_processed': self.files_processed,
+                    'duration_minutes': round((datetime.now() - self.processing_start_time).total_seconds() / 60, 2),
+                    'date_range': f"{getattr(self, 'processing_date_range_start', 'N/A')} to {getattr(self, 'processing_date_range_end', 'N/A')}"
+                }
+            )
+        except Exception as notify_ex:
+            logger.warning(f"Failed to send notification: {notify_ex}")
         
         logger.info(f"Processing run {self.processing_run_id} completed")
 
@@ -600,6 +744,25 @@ class NbacGamebookProcessor(ProcessorBase):
             logger.error(f"Error resolving {last_name}: {e}")
             if is_debug_case:
                 logger.info(f"=== RESOLVE DEBUG END (ERROR) ===")
+            
+            # Notify about resolution error
+            try:
+                notify_error(
+                    title="Player Resolution Error",
+                    message=f"Error resolving player name: {last_name} ({team_abbr})",
+                    details={
+                        'player_name': last_name,
+                        'team_abbr': team_abbr,
+                        'season_year': season_year,
+                        'game_id': game_id,
+                        'error_type': type(e).__name__,
+                        'error': str(e)
+                    },
+                    processor_name="NBA.com Gamebook Processor"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            
             return last_name, self.normalize_name(last_name), 'not_found', ['processing_error'], True
 
     def get_roster_matches(self, last_name: str, team_abbr: str, season_year: int) -> List[Dict]:
@@ -691,8 +854,21 @@ class NbacGamebookProcessor(ProcessorBase):
         if result:
             return result
         
-        # Log unmapped for debugging
+        # Log unmapped for debugging and notify if this happens frequently
         logger.warning(f"Could not map team name: '{team_name}'")
+        
+        try:
+            notify_warning(
+                title="Team Name Mapping Failed",
+                message=f"Unable to map team name to abbreviation: {team_name}",
+                details={
+                    'team_name': team_name,
+                    'processing_run_id': self.processing_run_id
+                }
+            )
+        except Exception as notify_ex:
+            logger.warning(f"Failed to send notification: {notify_ex}")
+        
         return None
     
     def process_active_player(self, player: Dict, game_info: Dict, source_file_path: str) -> Dict:
@@ -846,29 +1022,51 @@ class NbacGamebookProcessor(ProcessorBase):
         """Transform gamebook data to BigQuery rows."""
         rows = []
         
-        # Track file processing
-        self.files_processed += 1
-        
-        # Extract game information
-        game_info = self.extract_game_info(file_path, raw_data)
-        
-        # Process active players
-        for player in raw_data.get('active_players', []):
-            row = self.process_active_player(player, game_info, file_path)
-            rows.append(row)
-        
-        # Process DNP players with source file context
-        for player in raw_data.get('dnp_players', []):
-            row = self.process_inactive_player(player, game_info, 'dnp', file_path)
-            rows.append(row)
-        
-        # Process inactive players with source file context
-        for player in raw_data.get('inactive_players', []):
-            row = self.process_inactive_player(player, game_info, 'inactive', file_path)
-            rows.append(row)
-        
-        logger.info(f"Processed {len(rows)} players from {file_path} (File #{self.files_processed})")
-        return rows
+        try:
+            # Track file processing
+            self.files_processed += 1
+            
+            # Extract game information
+            game_info = self.extract_game_info(file_path, raw_data)
+            
+            # Process active players
+            for player in raw_data.get('active_players', []):
+                row = self.process_active_player(player, game_info, file_path)
+                rows.append(row)
+            
+            # Process DNP players with source file context
+            for player in raw_data.get('dnp_players', []):
+                row = self.process_inactive_player(player, game_info, 'dnp', file_path)
+                rows.append(row)
+            
+            # Process inactive players with source file context
+            for player in raw_data.get('inactive_players', []):
+                row = self.process_inactive_player(player, game_info, 'inactive', file_path)
+                rows.append(row)
+            
+            logger.info(f"Processed {len(rows)} players from {file_path} (File #{self.files_processed})")
+            return rows
+            
+        except Exception as e:
+            logger.error(f"Error transforming data from {file_path}: {e}")
+            
+            # Notify about transformation failure
+            try:
+                notify_error(
+                    title="Gamebook Data Transformation Failed",
+                    message=f"Failed to transform gamebook data: {str(e)}",
+                    details={
+                        'file_path': file_path,
+                        'processing_run_id': self.processing_run_id,
+                        'error_type': type(e).__name__,
+                        'files_processed_so_far': self.files_processed
+                    },
+                    processor_name="NBA.com Gamebook Processor"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            
+            raise e
     
     def load_data(self, rows: List[Dict], **kwargs) -> Dict:
         """Load data to BigQuery using MERGE_UPDATE strategy."""
@@ -894,6 +1092,22 @@ class NbacGamebookProcessor(ProcessorBase):
             if result:
                 errors.extend([str(e) for e in result])
                 
+                # Notify about insert errors
+                try:
+                    notify_error(
+                        title="BigQuery Insert Errors",
+                        message=f"Encountered {len(result)} errors inserting gamebook data",
+                        details={
+                            'table_id': table_id,
+                            'rows_attempted': len(rows),
+                            'processing_run_id': self.processing_run_id,
+                            'errors': str(errors)[:500]
+                        },
+                        processor_name="NBA.com Gamebook Processor"
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                
             # If this is the final batch, finalize processing
             if kwargs.get('is_final_batch', False):
                 self.finalize_processing()
@@ -901,6 +1115,22 @@ class NbacGamebookProcessor(ProcessorBase):
         except Exception as e:
             errors.append(str(e))
             logger.error(f"Failed to load data: {e}")
+            
+            # Notify about database operation failure
+            try:
+                notify_error(
+                    title="Database Load Failed",
+                    message=f"Failed to load gamebook data to BigQuery: {str(e)}",
+                    details={
+                        'table_id': table_id,
+                        'rows_attempted': len(rows),
+                        'processing_run_id': self.processing_run_id,
+                        'error_type': type(e).__name__
+                    },
+                    processor_name="NBA.com Gamebook Processor"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
         
         return {
             'rows_processed': len(rows) if not errors else 0,
@@ -1054,6 +1284,23 @@ class NbacGamebookProcessor(ProcessorBase):
                 
         except Exception as e:
             logger.error(f"Error in injury database resolution for {last_name}: {e}")
+            
+            # Notify about injury database resolution error
+            try:
+                notify_error(
+                    title="Injury Database Resolution Failed",
+                    message=f"Error querying injury database for player: {last_name}",
+                    details={
+                        'player_name': last_name,
+                        'team_abbr': team_abbr,
+                        'game_date': game_date,
+                        'error_type': type(e).__name__,
+                        'error': str(e)
+                    },
+                    processor_name="NBA.com Gamebook Processor"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            
             # Fall back to Basketball Reference on error
             return self.resolve_inactive_player(last_name, team_abbr, season_year, game_id, game_date, player_status, source_file_path)
-        

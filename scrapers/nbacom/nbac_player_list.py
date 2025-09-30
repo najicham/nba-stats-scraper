@@ -44,6 +44,22 @@ except ImportError:
     from scrapers.utils.exceptions import DownloadDataException
     from scrapers.utils.gcs_path_builder import GCSPathBuilder
 
+# Import notification system
+try:
+    from shared.utils.notification_system import (
+        notify_error,
+        notify_warning,
+        notify_info
+    )
+except ImportError:
+    # Fallback if shared module not available
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+    from shared.utils.notification_system import (
+        notify_error,
+        notify_warning,
+        notify_info
+    )
+
 logger = logging.getLogger("scraper_base")
 
 
@@ -140,10 +156,69 @@ class GetNbaComPlayerList(ScraperBase, ScraperFlaskMixin):
     # Validation
     # ------------------------------------------------------------------ #
     def validate_download_data(self) -> None:
-        rs = self.decoded_data.get("resultSets")
-        if not rs:
-            raise DownloadDataException("'resultSets' missing or empty.")
-        logger.info("resultSets found with length %d", len(rs))
+        try:
+            rs = self.decoded_data.get("resultSets")
+            if not rs:
+                # Send error notification for missing data
+                try:
+                    notify_error(
+                        title="NBA.com Player List - Missing Data",
+                        message=f"resultSets missing or empty for season {self.opts.get('season')}",
+                        details={
+                            'scraper': 'nbac_player_list',
+                            'season': self.opts.get('season'),
+                            'url': self.url,
+                            'error': 'resultSets missing or empty'
+                        },
+                        processor_name="NBA.com Player List Scraper"
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                
+                raise DownloadDataException("'resultSets' missing or empty.")
+            
+            logger.info("resultSets found with length %d", len(rs))
+            
+            # Get player count for success notification
+            rows: List = rs[0].get("rowSet", [])
+            player_count = len(rows)
+            
+            # Send success notification
+            try:
+                notify_info(
+                    title="NBA.com Player List - Download Complete",
+                    message=f"Successfully downloaded player list for season {self.opts.get('season')}",
+                    details={
+                        'scraper': 'nbac_player_list',
+                        'season': self.opts.get('season'),
+                        'players_found': player_count,
+                        'url': self.url
+                    }
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+                
+        except DownloadDataException:
+            # Re-raise validation exceptions (already notified above)
+            raise
+        except Exception as e:
+            # Catch any unexpected validation errors
+            try:
+                notify_error(
+                    title="NBA.com Player List - Validation Failed",
+                    message=f"Unexpected validation error for season {self.opts.get('season')}: {str(e)}",
+                    details={
+                        'scraper': 'nbac_player_list',
+                        'season': self.opts.get('season'),
+                        'error_type': type(e).__name__,
+                        'error': str(e),
+                        'url': self.url
+                    },
+                    processor_name="NBA.com Player List Scraper"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            raise
 
     # ------------------------------------------------------------------ #
     # should_save_data (unchanged behaviour)
@@ -184,4 +259,3 @@ create_app = convert_existing_flask_scraper(GetNbaComPlayerList)
 if __name__ == "__main__":
     main = GetNbaComPlayerList.create_cli_and_flask_main()
     main()
-    

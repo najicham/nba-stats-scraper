@@ -1,4 +1,6 @@
 """
+File: scrapers/balldontlie/bdl_player_detail.py
+
 BALLDONTLIE - Player-Detail endpoint                         v1.1 - 2025-06-24
 -------------------------------------------------------------------------------
 Fetch the JSON object for a single NBA player:
@@ -40,6 +42,19 @@ except ImportError:
     from scrapers.scraper_flask_mixin import ScraperFlaskMixin
     from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
     from scrapers.utils.gcs_path_builder import GCSPathBuilder
+
+# Notification system imports
+try:
+    from shared.utils.notification_system import (
+        notify_error,
+        notify_warning,
+        notify_info
+    )
+except ImportError:
+    # Graceful fallback if notification system not available
+    def notify_error(*args, **kwargs): pass
+    def notify_warning(*args, **kwargs): pass
+    def notify_info(*args, **kwargs): pass
 
 logger = logging.getLogger(__name__)
 
@@ -125,29 +140,84 @@ class BdlPlayerDetailScraper(ScraperBase, ScraperFlaskMixin):
         BDL v1.4 wraps responses in {"data": {...}}.
         Accept both wrapped and legacy bare objects.
         """
-        if "id" in self.decoded_data:
-            player = self.decoded_data                       # legacy format
-        elif "data" in self.decoded_data and "id" in self.decoded_data["data"]:
-            player = self.decoded_data["data"]               # new format
-        else:
-            raise ValueError(f"PlayerId {self.opts['playerId']} not found in BallDontLie")
+        try:
+            if "id" in self.decoded_data:
+                player = self.decoded_data                       # legacy format
+            elif "data" in self.decoded_data and "id" in self.decoded_data["data"]:
+                player = self.decoded_data["data"]               # new format
+            else:
+                raise ValueError(f"PlayerId {self.opts['playerId']} not found in BallDontLie")
 
-        if player["id"] != int(self.opts["playerId"]):
-            raise ValueError("Returned playerId does not match requested playerId")
+            if player["id"] != int(self.opts["playerId"]):
+                raise ValueError("Returned playerId does not match requested playerId")
 
-        # Unwrap so transform/exporters work consistently
-        self.decoded_data = player
+            # Unwrap so transform/exporters work consistently
+            self.decoded_data = player
+
+        except Exception as e:
+            # Send error notification for validation failure
+            try:
+                notify_error(
+                    title="BDL Player Detail - Validation Failed",
+                    message=f"Data validation failed for playerId {self.opts.get('playerId', 'unknown')}: {str(e)}",
+                    details={
+                        'scraper': 'bdl_player_detail',
+                        'player_id': self.opts.get('playerId'),
+                        'error_type': type(e).__name__,
+                        'url': self.url,
+                        'has_data': self.decoded_data is not None,
+                        'note': 'Player may not exist or API format changed'
+                    },
+                    processor_name="Ball Don't Lie Player Detail"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send validation error notification: {notify_ex}")
+            raise
 
     # ------------------------------------------------------------------ #
     # Transform                                                          #
     # ------------------------------------------------------------------ #
     def transform_data(self) -> None:
-        self.data = {
-            "playerId": self.opts["playerId"],
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "player": self.decoded_data,
-        }
-        logger.info("Fetched player detail for playerId=%s", self.opts["playerId"])
+        try:
+            self.data = {
+                "playerId": self.opts["playerId"],
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "player": self.decoded_data,
+            }
+            logger.info("Fetched player detail for playerId=%s", self.opts["playerId"])
+
+            # Success notification
+            try:
+                notify_info(
+                    title="BDL Player Detail - Success",
+                    message=f"Successfully fetched player detail for playerId {self.opts.get('playerId', 'unknown')}",
+                    details={
+                        'scraper': 'bdl_player_detail',
+                        'player_id': self.opts.get('playerId'),
+                        'player_name': f"{self.decoded_data.get('first_name', '')} {self.decoded_data.get('last_name', '')}".strip(),
+                        'team': self.decoded_data.get('team', {}).get('full_name', 'unknown')
+                    }
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send success notification: {notify_ex}")
+
+        except Exception as e:
+            # General transformation error
+            try:
+                notify_error(
+                    title="BDL Player Detail - Transform Failed",
+                    message=f"Data transformation failed for playerId {self.opts.get('playerId', 'unknown')}: {str(e)}",
+                    details={
+                        'scraper': 'bdl_player_detail',
+                        'player_id': self.opts.get('playerId'),
+                        'error_type': type(e).__name__,
+                        'has_decoded_data': self.decoded_data is not None
+                    },
+                    processor_name="Ball Don't Lie Player Detail"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send transform error notification: {notify_ex}")
+            raise
 
     # ------------------------------------------------------------------ #
     # Stats                                                              #
@@ -167,4 +237,3 @@ create_app = convert_existing_flask_scraper(BdlPlayerDetailScraper)
 if __name__ == "__main__":
     main = BdlPlayerDetailScraper.create_cli_and_flask_main()
     main()
-    

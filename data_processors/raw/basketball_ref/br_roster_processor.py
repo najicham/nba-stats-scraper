@@ -19,6 +19,13 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from processor_base import ProcessorBase
 from utils.name_utils import normalize_name
 
+# Notification imports
+from shared.utils.notification_system import (
+    notify_error,
+    notify_warning,
+    notify_info
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -58,18 +65,54 @@ class BasketballRefRosterProcessor(ProcessorBase):
         blob = bucket.blob(file_path)
         
         if not blob.exists():
-            raise FileNotFoundError(f"File not found: gs://{bucket_name}/{file_path}")
+            error_msg = f"File not found: gs://{bucket_name}/{file_path}"
+            
+            # Notify critical error
+            try:
+                notify_error(
+                    title="Basketball Reference Roster File Not Found",
+                    message=f"Could not find roster file in GCS: {file_path}",
+                    details={
+                        'bucket': bucket_name,
+                        'file_path': file_path,
+                        'team_abbrev': self.opts.get('team_abbrev'),
+                        'season_year': self.opts.get('season_year')
+                    },
+                    processor_name="Basketball Reference Roster Processor"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            
+            raise FileNotFoundError(error_msg)
         
-        content = blob.download_as_text()
-        self.raw_data = json.loads(content)
-        
-        logger.info(f"Loaded {len(self.raw_data.get('players', []))} players")
+        try:
+            content = blob.download_as_text()
+            self.raw_data = json.loads(content)
+            logger.info(f"Loaded {len(self.raw_data.get('players', []))} players")
+        except json.JSONDecodeError as e:
+            # Notify JSON parse error
+            try:
+                notify_error(
+                    title="Basketball Reference Roster JSON Parse Failed",
+                    message=f"Failed to parse roster JSON: {str(e)}",
+                    details={
+                        'file_path': file_path,
+                        'team_abbrev': self.opts.get('team_abbrev'),
+                        'season_year': self.opts.get('season_year'),
+                        'error_type': type(e).__name__
+                    },
+                    processor_name="Basketball Reference Roster Processor"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            raise
     
     def validate_loaded_data(self) -> None:
         """Validate roster data structure."""
         super().validate_loaded_data()
         
         errors = []
+        warnings = []
         
         # Check required fields
         if "players" not in self.raw_data:
@@ -82,20 +125,55 @@ class BasketballRefRosterProcessor(ProcessorBase):
         # Check roster size
         players = self.raw_data.get("players", [])
         if len(players) < 10:
-            errors.append(f"Suspicious roster size: {len(players)} players")
+            warnings.append(f"Suspicious roster size: {len(players)} players")
         
         # Check for duplicate players
         names = [p.get("full_name") for p in players if p.get("full_name")]
         if len(names) != len(set(names)):
-            errors.append("Duplicate player names found")
+            warnings.append("Duplicate player names found")
         
+        # Handle warnings
+        if warnings:
+            for warning in warnings:
+                logger.warning(f"Validation warning: {warning}")
+            
+            # Notify data quality issues
+            try:
+                notify_warning(
+                    title="Basketball Reference Roster Data Quality Issues",
+                    message=f"Data quality issues detected: {', '.join(warnings)}",
+                    details={
+                        'team_abbrev': self.opts.get('team_abbrev'),
+                        'season_year': self.opts.get('season_year'),
+                        'player_count': len(players),
+                        'issues': warnings
+                    }
+                )
+            except Exception as e:
+                logger.warning(f"Failed to send notification: {e}")
+        
+        # Handle critical errors
         if errors:
             for error in errors:
-                logger.warning(f"Validation issue: {error}")
+                logger.error(f"Validation error: {error}")
             
-            # Critical errors stop processing
-            if any("Missing" in e for e in errors):
-                raise ValueError(f"Validation failed: {'; '.join(errors)}")
+            # Notify validation failure
+            try:
+                notify_error(
+                    title="Basketball Reference Roster Validation Failed",
+                    message=f"Required fields missing: {', '.join(errors)}",
+                    details={
+                        'file_path': self.opts.get('file_path'),
+                        'team_abbrev': self.opts.get('team_abbrev'),
+                        'season_year': self.opts.get('season_year'),
+                        'errors': errors
+                    },
+                    processor_name="Basketball Reference Roster Processor"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            
+            raise ValueError(f"Validation failed: {'; '.join(errors)}")
     
     def transform_data(self) -> None:
         """
@@ -112,10 +190,12 @@ class BasketballRefRosterProcessor(ProcessorBase):
         
         rows = []
         new_players = []
+        skipped_count = 0
         
         for player in self.raw_data.get("players", []):
             if not player.get("full_name"):
                 logger.warning(f"Skipping player without name: {player}")
+                skipped_count += 1
                 continue
             
             # Transform player data (matching scraper patterns)
@@ -158,6 +238,23 @@ class BasketballRefRosterProcessor(ProcessorBase):
         self.transformed_data = rows
         self.stats["new_players"] = len(new_players)
         self.stats["total_players"] = len(rows)
+        self.stats["skipped_players"] = skipped_count
+        
+        # Notify if players were skipped
+        if skipped_count > 0:
+            try:
+                notify_warning(
+                    title="Basketball Reference Roster Players Skipped",
+                    message=f"Skipped {skipped_count} players without names",
+                    details={
+                        'team_abbrev': team_abbrev,
+                        'season_year': season_year,
+                        'skipped_count': skipped_count,
+                        'total_players': len(rows)
+                    }
+                )
+            except Exception as e:
+                logger.warning(f"Failed to send notification: {e}")
     
     def save_data(self) -> None:
         """
@@ -170,37 +267,91 @@ class BasketballRefRosterProcessor(ProcessorBase):
         
         table_id = f"{self.bq_client.project}.{self.dataset_id}.{self.table_name}"
         
-        # Separate new vs existing players
-        new_rows = [r for r in self.transformed_data if "first_seen_date" in r]
-        update_rows = [r for r in self.transformed_data if "first_seen_date" not in r]
-        
-        # Insert new players
-        if new_rows:
-            logger.info(f"Inserting {len(new_rows)} new players")
-            errors = self.bq_client.insert_rows_json(table_id, new_rows)
-            if errors:
-                raise Exception(f"Failed to insert new players: {errors}")
-        
-        # Update existing players (just update last_scraped_date)
-        if update_rows:
-            season_year = self.opts["season_year"]
-            team_abbrev = self.opts["team_abbrev"]
-            player_names = [r["player_full_name"] for r in update_rows]
+        try:
+            # Separate new vs existing players
+            new_rows = [r for r in self.transformed_data if "first_seen_date" in r]
+            update_rows = [r for r in self.transformed_data if "first_seen_date" not in r]
             
-            query = f"""
-            UPDATE `{table_id}`
-            SET last_scraped_date = CURRENT_DATE()
-            WHERE season_year = {season_year}
-              AND team_abbrev = '{team_abbrev}'
-              AND player_full_name IN ({','.join([f"'{n}'" for n in player_names])})
-            """
+            # Insert new players
+            if new_rows:
+                logger.info(f"Inserting {len(new_rows)} new players")
+                errors = self.bq_client.insert_rows_json(table_id, new_rows)
+                if errors:
+                    error_msg = f"Failed to insert new players: {errors}"
+                    
+                    # Notify BigQuery error
+                    try:
+                        notify_error(
+                            title="Basketball Reference Roster BigQuery Insert Failed",
+                            message=f"Failed to insert {len(new_rows)} new players",
+                            details={
+                                'team_abbrev': self.opts.get('team_abbrev'),
+                                'season_year': self.opts.get('season_year'),
+                                'new_players_count': len(new_rows),
+                                'errors': str(errors)[:500]
+                            },
+                            processor_name="Basketball Reference Roster Processor"
+                        )
+                    except Exception as notify_ex:
+                        logger.warning(f"Failed to send notification: {notify_ex}")
+                    
+                    raise Exception(error_msg)
             
-            logger.info(f"Updating {len(update_rows)} existing players")
-            query_job = self.bq_client.query(query)
-            query_job.result()  # Wait for completion
-        
-        self.stats["rows_inserted"] = len(new_rows)
-        self.stats["rows_updated"] = len(update_rows)
+            # Update existing players (just update last_scraped_date)
+            if update_rows:
+                season_year = self.opts["season_year"]
+                team_abbrev = self.opts["team_abbrev"]
+                player_names = [r["player_full_name"] for r in update_rows]
+                
+                query = f"""
+                UPDATE `{table_id}`
+                SET last_scraped_date = CURRENT_DATE()
+                WHERE season_year = {season_year}
+                  AND team_abbrev = '{team_abbrev}'
+                  AND player_full_name IN ({','.join([f"'{n}'" for n in player_names])})
+                """
+                
+                logger.info(f"Updating {len(update_rows)} existing players")
+                query_job = self.bq_client.query(query)
+                query_job.result()  # Wait for completion
+            
+            self.stats["rows_inserted"] = len(new_rows)
+            self.stats["rows_updated"] = len(update_rows)
+            
+            # Send success notification
+            try:
+                notify_info(
+                    title="Basketball Reference Roster Processing Complete",
+                    message=f"Successfully processed {self.stats['total_players']} players for {self.opts.get('team_abbrev')}",
+                    details={
+                        'team_abbrev': self.opts.get('team_abbrev'),
+                        'season_year': self.opts.get('season_year'),
+                        'total_players': self.stats['total_players'],
+                        'new_players': self.stats['new_players'],
+                        'rows_inserted': len(new_rows),
+                        'rows_updated': len(update_rows)
+                    }
+                )
+            except Exception as e:
+                logger.warning(f"Failed to send notification: {e}")
+                
+        except Exception as e:
+            # Notify unexpected error
+            try:
+                notify_error(
+                    title="Basketball Reference Roster Processing Failed",
+                    message=f"Unexpected error during save: {str(e)}",
+                    details={
+                        'team_abbrev': self.opts.get('team_abbrev'),
+                        'season_year': self.opts.get('season_year'),
+                        'error_type': type(e).__name__,
+                        'total_players': len(self.transformed_data)
+                    },
+                    processor_name="Basketball Reference Roster Processor"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            raise
     
     def _get_existing_roster(self, season_year: int, team_abbrev: str) -> List[Dict]:
         """Get existing roster from BigQuery for merge logic."""

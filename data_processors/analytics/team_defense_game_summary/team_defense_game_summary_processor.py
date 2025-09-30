@@ -7,6 +7,7 @@ Calculates team defensive metrics by analyzing opponent offensive performance.
 
 Depends on team_offense_game_summary being populated first.
 Processes defensive stats, opponent performance allowed, and defensive actions.
+Includes multi-channel notifications for critical failures and data quality issues.
 """
 
 import logging
@@ -14,6 +15,11 @@ import pandas as pd
 from datetime import datetime, timezone
 from typing import Dict, List
 from data_processors.analytics.analytics_base import AnalyticsProcessorBase
+from shared.utils.notification_system import (
+    notify_error,
+    notify_warning,
+    notify_info
+)
 
 logger = logging.getLogger(__name__)
 
@@ -26,10 +32,70 @@ class TeamDefenseGameSummaryProcessor(AnalyticsProcessorBase):
         self.table_name = 'team_defense_game_summary'
         self.processing_strategy = 'MERGE_UPDATE'
     
+    def check_dependencies(self) -> bool:
+        """Check if required upstream tables are populated."""
+        start_date = self.opts['start_date']
+        end_date = self.opts['end_date']
+        
+        try:
+            # Check if team_offense_game_summary has data for this date range
+            check_query = f"""
+            SELECT COUNT(*) as record_count
+            FROM `{self.project_id}.nba_analytics.team_offense_game_summary`
+            WHERE game_date BETWEEN '{start_date}' AND '{end_date}'
+            """
+            
+            result = self.bq_client.query(check_query).to_dataframe()
+            record_count = result['record_count'].iloc[0]
+            
+            if record_count == 0:
+                logger.error(f"Dependency check failed: No team_offense_game_summary data for {start_date} to {end_date}")
+                try:
+                    notify_error(
+                        title="Team Defense: Missing Dependency Data",
+                        message=f"Cannot process team defense - team_offense_game_summary has no data for {start_date} to {end_date}",
+                        details={
+                            'processor': 'team_defense_game_summary',
+                            'dependency': 'team_offense_game_summary',
+                            'start_date': start_date,
+                            'end_date': end_date,
+                            'action_required': 'Run team_offense_game_summary_processor first'
+                        },
+                        processor_name="Team Defense Game Summary Processor"
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                return False
+            
+            logger.info(f"Dependency check passed: Found {record_count} team offense records")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Dependency check failed with error: {e}")
+            try:
+                notify_error(
+                    title="Team Defense: Dependency Check Failed",
+                    message=f"Failed to check team_offense_game_summary dependency: {str(e)}",
+                    details={
+                        'processor': 'team_defense_game_summary',
+                        'error_type': type(e).__name__,
+                        'start_date': start_date,
+                        'end_date': end_date
+                    },
+                    processor_name="Team Defense Game Summary Processor"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            return False
+    
     def extract_raw_data(self) -> None:
         """Extract team defensive data by looking at opponent offensive performance."""
         start_date = self.opts['start_date']
         end_date = self.opts['end_date']
+        
+        # Check dependencies before extraction
+        if not self.check_dependencies():
+            raise ValueError("Missing required dependency: team_offense_game_summary table")
         
         query = f"""
         WITH opponent_offense AS (
@@ -134,15 +200,66 @@ class TeamDefenseGameSummaryProcessor(AnalyticsProcessorBase):
         """
         
         logger.info(f"Extracting team defensive data for {start_date} to {end_date}")
-        self.raw_data = self.bq_client.query(query).to_dataframe()
-        logger.info(f"Extracted {len(self.raw_data)} team-game defensive records")
+        
+        try:
+            self.raw_data = self.bq_client.query(query).to_dataframe()
+            logger.info(f"Extracted {len(self.raw_data)} team-game defensive records")
+            
+            if self.raw_data.empty:
+                logger.warning(f"No team defensive data extracted for {start_date} to {end_date}")
+                try:
+                    notify_warning(
+                        title="Team Defense: No Data Extracted",
+                        message=f"No team defensive records found for {start_date} to {end_date}",
+                        details={
+                            'processor': 'team_defense_game_summary',
+                            'start_date': start_date,
+                            'end_date': end_date,
+                            'possible_causes': ['no games scheduled', 'team_offense_game_summary empty', 'player_game_summary missing']
+                        }
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                    
+        except Exception as e:
+            logger.error(f"BigQuery extraction failed: {e}")
+            try:
+                notify_error(
+                    title="Team Defense: Data Extraction Failed",
+                    message=f"Failed to extract team defensive data from BigQuery: {str(e)}",
+                    details={
+                        'processor': 'team_defense_game_summary',
+                        'start_date': start_date,
+                        'end_date': end_date,
+                        'error_type': type(e).__name__
+                    },
+                    processor_name="Team Defense Game Summary Processor"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            raise
     
     def validate_extracted_data(self) -> None:
         """Enhanced validation for team defensive data."""
         super().validate_extracted_data()
         
         if self.raw_data.empty:
-            raise ValueError("No team defensive data extracted for date range")
+            error_msg = "No team defensive data extracted for date range"
+            logger.error(error_msg)
+            try:
+                notify_error(
+                    title="Team Defense: Validation Failed",
+                    message=error_msg,
+                    details={
+                        'processor': 'team_defense_game_summary',
+                        'start_date': self.opts['start_date'],
+                        'end_date': self.opts['end_date']
+                    },
+                    processor_name="Team Defense Game Summary Processor"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            raise ValueError(error_msg)
         
         # Check for unrealistic defensive performance
         unrealistic_defense = self.raw_data[
@@ -161,6 +278,29 @@ class TeamDefenseGameSummaryProcessor(AnalyticsProcessorBase):
                         'opponent': row['opponent_team_abbr']
                     }
                 )
+            
+            # Notify if multiple unrealistic records found
+            if len(unrealistic_defense) > 3:
+                try:
+                    notify_warning(
+                        title="Team Defense: Unrealistic Points Allowed",
+                        message=f"Found {len(unrealistic_defense)} team-games with unrealistic points allowed (< 50 or > 200)",
+                        details={
+                            'processor': 'team_defense_game_summary',
+                            'affected_records': len(unrealistic_defense),
+                            'total_records': len(self.raw_data),
+                            'sample_games': [
+                                {
+                                    'game_id': row['game_id'],
+                                    'team': row['defending_team_abbr'],
+                                    'points_allowed': int(row['points_allowed'])
+                                }
+                                for _, row in unrealistic_defense.head(3).iterrows()
+                            ]
+                        }
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
         
         # Check for missing defensive actions data
         missing_actions = self.raw_data[
@@ -168,11 +308,30 @@ class TeamDefenseGameSummaryProcessor(AnalyticsProcessorBase):
         ]
         
         if not missing_actions.empty:
-            logger.warning(f"Found {len(missing_actions)} records with missing defensive actions data")
+            missing_pct = len(missing_actions) / len(self.raw_data) * 100
+            logger.warning(f"Found {len(missing_actions)} records with missing defensive actions data ({missing_pct:.1f}%)")
+            
+            # Notify if significant portion is missing defensive actions
+            if missing_pct > 10:
+                try:
+                    notify_warning(
+                        title="Team Defense: Missing Defensive Actions",
+                        message=f"{len(missing_actions)} records missing steals/blocks data ({missing_pct:.1f}% of total)",
+                        details={
+                            'processor': 'team_defense_game_summary',
+                            'missing_records': len(missing_actions),
+                            'total_records': len(self.raw_data),
+                            'missing_percentage': round(missing_pct, 2),
+                            'likely_cause': 'player_game_summary incomplete or missing'
+                        }
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
     
     def calculate_analytics(self) -> None:
         """Transform defensive data to final analytics format."""
         records = []
+        processing_errors = []
         
         for _, row in self.raw_data.iterrows():
             try:
@@ -246,17 +405,46 @@ class TeamDefenseGameSummaryProcessor(AnalyticsProcessorBase):
                 records.append(record)
                 
             except Exception as e:
+                error_info = {
+                    'game_id': row['game_id'],
+                    'defending_team': row['defending_team_abbr'],
+                    'error': str(e),
+                    'error_type': type(e).__name__
+                }
+                processing_errors.append(error_info)
+                
                 logger.error(f"Error processing team defensive record {row['game_id']}_{row['defending_team_abbr']}: {e}")
                 self.log_quality_issue(
                     issue_type='processing_error',
                     severity='medium',
                     identifier=f"{row['game_id']}_{row['defending_team_abbr']}",
-                    details={'error': str(e)}
+                    details=error_info
                 )
                 continue
         
         self.transformed_data = records
         logger.info(f"Calculated team defensive analytics for {len(records)} team-game records")
+        
+        # Notify if processing errors exceed threshold
+        if len(processing_errors) > 0:
+            error_rate = len(processing_errors) / len(self.raw_data) * 100
+            
+            if error_rate > 5:  # More than 5% error rate
+                try:
+                    notify_warning(
+                        title="Team Defense: High Processing Error Rate",
+                        message=f"Failed to process {len(processing_errors)} records ({error_rate:.1f}% error rate)",
+                        details={
+                            'processor': 'team_defense_game_summary',
+                            'total_input_records': len(self.raw_data),
+                            'processing_errors': len(processing_errors),
+                            'error_rate_pct': round(error_rate, 2),
+                            'successful_records': len(records),
+                            'sample_errors': processing_errors[:5]
+                        }
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
     
     def get_analytics_stats(self) -> Dict:
         """Return team defensive analytics stats."""
@@ -277,3 +465,57 @@ class TeamDefenseGameSummaryProcessor(AnalyticsProcessorBase):
         }
         
         return stats
+    
+    def process(self) -> None:
+        """Main processing method with success notification."""
+        try:
+            # Run the standard processing pipeline
+            super().process()
+            
+            # Send success notification with stats
+            analytics_stats = self.get_analytics_stats()
+            
+            try:
+                notify_info(
+                    title="Team Defense: Processing Complete",
+                    message=f"Successfully processed {analytics_stats.get('records_processed', 0)} team defensive records",
+                    details={
+                        'processor': 'team_defense_game_summary',
+                        'date_range': f"{self.opts['start_date']} to {self.opts['end_date']}",
+                        'records_processed': analytics_stats.get('records_processed', 0),
+                        'avg_points_allowed': analytics_stats.get('avg_points_allowed', 0),
+                        'defensive_actions': {
+                            'total_steals': analytics_stats.get('total_steals', 0),
+                            'total_blocks': analytics_stats.get('total_blocks', 0),
+                            'turnovers_forced': analytics_stats.get('total_turnovers_forced', 0)
+                        },
+                        'game_splits': {
+                            'home_games': analytics_stats.get('home_games', 0),
+                            'road_games': analytics_stats.get('road_games', 0)
+                        },
+                        'data_quality': {
+                            'high_quality_records': analytics_stats.get('high_quality_records', 0)
+                        }
+                    }
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send success notification: {notify_ex}")
+                
+        except Exception as e:
+            logger.error(f"Processing failed: {e}")
+            try:
+                notify_error(
+                    title="Team Defense: Processing Failed",
+                    message=f"Team defensive analytics processing failed: {str(e)}",
+                    details={
+                        'processor': 'team_defense_game_summary',
+                        'start_date': self.opts.get('start_date'),
+                        'end_date': self.opts.get('end_date'),
+                        'error_type': type(e).__name__,
+                        'stage': 'process_pipeline'
+                    },
+                    processor_name="Team Defense Game Summary Processor"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send error notification: {notify_ex}")
+            raise

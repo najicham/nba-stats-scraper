@@ -1,4 +1,6 @@
 """
+File: scrapers/balldontlie/bdl_player_leaders.py
+
 BALLDONTLIE - Player Leaders endpoint                   v1.2  2025-06-24
 -----------------------------------------------------------------------
 Top-N league leaders for a single statistic:
@@ -42,6 +44,19 @@ except ImportError:
     from scrapers.scraper_flask_mixin import ScraperFlaskMixin
     from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
     from scrapers.utils.gcs_path_builder import GCSPathBuilder
+
+# Notification system imports
+try:
+    from shared.utils.notification_system import (
+        notify_error,
+        notify_warning,
+        notify_info
+    )
+except ImportError:
+    # Graceful fallback if notification system not available
+    def notify_error(*args, **kwargs): pass
+    def notify_warning(*args, **kwargs): pass
+    def notify_info(*args, **kwargs): pass
 
 logger = logging.getLogger(__name__)
 
@@ -122,14 +137,35 @@ class BdlPlayerLeadersScraper(ScraperBase, ScraperFlaskMixin):
     # ------------------------------------------------------------------ #
     def set_additional_opts(self) -> None:
         super().set_additional_opts()
-        stat_type = (self.opts.get("statType") or "pts").lower()
-        if stat_type not in _VALID_STATS:
-            raise ValueError(
-                f"Invalid statType '{stat_type}'. Allowed: {', '.join(sorted(_VALID_STATS))}"
-            )
-        self.opts["statType"] = stat_type
-        self.opts["season"] = int(self.opts.get("season") or _current_nba_season())
-        self.opts["ident"] = f"{self.opts['season']}_{stat_type}"
+        
+        try:
+            stat_type = (self.opts.get("statType") or "pts").lower()
+            if stat_type not in _VALID_STATS:
+                raise ValueError(
+                    f"Invalid statType '{stat_type}'. Allowed: {', '.join(sorted(_VALID_STATS))}"
+                )
+            self.opts["statType"] = stat_type
+            self.opts["season"] = int(self.opts.get("season") or _current_nba_season())
+            self.opts["ident"] = f"{self.opts['season']}_{stat_type}"
+        
+        except Exception as e:
+            # Send error notification for parameter validation failure
+            try:
+                notify_error(
+                    title="BDL Player Leaders - Parameter Validation Failed",
+                    message=f"Invalid parameters: {str(e)}",
+                    details={
+                        'scraper': 'bdl_player_leaders',
+                        'error_type': type(e).__name__,
+                        'stat_type': self.opts.get('statType'),
+                        'season': self.opts.get('season'),
+                        'valid_stats': ', '.join(sorted(_VALID_STATS))
+                    },
+                    processor_name="Ball Don't Lie Player Leaders"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send parameter validation error notification: {notify_ex}")
+            raise
 
     # ------------------------------------------------------------------ #
     # URL & headers                                                      #
@@ -157,42 +193,128 @@ class BdlPlayerLeadersScraper(ScraperBase, ScraperFlaskMixin):
     # Validation                                                         #
     # ------------------------------------------------------------------ #
     def validate_download_data(self) -> None:
-        if not isinstance(self.decoded_data, dict) or "data" not in self.decoded_data:
-            raise ValueError("Leaders response malformed: missing 'data' key")
+        try:
+            if not isinstance(self.decoded_data, dict) or "data" not in self.decoded_data:
+                raise ValueError("Leaders response malformed: missing 'data' key")
+        except Exception as e:
+            # Send error notification for validation failure
+            try:
+                notify_error(
+                    title="BDL Player Leaders - Validation Failed",
+                    message=f"Data validation failed for {self.opts.get('ident', 'unknown')}: {str(e)}",
+                    details={
+                        'scraper': 'bdl_player_leaders',
+                        'ident': self.opts.get('ident'),
+                        'stat_type': self.opts.get('statType'),
+                        'season': self.opts.get('season'),
+                        'error_type': type(e).__name__,
+                        'url': self.url,
+                        'has_data': self.decoded_data is not None
+                    },
+                    processor_name="Ball Don't Lie Player Leaders"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send validation error notification: {notify_ex}")
+            raise
 
     # ------------------------------------------------------------------ #
     # Transform (cursor-aware)                                           #
     # ------------------------------------------------------------------ #
     def transform_data(self) -> None:
-        leaders: List[Dict[str, Any]] = list(self.decoded_data["data"])
-        cursor: Optional[str] = self.decoded_data.get("meta", {}).get("next_cursor")
+        try:
+            leaders: List[Dict[str, Any]] = list(self.decoded_data["data"])
+            cursor: Optional[str] = self.decoded_data.get("meta", {}).get("next_cursor")
+            pages_fetched = 1
 
-        while cursor:
-            resp = self.http_downloader.get(
-                self.base_url,
-                headers=self.headers,
-                params={
-                    "cursor": cursor,
-                    "per_page": 100,
-                    "season": self.opts["season"],
-                    "stat_type": self.opts["statType"],
-                },
-                timeout=self.timeout_http,
-            )
-            resp.raise_for_status()
-            page_json: Dict[str, Any] = resp.json()
-            leaders.extend(page_json.get("data", []))
-            cursor = page_json.get("meta", {}).get("next_cursor")
+            # Paginate through all results
+            while cursor:
+                try:
+                    resp = self.http_downloader.get(
+                        self.base_url,
+                        headers=self.headers,
+                        params={
+                            "cursor": cursor,
+                            "per_page": 100,
+                            "season": self.opts["season"],
+                            "stat_type": self.opts["statType"],
+                        },
+                        timeout=self.timeout_http,
+                    )
+                    resp.raise_for_status()
+                    page_json: Dict[str, Any] = resp.json()
+                    leaders.extend(page_json.get("data", []))
+                    cursor = page_json.get("meta", {}).get("next_cursor")
+                    pages_fetched += 1
+                except Exception as e:
+                    # Pagination failure
+                    try:
+                        notify_error(
+                            title="BDL Player Leaders - Pagination Failed",
+                            message=f"Failed to fetch page {pages_fetched + 1} for {self.opts.get('ident', 'unknown')}: {str(e)}",
+                            details={
+                                'scraper': 'bdl_player_leaders',
+                                'ident': self.opts.get('ident'),
+                                'stat_type': self.opts.get('statType'),
+                                'season': self.opts.get('season'),
+                                'pages_fetched': pages_fetched,
+                                'leaders_so_far': len(leaders),
+                                'error_type': type(e).__name__,
+                                'cursor': cursor
+                            },
+                            processor_name="Ball Don't Lie Player Leaders"
+                        )
+                    except Exception as notify_ex:
+                        logger.warning(f"Failed to send pagination error notification: {notify_ex}")
+                    raise
 
-        leaders.sort(key=lambda r: r.get("rank", 999))
+            leaders.sort(key=lambda r: r.get("rank", 999))
 
-        self.data = {
-            "ident": self.opts["ident"],
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "rowCount": len(leaders),
-            "leaders": leaders,
-        }
-        logger.info("Fetched %d leader rows for %s", len(leaders), self.opts["ident"])
+            self.data = {
+                "ident": self.opts["ident"],
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "rowCount": len(leaders),
+                "leaders": leaders,
+            }
+            
+            logger.info("Fetched %d leader rows for %s across %d pages", 
+                       len(leaders), self.opts["ident"], pages_fetched)
+
+            # Success notification
+            try:
+                notify_info(
+                    title="BDL Player Leaders - Success",
+                    message=f"Successfully scraped {len(leaders)} leader rows ({self.opts.get('ident', 'unknown')})",
+                    details={
+                        'scraper': 'bdl_player_leaders',
+                        'ident': self.opts.get('ident'),
+                        'stat_type': self.opts.get('statType'),
+                        'season': self.opts.get('season'),
+                        'leader_count': len(leaders),
+                        'pages_fetched': pages_fetched
+                    }
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send success notification: {notify_ex}")
+
+        except Exception as e:
+            # General transformation error
+            try:
+                notify_error(
+                    title="BDL Player Leaders - Transform Failed",
+                    message=f"Data transformation failed for {self.opts.get('ident', 'unknown')}: {str(e)}",
+                    details={
+                        'scraper': 'bdl_player_leaders',
+                        'ident': self.opts.get('ident'),
+                        'stat_type': self.opts.get('statType'),
+                        'season': self.opts.get('season'),
+                        'error_type': type(e).__name__,
+                        'has_decoded_data': self.decoded_data is not None
+                    },
+                    processor_name="Ball Don't Lie Player Leaders"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send transform error notification: {notify_ex}")
+            raise
 
     # ------------------------------------------------------------------ #
     # Stats                                                              #
@@ -212,4 +334,3 @@ create_app = convert_existing_flask_scraper(BdlPlayerLeadersScraper)
 if __name__ == "__main__":
     main = BdlPlayerLeadersScraper.create_cli_and_flask_main()
     main()
-    

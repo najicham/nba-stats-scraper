@@ -1,4 +1,6 @@
 """
+File: scrapers/balldontlie/bdl_games.py
+
 BALLDONTLIE - Games endpoint                                  v1.2 - 2025-06-24
 -------------------------------------------------------------------------------
 Fetches every NBA game between **startDate** and **endDate** (inclusive).
@@ -48,6 +50,19 @@ except ImportError:
     from scrapers.scraper_flask_mixin import ScraperFlaskMixin
     from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
     from scrapers.utils.gcs_path_builder import GCSPathBuilder
+
+# Notification system imports
+try:
+    from shared.utils.notification_system import (
+        notify_error,
+        notify_warning,
+        notify_info
+    )
+except ImportError:
+    # Graceful fallback if notification system not available
+    def notify_error(*args, **kwargs): pass
+    def notify_warning(*args, **kwargs): pass
+    def notify_info(*args, **kwargs): pass
 
 logger = logging.getLogger(__name__)
 
@@ -161,50 +176,132 @@ class BdlGamesScraper(ScraperBase, ScraperFlaskMixin):
     # Validation                                                         #
     # ------------------------------------------------------------------ #
     def validate_download_data(self) -> None:
-        if not isinstance(self.decoded_data, dict) or "data" not in self.decoded_data:
-            raise ValueError("Games response malformed: no 'data' key")
+        try:
+            if not isinstance(self.decoded_data, dict) or "data" not in self.decoded_data:
+                raise ValueError("Games response malformed: no 'data' key")
+        except Exception as e:
+            # Send error notification for validation failure
+            try:
+                notify_error(
+                    title="BDL Games - Validation Failed",
+                    message=f"Data validation failed for {self.opts.get('startDate')} to {self.opts.get('endDate')}: {str(e)}",
+                    details={
+                        'scraper': 'bdl_games',
+                        'start_date': self.opts.get('startDate'),
+                        'end_date': self.opts.get('endDate'),
+                        'error_type': type(e).__name__,
+                        'url': self.url,
+                        'has_data': self.decoded_data is not None
+                    },
+                    processor_name="Ball Don't Lie Games"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send validation error notification: {notify_ex}")
+            raise
 
     # ------------------------------------------------------------------ #
     # Transform (cursor walk + packaging)                                #
     # ------------------------------------------------------------------ #
     def transform_data(self) -> None:
-        games: List[Dict[str, Any]] = list(self.decoded_data["data"])
-        cursor: Optional[str] = self.decoded_data.get("meta", {}).get("next_cursor")
+        try:
+            games: List[Dict[str, Any]] = list(self.decoded_data["data"])
+            cursor: Optional[str] = self.decoded_data.get("meta", {}).get("next_cursor")
+            pages_fetched = 1
 
-        base_params = {
-            "start_date": self.opts["startDate"],
-            "end_date": self.opts["endDate"],
-            "per_page": 100,
-        }
+            base_params = {
+                "start_date": self.opts["startDate"],
+                "end_date": self.opts["endDate"],
+                "per_page": 100,
+            }
 
-        while cursor:
-            base_params["cursor"] = cursor
-            r = self.http_downloader.get(
-                self.base_url,
-                headers=self.headers,
-                params=base_params,
-                timeout=self.timeout_http,
+            # Paginate through all results
+            while cursor:
+                try:
+                    base_params["cursor"] = cursor
+                    r = self.http_downloader.get(
+                        self.base_url,
+                        headers=self.headers,
+                        params=base_params,
+                        timeout=self.timeout_http,
+                    )
+                    r.raise_for_status()
+                    j = r.json()
+                    games.extend(j.get("data", []))
+                    cursor = j.get("meta", {}).get("next_cursor")
+                    pages_fetched += 1
+                except Exception as e:
+                    # Pagination failure
+                    try:
+                        notify_error(
+                            title="BDL Games - Pagination Failed",
+                            message=f"Failed to fetch page {pages_fetched + 1} for {self.opts.get('startDate')} to {self.opts.get('endDate')}: {str(e)}",
+                            details={
+                                'scraper': 'bdl_games',
+                                'start_date': self.opts.get('startDate'),
+                                'end_date': self.opts.get('endDate'),
+                                'pages_fetched': pages_fetched,
+                                'games_so_far': len(games),
+                                'error_type': type(e).__name__,
+                                'cursor': cursor
+                            },
+                            processor_name="Ball Don't Lie Games"
+                        )
+                    except Exception as notify_ex:
+                        logger.warning(f"Failed to send pagination error notification: {notify_ex}")
+                    raise
+
+            games.sort(key=lambda g: g.get("id", 0))
+
+            self.data = {
+                "startDate": self.opts["startDate"],
+                "endDate": self.opts["endDate"],
+                "timestamp": _dt.datetime.now(_dt.timezone.utc).isoformat(),
+                "gameCount": len(games),
+                "games": games,
+            }
+            
+            logger.info(
+                "Fetched %d games (%s -> %s) across %d pages",
+                len(games),
+                self.opts["startDate"],
+                self.opts["endDate"],
+                pages_fetched
             )
-            r.raise_for_status()
-            j = r.json()
-            games.extend(j.get("data", []))
-            cursor = j.get("meta", {}).get("next_cursor")
 
-        games.sort(key=lambda g: g.get("id", 0))
+            # Success notification
+            try:
+                notify_info(
+                    title="BDL Games - Success",
+                    message=f"Successfully scraped {len(games)} games ({self.opts.get('startDate')} to {self.opts.get('endDate')})",
+                    details={
+                        'scraper': 'bdl_games',
+                        'start_date': self.opts.get('startDate'),
+                        'end_date': self.opts.get('endDate'),
+                        'game_count': len(games),
+                        'pages_fetched': pages_fetched
+                    }
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send success notification: {notify_ex}")
 
-        self.data = {
-            "startDate": self.opts["startDate"],
-            "endDate": self.opts["endDate"],
-            "timestamp": _dt.datetime.now(_dt.timezone.utc).isoformat(),
-            "gameCount": len(games),
-            "games": games,
-        }
-        logger.info(
-            "Fetched %d games (%s -> %s)",
-            len(games),
-            self.opts["startDate"],
-            self.opts["endDate"],
-        )
+        except Exception as e:
+            # General transformation error
+            try:
+                notify_error(
+                    title="BDL Games - Transform Failed",
+                    message=f"Data transformation failed for {self.opts.get('startDate')} to {self.opts.get('endDate')}: {str(e)}",
+                    details={
+                        'scraper': 'bdl_games',
+                        'start_date': self.opts.get('startDate'),
+                        'end_date': self.opts.get('endDate'),
+                        'error_type': type(e).__name__,
+                        'has_decoded_data': self.decoded_data is not None
+                    },
+                    processor_name="Ball Don't Lie Games"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send transform error notification: {notify_ex}")
+            raise
 
     # ------------------------------------------------------------------ #
     # Stats                                                              #
@@ -228,4 +325,3 @@ create_app = convert_existing_flask_scraper(BdlGamesScraper)
 if __name__ == "__main__":
     main = BdlGamesScraper.create_cli_and_flask_main()
     main()
-    

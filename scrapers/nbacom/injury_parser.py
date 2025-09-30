@@ -16,6 +16,33 @@ import logging
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 
+# Import notification system
+try:
+    from shared.utils.notification_system import (
+        notify_error,
+        notify_warning,
+        notify_info
+    )
+except ImportError:
+    # Fallback - try alternate path
+    import sys
+    import os
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+    try:
+        from shared.utils.notification_system import (
+            notify_error,
+            notify_warning,
+            notify_info
+        )
+    except ImportError:
+        # If still fails, create stub functions
+        def notify_error(*args, **kwargs):
+            pass
+        def notify_warning(*args, **kwargs):
+            pass
+        def notify_info(*args, **kwargs):
+            pass
+
 
 @dataclass
 class PlayerRecord:
@@ -67,22 +94,111 @@ class InjuryReportParser:
     
     def parse_text_content(self, text_content: str) -> List[Dict[str, Any]]:
         """Main entry point - parse text content and return structured records."""
-        self.logger.info(f"Processing text content: {len(text_content)} characters")
-        
-        # Clean up text content
-        if "=== PARSED RECORDS" in text_content:
-            text_content = text_content.split("=== PARSED RECORDS")[0]
-        
-        self.logger.info("Starting multi-line injury detection and parsing...")
-        
-        # PRE-PROCESS: Merge multi-line injuries before main parsing
-        merged_text = self._merge_multiline_injuries(text_content)
-        
-        # Parse the merged text
-        records = self._parse_text(merged_text)
-        
-        self.logger.info(f"Parsing complete: {len(records)} records found")
-        return [self._record_to_dict(r) for r in records]
+        try:
+            self.logger.info(f"Processing text content: {len(text_content)} characters")
+            
+            # Validate input
+            if not text_content or len(text_content) < 100:
+                try:
+                    notify_error(
+                        title="Injury Parser - Invalid Input",
+                        message=f"Text content too short or empty: {len(text_content)} characters",
+                        details={
+                            'parser': 'injury_parser',
+                            'text_length': len(text_content),
+                            'minimum_expected': 100
+                        },
+                        processor_name="NBA Injury Report Parser"
+                    )
+                except Exception as notify_ex:
+                    self.logger.warning(f"Failed to send notification: {notify_ex}")
+                return []
+            
+            # Clean up text content
+            if "=== PARSED RECORDS" in text_content:
+                text_content = text_content.split("=== PARSED RECORDS")[0]
+            
+            self.logger.info("Starting multi-line injury detection and parsing...")
+            
+            # PRE-PROCESS: Merge multi-line injuries before main parsing
+            merged_text = self._merge_multiline_injuries(text_content)
+            
+            # Parse the merged text
+            records = self._parse_text(merged_text)
+            
+            # Calculate quality metrics
+            low_confidence_count = sum(1 for r in records if r.confidence < 0.5)
+            avg_confidence = sum(r.confidence for r in records) / len(records) if records else 0.0
+            
+            self.logger.info(f"Parsing complete: {len(records)} records found")
+            
+            # Send notifications based on results
+            if not records:
+                try:
+                    notify_warning(
+                        title="Injury Parser - No Records Found",
+                        message="No player injury records found in text content",
+                        details={
+                            'parser': 'injury_parser',
+                            'text_length': len(text_content),
+                            'total_lines': self.parsing_stats['total_lines']
+                        }
+                    )
+                except Exception as notify_ex:
+                    self.logger.warning(f"Failed to send notification: {notify_ex}")
+            elif low_confidence_count > len(records) * 0.3:  # More than 30% low confidence
+                try:
+                    notify_warning(
+                        title="Injury Parser - Low Confidence Results",
+                        message=f"{low_confidence_count}/{len(records)} records have low confidence (<0.5)",
+                        details={
+                            'parser': 'injury_parser',
+                            'total_records': len(records),
+                            'low_confidence_count': low_confidence_count,
+                            'avg_confidence': round(avg_confidence, 2),
+                            'merged_multiline': self.parsing_stats['merged_multiline']
+                        }
+                    )
+                except Exception as notify_ex:
+                    self.logger.warning(f"Failed to send notification: {notify_ex}")
+            else:
+                # Successful parsing
+                try:
+                    notify_info(
+                        title="Injury Parser - Parsing Complete",
+                        message=f"Successfully parsed {len(records)} player injury records",
+                        details={
+                            'parser': 'injury_parser',
+                            'total_records': len(records),
+                            'avg_confidence': round(avg_confidence, 2),
+                            'low_confidence_count': low_confidence_count,
+                            'merged_multiline': self.parsing_stats['merged_multiline'],
+                            'total_lines': self.parsing_stats['total_lines']
+                        }
+                    )
+                except Exception as notify_ex:
+                    self.logger.warning(f"Failed to send notification: {notify_ex}")
+            
+            return [self._record_to_dict(r) for r in records]
+            
+        except Exception as e:
+            # Critical parsing failure
+            try:
+                notify_error(
+                    title="Injury Parser - Parsing Failed",
+                    message=f"Critical parsing error: {str(e)}",
+                    details={
+                        'parser': 'injury_parser',
+                        'error_type': type(e).__name__,
+                        'error': str(e),
+                        'text_length': len(text_content) if text_content else 0,
+                        'parsing_stats': self.parsing_stats
+                    },
+                    processor_name="NBA Injury Report Parser"
+                )
+            except Exception as notify_ex:
+                self.logger.warning(f"Failed to send notification: {notify_ex}")
+            raise
     
     def get_parsing_stats(self) -> Dict[str, Any]:
         """Get parsing statistics for monitoring."""
@@ -93,121 +209,127 @@ class InjuryReportParser:
     
     def _merge_multiline_injuries(self, text: str) -> str:
         """Pre-process text to merge multi-line injuries using validated detection patterns."""
-        lines = text.split('\n')
-        merged_lines = []
-        merge_count = 0
-        i = 0
-        
-        while i < len(lines):
-            line = lines[i].strip()
+        try:
+            lines = text.split('\n')
+            merged_lines = []
+            merge_count = 0
+            i = 0
             
-            # ENHANCED DETECTION: Look for "Injury/Illness" with semicolon (incomplete patterns)
-            is_incomplete_injury = (
-                line.startswith('Injury/Illness') and 
-                ';' in line and 
-                (line.endswith(';') or self._looks_like_incomplete_injury_line(line))
-            )
-            
-            if is_incomplete_injury:
-                self.logger.debug(f"MULTILINE: Incomplete injury detected: '{line}'")
+            while i < len(lines):
+                line = lines[i].strip()
                 
-                # Check if next line has a player using status-based detection
-                if i + 1 < len(lines):
-                    next_line = lines[i + 1].strip()
+                # ENHANCED DETECTION: Look for "Injury/Illness" with semicolon (incomplete patterns)
+                is_incomplete_injury = (
+                    line.startswith('Injury/Illness') and 
+                    ';' in line and 
+                    (line.endswith(';') or self._looks_like_incomplete_injury_line(line))
+                )
+                
+                if is_incomplete_injury:
+                    self.logger.debug(f"MULTILINE: Incomplete injury detected: '{line}'")
                     
-                    # Use enhanced status-based detection
-                    player_name, status, remainder = self._find_player_with_status(next_line)
-                    
-                    if player_name and status:
-                        self.logger.debug(f"MULTILINE: Player found: '{player_name} {status}' remainder: '{remainder}'")
+                    # Check if next line has a player using status-based detection
+                    if i + 1 < len(lines):
+                        next_line = lines[i + 1].strip()
                         
-                        # Check for 3-line case (complex medical terms)
-                        if remainder and self._looks_like_medical_continuation(remainder):
-                            if i + 2 < len(lines):
+                        # Use enhanced status-based detection
+                        player_name, status, remainder = self._find_player_with_status(next_line)
+                        
+                        if player_name and status:
+                            self.logger.debug(f"MULTILINE: Player found: '{player_name} {status}' remainder: '{remainder}'")
+                            
+                            # Check for 3-line case (complex medical terms)
+                            if remainder and self._looks_like_medical_continuation(remainder):
+                                if i + 2 < len(lines):
+                                    continuation_line = lines[i + 2].strip()
+                                    
+                                    if (continuation_line and 
+                                        self._looks_like_medical_continuation(continuation_line) and
+                                        not self._is_definitive_player_line(continuation_line)):
+                                        
+                                        # MERGE 3-line: injury + remainder + continuation
+                                        complete_injury = f"{line} {remainder} {continuation_line}"
+                                        merged_player_line = f"{player_name} {status} {complete_injury}"
+                                        
+                                        self.logger.debug(f"MULTILINE: 3-line merge: '{merged_player_line}'")
+                                        merged_lines.append(merged_player_line)
+                                        merge_count += 1
+                                        i += 3
+                                        continue
+                                
+                                # Handle 2-line case where remainder IS the continuation
+                                complete_injury = f"{line} {remainder}"
+                                merged_player_line = f"{player_name} {status} {complete_injury}"
+                                
+                                self.logger.debug(f"MULTILINE: 2-line with remainder: '{merged_player_line}'")
+                                merged_lines.append(merged_player_line)
+                                merge_count += 1
+                                i += 2
+                                continue
+                            
+                            # Standard 2-line case: check for continuation on next line
+                            elif i + 2 < len(lines):
                                 continuation_line = lines[i + 2].strip()
                                 
                                 if (continuation_line and 
                                     self._looks_like_medical_continuation(continuation_line) and
                                     not self._is_definitive_player_line(continuation_line)):
                                     
-                                    # MERGE 3-line: injury + remainder + continuation
-                                    complete_injury = f"{line} {remainder} {continuation_line}"
+                                    # MERGE standard 2-line
+                                    complete_injury = f"{line} {continuation_line}"
                                     merged_player_line = f"{player_name} {status} {complete_injury}"
                                     
-                                    self.logger.debug(f"MULTILINE: 3-line merge: '{merged_player_line}'")
+                                    self.logger.debug(f"MULTILINE: Standard 2-line merge: '{merged_player_line}'")
                                     merged_lines.append(merged_player_line)
                                     merge_count += 1
                                     i += 3
                                     continue
                             
-                            # Handle 2-line case where remainder IS the continuation
-                            complete_injury = f"{line} {remainder}"
-                            merged_player_line = f"{player_name} {status} {complete_injury}"
-                            
-                            self.logger.debug(f"MULTILINE: 2-line with remainder: '{merged_player_line}'")
-                            merged_lines.append(merged_player_line)
-                            merge_count += 1
+                            # No merge possible, add player line as-is
+                            merged_lines.append(next_line)
                             i += 2
                             continue
-                        
-                        # Standard 2-line case: check for continuation on next line
-                        elif i + 2 < len(lines):
-                            continuation_line = lines[i + 2].strip()
+                        else:
+                            # Try fallback to original player detection
+                            player_info = self._extract_player_from_line(next_line)
                             
-                            if (continuation_line and 
-                                self._looks_like_medical_continuation(continuation_line) and
-                                not self._is_definitive_player_line(continuation_line)):
+                            if player_info:
+                                self.logger.debug(f"MULTILINE: Player found (fallback): '{next_line}'")
                                 
-                                # MERGE standard 2-line
-                                complete_injury = f"{line} {continuation_line}"
-                                merged_player_line = f"{player_name} {status} {complete_injury}"
-                                
-                                self.logger.debug(f"MULTILINE: Standard 2-line merge: '{merged_player_line}'")
-                                merged_lines.append(merged_player_line)
-                                merge_count += 1
-                                i += 3
-                                continue
-                        
-                        # No merge possible, add player line as-is
-                        merged_lines.append(next_line)
-                        i += 2
-                        continue
-                    else:
-                        # Try fallback to original player detection
-                        player_info = self._extract_player_from_line(next_line)
-                        
-                        if player_info:
-                            self.logger.debug(f"MULTILINE: Player found (fallback): '{next_line}'")
-                            
-                            # Check if line after player has medical continuation
-                            if i + 2 < len(lines):
-                                continuation_line = lines[i + 2].strip()
-                                
-                                if (continuation_line and 
-                                    self._looks_like_medical_continuation(continuation_line) and
-                                    not self._extract_player_from_line(continuation_line) and
-                                    not self._extract_team_from_line(continuation_line)):
+                                # Check if line after player has medical continuation
+                                if i + 2 < len(lines):
+                                    continuation_line = lines[i + 2].strip()
                                     
-                                    self.logger.debug(f"MULTILINE: Continuation found: '{continuation_line}'")
-                                    
-                                    # MERGE: Create complete injury and add to player line
-                                    complete_injury = f"{line} {continuation_line}"
-                                    merged_player_line = f"{next_line} {complete_injury}"
-                                    
-                                    self.logger.debug(f"MULTILINE: Fallback merge: '{merged_player_line}'")
-                                    
-                                    merged_lines.append(merged_player_line)
-                                    merge_count += 1
-                                    i += 3
-                                    continue
+                                    if (continuation_line and 
+                                        self._looks_like_medical_continuation(continuation_line) and
+                                        not self._extract_player_from_line(continuation_line) and
+                                        not self._extract_team_from_line(continuation_line)):
+                                        
+                                        self.logger.debug(f"MULTILINE: Continuation found: '{continuation_line}'")
+                                        
+                                        # MERGE: Create complete injury and add to player line
+                                        complete_injury = f"{line} {continuation_line}"
+                                        merged_player_line = f"{next_line} {complete_injury}"
+                                        
+                                        self.logger.debug(f"MULTILINE: Fallback merge: '{merged_player_line}'")
+                                        
+                                        merged_lines.append(merged_player_line)
+                                        merge_count += 1
+                                        i += 3
+                                        continue
+                
+                # If no merge occurred, keep original line
+                merged_lines.append(lines[i])
+                i += 1
             
-            # If no merge occurred, keep original line
-            merged_lines.append(lines[i])
-            i += 1
-        
-        self.parsing_stats['merged_multiline'] = merge_count
-        self.logger.info(f"Multi-line merge complete: {merge_count} injuries merged")
-        return '\n'.join(merged_lines)
+            self.parsing_stats['merged_multiline'] = merge_count
+            self.logger.info(f"Multi-line merge complete: {merge_count} injuries merged")
+            return '\n'.join(merged_lines)
+            
+        except Exception as e:
+            # Non-critical error - log but don't notify
+            self.logger.warning(f"Multi-line merge encountered error (continuing): {e}")
+            return text  # Return original text if merge fails
     
     def _find_player_with_status(self, line: str) -> tuple:
         """Find player name and status in line using status as anchor."""
@@ -277,6 +399,9 @@ class InjuryReportParser:
         
         game_sections = self._identify_game_sections(lines)
         self.logger.info(f"Identified {len(game_sections)} game sections")
+        
+        if len(game_sections) == 0:
+            self.logger.warning("No game sections identified in text")
         
         all_records = []
         for game in game_sections:

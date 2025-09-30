@@ -13,6 +13,7 @@ Three Usage Scenarios:
 3. Basic name change detection: Simple unresolved player tracking
 """
 
+import os
 import logging
 import time
 from datetime import datetime, date
@@ -23,6 +24,11 @@ from google.cloud import bigquery
 from data_processors.reference.base.registry_processor_base import RegistryProcessorBase
 from data_processors.reference.base.name_change_detection_mixin import NameChangeDetectionMixin
 from data_processors.reference.base.database_strategies import DatabaseStrategiesMixin
+from shared.utils.notification_system import (
+    NotificationRouter, 
+    NotificationLevel, 
+    NotificationType
+)
 
 logger = logging.getLogger(__name__)
 
@@ -475,6 +481,27 @@ class GamebookRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin,
             self._insert_unresolved_players(unresolved_players)
             self.stats['unresolved_players_found'] = len(unresolved_players)
             logger.info(f"Added {len(unresolved_players)} Basketball Reference players to unresolved queue")
+            
+            # Send notification if unresolved count exceeds threshold
+            threshold = int(os.environ.get('EMAIL_ALERT_UNRESOLVED_COUNT_THRESHOLD', '50'))
+            if len(unresolved_players) > threshold:
+                try:
+                    router = NotificationRouter()
+                    router.send_notification(
+                        level=NotificationLevel.WARNING,
+                        notification_type=NotificationType.UNRESOLVED_PLAYERS,
+                        title="High Unresolved Player Count",
+                        message=f"{len(unresolved_players)} unresolved players detected (threshold: {threshold})",
+                        details={
+                            'count': len(unresolved_players),
+                            'threshold': threshold,
+                            'processing_run_id': self.processing_run_id,
+                            'season': self.calculate_season_string(list(enhancement_data.values())[0].get('season_year', 2024)) if enhancement_data else 'unknown'
+                        },
+                        processor_name="Gamebook Registry Processor"
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to send unresolved players notification: {e}")
 
     def transform_data(self, raw_data: Dict, file_path: str = None) -> List[Dict]:
         """Transform data for this processor."""
@@ -534,6 +561,27 @@ class GamebookRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin,
         result['new_players_discovered'] = list(self.new_players_discovered)
         if self.new_players_discovered:
             logger.info(f"Discovered {len(self.new_players_discovered)} new players: {', '.join(self.new_players_discovered)}")
+            
+            # Send notification for new players
+            try:
+                router = NotificationRouter()
+                router.send_notification(
+                    level=NotificationLevel.INFO,
+                    notification_type=NotificationType.NEW_PLAYERS,
+                    title=f"New Players Discovered - {season}",
+                    message=f"{len(self.new_players_discovered)} new players added to registry",
+                    details={
+                        'count': len(self.new_players_discovered),
+                        'players': list(self.new_players_discovered)[:10],  # First 10
+                        'season': season,
+                        'processing_run_id': self.processing_run_id,
+                        'total_shown': min(10, len(self.new_players_discovered)),
+                        'note': 'Showing first 10 players' if len(self.new_players_discovered) > 10 else 'All players shown'
+                    },
+                    processor_name="Gamebook Registry Processor"
+                )
+            except Exception as e:
+                logger.warning(f"Failed to send new players notification: {e}")
         
         # Log summary
         logger.info(f"Registry build complete for {season}:")
@@ -593,6 +641,27 @@ class GamebookRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin,
         # Summary
         total_records = sum(r.get('records_processed', 0) for r in total_results)
         total_errors = sum(len(r.get('errors', [])) for r in total_results)
+        
+        # Send completion summary notification
+        try:
+            router = NotificationRouter()
+            router.send_notification(
+                level=NotificationLevel.INFO,
+                notification_type=NotificationType.DAILY_SUMMARY,
+                title="Historical Registry Build Complete",
+                message=f"Processed {len(seasons)} seasons with {total_records} total records",
+                details={
+                    'scenario': 'historical_backfill',
+                    'seasons_count': len(seasons),
+                    'seasons': seasons,
+                    'total_records': total_records,
+                    'total_errors': total_errors,
+                    'processing_run_id': self.processing_run_id
+                },
+                processor_name="Gamebook Registry Processor"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to send historical build notification: {e}")
         
         return {
             'scenario': 'historical_backfill',

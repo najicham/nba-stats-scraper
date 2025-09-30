@@ -80,6 +80,13 @@ except ImportError:
     from scrapers.utils.exceptions import DownloadDataException
     from scrapers.utils.gcs_path_builder import GCSPathBuilder
 
+# Notification system imports
+from shared.utils.notification_system import (
+    notify_error,
+    notify_warning,
+    notify_info
+)
+
 logger = logging.getLogger(__name__)
 
 # --------------------------------------------------------------------------- #
@@ -205,7 +212,26 @@ class GetOddsApiHistoricalEvents(ScraperBase, ScraperFlaskMixin):
 
         api_key = self.opts.get("api_key") or os.getenv("ODDS_API_KEY")
         if not api_key:
-            raise DownloadDataException("Missing api_key and no ODDS_API_KEY env var found.")
+            error_msg = "Missing api_key and no ODDS_API_KEY env var found."
+            
+            # Send critical notification - API key missing prevents all scraping
+            try:
+                notify_error(
+                    title="Odds API Key Missing",
+                    message="Cannot scrape historical events - API key not configured",
+                    details={
+                        'scraper': 'oddsa_events_his',
+                        'sport': self.opts.get('sport', 'unknown'),
+                        'game_date': self.opts.get('game_date', 'unknown'),
+                        'snapshot_timestamp': self.opts.get('snapshot_timestamp', 'unknown'),
+                        'error': 'ODDS_API_KEY environment variable not set'
+                    },
+                    processor_name="Odds API Historical Events Scraper"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            
+            raise DownloadDataException(error_msg)
 
         query: Dict[str, Any] = {
             "apiKey": api_key,
@@ -231,7 +257,49 @@ class GetOddsApiHistoricalEvents(ScraperBase, ScraperFlaskMixin):
         Treat 200 **and 204** as success (204 ⇒ empty snapshot, costs 0 credits).
         """
         if self.raw_response.status_code in (200, 204):
+            # 204 is expected for empty snapshots, just log it
+            if self.raw_response.status_code == 204:
+                logger.info("204 response - no events at snapshot %s", 
+                           self.opts.get("snapshot_timestamp"))
             return
+        
+        # Special handling for 404 - though less common for events than odds
+        if self.raw_response.status_code == 404:
+            try:
+                notify_warning(
+                    title="Historical Events Not Found (404)",
+                    message="No events found at snapshot timestamp",
+                    details={
+                        'scraper': 'oddsa_events_his',
+                        'sport': self.opts.get('sport', 'unknown'),
+                        'game_date': self.opts.get('game_date', 'unknown'),
+                        'snapshot_timestamp': self.opts.get('snapshot_timestamp', 'unknown'),
+                        'status_code': 404,
+                        'note': 'Snapshot may be outside available historical range'
+                    }
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+        else:
+            # Other error status codes
+            status_code = self.raw_response.status_code
+            try:
+                notify_error(
+                    title="Odds API HTTP Error",
+                    message=f"Historical events scraping failed with HTTP {status_code}",
+                    details={
+                        'scraper': 'oddsa_events_his',
+                        'sport': self.opts.get('sport', 'unknown'),
+                        'game_date': self.opts.get('game_date', 'unknown'),
+                        'snapshot_timestamp': self.opts.get('snapshot_timestamp', 'unknown'),
+                        'status_code': status_code,
+                        'response_text': self.raw_response.text[:500] if hasattr(self.raw_response, 'text') else 'N/A'
+                    },
+                    processor_name="Odds API Historical Events Scraper"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+        
         super().check_download_status()
 
     # ------------------------------------------------------------------ #
@@ -252,12 +320,67 @@ class GetOddsApiHistoricalEvents(ScraperBase, ScraperFlaskMixin):
                 "timestamp": self.opts.get("snapshot_timestamp"),
                 "message": "No events available for this snapshot"
             }
+            
+            # Send info notification for 204 (expected but worth tracking)
+            try:
+                notify_info(
+                    title="Empty Historical Events Snapshot (204)",
+                    message="No events available at this snapshot",
+                    details={
+                        'scraper': 'oddsa_events_his',
+                        'sport': self.opts.get('sport', 'unknown'),
+                        'game_date': self.opts.get('game_date', 'unknown'),
+                        'snapshot_timestamp': self.opts.get('snapshot_timestamp', 'unknown'),
+                        'status_code': 204,
+                        'note': 'May indicate no games scheduled or snapshot outside available range'
+                    }
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            
             return
 
         if isinstance(self.decoded_data, dict) and "message" in self.decoded_data:
-            raise DownloadDataException(f"API error: {self.decoded_data['message']}")
+            error_msg = self.decoded_data['message']
+            
+            # API returned an error message
+            try:
+                notify_error(
+                    title="Odds API Error Response",
+                    message=f"Historical events API returned error: {error_msg}",
+                    details={
+                        'scraper': 'oddsa_events_his',
+                        'sport': self.opts.get('sport', 'unknown'),
+                        'game_date': self.opts.get('game_date', 'unknown'),
+                        'snapshot_timestamp': self.opts.get('snapshot_timestamp', 'unknown'),
+                        'api_error': error_msg
+                    },
+                    processor_name="Odds API Historical Events Scraper"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            
+            raise DownloadDataException(f"API error: {error_msg}")
 
         if not (isinstance(self.decoded_data, dict) and "data" in self.decoded_data):
+            # Unexpected data format
+            try:
+                notify_error(
+                    title="Odds API Invalid Response Format",
+                    message="Historical events API returned unexpected data format",
+                    details={
+                        'scraper': 'oddsa_events_his',
+                        'sport': self.opts.get('sport', 'unknown'),
+                        'game_date': self.opts.get('game_date', 'unknown'),
+                        'snapshot_timestamp': self.opts.get('snapshot_timestamp', 'unknown'),
+                        'received_type': type(self.decoded_data).__name__,
+                        'has_data_key': 'data' in self.decoded_data if isinstance(self.decoded_data, dict) else False
+                    },
+                    processor_name="Odds API Historical Events Scraper"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            
             raise DownloadDataException("Expected dict with 'data' key.")
 
     # ------------------------------------------------------------------ #
@@ -278,6 +401,50 @@ class GetOddsApiHistoricalEvents(ScraperBase, ScraperFlaskMixin):
             "rowCount": len(events),
             "events": events,
         }
+        
+        # Check for no events in successful response
+        if len(events) == 0 and self.raw_response.status_code == 200:
+            try:
+                notify_warning(
+                    title="No Historical Events in Snapshot",
+                    message="Historical snapshot returned successfully but contains zero events",
+                    details={
+                        'scraper': 'oddsa_events_his',
+                        'sport': self.opts.get('sport', 'unknown'),
+                        'game_date': self.opts.get('game_date', 'unknown'),
+                        'snapshot_timestamp': wrapper.get('timestamp', self.opts.get('snapshot_timestamp', 'unknown')),
+                        'note': 'May indicate no games scheduled for this date or events already removed'
+                    }
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+        elif len(events) > 0:
+            # Success! Send info notification with metrics
+            try:
+                # Extract earliest and latest commence times for context
+                earliest_time = events[0].get("commence_time", "unknown") if events else "unknown"
+                latest_time = events[-1].get("commence_time", "unknown") if events else "unknown"
+                
+                notify_info(
+                    title="Historical Events Scraped Successfully",
+                    message=f"Retrieved {len(events)} historical events from snapshot",
+                    details={
+                        'scraper': 'oddsa_events_his',
+                        'sport': self.opts.get('sport', 'unknown'),
+                        'game_date': self.opts.get('game_date', 'unknown'),
+                        'snapshot_timestamp': wrapper.get('timestamp', self.opts.get('snapshot_timestamp', 'unknown')),
+                        'event_count': len(events),
+                        'earliest_commence_time': earliest_time,
+                        'latest_commence_time': latest_time,
+                        'previous_snapshot': wrapper.get('previous_timestamp'),
+                        'next_snapshot': wrapper.get('next_timestamp'),
+                        'commence_time_from': self.opts.get('commenceTimeFrom', 'not specified'),
+                        'commence_time_to': self.opts.get('commenceTimeTo', 'not specified')
+                    }
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+        
         logger.info("Fetched %d events @ %s for date %s", 
                    len(events), self.data["snapshot_timestamp"], self.opts["game_date"])
 

@@ -20,6 +20,11 @@ from google.cloud import bigquery
 
 from data_processors.raw.processor_base import ProcessorBase
 from shared.utils.universal_player_id_resolver import UniversalPlayerIDResolver
+from shared.utils.notification_system import (
+    notify_error,
+    notify_warning,
+    notify_info
+)
 
 logger = logging.getLogger(__name__)
 
@@ -76,27 +81,89 @@ class RegistryProcessorBase(ProcessorBase, UpdateSourceTrackingMixin):
         super().__init__()
     
         # Configure processing strategy
-        self.processing_strategy = ProcessingStrategy(strategy.lower())
+        try:
+            self.processing_strategy = ProcessingStrategy(strategy.lower())
+        except ValueError as e:
+            try:
+                notify_error(
+                    title="Registry Processor Initialization Failed",
+                    message=f"Invalid processing strategy: {strategy}",
+                    details={
+                        'strategy': strategy,
+                        'valid_strategies': ['merge', 'replace'],
+                        'error': str(e)
+                    },
+                    processor_name="Registry Processor Base"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            raise
+        
         self.confirm_full_delete = confirm_full_delete
         self.enable_name_change_detection = enable_name_change_detection
         
         # Safety check for REPLACE mode
         if self.processing_strategy == ProcessingStrategy.REPLACE and not confirm_full_delete:
-            raise ValueError(
+            error_msg = (
                 "REPLACE strategy requires --confirm-full-delete flag to prevent accidental data loss. "
                 "This will DELETE entire tables and rebuild from scratch. "
                 "Use 'merge' strategy for incremental updates, or add --confirm-full-delete if full rebuild is intended."
             )
+            
+            try:
+                notify_error(
+                    title="Registry Processor Safety Check Failed",
+                    message="REPLACE strategy attempted without confirmation",
+                    details={
+                        'strategy': 'REPLACE',
+                        'confirm_full_delete': confirm_full_delete,
+                        'required_action': 'Add --confirm-full-delete flag or use merge strategy'
+                    },
+                    processor_name="Registry Processor Base"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            
+            raise ValueError(error_msg)
         
         if self.processing_strategy == ProcessingStrategy.REPLACE and confirm_full_delete:
             logger.warning("🚨 REPLACE mode with FULL DELETE confirmation - this will rebuild tables from scratch")
+            try:
+                notify_warning(
+                    title="Registry Processor in REPLACE Mode",
+                    message="Full table rebuild mode active - all data will be deleted and rebuilt",
+                    details={
+                        'strategy': 'REPLACE',
+                        'confirm_full_delete': True,
+                        'impact': 'Complete table rebuild'
+                    }
+                )
+            except Exception as e:
+                logger.warning(f"Failed to send notification: {e}")
         
         logger.info(f"Initialized with processing strategy: {self.processing_strategy.value}")
         logger.info(f"Name change detection: {'enabled' if enable_name_change_detection else 'disabled'}")
         
         # Initialize BigQuery client
-        self.bq_client = bigquery.Client()
-        self.project_id = os.environ.get('GCP_PROJECT_ID', self.bq_client.project)
+        try:
+            self.bq_client = bigquery.Client()
+            self.project_id = os.environ.get('GCP_PROJECT_ID', self.bq_client.project)
+        except Exception as e:
+            logger.error(f"Failed to initialize BigQuery client: {e}")
+            try:
+                notify_error(
+                    title="Registry Processor BigQuery Initialization Failed",
+                    message="Unable to create BigQuery client",
+                    details={
+                        'error': str(e),
+                        'error_type': type(e).__name__,
+                        'project_id_env': os.environ.get('GCP_PROJECT_ID', 'not_set')
+                    },
+                    processor_name="Registry Processor Base"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            raise
 
         # Processing tracking
         self.processing_run_id = f"registry_build_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -128,7 +195,25 @@ class RegistryProcessorBase(ProcessorBase, UpdateSourceTrackingMixin):
         }
 
         # Initialize universal ID resolver and tracking
-        self.universal_id_resolver = UniversalPlayerIDResolver(self.bq_client, self.project_id)
+        try:
+            self.universal_id_resolver = UniversalPlayerIDResolver(self.bq_client, self.project_id)
+        except Exception as e:
+            logger.error(f"Failed to initialize Universal Player ID Resolver: {e}")
+            try:
+                notify_error(
+                    title="Universal Player ID Resolver Initialization Failed",
+                    message="Unable to initialize player ID resolver",
+                    details={
+                        'error': str(e),
+                        'error_type': type(e).__name__,
+                        'project_id': self.project_id
+                    },
+                    processor_name="Registry Processor Base"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            raise
+        
         self.new_players_discovered = set()
         self.players_seen_this_run = set()
         
@@ -263,6 +348,19 @@ class RegistryProcessorBase(ProcessorBase, UpdateSourceTrackingMixin):
             
         except Exception as e:
             logger.warning(f"Error checking player aliases: {e}")
+            try:
+                notify_warning(
+                    title="Player Alias Check Failed",
+                    message=f"Unable to verify player alias for {player_lookup}",
+                    details={
+                        'player_lookup': player_lookup,
+                        'team_abbr': team_abbr,
+                        'error': str(e),
+                        'error_type': type(e).__name__
+                    }
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
             return False
     
     def resolve_universal_player_id(self, player_lookup: str) -> str:
@@ -280,6 +378,21 @@ class RegistryProcessorBase(ProcessorBase, UpdateSourceTrackingMixin):
             
         except Exception as e:
             logger.error(f"Error resolving universal ID for {player_lookup}: {e}")
+            try:
+                notify_error(
+                    title="Universal Player ID Resolution Failed",
+                    message=f"Unable to resolve player ID for {player_lookup}",
+                    details={
+                        'player_lookup': player_lookup,
+                        'error': str(e),
+                        'error_type': type(e).__name__,
+                        'fallback_action': 'Using simple ID fallback'
+                    },
+                    processor_name="Registry Processor Base"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            
             # Fallback: create simple ID to prevent failure
             return f"{player_lookup}_001"
     
@@ -289,6 +402,21 @@ class RegistryProcessorBase(ProcessorBase, UpdateSourceTrackingMixin):
             return self.universal_id_resolver.bulk_resolve_or_create_universal_ids(player_lookups)
         except Exception as e:
             logger.error(f"Error in bulk universal ID resolution: {e}")
+            try:
+                notify_error(
+                    title="Bulk Universal Player ID Resolution Failed",
+                    message=f"Unable to resolve IDs for batch of {len(player_lookups)} players",
+                    details={
+                        'player_count': len(player_lookups),
+                        'error': str(e),
+                        'error_type': type(e).__name__,
+                        'fallback_action': 'Using simple ID fallback for batch'
+                    },
+                    processor_name="Registry Processor Base"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            
             # Fallback: create simple mappings
             return {lookup: f"{lookup}_001" for lookup in player_lookups}
     
@@ -355,6 +483,19 @@ class RegistryProcessorBase(ProcessorBase, UpdateSourceTrackingMixin):
             
         except Exception as e:
             logger.error(f"Error getting registry summary: {e}")
+            try:
+                notify_error(
+                    title="Registry Summary Query Failed",
+                    message="Unable to retrieve registry statistics",
+                    details={
+                        'table_name': self.table_name,
+                        'error': str(e),
+                        'error_type': type(e).__name__
+                    },
+                    processor_name="Registry Processor Base"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
             return {'error': str(e)}
     
     def build_registry_for_season(self, season: str, team: str = None) -> Dict:

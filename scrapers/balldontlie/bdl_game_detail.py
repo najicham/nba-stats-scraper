@@ -1,4 +1,6 @@
 """
+File: scrapers/balldontlie/bdl_game_detail.py
+
 BALLDONTLIE - Game-Detail endpoint                         v1.1 - 2025-06-24
 -------------------------------------------------------------------------------
 Retrieve the JSON object for one NBA game:
@@ -45,6 +47,19 @@ except ImportError:
     from scrapers.scraper_flask_mixin import ScraperFlaskMixin
     from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
     from scrapers.utils.gcs_path_builder import GCSPathBuilder
+
+# Notification system imports
+try:
+    from shared.utils.notification_system import (
+        notify_error,
+        notify_warning,
+        notify_info
+    )
+except ImportError:
+    # Graceful fallback if notification system not available
+    def notify_error(*args, **kwargs): pass
+    def notify_warning(*args, **kwargs): pass
+    def notify_info(*args, **kwargs): pass
 
 logger = logging.getLogger(__name__)
 
@@ -130,30 +145,86 @@ class BdlGameDetailScraper(ScraperBase, ScraperFlaskMixin):
         BDL v1.4 wraps single-resource responses in {"data": {...}}.
         Older versions returned the object bare.  Accept both.
         """
-        if "id" in self.decoded_data:            # old format
-            game = self.decoded_data
-        elif "data" in self.decoded_data and "id" in self.decoded_data["data"]:
-            game = self.decoded_data["data"]     # new wrapped format
-        else:
-            raise ValueError(f"GameId {self.opts['gameId']} not found in BallDontLie")
+        try:
+            if "id" in self.decoded_data:            # old format
+                game = self.decoded_data
+            elif "data" in self.decoded_data and "id" in self.decoded_data["data"]:
+                game = self.decoded_data["data"]     # new wrapped format
+            else:
+                raise ValueError(f"GameId {self.opts['gameId']} not found in BallDontLie")
 
-        if game["id"] != int(self.opts["gameId"]):
-            raise ValueError("Returned gameId does not match requested gameId")
+            if game["id"] != int(self.opts["gameId"]):
+                raise ValueError("Returned gameId does not match requested gameId")
 
-        # Replace decoded_data with the unwrapped object so downstream
-        # transform / exporters don't care which format we got.
-        self.decoded_data = game
+            # Replace decoded_data with the unwrapped object so downstream
+            # transform / exporters don't care which format we got.
+            self.decoded_data = game
+
+        except Exception as e:
+            # Send error notification for validation failure
+            try:
+                notify_error(
+                    title="BDL Game Detail - Validation Failed",
+                    message=f"Data validation failed for gameId {self.opts.get('gameId', 'unknown')}: {str(e)}",
+                    details={
+                        'scraper': 'bdl_game_detail',
+                        'game_id': self.opts.get('gameId'),
+                        'error_type': type(e).__name__,
+                        'url': self.url,
+                        'has_data': self.decoded_data is not None,
+                        'note': 'Game may not exist or API format changed'
+                    },
+                    processor_name="Ball Don't Lie Game Detail"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send validation error notification: {notify_ex}")
+            raise
 
     # ------------------------------------------------------------------ #
     # Transform                                                          #
     # ------------------------------------------------------------------ #
     def transform_data(self) -> None:
-        self.data = {
-            "gameId": self.opts["gameId"],
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "game": self.decoded_data,
-        }
-        logger.info("Fetched game detail for gameId=%s", self.opts["gameId"])
+        try:
+            self.data = {
+                "gameId": self.opts["gameId"],
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "game": self.decoded_data,
+            }
+            logger.info("Fetched game detail for gameId=%s", self.opts["gameId"])
+
+            # Success notification
+            try:
+                notify_info(
+                    title="BDL Game Detail - Success",
+                    message=f"Successfully fetched game detail for gameId {self.opts.get('gameId', 'unknown')}",
+                    details={
+                        'scraper': 'bdl_game_detail',
+                        'game_id': self.opts.get('gameId'),
+                        'home_team': self.decoded_data.get('home_team', {}).get('full_name', 'unknown'),
+                        'visitor_team': self.decoded_data.get('visitor_team', {}).get('full_name', 'unknown'),
+                        'status': self.decoded_data.get('status', 'unknown')
+                    }
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send success notification: {notify_ex}")
+
+        except Exception as e:
+            # General transformation error
+            try:
+                notify_error(
+                    title="BDL Game Detail - Transform Failed",
+                    message=f"Data transformation failed for gameId {self.opts.get('gameId', 'unknown')}: {str(e)}",
+                    details={
+                        'scraper': 'bdl_game_detail',
+                        'game_id': self.opts.get('gameId'),
+                        'error_type': type(e).__name__,
+                        'has_decoded_data': self.decoded_data is not None
+                    },
+                    processor_name="Ball Don't Lie Game Detail"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send transform error notification: {notify_ex}")
+            raise
 
     # ------------------------------------------------------------------ #
     # Stats                                                              #

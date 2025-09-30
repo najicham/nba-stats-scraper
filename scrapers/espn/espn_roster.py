@@ -1,4 +1,5 @@
 """
+FILE: scrapers/espn/espn_roster.py
 ESPN NBA Roster (HTML) scraper                         v2 - 2025-06-16
 ----------------------------------------------------------------------
 Scrapes the public roster page, e.g.
@@ -53,6 +54,22 @@ except ImportError:
     from scrapers.scraper_flask_mixin import ScraperFlaskMixin
     from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
     from scrapers.utils.gcs_path_builder import GCSPathBuilder
+
+# Notification system imports
+try:
+    from shared.utils.notification_system import (
+        notify_error,
+        notify_warning,
+        notify_info
+    )
+except ImportError:
+    # Fallback if notification system not available
+    def notify_error(*args, **kwargs):
+        pass
+    def notify_warning(*args, **kwargs):
+        pass
+    def notify_info(*args, **kwargs):
+        pass
 
 logger = logging.getLogger("scraper_base")
 
@@ -147,7 +164,27 @@ class GetEspnTeamRoster(ScraperBase, ScraperFlaskMixin):
     # ------------------------------------------------------------------ #
     def validate_download_data(self) -> None:
         if not isinstance(self.decoded_data, str) or "<html" not in self.decoded_data.lower():
-            raise ValueError("Roster page did not return HTML.")
+            error_msg = "Roster page did not return HTML."
+            
+            # Send error notification
+            try:
+                notify_error(
+                    title="ESPN Roster: Invalid Response",
+                    message=f"Roster page for {self.opts['teamAbbr']} did not return valid HTML",
+                    details={
+                        'scraper': 'espn_roster',
+                        'team_abbr': self.opts['teamAbbr'],
+                        'team_slug': self.opts['teamSlug'],
+                        'error': error_msg,
+                        'response_type': type(self.decoded_data).__name__ if self.decoded_data else 'None',
+                        'response_length': len(self.decoded_data) if isinstance(self.decoded_data, str) else 0
+                    },
+                    processor_name="ESPN Roster Scraper"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            
+            raise ValueError(error_msg)
 
     # ------------------------------------------------------------------ #
     # Transform
@@ -156,7 +193,26 @@ class GetEspnTeamRoster(ScraperBase, ScraperFlaskMixin):
         soup = BeautifulSoup(self.decoded_data, "html.parser")
         rows = soup.select(ROW_SELECTOR)
 
+        # Warn if no roster rows found
+        if not rows:
+            try:
+                notify_warning(
+                    title="ESPN Roster: No Rows Found",
+                    message=f"No roster rows found for {self.opts['teamAbbr']} using selector '{ROW_SELECTOR}'",
+                    details={
+                        'scraper': 'espn_roster',
+                        'team_abbr': self.opts['teamAbbr'],
+                        'team_slug': self.opts['teamSlug'],
+                        'selector': ROW_SELECTOR,
+                        'html_length': len(self.decoded_data)
+                    }
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+
         players: List[Dict[str, str]] = []
+        unparsed_rows = []  # Track rows with all IDs missing
+        
         for tr in rows:
             tds = tr.find_all("td")
             if len(tds) < 6:
@@ -187,30 +243,50 @@ class GetEspnTeamRoster(ScraperBase, ScraperFlaskMixin):
             height = tds[4].get_text(strip=True)
             weight = tds[5].get_text(strip=True)
 
-            players.append(
-                {
-                    "number": jersey,
-                    "name": name,
-                    "playerId": player_id,
-                    "slug": slug,
-                    "fullUrl": (
-                        f"https://www.espn.com{full_href}"
-                        if full_href.startswith("/")
-                        else full_href
-                    ),
-                    "position": position,
-                    "age": age,
-                    "height": height,
-                    "weight": weight,
-                }
-            )
-
-        # Basic schema-sanity warning
-        for p in players:
-            missing = [k for k in ("name", "slug", "playerId") if not p.get(k)]
+            player_data = {
+                "number": jersey,
+                "name": name,
+                "playerId": player_id,
+                "slug": slug,
+                "fullUrl": (
+                    f"https://www.espn.com{full_href}"
+                    if full_href.startswith("/")
+                    else full_href
+                ),
+                "position": position,
+                "age": age,
+                "height": height,
+                "weight": weight,
+            }
+            
+            players.append(player_data)
+            
+            # Track completely unparsed rows
+            missing = [k for k in ("name", "slug", "playerId") if not player_data.get(k)]
             if len(missing) == 3:  # all missing -> definitely broken row
-                logger.warning("ESPN roster: missing all ids for row %s", p)
+                unparsed_rows.append(player_data)
+
+        # Send notification about unparsed rows if any found
+        if unparsed_rows:
+            logger.warning("ESPN roster: %d rows missing all IDs", len(unparsed_rows))
+            for p in unparsed_rows:
                 sentry_sdk.capture_message(f"[ESPN Roster] Unparsed row: {p}", level="warning")
+            
+            try:
+                notify_warning(
+                    title="ESPN Roster: Unparsed Rows",
+                    message=f"Found {len(unparsed_rows)} rows with missing player IDs for {self.opts['teamAbbr']}",
+                    details={
+                        'scraper': 'espn_roster',
+                        'team_abbr': self.opts['teamAbbr'],
+                        'team_slug': self.opts['teamSlug'],
+                        'unparsed_count': len(unparsed_rows),
+                        'total_rows': len(players),
+                        'unparsed_rows': unparsed_rows[:5]  # Include first 5 for inspection
+                    }
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
 
         self.data = {
             "teamAbbr": self.opts["teamAbbr"],
@@ -221,6 +297,23 @@ class GetEspnTeamRoster(ScraperBase, ScraperFlaskMixin):
             "players": players,
         }
         logger.info("Parsed %d players for %s", len(players), self.opts["teamAbbr"])
+
+        # Send success notification
+        try:
+            notify_info(
+                title="ESPN Roster Scraped Successfully",
+                message=f"Successfully scraped {len(players)} players for {self.opts['teamAbbr']}",
+                details={
+                    'scraper': 'espn_roster',
+                    'team_abbr': self.opts['teamAbbr'],
+                    'team_slug': self.opts['teamSlug'],
+                    'season': self.opts['season'],
+                    'player_count': len(players),
+                    'unparsed_count': len(unparsed_rows)
+                }
+            )
+        except Exception as notify_ex:
+            logger.warning(f"Failed to send notification: {notify_ex}")
 
     # ------------------------------------------------------------------ #
     # Stats
@@ -243,4 +336,3 @@ create_app = convert_existing_flask_scraper(GetEspnTeamRoster)
 if __name__ == "__main__":
     main = GetEspnTeamRoster.create_cli_and_flask_main()
     main()
-    

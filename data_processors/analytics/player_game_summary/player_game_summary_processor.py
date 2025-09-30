@@ -12,6 +12,7 @@ Features:
 - Prop outcome calculation with margin analysis
 - Cross-source validation and error handling
 - Schema-compliant output for BigQuery insertion
+- Multi-channel notifications for critical failures and data quality issues
 """
 
 import logging
@@ -20,6 +21,11 @@ import re
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 from data_processors.analytics.analytics_base import AnalyticsProcessorBase
+from shared.utils.notification_system import (
+    notify_error,
+    notify_warning,
+    notify_info
+)
 
 logger = logging.getLogger(__name__)
 
@@ -218,13 +224,49 @@ class PlayerGameSummaryProcessor(AnalyticsProcessorBase):
         """
         
         logger.info(f"Extracting data for {start_date} to {end_date}")
-        self.raw_data = self.bq_client.query(query).to_dataframe()
-        logger.info(f"Extracted {len(self.raw_data)} player-game records")
         
-        # Log data source breakdown
-        if not self.raw_data.empty:
-            source_counts = self.raw_data['primary_source'].value_counts()
-            logger.info(f"Data sources: {dict(source_counts)}")
+        try:
+            self.raw_data = self.bq_client.query(query).to_dataframe()
+            logger.info(f"Extracted {len(self.raw_data)} player-game records")
+            
+            # Log data source breakdown
+            if not self.raw_data.empty:
+                source_counts = self.raw_data['primary_source'].value_counts()
+                logger.info(f"Data sources: {dict(source_counts)}")
+            else:
+                # Notify if no data extracted
+                logger.warning(f"No data extracted for date range {start_date} to {end_date}")
+                try:
+                    notify_warning(
+                        title="Player Game Summary: No Data Extracted",
+                        message=f"No player-game records found for {start_date} to {end_date}",
+                        details={
+                            'processor': 'player_game_summary',
+                            'start_date': start_date,
+                            'end_date': end_date,
+                            'possible_causes': ['no games scheduled', 'upstream scraper failure', 'data not yet available']
+                        }
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                    
+        except Exception as e:
+            logger.error(f"BigQuery extraction failed: {e}")
+            try:
+                notify_error(
+                    title="Player Game Summary: Data Extraction Failed",
+                    message=f"Failed to extract player-game data from BigQuery: {str(e)}",
+                    details={
+                        'processor': 'player_game_summary',
+                        'start_date': start_date,
+                        'end_date': end_date,
+                        'error_type': type(e).__name__
+                    },
+                    processor_name="Player Game Summary Processor"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            raise
     
     def clean_numeric_columns(self) -> None:
         """Ensure numeric columns have consistent data types before validation."""
@@ -253,7 +295,22 @@ class PlayerGameSummaryProcessor(AnalyticsProcessorBase):
         super().validate_extracted_data()
         
         if self.raw_data.empty:
-            raise ValueError("No data extracted for date range")
+            error_msg = "No data extracted for date range"
+            logger.error(error_msg)
+            try:
+                notify_error(
+                    title="Player Game Summary: Validation Failed",
+                    message=error_msg,
+                    details={
+                        'processor': 'player_game_summary',
+                        'start_date': self.opts['start_date'],
+                        'end_date': self.opts['end_date']
+                    },
+                    processor_name="Player Game Summary Processor"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            raise ValueError(error_msg)
         
         # Clean data types before validation to prevent comparison errors
         self.clean_numeric_columns()
@@ -267,6 +324,26 @@ class PlayerGameSummaryProcessor(AnalyticsProcessorBase):
         
         # Summary validation report
         self.generate_validation_summary()
+        
+        # Check if we have high severity issues and notify
+        high_severity_issues = sum(1 for issue in getattr(self, 'quality_issues', []) 
+                                   if issue.get('severity') == 'high')
+        
+        if high_severity_issues > 0:
+            try:
+                notify_warning(
+                    title="Player Game Summary: Data Quality Issues Detected",
+                    message=f"Found {high_severity_issues} high-severity data quality issues during validation",
+                    details={
+                        'processor': 'player_game_summary',
+                        'high_severity_count': high_severity_issues,
+                        'total_records': len(self.raw_data),
+                        'date_range': f"{self.opts['start_date']} to {self.opts['end_date']}",
+                        'action': 'Check logs for detailed validation results'
+                    }
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
 
     def validate_critical_fields(self) -> None:
         """Check for missing critical fields that would break processing."""
@@ -578,6 +655,7 @@ class PlayerGameSummaryProcessor(AnalyticsProcessorBase):
     def calculate_analytics(self) -> None:
         """Calculate analytics metrics with schema-compliant output."""
         records = []
+        processing_errors = []
         
         for _, row in self.raw_data.iterrows():
             try:
@@ -699,17 +777,46 @@ class PlayerGameSummaryProcessor(AnalyticsProcessorBase):
                 records.append(record)
                 
             except Exception as e:
+                error_info = {
+                    'game_id': row['game_id'],
+                    'player_lookup': row['player_lookup'],
+                    'error': str(e),
+                    'error_type': type(e).__name__
+                }
+                processing_errors.append(error_info)
+                
                 logger.error(f"Error processing record {row['game_id']}_{row['player_lookup']}: {e}")
                 self.log_quality_issue(
                     issue_type='processing_error',
                     severity='medium',
                     identifier=f"{row['game_id']}_{row['player_lookup']}",
-                    details={'error': str(e)}
+                    details=error_info
                 )
                 continue
         
         self.transformed_data = records
         logger.info(f"Calculated analytics for {len(records)} player-game records")
+        
+        # Notify if processing errors exceed threshold
+        if len(processing_errors) > 0:
+            error_rate = len(processing_errors) / len(self.raw_data) * 100
+            
+            if error_rate > 5:  # More than 5% error rate
+                try:
+                    notify_warning(
+                        title="Player Game Summary: High Processing Error Rate",
+                        message=f"Failed to process {len(processing_errors)} records ({error_rate:.1f}% error rate)",
+                        details={
+                            'processor': 'player_game_summary',
+                            'total_input_records': len(self.raw_data),
+                            'processing_errors': len(processing_errors),
+                            'error_rate_pct': round(error_rate, 2),
+                            'successful_records': len(records),
+                            'sample_errors': processing_errors[:5]
+                        }
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
     
     def get_analytics_stats(self) -> Dict:
         """Return analytics-specific stats."""
@@ -728,3 +835,54 @@ class PlayerGameSummaryProcessor(AnalyticsProcessorBase):
         }
         
         return stats
+    
+    def process(self) -> None:
+        """Main processing method with success notification."""
+        try:
+            # Run the standard processing pipeline
+            super().process()
+            
+            # Send success notification with stats
+            analytics_stats = self.get_analytics_stats()
+            
+            try:
+                notify_info(
+                    title="Player Game Summary: Processing Complete",
+                    message=f"Successfully processed {analytics_stats.get('records_processed', 0)} player-game records",
+                    details={
+                        'processor': 'player_game_summary',
+                        'date_range': f"{self.opts['start_date']} to {self.opts['end_date']}",
+                        'records_processed': analytics_stats.get('records_processed', 0),
+                        'active_players': analytics_stats.get('active_players', 0),
+                        'games_with_props': analytics_stats.get('games_with_props', 0),
+                        'prop_outcomes': {
+                            'overs': analytics_stats.get('prop_overs', 0),
+                            'unders': analytics_stats.get('prop_unders', 0)
+                        },
+                        'data_quality': {
+                            'high_quality_records': analytics_stats.get('high_quality_records', 0),
+                            'avg_points': analytics_stats.get('avg_points', 0)
+                        }
+                    }
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send success notification: {notify_ex}")
+                
+        except Exception as e:
+            logger.error(f"Processing failed: {e}")
+            try:
+                notify_error(
+                    title="Player Game Summary: Processing Failed",
+                    message=f"Analytics processing failed: {str(e)}",
+                    details={
+                        'processor': 'player_game_summary',
+                        'start_date': self.opts.get('start_date'),
+                        'end_date': self.opts.get('end_date'),
+                        'error_type': type(e).__name__,
+                        'stage': 'process_pipeline'
+                    },
+                    processor_name="Player Game Summary Processor"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send error notification: {notify_ex}")
+            raise

@@ -29,6 +29,13 @@ from google.cloud import bigquery
 from .player_name_normalizer import normalize_name_for_lookup, extract_suffix
 from .nba_team_mapper import get_nba_tricode, get_nba_tricode_fuzzy
 
+# Import notification system for infrastructure failures
+from .notification_system import (
+    notify_error,
+    notify_warning,
+    notify_info
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -43,7 +50,27 @@ class PlayerNameResolver:
     def __init__(self, project_id: str = None):
         """Initialize the name resolver with BigQuery client."""
         self.project_id = project_id or os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
-        self.bq_client = bigquery.Client(project=self.project_id)
+        
+        try:
+            self.bq_client = bigquery.Client(project=self.project_id)
+        except Exception as e:
+            logger.error(f"Failed to initialize BigQuery client for PlayerNameResolver: {e}")
+            try:
+                notify_error(
+                    title="Player Name Resolver: BigQuery Initialization Failed",
+                    message="Unable to initialize BigQuery client for name resolution",
+                    details={
+                        'component': 'PlayerNameResolver',
+                        'project_id': self.project_id,
+                        'error_type': type(e).__name__,
+                        'error': str(e),
+                        'impact': 'Player name resolution will fail across all processors'
+                    },
+                    processor_name="Player Name Resolver"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            raise
         
         # Team mapping for Basketball Reference compatibility
         self.team_mapping = {
@@ -56,6 +83,10 @@ class PlayerNameResolver:
         self._alias_cache = {}
         self._registry_cache = {}
         self._cache_expiry = None
+        
+        # Track consecutive infrastructure failures
+        self._consecutive_failures = 0
+        self._failure_threshold = 5
         
         logger.info(f"Initialized PlayerNameResolver for project: {self.project_id}")
     
@@ -101,17 +132,45 @@ class PlayerNameResolver:
             
             results = self.bq_client.query(query, job_config=job_config).to_dataframe()
             
+            # Reset failure counter on success
+            self._consecutive_failures = 0
+            
             if not results.empty:
                 resolved_name = results.iloc[0]['nba_canonical_display']
                 logger.debug(f"Resolved '{input_name}' -> '{resolved_name}' via alias table")
                 return resolved_name
             
-            # No alias found - return original name
+            # No alias found - return original name (this is normal, not an error)
             logger.debug(f"No alias found for '{input_name}', returning original")
             return input_name
             
         except Exception as e:
             logger.error(f"Error resolving name '{input_name}': {e}")
+            
+            # Track consecutive failures for infrastructure issues
+            self._consecutive_failures += 1
+            
+            # Only notify on repeated infrastructure failures
+            if self._consecutive_failures >= self._failure_threshold:
+                try:
+                    notify_error(
+                        title="Player Name Resolver: Alias Table Query Failures",
+                        message=f"Alias table queries failing repeatedly ({self._consecutive_failures} consecutive failures)",
+                        details={
+                            'component': 'PlayerNameResolver',
+                            'operation': 'resolve_to_nba_name',
+                            'consecutive_failures': self._consecutive_failures,
+                            'error_type': type(e).__name__,
+                            'error': str(e),
+                            'impact': 'Player name resolution degraded across all processors'
+                        },
+                        processor_name="Player Name Resolver"
+                    )
+                    # Reset counter after notifying
+                    self._consecutive_failures = 0
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+            
             return input_name
     
     def is_valid_nba_player(self, player_name: str, season: str = None, team: str = None) -> bool:
@@ -156,6 +215,8 @@ class PlayerNameResolver:
             return results.iloc[0]['count'] > 0
             
         except Exception as e:
+            # Don't notify for individual validation failures - this is expected
+            # Calling processor should handle this
             logger.error(f"Error validating player '{player_name}': {e}")
             return False
     
@@ -188,6 +249,7 @@ class PlayerNameResolver:
             return resolved_name
         
         # Step 3: No resolution found - add to manual review queue
+        # (This is normal operation, not an error - don't notify here)
         self.add_to_unresolved_queue(
             source=source,
             original_name=input_name,
@@ -275,11 +337,46 @@ class PlayerNameResolver:
                 
                 if errors:
                     logger.error(f"Failed to insert unresolved name: {errors}")
+                    # Only notify on insert failures - these indicate infrastructure issues
+                    try:
+                        notify_error(
+                            title="Player Name Resolver: Unresolved Queue Insert Failed",
+                            message=f"Unable to add unresolved player name to queue: {original_name}",
+                            details={
+                                'component': 'PlayerNameResolver',
+                                'operation': 'add_to_unresolved_queue',
+                                'player_name': original_name,
+                                'source': source,
+                                'errors': errors,
+                                'impact': 'Manual review queue may be incomplete'
+                            },
+                            processor_name="Player Name Resolver"
+                        )
+                    except Exception as notify_ex:
+                        logger.warning(f"Failed to send notification: {notify_ex}")
                 else:
                     logger.info(f"Added new unresolved name: {original_name} from {source}")
                     
         except Exception as e:
             logger.error(f"Error adding to unresolved queue: {e}")
+            # Notify on critical queue management failures
+            try:
+                notify_error(
+                    title="Player Name Resolver: Unresolved Queue Error",
+                    message=f"Failed to manage unresolved player queue: {str(e)}",
+                    details={
+                        'component': 'PlayerNameResolver',
+                        'operation': 'add_to_unresolved_queue',
+                        'player_name': original_name,
+                        'source': source,
+                        'error_type': type(e).__name__,
+                        'error': str(e),
+                        'impact': 'Manual review queue may be incomplete'
+                    },
+                    processor_name="Player Name Resolver"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
     
     def create_alias_mapping(self, alias_name: str, canonical_name: str, alias_type: str, 
                            alias_source: str, notes: str = None, created_by: str = 'manual') -> bool:
@@ -321,6 +418,24 @@ class PlayerNameResolver:
             
             if errors:
                 logger.error(f"Failed to create alias mapping: {errors}")
+                # Notify on alias creation failures - these affect future resolution
+                try:
+                    notify_error(
+                        title="Player Name Resolver: Alias Creation Failed",
+                        message=f"Unable to create alias mapping: {alias_name} → {canonical_name}",
+                        details={
+                            'component': 'PlayerNameResolver',
+                            'operation': 'create_alias_mapping',
+                            'alias_name': alias_name,
+                            'canonical_name': canonical_name,
+                            'alias_type': alias_type,
+                            'errors': errors,
+                            'impact': 'Name resolution will not work for this player'
+                        },
+                        processor_name="Player Name Resolver"
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
                 return False
             else:
                 logger.info(f"Created alias mapping: '{alias_name}' -> '{canonical_name}'")
@@ -328,6 +443,22 @@ class PlayerNameResolver:
                 
         except Exception as e:
             logger.error(f"Error creating alias mapping: {e}")
+            try:
+                notify_error(
+                    title="Player Name Resolver: Alias Creation Error",
+                    message=f"Error creating alias mapping: {str(e)}",
+                    details={
+                        'component': 'PlayerNameResolver',
+                        'operation': 'create_alias_mapping',
+                        'alias_name': alias_name,
+                        'canonical_name': canonical_name,
+                        'error_type': type(e).__name__,
+                        'error': str(e)
+                    },
+                    processor_name="Player Name Resolver"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
             return False
     
     def get_unresolved_names(self, limit: int = 50, source: str = None) -> pd.DataFrame:
@@ -367,7 +498,28 @@ class PlayerNameResolver:
             query_params.append(bigquery.ScalarQueryParameter("limit", "INT64", limit))
             
             job_config = bigquery.QueryJobConfig(query_parameters=query_params)
-            return self.bq_client.query(query, job_config=job_config).to_dataframe()
+            result_df = self.bq_client.query(query, job_config=job_config).to_dataframe()
+            
+            # Check if unresolved queue is getting large (potential issue)
+            if not result_df.empty:
+                total_unresolved = result_df['occurrences'].sum()
+                if total_unresolved > 500:  # Threshold for warning
+                    try:
+                        notify_warning(
+                            title="Player Name Resolver: Large Unresolved Queue",
+                            message=f"Unresolved player name queue has {len(result_df)} entries with {total_unresolved} total occurrences",
+                            details={
+                                'component': 'PlayerNameResolver',
+                                'operation': 'get_unresolved_names',
+                                'unresolved_count': len(result_df),
+                                'total_occurrences': int(total_unresolved),
+                                'action': 'Review and resolve pending player names'
+                            }
+                        )
+                    except Exception as notify_ex:
+                        logger.warning(f"Failed to send notification: {notify_ex}")
+            
+            return result_df
             
         except Exception as e:
             logger.error(f"Error getting unresolved names: {e}")

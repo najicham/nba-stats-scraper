@@ -11,6 +11,13 @@ from datetime import datetime
 from google.cloud import bigquery
 from data_processors.raw.processor_base import ProcessorBase
 
+# Notification imports
+from shared.utils.notification_system import (
+    notify_error,
+    notify_warning,
+    notify_info
+)
+
 class BigDataBallPbpProcessor(ProcessorBase):
     def __init__(self):
         super().__init__()
@@ -28,6 +35,22 @@ class BigDataBallPbpProcessor(ProcessorBase):
             return data
         except json.JSONDecodeError as e:
             logging.error(f"Failed to parse JSON from {file_path}: {e}")
+            
+            # Notify JSON parse error
+            try:
+                notify_error(
+                    title="BigDataBall Play-by-Play JSON Parse Failed",
+                    message=f"Failed to parse play-by-play JSON: {str(e)}",
+                    details={
+                        'file_path': file_path,
+                        'error_type': type(e).__name__,
+                        'error_message': str(e)
+                    },
+                    processor_name="BigDataBall Play-by-Play Processor"
+                )
+            except Exception as notify_ex:
+                logging.warning(f"Failed to send notification: {notify_ex}")
+            
             raise
         
     def normalize_player_name(self, name: str) -> str:
@@ -141,6 +164,25 @@ class BigDataBallPbpProcessor(ProcessorBase):
             errors.append("Missing playByPlay")
         elif not isinstance(data['playByPlay'], list):
             errors.append("playByPlay is not a list")
+        elif len(data['playByPlay']) == 0:
+            errors.append("playByPlay is empty")
+        
+        # Notify if validation errors found
+        if errors:
+            try:
+                notify_error(
+                    title="BigDataBall Play-by-Play Validation Failed",
+                    message=f"Data validation errors: {', '.join(errors)}",
+                    details={
+                        'game_id': game_info.get('game_id') if 'game_info' in data else 'unknown',
+                        'errors': errors,
+                        'has_game_info': 'game_info' in data,
+                        'has_playbyplay': 'playByPlay' in data
+                    },
+                    processor_name="BigDataBall Play-by-Play Processor"
+                )
+            except Exception as notify_ex:
+                logging.warning(f"Failed to send notification: {notify_ex}")
         
         return errors
     
@@ -267,6 +309,7 @@ class BigDataBallPbpProcessor(ProcessorBase):
     def load_data(self, rows: List[Dict], **kwargs) -> Dict:
         """Load data to BigQuery using streaming-compatible strategy"""
         if not rows:
+            logging.warning("No rows to load")
             return {'rows_processed': 0, 'errors': []}
         
         table_id = f"{self.project_id}.{self.table_name}"
@@ -290,6 +333,22 @@ class BigDataBallPbpProcessor(ProcessorBase):
             if existing_rows > 0:
                 # Data already exists - this is likely a duplicate file for the same game
                 logging.info(f"Game {game_id} already has {existing_rows} rows - skipping to avoid streaming buffer conflict")
+                
+                # Notify duplicate processing attempt
+                try:
+                    notify_warning(
+                        title="BigDataBall Play-by-Play Duplicate Game Skipped",
+                        message=f"Game {game_id} already processed with {existing_rows} rows - skipping to avoid conflicts",
+                        details={
+                            'game_id': game_id,
+                            'game_date': game_date,
+                            'existing_rows': existing_rows,
+                            'attempted_rows': len(rows)
+                        }
+                    )
+                except Exception as notify_ex:
+                    logging.warning(f"Failed to send notification: {notify_ex}")
+                
                 return {
                     'rows_processed': 0, 
                     'errors': [],
@@ -304,10 +363,59 @@ class BigDataBallPbpProcessor(ProcessorBase):
                 if result:
                     errors.extend([str(e) for e in result])
                     logging.error(f"BigQuery insert errors: {errors}")
+                    
+                    # Notify BigQuery errors
+                    try:
+                        notify_error(
+                            title="BigDataBall Play-by-Play BigQuery Insert Failed",
+                            message=f"Failed to insert {len(rows)} play-by-play events for game {game_id}",
+                            details={
+                                'game_id': game_id,
+                                'game_date': game_date,
+                                'rows_attempted': len(rows),
+                                'errors': str(errors)[:500]
+                            },
+                            processor_name="BigDataBall Play-by-Play Processor"
+                        )
+                    except Exception as notify_ex:
+                        logging.warning(f"Failed to send notification: {notify_ex}")
+                else:
+                    # Success - send info notification
+                    try:
+                        notify_info(
+                            title="BigDataBall Play-by-Play Processing Complete",
+                            message=f"Successfully processed {len(rows)} play-by-play events for game {game_id}",
+                            details={
+                                'game_id': game_id,
+                                'game_date': game_date,
+                                'rows_processed': len(rows),
+                                'away_team': rows[0]['away_team_abbr'],
+                                'home_team': rows[0]['home_team_abbr']
+                            }
+                        )
+                    except Exception as notify_ex:
+                        logging.warning(f"Failed to send notification: {notify_ex}")
+                        
         except Exception as e:
             error_msg = str(e)
             errors.append(error_msg)
             logging.error(f"Error loading data: {error_msg}")
+            
+            # Notify unexpected error
+            try:
+                notify_error(
+                    title="BigDataBall Play-by-Play Processing Failed",
+                    message=f"Unexpected error during processing: {error_msg}",
+                    details={
+                        'game_id': rows[0]['game_id'] if rows else 'unknown',
+                        'error_type': type(e).__name__,
+                        'error_message': error_msg,
+                        'rows_attempted': len(rows)
+                    },
+                    processor_name="BigDataBall Play-by-Play Processor"
+                )
+            except Exception as notify_ex:
+                logging.warning(f"Failed to send notification: {notify_ex}")
         
         return {
             'rows_processed': len(rows) if not errors else 0, 
