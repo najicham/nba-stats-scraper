@@ -30,6 +30,32 @@ from shared.utils.notification_system import (
 
 logger = logging.getLogger(__name__)
 
+# Team abbreviation normalization
+# Basketball Reference uses legacy codes that need to be mapped to official NBA codes
+TEAM_ABBR_NORMALIZATION = {
+    'BRK': 'BKN',  # Brooklyn Nets
+    'CHO': 'CHA',  # Charlotte Hornets  
+    'PHO': 'PHX',  # Phoenix Suns
+}
+
+def normalize_team_abbr(team_abbr: str) -> str:
+    """
+    Normalize team abbreviation to official NBA code.
+    
+    Basketball Reference uses some legacy team codes that differ from
+    official NBA abbreviations. This function maps them to the standard codes.
+    
+    Args:
+        team_abbr: Team abbreviation (may be legacy code)
+        
+    Returns:
+        Normalized NBA team abbreviation
+    """
+    normalized = TEAM_ABBR_NORMALIZATION.get(team_abbr, team_abbr)
+    if normalized != team_abbr:
+        logger.debug(f"Normalized team code: {team_abbr} → {normalized}")
+    return normalized
+
 
 class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, DatabaseStrategiesMixin):
     """
@@ -119,10 +145,12 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
         query = """
         SELECT DISTINCT player_lookup, team_abbr, jersey_number, position
         FROM `{project}.nba_raw.espn_team_rosters`
-        WHERE roster_date = (
+        WHERE roster_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)  -- Partition filter
+        AND roster_date = (
             SELECT MAX(roster_date) 
             FROM `{project}.nba_raw.espn_team_rosters`
             WHERE season_year = @season_year
+            AND roster_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
         )
         AND season_year = @season_year
         """.format(project=self.project_id)
@@ -258,7 +286,8 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
     
     def aggregate_roster_assignments(self, roster_data: Dict[str, Set[str]], season_year: int) -> List[Dict]:
         """
-        Aggregate roster data into registry records with bulk universal ID resolution.
+        Aggregate roster data into registry records with NBA.com validation.
+        Now validates BR/ESPN players against NBA.com canonical (player, team) combinations.
         
         Args:
             roster_data: Dict of roster sources and their players
@@ -270,9 +299,26 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
         logger.info("Aggregating roster assignments into registry records...")
         
         try:
+            # Build NBA.com canonical set upfront (now returns player-team tuples)
+            nba_canonical_set = self._get_nba_canonical_set(season_year)
+            fallback_mode = len(nba_canonical_set) == 0
+            
+            if fallback_mode:
+                logger.warning("⚠️ Running in NO VALIDATION mode - no canonical set available")
+            else:
+                logger.info(f"Using {len(nba_canonical_set)} NBA.com player-team combinations as canonical set")
+            
+            # Source mapping for priority
+            source_map = {
+                'espn_rosters': 'roster_espn',
+                'basketball_reference': 'roster_br',
+                'nba_player_list': 'roster_nba_com'
+            }
+            
             # Combine all roster sources and collect detailed data
             all_roster_players = set()
-            player_details = {}  # player_lookup -> {team_abbr, sources, enhancement_data}
+            player_team_details = {}  # (player_lookup, team_abbr) -> {sources, enhancement_data, source_priority}
+            unvalidated_players = []  # BR/ESPN players not in canonical set
             
             for source, players in roster_data.items():
                 all_roster_players.update(players)
@@ -281,40 +327,100 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
                 detailed_data = self._get_detailed_roster_data(source, season_year)
                 
                 for player_lookup, details in detailed_data.items():
-                    if player_lookup not in player_details:
-                        player_details[player_lookup] = {
-                            'team_abbr': details['team_abbr'],
-                            'sources': [],
-                            'enhancement_data': {}
-                        }
+                    team_abbr = details['team_abbr']
+                    key = (player_lookup, team_abbr)
                     
-                    player_details[player_lookup]['sources'].append(source)
+                    # Validation logic - STRICTER: check player-team combination
+                    if source == 'nba_player_list':
+                        # NBA.com always goes through with nba_com priority
+                        should_create_record = True
+                        actual_source_priority = 'roster_nba_com'
+                        
+                    elif source in ['espn_rosters', 'basketball_reference']:
+                        if fallback_mode:
+                            # No canonical set - allow through with original source
+                            should_create_record = True
+                            actual_source_priority = source_map.get(source, 'roster_unknown')
+                            logger.debug(f"⚠️ {source}: {player_lookup} on {team_abbr} accepted (fallback mode - no validation)")
+                            
+                        elif key in nba_canonical_set:  # CHANGED: Check (player, team) tuple
+                            # Validated by NBA.com - use NBA.com as source priority
+                            should_create_record = True
+                            actual_source_priority = 'roster_nba_com'
+                            logger.debug(f"✓ {source}: {player_lookup} on {team_abbr} validated against NBA.com canonical set")
+                            
+                        elif self._check_player_aliases(player_lookup, team_abbr):
+                            # Validated via alias - use NBA.com as source priority
+                            should_create_record = True
+                            actual_source_priority = 'roster_nba_com'
+                            logger.debug(f"✓ {source}: {player_lookup} on {team_abbr} validated via alias")
+                            
+                        else:
+                            # Not validated - create unresolved, don't create registry record yet
+                            should_create_record = False
+                            unvalidated_players.append({
+                                'source': source,
+                                'player_lookup': player_lookup,
+                                'team_abbr': team_abbr,
+                                'display_name': details.get('player_full_name', player_lookup.title())
+                            })
+                            logger.debug(f"✗ {source}: {player_lookup} on {team_abbr} not in canonical set - flagging for review")
+                    else:
+                        # Unknown source
+                        should_create_record = True
+                        actual_source_priority = source_map.get(source, 'roster_unknown')
                     
-                    # Merge enhancement data (jersey_number, position, etc.)
-                    if 'jersey_number' in details and details['jersey_number']:
-                        player_details[player_lookup]['enhancement_data']['jersey_number'] = details['jersey_number']
-                    if 'position' in details and details['position']:
-                        player_details[player_lookup]['enhancement_data']['position'] = details['position']
-                    if 'player_full_name' in details and details['player_full_name']:
-                        player_details[player_lookup]['enhancement_data']['player_full_name'] = details['player_full_name']
+                    # Only add to player_team_details if validated
+                    if should_create_record:
+                        if key not in player_team_details:
+                            player_team_details[key] = {
+                                'sources': [],
+                                'enhancement_data': {},
+                                'source_priority': actual_source_priority
+                            }
+                        
+                        player_team_details[key]['sources'].append(source)
+                        
+                        # Merge enhancement data (jersey_number, position, etc.)
+                        if 'jersey_number' in details and details['jersey_number']:
+                            player_team_details[key]['enhancement_data']['jersey_number'] = details['jersey_number']
+                        if 'position' in details and details['position']:
+                            player_team_details[key]['enhancement_data']['position'] = details['position']
+                        if 'player_full_name' in details and details['player_full_name']:
+                            player_team_details[key]['enhancement_data']['player_full_name'] = details['player_full_name']
+            
+            # Create unresolved records for unvalidated players
+            if unvalidated_players:
+                logger.warning(f"Found {len(unvalidated_players)} player-team combinations not in NBA.com canonical set")
+                self._create_unvalidated_records(unvalidated_players, season_year)
             
             # BULK RESOLUTION: Get all universal IDs in one operation
-            unique_player_lookups = list(all_roster_players)
-            logger.info(f"Performing bulk universal ID resolution for {len(unique_player_lookups)} roster players")
+            unique_player_lookups = list({lookup for (lookup, team) in player_team_details.keys()})
+            logger.info(f"Performing bulk universal ID resolution for {len(unique_player_lookups)} validated roster players")
             
             universal_id_mappings = self.bulk_resolve_universal_player_ids(unique_player_lookups)
             
             registry_records = []
             season_str = self.calculate_season_string(season_year)
             
-            for player_lookup in all_roster_players:
-                details = player_details.get(player_lookup, {})
-                team_abbr = details.get('team_abbr', 'UNK')
+            # Auto-detect and create suffix aliases (only for validated players)
+            try:
+                aliases_created = self._auto_create_suffix_aliases(player_team_details)
+                if aliases_created > 0:
+                    logger.info(f"Auto-created {aliases_created} suffix aliases for source matching")
+            except Exception as e:
+                logger.warning(f"Failed to auto-create aliases (non-fatal): {e}")
+                
+            logger.info(f"Creating records for {len(player_team_details)} validated player-team combinations")
+            
+            # Iterate over validated players
+            for (player_lookup, team_abbr), details in player_team_details.items():
                 sources = details.get('sources', [])
                 enhancement = details.get('enhancement_data', {})
+                source_priority = details.get('source_priority', 'roster_unknown')
                 
-                # Determine source priority and confidence with dynamic logic
-                source_priority, confidence_score = self._determine_roster_source_priority_and_confidence(
+                # Determine confidence with dynamic logic
+                _, confidence_score = self._determine_roster_source_priority_and_confidence(
                     sources, enhancement, season_year
                 )
                 
@@ -340,9 +446,9 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
                     # Roster-specific fields
                     'jersey_number': enhancement.get('jersey_number'),
                     'position': enhancement.get('position'),
-                    'last_roster_update': date.today(),
+                    'last_roster_update': datetime.now(),
                     
-                    # Source metadata
+                    # Source metadata - use determined priority (all validated = nba_com)
                     'source_priority': source_priority,
                     'confidence_score': confidence_score,
                     'created_by': self.processing_run_id,
@@ -357,7 +463,17 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
                 enhanced_record = self._convert_pandas_types_for_json(enhanced_record)
                 registry_records.append(enhanced_record)
             
-            logger.info(f"Created {len(registry_records)} registry records from roster data")
+            logger.info(f"Created {len(registry_records)} registry records from validated roster data")
+            
+            # Log if any players appear on multiple teams (trades)
+            player_team_counts = {}
+            for (player_lookup, team_abbr) in player_team_details.keys():
+                player_team_counts[player_lookup] = player_team_counts.get(player_lookup, 0) + 1
+            
+            traded_players = {p: count for p, count in player_team_counts.items() if count > 1}
+            if traded_players:
+                logger.info(f"Detected {len(traded_players)} players on multiple teams (trades): {list(traded_players.keys())[:5]}...")
+            
             return registry_records
             
         except Exception as e:
@@ -442,10 +558,12 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
             jersey_number,
             position
         FROM `{project}.nba_raw.espn_team_rosters`
-        WHERE roster_date = (
+        WHERE roster_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)  -- Partition filter
+        AND roster_date = (
             SELECT MAX(roster_date) 
             FROM `{project}.nba_raw.espn_team_rosters`
             WHERE season_year = @season_year
+            AND roster_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
         )
         AND season_year = @season_year
         """.format(project=self.project_id)
@@ -528,9 +646,12 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
             detailed_data = {}
             
             for _, row in results.iterrows():
+                # Normalize Basketball Reference team codes to official NBA codes
+                team_abbr = normalize_team_abbr(row['team_abbr'])
+                
                 detailed_data[row['player_lookup']] = {
                     'player_full_name': row['player_full_name'],
-                    'team_abbr': row['team_abbr'],
+                    'team_abbr': team_abbr,  # Use normalized code
                     'jersey_number': row['jersey_number'] if pd.notna(row['jersey_number']) else None,
                     'position': row['position'] if pd.notna(row['position']) else None
                 }
@@ -539,6 +660,452 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
         except Exception as e:
             logger.warning(f"Error getting Basketball Reference detailed data: {e}")
             return {}
+        
+    def _get_nba_canonical_set(self, season_year: int) -> Set[Tuple[str, str]]:
+        """
+        Get canonical (player, team) combinations from NBA.com (current + historical registry records).
+        Falls back to all registry sources if NBA.com unavailable.
+        
+        Returns set of tuples: (player_lookup, team_abbr)
+        """
+        canonical_combos = set()
+        season_str = self.calculate_season_string(season_year)
+        nba_players_found = False
+        
+        # 1. Get NBA.com players from current scrape
+        nba_query = """
+        SELECT DISTINCT 
+            player_lookup, 
+            team_abbr,
+            player_full_name as display_name
+        FROM `{project}.nba_raw.nbac_player_list_current`
+        WHERE is_active = TRUE
+        AND season_year = @season_year
+        """.format(project=self.project_id)
+        
+        job_config = bigquery.QueryJobConfig(query_parameters=[
+            bigquery.ScalarQueryParameter("season_year", "INT64", season_year)
+        ])
+        
+        try:
+            nba_current = self.bq_client.query(nba_query, job_config=job_config).to_dataframe()
+            if not nba_current.empty:
+                for _, row in nba_current.iterrows():
+                    canonical_combos.add((row['player_lookup'], row['team_abbr']))
+                nba_players_found = True
+                logger.info(f"Loaded {len(canonical_combos)} player-team combinations from NBA.com current scrape")
+            else:
+                logger.warning("NBA.com current scrape returned no players")
+        except Exception as e:
+            logger.warning(f"Error loading NBA.com current players: {e}")
+        
+        # 2. Get NBA.com players from existing registry
+        registry_nba_query = """
+        SELECT DISTINCT 
+            player_lookup,
+            team_abbr,
+            player_name as display_name
+        FROM `{project}.{table_name}`
+        WHERE season = @season
+        AND source_priority = 'roster_nba_com'
+        """.format(project=self.project_id, table_name=self.table_name)
+        
+        job_config = bigquery.QueryJobConfig(query_parameters=[
+            bigquery.ScalarQueryParameter("season", "STRING", season_str)
+        ])
+        
+        try:
+            registry_nba = self.bq_client.query(registry_nba_query, job_config=job_config).to_dataframe()
+            if not registry_nba.empty:
+                original_count = len(canonical_combos)
+                for _, row in registry_nba.iterrows():
+                    canonical_combos.add((row['player_lookup'], row['team_abbr']))
+                nba_players_found = True
+                logger.info(f"Added {len(canonical_combos) - original_count} player-team combinations from registry (total: {len(canonical_combos)})")
+            else:
+                logger.warning("No NBA.com players found in existing registry")
+        except Exception as e:
+            logger.warning(f"Error loading registry NBA.com players: {e}")
+        
+        # 3. FALLBACK: If no NBA.com data available, use ALL registry sources
+        if not nba_players_found or len(canonical_combos) == 0:
+            logger.warning("⚠️ NBA.com data unavailable - falling back to existing registry (all sources)")
+            
+            fallback_query = """
+            SELECT DISTINCT 
+                player_lookup,
+                team_abbr,
+                player_name as display_name,
+                source_priority
+            FROM `{project}.{table_name}`
+            WHERE season = @season
+            """.format(project=self.project_id, table_name=self.table_name)
+            
+            job_config = bigquery.QueryJobConfig(query_parameters=[
+                bigquery.ScalarQueryParameter("season", "STRING", season_str)
+            ])
+            
+            try:
+                all_registry = self.bq_client.query(fallback_query, job_config=job_config).to_dataframe()
+                if not all_registry.empty:
+                    for _, row in all_registry.iterrows():
+                        canonical_combos.add((row['player_lookup'], row['team_abbr']))
+                    logger.warning(f"Using fallback canonical set: {len(canonical_combos)} player-team combinations from all sources")
+                    
+                    # Send notification about fallback mode
+                    try:
+                        notify_warning(
+                            title="Roster Processor Using Fallback Mode",
+                            message=f"NBA.com data unavailable - using existing registry as canonical set ({len(canonical_combos)} player-team combinations)",
+                            details={
+                                'season': season_str,
+                                'canonical_combos_count': len(canonical_combos),
+                                'fallback_mode': True,
+                                'processor': 'roster_registry'
+                            }
+                        )
+                    except Exception as notify_ex:
+                        logger.warning(f"Failed to send notification: {notify_ex}")
+                else:
+                    logger.error("⚠️ No canonical set available - first run with no data!")
+            except Exception as e:
+                logger.error(f"Error loading fallback registry data: {e}")
+        
+        return canonical_combos
+        
+    def _auto_create_suffix_aliases(self, player_team_details: Dict[Tuple[str, str], Dict]) -> int:
+        """
+        Automatically detect and create aliases for suffix mismatches between sources.
+        
+        IMPORTANT: Only creates aliases when players are on the SAME team.
+        Cross-team suffix mismatches are flagged as unresolved (father/son, different people).
+        
+        Args:
+            player_team_details: Dict with (player_lookup, team_abbr) keys
+            
+        Returns:
+            Number of aliases created
+        """
+        suffixes = ['jr', 'sr', 'ii', 'iii', 'iv', 'v']
+        aliases_to_create = []
+        unresolved_to_create = []
+        
+        # Build reverse lookup: base_name -> {full_names_with_suffixes}
+        base_to_variants = {}
+        for (player_lookup, team_abbr), details in player_team_details.items():
+            base = player_lookup
+            detected_suffix = None
+            
+            for suffix in suffixes:
+                if player_lookup.endswith(suffix):
+                    base = player_lookup[:-len(suffix)]
+                    detected_suffix = suffix
+                    break
+            
+            if base not in base_to_variants:
+                base_to_variants[base] = []
+            base_to_variants[base].append({
+                'lookup': player_lookup,
+                'suffix': detected_suffix,
+                'team': team_abbr,
+                'sources': details.get('sources', []),
+                'display_name': details.get('enhancement_data', {}).get('player_full_name', player_lookup.title())
+            })
+        
+        # Find bases with multiple variants (suffix mismatches)
+        for base, variants in base_to_variants.items():
+            if len(variants) > 1:
+                # NEW: Check if all variants are on the same team
+                teams = set(v['team'] for v in variants)
+                
+                if len(teams) == 1:
+                    # SAME TEAM → Safe to auto-alias
+                    canonical = None
+                    for variant in variants:
+                        if 'nba_player_list' in variant['sources']:
+                            canonical = variant
+                            break
+                    
+                    if not canonical:
+                        canonical = next((v for v in variants if v['suffix']), variants[0])
+                    
+                    # Create aliases for all non-canonical variants
+                    for variant in variants:
+                        if variant['lookup'] != canonical['lookup']:
+                            aliases_to_create.append({
+                                'alias_lookup': variant['lookup'],
+                                'nba_canonical_lookup': canonical['lookup'],
+                                'alias_display': variant['display_name'],
+                                'nba_canonical_display': canonical['display_name'],
+                                'alias_type': 'suffix_difference',
+                                'alias_source': 'auto_detected',
+                                'is_active': True,
+                                'notes': f"Auto-detected suffix mismatch: '{variant['lookup']}' → '{canonical['lookup']}' (same team: {variant['team']})",
+                                'created_by': self.processing_run_id,
+                                'created_at': datetime.now(),
+                                'processed_at': datetime.now()
+                            })
+                            
+                else:
+                    # DIFFERENT TEAMS → Flag as unresolved (could be father/son or different people)
+                    variant_details = [f"{v['lookup']} ({v['team']})" for v in variants]
+                    logger.warning(f"Cross-team suffix mismatch detected for base '{base}': {variant_details}")
+                    
+                    # Create unresolved record for each variant
+                    for variant in variants:
+                        # Determine which source this variant came from
+                        primary_source = variant['sources'][0] if variant['sources'] else 'unknown'
+                        source_map = {
+                            'espn_rosters': 'espn',
+                            'nba_player_list': 'nba_com',
+                            'basketball_reference': 'br'
+                        }
+                        source_name = source_map.get(primary_source, primary_source)
+                        
+                        unresolved_to_create.append({
+                            'source': source_name,
+                            'original_name': variant['display_name'],
+                            'normalized_lookup': variant['lookup'],
+                            'first_seen_date': date.today(),
+                            'last_seen_date': date.today(),
+                            'team_abbr': variant['team'],
+                            'season': self.calculate_season_string(
+                                date.today().year if date.today().month >= 10 else date.today().year - 1
+                            ),
+                            'occurrences': 1,
+                            'example_games': [],  # ✅ Empty array, not None
+                            'status': 'pending',
+                            'resolution_type': None,
+                            'resolved_to_name': None,
+                            'notes': f"Cross-team suffix mismatch: base '{base}' appears on multiple teams {list(teams)}. Could be father/son (e.g., Gary Payton vs Gary Payton II) or different people. Needs manual review before creating alias.",
+                            'reviewed_by': None,
+                            'reviewed_at': None,
+                            # ✅ Removed created_by field
+                            'created_at': datetime.now(),
+                            'processed_at': datetime.now()
+                        })
+        
+        # Insert aliases and unresolved records
+        if aliases_to_create:
+            self._insert_aliases(aliases_to_create)
+            logger.info(f"Auto-created {len(aliases_to_create)} suffix aliases (same-team only)")
+        
+        if unresolved_to_create:
+            self._insert_unresolved_names(unresolved_to_create)
+            logger.warning(f"Created {len(unresolved_to_create)} unresolved records for cross-team suffix mismatches (manual review required)")
+        
+        return len(aliases_to_create)
+    
+    def _create_unvalidated_records(self, unvalidated_players: List[Dict], season_year: int) -> None:
+        """Create unresolved records for players not in NBA.com canonical set."""
+        unresolved_records = []
+        
+        source_map = {
+            'espn_rosters': 'espn',
+            'basketball_reference': 'br',
+            'nba_player_list': 'nba_com'
+        }
+        
+        for player in unvalidated_players:
+            source_name = source_map.get(player['source'], player['source'])
+            
+            unresolved_records.append({
+                'source': source_name,
+                'original_name': player['display_name'],
+                'normalized_lookup': player['player_lookup'],
+                'first_seen_date': date.today(),
+                'last_seen_date': date.today(),
+                'team_abbr': player['team_abbr'],
+                'season': self.calculate_season_string(season_year),
+                'occurrences': 1,
+                'example_games': [],
+                'status': 'pending',
+                'resolution_type': None,
+                'resolved_to_name': None,
+                'notes': f"Player found in {player['source']} but not in NBA.com canonical set. Needs validation: could be typo, formatting difference, or legitimate new player not yet in NBA.com data.",
+                'reviewed_by': None,
+                'reviewed_at': None,
+                'created_at': datetime.now(),
+                'processed_at': datetime.now()
+            })
+        
+        if unresolved_records:
+            try:
+                self._insert_unresolved_names(unresolved_records)
+                logger.info(f"Created {len(unresolved_records)} unresolved records for unvalidated players")
+            except Exception as e:
+                logger.error(f"Failed to create unvalidated player records: {e}")
+
+    def _insert_aliases(self, alias_records: List[Dict]) -> None:
+        """Insert alias records into player_aliases table."""
+        if not alias_records:
+            return
+        
+        table_id = f"{self.project_id}.{self.alias_table_name}"
+        
+        try:
+            # Check for existing aliases to avoid duplicates
+            existing_query = f"""
+            SELECT alias_lookup, nba_canonical_lookup
+            FROM `{table_id}`
+            WHERE alias_lookup IN UNNEST(@alias_lookups)
+            """
+            
+            job_config = bigquery.QueryJobConfig(query_parameters=[
+                bigquery.ArrayQueryParameter("alias_lookups", "STRING", 
+                    [r['alias_lookup'] for r in alias_records])
+            ])
+            
+            existing_df = self.bq_client.query(existing_query, job_config=job_config).to_dataframe()
+            existing_aliases = set(existing_df['alias_lookup']) if not existing_df.empty else set()
+            
+            # Filter out existing
+            new_aliases = [r for r in alias_records if r['alias_lookup'] not in existing_aliases]
+            
+            if not new_aliases:
+                logger.info("All aliases already exist, skipping insertion")
+                return
+            
+            # Convert types for BigQuery
+            processed_aliases = []
+            for r in new_aliases:
+                converted = self._convert_pandas_types_for_json(r)
+                # Ensure is_active is a proper boolean
+                if 'is_active' in converted:
+                    converted['is_active'] = bool(converted['is_active'])
+                processed_aliases.append(converted)
+            
+            # Insert
+            errors = self.bq_client.insert_rows_json(table_id, processed_aliases)
+            
+            if errors:
+                logger.error(f"Errors inserting aliases: {errors}")
+            else:
+                logger.info(f"Successfully inserted {len(new_aliases)} new aliases")
+                
+        except Exception as e:
+            logger.error(f"Failed to insert aliases: {e}")
+            # Don't raise - alias creation failure shouldn't block roster processing
+
+    def _insert_unresolved_names(self, unresolved_records: List[Dict]) -> None:
+        """Insert unresolved player name records for manual review."""
+        if not unresolved_records:
+            return
+        
+        # Convert to list if needed (defensive)
+        if not isinstance(unresolved_records, list):
+            unresolved_records = list(unresolved_records)
+        
+        table_id = f"{self.project_id}.{self.unresolved_table_name}"
+        
+        try:
+            # Check for existing unresolved records
+            existing_query = f"""
+            SELECT normalized_lookup, team_abbr, season, occurrences
+            FROM `{table_id}`
+            WHERE normalized_lookup IN UNNEST(@lookups)
+            AND status = 'pending'
+            """
+            
+            job_config = bigquery.QueryJobConfig(query_parameters=[
+                bigquery.ArrayQueryParameter("lookups", "STRING", 
+                    [r['normalized_lookup'] for r in unresolved_records])
+            ])
+            
+            existing_df = self.bq_client.query(existing_query, job_config=job_config).to_dataframe()
+            
+            # Build map of existing records (defensive - check length explicitly)
+            existing_map = {}
+            if len(existing_df) > 0:  # Changed from: if not existing_df.empty
+                for _, row in existing_df.iterrows():
+                    key = (row['normalized_lookup'], row['team_abbr'], row['season'])
+                    existing_map[key] = row['occurrences']
+            
+            # Separate into new vs update (use Python lists explicitly)
+            new_unresolved = []
+            updates_needed = []
+            
+            for r in unresolved_records:
+                key = (r['normalized_lookup'], r['team_abbr'], r['season'])
+                
+                if key in existing_map:
+                    # EXISTS - need to increment occurrences
+                    updates_needed.append({
+                        'normalized_lookup': r['normalized_lookup'],
+                        'team_abbr': r['team_abbr'],
+                        'season': r['season'],
+                        'new_occurrences': existing_map[key] + 1,
+                        'last_seen_date': r['last_seen_date']
+                    })
+                else:
+                    # NEW - insert
+                    new_unresolved.append(r)
+            
+            # Insert new records (check length explicitly)
+            if len(new_unresolved) > 0:  # Changed from: if new_unresolved
+                processed_unresolved = []
+                for r in new_unresolved:
+                    converted = self._convert_pandas_types_for_json(r)
+                    # Ensure example_games is a plain Python list
+                    if 'example_games' in converted:
+                        eg = converted['example_games']
+                        if eg is None:
+                            converted['example_games'] = []
+                        elif not isinstance(eg, list):
+                            converted['example_games'] = list(eg) if hasattr(eg, '__iter__') else []
+                        else:
+                            converted['example_games'] = eg
+                    processed_unresolved.append(converted)
+                
+                errors = self.bq_client.insert_rows_json(table_id, processed_unresolved)
+                if errors:
+                    logger.error(f"Errors inserting unresolved records: {errors}")
+                else:
+                    logger.info(f"Inserted {len(new_unresolved)} new unresolved records")
+            
+            # Update existing records (check length explicitly)
+            if len(updates_needed) > 0:
+                successful_updates = 0
+                for update in updates_needed:
+                    update_query = f"""
+                    UPDATE `{table_id}`
+                    SET 
+                        occurrences = @new_occurrences,
+                        last_seen_date = @last_seen_date,
+                        processed_at = CURRENT_TIMESTAMP()
+                    WHERE normalized_lookup = @normalized_lookup
+                    AND team_abbr = @team_abbr
+                    AND season = @season
+                    AND status = 'pending'
+                    """
+                    
+                    job_config = bigquery.QueryJobConfig(query_parameters=[
+                        bigquery.ScalarQueryParameter("normalized_lookup", "STRING", update['normalized_lookup']),
+                        bigquery.ScalarQueryParameter("team_abbr", "STRING", update['team_abbr']),
+                        bigquery.ScalarQueryParameter("season", "STRING", update['season']),
+                        bigquery.ScalarQueryParameter("new_occurrences", "INT64", update['new_occurrences']),
+                        bigquery.ScalarQueryParameter("last_seen_date", "DATE", update['last_seen_date'])
+                    ])
+                    
+                    try:
+                        self.bq_client.query(update_query, job_config=job_config).result()
+                        successful_updates += 1
+                    except Exception as e:
+                        error_msg = str(e).lower()
+                        if 'streaming buffer' in error_msg:
+                            logger.debug(f"Skipping UPDATE for {update['normalized_lookup']} on {update['team_abbr']} - record in streaming buffer (will be updated on next run after ~90 min)")
+                        else:
+                            logger.warning(f"Failed to update occurrence count for {update['normalized_lookup']} on {update['team_abbr']}: {e}")
+                
+                if successful_updates > 0:
+                    logger.info(f"Updated {successful_updates} existing unresolved records (incremented occurrences)")
+                if successful_updates < len(updates_needed):
+                    logger.info(f"Skipped {len(updates_needed) - successful_updates} updates due to streaming buffer (expected behavior, will succeed on future runs)")
+                
+        except Exception as e:
+            logger.error(f"Failed to insert/update unresolved records: {e}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")  # Added for debugging
     
     def get_player_team_assignment(self, player_lookup: str, roster_data: Dict[str, Set[str]] = None) -> str:
         """Find team assignment for a player from roster data."""
@@ -684,9 +1251,9 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
                 'season_year': season_year
             }
             
-            # Transform and load
+            # Transform and save
             rows = self.transform_data(filter_data)
-            result = self.load_data(rows)
+            result = self.save_registry_data(rows)
             
             result['new_players_discovered'] = list(self.new_players_discovered)
             if self.new_players_discovered:
@@ -826,3 +1393,37 @@ def process_daily_rosters(season_year: int = None, strategy: str = "merge") -> D
     """Convenience function for daily roster processing."""
     processor = RosterRegistryProcessor(strategy=strategy)
     return processor.process_daily_rosters(season_year)
+
+
+if __name__ == "__main__":
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Process roster registry")
+    parser.add_argument("--season-year", type=int, help="NBA season starting year (e.g., 2025 for 2025-26)")
+    parser.add_argument("--strategy", default="merge", choices=["merge", "replace", "append"], 
+                        help="Database strategy")
+    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
+    
+    args = parser.parse_args()
+    
+    if args.debug:
+        logging.basicConfig(level=logging.DEBUG)
+    else:
+        logging.basicConfig(level=logging.INFO)
+    
+    # Create processor
+    processor = RosterRegistryProcessor(strategy=args.strategy)
+    
+    # Run daily roster processing
+    result = processor.process_daily_rosters(season_year=args.season_year)
+    
+    print(f"\n{'='*60}")
+    print(f"✅ SUCCESS")
+    print(f"{'='*60}")
+    print(f"Season: {result['season']}")
+    print(f"Records processed: {result['records_processed']}")
+    print(f"Players processed: {result['players_processed']}")
+    print(f"New players discovered: {len(result.get('new_players_discovered', []))}")
+    print(f"Errors: {len(result.get('errors', []))}")
+    print(f"{'='*60}")
+    

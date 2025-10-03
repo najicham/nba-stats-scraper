@@ -3,7 +3,7 @@
 File: processors/nba_com/nbac_player_list_processor.py
 
 Process NBA.com Player List data for current player-team assignments.
-Integrated notification system for monitoring and alerts.
+Uses MERGE strategy to prevent duplicate accumulation from multiple daily runs.
 """
 
 import json
@@ -12,6 +12,7 @@ import os
 from datetime import datetime, date
 from typing import Dict, List, Optional
 from google.cloud import bigquery
+from google.cloud import storage
 from data_processors.raw.processor_base import ProcessorBase
 from shared.utils.notification_system import (
     notify_error,
@@ -24,149 +25,229 @@ logger = logging.getLogger(__name__)
 class NbacPlayerListProcessor(ProcessorBase):
     """Process NBA.com Player List for current roster assignments."""
     
+    # Configure for ProcessorBase
+    required_opts = ['bucket']  # file_path OR date required
+    
     def __init__(self):
         super().__init__()
-        self.table_name = 'nba_raw.nbac_player_list_current'
-        self.processing_strategy = 'MERGE_UPDATE'
-        self.project_id = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
-        self.bq_client = bigquery.Client(project=self.project_id)
+        self.table_name = 'nbac_player_list_current'
+        self.dataset_id = 'nba_raw'
         
         # Tracking counters
         self.players_processed = 0
         self.players_failed = 0
         self.duplicate_count = 0
+    
+    def set_additional_opts(self) -> None:
+        """
+        Discover file if --date provided instead of --file-path.
+        Enables manual reprocessing by date without knowing exact filename.
+        """
+        super().set_additional_opts()
         
-    def validate_data(self, data: Dict) -> List[str]:
-        """Validate the JSON data structure."""
-        errors = []
+        # If date provided but no file_path, discover latest file
+        if self.opts.get('date') and not self.opts.get('file_path'):
+            date_str = self.opts['date']
+            bucket = self.opts.get('bucket', 'nba-scraped-data')
+            
+            logger.info(f"No file_path provided, discovering latest file for {date_str}")
+            
+            # Find latest file for date
+            prefix = f"nba-com/player-list/{date_str}/"
+            file_path = self._find_latest_file(bucket, prefix)
+            
+            if not file_path:
+                raise FileNotFoundError(f"No files found in gs://{bucket}/{prefix}")
+            
+            self.opts['file_path'] = file_path
+            logger.info(f"Discovered file: {file_path}")
+    
+    def _find_latest_file(self, bucket_name: str, prefix: str) -> Optional[str]:
+        """
+        Find latest JSON file in GCS for given prefix.
         
-        if 'resultSets' not in data:
-            errors.append("Missing 'resultSets' in data")
-            return errors
+        Args:
+            bucket_name: GCS bucket name
+            prefix: Path prefix (e.g., 'nba-com/player-list/2025-10-02/')
             
-        # NBA.com uses array format, need to find PlayerIndex result set
-        player_result = None
-        for result_set in data.get('resultSets', []):
-            if result_set.get('name') == 'PlayerIndex':
-                player_result = result_set
-                break
-                
-        if not player_result:
-            errors.append("No 'PlayerIndex' result set found")
+        Returns:
+            Full file path or None if no files found
+        """
+        try:
+            bucket = self.gcs_client.bucket(bucket_name)
+            blobs = list(bucket.list_blobs(prefix=prefix))
             
-            # Notify about missing PlayerIndex
+            if not blobs:
+                logger.warning(f"No blobs found with prefix: {prefix}")
+                return None
+            
+            # Filter to JSON files
+            json_blobs = [b for b in blobs if b.name.endswith('.json')]
+            
+            if not json_blobs:
+                logger.warning(f"No JSON files found with prefix: {prefix}")
+                return None
+            
+            # Sort by creation time, take latest
+            json_blobs.sort(key=lambda b: b.time_created, reverse=True)
+            latest_blob = json_blobs[0]
+            
+            logger.info(f"Found {len(json_blobs)} files, using latest: {latest_blob.name}")
+            return latest_blob.name
+            
+        except Exception as e:
+            logger.error(f"Error finding latest file: {e}")
+            return None
+    
+    # ================================================================
+    # STEP 1: LOAD DATA FROM GCS
+    # ================================================================
+    def load_data(self) -> None:
+        """Load JSON data from GCS bucket (implements ProcessorBase interface)."""
+        bucket_name = self.opts.get('bucket')
+        file_path = self.opts.get('file_path')
+        
+        if not bucket_name or not file_path:
+            raise ValueError("Missing 'bucket' or 'file_path' in opts")
+        
+        logger.info(f"Loading data from gs://{bucket_name}/{file_path}")
+        
+        try:
+            bucket = self.gcs_client.bucket(bucket_name)
+            blob = bucket.blob(file_path)
+            
+            if not blob.exists():
+                raise FileNotFoundError(f"File not found: gs://{bucket_name}/{file_path}")
+            
+            # Download and parse JSON
+            json_string = blob.download_as_string()
+            self.raw_data = json.loads(json_string)
+            
+            logger.info(f"Successfully loaded {len(json_string)} bytes from GCS")
+            
+        except Exception as e:
+            logger.error(f"Failed to load data from GCS: {e}")
             try:
                 notify_error(
-                    title="Player List Missing PlayerIndex",
-                    message="No 'PlayerIndex' result set found in player list data",
+                    title="Failed to Load Player List from GCS",
+                    message=f"Could not load gs://{bucket_name}/{file_path}",
                     details={
-                        'result_sets_found': [rs.get('name') for rs in data.get('resultSets', [])],
-                        'result_sets_count': len(data.get('resultSets', []))
+                        'bucket': bucket_name,
+                        'file_path': file_path,
+                        'error_type': type(e).__name__,
+                        'error': str(e)
                     },
                     processor_name="NBA.com Player List Processor"
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-            
-            return errors
-            
-        if 'headers' not in player_result or 'rowSet' not in player_result:
-            errors.append("Missing headers or rowSet in player data")
+            raise
+    
+    # ================================================================
+    # STEP 2: VALIDATE LOADED DATA
+    # ================================================================
+    def validate_loaded_data(self) -> None:
+        """Validate the JSON data structure (overrides ProcessorBase)."""
+        if not self.raw_data:
+            raise ValueError("No data loaded")
         
-        # Notify about validation failures
+        errors = []
+        
+        if 'resultSets' not in self.raw_data:
+            errors.append("Missing 'resultSets' in data")
+        else:
+            # Find PlayerIndex result set
+            player_result = None
+            for result_set in self.raw_data.get('resultSets', []):
+                if result_set.get('name') == 'PlayerIndex':
+                    player_result = result_set
+                    break
+            
+            if not player_result:
+                errors.append("No 'PlayerIndex' result set found")
+                try:
+                    notify_error(
+                        title="Player List Missing PlayerIndex",
+                        message="No 'PlayerIndex' result set found in player list data",
+                        details={
+                            'result_sets_found': [rs.get('name') for rs in self.raw_data.get('resultSets', [])],
+                            'result_sets_count': len(self.raw_data.get('resultSets', []))
+                        },
+                        processor_name="NBA.com Player List Processor"
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+            
+            elif 'headers' not in player_result or 'rowSet' not in player_result:
+                errors.append("Missing headers or rowSet in player data")
+        
         if errors:
+            error_msg = "; ".join(errors)
             try:
                 notify_warning(
                     title="Player List Data Validation Failed",
-                    message=f"Found {len(errors)} validation errors in player list data",
-                    details={
-                        'errors': errors,
-                        'has_resultSets': 'resultSets' in data,
-                        'result_sets_count': len(data.get('resultSets', []))
-                    }
+                    message=f"Found {len(errors)} validation errors",
+                    details={'errors': errors}
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-            
-        return errors
+            raise ValueError(error_msg)
+        
+        logger.info("Data validation passed")
     
-    def _normalize_player_name(self, full_name: str) -> str:
-        """Create normalized player lookup key."""
-        if not full_name:
-            return ""
-        # Remove spaces, apostrophes, periods, hyphens
-        # Convert to lowercase
-        normalized = full_name.lower()
-        for char in [' ', "'", '.', '-', ',', 'jr', 'sr', 'ii', 'iii', 'iv']:
-            normalized = normalized.replace(char, '')
-        return normalized
-    
-    def _parse_date(self, date_str: str) -> Optional[date]:
-        """Parse date string from NBA.com format."""
-        if not date_str or date_str == 'null':
-            return None
-        try:
-            # NBA.com format: "1984-12-30T00:00:00"
-            return datetime.strptime(date_str[:10], '%Y-%m-%d').date()
-        except:
-            return None
-    
-    def _calculate_age(self, birth_date: date) -> Optional[float]:
-        """Calculate age in years."""
-        if not birth_date:
-            return None
-        today = date.today()
-        age = today.year - birth_date.year - ((today.month, today.day) < (birth_date.month, birth_date.day))
-        return float(age)
-    
-    def transform_data(self, raw_data: Dict, file_path: str) -> List[Dict]:
-        """Transform NBA.com player list to BigQuery rows."""
+    # ================================================================
+    # STEP 3: TRANSFORM DATA
+    # ================================================================
+    def transform_data(self) -> None:
+        """Transform NBA.com player list to BigQuery rows (implements ProcessorBase interface)."""
         rows = []
         
         try:
             # Find PlayerIndex result set
             player_result = None
-            for result_set in raw_data.get('resultSets', []):
+            for result_set in self.raw_data.get('resultSets', []):
                 if result_set.get('name') == 'PlayerIndex':
                     player_result = result_set
                     break
             
             if not player_result:
                 logger.error("No PlayerIndex result set found")
-                return rows
-                
-            headers = player_result['headers']
+                self.transformed_data = []
+                return
             
-            # Map headers to indices
+            headers = player_result['headers']
             header_map = {h: i for i, h in enumerate(headers)}
             
-            # Get current season year (2024 for 2024-25 season)
+            # Get current season year
             current_date = datetime.now()
             season_year = current_date.year if current_date.month >= 10 else current_date.year - 1
             
-            # Track duplicates for alerting
+            # Track duplicates
             seen_lookups = {}
             self.players_processed = 0
             self.players_failed = 0
             self.duplicate_count = 0
             
+            file_path = self.opts.get('file_path', 'unknown')
+            
             for player_row in player_result['rowSet']:
                 try:
-                    # Extract fields using header mapping
+                    # Extract fields
                     player_id = player_row[header_map.get('PERSON_ID', 0)]
-                    full_name = f"{player_row[header_map.get('PLAYER_FIRST_NAME', 2)]} {player_row[header_map.get('PLAYER_LAST_NAME', 1)]}"
+                    first_name = player_row[header_map.get('PLAYER_FIRST_NAME', 2)]
+                    last_name = player_row[header_map.get('PLAYER_LAST_NAME', 1)]
+                    full_name = f"{first_name} {last_name}"
                     team_id = player_row[header_map.get('TEAM_ID', 4)]
                     team_abbr = player_row[header_map.get('TEAM_ABBREVIATION', 9)] or ""
-
+                    
                     # Generate player_lookup
                     player_lookup = self._normalize_player_name(full_name)
-
+                    
                     # Check for duplicates
                     if player_lookup in seen_lookups:
                         self.duplicate_count += 1
                         logger.warning(f"Duplicate player_lookup '{player_lookup}': {full_name} ({team_abbr}) vs {seen_lookups[player_lookup]}")
                         
-                        # Notify on first duplicate
                         if self.duplicate_count == 1:
                             try:
                                 notify_warning(
@@ -183,12 +264,12 @@ class NbacPlayerListProcessor(ProcessorBase):
                                 logger.warning(f"Failed to send notification: {notify_ex}")
                     
                     seen_lookups[player_lookup] = f"{full_name} ({team_abbr})"
-
+                    
                     # Determine roster status
                     roster_status_code = player_row[header_map.get('ROSTER_STATUS', 19)]
                     is_active = roster_status_code == 1
                     roster_status = 'active' if is_active else 'inactive'
-
+                    
                     row = {
                         'player_lookup': player_lookup,
                         'player_id': player_id,
@@ -199,12 +280,12 @@ class NbacPlayerListProcessor(ProcessorBase):
                         'position': player_row[header_map.get('POSITION', 11)],
                         'height': player_row[header_map.get('HEIGHT', 12)],
                         'weight': player_row[header_map.get('WEIGHT', 13)],
-                        'birth_date': None,  # Not in this data
-                        'age': None,  # Not in this data
+                        'birth_date': None,
+                        'age': None,
                         'draft_year': player_row[header_map.get('DRAFT_YEAR', 16)],
                         'draft_round': player_row[header_map.get('DRAFT_ROUND', 17)],
                         'draft_pick': player_row[header_map.get('DRAFT_NUMBER', 18)],
-                        'years_pro': None,  # Calculate from FROM_YEAR/TO_YEAR if needed
+                        'years_pro': None,
                         'college': player_row[header_map.get('COLLEGE', 14)],
                         'country': player_row[header_map.get('COUNTRY', 15)],
                         'is_active': is_active,
@@ -222,7 +303,6 @@ class NbacPlayerListProcessor(ProcessorBase):
                     self.players_failed += 1
                     logger.error(f"Error processing player row: {e}")
                     
-                    # Notify on first player processing failure
                     if self.players_failed == 1:
                         try:
                             notify_error(
@@ -238,6 +318,9 @@ class NbacPlayerListProcessor(ProcessorBase):
                         except Exception as notify_ex:
                             logger.warning(f"Failed to send notification: {notify_ex}")
                     continue
+            
+            # Store transformed data
+            self.transformed_data = rows
             
             # Check for high duplicate rate
             total_players = len(player_result['rowSet'])
@@ -259,7 +342,7 @@ class NbacPlayerListProcessor(ProcessorBase):
             # Check for high failure rate
             if total_players > 0:
                 failure_rate = self.players_failed / total_players
-                if failure_rate > 0.05:  # More than 5% failures
+                if failure_rate > 0.05:
                     try:
                         notify_warning(
                             title="High Player List Failure Rate",
@@ -275,19 +358,16 @@ class NbacPlayerListProcessor(ProcessorBase):
                     except Exception as notify_ex:
                         logger.warning(f"Failed to send notification: {notify_ex}")
             
-            logger.info(f"Transformed {len(rows)} players from NBA.com player list (failed: {self.players_failed}, duplicates: {self.duplicate_count})")
-            return rows
+            logger.info(f"Transformed {len(rows)} players (failed: {self.players_failed}, duplicates: {self.duplicate_count})")
             
         except Exception as e:
             logger.error(f"Critical error in transform_data: {e}")
-            
-            # Notify about critical transformation failure
             try:
                 notify_error(
                     title="Player List Transformation Failed",
                     message=f"Critical error transforming player list data: {str(e)}",
                     details={
-                        'file_path': file_path,
+                        'file_path': self.opts.get('file_path'),
                         'error_type': type(e).__name__,
                         'players_processed': self.players_processed,
                         'players_failed': self.players_failed
@@ -296,80 +376,256 @@ class NbacPlayerListProcessor(ProcessorBase):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-            
-            raise e
+            raise
     
-    def load_data(self, rows: List[Dict], **kwargs) -> Dict:
-        """Load data to BigQuery using MERGE UPDATE strategy."""
-        if not rows:
-            logger.warning("No rows to load")
-            return {'rows_processed': 0, 'errors': []}
+    # ================================================================
+    # STEP 4: SAVE DATA (OVERRIDE WITH MERGE STRATEGY)
+    # ================================================================
+    def save_data(self) -> None:
+        """
+        Override to use MERGE instead of APPEND.
         
-        errors = []
+        Uses staging table approach from lessons learned doc.
+        Prevents duplicate accumulation from multiple daily runs.
+        """
+        if not self.transformed_data:
+            logger.warning("No transformed data to save")
+            return
+        
+        rows = self.transformed_data if isinstance(self.transformed_data, list) else [self.transformed_data]
+        
+        if not rows:
+            logger.warning("No rows to save")
+            return
+        
+        logger.info(f"Using MERGE strategy for {len(rows)} rows")
+        
+        # Use staging table MERGE
+        self._merge_via_staging_table(
+            rows=rows,
+            merge_keys=['player_lookup', 'team_abbr', 'season_year']
+        )
+        
+        self.stats["rows_inserted"] = len(rows)
+        logger.info(f"Successfully merged {len(rows)} rows")
+    
+    def _merge_via_staging_table(self, rows: List[Dict], merge_keys: List[str]) -> None:
+        """
+        MERGE records using staging table approach (from lessons learned).
+        
+        Args:
+            rows: List of record dictionaries
+            merge_keys: Keys to match on for MERGE (e.g., ['player_lookup', 'team_abbr', 'season_year'])
+        """
+        if not rows:
+            return
+        
+        project_id = self.bq_client.project
+        table_id = f"{project_id}.{self.dataset_id}.{self.table_name}"
+        staging_table_name = f"{self.table_name}_staging_{self.run_id}"
+        staging_table_id = f"{project_id}.{self.dataset_id}.{staging_table_name}"
         
         try:
-            # Simple insert for now - we can implement MERGE later
-            from google.cloud import bigquery
-            client = bigquery.Client()
-            table = client.get_table('nba_raw.nbac_player_list_current')
+            # 1. Create staging table
+            logger.info(f"Creating staging table: {staging_table_id}")
             
-            errors_result = client.insert_rows_json(table, rows)
-            if errors_result:
-                errors.extend([str(e) for e in errors_result])
-                logger.error(f"Insert errors: {errors_result}")
-                
-                # Notify about insert errors
-                try:
-                    notify_error(
-                        title="BigQuery Insert Errors",
-                        message=f"Encountered {len(errors_result)} errors inserting player list data",
-                        details={
-                            'table': 'nba_raw.nbac_player_list_current',
-                            'rows_attempted': len(rows),
-                            'error_count': len(errors_result),
-                            'errors': str(errors_result)[:500],
-                            'season_year': rows[0].get('season_year') if rows else None
-                        },
-                        processor_name="NBA.com Player List Processor"
-                    )
-                except Exception as notify_ex:
-                    logger.warning(f"Failed to send notification: {notify_ex}")
-            else:
-                logger.info(f"Successfully inserted {len(rows)} rows")
-                
-                # Send success notification
-                try:
-                    notify_info(
-                        title="Player List Processing Complete",
-                        message=f"Successfully processed {len(rows)} players",
-                        details={
-                            'rows_processed': len(rows),
-                            'players_failed': self.players_failed,
-                            'duplicate_count': self.duplicate_count,
-                            'season_year': rows[0].get('season_year') if rows else None
-                        }
-                    )
-                except Exception as notify_ex:
-                    logger.warning(f"Failed to send notification: {notify_ex}")
-                
+            # Get main table schema
+            main_table = self.bq_client.get_table(table_id)
+            
+            # Create staging table with same schema and 30 min expiration
+            staging_table = bigquery.Table(staging_table_id, schema=main_table.schema)
+            staging_table.expires = datetime.utcnow() + timedelta(minutes=30)
+            self.bq_client.create_table(staging_table)
+            
+            # 2. Load data to staging table
+            logger.info(f"Loading {len(rows)} rows to staging table")
+            
+            # Convert types for JSON loading
+            processed_rows = []
+            for row in rows:
+                converted = self._convert_for_json_load(row)
+                processed_rows.append(converted)
+            
+            job_config = bigquery.LoadJobConfig(
+                schema=main_table.schema,
+                write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE
+            )
+            
+            load_job = self.bq_client.load_table_from_json(
+                processed_rows,
+                staging_table_id,
+                job_config=job_config
+            )
+            load_job.result()  # Wait for completion
+            
+            # 3. Execute MERGE from staging to main
+            logger.info("Executing MERGE from staging to main table")
+            
+            # Build ON clause
+            on_conditions = " AND ".join([f"T.{key} = S.{key}" for key in merge_keys])
+            
+            # Build UPDATE SET clause (all fields except merge keys)
+            all_fields = [field.name for field in main_table.schema]
+            update_fields = [f for f in all_fields if f not in merge_keys]
+            update_set = ", ".join([f"{field} = S.{field}" for field in update_fields])
+            
+            # Build INSERT clause
+            insert_fields = ", ".join(all_fields)
+            insert_values = ", ".join([f"S.{field}" for field in all_fields])
+            
+            merge_query = f"""
+            MERGE `{table_id}` T
+            USING `{staging_table_id}` S
+            ON {on_conditions}
+            WHEN MATCHED THEN
+                UPDATE SET {update_set}
+            WHEN NOT MATCHED THEN
+                INSERT ({insert_fields})
+                VALUES ({insert_values})
+            """
+            
+            merge_job = self.bq_client.query(merge_query)
+            merge_job.result()  # Wait for completion
+            
+            logger.info("MERGE completed successfully")
+            
         except Exception as e:
-            errors.append(str(e))
-            logger.error(f"Error loading data: {e}")
+            logger.error(f"MERGE operation failed: {e}")
+            raise
             
-            # Notify about load failure
+        finally:
+            # Cleanup staging table
             try:
-                notify_error(
-                    title="Player List Load Failed",
-                    message=f"Failed to load player list data to BigQuery: {str(e)}",
-                    details={
-                        'table': 'nba_raw.nbac_player_list_current',
-                        'rows_attempted': len(rows),
-                        'error_type': type(e).__name__,
-                        'season_year': rows[0].get('season_year') if rows else None
-                    },
-                    processor_name="NBA.com Player List Processor"
-                )
-            except Exception as notify_ex:
-                logger.warning(f"Failed to send notification: {notify_ex}")
+                self.bq_client.delete_table(staging_table_id, not_found_ok=True)
+                logger.debug(f"Cleaned up staging table: {staging_table_id}")
+            except Exception as cleanup_error:
+                logger.warning(f"Failed to cleanup staging table: {cleanup_error}")
+    
+    def _convert_for_json_load(self, record: Dict) -> Dict:
+        """
+        Convert record types for JSON loading (from lessons learned).
         
-        return {'rows_processed': len(rows), 'errors': errors}
+        Args:
+            record: Dictionary with potentially problematic types
+            
+        Returns:
+            Dictionary with JSON-safe types
+        """
+        import pandas as pd
+        
+        converted = {}
+        
+        timestamp_fields = {'processed_at', 'created_at', 'updated_at'}
+        date_fields = {'last_seen_date', 'birth_date'}
+        
+        for key, value in record.items():
+            # Handle lists first (never call pd.isna on arrays)
+            if isinstance(value, list):
+                converted[key] = value
+                continue
+            
+            # Check for None/NaN on scalar values only
+            if pd.isna(value):
+                converted[key] = None
+                continue
+            
+            # TIMESTAMP fields - convert to ISO strings
+            if key in timestamp_fields:
+                if isinstance(value, (datetime, pd.Timestamp)):
+                    converted[key] = value.isoformat()
+                elif isinstance(value, str):
+                    converted[key] = value
+                else:
+                    converted[key] = None
+            
+            # DATE fields - convert to ISO date strings
+            elif key in date_fields:
+                if isinstance(value, (date, datetime)):
+                    converted[key] = value.isoformat()
+                elif isinstance(value, str):
+                    converted[key] = value
+                else:
+                    converted[key] = None
+            
+            # Other types pass through
+            else:
+                converted[key] = value
+        
+        return converted
+    
+    # ================================================================
+    # HELPER METHODS
+    # ================================================================
+    def _normalize_player_name(self, full_name: str) -> str:
+        """Create normalized player lookup key - preserves suffixes, removes special chars."""
+        import unicodedata
+        
+        if not full_name:
+            return ""
+        
+        # Remove accents/diacritics (ñ → n, é → e, etc)
+        normalized = unicodedata.normalize('NFD', full_name)
+        normalized = ''.join(char for char in normalized if unicodedata.category(char) != 'Mn')
+        
+        # Lowercase
+        normalized = normalized.lower()
+        
+        # Remove punctuation and spaces (but keep suffixes like jr, sr, ii, iii)
+        for char in [' ', "'", '.', '-', ',']:
+            normalized = normalized.replace(char, '')
+        
+        return normalized
+    
+    def get_processor_stats(self) -> Dict:
+        """Return processor statistics."""
+        return {
+            'players_processed': self.players_processed,
+            'players_failed': self.players_failed,
+            'duplicate_count': self.duplicate_count,
+            'rows_transformed': len(self.transformed_data) if isinstance(self.transformed_data, list) else 0
+        }
+
+
+# CLI entry point
+if __name__ == "__main__":
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Process NBA.com player list")
+    parser.add_argument("--bucket", default="nba-scraped-data", help="GCS bucket name")
+    parser.add_argument("--file-path", help="Path to file in bucket")
+    parser.add_argument("--date", help="Date to process (YYYY-MM-DD), discovers latest file automatically")
+    parser.add_argument("--project-id", default="nba-props-platform", help="GCP project ID")
+    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
+    
+    args = parser.parse_args()
+    
+    if args.debug:
+        logging.basicConfig(level=logging.DEBUG)
+    else:
+        logging.basicConfig(level=logging.INFO)
+    
+    # Require either file-path or date
+    if not args.file_path and not args.date:
+        parser.error("Must provide either --file-path or --date")
+    
+    # Build opts dict
+    opts = {
+        'bucket': args.bucket,
+        'project_id': args.project_id
+    }
+    
+    if args.file_path:
+        opts['file_path'] = args.file_path
+    
+    if args.date:
+        opts['date'] = args.date
+    
+    # Run processor
+    processor = NbacPlayerListProcessor()
+    success = processor.run(opts)
+    
+    print(f"\n{'='*60}")
+    print(f"{'✅ SUCCESS' if success else '❌ FAILED'}")
+    print(f"{'='*60}")
+    print(f"Stats: {processor.get_processor_stats()}")
+    print(f"{'='*60}")

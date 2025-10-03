@@ -31,7 +31,7 @@ class DatabaseStrategiesMixin:
     - Enhanced with processor tracking fields using actual schema
     """
     
-    def load_data(self, rows: List[Dict], **kwargs) -> Dict:
+    def save_registry_data(self, rows: List[Dict], **kwargs) -> Dict:
         """Load registry data using configured processing strategy."""
         if not rows:
             logger.info("No records to insert")
@@ -155,7 +155,7 @@ class DatabaseStrategiesMixin:
             # Step 2: Load data to temp table
             logger.info(f"Loading {len(rows)} records to temporary table")
             
-            rows_for_loading = [self._convert_pandas_types_for_json(row) for row in rows]
+            rows_for_loading = [self._convert_pandas_types_for_json(row, for_table_load=True) for row in rows]
             
             load_job = self.bq_client.load_table_from_json(
                 rows_for_loading, 
@@ -262,10 +262,6 @@ class DatabaseStrategiesMixin:
                 WHEN source.last_processor = 'gamebook' THEN source.last_gamebook_update
                 ELSE target.last_gamebook_update
             END,
-            last_roster_update = CASE 
-                WHEN source.last_processor = 'roster' THEN source.last_roster_update
-                ELSE target.last_roster_update
-            END,
             gamebook_update_count = CASE 
                 WHEN source.last_processor = 'gamebook' THEN COALESCE(target.gamebook_update_count, 0) + 1
                 ELSE COALESCE(target.gamebook_update_count, 0)
@@ -284,21 +280,21 @@ class DatabaseStrategiesMixin:
             source_priority, confidence_score, created_by, created_at, processed_at,
             
             -- Processor tracking fields using actual schema names
-            last_processor, last_gamebook_update, last_roster_update,
+            last_processor, last_gamebook_update,
             gamebook_update_count, roster_update_count, update_sequence_number
         )
         VALUES (
             source.universal_player_id, source.player_name, source.player_lookup, source.team_abbr, source.season,
             source.first_game_date, source.last_game_date, source.games_played,
             source.total_appearances, source.inactive_appearances, source.dnp_appearances,
-            source.jersey_number, source.position, source.last_roster_update,
+            source.jersey_number, source.position, 
+            CASE WHEN source.last_processor = 'roster' THEN source.last_roster_update ELSE NULL END,
             source.source_priority, source.confidence_score, source.created_by,
             source.created_at, source.processed_at,
             
             -- Processor tracking fields using actual schema names
             source.last_processor,
             CASE WHEN source.last_processor = 'gamebook' THEN source.last_gamebook_update ELSE NULL END,
-            CASE WHEN source.last_processor = 'roster' THEN source.last_roster_update ELSE NULL END,
             CASE WHEN source.last_processor = 'gamebook' THEN 1 ELSE 0 END,
             CASE WHEN source.last_processor = 'roster' THEN 1 ELSE 0 END,
             source.update_sequence_number

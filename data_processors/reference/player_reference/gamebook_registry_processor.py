@@ -383,7 +383,7 @@ class GamebookRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin,
                 'dnp_appearances': dnp_games,
                 'jersey_number': enhancement.get('jersey_number'),
                 'position': enhancement.get('position'),
-                'last_roster_update': date.today() if enhancement else None,
+                # 'last_roster_update': date.today() if enhancement else None,
                 'source_priority': source_priority,
                 'confidence_score': confidence_score,
                 'created_by': self.processing_run_id,
@@ -554,9 +554,9 @@ class GamebookRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin,
             'team_filter': team
         }
         
-        # Transform and load
+        # Transform and save
         rows = self.transform_data(filter_data)
-        result = self.load_data(rows)
+        result = self.save_registry_data(rows)
 
         result['new_players_discovered'] = list(self.new_players_discovered)
         if self.new_players_discovered:

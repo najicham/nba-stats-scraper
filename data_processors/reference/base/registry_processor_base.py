@@ -271,6 +271,11 @@ class RegistryProcessorBase(ProcessorBase, UpdateSourceTrackingMixin):
                           'last_gamebook_update', 'last_roster_update'}
         
         for key, value in record.items():
+            # Handle lists/arrays FIRST (before pd.isna check)
+            if isinstance(value, list):
+                converted_record[key] = value
+                continue
+            
             # Handle NaN/None values first
             if pd.isna(value):
                 converted_record[key] = None

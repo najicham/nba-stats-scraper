@@ -149,6 +149,10 @@ class GetEspnTeamRoster(ScraperBase, ScraperFlaskMixin):
         season_start = now.year
         self.opts.setdefault("season", f"{season_start}-{(season_start+1)%100:02d}")
 
+        # Add snake_case versions for GCS path template compatibility
+        self.opts["team_abbr"] = self.opts["teamAbbr"]
+        self.opts["team_slug"] = self.opts["teamSlug"]
+
     # ------------------------------------------------------------------ #
     # URL
     # ------------------------------------------------------------------ #

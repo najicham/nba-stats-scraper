@@ -2,12 +2,16 @@
 processors/processor_base.py
 
 Base class for all data processors that handles:
- - Loading data from GCS
+ - Loading data from GCS or databases
  - Validating and transforming data
  - Loading to BigQuery
  - Error handling and logging
  - Multi-channel notifications (Email + Slack)
- - Matches ScraperBase patterns
+ 
+UPDATED: 2025-10-01
+ - Added load_json_from_gcs() helper for raw processors
+ - Fixed duplicate error notifications
+ - Improved documentation
 """
 
 import json
@@ -39,12 +43,25 @@ class ProcessorBase:
     """
     Base class for data processors - matches ScraperBase patterns.
     
+    There are two types of processors:
+    1. Raw Processors: Load JSON from GCS → Transform → Save to BigQuery
+    2. Reference Processors: Load from BigQuery → Transform → Save back to BigQuery
+    
     Lifecycle:
-      1) Load data from GCS
-      2) Validate loaded data
-      3) Transform data for BigQuery
-      4) Load to BigQuery
-      5) Log stats
+      1) load_data() - Load data from source (GCS or BigQuery)
+      2) validate_loaded_data() - Validate the loaded data
+      3) transform_data() - Transform data for target schema
+      4) save_data() - Save to BigQuery
+      5) post_process() - Log stats and cleanup
+    
+    Child classes must implement:
+      - load_data(): Load self.raw_data from source
+      - transform_data(): Transform self.raw_data → self.transformed_data
+      
+    Child classes can override:
+      - validate_loaded_data(): Custom validation logic
+      - save_data(): Custom save logic (MERGE, DELETE, etc.)
+      - get_processor_stats(): Return custom statistics
     """
     
     # Class-level configs (matching ScraperBase pattern)
@@ -105,7 +122,7 @@ class ProcessorBase:
             self.validate_additional_opts()
             self.init_clients()
             
-            # Load from GCS
+            # Load from source
             self.mark_time("load")
             self.load_data()
             load_seconds = self.get_elapsed_seconds("load")
@@ -140,7 +157,7 @@ class ProcessorBase:
             logger.error("ProcessorBase Error: %s", e, exc_info=True)
             sentry_sdk.capture_exception(e)
             
-            # Send notification for processor failure
+            # Send notification for processor failure (only place we notify errors)
             try:
                 notify_error(
                     title=f"Processor Failed: {self.__class__.__name__}",
@@ -209,7 +226,16 @@ class ProcessorBase:
                 raise ValueError(error_msg)
     
     def set_additional_opts(self) -> None:
-        """Add additional options - child classes override and call super()."""
+        """
+        Add additional options computed from required_opts.
+        
+        Child classes override this to set computed options like:
+        - Derive season_year from a date parameter
+        - Set default values
+        - Calculate derived parameters
+        
+        Always call super().set_additional_opts() first.
+        """
         # Add timestamp for tracking
         if "timestamp" not in self.opts:
             self.opts["timestamp"] = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
@@ -243,13 +269,106 @@ class ProcessorBase:
                 logger.warning(f"Failed to send notification: {notify_ex}")
             raise
     
-    # Abstract methods for child classes (matching scraper pattern)
+    # ================================================================
+    # HELPER METHOD FOR RAW PROCESSORS
+    # ================================================================
+    def load_json_from_gcs(self, bucket: str = None, file_path: str = None) -> Dict:
+        """
+        Helper method for raw processors loading JSON from GCS.
+        
+        Reference processors loading from BigQuery don't need this.
+        
+        Args:
+            bucket: GCS bucket name (defaults to self.opts['bucket'])
+            file_path: Path to file in bucket (defaults to self.opts['file_path'])
+            
+        Returns:
+            Dict: Parsed JSON data
+            
+        Raises:
+            ValueError: If bucket or file_path missing
+            FileNotFoundError: If file doesn't exist in GCS
+            
+        Example:
+            def load_data(self) -> None:
+                self.raw_data = self.load_json_from_gcs()
+        """
+        bucket = bucket or self.opts.get('bucket')
+        file_path = file_path or self.opts.get('file_path')
+        
+        if not bucket or not file_path:
+            raise ValueError("Missing 'bucket' or 'file_path' in opts")
+        
+        logger.info(f"Loading JSON from gs://{bucket}/{file_path}")
+        
+        bucket_obj = self.gcs_client.bucket(bucket)
+        blob = bucket_obj.blob(file_path)
+        
+        if not blob.exists():
+            raise FileNotFoundError(f"File not found: gs://{bucket}/{file_path}")
+        
+        json_string = blob.download_as_string()
+        data = json.loads(json_string)
+        
+        logger.info(f"Successfully loaded {len(json_string)} bytes from GCS")
+        return data
+    
+    # ================================================================
+    # ABSTRACT METHODS - CHILD CLASSES MUST IMPLEMENT
+    # ================================================================
     def load_data(self) -> None:
-        """Load data from GCS - child classes must implement."""
+        """
+        Load data from source into self.raw_data.
+        
+        Raw processors: Load from GCS using load_json_from_gcs()
+        Reference processors: Load from BigQuery using SQL queries
+        
+        Must set self.raw_data with the loaded data.
+        
+        Example (Raw Processor):
+            def load_data(self) -> None:
+                self.raw_data = self.load_json_from_gcs()
+                
+        Example (Reference Processor):
+            def load_data(self) -> None:
+                query = "SELECT * FROM `dataset.table` WHERE date = @date"
+                self.raw_data = list(self.bq_client.query(query).result())
+        """
         raise NotImplementedError("Child classes must implement load_data()")
     
+    def transform_data(self) -> None:
+        """
+        Transform self.raw_data into self.transformed_data.
+        
+        Must set self.transformed_data as either:
+        - List[Dict]: Multiple rows for BigQuery
+        - Dict: Single row for BigQuery
+        
+        Example:
+            def transform_data(self) -> None:
+                rows = []
+                for item in self.raw_data['results']:
+                    rows.append({
+                        'id': item['id'],
+                        'name': item['name'],
+                        'processed_at': datetime.utcnow().isoformat()
+                    })
+                self.transformed_data = rows
+        """
+        raise NotImplementedError("Child classes must implement transform_data()")
+    
+    # ================================================================
+    # OPTIONAL OVERRIDE METHODS
+    # ================================================================
     def validate_loaded_data(self) -> None:
-        """Validate loaded data - child classes override."""
+        """
+        Validate self.raw_data after loading.
+        
+        Override to add custom validation logic.
+        Default implementation just checks data exists.
+        
+        Raise ValueError or other exceptions if validation fails.
+        """
         if not self.raw_data:
             try:
                 notify_warning(
@@ -266,12 +385,36 @@ class ProcessorBase:
                 logger.warning(f"Failed to send notification: {notify_ex}")
             raise ValueError("No data loaded")
     
-    def transform_data(self) -> None:
-        """Transform data for BigQuery - child classes must implement."""
-        raise NotImplementedError("Child classes must implement transform_data()")
-    
     def save_data(self) -> None:
-        """Save to BigQuery - base implementation provided with notifications."""
+        """
+        Save self.transformed_data to BigQuery.
+        
+        Default implementation uses insert_rows_json (append).
+        
+        Override for custom save strategies:
+        - MERGE operations (upserts)
+        - DELETE operations
+        - Query-based transformations
+        
+        If overriding, set self.stats["rows_inserted"] for tracking.
+        
+        Example (Custom MERGE):
+            def save_data(self) -> None:
+                query = '''
+                    MERGE `dataset.table` T
+                    USING UNNEST(@rows) S
+                    ON T.id = S.id
+                    WHEN MATCHED THEN UPDATE SET ...
+                    WHEN NOT MATCHED THEN INSERT ...
+                '''
+                job_config = bigquery.QueryJobConfig(
+                    query_parameters=[
+                        bigquery.ArrayQueryParameter("rows", "STRUCT", self.transformed_data)
+                    ]
+                )
+                self.bq_client.query(query, job_config=job_config).result()
+                self.stats["rows_inserted"] = len(self.transformed_data)
+        """
         if not self.transformed_data:
             logger.warning("No transformed data to save")
             try:
@@ -299,86 +442,21 @@ class ProcessorBase:
             rows = [self.transformed_data]
         else:
             error_msg = f"Unexpected data type: {type(self.transformed_data)}"
-            try:
-                notify_error(
-                    title=f"Processor Data Type Error: {self.__class__.__name__}",
-                    message=error_msg,
-                    details={
-                        'processor': self.__class__.__name__,
-                        'run_id': self.run_id,
-                        'table': self.table_name,
-                        'data_type': str(type(self.transformed_data)),
-                        'expected_types': ['list', 'dict']
-                    },
-                    processor_name=self.__class__.__name__
-                )
-            except Exception as notify_ex:
-                logger.warning(f"Failed to send notification: {notify_ex}")
             raise ValueError(error_msg)
         
         if not rows:
             logger.warning("No rows to insert")
-            try:
-                notify_warning(
-                    title=f"Processor Empty Dataset: {self.__class__.__name__}",
-                    message="No rows to insert after transformation",
-                    details={
-                        'processor': self.__class__.__name__,
-                        'run_id': self.run_id,
-                        'table': self.table_name,
-                        'raw_data_size': len(str(self.raw_data)) if self.raw_data else 0
-                    }
-                )
-            except Exception as notify_ex:
-                logger.warning(f"Failed to send notification: {notify_ex}")
             return
             
         # Insert to BigQuery
         logger.info(f"Inserting {len(rows)} rows to {table_id}")
         
-        try:
-            errors = self.bq_client.insert_rows_json(table_id, rows)
-            
-            if errors:
-                error_msg = f"BigQuery insert errors: {errors}"
-                try:
-                    notify_error(
-                        title=f"Processor BigQuery Insert Failed: {self.__class__.__name__}",
-                        message=f"Failed to insert {len(rows)} rows",
-                        details={
-                            'processor': self.__class__.__name__,
-                            'run_id': self.run_id,
-                            'table': table_id,
-                            'rows_attempted': len(rows),
-                            'errors': errors[:5] if len(errors) > 5 else errors,  # Limit error details
-                            'error_count': len(errors)
-                        },
-                        processor_name=self.__class__.__name__
-                    )
-                except Exception as notify_ex:
-                    logger.warning(f"Failed to send notification: {notify_ex}")
-                raise Exception(error_msg)
-                
-        except Exception as e:
-            # Catch any other BigQuery errors (network, permissions, etc.)
-            if "BigQuery insert errors:" not in str(e):
-                try:
-                    notify_error(
-                        title=f"Processor BigQuery Error: {self.__class__.__name__}",
-                        message=f"BigQuery operation failed: {str(e)}",
-                        details={
-                            'processor': self.__class__.__name__,
-                            'run_id': self.run_id,
-                            'table': table_id,
-                            'rows_attempted': len(rows),
-                            'error_type': type(e).__name__,
-                            'error': str(e)
-                        },
-                        processor_name=self.__class__.__name__
-                    )
-                except Exception as notify_ex:
-                    logger.warning(f"Failed to send notification: {notify_ex}")
-            raise
+        # Don't notify here - let run() catch exceptions and notify
+        errors = self.bq_client.insert_rows_json(table_id, rows)
+        
+        if errors:
+            # Just raise - run() will catch and notify
+            raise Exception(f"BigQuery insert errors: {errors}")
         
         self.stats["rows_inserted"] = len(rows)
         logger.info(f"Successfully inserted {len(rows)} rows")
@@ -400,10 +478,27 @@ class ProcessorBase:
         logger.info("PROCESSOR_STATS %s", json.dumps(summary))
     
     def get_processor_stats(self) -> Dict:
-        """Get processor stats - child classes override."""
+        """
+        Get processor-specific statistics.
+        
+        Override to return custom stats like:
+        - Number of records processed
+        - Number of errors
+        - Custom metrics
+        
+        Example:
+            def get_processor_stats(self) -> Dict:
+                return {
+                    'players_processed': self.players_processed,
+                    'players_failed': self.players_failed,
+                    'rows_transformed': len(self.transformed_data)
+                }
+        """
         return {}
     
-    # Logging methods (matching scraper_base exactly)
+    # ================================================================
+    # LOGGING METHODS (matching scraper_base pattern)
+    # ================================================================
     def step_info(self, step_name: str, message: str, extra: Optional[Dict] = None) -> None:
         """Log structured step - matches scraper pattern."""
         if extra is None:
@@ -414,7 +509,9 @@ class ProcessorBase:
         })
         logger.info(f"PROCESSOR_STEP {message}", extra=extra)
     
-    # Time tracking (matching scraper_base exactly)
+    # ================================================================
+    # TIME TRACKING (matching scraper_base exactly)
+    # ================================================================
     def mark_time(self, label: str) -> str:
         """Mark time - matches scraper implementation."""
         now = datetime.now()
@@ -438,7 +535,9 @@ class ProcessorBase:
         now_time = datetime.now()
         return (now_time - start_time).total_seconds()
     
-    # Error handling (matching scraper pattern)
+    # ================================================================
+    # ERROR HANDLING (matching scraper pattern)
+    # ================================================================
     def report_error(self, exc: Exception) -> None:
         """Report error to Sentry."""
         sentry_sdk.capture_exception(exc)
@@ -458,3 +557,4 @@ class ProcessorBase:
             logger.info(f"Saved debug data to {debug_file}")
         except Exception as save_exc:
             logger.warning(f"Failed to save debug data: {save_exc}")
+            

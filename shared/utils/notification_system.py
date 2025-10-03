@@ -318,6 +318,11 @@ class NotificationRouter:
             if level in [NotificationLevel.CRITICAL, NotificationLevel.ERROR]:
                 return self._email_handler.send_error_alert(message, details, processor_name)
             
+            elif level == NotificationLevel.INFO:
+                # INFO: log it, don't send critical error emails
+                logger.info(f"INFO (from notifier): {title} - {message}")
+                return True
+
             elif notification_type == NotificationType.UNRESOLVED_PLAYERS and details:
                 count = details.get('count', 0)
                 threshold = details.get('threshold', 50)
