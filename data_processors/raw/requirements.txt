@@ -2,7 +2,6 @@
 # Processor-specific dependencies (not in shared)
 
 # Data processing
-pandas==2.1.3
 numpy==1.24.4
 
 # Database (if needed for processors)
@@ -21,4 +20,3 @@ db-dtypes==1.2.0
 
 fuzzywuzzy>=0.18.0
 python-Levenshtein>=0.21.0
-google-cloud-pubsub>=2.31.1

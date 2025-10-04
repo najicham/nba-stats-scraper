@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS `nba_raw.nbac_player_list_current` (
   season_year INT64,
   
   -- Tracking
+  source_file_date DATE,             -- Date from source file path (when roster was scraped)
   first_seen_date DATE,
   last_seen_date DATE,
   source_file_path STRING,

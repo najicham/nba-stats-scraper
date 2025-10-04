@@ -1,0 +1,34 @@
+################################################################################
+# File: monitoring/processing_gap_detection/.gcloudignore
+################################################################################
+# Exclude files from Cloud Run deployment
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Testing
+.pytest_cache/
+tests/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Documentation
+README.md
+docs/
+
+# Config that shouldn't be deployed
+.env
+.env.*
+!requirements.txt

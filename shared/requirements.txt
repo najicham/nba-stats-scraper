@@ -8,6 +8,9 @@ googleapis-common-protos==1.70.0
 google-crc32c==1.7.1
 google-resumable-media==2.7.2
 
+pandas==2.3.0
+google-cloud-pubsub>=2.31.1
+
 # Core web framework (stable, shared across services)
 flask==2.3.3
 gunicorn==21.2.0

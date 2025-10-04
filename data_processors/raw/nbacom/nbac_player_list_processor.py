@@ -9,7 +9,7 @@ Uses MERGE strategy to prevent duplicate accumulation from multiple daily runs.
 import json
 import logging
 import os
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from typing import Dict, List, Optional
 from google.cloud import bigquery
 from google.cloud import storage
@@ -39,28 +39,12 @@ class NbacPlayerListProcessor(ProcessorBase):
         self.duplicate_count = 0
     
     def set_additional_opts(self) -> None:
-        """
-        Discover file if --date provided instead of --file-path.
-        Enables manual reprocessing by date without knowing exact filename.
-        """
+        """Validate that we have either file_path or date."""
         super().set_additional_opts()
         
-        # If date provided but no file_path, discover latest file
-        if self.opts.get('date') and not self.opts.get('file_path'):
-            date_str = self.opts['date']
-            bucket = self.opts.get('bucket', 'nba-scraped-data')
-            
-            logger.info(f"No file_path provided, discovering latest file for {date_str}")
-            
-            # Find latest file for date
-            prefix = f"nba-com/player-list/{date_str}/"
-            file_path = self._find_latest_file(bucket, prefix)
-            
-            if not file_path:
-                raise FileNotFoundError(f"No files found in gs://{bucket}/{prefix}")
-            
-            self.opts['file_path'] = file_path
-            logger.info(f"Discovered file: {file_path}")
+        # Validate inputs - file discovery happens later in load_data()
+        if not self.opts.get('file_path') and not self.opts.get('date'):
+            raise ValueError("Must provide either 'file_path' or 'date'")
     
     def _find_latest_file(self, bucket_name: str, prefix: str) -> Optional[str]:
         """
@@ -106,6 +90,21 @@ class NbacPlayerListProcessor(ProcessorBase):
         """Load JSON data from GCS bucket (implements ProcessorBase interface)."""
         bucket_name = self.opts.get('bucket')
         file_path = self.opts.get('file_path')
+        
+        # If date provided but no file_path, discover now (after gcs_client initialized)
+        if not file_path and self.opts.get('date'):
+            date_str = self.opts['date']
+            logger.info(f"No file_path provided, discovering latest file for {date_str}")
+            
+            prefix = f"nba-com/player-list/{date_str}/"
+            file_path = self._find_latest_file(bucket_name, prefix)
+            
+            if not file_path:
+                raise FileNotFoundError(f"No files found in gs://{bucket_name}/{prefix}")
+            
+            # Store discovered path to opts so transform_data can access it
+            self.opts['file_path'] = file_path
+            logger.info(f"Discovered file: {file_path}")
         
         if not bucket_name or not file_path:
             raise ValueError("Missing 'bucket' or 'file_path' in opts")
@@ -230,6 +229,19 @@ class NbacPlayerListProcessor(ProcessorBase):
             
             file_path = self.opts.get('file_path', 'unknown')
             
+            # Extract source_file_date from file path
+            # Path format: nba-com/player-list/2025-10-01/20251001_220717.json
+            source_file_date = None
+            try:
+                path_parts = file_path.split('/')
+                if len(path_parts) >= 3:
+                    date_str = path_parts[2]  # "2025-10-01"
+                    source_file_date = date.fromisoformat(date_str)
+                    logger.info(f"Extracted source_file_date: {source_file_date}")
+            except (IndexError, ValueError) as e:
+                logger.warning(f"Could not extract source_file_date from path '{file_path}': {e}")
+                source_file_date = date.today()  # Fallback to today
+            
             for player_row in player_result['rowSet']:
                 try:
                     # Extract fields
@@ -291,6 +303,7 @@ class NbacPlayerListProcessor(ProcessorBase):
                         'is_active': is_active,
                         'roster_status': roster_status,
                         'season_year': season_year,
+                        'source_file_date': source_file_date.isoformat() if source_file_date else None,
                         'last_seen_date': date.today().isoformat(),
                         'source_file_path': file_path,
                         'processed_at': datetime.utcnow().isoformat()

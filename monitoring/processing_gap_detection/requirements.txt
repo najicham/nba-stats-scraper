@@ -1,0 +1,2 @@
+# Include all shared dependencies
+-r ../../shared/requirements.txt

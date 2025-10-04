@@ -26,7 +26,6 @@ slack_sdk==3.35.0
 flask==2.3.3
 beautifulsoup4>=4.12.0
 lxml>=4.9.0
-pandas>=2.0.0
 numpy>=1.24.0
 pydantic>=2.11.0
 httpx>=0.24.0

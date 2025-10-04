@@ -32,7 +32,7 @@ node_modules/
 # Local development
 docker-compose.dev.yml
 infra/
-monitoring/
+# monitoring/
 tools/
 workflows/
 
