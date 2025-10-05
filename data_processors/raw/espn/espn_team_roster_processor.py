@@ -236,7 +236,7 @@ class EspnTeamRosterProcessor(ProcessorBase):
             
             # Create staging table with same schema and 30 min expiration
             staging_table = bigquery.Table(staging_table_id, schema=main_table.schema)
-            staging_table.expires = datetime.utcnow() + timedelta(minutes=30)
+            staging_table.expires = datetime.now(timezone.utc) + timedelta(minutes=30)
             self.bq_client.create_table(staging_table)
             
             # 2. Load data to staging table
@@ -260,34 +260,36 @@ class EspnTeamRosterProcessor(ProcessorBase):
             )
             load_job.result()  # Wait for completion
             
-            # 3. Execute MERGE from staging to main
-            logger.debug("Executing MERGE from staging to main table")
+            # 3. Delete existing records, then insert from staging
+            logger.debug("Deleting existing records for partition")
             
-            # Build ON clause
-            on_conditions = " AND ".join([f"T.{key} = S.{key}" for key in merge_keys])
+            # Extract values for deletion
+            roster_date = rows[0]['roster_date']
+            scrape_hour = rows[0]['scrape_hour']
+            team_abbr = rows[0]['team_abbr']
             
-            # Build UPDATE SET clause (all fields except merge keys)
-            all_fields = [field.name for field in main_table.schema]
-            update_fields = [f for f in all_fields if f not in merge_keys]
-            update_set = ", ".join([f"{field} = S.{field}" for field in update_fields])
-            
-            # Build INSERT clause
-            insert_fields = ", ".join(all_fields)
-            insert_values = ", ".join([f"S.{field}" for field in all_fields])
-            
-            merge_query = f"""
-            MERGE `{table_id}` T
-            USING `{staging_table_id}` S
-            ON {on_conditions}
-            WHEN MATCHED THEN
-                UPDATE SET {update_set}
-            WHEN NOT MATCHED THEN
-                INSERT ({insert_fields})
-                VALUES ({insert_values})
+            # Delete existing records (partition filter included)
+            delete_query = f"""
+            DELETE FROM `{table_id}`
+            WHERE roster_date = '{roster_date}'
+              AND scrape_hour = {scrape_hour}
+              AND team_abbr = '{team_abbr}'
             """
             
-            merge_job = self.bq_client.query(merge_query)
-            merge_job.result()  # Wait for completion
+            delete_job = self.bq_client.query(delete_query)
+            delete_job.result()  # Wait for completion
+            logger.debug(f"Deleted existing records for {team_abbr} on {roster_date}")
+            
+            # Insert from staging table
+            logger.debug("Inserting new records from staging")
+            
+            insert_query = f"""
+            INSERT INTO `{table_id}`
+            SELECT * FROM `{staging_table_id}`
+            """
+            
+            insert_job = self.bq_client.query(insert_query)
+            insert_job.result()  # Wait for completion
             
             logger.info(f"MERGE completed for {rows[0].get('team_abbr')}")
             

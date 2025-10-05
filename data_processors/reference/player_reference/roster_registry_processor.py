@@ -2,15 +2,15 @@
 """
 File: data_processors/reference/player_reference/roster_registry_processor.py
 
-Roster Registry Processor - Simplified Implementation
+Roster Registry Processor - With Complete Data Protection
 
 Maintains the NBA players registry from roster assignment data.
-Simplified version with conflict prevention removed and bulk universal ID resolution.
-
-Usage Scenarios:
-1. Daily roster updates: Triggered after roster scrapers complete
-2. Season start processing: Bulk roster processing for new season
-3. Trade/transaction handling: Update registry when players change teams
+Enhanced with:
+- Temporal ordering protection
+- Season protection (current season only)
+- Staleness detection
+- Activity date tracking
+- Team assignment authority rules
 """
 
 import logging
@@ -19,7 +19,7 @@ from typing import Dict, List, Set, Tuple
 import pandas as pd
 from google.cloud import bigquery
 
-from data_processors.reference.base.registry_processor_base import RegistryProcessorBase
+from data_processors.reference.base.registry_processor_base import RegistryProcessorBase, TemporalOrderingError
 from data_processors.reference.base.name_change_detection_mixin import NameChangeDetectionMixin
 from data_processors.reference.base.database_strategies import DatabaseStrategiesMixin
 from shared.utils.notification_system import (
@@ -31,26 +31,14 @@ from shared.utils.notification_system import (
 logger = logging.getLogger(__name__)
 
 # Team abbreviation normalization
-# Basketball Reference uses legacy codes that need to be mapped to official NBA codes
 TEAM_ABBR_NORMALIZATION = {
-    'BRK': 'BKN',  # Brooklyn Nets
-    'CHO': 'CHA',  # Charlotte Hornets  
-    'PHO': 'PHX',  # Phoenix Suns
+    'BRK': 'BKN',
+    'CHO': 'CHA',
+    'PHO': 'PHX',
 }
 
 def normalize_team_abbr(team_abbr: str) -> str:
-    """
-    Normalize team abbreviation to official NBA code.
-    
-    Basketball Reference uses some legacy team codes that differ from
-    official NBA abbreviations. This function maps them to the standard codes.
-    
-    Args:
-        team_abbr: Team abbreviation (may be legacy code)
-        
-    Returns:
-        Normalized NBA team abbreviation
-    """
+    """Normalize team abbreviation to official NBA code."""
     normalized = TEAM_ABBR_NORMALIZATION.get(team_abbr, team_abbr)
     if normalized != team_abbr:
         logger.debug(f"Normalized team code: {team_abbr} → {normalized}")
@@ -80,20 +68,12 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
         logger.info("Initialized Roster Registry Processor")
     
     def get_current_roster_data(self, season_year: int = None) -> Dict[str, Set[str]]:
-        """
-        Get current roster players from all roster sources.
-        
-        Args:
-            season_year: NBA season starting year (e.g., 2024 for 2024-25 season)
-        
-        Returns:
-            Dict mapping source names to sets of player_lookup values
-        """
+        """Get current roster players from all roster sources."""
         if not season_year:
             current_month = date.today().month
-            if current_month >= 10:  # Oct-Dec = new season starting
+            if current_month >= 10:
                 season_year = date.today().year
-            else:  # Jan-Sep = season ending
+            else:
                 season_year = date.today().year - 1
         
         logger.info(f"Getting current roster data for {season_year}-{season_year+1} season")
@@ -104,12 +84,10 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
             'basketball_reference': self._get_basketball_reference_players(season_year)
         }
         
-        # Log summary
         total_players = sum(len(players) for players in roster_sources.values())
         for source, players in roster_sources.items():
             logger.info(f"{source}: {len(players)} players")
         
-        # Check for concerning data issues
         if total_players == 0:
             try:
                 notify_warning(
@@ -123,7 +101,7 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
                 )
             except Exception as e:
                 logger.warning(f"Failed to send notification: {e}")
-        elif total_players < 400:  # NBA typically has 450+ players
+        elif total_players < 400:
             try:
                 notify_warning(
                     title="Low Roster Data Count",
@@ -145,7 +123,7 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
         query = """
         SELECT DISTINCT player_lookup, team_abbr, jersey_number, position
         FROM `{project}.nba_raw.espn_team_rosters`
-        WHERE roster_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)  -- Partition filter
+        WHERE roster_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
         AND roster_date = (
             SELECT MAX(roster_date) 
             FROM `{project}.nba_raw.espn_team_rosters`
@@ -284,31 +262,40 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
                 logger.warning(f"Failed to send notification: {notify_ex}")
             return set()
     
-    def aggregate_roster_assignments(self, roster_data: Dict[str, Set[str]], season_year: int) -> List[Dict]:
+    def aggregate_roster_assignments(self, roster_data: Dict[str, Set[str]], season_year: int, 
+                                    data_date: date, allow_backfill: bool = False) -> Tuple[List[Dict], Dict]:
         """
-        Aggregate roster data into registry records with NBA.com validation.
-        Now validates BR/ESPN players against NBA.com canonical (player, team) combinations.
+        Aggregate roster data into registry records with NBA.com validation and staleness checking.
+        Now includes freshness and authority checks.
         
         Args:
             roster_data: Dict of roster sources and their players
             season_year: NBA season starting year
-            
+            data_date: Date this roster data represents
+            allow_backfill: If True, skip freshness checks for historical data
+        
         Returns:
-            List of registry record dictionaries
+            Tuple of (registry records, validation info dict)
         """
+        import time
+        start_time = time.time()
         logger.info("Aggregating roster assignments into registry records...")
         
         try:
-            # Build NBA.com canonical set upfront (now returns player-team tuples)
-            nba_canonical_set = self._get_nba_canonical_set(season_year)
+            # Build NBA.com canonical set with freshness check
+            canonical_start = time.time()
+            nba_canonical_set, validation_info = self._get_nba_canonical_set(season_year, data_date)
+            canonical_duration = time.time() - canonical_start
+            logger.info(f"Built NBA.com canonical set in {canonical_duration:.2f}s")
+            
             fallback_mode = len(nba_canonical_set) == 0
             
-            if fallback_mode:
-                logger.warning("⚠️ Running in NO VALIDATION mode - no canonical set available")
+            if validation_info['validation_mode'] == 'none':
+                logger.warning(f"⚠️ Running in NO VALIDATION mode - {validation_info.get('validation_skipped_reason')}")
             else:
                 logger.info(f"Using {len(nba_canonical_set)} NBA.com player-team combinations as canonical set")
             
-            # Source mapping for priority
+            # Source mapping
             source_map = {
                 'espn_rosters': 'roster_espn',
                 'basketball_reference': 'roster_br',
@@ -317,46 +304,35 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
             
             # Combine all roster sources and collect detailed data
             all_roster_players = set()
-            player_team_details = {}  # (player_lookup, team_abbr) -> {sources, enhancement_data, source_priority}
-            unvalidated_players = []  # BR/ESPN players not in canonical set
+            player_team_details = {}
+            unvalidated_players = []
             
             for source, players in roster_data.items():
                 all_roster_players.update(players)
-                
-                # Get detailed data for each source
                 detailed_data = self._get_detailed_roster_data(source, season_year)
                 
                 for player_lookup, details in detailed_data.items():
                     team_abbr = details['team_abbr']
                     key = (player_lookup, team_abbr)
                     
-                    # Validation logic - STRICTER: check player-team combination
+                    # Validation logic
                     if source == 'nba_player_list':
-                        # NBA.com always goes through with nba_com priority
                         should_create_record = True
                         actual_source_priority = 'roster_nba_com'
-                        
                     elif source in ['espn_rosters', 'basketball_reference']:
-                        if fallback_mode:
-                            # No canonical set - allow through with original source
+                        if validation_info['validation_mode'] == 'none':
                             should_create_record = True
                             actual_source_priority = source_map.get(source, 'roster_unknown')
-                            logger.debug(f"⚠️ {source}: {player_lookup} on {team_abbr} accepted (fallback mode - no validation)")
-                            
-                        elif key in nba_canonical_set:  # CHANGED: Check (player, team) tuple
-                            # Validated by NBA.com - use NBA.com as source priority
+                            logger.debug(f"⚠️ {source}: {player_lookup} on {team_abbr} accepted (no validation mode)")
+                        elif key in nba_canonical_set:
                             should_create_record = True
                             actual_source_priority = 'roster_nba_com'
-                            logger.debug(f"✓ {source}: {player_lookup} on {team_abbr} validated against NBA.com canonical set")
-                            
+                            logger.debug(f"✓ {source}: {player_lookup} on {team_abbr} validated")
                         elif self._check_player_aliases(player_lookup, team_abbr):
-                            # Validated via alias - use NBA.com as source priority
                             should_create_record = True
                             actual_source_priority = 'roster_nba_com'
                             logger.debug(f"✓ {source}: {player_lookup} on {team_abbr} validated via alias")
-                            
                         else:
-                            # Not validated - create unresolved, don't create registry record yet
                             should_create_record = False
                             unvalidated_players.append({
                                 'source': source,
@@ -364,13 +340,11 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
                                 'team_abbr': team_abbr,
                                 'display_name': details.get('player_full_name', player_lookup.title())
                             })
-                            logger.debug(f"✗ {source}: {player_lookup} on {team_abbr} not in canonical set - flagging for review")
+                            logger.debug(f"✗ {source}: {player_lookup} on {team_abbr} not in canonical set")
                     else:
-                        # Unknown source
                         should_create_record = True
                         actual_source_priority = source_map.get(source, 'roster_unknown')
                     
-                    # Only add to player_team_details if validated
                     if should_create_record:
                         if key not in player_team_details:
                             player_team_details[key] = {
@@ -381,7 +355,6 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
                         
                         player_team_details[key]['sources'].append(source)
                         
-                        # Merge enhancement data (jersey_number, position, etc.)
                         if 'jersey_number' in details and details['jersey_number']:
                             player_team_details[key]['enhancement_data']['jersey_number'] = details['jersey_number']
                         if 'position' in details and details['position']:
@@ -389,12 +362,12 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
                         if 'player_full_name' in details and details['player_full_name']:
                             player_team_details[key]['enhancement_data']['player_full_name'] = details['player_full_name']
             
-            # Create unresolved records for unvalidated players
+            # Create unresolved records
             if unvalidated_players:
                 logger.warning(f"Found {len(unvalidated_players)} player-team combinations not in NBA.com canonical set")
                 self._create_unvalidated_records(unvalidated_players, season_year)
             
-            # BULK RESOLUTION: Get all universal IDs in one operation
+            # BULK RESOLUTION
             unique_player_lookups = list({lookup for (lookup, team) in player_team_details.keys()})
             logger.info(f"Performing bulk universal ID resolution for {len(unique_player_lookups)} validated roster players")
             
@@ -403,7 +376,7 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
             registry_records = []
             season_str = self.calculate_season_string(season_year)
             
-            # Auto-detect and create suffix aliases (only for validated players)
+            # Auto-create suffix aliases
             try:
                 aliases_created = self._auto_create_suffix_aliases(player_team_details)
                 if aliases_created > 0:
@@ -413,18 +386,109 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
                 
             logger.info(f"Creating records for {len(player_team_details)} validated player-team combinations")
             
-            # Iterate over validated players
+            # ===================================================================
+            # OPTIMIZATION: Batch fetch all existing records for this season
+            # ===================================================================
+            batch_fetch_start = time.time()
+            existing_records_query = f"""
+            SELECT 
+                player_lookup,
+                team_abbr,
+                games_played,
+                last_processor,
+                last_gamebook_activity_date,
+                last_roster_activity_date,
+                jersey_number,
+                position,
+                source_priority,
+                processed_at
+            FROM `{self.project_id}.{self.table_name}`
+            WHERE season = @season
+            """
+            
+            job_config = bigquery.QueryJobConfig(query_parameters=[
+                bigquery.ScalarQueryParameter("season", "STRING", season_str)
+            ])
+            
+            try:
+                existing_records_df = self.bq_client.query(existing_records_query, job_config=job_config).to_dataframe()
+                
+                # Build lookup dictionary for O(1) access
+                existing_records_lookup = {}
+                for _, row in existing_records_df.iterrows():
+                    key = (row['player_lookup'], row['team_abbr'])
+                    # Convert to dict and handle NaN values
+                    record_dict = {}
+                    for col, value in row.items():
+                        if pd.isna(value):
+                            record_dict[col] = None
+                        elif isinstance(value, pd.Timestamp):
+                            record_dict[col] = value.to_pydatetime()
+                        elif hasattr(value, 'date'):
+                            record_dict[col] = value.date()
+                        else:
+                            record_dict[col] = value
+                    existing_records_lookup[key] = record_dict
+                
+                batch_fetch_duration = time.time() - batch_fetch_start
+                logger.info(f"Batch fetched {len(existing_records_lookup)} existing records in {batch_fetch_duration:.2f}s")
+                
+            except Exception as e:
+                logger.warning(f"Error batch fetching existing records: {e}, falling back to individual queries")
+                existing_records_lookup = None
+            
+            # Track skipped records for reporting
+            skipped_count = 0
+            record_creation_start = time.time()
+            records_checked = 0
+            
+            # Create registry records with PROTECTION CHECKS
             for (player_lookup, team_abbr), details in player_team_details.items():
+                records_checked += 1
+                
+                # Log progress every 100 records
+                if records_checked % 100 == 0:
+                    elapsed = time.time() - record_creation_start
+                    logger.info(f"Progress: {records_checked}/{len(player_team_details)} records checked in {elapsed:.1f}s")
+                
                 sources = details.get('sources', [])
                 enhancement = details.get('enhancement_data', {})
                 source_priority = details.get('source_priority', 'roster_unknown')
                 
-                # Determine confidence with dynamic logic
+                # ===================================================================
+                # PROTECTION 1: Get existing record (optimized batch lookup)
+                # ===================================================================
+                if existing_records_lookup is not None:
+                    # Fast O(1) lookup from batch-fetched data
+                    existing_record = existing_records_lookup.get((player_lookup, team_abbr))
+                else:
+                    # Fallback to individual query if batch fetch failed
+                    existing_record = self.get_existing_record(player_lookup, team_abbr, season_str)
+                
+                # PROTECTION 2: Freshness check (skip when backfilling historical data)
+                if not allow_backfill:
+                    should_update, freshness_reason = self.should_update_record(
+                        existing_record, data_date, self.processor_type
+                    )
+                    
+                    if not should_update:
+                        logger.debug(f"Skipping {player_lookup} on {team_abbr}: {freshness_reason}")
+                        skipped_count += 1
+                        continue  # Skip this record - data is stale
+                elif existing_record and allow_backfill:
+                    logger.debug(f"Backfill mode: allowing update for {player_lookup} on {team_abbr} (skipping freshness check)")
+                
+                # PROTECTION 3: Team authority check
+                has_team_authority, authority_reason = self.check_team_authority(
+                    existing_record, self.processor_type
+                )
+                
+                # Determine confidence
                 _, confidence_score = self._determine_roster_source_priority_and_confidence(
                     sources, enhancement, season_year
                 )
                 
-                # Get universal player ID from bulk resolution
+                # Get universal player ID
                 universal_id = universal_id_mappings.get(player_lookup, f"{player_lookup}_001")
                 
                 # Create base registry record
@@ -432,10 +496,9 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
                     'universal_player_id': universal_id,
                     'player_name': enhancement.get('player_full_name', player_lookup.title()),
                     'player_lookup': player_lookup,
-                    'team_abbr': team_abbr,
                     'season': season_str,
                     
-                    # No game data yet (roster processor runs pre-game)
+                    # No game data yet
                     'first_game_date': None,
                     'last_game_date': None,
                     'games_played': 0,
@@ -448,7 +511,7 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
                     'position': enhancement.get('position'),
                     'last_roster_update': datetime.now(),
                     
-                    # Source metadata - use determined priority (all validated = nba_com)
+                    # Source metadata
                     'source_priority': source_priority,
                     'confidence_score': confidence_score,
                     'created_by': self.processing_run_id,
@@ -456,25 +519,45 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
                     'processed_at': datetime.now()
                 }
                 
-                # Enhance record with source tracking
+                # PROTECTION 4: Only set team_abbr if we have authority
+                if has_team_authority:
+                    record['team_abbr'] = team_abbr
+                    logger.debug(f"Setting team for {player_lookup}: {authority_reason}")
+                else:
+                    # Don't include team_abbr in record - MERGE will preserve existing value
+                    # But we still need it for other operations, so log it
+                    logger.debug(f"Skipping team update for {player_lookup}: {authority_reason}")
+                    # Still need to include team_abbr for new records or we'll fail
+                    # The check is: if existing_record has games > 0, don't update team
+                    # But if it's a new record, we must set team
+                    if existing_record is None:
+                        record['team_abbr'] = team_abbr
+                
+                # PROTECTION 5: Update activity date
+                record = self.update_activity_date(record, self.processor_type, data_date)
+                
+                # Enhance with source tracking
                 enhanced_record = self.enhance_record_with_source_tracking(record, self.processor_type)
                 
-                # Convert types for BigQuery
+                # Convert types
                 enhanced_record = self._convert_pandas_types_for_json(enhanced_record)
                 registry_records.append(enhanced_record)
             
-            logger.info(f"Created {len(registry_records)} registry records from validated roster data")
+            if skipped_count > 0:
+                logger.info(f"Skipped {skipped_count} records due to stale data")
             
-            # Log if any players appear on multiple teams (trades)
-            player_team_counts = {}
-            for (player_lookup, team_abbr) in player_team_details.keys():
-                player_team_counts[player_lookup] = player_team_counts.get(player_lookup, 0) + 1
+            record_creation_duration = time.time() - record_creation_start
+            logger.info(f"Created {len(registry_records)} registry records from validated roster data in {record_creation_duration:.2f}s")
             
-            traded_players = {p: count for p, count in player_team_counts.items() if count > 1}
-            if traded_players:
-                logger.info(f"Detected {len(traded_players)} players on multiple teams (trades): {list(traded_players.keys())[:5]}...")
+            total_duration = time.time() - start_time
+            logger.info(f"Total aggregation time: {total_duration:.2f}s")
             
-            return registry_records
+            # Add counts to validation info
+            validation_info['records_created'] = len(registry_records)
+            validation_info['unvalidated_count'] = len(unvalidated_players)
+            validation_info['records_skipped'] = skipped_count
+            
+            return registry_records, validation_info
             
         except Exception as e:
             logger.error(f"Failed to aggregate roster assignments: {e}")
@@ -500,7 +583,6 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
         current_year = date.today().year
         data_recency_days = (date.today() - date(season_year, 10, 1)).days
         
-        # Base source priority (ESPN is most reliable for current rosters)
         if 'espn_rosters' in sources:
             source_priority = 'roster_espn'
             base_confidence = 0.8
@@ -516,22 +598,19 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
         
         confidence_score = base_confidence
         
-        # Multiple sources increase confidence
         if len(sources) >= 3:
             confidence_score = min(confidence_score + 0.15, 1.0)
         elif len(sources) >= 2:
             confidence_score = min(confidence_score + 0.1, 1.0)
         
-        # Having detailed roster info increases confidence
         if enhancement.get('jersey_number'):
             confidence_score = min(confidence_score + 0.05, 1.0)
         if enhancement.get('position'):
             confidence_score = min(confidence_score + 0.05, 1.0)
         
-        # Recent data is more reliable during current season
-        if data_recency_days < 30:  # Very recent data
+        if data_recency_days < 30:
             confidence_score = min(confidence_score + 0.1, 1.0)
-        elif data_recency_days > 365:  # Old data
+        elif data_recency_days > 365:
             confidence_score = max(confidence_score - 0.1, 0.1)
         
         return source_priority, confidence_score
@@ -558,7 +637,7 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
             jersey_number,
             position
         FROM `{project}.nba_raw.espn_team_rosters`
-        WHERE roster_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)  -- Partition filter
+        WHERE roster_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
         AND roster_date = (
             SELECT MAX(roster_date) 
             FROM `{project}.nba_raw.espn_team_rosters`
@@ -625,16 +704,18 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
             return {}
     
     def _get_br_detailed_data(self, season_year: int) -> Dict[str, Dict]:
-        """Get detailed data from Basketball Reference rosters."""
+        """Get detailed data from Basketball Reference rosters with staleness checking."""
         query = """
         SELECT 
             player_lookup,
             player_full_name,
             team_abbrev as team_abbr,
             jersey_number,
-            position
+            position,
+            MAX(last_scraped_date) as latest_scrape_date
         FROM `{project}.nba_raw.br_rosters_current`
         WHERE season_year = @season_year
+        GROUP BY player_lookup, player_full_name, team_abbrev, jersey_number, position
         """.format(project=self.project_id)
         
         job_config = bigquery.QueryJobConfig(query_parameters=[
@@ -643,63 +724,146 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
         
         try:
             results = self.bq_client.query(query, job_config=job_config).to_dataframe()
+            
+            if results.empty:
+                logger.warning(f"No Basketball Reference roster data found for season {season_year}")
+                return {}
+            
+            # Check staleness
+            latest_scrape = pd.to_datetime(results['latest_scrape_date']).max()
+            if isinstance(latest_scrape, pd.Timestamp):
+                latest_scrape_date = latest_scrape.date()
+            else:
+                latest_scrape_date = latest_scrape
+            
+            staleness_days = (date.today() - latest_scrape_date).days
+            
+            logger.info(f"Basketball Reference data latest scrape: {latest_scrape_date} ({staleness_days} days old)")
+            
+            if staleness_days > 30:
+                logger.warning(
+                    f"⚠️ Basketball Reference data is {staleness_days} days stale "
+                    f"(last scraped: {latest_scrape_date}). "
+                    f"Jersey numbers and positions may be outdated."
+                )
+                try:
+                    notify_warning(
+                        title="Stale Basketball Reference Data",
+                        message=f"BR roster data is {staleness_days} days old",
+                        details={
+                            'latest_scrape_date': str(latest_scrape_date),
+                            'staleness_days': staleness_days,
+                            'season_year': season_year,
+                            'threshold_days': 30,
+                            'impact': 'Jersey numbers and positions may be outdated',
+                            'processor': 'roster_registry'
+                        }
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to send notification: {e}")
+            
             detailed_data = {}
             
             for _, row in results.iterrows():
-                # Normalize Basketball Reference team codes to official NBA codes
                 team_abbr = normalize_team_abbr(row['team_abbr'])
                 
                 detailed_data[row['player_lookup']] = {
                     'player_full_name': row['player_full_name'],
-                    'team_abbr': team_abbr,  # Use normalized code
+                    'team_abbr': team_abbr,
                     'jersey_number': row['jersey_number'] if pd.notna(row['jersey_number']) else None,
-                    'position': row['position'] if pd.notna(row['position']) else None
+                    'position': row['position'] if pd.notna(row['position']) else None,
+                    'data_staleness_days': staleness_days
                 }
             
             return detailed_data
+            
         except Exception as e:
             logger.warning(f"Error getting Basketball Reference detailed data: {e}")
             return {}
         
-    def _get_nba_canonical_set(self, season_year: int) -> Set[Tuple[str, str]]:
+    def _get_nba_canonical_set(self, season_year: int, data_date: date) -> Tuple[Set[Tuple[str, str]], Dict]:
         """
-        Get canonical (player, team) combinations from NBA.com (current + historical registry records).
-        Falls back to all registry sources if NBA.com unavailable.
+        Get canonical (player, team) combinations from NBA.com with staleness checking.
         
-        Returns set of tuples: (player_lookup, team_abbr)
+        Returns:
+            Tuple of (canonical set, validation info dict)
         """
         canonical_combos = set()
         season_str = self.calculate_season_string(season_year)
         nba_players_found = False
         
-        # 1. Get NBA.com players from current scrape
+        # Get NBA.com players with freshness check
         nba_query = """
         SELECT DISTINCT 
             player_lookup, 
             team_abbr,
-            player_full_name as display_name
+            player_full_name as display_name,
+            MAX(source_file_date) as latest_scrape_date
         FROM `{project}.nba_raw.nbac_player_list_current`
         WHERE is_active = TRUE
         AND season_year = @season_year
+        GROUP BY player_lookup, team_abbr, player_full_name
         """.format(project=self.project_id)
         
         job_config = bigquery.QueryJobConfig(query_parameters=[
             bigquery.ScalarQueryParameter("season_year", "INT64", season_year)
         ])
         
+        latest_scrape_date = None
+        staleness_days = None
+        
         try:
             nba_current = self.bq_client.query(nba_query, job_config=job_config).to_dataframe()
+            
             if not nba_current.empty:
+                latest_scrape_date = pd.to_datetime(nba_current['latest_scrape_date']).max()
+                if isinstance(latest_scrape_date, pd.Timestamp):
+                    latest_scrape_date = latest_scrape_date.date()
+                
+                staleness_days = (data_date - latest_scrape_date).days
+                
+                logger.info(f"NBA.com data latest scrape: {latest_scrape_date} ({staleness_days} days old)")
+                
+                # STALENESS CHECK: Threshold is 1 day
+                if staleness_days > 1:
+                    logger.warning(f"⚠️ NBA.com data is {staleness_days} days stale - SKIPPING VALIDATION")
+                    
+                    try:
+                        notify_warning(
+                            title="Stale NBA.com Canonical Data",
+                            message=f"NBA.com data is {staleness_days} days old ({latest_scrape_date})",
+                            details={
+                                'latest_scrape_date': str(latest_scrape_date),
+                                'data_date': str(data_date),
+                                'staleness_days': staleness_days,
+                                'threshold_days': 1,
+                                'action': 'Skipping validation - processing ESPN-only',
+                                'recommendation': 'Check NBA.com scraper status',
+                                'processor': 'roster_registry'
+                            }
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to send notification: {e}")
+                    
+                    return set(), {
+                        'validation_mode': 'none',
+                        'validation_skipped_reason': 'nbacom_stale',
+                        'source_data_freshness_days': staleness_days
+                    }
+                
+                # Fresh data
                 for _, row in nba_current.iterrows():
                     canonical_combos.add((row['player_lookup'], row['team_abbr']))
                 nba_players_found = True
-                logger.info(f"Loaded {len(canonical_combos)} player-team combinations from NBA.com current scrape")
+                logger.info(f"Loaded {len(canonical_combos)} player-team combinations from NBA.com (fresh data)")
+                
             else:
                 logger.warning("NBA.com current scrape returned no players")
+                
         except Exception as e:
             logger.warning(f"Error loading NBA.com current players: {e}")
         
-        # 2. Get NBA.com players from existing registry
+        # Get from existing registry
         registry_nba_query = """
         SELECT DISTINCT 
             player_lookup,
@@ -721,22 +885,18 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
                 for _, row in registry_nba.iterrows():
                     canonical_combos.add((row['player_lookup'], row['team_abbr']))
                 nba_players_found = True
-                logger.info(f"Added {len(canonical_combos) - original_count} player-team combinations from registry (total: {len(canonical_combos)})")
-            else:
-                logger.warning("No NBA.com players found in existing registry")
+                logger.info(f"Added {len(canonical_combos) - original_count} from registry (total: {len(canonical_combos)})")
         except Exception as e:
             logger.warning(f"Error loading registry NBA.com players: {e}")
         
-        # 3. FALLBACK: If no NBA.com data available, use ALL registry sources
+        # FALLBACK
         if not nba_players_found or len(canonical_combos) == 0:
             logger.warning("⚠️ NBA.com data unavailable - falling back to existing registry (all sources)")
             
             fallback_query = """
             SELECT DISTINCT 
                 player_lookup,
-                team_abbr,
-                player_name as display_name,
-                source_priority
+                team_abbr
             FROM `{project}.{table_name}`
             WHERE season = @season
             """.format(project=self.project_id, table_name=self.table_name)
@@ -750,13 +910,12 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
                 if not all_registry.empty:
                     for _, row in all_registry.iterrows():
                         canonical_combos.add((row['player_lookup'], row['team_abbr']))
-                    logger.warning(f"Using fallback canonical set: {len(canonical_combos)} player-team combinations from all sources")
+                    logger.warning(f"Using fallback: {len(canonical_combos)} player-team combinations from all sources")
                     
-                    # Send notification about fallback mode
                     try:
                         notify_warning(
                             title="Roster Processor Using Fallback Mode",
-                            message=f"NBA.com data unavailable - using existing registry as canonical set ({len(canonical_combos)} player-team combinations)",
+                            message=f"NBA.com unavailable - using registry as canonical ({len(canonical_combos)} combinations)",
                             details={
                                 'season': season_str,
                                 'canonical_combos_count': len(canonical_combos),
@@ -764,33 +923,29 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
                                 'processor': 'roster_registry'
                             }
                         )
-                    except Exception as notify_ex:
-                        logger.warning(f"Failed to send notification: {notify_ex}")
-                else:
-                    logger.error("⚠️ No canonical set available - first run with no data!")
+                    except Exception as e:
+                        logger.warning(f"Failed to send notification: {e}")
+                        
+                    return canonical_combos, {
+                        'validation_mode': 'partial',
+                        'validation_skipped_reason': 'nbacom_unavailable',
+                        'source_data_freshness_days': None
+                    }
             except Exception as e:
                 logger.error(f"Error loading fallback registry data: {e}")
         
-        return canonical_combos
+        return canonical_combos, {
+            'validation_mode': 'full',
+            'validation_skipped_reason': None,
+            'source_data_freshness_days': staleness_days
+        }
         
     def _auto_create_suffix_aliases(self, player_team_details: Dict[Tuple[str, str], Dict]) -> int:
-        """
-        Automatically detect and create aliases for suffix mismatches between sources.
-        
-        IMPORTANT: Only creates aliases when players are on the SAME team.
-        Cross-team suffix mismatches are flagged as unresolved (father/son, different people).
-        
-        Args:
-            player_team_details: Dict with (player_lookup, team_abbr) keys
-            
-        Returns:
-            Number of aliases created
-        """
+        """Auto-detect and create aliases for suffix mismatches (same team only)."""
         suffixes = ['jr', 'sr', 'ii', 'iii', 'iv', 'v']
         aliases_to_create = []
         unresolved_to_create = []
         
-        # Build reverse lookup: base_name -> {full_names_with_suffixes}
         base_to_variants = {}
         for (player_lookup, team_abbr), details in player_team_details.items():
             base = player_lookup
@@ -812,14 +967,11 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
                 'display_name': details.get('enhancement_data', {}).get('player_full_name', player_lookup.title())
             })
         
-        # Find bases with multiple variants (suffix mismatches)
         for base, variants in base_to_variants.items():
             if len(variants) > 1:
-                # NEW: Check if all variants are on the same team
                 teams = set(v['team'] for v in variants)
                 
                 if len(teams) == 1:
-                    # SAME TEAM → Safe to auto-alias
                     canonical = None
                     for variant in variants:
                         if 'nba_player_list' in variant['sources']:
@@ -829,7 +981,6 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
                     if not canonical:
                         canonical = next((v for v in variants if v['suffix']), variants[0])
                     
-                    # Create aliases for all non-canonical variants
                     for variant in variants:
                         if variant['lookup'] != canonical['lookup']:
                             aliases_to_create.append({
@@ -840,20 +991,13 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
                                 'alias_type': 'suffix_difference',
                                 'alias_source': 'auto_detected',
                                 'is_active': True,
-                                'notes': f"Auto-detected suffix mismatch: '{variant['lookup']}' → '{canonical['lookup']}' (same team: {variant['team']})",
+                                'notes': f"Auto-detected suffix mismatch (same team: {variant['team']})",
                                 'created_by': self.processing_run_id,
                                 'created_at': datetime.now(),
                                 'processed_at': datetime.now()
                             })
-                            
                 else:
-                    # DIFFERENT TEAMS → Flag as unresolved (could be father/son or different people)
-                    variant_details = [f"{v['lookup']} ({v['team']})" for v in variants]
-                    logger.warning(f"Cross-team suffix mismatch detected for base '{base}': {variant_details}")
-                    
-                    # Create unresolved record for each variant
                     for variant in variants:
-                        # Determine which source this variant came from
                         primary_source = variant['sources'][0] if variant['sources'] else 'unknown'
                         source_map = {
                             'espn_rosters': 'espn',
@@ -873,26 +1017,24 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
                                 date.today().year if date.today().month >= 10 else date.today().year - 1
                             ),
                             'occurrences': 1,
-                            'example_games': [],  # ✅ Empty array, not None
+                            'example_games': [],
                             'status': 'pending',
                             'resolution_type': None,
                             'resolved_to_name': None,
-                            'notes': f"Cross-team suffix mismatch: base '{base}' appears on multiple teams {list(teams)}. Could be father/son (e.g., Gary Payton vs Gary Payton II) or different people. Needs manual review before creating alias.",
+                            'notes': f"Cross-team suffix mismatch: base '{base}' on teams {list(teams)} - needs review",
                             'reviewed_by': None,
                             'reviewed_at': None,
-                            # ✅ Removed created_by field
                             'created_at': datetime.now(),
                             'processed_at': datetime.now()
                         })
         
-        # Insert aliases and unresolved records
         if aliases_to_create:
             self._insert_aliases(aliases_to_create)
-            logger.info(f"Auto-created {len(aliases_to_create)} suffix aliases (same-team only)")
+            logger.info(f"Auto-created {len(aliases_to_create)} suffix aliases")
         
         if unresolved_to_create:
             self._insert_unresolved_names(unresolved_to_create)
-            logger.warning(f"Created {len(unresolved_to_create)} unresolved records for cross-team suffix mismatches (manual review required)")
+            logger.warning(f"Created {len(unresolved_to_create)} unresolved records for cross-team mismatches")
         
         return len(aliases_to_create)
     
@@ -922,7 +1064,7 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
                 'status': 'pending',
                 'resolution_type': None,
                 'resolved_to_name': None,
-                'notes': f"Player found in {player['source']} but not in NBA.com canonical set. Needs validation: could be typo, formatting difference, or legitimate new player not yet in NBA.com data.",
+                'notes': f"Found in {player['source']} but not in NBA.com canonical set",
                 'reviewed_by': None,
                 'reviewed_at': None,
                 'created_at': datetime.now(),
@@ -932,7 +1074,7 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
         if unresolved_records:
             try:
                 self._insert_unresolved_names(unresolved_records)
-                logger.info(f"Created {len(unresolved_records)} unresolved records for unvalidated players")
+                logger.info(f"Created {len(unresolved_records)} unresolved records")
             except Exception as e:
                 logger.error(f"Failed to create unvalidated player records: {e}")
 
@@ -944,9 +1086,8 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
         table_id = f"{self.project_id}.{self.alias_table_name}"
         
         try:
-            # Check for existing aliases to avoid duplicates
             existing_query = f"""
-            SELECT alias_lookup, nba_canonical_lookup
+            SELECT alias_lookup
             FROM `{table_id}`
             WHERE alias_lookup IN UNNEST(@alias_lookups)
             """
@@ -959,23 +1100,18 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
             existing_df = self.bq_client.query(existing_query, job_config=job_config).to_dataframe()
             existing_aliases = set(existing_df['alias_lookup']) if not existing_df.empty else set()
             
-            # Filter out existing
             new_aliases = [r for r in alias_records if r['alias_lookup'] not in existing_aliases]
             
             if not new_aliases:
-                logger.info("All aliases already exist, skipping insertion")
                 return
             
-            # Convert types for BigQuery
             processed_aliases = []
             for r in new_aliases:
                 converted = self._convert_pandas_types_for_json(r)
-                # Ensure is_active is a proper boolean
                 if 'is_active' in converted:
                     converted['is_active'] = bool(converted['is_active'])
                 processed_aliases.append(converted)
             
-            # Insert
             errors = self.bq_client.insert_rows_json(table_id, processed_aliases)
             
             if errors:
@@ -985,21 +1121,18 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
                 
         except Exception as e:
             logger.error(f"Failed to insert aliases: {e}")
-            # Don't raise - alias creation failure shouldn't block roster processing
 
     def _insert_unresolved_names(self, unresolved_records: List[Dict]) -> None:
-        """Insert unresolved player name records for manual review."""
+        """Insert unresolved player name records."""
         if not unresolved_records:
             return
         
-        # Convert to list if needed (defensive)
         if not isinstance(unresolved_records, list):
             unresolved_records = list(unresolved_records)
         
         table_id = f"{self.project_id}.{self.unresolved_table_name}"
         
         try:
-            # Check for existing unresolved records
             existing_query = f"""
             SELECT normalized_lookup, team_abbr, season, occurrences
             FROM `{table_id}`
@@ -1014,14 +1147,12 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
             
             existing_df = self.bq_client.query(existing_query, job_config=job_config).to_dataframe()
             
-            # Build map of existing records (defensive - check length explicitly)
             existing_map = {}
-            if len(existing_df) > 0:  # Changed from: if not existing_df.empty
+            if len(existing_df) > 0:
                 for _, row in existing_df.iterrows():
                     key = (row['normalized_lookup'], row['team_abbr'], row['season'])
                     existing_map[key] = row['occurrences']
             
-            # Separate into new vs update (use Python lists explicitly)
             new_unresolved = []
             updates_needed = []
             
@@ -1029,7 +1160,6 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
                 key = (r['normalized_lookup'], r['team_abbr'], r['season'])
                 
                 if key in existing_map:
-                    # EXISTS - need to increment occurrences
                     updates_needed.append({
                         'normalized_lookup': r['normalized_lookup'],
                         'team_abbr': r['team_abbr'],
@@ -1038,32 +1168,26 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
                         'last_seen_date': r['last_seen_date']
                     })
                 else:
-                    # NEW - insert
                     new_unresolved.append(r)
             
-            # Insert new records (check length explicitly)
-            if len(new_unresolved) > 0:  # Changed from: if new_unresolved
+            if len(new_unresolved) > 0:
                 processed_unresolved = []
                 for r in new_unresolved:
                     converted = self._convert_pandas_types_for_json(r)
-                    # Ensure example_games is a plain Python list
                     if 'example_games' in converted:
                         eg = converted['example_games']
                         if eg is None:
                             converted['example_games'] = []
                         elif not isinstance(eg, list):
                             converted['example_games'] = list(eg) if hasattr(eg, '__iter__') else []
-                        else:
-                            converted['example_games'] = eg
                     processed_unresolved.append(converted)
                 
                 errors = self.bq_client.insert_rows_json(table_id, processed_unresolved)
                 if errors:
-                    logger.error(f"Errors inserting unresolved records: {errors}")
+                    logger.error(f"Errors inserting unresolved: {errors}")
                 else:
                     logger.info(f"Inserted {len(new_unresolved)} new unresolved records")
             
-            # Update existing records (check length explicitly)
             if len(updates_needed) > 0:
                 successful_updates = 0
                 for update in updates_needed:
@@ -1091,29 +1215,22 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
                         self.bq_client.query(update_query, job_config=job_config).result()
                         successful_updates += 1
                     except Exception as e:
-                        error_msg = str(e).lower()
-                        if 'streaming buffer' in error_msg:
-                            logger.debug(f"Skipping UPDATE for {update['normalized_lookup']} on {update['team_abbr']} - record in streaming buffer (will be updated on next run after ~90 min)")
+                        if 'streaming buffer' in str(e).lower():
+                            logger.debug(f"Skipping UPDATE for {update['normalized_lookup']} - streaming buffer")
                         else:
-                            logger.warning(f"Failed to update occurrence count for {update['normalized_lookup']} on {update['team_abbr']}: {e}")
+                            logger.warning(f"Failed to update {update['normalized_lookup']}: {e}")
                 
                 if successful_updates > 0:
-                    logger.info(f"Updated {successful_updates} existing unresolved records (incremented occurrences)")
-                if successful_updates < len(updates_needed):
-                    logger.info(f"Skipped {len(updates_needed) - successful_updates} updates due to streaming buffer (expected behavior, will succeed on future runs)")
-                
+                    logger.info(f"Updated {successful_updates} existing unresolved records")
+                    
         except Exception as e:
-            logger.error(f"Failed to insert/update unresolved records: {e}")
-            import traceback
-            logger.error(f"Traceback: {traceback.format_exc()}")  # Added for debugging
+            logger.error(f"Failed to insert/update unresolved: {e}")
     
     def get_player_team_assignment(self, player_lookup: str, roster_data: Dict[str, Set[str]] = None) -> str:
-        """Find team assignment for a player from roster data."""
+        """Find team assignment for a player."""
         if not roster_data:
-            # Query all sources to find team assignment
             season_year = date.today().year if date.today().month >= 10 else date.today().year - 1
             
-            # Try ESPN first (most reliable)
             query = """
             SELECT team_abbr
             FROM `{project}.nba_raw.espn_team_rosters`
@@ -1136,74 +1253,55 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
                 if not results.empty:
                     return results.iloc[0]['team_abbr']
             except Exception as e:
-                logger.warning(f"Error finding team assignment for {player_lookup}: {e}")
+                logger.warning(f"Error finding team assignment: {e}")
         
-        return 'UNK'  # Unknown team
+        return 'UNK'
     
     def transform_data(self, raw_data: Dict, file_path: str = None) -> List[Dict]:
         """Transform roster data into registry records."""
         try:
-            # Extract filters from raw_data
             season_year = raw_data.get('season_year', date.today().year)
+            data_date = raw_data.get('data_date', date.today())
+            allow_backfill = raw_data.get('allow_backfill', False)
             
-            logger.info(f"Processing roster data for season {season_year}")
+            logger.info(f"Processing roster data for season {season_year}, date {data_date}")
             
-            # Step 1: Get current roster data from all sources
             roster_data = self.get_current_roster_data(season_year)
-            
-            # Step 2: Get existing registry players
             season_str = self.calculate_season_string(season_year)
             existing_players = self.get_existing_registry_players(season_str)
             
-            # Step 3: Find all roster players
             all_roster_players = set()
             for source, players in roster_data.items():
                 all_roster_players.update(players)
             
-            logger.info(f"Found {len(all_roster_players)} total players across all roster sources")
+            logger.info(f"Found {len(all_roster_players)} total players")
             
-            # Step 4: Detect unknown players and send notification if significant
             unknown_players = all_roster_players - existing_players
             if unknown_players:
-                logger.info(f"Found {len(unknown_players)} unknown players not in registry: {list(unknown_players)[:10]}{'...' if len(unknown_players) > 10 else ''}")
+                logger.info(f"Found {len(unknown_players)} unknown players")
                 
-                # Send notification if many unknown players (might indicate new season or data issue)
                 if len(unknown_players) > 50:
                     try:
                         notify_warning(
-                            title="High Unknown Player Count in Rosters",
-                            message=f"Found {len(unknown_players)} players in rosters not in registry for {season_str}",
+                            title="High Unknown Player Count",
+                            message=f"Found {len(unknown_players)} new players",
                             details={
                                 'season': season_str,
                                 'unknown_count': len(unknown_players),
-                                'total_roster_players': len(all_roster_players),
-                                'existing_in_registry': len(existing_players),
-                                'sample_unknown': list(unknown_players)[:20],
-                                'processor': 'roster_registry'
-                            }
-                        )
-                    except Exception as e:
-                        logger.warning(f"Failed to send notification: {e}")
-                elif len(unknown_players) > 0:
-                    # Info notification for new players (normal operation)
-                    try:
-                        notify_info(
-                            title="New Players Detected in Rosters",
-                            message=f"Found {len(unknown_players)} new players in roster data for {season_str}",
-                            details={
-                                'season': season_str,
-                                'new_player_count': len(unknown_players),
-                                'sample_players': list(unknown_players)[:10],
-                                'processor': 'roster_registry'
+                                'sample': list(unknown_players)[:20]
                             }
                         )
                     except Exception as e:
                         logger.warning(f"Failed to send notification: {e}")
             
-            # Step 5: Create registry records for all roster players
-            registry_records = self.aggregate_roster_assignments(roster_data, season_year)
+            registry_records, validation_info = self.aggregate_roster_assignments(
+                roster_data, season_year, data_date, allow_backfill=allow_backfill
+            )
             
-            logger.info(f"Created {len(registry_records)} registry records from roster data")
+            logger.info(f"Created {len(registry_records)} registry records")
+            
+            self.validation_info = validation_info
+            
             return registry_records
             
         except Exception as e:
@@ -1211,11 +1309,10 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
             try:
                 notify_error(
                     title="Roster Registry Transform Failed",
-                    message=f"Failed to transform roster data: {str(e)}",
+                    message=f"Failed to transform: {str(e)}",
                     details={
-                        'season_year': raw_data.get('season_year') if raw_data else None,
-                        'error_type': type(e).__name__,
-                        'processor': 'roster_registry'
+                        'season_year': raw_data.get('season_year'),
+                        'error_type': type(e).__name__
                     },
                     processor_name="Roster Registry Processor"
                 )
@@ -1223,16 +1320,15 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
                 logger.warning(f"Failed to send notification: {notify_ex}")
             raise
     
-    def _build_registry_for_season_impl(self, season: str, team: str = None) -> Dict:
+    def _build_registry_for_season_impl(self, season: str, team: str = None, 
+                                       data_date: date = None, allow_backfill: bool = False) -> Dict:
         """Implementation of season building."""
-        logger.info(f"Building roster registry for season {season}" + (f", team {team}" if team else ""))
+        logger.info(f"Building roster registry for season {season}")
         
         try:
-            # Reset tracking for this run
             self.new_players_discovered = set()
             self.players_seen_this_run = set()
             
-            # Reset stats
             self.stats = {
                 'players_processed': 0,
                 'records_created': 0,
@@ -1243,50 +1339,53 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
                 'alias_resolutions': 0
             }
             
-            # Parse season year
             season_year = int(season.split('-')[0])
+            data_date = data_date or date.today()
             
-            # Create filter data
             filter_data = {
-                'season_year': season_year
+                'season_year': season_year,
+                'data_date': data_date,
+                'allow_backfill': allow_backfill
             }
             
-            # Transform and save
             rows = self.transform_data(filter_data)
             result = self.save_registry_data(rows)
             
+            if hasattr(self, 'validation_info'):
+                result.update(self.validation_info)
+            
             result['new_players_discovered'] = list(self.new_players_discovered)
             if self.new_players_discovered:
-                logger.info(f"Discovered {len(self.new_players_discovered)} new players from rosters")
+                logger.info(f"Discovered {len(self.new_players_discovered)} new players")
             
-            logger.info(f"Roster registry build complete for {season}:")
+            logger.info(f"Roster registry build complete for {season}")
             logger.info(f"  Records processed: {result['rows_processed']}")
             logger.info(f"  Records created: {len(rows)}")
-            logger.info(f"  Errors: {len(result.get('errors', []))}")
             
             return {
                 'season': season,
                 'team_filter': team,
                 'records_processed': result['rows_processed'],
                 'records_created': len(rows),
-                'players_processed': len(rows),  # For roster, each record is one player
+                'players_processed': len(rows),
                 'teams_processed': list(set(row['team_abbr'] for row in rows)) if rows else [],
                 'new_players_discovered': result['new_players_discovered'],
+                'validation_mode': result.get('validation_mode'),
+                'validation_skipped_reason': result.get('validation_skipped_reason'),
+                'source_data_freshness_days': result.get('source_data_freshness_days'),
                 'errors': result.get('errors', []),
                 'processing_run_id': self.processing_run_id
             }
             
         except Exception as e:
-            logger.error(f"Failed to build roster registry for {season}: {e}")
+            logger.error(f"Failed to build roster registry: {e}")
             try:
                 notify_error(
                     title="Roster Registry Build Failed",
-                    message=f"Failed to build roster registry for season {season}: {str(e)}",
+                    message=f"Failed to build: {str(e)}",
                     details={
                         'season': season,
-                        'team_filter': team,
-                        'error_type': type(e).__name__,
-                        'processor': 'roster_registry'
+                        'error_type': type(e).__name__
                     },
                     processor_name="Roster Registry Processor"
                 )
@@ -1294,38 +1393,87 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
                 logger.warning(f"Failed to send notification: {notify_ex}")
             raise
     
-    def process_daily_rosters(self, season_year: int = None) -> Dict:
+    def process_daily_rosters(self, season_year: int = None, data_date: date = None,
+                             allow_backfill: bool = False) -> Dict:
         """
-        Process daily roster updates.
+        Process daily roster updates with complete protection.
         
         Main entry point for daily processing after roster scrapers complete.
         """
         if not season_year:
             current_month = date.today().month
-            if current_month >= 10:  # Oct-Dec = new season starting
+            if current_month >= 10:
                 season_year = date.today().year
-            else:  # Jan-Sep = season ending
+            else:
                 season_year = date.today().year - 1
         
+        if not data_date:
+            data_date = date.today()
+
+        # =======================================================================
+        # PROTECTION 1: Season Protection - Don't process historical seasons
+        # =======================================================================
+        current_season_year = date.today().year if date.today().month >= 10 else date.today().year - 1
+        if season_year < current_season_year and not allow_backfill:
+            error_msg = (
+                f"Cannot process historical season {season_year}-{season_year+1}. "
+                f"Current season is {current_season_year}-{current_season_year+1}. "
+                f"Roster processor is for current season only. "
+                f"Use --allow-backfill flag only if you need to fix historical roster data."
+            )
+            logger.error(error_msg)
+            return {
+                'status': 'blocked',
+                'reason': error_msg,
+                'season': self.calculate_season_string(season_year)
+            }
+        
         season_str = self.calculate_season_string(season_year)
-        logger.info(f"Processing daily rosters for {season_str} season")
+        logger.info(f"Processing daily rosters for {season_str}, date {data_date}")
+        
+        # =======================================================================
+        # PROTECTION 2: Temporal Ordering Protection
+        # =======================================================================
+        try:
+            self.validate_temporal_ordering(
+                data_date=data_date,
+                season_year=season_year,
+                allow_backfill=allow_backfill
+            )
+        except TemporalOrderingError as e:
+            logger.error(f"Temporal ordering error: {e}")
+            return {
+                'status': 'skipped',
+                'reason': str(e),
+                'season': season_str,
+                'data_date': str(data_date)
+            }
+        
+        # Record run start
+        run_id = self.record_run_start(
+            data_date=data_date,
+            season_year=season_year,
+            data_source_primary='espn_roster',
+            data_source_enhancement='nbacom_roster',
+            backfill_mode=allow_backfill
+        )
         
         try:
-            result = self._build_registry_for_season_impl(season_str)
+            result = self._build_registry_for_season_impl(season_str, data_date=data_date, allow_backfill=allow_backfill)
             
-            # Send success notification with summary
+            self.record_run_complete(data_date, 'success', result)
+            
             try:
                 notify_info(
                     title="Daily Roster Processing Complete",
-                    message=f"Successfully processed daily rosters for {season_str} season",
+                    message=f"Successfully processed {season_str}",
                     details={
                         'season': season_str,
+                        'data_date': str(data_date),
                         'records_processed': result['records_processed'],
-                        'players_processed': result['players_processed'],
-                        'new_players_discovered': len(result.get('new_players_discovered', [])),
-                        'errors': len(result.get('errors', [])),
-                        'processor': 'roster_registry',
-                        'processing_run_id': self.processing_run_id
+                        'new_players': len(result.get('new_players_discovered', [])),
+                        'validation_mode': result.get('validation_mode'),
+                        'run_id': run_id
                     }
                 )
             except Exception as e:
@@ -1335,15 +1483,17 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
             
         except Exception as e:
             logger.error(f"Daily roster processing failed: {e}")
+            
+            self.record_run_complete(data_date, 'failed', error=e)
+            
             try:
                 notify_error(
                     title="Daily Roster Processing Failed",
-                    message=f"Failed to process daily rosters for {season_str}: {str(e)}",
+                    message=f"Failed: {str(e)}",
                     details={
                         'season': season_str,
-                        'season_year': season_year,
-                        'error_type': type(e).__name__,
-                        'processor': 'roster_registry'
+                        'data_date': str(data_date),
+                        'error_type': type(e).__name__
                     },
                     processor_name="Roster Registry Processor"
                 )
@@ -1352,8 +1502,8 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
             raise
 
     def build_historical_registry(self, seasons: List[str] = None) -> Dict:
-        """Build registry from historical roster data (simplified - current season only)."""
-        logger.info("Roster processor handles current data only - building for current season")
+        """Build registry from historical roster data."""
+        logger.info("Roster processor handles current data only")
         
         try:
             current_season_year = date.today().year if date.today().month >= 10 else date.today().year - 1
@@ -1367,20 +1517,16 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
                 'total_records_processed': result['records_processed'],
                 'total_errors': len(result.get('errors', [])),
                 'individual_results': [result],
-                'processing_run_id': self.processing_run_id,
-                'note': 'Roster processor handles current data only'
+                'processing_run_id': self.processing_run_id
             }
             
         except Exception as e:
             logger.error(f"Historical registry build failed: {e}")
             try:
                 notify_error(
-                    title="Historical Roster Registry Build Failed",
-                    message=f"Failed to build historical roster registry: {str(e)}",
-                    details={
-                        'error_type': type(e).__name__,
-                        'processor': 'roster_registry'
-                    },
+                    title="Historical Roster Build Failed",
+                    message=f"Failed: {str(e)}",
+                    details={'error_type': type(e).__name__},
                     processor_name="Roster Registry Processor"
                 )
             except Exception as notify_ex:
@@ -1388,20 +1534,21 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
             raise
 
 
-# Convenience functions
-def process_daily_rosters(season_year: int = None, strategy: str = "merge") -> Dict:
+def process_daily_rosters(season_year: int = None, data_date: date = None, 
+                         strategy: str = "merge", allow_backfill: bool = False) -> Dict:
     """Convenience function for daily roster processing."""
     processor = RosterRegistryProcessor(strategy=strategy)
-    return processor.process_daily_rosters(season_year)
+    return processor.process_daily_rosters(season_year, data_date, allow_backfill)
 
 
 if __name__ == "__main__":
     import argparse
     
     parser = argparse.ArgumentParser(description="Process roster registry")
-    parser.add_argument("--season-year", type=int, help="NBA season starting year (e.g., 2025 for 2025-26)")
-    parser.add_argument("--strategy", default="merge", choices=["merge", "replace", "append"], 
-                        help="Database strategy")
+    parser.add_argument("--season-year", type=int, help="NBA season starting year")
+    parser.add_argument("--data-date", type=str, help="Date to process (YYYY-MM-DD)")
+    parser.add_argument("--allow-backfill", action="store_true", help="Allow processing earlier dates")
+    parser.add_argument("--strategy", default="merge", choices=["merge", "replace", "append"])
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
     
     args = parser.parse_args()
@@ -1411,19 +1558,38 @@ if __name__ == "__main__":
     else:
         logging.basicConfig(level=logging.INFO)
     
-    # Create processor
-    processor = RosterRegistryProcessor(strategy=args.strategy)
+    data_date = None
+    if args.data_date:
+        data_date = datetime.strptime(args.data_date, '%Y-%m-%d').date()
     
-    # Run daily roster processing
-    result = processor.process_daily_rosters(season_year=args.season_year)
+    processor = RosterRegistryProcessor(strategy=args.strategy)
+    result = processor.process_daily_rosters(
+        season_year=args.season_year,
+        data_date=data_date,
+        allow_backfill=args.allow_backfill
+    )
     
     print(f"\n{'='*60}")
-    print(f"✅ SUCCESS")
-    print(f"{'='*60}")
-    print(f"Season: {result['season']}")
-    print(f"Records processed: {result['records_processed']}")
-    print(f"Players processed: {result['players_processed']}")
-    print(f"New players discovered: {len(result.get('new_players_discovered', []))}")
-    print(f"Errors: {len(result.get('errors', []))}")
-    print(f"{'='*60}")
     
+    # Handle different result types
+    if result.get('status') == 'blocked':
+        print(f"❌ BLOCKED")
+        print(f"{'='*60}")
+        print(f"Season: {result['season']}")
+        print(f"Reason: {result['reason']}")
+    elif result.get('status') == 'skipped':
+        print(f"⚠️  SKIPPED")
+        print(f"{'='*60}")
+        print(f"Season: {result['season']}")
+        print(f"Reason: {result['reason']}")
+    else:
+        print(f"✅ SUCCESS")
+        print(f"{'='*60}")
+        print(f"Season: {result['season']}")
+        print(f"Data Date: {result.get('data_date', 'today')}")
+        print(f"Records processed: {result.get('records_processed', 0)}")
+        print(f"Validation mode: {result.get('validation_mode', 'N/A')}")
+        if result.get('source_data_freshness_days') is not None:
+            print(f"Source freshness: {result['source_data_freshness_days']} days")
+    
+    print(f"{'='*60}")

@@ -4,7 +4,8 @@ File: data_processors/reference/base/registry_processor_base.py
 
 Base class for NBA registry processors.
 Provides shared functionality for both gamebook and roster registry processors.
-Enhanced with update source tracking and Universal Player ID integration.
+Enhanced with update source tracking, Universal Player ID integration, temporal ordering protection,
+and data freshness validation.
 """
 
 import json
@@ -27,6 +28,11 @@ from shared.utils.notification_system import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class TemporalOrderingError(Exception):
+    """Raised when attempting to process data out of temporal order."""
+    pass
 
 
 class ProcessingStrategy(Enum):
@@ -72,6 +78,8 @@ class RegistryProcessorBase(ProcessorBase, UpdateSourceTrackingMixin):
     - Season calculations
     - Universal Player ID integration
     - Update source tracking
+    - Temporal ordering protection
+    - Data freshness validation
     - Basic validation and error handling
     """
     
@@ -175,12 +183,14 @@ class RegistryProcessorBase(ProcessorBase, UpdateSourceTrackingMixin):
             self.table_name = f'nba_reference.nba_players_registry_test_{timestamp_suffix}'
             self.unresolved_table_name = f'nba_reference.unresolved_player_names_test_{timestamp_suffix}'
             self.alias_table_name = f'nba_reference.player_aliases_test_{timestamp_suffix}'
+            self.run_history_table = f'nba_reference.processor_run_history_test_{timestamp_suffix}'
             self.processing_run_id += f"_TEST_{timestamp_suffix}"
             logger.info(f"Running in TEST MODE with fixed table suffix: {timestamp_suffix}")
         else:
             self.table_name = 'nba_reference.nba_players_registry'
             self.unresolved_table_name = 'nba_reference.unresolved_player_names'
             self.alias_table_name = 'nba_reference.player_aliases'
+            self.run_history_table = 'nba_reference.processor_run_history'
             logger.info("Running in PRODUCTION MODE")
         
         # Initialize stats tracking
@@ -220,7 +230,502 @@ class RegistryProcessorBase(ProcessorBase, UpdateSourceTrackingMixin):
         # Processor type (set by subclasses for source tracking)
         self.processor_type = None  # Must be set by subclasses
         
+        # Current run tracking for temporal ordering
+        self.current_run_id = None
+        self.current_data_date = None
+        
         logger.info(f"Initialized registry processor with run ID: {self.processing_run_id}")
+    
+    # =========================================================================
+    # TEMPORAL ORDERING PROTECTION
+    # =========================================================================
+    
+    def validate_temporal_ordering(self, data_date: date, season_year: int, 
+                                   allow_backfill: bool = False) -> None:
+        """
+        Validate that we're not processing data out of temporal order.
+        
+        Prevents corruption by checking if we've already processed later dates
+        for this season. If we have, and backfill mode is not enabled, raise an error.
+        
+        Args:
+            data_date: The date of data being processed
+            season_year: The season year (for season-aware validation)
+            allow_backfill: If True, allow processing earlier dates (insert-only mode)
+            
+        Raises:
+            TemporalOrderingError: If attempting to process earlier date after later date
+        """
+        if not self.processor_type:
+            logger.warning("Processor type not set - skipping temporal validation")
+            return
+        
+        # Query for latest successfully processed date for this season
+        query = f"""
+        SELECT 
+            MAX(data_date) as latest_processed_date,
+            MAX(started_at) as latest_run_time
+        FROM `{self.project_id}.{self.run_history_table}`
+        WHERE processor_name = @processor_name
+          AND season_year = @season_year
+          AND status = 'success'
+          AND data_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 365 DAY)
+        """
+        
+        job_config = bigquery.QueryJobConfig(query_parameters=[
+            bigquery.ScalarQueryParameter("processor_name", "STRING", self.processor_type),
+            bigquery.ScalarQueryParameter("season_year", "INT64", season_year)
+        ])
+        
+        try:
+            results = self.bq_client.query(query, job_config=job_config).to_dataframe()
+            
+            if results.empty or pd.isna(results.iloc[0]['latest_processed_date']):
+                logger.info(f"No prior successful runs found for {self.processor_type} season {season_year} - proceeding")
+                return
+            
+            latest_processed_date = results.iloc[0]['latest_processed_date']
+            
+            # Convert to date if timestamp
+            if isinstance(latest_processed_date, pd.Timestamp):
+                latest_processed_date = latest_processed_date.date()
+            
+            # Check temporal ordering
+            if data_date < latest_processed_date:
+                if allow_backfill:
+                    logger.warning(
+                        f"⚠️ BACKFILL MODE: Processing {data_date} after {latest_processed_date} "
+                        f"(insert-only, no updates)"
+                    )
+                    return
+                else:
+                    error_msg = (
+                        f"Temporal ordering violation: Attempting to process {data_date} "
+                        f"but already processed through {latest_processed_date} for season {season_year}. "
+                        f"Use --allow-backfill flag to enable insert-only backfill mode."
+                    )
+                    logger.error(error_msg)
+                    
+                    try:
+                        notify_error(
+                            title="Temporal Ordering Violation",
+                            message=f"Cannot process {data_date} - already processed {latest_processed_date}",
+                            details={
+                                'processor': self.processor_type,
+                                'season_year': season_year,
+                                'data_date': str(data_date),
+                                'latest_processed_date': str(latest_processed_date),
+                                'action_required': 'Use --allow-backfill flag if intentional'
+                            },
+                            processor_name=f"{self.processor_type.title()} Registry Processor"
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to send notification: {e}")
+                    
+                    raise TemporalOrderingError(error_msg)
+            
+            logger.info(f"✓ Temporal validation passed: {data_date} >= {latest_processed_date}")
+            
+        except bigquery.exceptions.NotFound:
+            # Table doesn't exist yet - first run
+            logger.info(f"Run history table not found - first run, proceeding")
+            return
+        except TemporalOrderingError:
+            raise
+        except Exception as e:
+            logger.warning(f"Error checking temporal ordering (proceeding anyway): {e}")
+            # Don't block processing on validation errors
+            return
+    
+    def record_run_start(self, data_date: date, season_year: int,
+                        data_source_primary: str = None,
+                        data_source_enhancement: str = None,
+                        validation_mode: str = None,
+                        source_data_freshness_days: int = None,
+                        backfill_mode: bool = False,
+                        force_reprocess: bool = False) -> str:
+        """
+        Record the start of a processor run in run history table.
+        
+        Args:
+            data_date: The date of data being processed
+            season_year: The season year
+            data_source_primary: Primary data source name
+            data_source_enhancement: Enhancement data source name
+            validation_mode: Validation mode ('full', 'partial', 'none')
+            source_data_freshness_days: How stale source data is (in days)
+            backfill_mode: Whether running in backfill mode
+            force_reprocess: Whether forcing reprocessing
+            
+        Returns:
+            run_id: Unique identifier for this run
+        """
+        if not self.processor_type:
+            logger.warning("Processor type not set - skipping run recording")
+            return f"unknown_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        
+        # Generate unique run ID
+        run_id = f"{self.processor_type}_{data_date.strftime('%Y%m%d')}_{datetime.now().strftime('%H%M%S')}_{str(uuid.uuid4())[:8]}"
+        
+        # Store for use in record_run_complete
+        self.current_run_id = run_id
+        self.current_data_date = data_date
+        
+        # Calculate season string
+        season_str = self.calculate_season_string(season_year)
+        
+        # Get execution environment
+        execution_host = os.environ.get('EXECUTION_HOST', 'local')
+        triggered_by = os.environ.get('TRIGGERED_BY', 'manual')
+        
+        # Build record
+        record = {
+            'processor_name': self.processor_type,
+            'run_id': run_id,
+            'season_year': season_year,
+            'status': 'running',
+            'duration_seconds': None,
+            'records_processed': 0,
+            'records_created': 0,
+            'records_updated': 0,
+            'records_skipped': 0,
+            'data_source_primary': data_source_primary,
+            'data_source_enhancement': data_source_enhancement,
+            'data_records_queried': None,
+            'validation_mode': validation_mode,
+            'validation_skipped_reason': None,
+            'source_data_freshness_days': source_data_freshness_days,
+            'season_filter': season_str,
+            'team_filter': None,
+            'date_range_filter_start': None,
+            'date_range_filter_end': None,
+            'backfill_mode': bool(backfill_mode),
+            'force_reprocess': bool(force_reprocess),
+            'test_mode': bool(self.test_mode),
+            'execution_host': execution_host,
+            'triggered_by': triggered_by,
+            'errors': None,
+            'warnings': None,
+            'summary': None,
+            'data_date': data_date,
+            'started_at': datetime.now(),
+            'processed_at': None
+        }
+        
+        # Insert into run history table
+        table_id = f"{self.project_id}.{self.run_history_table}"
+        
+        try:
+            # Convert types for BigQuery
+            converted_record = self._convert_pandas_types_for_json(record)
+            
+            errors = self.bq_client.insert_rows_json(table_id, [converted_record])
+            
+            if errors:
+                logger.warning(f"Errors recording run start: {errors}")
+            else:
+                logger.info(f"✓ Recorded run start: {run_id}")
+            
+            return run_id
+            
+        except Exception as e:
+            logger.warning(f"Failed to record run start (non-fatal): {e}")
+            return run_id
+    
+    def record_run_complete(self, data_date: date, status: str, 
+                           result: Dict = None, error: Exception = None) -> None:
+        """
+        Update run history record with completion status.
+        
+        Args:
+            data_date: The date of data that was processed
+            status: Final status ('success', 'failed', 'partial')
+            result: Processing result dictionary (if success)
+            error: Exception object (if failed)
+        """
+        if not self.current_run_id:
+            logger.warning("No current run ID - skipping run completion recording")
+            return
+        
+        # Calculate duration
+        processed_at = datetime.now()
+        
+        # Query for started_at from the running record
+        query = f"""
+        SELECT started_at
+        FROM `{self.project_id}.{self.run_history_table}`
+        WHERE processor_name = @processor_name
+          AND run_id = @run_id
+          AND data_date = @data_date
+        LIMIT 1
+        """
+        
+        job_config = bigquery.QueryJobConfig(query_parameters=[
+            bigquery.ScalarQueryParameter("processor_name", "STRING", self.processor_type),
+            bigquery.ScalarQueryParameter("run_id", "STRING", self.current_run_id),
+            bigquery.ScalarQueryParameter("data_date", "DATE", data_date)
+        ])
+        
+        try:
+            results = self.bq_client.query(query, job_config=job_config).to_dataframe()
+            
+            if not results.empty:
+                started_at = results.iloc[0]['started_at']
+                duration_seconds = (processed_at - started_at).total_seconds()
+            else:
+                duration_seconds = None
+                logger.warning(f"Could not find start record for run {self.current_run_id}")
+            
+            # Build update values
+            records_processed = result.get('records_processed', 0) if result else 0
+            records_created = result.get('records_created', 0) if result else 0
+            records_updated = result.get('records_updated', 0) if result else 0
+            
+            # Build errors JSON
+            errors_json = None
+            if error:
+                errors_json = json.dumps([{
+                    'error_type': type(error).__name__,
+                    'error_message': str(error),
+                    'timestamp': datetime.now().isoformat()
+                }])
+            
+            # Build summary JSON
+            summary_json = None
+            if result:
+                summary_json = json.dumps(result, default=str)
+            
+            # Update record
+            update_query = f"""
+            UPDATE `{self.project_id}.{self.run_history_table}`
+            SET 
+                status = @status,
+                duration_seconds = @duration_seconds,
+                records_processed = @records_processed,
+                records_created = @records_created,
+                records_updated = @records_updated,
+                errors = PARSE_JSON(@errors_json),
+                summary = PARSE_JSON(@summary_json),
+                processed_at = @processed_at
+            WHERE processor_name = @processor_name
+              AND run_id = @run_id
+              AND data_date = @data_date
+            """
+            
+            update_config = bigquery.QueryJobConfig(query_parameters=[
+                bigquery.ScalarQueryParameter("status", "STRING", status),
+                bigquery.ScalarQueryParameter("duration_seconds", "FLOAT64", duration_seconds),
+                bigquery.ScalarQueryParameter("records_processed", "INT64", records_processed),
+                bigquery.ScalarQueryParameter("records_created", "INT64", records_created),
+                bigquery.ScalarQueryParameter("records_updated", "INT64", records_updated),
+                bigquery.ScalarQueryParameter("errors_json", "STRING", errors_json),
+                bigquery.ScalarQueryParameter("summary_json", "STRING", summary_json),
+                bigquery.ScalarQueryParameter("processed_at", "TIMESTAMP", processed_at),
+                bigquery.ScalarQueryParameter("processor_name", "STRING", self.processor_type),
+                bigquery.ScalarQueryParameter("run_id", "STRING", self.current_run_id),
+                bigquery.ScalarQueryParameter("data_date", "DATE", data_date)
+            ])
+            
+            self.bq_client.query(update_query, job_config=update_config).result()
+            
+            logger.info(f"✓ Recorded run completion: {self.current_run_id} - {status}")
+            
+            # Clear current run tracking
+            self.current_run_id = None
+            self.current_data_date = None
+            
+        except Exception as e:
+            logger.warning(f"Failed to record run completion (non-fatal): {e}")
+    
+    # =========================================================================
+    # DATA FRESHNESS PROTECTION
+    # =========================================================================
+    
+    def get_existing_record(self, player_lookup: str, team_abbr: str, 
+                           season: str) -> Optional[Dict]:
+        """
+        Get existing registry record for a player-team-season combination.
+        
+        Args:
+            player_lookup: Normalized player name
+            team_abbr: Team abbreviation
+            season: Season string (e.g., '2024-25')
+            
+        Returns:
+            Dictionary with existing record data or None if not found
+        """
+        query = f"""
+        SELECT 
+            player_lookup,
+            team_abbr,
+            season,
+            games_played,
+            last_game_date,
+            last_processor,
+            last_gamebook_activity_date,
+            last_roster_activity_date,
+            jersey_number,
+            position,
+            source_priority,
+            processed_at
+        FROM `{self.project_id}.{self.table_name}`
+        WHERE player_lookup = @player_lookup
+          AND team_abbr = @team_abbr
+          AND season = @season
+        LIMIT 1
+        """
+        
+        job_config = bigquery.QueryJobConfig(query_parameters=[
+            bigquery.ScalarQueryParameter("player_lookup", "STRING", player_lookup),
+            bigquery.ScalarQueryParameter("team_abbr", "STRING", team_abbr),
+            bigquery.ScalarQueryParameter("season", "STRING", season)
+        ])
+        
+        try:
+            results = self.bq_client.query(query, job_config=job_config).to_dataframe()
+            
+            if results.empty:
+                return None
+            
+            # Convert to dictionary
+            record = results.iloc[0].to_dict()
+            
+            # Convert timestamps/dates to Python types
+            for key, value in record.items():
+                if pd.isna(value):
+                    record[key] = None
+                elif isinstance(value, pd.Timestamp):
+                    record[key] = value.to_pydatetime()
+                elif hasattr(value, 'date'):
+                    record[key] = value.date()
+            
+            return record
+            
+        except Exception as e:
+            logger.warning(f"Error fetching existing record for {player_lookup}: {e}")
+            return None
+    
+    def should_update_record(self, existing_record: Optional[Dict], 
+                            new_data_date: date, processor_type: str) -> Tuple[bool, str]:
+        """
+        Determine if we should update a record based on data freshness.
+        
+        This implements the core data protection logic:
+        1. New records: Always allow
+        2. Same processor with fresher data: Allow
+        3. Same processor with stale data: Block
+        4. Different processor: Check authority rules
+        
+        Args:
+            existing_record: Existing record dict (or None if new record)
+            new_data_date: Date of the data we want to write
+            processor_type: 'gamebook' or 'roster'
+            
+        Returns:
+            Tuple of (should_update: bool, reason: str)
+        """
+        if existing_record is None:
+            # New record - always safe to write
+            return True, "new_record"
+        
+        # Check activity date for this processor
+        activity_field = f'last_{processor_type}_activity_date'
+        existing_activity = existing_record.get(activity_field)
+        
+        if existing_activity is None:
+            # This processor has never touched this record - safe to write
+            return True, f"first_{processor_type}_activity"
+        
+        # Convert to date if timestamp
+        if isinstance(existing_activity, datetime):
+            existing_activity = existing_activity.date()
+        
+        # Freshness check
+        if new_data_date > existing_activity:
+            # Our data is fresher - allow update
+            return True, f"fresher_data ({new_data_date} > {existing_activity})"
+        
+        elif new_data_date == existing_activity:
+            # Same date - allow update (reprocessing same date)
+            return True, f"same_date_reprocess ({new_data_date})"
+        
+        else:
+            # Our data is staler - block update
+            logger.warning(
+                f"Blocking update for {existing_record['player_lookup']} on {existing_record['team_abbr']} - "
+                f"existing {processor_type} data is fresher ({existing_activity} vs {new_data_date})"
+            )
+            return False, f"stale_data ({new_data_date} < {existing_activity})"
+    
+    def check_team_authority(self, existing_record: Optional[Dict], 
+                            processor_type: str) -> Tuple[bool, str]:
+        """
+        Check if this processor has authority to update team_abbr field.
+        
+        Authority rules:
+        1. Gamebook always has authority (verified via game participation)
+        2. Roster has authority only if:
+           - Record is new, OR
+           - Record exists but has no games played (gamebook hasn't set team yet)
+        
+        Args:
+            existing_record: Existing record dict (or None if new)
+            processor_type: 'gamebook' or 'roster'
+            
+        Returns:
+            Tuple of (has_authority: bool, reason: str)
+        """
+        if processor_type == 'gamebook':
+            # Gamebook always has authority (verified via actual games)
+            return True, "gamebook_authority"
+        
+        if processor_type == 'roster':
+            if existing_record is None:
+                # New record - roster can set initial team
+                return True, "new_record"
+            
+            games_played = existing_record.get('games_played', 0)
+            if games_played == 0:
+                # No games played yet - roster can set/update team
+                return True, "no_games_yet"
+            else:
+                # Games played - gamebook has set the team, roster shouldn't override
+                logger.debug(
+                    f"Roster processor does not have team authority for "
+                    f"{existing_record['player_lookup']} - gamebook has set team "
+                    f"({games_played} games played)"
+                )
+                return False, f"gamebook_owns_team ({games_played} games)"
+        
+        # Unknown processor type
+        return False, "unknown_processor"
+    
+    def update_activity_date(self, record: Dict, processor_type: str, 
+                            activity_date: date) -> Dict:
+        """
+        Update the activity date field for this processor.
+        
+        Args:
+            record: Record dictionary to update
+            processor_type: 'gamebook' or 'roster'
+            activity_date: Date to set as activity date
+            
+        Returns:
+            Updated record dictionary
+        """
+        activity_field = f'last_{processor_type}_activity_date'
+        record[activity_field] = activity_date
+        
+        logger.debug(
+            f"Updated {activity_field} to {activity_date} for "
+            f"{record.get('player_lookup', 'unknown')}"
+        )
+        
+        return record
+    
+    # =========================================================================
+    # EXISTING METHODS (unchanged)
+    # =========================================================================
     
     def calculate_season_string(self, season_year: int) -> str:
         """Convert season year to standard season string format."""
@@ -264,11 +769,13 @@ class RegistryProcessorBase(ProcessorBase, UpdateSourceTrackingMixin):
         # Define fields that should be integers
         integer_fields = {'games_played', 'total_appearances', 'inactive_appearances', 
                 'dnp_appearances', 'jersey_number', 'occurrences', 'gamebook_update_count', 
-                'roster_update_count', 'update_sequence_number'}
+                'roster_update_count', 'update_sequence_number', 'season_year', 
+                'records_processed', 'records_created', 'records_updated', 'records_skipped',
+                'data_records_queried', 'source_data_freshness_days'}
         
         # Define TIMESTAMP fields that need special handling
         timestamp_fields = {'created_at', 'processed_at', 'reviewed_at',
-                          'last_gamebook_update', 'last_roster_update'}
+                          'last_gamebook_update', 'last_roster_update', 'started_at'}
         
         for key, value in record.items():
             # Handle lists/arrays FIRST (before pd.isna check)

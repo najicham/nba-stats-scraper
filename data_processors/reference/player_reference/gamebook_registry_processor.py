@@ -2,10 +2,13 @@
 """
 File: data_processors/reference/player_reference/gamebook_registry_processor.py
 
-Gamebook Registry Processor
+Gamebook Registry Processor - With Complete Data Protection
 
 Builds the NBA players registry from NBA.com gamebook data.
-Simplified version with conflict prevention removed and bulk universal ID resolution.
+Enhanced with:
+- Temporal ordering protection
+- Activity date tracking
+- Data freshness validation
 
 Three Usage Scenarios:
 1. Historical backfill: Process 4 years of gamebook data
@@ -21,7 +24,7 @@ from typing import Dict, List, Tuple, Optional
 import pandas as pd
 from google.cloud import bigquery
 
-from data_processors.reference.base.registry_processor_base import RegistryProcessorBase
+from data_processors.reference.base.registry_processor_base import RegistryProcessorBase, TemporalOrderingError
 from data_processors.reference.base.name_change_detection_mixin import NameChangeDetectionMixin
 from data_processors.reference.base.database_strategies import DatabaseStrategiesMixin
 from shared.utils.notification_system import (
@@ -61,7 +64,6 @@ class GamebookRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin,
         query_start = time.time()
         logger.info(f"PERF_METRIC: gamebook_query_start season={season_filter} team={team_filter}")
         
-        # Build the query
         query = """
         SELECT 
             player_name,
@@ -81,7 +83,6 @@ class GamebookRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin,
         
         query_params = []
         
-        # Add filters
         if season_filter:
             season_year = int(season_filter.split('-')[0])
             query += " AND season_year = @season_year"
@@ -126,22 +127,19 @@ class GamebookRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin,
         logger.info("Loading roster enhancement data from Basketball Reference...")
         
         try:
-            # Import team mapper with fallback
             try:
                 from shared.utils.nba_team_mapper import nba_team_mapper
                 logger.info("Successfully imported nba_team_mapper")
             except ImportError as e:
                 logger.warning(f"Could not import nba_team_mapper: {e}")
-                # Fallback mapping
                 BR_TO_NBA_MAPPING = {
-                    'BRK': 'BKN',  # Brooklyn
-                    'CHO': 'CHA',  # Charlotte  
-                    'PHO': 'PHX'   # Phoenix
+                    'BRK': 'BKN',
+                    'CHO': 'CHA',
+                    'PHO': 'PHX'
                 }
                 nba_team_mapper = None
                 logger.info("Using fallback hardcoded team mapping")
             
-            # Query Basketball Reference with team codes
             query = """
             SELECT DISTINCT
                 team_abbrev as br_team_abbr,
@@ -157,7 +155,6 @@ class GamebookRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin,
             
             query_params = []
             
-            # Apply filters
             if season_filter:
                 season_year = int(season_filter.split('-')[0])
                 query += " AND season_year = @season_year"
@@ -188,7 +185,6 @@ class GamebookRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin,
                 season_years = results['season_year'].unique()
                 logger.info(f"Basketball Reference data contains season years: {sorted(season_years)}")
             
-            # Build lookup dict with NBA team code mapping
             enhancement_data = {}
             mapped_count = 0
             unmapped_teams = set()
@@ -198,7 +194,6 @@ class GamebookRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin,
                 br_team_abbr = row['br_team_abbr']
                 nba_team_abbr = None
                 
-                # Apply team mapping
                 if nba_team_mapper:
                     for team in nba_team_mapper.teams_data:
                         if team.br_tricode == br_team_abbr:
@@ -210,7 +205,6 @@ class GamebookRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin,
                                 mapped_count += 1
                             break
                 else:
-                    # Use hardcoded fallback mapping
                     nba_team_abbr = BR_TO_NBA_MAPPING.get(br_team_abbr, br_team_abbr)
                     if br_team_abbr != nba_team_abbr:
                         if br_team_abbr not in team_mapping_log:
@@ -249,12 +243,10 @@ class GamebookRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin,
                                      enhancement_data: Dict) -> Tuple[Optional[Dict], bool]:
         """Attempt to resolve enhancement data via alias lookup."""
         
-        # Direct lookup first
         direct_key = (team_abbr, player_lookup)
         if direct_key in enhancement_data:
             return enhancement_data[direct_key], False
         
-        # Try alias resolution
         alias_query = f"""
         SELECT a.alias_lookup as br_alias_lookup
         FROM `{self.project_id}.{self.alias_table_name}` a
@@ -286,10 +278,13 @@ class GamebookRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin,
 
     def aggregate_player_stats(self, gamebook_df: pd.DataFrame, 
                              date_range: Tuple[str, str] = None) -> List[Dict]:
-        """Aggregate gamebook data into registry records with bulk universal ID resolution."""
+        """
+        Aggregate gamebook data into registry records with bulk universal ID resolution.
+        Now includes freshness checks and activity date tracking.
+        """
         logger.info("Aggregating player statistics for registry...")
         
-        # Determine season years for Basketball Reference filtering
+        # Determine season years for BR filtering
         season_years_filter = None
         if date_range:
             start_season_year, end_season_year = self.date_to_nba_season_years(date_range)
@@ -299,30 +294,45 @@ class GamebookRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin,
             if len(seasons_in_data) > 0:
                 season_years_filter = (int(seasons_in_data.min()), int(seasons_in_data.max()))
         
-        # Get roster enhancement data
         enhancement_data = self.get_roster_enhancement_data(season_years_filter=season_years_filter)
         
-        # Group by logical business key
         groupby_cols = ['player_lookup', 'team_abbr', 'season_year']
         grouped = gamebook_df.groupby(groupby_cols)
         
-        # Track which Basketball Reference players we found in gamebook
         found_br_players = set()
         
-        # BULK RESOLUTION: Collect all unique player_lookup values first
+        # BULK RESOLUTION
         unique_player_lookups = list(gamebook_df['player_lookup'].unique())
         logger.info(f"Performing bulk universal ID resolution for {len(unique_player_lookups)} unique players")
         
-        # Get all universal IDs in one operation
         universal_id_mappings = self.bulk_resolve_universal_player_ids(unique_player_lookups)
         
         registry_records = []
+        skipped_count = 0
         
         for (player_lookup, team_abbr, season_year), group in grouped:
-            # Calculate season string
             season_str = self.calculate_season_string(season_year)
             
-            # Pick the most common player name variant
+            # =================================================================
+            # PROTECTION 1: Check existing record for freshness
+            # =================================================================
+            existing_record = self.get_existing_record(player_lookup, team_abbr, season_str)
+            
+            # Determine the data_date for this group (use last game date)
+            game_dates = pd.to_datetime(group['game_date'])
+            data_date = game_dates.max().date()
+            
+            # PROTECTION 2: Freshness check
+            should_update, freshness_reason = self.should_update_record(
+                existing_record, data_date, self.processor_type
+            )
+            
+            if not should_update:
+                logger.debug(f"Skipping {player_lookup} on {team_abbr}: {freshness_reason}")
+                skipped_count += 1
+                continue  # Skip this record - data is stale
+            
+            # Pick most common player name variant
             name_counts = group['player_name'].value_counts()
             player_name = name_counts.index[0]
             
@@ -330,8 +340,6 @@ class GamebookRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin,
             total_appearances = len(group)
             unique_games = group['game_id'].nunique()
             
-            # Get date range
-            game_dates = pd.to_datetime(group['game_date'])
             first_game = game_dates.min().date()
             last_game = game_dates.max().date()
             
@@ -341,18 +349,17 @@ class GamebookRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin,
             inactive_games = status_counts.get('inactive', 0)
             dnp_games = status_counts.get('dnp', 0)
             
-            # Determine source priority and confidence with dynamic logic
+            # Determine source priority and confidence
             resolution_statuses = group['name_resolution_status'].value_counts()
             source_priority, confidence_score = self._determine_gamebook_source_priority_and_confidence(
                 resolution_statuses, active_games, total_appearances
             )
             
-            # Look up enhancement data (with alias resolution)
+            # Look up enhancement data
             enhancement, resolved_via_alias = self._resolve_enhancement_via_alias(
                 player_lookup, team_abbr, enhancement_data
             )
 
-            # Track found BR players
             if enhancement:
                 if resolved_via_alias:
                     for br_key, br_data in enhancement_data.items():
@@ -365,7 +372,7 @@ class GamebookRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin,
             if enhancement is None:
                 enhancement = {}
 
-            # Get universal player ID from bulk resolution
+            # Get universal player ID
             universal_id = universal_id_mappings.get(player_lookup, f"{player_lookup}_001")
             
             # Create base registry record
@@ -373,7 +380,7 @@ class GamebookRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin,
                 'universal_player_id': universal_id,
                 'player_name': player_name,
                 'player_lookup': player_lookup,
-                'team_abbr': team_abbr,
+                'team_abbr': team_abbr,  # Gamebook always has authority over team
                 'season': season_str,
                 'first_game_date': first_game,
                 'last_game_date': last_game,
@@ -383,7 +390,6 @@ class GamebookRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin,
                 'dnp_appearances': dnp_games,
                 'jersey_number': enhancement.get('jersey_number'),
                 'position': enhancement.get('position'),
-                # 'last_roster_update': date.today() if enhancement else None,
                 'source_priority': source_priority,
                 'confidence_score': confidence_score,
                 'created_by': self.processing_run_id,
@@ -391,10 +397,15 @@ class GamebookRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin,
                 'processed_at': datetime.now()
             }
             
-            # Enhance record with source tracking
+            # =================================================================
+            # PROTECTION 3: Update activity date
+            # =================================================================
+            record = self.update_activity_date(record, self.processor_type, data_date)
+            
+            # Enhance with source tracking
             enhanced_record = self.enhance_record_with_source_tracking(record, self.processor_type)
             
-            # Convert types for BigQuery
+            # Convert types
             enhanced_record = self._convert_pandas_types_for_json(enhanced_record)
             registry_records.append(enhanced_record)
             
@@ -403,7 +414,10 @@ class GamebookRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin,
             self.stats['seasons_processed'].add(season_str)
             self.stats['teams_processed'].add(team_abbr)
         
-        # Handle unresolved Basketball Reference players (simplified)
+        if skipped_count > 0:
+            logger.info(f"Skipped {skipped_count} records due to stale data")
+        
+        # Handle unresolved BR players
         self._handle_unresolved_br_players_simple(enhancement_data, found_br_players)
         
         logger.info(f"Created {len(registry_records)} registry records")
@@ -414,7 +428,6 @@ class GamebookRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin,
     def _determine_gamebook_source_priority_and_confidence(self, resolution_statuses: pd.Series, 
                                                          active_games: int, total_appearances: int) -> Tuple[str, float]:
         """Determine source priority and confidence with dynamic logic."""
-        # Base source priority determination
         if 'original' in resolution_statuses:
             source_priority = 'nba_gamebook'
             base_confidence = 1.0
@@ -425,10 +438,8 @@ class GamebookRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin,
             source_priority = 'nba_gamebook_uncertain'
             base_confidence = 0.7
         
-        # Dynamic confidence adjustments
         confidence_score = base_confidence
         
-        # More games played = higher confidence
         if active_games >= 50:
             confidence_score = min(confidence_score + 0.1, 1.0)
         elif active_games >= 20:
@@ -436,7 +447,6 @@ class GamebookRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin,
         elif active_games < 5:
             confidence_score = max(confidence_score - 0.1, 0.1)
         
-        # High participation rate = higher confidence
         participation_rate = active_games / max(total_appearances, 1)
         if participation_rate >= 0.8:
             confidence_score = min(confidence_score + 0.05, 1.0)
@@ -446,7 +456,7 @@ class GamebookRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin,
         return source_priority, confidence_score
 
     def _handle_unresolved_br_players_simple(self, enhancement_data: Dict, found_players: set):
-        """Simplified unresolved player handling - just log unresolved players."""
+        """Simplified unresolved player handling."""
         unresolved_players = []
         current_datetime = datetime.now()
         current_date = current_datetime.date()
@@ -482,7 +492,6 @@ class GamebookRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin,
             self.stats['unresolved_players_found'] = len(unresolved_players)
             logger.info(f"Added {len(unresolved_players)} Basketball Reference players to unresolved queue")
             
-            # Send notification if unresolved count exceeds threshold
             threshold = int(os.environ.get('EMAIL_ALERT_UNRESOLVED_COUNT_THRESHOLD', '50'))
             if len(unresolved_players) > threshold:
                 try:
@@ -491,28 +500,25 @@ class GamebookRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin,
                         level=NotificationLevel.WARNING,
                         notification_type=NotificationType.UNRESOLVED_PLAYERS,
                         title="High Unresolved Player Count",
-                        message=f"{len(unresolved_players)} unresolved players detected (threshold: {threshold})",
+                        message=f"{len(unresolved_players)} unresolved players detected",
                         details={
                             'count': len(unresolved_players),
                             'threshold': threshold,
-                            'processing_run_id': self.processing_run_id,
-                            'season': self.calculate_season_string(list(enhancement_data.values())[0].get('season_year', 2024)) if enhancement_data else 'unknown'
+                            'processing_run_id': self.processing_run_id
                         },
                         processor_name="Gamebook Registry Processor"
                     )
                 except Exception as e:
-                    logger.warning(f"Failed to send unresolved players notification: {e}")
+                    logger.warning(f"Failed to send notification: {e}")
 
     def transform_data(self, raw_data: Dict, file_path: str = None) -> List[Dict]:
         """Transform data for this processor."""
-        # Extract filters from raw_data
         season_filter = raw_data.get('season_filter')
         team_filter = raw_data.get('team_filter') 
         date_range = raw_data.get('date_range')
         
         logger.info(f"Building registry with filters: season={season_filter}, team={team_filter}, date_range={date_range}")
         
-        # Get gamebook data
         gamebook_df = self.get_gamebook_player_data(
             season_filter=season_filter,
             team_filter=team_filter, 
@@ -523,21 +529,19 @@ class GamebookRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin,
             logger.warning("No gamebook data found for specified filters")
             return []
         
-        # Aggregate into registry records
         registry_records = self.aggregate_player_stats(gamebook_df, date_range=date_range)
         
         return registry_records
     
-    def _build_registry_for_season_impl(self, season: str, team: str = None) -> Dict:
+    def _build_registry_for_season_impl(self, season: str, team: str = None,
+                                       date_range: Tuple[str, str] = None) -> Dict:
         """Implementation of season building."""
         season_start = time.time()
         logger.info(f"PERF_METRIC: season_processing_start season={season} team={team}")
         
-        # Reset tracking for this run
         self.new_players_discovered = set()
         self.players_seen_this_run = set()
 
-        # Reset stats
         self.stats = {
             'players_processed': 0,
             'records_created': 0,
@@ -548,53 +552,43 @@ class GamebookRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin,
             'alias_resolutions': 0
         }
         
-        # Create filter data
         filter_data = {
             'season_filter': season,
-            'team_filter': team
+            'team_filter': team,
+            'date_range': date_range
         }
         
-        # Transform and save
         rows = self.transform_data(filter_data)
         result = self.save_registry_data(rows)
 
         result['new_players_discovered'] = list(self.new_players_discovered)
         if self.new_players_discovered:
-            logger.info(f"Discovered {len(self.new_players_discovered)} new players: {', '.join(self.new_players_discovered)}")
+            logger.info(f"Discovered {len(self.new_players_discovered)} new players")
             
-            # Send notification for new players
             try:
                 router = NotificationRouter()
                 router.send_notification(
                     level=NotificationLevel.INFO,
                     notification_type=NotificationType.NEW_PLAYERS,
                     title=f"New Players Discovered - {season}",
-                    message=f"{len(self.new_players_discovered)} new players added to registry",
+                    message=f"{len(self.new_players_discovered)} new players added",
                     details={
                         'count': len(self.new_players_discovered),
-                        'players': list(self.new_players_discovered)[:10],  # First 10
+                        'players': list(self.new_players_discovered)[:10],
                         'season': season,
-                        'processing_run_id': self.processing_run_id,
-                        'total_shown': min(10, len(self.new_players_discovered)),
-                        'note': 'Showing first 10 players' if len(self.new_players_discovered) > 10 else 'All players shown'
+                        'processing_run_id': self.processing_run_id
                     },
                     processor_name="Gamebook Registry Processor"
                 )
             except Exception as e:
-                logger.warning(f"Failed to send new players notification: {e}")
+                logger.warning(f"Failed to send notification: {e}")
         
-        # Log summary
-        logger.info(f"Registry build complete for {season}:")
+        logger.info(f"Registry build complete for {season}")
         logger.info(f"  Records created: {len(rows)}")
         logger.info(f"  Records loaded: {result['rows_processed']}")
-        logger.info(f"  Load errors: {len(result.get('errors', []))}")
-        logger.info(f"  Players processed: {self.stats['players_processed']}")
-        logger.info(f"  Teams: {len(self.stats['teams_processed'])}")
-        logger.info(f"  Alias resolutions: {self.stats['alias_resolutions']}")
-        logger.info(f"  Unresolved found: {self.stats['unresolved_players_found']}")
         
         season_duration = time.time() - season_start
-        logger.info(f"PERF_METRIC: season_processing_complete season={season} duration={season_duration:.3f}s records={result['rows_processed']}")
+        logger.info(f"PERF_METRIC: season_processing_complete duration={season_duration:.3f}s")
 
         return {
             'season': season,
@@ -609,12 +603,12 @@ class GamebookRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin,
             'processing_run_id': self.processing_run_id
         }
 
-    def build_historical_registry(self, seasons: List[str] = None) -> Dict:
-        """Build registry from historical gamebook data."""
+    def build_historical_registry(self, seasons: List[str] = None, 
+                                 allow_backfill: bool = False) -> Dict:
+        """Build registry from historical gamebook data with temporal protection."""
         logger.info("Starting historical registry build")
         
         if not seasons:
-            # Get available seasons from gamebook data
             seasons_query = f"""
                 SELECT DISTINCT season_year
                 FROM `{self.project_id}.nba_raw.nbac_gamebook_player_stats`
@@ -635,21 +629,76 @@ class GamebookRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin,
         total_results = []
         for season in seasons:
             logger.info(f"Processing season {season}")
-            result = self._build_registry_for_season_impl(season)
-            total_results.append(result)
+            
+            season_year = int(season.split('-')[0])
+            
+            start_date = f"{season_year}-10-01"
+            end_date = f"{season_year + 1}-06-30"
+            
+            # Temporal validation
+            try:
+                self.validate_temporal_ordering(
+                    data_date=date.fromisoformat(end_date),
+                    season_year=season_year,
+                    allow_backfill=allow_backfill
+                )
+            except TemporalOrderingError as e:
+                logger.error(f"Temporal ordering error for {season}: {e}")
+                total_results.append({
+                    'season': season,
+                    'status': 'skipped',
+                    'reason': str(e)
+                })
+                continue
+            
+            # Record run start
+            run_id = self.record_run_start(
+                data_date=date.fromisoformat(end_date),
+                season_year=season_year,
+                data_source_primary='nba_gamebook',
+                data_source_enhancement='br_roster',
+                backfill_mode=allow_backfill
+            )
+            
+            try:
+                result = self._build_registry_for_season_impl(
+                    season, 
+                    date_range=(start_date, end_date)
+                )
+                
+                self.record_run_complete(
+                    date.fromisoformat(end_date), 
+                    'success', 
+                    result
+                )
+                
+                total_results.append(result)
+                
+            except Exception as e:
+                logger.error(f"Failed to process season {season}: {e}")
+                
+                self.record_run_complete(
+                    date.fromisoformat(end_date),
+                    'failed',
+                    error=e
+                )
+                
+                total_results.append({
+                    'season': season,
+                    'status': 'failed',
+                    'error': str(e)
+                })
         
-        # Summary
-        total_records = sum(r.get('records_processed', 0) for r in total_results)
-        total_errors = sum(len(r.get('errors', [])) for r in total_results)
+        total_records = sum(r.get('records_processed', 0) for r in total_results if 'records_processed' in r)
+        total_errors = sum(len(r.get('errors', [])) for r in total_results if 'errors' in r)
         
-        # Send completion summary notification
         try:
             router = NotificationRouter()
             router.send_notification(
                 level=NotificationLevel.INFO,
                 notification_type=NotificationType.DAILY_SUMMARY,
                 title="Historical Registry Build Complete",
-                message=f"Processed {len(seasons)} seasons with {total_records} total records",
+                message=f"Processed {len(seasons)} seasons with {total_records} records",
                 details={
                     'scenario': 'historical_backfill',
                     'seasons_count': len(seasons),
@@ -661,7 +710,7 @@ class GamebookRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin,
                 processor_name="Gamebook Registry Processor"
             )
         except Exception as e:
-            logger.warning(f"Failed to send historical build notification: {e}")
+            logger.warning(f"Failed to send notification: {e}")
         
         return {
             'scenario': 'historical_backfill',
@@ -671,3 +720,90 @@ class GamebookRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin,
             'individual_results': total_results,
             'processing_run_id': self.processing_run_id
         }
+
+
+if __name__ == "__main__":
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Process gamebook registry")
+    parser.add_argument("--season", type=str, help="Season to process (e.g., 2024-25)")
+    parser.add_argument("--team", type=str, help="Team filter")
+    parser.add_argument("--date-range", type=str, help="Date range (YYYY-MM-DD,YYYY-MM-DD)")
+    parser.add_argument("--allow-backfill", action="store_true", help="Allow processing earlier dates")
+    parser.add_argument("--strategy", default="merge", choices=["merge", "replace"])
+    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
+    parser.add_argument("--historical", action="store_true", help="Build historical registry")
+    
+    args = parser.parse_args()
+    
+    if args.debug:
+        logging.basicConfig(level=logging.DEBUG)
+    else:
+        logging.basicConfig(level=logging.INFO)
+    
+    processor = GamebookRegistryProcessor(strategy=args.strategy)
+    
+    if args.historical:
+        result = processor.build_historical_registry(allow_backfill=args.allow_backfill)
+    else:
+        if not args.season:
+            print("Error: --season required for non-historical processing")
+            exit(1)
+        
+        date_range = None
+        if args.date_range:
+            dates = args.date_range.split(',')
+            if len(dates) == 2:
+                date_range = (dates[0], dates[1])
+        
+        season_year = int(args.season.split('-')[0])
+        
+        if date_range:
+            end_date = date.fromisoformat(date_range[1])
+        else:
+            end_date = date(season_year + 1, 6, 30)
+        
+        try:
+            processor.validate_temporal_ordering(
+                data_date=end_date,
+                season_year=season_year,
+                allow_backfill=args.allow_backfill
+            )
+        except TemporalOrderingError as e:
+            print(f"\n❌ TEMPORAL ORDERING ERROR")
+            print(f"{'='*60}")
+            print(str(e))
+            print(f"{'='*60}")
+            exit(1)
+        
+        run_id = processor.record_run_start(
+            data_date=end_date,
+            season_year=season_year,
+            data_source_primary='nba_gamebook',
+            data_source_enhancement='br_roster',
+            backfill_mode=args.allow_backfill
+        )
+        
+        try:
+            result = processor._build_registry_for_season_impl(
+                args.season,
+                team=args.team,
+                date_range=date_range
+            )
+            
+            processor.record_run_complete(end_date, 'success', result)
+            
+        except Exception as e:
+            processor.record_run_complete(end_date, 'failed', error=e)
+            raise
+    
+    print(f"\n{'='*60}")
+    print(f"✅ SUCCESS")
+    print(f"{'='*60}")
+    if 'season' in result:
+        print(f"Season: {result['season']}")
+        print(f"Records processed: {result['records_processed']}")
+    else:
+        print(f"Seasons processed: {result['seasons_processed']}")
+        print(f"Total records: {result['total_records_processed']}")
+    print(f"{'='*60}")

@@ -5,6 +5,11 @@ Processing Gap Detector
 
 Core logic for detecting unprocessed GCS files by comparing against BigQuery.
 Integrates with existing notification_system.py for alerts.
+
+CRITICAL FIX (Oct 4, 2025): Path normalization to match BigQuery storage format
+- BigQuery stores: "nba-com/player-list/2025-10-01/file.json"
+- GCS returns: "gs://nba-scraped-data/nba-com/player-list/2025-10-01/file.json"
+- Solution: Strip gs://bucket/ prefix before querying BigQuery
 """
 
 import logging
@@ -202,6 +207,29 @@ class ProcessingGapDetector:
         
         return result
     
+    def _normalize_file_path(self, file_path: str) -> str:
+        """
+        Normalize GCS file path to match BigQuery storage format.
+        
+        BigQuery stores paths without gs://bucket/ prefix:
+          "nba-com/player-list/2025-10-01/file.json"
+        
+        GCS inspector returns full paths:
+          "gs://nba-scraped-data/nba-com/player-list/2025-10-01/file.json"
+        
+        Args:
+            file_path: File path (may include gs://bucket/ prefix)
+            
+        Returns:
+            Normalized path without bucket prefix
+        """
+        if file_path.startswith('gs://'):
+            # Extract path after bucket name
+            path_parts = file_path.replace('gs://', '').split('/', 1)
+            if len(path_parts) > 1:
+                return path_parts[1]
+        return file_path
+    
     def _check_file_processed(
         self, 
         table: str, 
@@ -213,12 +241,15 @@ class ProcessingGapDetector:
         
         Args:
             table: Fully qualified table name
-            file_path: GCS file path
+            file_path: GCS file path (may include gs://bucket/ prefix)
             source_field: Field name storing source path
         
         Returns:
             True if file found in table, False otherwise
         """
+        # Normalize path to match BigQuery storage format
+        file_path_normalized = self._normalize_file_path(file_path)
+        
         query = f"""
         SELECT COUNT(*) as count
         FROM `{table}`
@@ -227,17 +258,17 @@ class ProcessingGapDetector:
         
         job_config = bigquery.QueryJobConfig(
             query_parameters=[
-                bigquery.ScalarQueryParameter("file_path", "STRING", file_path)
+                bigquery.ScalarQueryParameter("file_path", "STRING", file_path_normalized)
             ]
         )
         
         try:
             result = self.bq_client.query(query, job_config=job_config).result()
             count = list(result)[0]['count']
-            logger.info(f"File processing check: {file_path} found {count} records")
+            logger.info(f"File processing check: {file_path_normalized} found {count} records")
             return count > 0
         except Exception as e:
-            logger.error(f"Error checking BigQuery for file '{file_path}': {e}")
+            logger.error(f"Error checking BigQuery for file '{file_path_normalized}': {e}")
             return False
     
     def _get_record_count(
@@ -247,6 +278,9 @@ class ProcessingGapDetector:
         source_field: str = 'source_file_path'
     ) -> int:
         """Get count of records for a specific source file."""
+        # Normalize path to match BigQuery storage format
+        file_path_normalized = self._normalize_file_path(file_path)
+        
         query = f"""
         SELECT COUNT(*) as count
         FROM `{table}`
@@ -255,7 +289,7 @@ class ProcessingGapDetector:
         
         job_config = bigquery.QueryJobConfig(
             query_parameters=[
-                bigquery.ScalarQueryParameter("file_path", "STRING", file_path)
+                bigquery.ScalarQueryParameter("file_path", "STRING", file_path_normalized)
             ]
         )
         
