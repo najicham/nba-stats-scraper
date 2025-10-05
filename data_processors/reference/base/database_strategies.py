@@ -4,7 +4,7 @@ File: data_processors/reference/base/database_strategies.py
 
 Database operation strategies for registry processors.
 Provides MERGE and REPLACE strategies with performance optimization and error handling.
-Enhanced with processor tracking field support using actual schema field names.
+Enhanced with processor tracking field support and activity date tracking.
 """
 
 import logging
@@ -28,7 +28,7 @@ class DatabaseStrategiesMixin:
     - Performance monitoring and metrics
     - Error handling with graceful degradation
     - Schema enforcement and type safety
-    - Enhanced with processor tracking fields using actual schema
+    - Enhanced with processor tracking fields and activity date tracking
     """
     
     def save_registry_data(self, rows: List[Dict], **kwargs) -> Dict:
@@ -95,7 +95,6 @@ class DatabaseStrategiesMixin:
             logger.error(error_msg)
             errors.append(error_msg)
             
-            # Send error notification
             try:
                 notify_error(
                     title="Database REPLACE Operation Failed",
@@ -195,7 +194,6 @@ class DatabaseStrategiesMixin:
             
             errors.append(error_msg)
             
-            # Send error notification
             try:
                 notify_error(
                     title="Database MERGE Operation Failed",
@@ -229,7 +227,7 @@ class DatabaseStrategiesMixin:
                     logger.warning(f"Failed to cleanup temp table {temp_table_id}: {cleanup_error}")
 
     def _build_merge_query(self, table_id: str, temp_table_id: str) -> str:
-        """Build MERGE query for registry table with actual schema field names."""
+        """Build MERGE query for registry table with complete field set including activity dates."""
         return f"""
         MERGE `{table_id}` AS target
         USING `{temp_table_id}` AS source
@@ -256,7 +254,7 @@ class DatabaseStrategiesMixin:
             confidence_score = source.confidence_score,
             processed_at = source.processed_at,
             
-            -- Processor tracking fields using actual schema names
+            -- Processor tracking fields
             last_processor = source.last_processor,
             last_gamebook_update = CASE 
                 WHEN source.last_processor = 'gamebook' THEN source.last_gamebook_update
@@ -270,7 +268,11 @@ class DatabaseStrategiesMixin:
                 WHEN source.last_processor = 'roster' THEN COALESCE(target.roster_update_count, 0) + 1
                 ELSE COALESCE(target.roster_update_count, 0)
             END,
-            update_sequence_number = source.update_sequence_number
+            update_sequence_number = source.update_sequence_number,
+            
+            -- CRITICAL: Activity date tracking fields
+            last_roster_activity_date = source.last_roster_activity_date,
+            last_gamebook_activity_date = source.last_gamebook_activity_date
             
         WHEN NOT MATCHED THEN
         INSERT (
@@ -279,9 +281,12 @@ class DatabaseStrategiesMixin:
             dnp_appearances, jersey_number, position, last_roster_update,
             source_priority, confidence_score, created_by, created_at, processed_at,
             
-            -- Processor tracking fields using actual schema names
+            -- Processor tracking fields
             last_processor, last_gamebook_update,
-            gamebook_update_count, roster_update_count, update_sequence_number
+            gamebook_update_count, roster_update_count, update_sequence_number,
+            
+            -- Activity date tracking fields
+            last_roster_activity_date, last_gamebook_activity_date
         )
         VALUES (
             source.universal_player_id, source.player_name, source.player_lookup, source.team_abbr, source.season,
@@ -292,12 +297,16 @@ class DatabaseStrategiesMixin:
             source.source_priority, source.confidence_score, source.created_by,
             source.created_at, source.processed_at,
             
-            -- Processor tracking fields using actual schema names
+            -- Processor tracking fields
             source.last_processor,
             CASE WHEN source.last_processor = 'gamebook' THEN source.last_gamebook_update ELSE NULL END,
             CASE WHEN source.last_processor = 'gamebook' THEN 1 ELSE 0 END,
             CASE WHEN source.last_processor = 'roster' THEN 1 ELSE 0 END,
-            source.update_sequence_number
+            source.update_sequence_number,
+            
+            -- Activity date tracking fields
+            source.last_roster_activity_date,
+            source.last_gamebook_activity_date
         )
         """
 
@@ -365,7 +374,6 @@ class DatabaseStrategiesMixin:
         except Exception as e:
             logger.error(f"Error in REPLACE mode for unresolved players: {e}")
             
-            # Send error notification
             try:
                 notify_error(
                     title="Unresolved Players REPLACE Failed",
@@ -426,7 +434,7 @@ class DatabaseStrategiesMixin:
             )
             load_result = load_job.result()
             
-            # Execute MERGE using actual field names
+            # Execute MERGE
             merge_query = f"""
             MERGE `{table_id}` AS target
             USING `{temp_table_id}` AS source
@@ -480,7 +488,6 @@ class DatabaseStrategiesMixin:
             else:
                 logger.error(f"MERGE failed with error: {str(e)}")
                 
-                # Send error notification (only for non-streaming-buffer errors)
                 try:
                     notify_error(
                         title="Unresolved Players MERGE Failed",

@@ -12,11 +12,12 @@ import json
 import logging
 import os
 import uuid
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from typing import Dict, List, Tuple, Optional, Any
 from enum import Enum
 import pandas as pd
 import numpy as np
+import google
 from google.cloud import bigquery
 
 from data_processors.raw.processor_base import ProcessorBase
@@ -232,9 +233,11 @@ class RegistryProcessorBase(ProcessorBase, UpdateSourceTrackingMixin):
         
         # Current run tracking for temporal ordering
         self.current_run_id = None
-        self.current_data_date = None
+        self.current_season_year = None
+        self.run_start_time = None  # Track in memory instead of DB
+        self.run_metadata = {}  # Store metadata until completion
         
-        logger.info(f"Initialized registry processor with run ID: {self.processing_run_id}")
+        logger.info(f"Initialized registry processor with run ID generation enabled")
     
     # =========================================================================
     # TEMPORAL ORDERING PROTECTION
@@ -260,16 +263,15 @@ class RegistryProcessorBase(ProcessorBase, UpdateSourceTrackingMixin):
             logger.warning("Processor type not set - skipping temporal validation")
             return
         
-        # Query for latest successfully processed date for this season
+        # Query for latest processed date for this season (ANY status, including running)
         query = f"""
         SELECT 
             MAX(data_date) as latest_processed_date,
             MAX(started_at) as latest_run_time
         FROM `{self.project_id}.{self.run_history_table}`
         WHERE processor_name = @processor_name
-          AND season_year = @season_year
-          AND status = 'success'
-          AND data_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 365 DAY)
+        AND season_year = @season_year
+        AND status IN ('success', 'running', 'partial')  -- ✅ Check any active runs
         """
         
         job_config = bigquery.QueryJobConfig(query_parameters=[
@@ -326,7 +328,7 @@ class RegistryProcessorBase(ProcessorBase, UpdateSourceTrackingMixin):
             
             logger.info(f"✓ Temporal validation passed: {data_date} >= {latest_processed_date}")
             
-        except bigquery.exceptions.NotFound:
+        except google.cloud.exceptions.NotFound:
             # Table doesn't exist yet - first run
             logger.info(f"Run history table not found - first run, proceeding")
             return
@@ -337,39 +339,43 @@ class RegistryProcessorBase(ProcessorBase, UpdateSourceTrackingMixin):
             # Don't block processing on validation errors
             return
     
-    def record_run_start(self, data_date: date, season_year: int,
-                        data_source_primary: str = None,
-                        data_source_enhancement: str = None,
-                        validation_mode: str = None,
-                        source_data_freshness_days: int = None,
-                        backfill_mode: bool = False,
-                        force_reprocess: bool = False) -> str:
+    def record_run_complete(self, data_date: date, season_year: int, status: str, 
+                       result: Dict = None, error: Exception = None,
+                       data_source_primary: str = None,
+                       data_source_enhancement: str = None,
+                       validation_mode: str = None,
+                       source_data_freshness_days: int = None,
+                       backfill_mode: bool = False,
+                       force_reprocess: bool = False) -> None:
         """
-        Record the start of a processor run in run history table.
+        Record completed processor run in single INSERT operation.
+        
+        This avoids BigQuery streaming buffer issues by only writing once at completion.
         
         Args:
-            data_date: The date of data being processed
-            season_year: The season year
+            data_date: The date of data that was processed
+            season_year: The season year processed
+            status: Final status ('success', 'failed', 'partial')
+            result: Processing result dictionary (if success/partial)
+            error: Exception object (if failed)
             data_source_primary: Primary data source name
             data_source_enhancement: Enhancement data source name
             validation_mode: Validation mode ('full', 'partial', 'none')
             source_data_freshness_days: How stale source data is (in days)
             backfill_mode: Whether running in backfill mode
             force_reprocess: Whether forcing reprocessing
-            
-        Returns:
-            run_id: Unique identifier for this run
         """
         if not self.processor_type:
             logger.warning("Processor type not set - skipping run recording")
-            return f"unknown_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            return
         
-        # Generate unique run ID
-        run_id = f"{self.processor_type}_{data_date.strftime('%Y%m%d')}_{datetime.now().strftime('%H%M%S')}_{str(uuid.uuid4())[:8]}"
+        if not self.run_start_time:
+            logger.warning("No run start time recorded - skipping run recording")
+            return
         
-        # Store for use in record_run_complete
-        self.current_run_id = run_id
-        self.current_data_date = data_date
+        # Calculate duration
+        processed_at = datetime.now(timezone.utc)
+        duration_seconds = (processed_at - self.run_start_time).total_seconds()
         
         # Calculate season string
         season_str = self.calculate_season_string(season_year)
@@ -378,161 +384,73 @@ class RegistryProcessorBase(ProcessorBase, UpdateSourceTrackingMixin):
         execution_host = os.environ.get('EXECUTION_HOST', 'local')
         triggered_by = os.environ.get('TRIGGERED_BY', 'manual')
         
-        # Build record
+        # Build errors JSON
+        errors_json = None
+        if error:
+            errors_json = json.dumps([{
+                'error_type': type(error).__name__,
+                'error_message': str(error),
+                'timestamp': datetime.now(timezone.utc).isoformat()
+            }])
+        
+        # Build summary JSON
+        summary_json = None
+        if result:
+            summary_json = json.dumps(result, default=str)
+        
+        # Build complete record
         record = {
             'processor_name': self.processor_type,
-            'run_id': run_id,
+            'run_id': self.current_run_id,
             'season_year': season_year,
-            'status': 'running',
-            'duration_seconds': None,
-            'records_processed': 0,
-            'records_created': 0,
-            'records_updated': 0,
-            'records_skipped': 0,
+            'status': status,
+            'duration_seconds': duration_seconds,
+            'records_processed': result.get('records_processed', 0) if result else 0,
+            'records_created': result.get('records_created', 0) if result else 0,
+            'records_updated': result.get('records_updated', 0) if result else 0,
+            'records_skipped': result.get('records_skipped', 0) if result else 0,
             'data_source_primary': data_source_primary,
             'data_source_enhancement': data_source_enhancement,
             'data_records_queried': None,
             'validation_mode': validation_mode,
-            'validation_skipped_reason': None,
+            'validation_skipped_reason': result.get('validation_skipped_reason') if result else None,
             'source_data_freshness_days': source_data_freshness_days,
             'season_filter': season_str,
             'team_filter': None,
             'date_range_filter_start': None,
             'date_range_filter_end': None,
-            'backfill_mode': bool(backfill_mode),
-            'force_reprocess': bool(force_reprocess),
-            'test_mode': bool(self.test_mode),
+            'backfill_mode': True if backfill_mode else False,
+            'force_reprocess': True if force_reprocess else False,
+            'test_mode': True if self.test_mode else False,
             'execution_host': execution_host,
             'triggered_by': triggered_by,
-            'errors': None,
+            'errors': errors_json,
             'warnings': None,
-            'summary': None,
+            'summary': summary_json,
             'data_date': data_date,
-            'started_at': datetime.now(),
-            'processed_at': None
+            'started_at': self.run_start_time,
+            'processed_at': processed_at
         }
         
-        # Insert into run history table
+        # Convert types for BigQuery
+        converted_record = self._convert_pandas_types_for_json(record)
+        
+        # Single INSERT - no UPDATE, no streaming buffer issues
         table_id = f"{self.project_id}.{self.run_history_table}"
         
         try:
-            # Convert types for BigQuery
-            converted_record = self._convert_pandas_types_for_json(record)
+            insert_errors = self.bq_client.insert_rows_json(table_id, [converted_record])
             
-            errors = self.bq_client.insert_rows_json(table_id, [converted_record])
-            
-            if errors:
-                logger.warning(f"Errors recording run start: {errors}")
+            if insert_errors:
+                logger.warning(f"Errors recording run completion: {insert_errors}")
             else:
-                logger.info(f"✓ Recorded run start: {run_id}")
+                logger.info(f"✓ Recorded run completion: {self.current_run_id} - {status} ({duration_seconds:.1f}s)")
             
-            return run_id
-            
-        except Exception as e:
-            logger.warning(f"Failed to record run start (non-fatal): {e}")
-            return run_id
-    
-    def record_run_complete(self, data_date: date, status: str, 
-                           result: Dict = None, error: Exception = None) -> None:
-        """
-        Update run history record with completion status.
-        
-        Args:
-            data_date: The date of data that was processed
-            status: Final status ('success', 'failed', 'partial')
-            result: Processing result dictionary (if success)
-            error: Exception object (if failed)
-        """
-        if not self.current_run_id:
-            logger.warning("No current run ID - skipping run completion recording")
-            return
-        
-        # Calculate duration
-        processed_at = datetime.now()
-        
-        # Query for started_at from the running record
-        query = f"""
-        SELECT started_at
-        FROM `{self.project_id}.{self.run_history_table}`
-        WHERE processor_name = @processor_name
-          AND run_id = @run_id
-          AND data_date = @data_date
-        LIMIT 1
-        """
-        
-        job_config = bigquery.QueryJobConfig(query_parameters=[
-            bigquery.ScalarQueryParameter("processor_name", "STRING", self.processor_type),
-            bigquery.ScalarQueryParameter("run_id", "STRING", self.current_run_id),
-            bigquery.ScalarQueryParameter("data_date", "DATE", data_date)
-        ])
-        
-        try:
-            results = self.bq_client.query(query, job_config=job_config).to_dataframe()
-            
-            if not results.empty:
-                started_at = results.iloc[0]['started_at']
-                duration_seconds = (processed_at - started_at).total_seconds()
-            else:
-                duration_seconds = None
-                logger.warning(f"Could not find start record for run {self.current_run_id}")
-            
-            # Build update values
-            records_processed = result.get('records_processed', 0) if result else 0
-            records_created = result.get('records_created', 0) if result else 0
-            records_updated = result.get('records_updated', 0) if result else 0
-            
-            # Build errors JSON
-            errors_json = None
-            if error:
-                errors_json = json.dumps([{
-                    'error_type': type(error).__name__,
-                    'error_message': str(error),
-                    'timestamp': datetime.now().isoformat()
-                }])
-            
-            # Build summary JSON
-            summary_json = None
-            if result:
-                summary_json = json.dumps(result, default=str)
-            
-            # Update record
-            update_query = f"""
-            UPDATE `{self.project_id}.{self.run_history_table}`
-            SET 
-                status = @status,
-                duration_seconds = @duration_seconds,
-                records_processed = @records_processed,
-                records_created = @records_created,
-                records_updated = @records_updated,
-                errors = PARSE_JSON(@errors_json),
-                summary = PARSE_JSON(@summary_json),
-                processed_at = @processed_at
-            WHERE processor_name = @processor_name
-              AND run_id = @run_id
-              AND data_date = @data_date
-            """
-            
-            update_config = bigquery.QueryJobConfig(query_parameters=[
-                bigquery.ScalarQueryParameter("status", "STRING", status),
-                bigquery.ScalarQueryParameter("duration_seconds", "FLOAT64", duration_seconds),
-                bigquery.ScalarQueryParameter("records_processed", "INT64", records_processed),
-                bigquery.ScalarQueryParameter("records_created", "INT64", records_created),
-                bigquery.ScalarQueryParameter("records_updated", "INT64", records_updated),
-                bigquery.ScalarQueryParameter("errors_json", "STRING", errors_json),
-                bigquery.ScalarQueryParameter("summary_json", "STRING", summary_json),
-                bigquery.ScalarQueryParameter("processed_at", "TIMESTAMP", processed_at),
-                bigquery.ScalarQueryParameter("processor_name", "STRING", self.processor_type),
-                bigquery.ScalarQueryParameter("run_id", "STRING", self.current_run_id),
-                bigquery.ScalarQueryParameter("data_date", "DATE", data_date)
-            ])
-            
-            self.bq_client.query(update_query, job_config=update_config).result()
-            
-            logger.info(f"✓ Recorded run completion: {self.current_run_id} - {status}")
-            
-            # Clear current run tracking
+            # Clear run tracking
             self.current_run_id = None
-            self.current_data_date = None
+            self.current_season_year = None
+            self.run_start_time = None
+            self.run_metadata = {}
             
         except Exception as e:
             logger.warning(f"Failed to record run completion (non-fatal): {e}")
@@ -773,9 +691,12 @@ class RegistryProcessorBase(ProcessorBase, UpdateSourceTrackingMixin):
                 'records_processed', 'records_created', 'records_updated', 'records_skipped',
                 'data_records_queried', 'source_data_freshness_days'}
         
+        # Define boolean fields that need explicit conversion
+        boolean_fields = {'backfill_mode', 'force_reprocess', 'test_mode', 'is_active'}
+        
         # Define TIMESTAMP fields that need special handling
         timestamp_fields = {'created_at', 'processed_at', 'reviewed_at',
-                          'last_gamebook_update', 'last_roster_update', 'started_at'}
+                        'last_gamebook_update', 'last_roster_update', 'started_at'}
         
         for key, value in record.items():
             # Handle lists/arrays FIRST (before pd.isna check)
@@ -786,6 +707,14 @@ class RegistryProcessorBase(ProcessorBase, UpdateSourceTrackingMixin):
             # Handle NaN/None values first
             if pd.isna(value):
                 converted_record[key] = None
+            
+            # Handle boolean fields explicitly for insert_rows_json
+            elif key in boolean_fields:
+                # Ensure we have actual Python bool, not numpy bool or int
+                if value is None or pd.isna(value):
+                    converted_record[key] = None
+                else:
+                    converted_record[key] = bool(value) if value else False
             
             # Handle numpy scalars
             elif hasattr(value, 'item'):  

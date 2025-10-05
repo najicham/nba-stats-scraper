@@ -14,10 +14,11 @@ Enhanced with:
 """
 
 import logging
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from typing import Dict, List, Set, Tuple
 import pandas as pd
 from google.cloud import bigquery
+import uuid
 
 from data_processors.reference.base.registry_processor_base import RegistryProcessorBase, TemporalOrderingError
 from data_processors.reference.base.name_change_detection_mixin import NameChangeDetectionMixin
@@ -1394,7 +1395,7 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
             raise
     
     def process_daily_rosters(self, season_year: int = None, data_date: date = None,
-                             allow_backfill: bool = False) -> Dict:
+                            allow_backfill: bool = False) -> Dict:
         """
         Process daily roster updates with complete protection.
         
@@ -1410,6 +1411,9 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
         if not data_date:
             data_date = date.today()
 
+        season_str = self.calculate_season_string(season_year)
+        logger.info(f"Processing daily rosters for {season_str}, date {data_date}")
+        
         # =======================================================================
         # PROTECTION 1: Season Protection - Don't process historical seasons
         # =======================================================================
@@ -1425,14 +1429,31 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
             return {
                 'status': 'blocked',
                 'reason': error_msg,
-                'season': self.calculate_season_string(season_year)
+                'season': season_str,
+                'protection_layer': 'season_protection'
             }
         
-        season_str = self.calculate_season_string(season_year)
-        logger.info(f"Processing daily rosters for {season_str}, date {data_date}")
+        # =======================================================================
+        # PROTECTION 2: Gamebook Precedence - Don't override gamebook data
+        # =======================================================================
+        is_blocked, block_reason = self.check_gamebook_precedence(data_date, season_year)
+        if is_blocked:
+            logger.error(f"Roster processing blocked by gamebook precedence: {block_reason}")
+            return {
+                'status': 'blocked',
+                'reason': block_reason,
+                'season': season_str,
+                'data_date': str(data_date),
+                'protection_layer': 'gamebook_precedence',
+                'message': (
+                    'Gamebook has already processed this date. Gamebook data represents '
+                    'verified game participation and is the authoritative source. '
+                    'Roster data should not override it.'
+                )
+            }
         
         # =======================================================================
-        # PROTECTION 2: Temporal Ordering Protection
+        # PROTECTION 3: Temporal Ordering Protection
         # =======================================================================
         try:
             self.validate_temporal_ordering(
@@ -1446,24 +1467,52 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
                 'status': 'skipped',
                 'reason': str(e),
                 'season': season_str,
-                'data_date': str(data_date)
+                'data_date': str(data_date),
+                'protection_layer': 'temporal_ordering'
             }
         
-        # Record run start
-        run_id = self.record_run_start(
-            data_date=data_date,
-            season_year=season_year,
-            data_source_primary='espn_roster',
-            data_source_enhancement='nbacom_roster',
-            backfill_mode=allow_backfill
-        )
+        # =======================================================================
+        # TRACK RUN START (in memory only)
+        # =======================================================================
+        from datetime import timezone
+        import uuid
+        
+        self.run_start_time = datetime.now(timezone.utc)
+        self.current_run_id = f"{self.processor_type}_{data_date.strftime('%Y%m%d')}_{datetime.now().strftime('%H%M%S')}_{str(uuid.uuid4())[:8]}"
+        self.current_season_year = season_year
+        
+        logger.info(f"Starting run: {self.current_run_id}")
+        
+        # Determine validation mode and freshness (will be filled in during processing)
+        validation_mode = None
+        source_data_freshness_days = None
         
         try:
-            result = self._build_registry_for_season_impl(season_str, data_date=data_date, allow_backfill=allow_backfill)
+            result = self._build_registry_for_season_impl(
+                season_str, 
+                data_date=data_date, 
+                allow_backfill=allow_backfill
+            )
             
-            self.record_run_complete(data_date, 'success', result)
+            # Extract validation info from result
+            validation_mode = result.get('validation_mode')
+            source_data_freshness_days = result.get('source_data_freshness_days')
+            
+            # Record successful completion
+            self.record_run_complete(
+                data_date=data_date,
+                season_year=season_year,
+                status='success',
+                result=result,
+                data_source_primary='espn_roster',
+                data_source_enhancement='nbacom_roster',
+                validation_mode=validation_mode,
+                source_data_freshness_days=source_data_freshness_days,
+                backfill_mode=allow_backfill
+            )
             
             try:
+                from shared.utils.notification_system import notify_info
                 notify_info(
                     title="Daily Roster Processing Complete",
                     message=f"Successfully processed {season_str}",
@@ -1472,8 +1521,8 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
                         'data_date': str(data_date),
                         'records_processed': result['records_processed'],
                         'new_players': len(result.get('new_players_discovered', [])),
-                        'validation_mode': result.get('validation_mode'),
-                        'run_id': run_id
+                        'validation_mode': validation_mode,
+                        'run_id': self.current_run_id
                     }
                 )
             except Exception as e:
@@ -1484,7 +1533,18 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
         except Exception as e:
             logger.error(f"Daily roster processing failed: {e}")
             
-            self.record_run_complete(data_date, 'failed', error=e)
+            # Record failed completion
+            self.record_run_complete(
+                data_date=data_date,
+                season_year=season_year,
+                status='failed',
+                error=e,
+                data_source_primary='espn_roster',
+                data_source_enhancement='nbacom_roster',
+                validation_mode=validation_mode,
+                source_data_freshness_days=source_data_freshness_days,
+                backfill_mode=allow_backfill
+            )
             
             try:
                 notify_error(
@@ -1500,6 +1560,116 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
             raise
+
+    def check_gamebook_precedence(self, data_date: date, season_year: int) -> Tuple[bool, str]:
+        """
+        Check if gamebook processor has processed this date or any later date in the season.
+        
+        This is a TEMPORAL cross-processor check, not just an exact-date check.
+        
+        Gamebook data is authoritative for historical dates because it represents
+        actual game participation. Roster data should not override it.
+        
+        Business Rule:
+        - If gamebook has successfully processed ANY date >= data_date in this season,
+        roster CANNOT process data_date
+        - This prevents roster from going backwards relative to gamebook's progress
+        - Works like temporal ordering but across processors
+        
+        Example:
+        Gamebook processed: Oct 5, 2024
+        Roster tries: Oct 1, 2024
+        Result: BLOCKED (gamebook is ahead, roster can't go backwards)
+        
+        Args:
+            data_date: The date being processed
+            season_year: The season year being processed
+            
+        Returns:
+            Tuple of (is_blocked: bool, reason: str)
+            - is_blocked=True: Processing should be blocked
+            - is_blocked=False: Safe to proceed
+            - reason: Explanation for the decision
+        """
+        query = f"""
+        SELECT 
+            MAX(data_date) as latest_gamebook_date,
+            MAX(processed_at) as last_gamebook_run,
+            COUNT(*) as total_gamebook_runs,
+            SUM(records_processed) as total_records
+        FROM `{self.project_id}.{self.run_history_table}`
+        WHERE processor_name = 'gamebook'
+        AND season_year = @season_year
+        AND status = 'success'
+        """
+        
+        job_config = bigquery.QueryJobConfig(query_parameters=[
+            bigquery.ScalarQueryParameter("season_year", "INT64", season_year)
+        ])
+        
+        try:
+            results = self.bq_client.query(query, job_config=job_config).to_dataframe()
+            
+            # Check if gamebook has processed anything for this season
+            if results.empty or pd.isna(results.iloc[0]['latest_gamebook_date']):
+                logger.info(f"No gamebook data found for season {season_year} - roster can proceed")
+                return False, "no_gamebook_data"
+            
+            # Get latest date gamebook has processed
+            latest_gamebook_date = results.iloc[0]['latest_gamebook_date']
+            
+            # Convert to date if timestamp
+            if isinstance(latest_gamebook_date, pd.Timestamp):
+                latest_gamebook_date = latest_gamebook_date.date()
+            
+            # TEMPORAL CHECK: Is roster trying to process a date <= gamebook's progress?
+            if data_date <= latest_gamebook_date:
+                last_run = results.iloc[0]['last_gamebook_run']
+                total_runs = results.iloc[0]['total_gamebook_runs']
+                total_records = results.iloc[0]['total_records']
+                
+                error_msg = (
+                    f"Gamebook processor has already processed through {latest_gamebook_date} "
+                    f"for season {season_year}. Cannot process {data_date} - roster must not "
+                    f"go backwards relative to gamebook's progress. "
+                    f"Last gamebook run: {last_run} ({total_runs} total runs, "
+                    f"{total_records} total records processed)."
+                )
+                
+                logger.error(error_msg)
+                
+                try:
+                    notify_error(
+                        title="Roster Processing Blocked by Gamebook Precedence",
+                        message=f"Cannot process {data_date} - gamebook already at {latest_gamebook_date}",
+                        details={
+                            'data_date': str(data_date),
+                            'latest_gamebook_date': str(latest_gamebook_date),
+                            'season_year': season_year,
+                            'total_gamebook_runs': int(total_runs) if pd.notna(total_runs) else 0,
+                            'last_gamebook_run': str(last_run),
+                            'total_records': int(total_records) if pd.notna(total_records) else 0,
+                            'reason': 'gamebook_data_is_authoritative',
+                            'action': 'Roster cannot go backwards relative to gamebook progress'
+                        },
+                        processor_name="Roster Registry Processor"
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to send notification: {e}")
+                
+                return True, error_msg
+            
+            # Roster is ahead of gamebook - safe to proceed
+            logger.info(
+                f"Gamebook at {latest_gamebook_date}, roster processing {data_date} - "
+                f"roster is ahead, safe to proceed"
+            )
+            return False, "roster_ahead_of_gamebook"
+            
+        except Exception as e:
+            logger.warning(f"Error checking gamebook precedence (proceeding with caution): {e}")
+            # On error, fail open but log warning - don't block processing
+            return False, f"check_failed: {str(e)}"
 
     def build_historical_registry(self, seasons: List[str] = None) -> Dict:
         """Build registry from historical roster data."""
@@ -1560,6 +1730,7 @@ if __name__ == "__main__":
     
     data_date = None
     if args.data_date:
+        from datetime import datetime
         data_date = datetime.strptime(args.data_date, '%Y-%m-%d').date()
     
     processor = RosterRegistryProcessor(strategy=args.strategy)
@@ -1573,10 +1744,15 @@ if __name__ == "__main__":
     
     # Handle different result types
     if result.get('status') == 'blocked':
-        print(f"❌ BLOCKED")
+        protection_layer = result.get('protection_layer', 'unknown')
+        print(f"🚫 BLOCKED by {protection_layer}")
         print(f"{'='*60}")
         print(f"Season: {result['season']}")
-        print(f"Reason: {result['reason']}")
+        if 'data_date' in result:
+            print(f"Data Date: {result['data_date']}")
+        print(f"\nReason: {result['reason']}")
+        if 'message' in result:
+            print(f"\nDetails: {result['message']}")
     elif result.get('status') == 'skipped':
         print(f"⚠️  SKIPPED")
         print(f"{'='*60}")

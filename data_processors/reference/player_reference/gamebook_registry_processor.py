@@ -277,10 +277,11 @@ class GamebookRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin,
             return None, False
 
     def aggregate_player_stats(self, gamebook_df: pd.DataFrame, 
-                             date_range: Tuple[str, str] = None) -> List[Dict]:
+                         date_range: Tuple[str, str] = None) -> List[Dict]:
         """
         Aggregate gamebook data into registry records with bulk universal ID resolution.
         Now includes freshness checks and activity date tracking.
+        OPTIMIZED: Batch fetch existing records AND aliases to avoid 60+ individual queries.
         """
         logger.info("Aggregating player statistics for registry...")
         
@@ -307,6 +308,92 @@ class GamebookRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin,
         
         universal_id_mappings = self.bulk_resolve_universal_player_ids(unique_player_lookups)
         
+        # ===================================================================
+        # OPTIMIZATION 1: Batch fetch all existing records for this season
+        # ===================================================================
+        season_str_for_batch = self.calculate_season_string(list(gamebook_df['season_year'].unique())[0])
+        batch_fetch_start = time.time()
+        
+        existing_records_query = f"""
+        SELECT 
+            player_lookup,
+            team_abbr,
+            games_played,
+            last_processor,
+            last_gamebook_activity_date,
+            last_roster_activity_date,
+            jersey_number,
+            position,
+            source_priority,
+            processed_at
+        FROM `{self.project_id}.{self.table_name}`
+        WHERE season = @season
+        """
+        
+        job_config = bigquery.QueryJobConfig(query_parameters=[
+            bigquery.ScalarQueryParameter("season", "STRING", season_str_for_batch)
+        ])
+        
+        try:
+            existing_records_df = self.bq_client.query(existing_records_query, job_config=job_config).to_dataframe()
+            
+            # Build lookup dictionary for O(1) access
+            existing_records_lookup = {}
+            for _, row in existing_records_df.iterrows():
+                key = (row['player_lookup'], row['team_abbr'])
+                # Convert to dict and handle NaN values
+                record_dict = {}
+                for col, value in row.items():
+                    if pd.isna(value):
+                        record_dict[col] = None
+                    elif isinstance(value, pd.Timestamp):
+                        record_dict[col] = value.to_pydatetime()
+                    elif hasattr(value, 'date'):
+                        record_dict[col] = value.date()
+                    else:
+                        record_dict[col] = value
+                existing_records_lookup[key] = record_dict
+            
+            batch_fetch_duration = time.time() - batch_fetch_start
+            logger.info(f"Batch fetched {len(existing_records_lookup)} existing records in {batch_fetch_duration:.2f}s")
+            
+        except Exception as e:
+            logger.warning(f"Error batch fetching existing records: {e}, falling back to individual queries")
+            existing_records_lookup = None
+        
+        # ===================================================================
+        # OPTIMIZATION 2: Batch fetch all active aliases once
+        # ===================================================================
+        alias_fetch_start = time.time()
+        
+        aliases_query = f"""
+        SELECT 
+            nba_canonical_lookup,
+            alias_lookup
+        FROM `{self.project_id}.{self.alias_table_name}`
+        WHERE is_active = TRUE
+        """
+        
+        try:
+            aliases_df = self.bq_client.query(aliases_query).to_dataframe()
+            
+            # Build lookup dictionary: canonical_name -> [alias1, alias2, ...]
+            aliases_lookup = {}
+            for _, row in aliases_df.iterrows():
+                canonical = row['nba_canonical_lookup']
+                alias = row['alias_lookup']
+                
+                if canonical not in aliases_lookup:
+                    aliases_lookup[canonical] = []
+                aliases_lookup[canonical].append(alias)
+            
+            alias_fetch_duration = time.time() - alias_fetch_start
+            logger.info(f"Batch fetched {len(aliases_df)} active aliases for {len(aliases_lookup)} canonical names in {alias_fetch_duration:.2f}s")
+            
+        except Exception as e:
+            logger.warning(f"Error batch fetching aliases: {e}, falling back to individual queries")
+            aliases_lookup = None
+        
         registry_records = []
         skipped_count = 0
         
@@ -314,9 +401,14 @@ class GamebookRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin,
             season_str = self.calculate_season_string(season_year)
             
             # =================================================================
-            # PROTECTION 1: Check existing record for freshness
+            # PROTECTION 1: Check existing record for freshness (OPTIMIZED)
             # =================================================================
-            existing_record = self.get_existing_record(player_lookup, team_abbr, season_str)
+            if existing_records_lookup is not None:
+                # Fast O(1) lookup from batch-fetched data
+                existing_record = existing_records_lookup.get((player_lookup, team_abbr))
+            else:
+                # Fallback to individual query if batch fetch failed
+                existing_record = self.get_existing_record(player_lookup, team_abbr, season_str)
             
             # Determine the data_date for this group (use last game date)
             game_dates = pd.to_datetime(group['game_date'])
@@ -355,18 +447,41 @@ class GamebookRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin,
                 resolution_statuses, active_games, total_appearances
             )
             
-            # Look up enhancement data
-            enhancement, resolved_via_alias = self._resolve_enhancement_via_alias(
-                player_lookup, team_abbr, enhancement_data
-            )
-
-            if enhancement:
-                if resolved_via_alias:
+            # =================================================================
+            # Look up enhancement data (OPTIMIZED with batch aliases)
+            # =================================================================
+            direct_key = (team_abbr, player_lookup)
+            if direct_key in enhancement_data:
+                # Direct match found
+                enhancement = enhancement_data[direct_key]
+                resolved_via_alias = False
+                found_br_players.add((team_abbr, player_lookup))
+            elif aliases_lookup is not None and player_lookup in aliases_lookup:
+                # Check all known aliases for this player
+                enhancement = None
+                for alias in aliases_lookup[player_lookup]:
+                    alias_key = (team_abbr, alias)
+                    if alias_key in enhancement_data:
+                        enhancement = enhancement_data[alias_key]
+                        resolved_via_alias = True
+                        found_br_players.add(alias_key)
+                        logger.info(f"Enhancement resolved via alias: {player_lookup} → {alias} for {team_abbr}")
+                        self.stats['alias_resolutions'] += 1
+                        break
+                if enhancement is None:
+                    enhancement = {}
+            else:
+                # Fallback to individual query if batch fetch failed
+                enhancement, resolved_via_alias = self._resolve_enhancement_via_alias(
+                    player_lookup, team_abbr, enhancement_data
+                )
+                if enhancement and resolved_via_alias:
+                    # Track which BR player was found via alias
                     for br_key, br_data in enhancement_data.items():
                         if br_key[0] == team_abbr and br_data == enhancement:
                             found_br_players.add(br_key)
                             break
-                else:
+                elif enhancement:
                     found_br_players.add((team_abbr, player_lookup))
 
             if enhancement is None:
@@ -418,7 +533,7 @@ class GamebookRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin,
             logger.info(f"Skipped {skipped_count} records due to stale data")
         
         # Handle unresolved BR players
-        self._handle_unresolved_br_players_simple(enhancement_data, found_br_players)
+        self._handle_unresolved_br_players_simple(enhancement_data, found_br_players, aliases_lookup)
         
         logger.info(f"Created {len(registry_records)} registry records")
         logger.info(f"Resolved {self.stats['alias_resolutions']} players via alias system")
@@ -455,17 +570,41 @@ class GamebookRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin,
         
         return source_priority, confidence_score
 
-    def _handle_unresolved_br_players_simple(self, enhancement_data: Dict, found_players: set):
-        """Simplified unresolved player handling."""
+    def _handle_unresolved_br_players_simple(self, enhancement_data: Dict, found_players: set, aliases_lookup: Dict = None):
+        """
+        Simplified unresolved player handling with batch alias optimization.
+        
+        Args:
+            enhancement_data: BR enhancement data keyed by (team_abbr, player_lookup)
+            found_players: Set of (team_abbr, player_lookup) tuples that were found
+            aliases_lookup: Pre-fetched aliases dict {canonical_name: [alias1, alias2, ...]}
+                        If None, falls back to individual queries (slow)
+        """
         unresolved_players = []
         current_datetime = datetime.now()
         current_date = current_datetime.date()
         
         for (team_abbr, player_lookup), enhancement in enhancement_data.items():
             if (team_abbr, player_lookup) not in found_players:
-                if self._check_player_aliases(player_lookup, team_abbr):
+                # Check aliases using batch data if available
+                found_via_alias = False
+                
+                if aliases_lookup is not None:
+                    # Check if any canonical name has this player_lookup as an alias
+                    # AND that canonical player was found on this team
+                    for canonical, alias_list in aliases_lookup.items():
+                        if player_lookup in alias_list and (team_abbr, canonical) in found_players:
+                            found_via_alias = True
+                            logger.debug(f"BR player {player_lookup} on {team_abbr} found via alias to {canonical}")
+                            break
+                else:
+                    # Fallback to individual query if batch fetch failed
+                    found_via_alias = self._check_player_aliases(player_lookup, team_abbr)
+                
+                if found_via_alias:
                     continue
                 
+                # Not found in gamebook or via aliases - add to unresolved
                 unresolved_record = {
                     'source': 'basketball_reference',
                     'original_name': enhancement.get('original_name', 'Unknown'),
@@ -510,6 +649,7 @@ class GamebookRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin,
                     )
                 except Exception as e:
                     logger.warning(f"Failed to send notification: {e}")
+
 
     def transform_data(self, raw_data: Dict, file_path: str = None) -> List[Dict]:
         """Transform data for this processor."""
@@ -651,14 +791,15 @@ class GamebookRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin,
                 })
                 continue
             
-            # Record run start
-            run_id = self.record_run_start(
-                data_date=date.fromisoformat(end_date),
-                season_year=season_year,
-                data_source_primary='nba_gamebook',
-                data_source_enhancement='br_roster',
-                backfill_mode=allow_backfill
-            )
+            # Track run start in memory (base class pattern)
+            from datetime import timezone
+            import uuid
+            
+            self.run_start_time = datetime.now(timezone.utc)
+            self.current_run_id = f"gamebook_{end_date.replace('-', '')}_{datetime.now().strftime('%H%M%S')}_{str(uuid.uuid4())[:8]}"
+            self.current_season_year = season_year
+            
+            logger.info(f"Starting run for {season}: {self.current_run_id}")
             
             try:
                 result = self._build_registry_for_season_impl(
@@ -667,9 +808,13 @@ class GamebookRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin,
                 )
                 
                 self.record_run_complete(
-                    date.fromisoformat(end_date), 
-                    'success', 
-                    result
+                    data_date=date.fromisoformat(end_date),
+                    season_year=season_year,
+                    status='success',
+                    result=result,
+                    data_source_primary='nba_gamebook',
+                    data_source_enhancement='br_roster',
+                    backfill_mode=allow_backfill
                 )
                 
                 total_results.append(result)
@@ -678,9 +823,13 @@ class GamebookRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin,
                 logger.error(f"Failed to process season {season}: {e}")
                 
                 self.record_run_complete(
-                    date.fromisoformat(end_date),
-                    'failed',
-                    error=e
+                    data_date=date.fromisoformat(end_date),
+                    season_year=season_year,
+                    status='failed',
+                    error=e,
+                    data_source_primary='nba_gamebook',
+                    data_source_enhancement='br_roster',
+                    backfill_mode=allow_backfill
                 )
                 
                 total_results.append({
@@ -759,13 +908,15 @@ if __name__ == "__main__":
         season_year = int(args.season.split('-')[0])
         
         if date_range:
+            start_date = date.fromisoformat(date_range[0])
             end_date = date.fromisoformat(date_range[1])
         else:
+            start_date = date(season_year, 10, 1)
             end_date = date(season_year + 1, 6, 30)
-        
+
         try:
             processor.validate_temporal_ordering(
-                data_date=end_date,
+                data_date=start_date,  # Validate earliest date in range
                 season_year=season_year,
                 allow_backfill=args.allow_backfill
             )
@@ -776,13 +927,15 @@ if __name__ == "__main__":
             print(f"{'='*60}")
             exit(1)
         
-        run_id = processor.record_run_start(
-            data_date=end_date,
-            season_year=season_year,
-            data_source_primary='nba_gamebook',
-            data_source_enhancement='br_roster',
-            backfill_mode=args.allow_backfill
-        )
+        # Track run start in memory (base class pattern)
+        from datetime import timezone
+        import uuid
+        
+        processor.run_start_time = datetime.now(timezone.utc)
+        processor.current_run_id = f"gamebook_{end_date.strftime('%Y%m%d')}_{datetime.now().strftime('%H%M%S')}_{str(uuid.uuid4())[:8]}"
+        processor.current_season_year = season_year
+        
+        logger.info(f"Starting run: {processor.current_run_id}")
         
         try:
             result = processor._build_registry_for_season_impl(
@@ -791,10 +944,26 @@ if __name__ == "__main__":
                 date_range=date_range
             )
             
-            processor.record_run_complete(end_date, 'success', result)
+            processor.record_run_complete(
+                data_date=end_date,
+                season_year=season_year,
+                status='success',
+                result=result,
+                data_source_primary='nba_gamebook',
+                data_source_enhancement='br_roster',
+                backfill_mode=args.allow_backfill
+            )
             
         except Exception as e:
-            processor.record_run_complete(end_date, 'failed', error=e)
+            processor.record_run_complete(
+                data_date=end_date,
+                season_year=season_year,
+                status='failed',
+                error=e,
+                data_source_primary='nba_gamebook',
+                data_source_enhancement='br_roster',
+                backfill_mode=args.allow_backfill
+            )
             raise
     
     print(f"\n{'='*60}")
