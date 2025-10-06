@@ -340,15 +340,15 @@ class RegistryProcessorBase(ProcessorBase, UpdateSourceTrackingMixin):
             return
     
     def record_run_complete(self, data_date: date, season_year: int, status: str, 
-                       result: Dict = None, error: Exception = None,
-                       data_source_primary: str = None,
-                       data_source_enhancement: str = None,
-                       validation_mode: str = None,
-                       source_data_freshness_days: int = None,
-                       backfill_mode: bool = False,
-                       force_reprocess: bool = False) -> None:
+                   result: Dict = None, error: Exception = None,
+                   data_source_primary: str = None,
+                   data_source_enhancement: str = None,
+                   validation_mode: str = None,
+                   source_data_freshness_days: int = None,
+                   backfill_mode: bool = False,
+                   force_reprocess: bool = False) -> None:
         """
-        Record completed processor run in single INSERT operation.
+        Record completed processor run in single INSERT operation with source date tracking.
         
         This avoids BigQuery streaming buffer issues by only writing once at completion.
         
@@ -398,6 +398,9 @@ class RegistryProcessorBase(ProcessorBase, UpdateSourceTrackingMixin):
         if result:
             summary_json = json.dumps(result, default=str)
         
+        # Get source dates from tracking (if available)
+        source_dates = getattr(self, 'source_dates_used', {})
+        
         # Build complete record
         record = {
             'processor_name': self.processor_type,
@@ -415,6 +418,18 @@ class RegistryProcessorBase(ProcessorBase, UpdateSourceTrackingMixin):
             'validation_mode': validation_mode,
             'validation_skipped_reason': result.get('validation_skipped_reason') if result else None,
             'source_data_freshness_days': source_data_freshness_days,
+            
+            # NEW: Source date tracking
+            'espn_roster_date': source_dates.get('espn_roster_date'),
+            'nbacom_source_date': source_dates.get('nbacom_source_date'),
+            'br_scrape_date': source_dates.get('br_scrape_date'),
+            'gamebook_pdf_date': source_dates.get('gamebook_pdf_date'),
+            'espn_matched_requested_date': source_dates.get('espn_matched'),
+            'nbacom_matched_requested_date': source_dates.get('nbacom_matched'),
+            'br_matched_requested_date': source_dates.get('br_matched'),
+            'gamebook_matched_requested_date': source_dates.get('gamebook_matched'),
+            'used_source_fallback': source_dates.get('used_fallback', False),
+            
             'season_filter': season_str,
             'team_filter': None,
             'date_range_filter_start': None,
@@ -692,7 +707,10 @@ class RegistryProcessorBase(ProcessorBase, UpdateSourceTrackingMixin):
                 'data_records_queried', 'source_data_freshness_days'}
         
         # Define boolean fields that need explicit conversion
-        boolean_fields = {'backfill_mode', 'force_reprocess', 'test_mode', 'is_active'}
+        boolean_fields = {'backfill_mode', 'force_reprocess', 'test_mode', 'is_active',
+                 'espn_matched_requested_date', 'nbacom_matched_requested_date',
+                 'br_matched_requested_date', 'gamebook_matched_requested_date',
+                 'used_source_fallback'}
         
         # Define TIMESTAMP fields that need special handling
         timestamp_fields = {'created_at', 'processed_at', 'reviewed_at',

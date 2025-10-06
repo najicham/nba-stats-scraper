@@ -43,8 +43,8 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_processing.analytics_processo
 PARTITION BY DATE(run_date)
 CLUSTER BY processor_name, success, run_date
 OPTIONS (
-  description = "Analytics processor execution logs and performance tracking for monitoring and optimization",
-  partition_expiration_days = 365  -- 1 year retention for processing logs
+  description = "Analytics processor execution logs and performance tracking for monitoring and optimization"
+  -- partition_expiration_days = 365  -- 1 year retention for processing logs
 );
 
 -- Data quality issues tracked during analytics processing

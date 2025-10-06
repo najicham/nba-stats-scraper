@@ -9,6 +9,7 @@ Enhanced with:
 - Temporal ordering protection
 - Activity date tracking
 - Data freshness validation
+- Source date tracking for run history
 
 Three Usage Scenarios:
 1. Historical backfill: Process 4 years of gamebook data
@@ -284,6 +285,28 @@ class GamebookRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin,
         OPTIMIZED: Batch fetch existing records AND aliases to avoid 60+ individual queries.
         """
         logger.info("Aggregating player statistics for registry...")
+
+        # =================================================================
+        # SOURCE DATE TRACKING: Capture actual game date range processed
+        # =================================================================
+        game_dates_all = pd.to_datetime(gamebook_df['game_date'])
+        min_game_date = game_dates_all.min().date()
+        max_game_date = game_dates_all.max().date()
+
+        logger.info(f"Processing game dates from {min_game_date} to {max_game_date}")
+
+        # Store the latest game date as the "gamebook PDF date" for run history
+        self.source_dates_used = {
+            'espn_roster_date': None,
+            'nbacom_source_date': None,
+            'br_scrape_date': None,
+            'gamebook_pdf_date': max_game_date,  # Latest game processed
+            'espn_matched': None,
+            'nbacom_matched': None,
+            'br_matched': None,
+            'gamebook_matched': True,  # Gamebook always matches (using actual game dates)
+            'used_fallback': False  # Gamebook doesn't use fallback
+        }
         
         # Determine season years for BR filtering
         season_years_filter = None
@@ -794,12 +817,25 @@ class GamebookRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin,
             # Track run start in memory (base class pattern)
             from datetime import timezone
             import uuid
-            
+
             self.run_start_time = datetime.now(timezone.utc)
             self.current_run_id = f"gamebook_{end_date.replace('-', '')}_{datetime.now().strftime('%H%M%S')}_{str(uuid.uuid4())[:8]}"
             self.current_season_year = season_year
             
             logger.info(f"Starting run for {season}: {self.current_run_id}")
+            
+            # Initialize source date tracking (will be populated by aggregate_player_stats)
+            self.source_dates_used = {
+                'espn_roster_date': None,
+                'nbacom_source_date': None,
+                'br_scrape_date': None,
+                'gamebook_pdf_date': None,  # Will be set by aggregate_player_stats
+                'espn_matched': None,
+                'nbacom_matched': None,
+                'br_matched': None,
+                'gamebook_matched': None,  # Will be set by aggregate_player_stats
+                'used_fallback': False
+            }
             
             try:
                 result = self._build_registry_for_season_impl(
@@ -936,6 +972,19 @@ if __name__ == "__main__":
         processor.current_season_year = season_year
         
         logger.info(f"Starting run: {processor.current_run_id}")
+
+        # Initialize source date tracking (will be populated by aggregate_player_stats)
+        processor.source_dates_used = {
+            'espn_roster_date': None,
+            'nbacom_source_date': None,
+            'br_scrape_date': None,
+            'gamebook_pdf_date': None,  # Will be set by aggregate_player_stats
+            'espn_matched': None,
+            'nbacom_matched': None,
+            'br_matched': None,
+            'gamebook_matched': None,  # Will be set by aggregate_player_stats
+            'used_fallback': False
+        }
         
         try:
             result = processor._build_registry_for_season_impl(

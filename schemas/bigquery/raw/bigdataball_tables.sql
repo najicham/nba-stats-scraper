@@ -93,8 +93,8 @@ PARTITION BY game_date
 CLUSTER BY game_id, period, event_type, away_player_1_lookup
 OPTIONS (
   description = "BigDataBall enhanced play-by-play data with complete lineup tracking, dual coordinate systems, and advanced timing data for basketball analytics",
-  require_partition_filter = true,
-  partition_expiration_days = 2555  -- 7 years retention
+  require_partition_filter = true
+  -- partition_expiration_days = 2555  -- 7 years retention
 );
 
 -- Helpful views for common BigDataBall analytics queries

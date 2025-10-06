@@ -50,8 +50,8 @@ PARTITION BY roster_date
 CLUSTER BY team_abbr, player_lookup
 OPTIONS (
   description = "ESPN team rosters - backup data source for player reference validation. Supports both HTML and API scrapers.",
-  partition_expiration_days = 1095,  -- 3 years retention
   require_partition_filter = true
+  -- partition_expiration_days = 1095,  -- 3 years retention
 );
 
 -- INDEXES (implicit via clustering)

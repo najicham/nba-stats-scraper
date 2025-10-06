@@ -15,7 +15,7 @@ Enhanced with:
 
 import logging
 from datetime import datetime, date, timedelta, timezone
-from typing import Dict, List, Set, Tuple
+from typing import Dict, List, Set, Tuple, Optional
 import pandas as pd
 from google.cloud import bigquery
 import uuid
@@ -45,6 +45,9 @@ def normalize_team_abbr(team_abbr: str) -> str:
         logger.debug(f"Normalized team code: {team_abbr} → {normalized}")
     return normalized
 
+class SourceDataMissingError(Exception):
+    """Raised when required source data is not available for the requested date."""
+    pass
 
 class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, DatabaseStrategiesMixin):
     """
@@ -68,8 +71,22 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
         
         logger.info("Initialized Roster Registry Processor")
     
-    def get_current_roster_data(self, season_year: int = None) -> Dict[str, Set[str]]:
-        """Get current roster players from all roster sources."""
+    def get_current_roster_data(self, season_year: int = None, data_date: date = None,
+                            allow_source_fallback: bool = False) -> Dict[str, Set[str]]:
+        """
+        Get roster data with strict date matching.
+        
+        Args:
+            season_year: NBA season starting year
+            data_date: Required date for source data
+            allow_source_fallback: If True, use latest available if exact date missing
+        
+        Returns:
+            Dictionary of roster sources and their players
+            
+        Raises:
+            SourceDataMissingError: If required source data not available for date
+        """
         if not season_year:
             current_month = date.today().month
             if current_month >= 10:
@@ -77,157 +94,306 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
             else:
                 season_year = date.today().year - 1
         
-        logger.info(f"Getting current roster data for {season_year}-{season_year+1} season")
+        if not data_date:
+            data_date = date.today()
+        
+        logger.info(f"Getting roster data for {season_year}-{season_year+1} season, date {data_date}")
+        logger.info(f"Strict date matching: {'disabled (using fallback)' if allow_source_fallback else 'ENABLED'}")
+        
+        # Get data from each source with date checking
+        espn_players, espn_date, espn_matched = self._get_espn_roster_players_strict(
+            season_year, data_date, allow_source_fallback
+        )
+        
+        nbacom_players, nbacom_date, nbacom_matched = self._get_nba_official_players_strict(
+            season_year, data_date, allow_source_fallback
+        )
+        
+        br_players, br_date, br_matched = self._get_basketball_reference_players_strict(
+            season_year, data_date, allow_source_fallback
+        )
+        
+        # Track source dates used
+        self.source_dates_used.update({
+            'espn_roster_date': espn_date,
+            'nbacom_source_date': nbacom_date,
+            'br_scrape_date': br_date,
+            'espn_matched': espn_matched,
+            'nbacom_matched': nbacom_matched,
+            'br_matched': br_matched,
+            'used_fallback': not all([espn_matched, nbacom_matched, br_matched])
+        })
+        
+        # Check if we have any data
+        if len(espn_players) == 0 and len(nbacom_players) == 0 and len(br_players) == 0:
+            error_msg = (
+                f"No roster data available for {data_date}. "
+                f"ESPN: {espn_date or 'missing'}, "
+                f"NBA.com: {nbacom_date or 'missing'}, "
+                f"BR: {br_date or 'missing'}"
+            )
+            logger.error(error_msg)
+            
+            notify_error(
+                title="No Roster Data Available",
+                message=f"Cannot process {data_date} - no source data found",
+                details={
+                    'requested_date': str(data_date),
+                    'season_year': season_year,
+                    'espn_date': str(espn_date) if espn_date else None,
+                    'nbacom_date': str(nbacom_date) if nbacom_date else None,
+                    'br_date': str(br_date) if br_date else None,
+                    'allow_fallback': allow_source_fallback
+                },
+                processor_name="Roster Registry Processor"
+            )
+            
+            raise SourceDataMissingError(error_msg)
+        
+        # Log what we got
+        logger.info(f"ESPN rosters: {len(espn_players)} players (date: {espn_date}, matched: {espn_matched})")
+        logger.info(f"NBA.com list: {len(nbacom_players)} players (date: {nbacom_date}, matched: {nbacom_matched})")
+        logger.info(f"BR rosters: {len(br_players)} players (date: {br_date}, matched: {br_matched})")
+        
+        if self.source_dates_used['used_fallback']:
+            logger.warning(
+                f"⚠️ Using fallback data - not all sources matched requested date {data_date}"
+            )
         
         roster_sources = {
-            'espn_rosters': self._get_espn_roster_players(season_year),
-            'nba_player_list': self._get_nba_official_players(season_year), 
-            'basketball_reference': self._get_basketball_reference_players(season_year)
+            'espn_rosters': espn_players,
+            'nba_player_list': nbacom_players,
+            'basketball_reference': br_players
         }
-        
-        total_players = sum(len(players) for players in roster_sources.values())
-        for source, players in roster_sources.items():
-            logger.info(f"{source}: {len(players)} players")
-        
-        if total_players == 0:
-            try:
-                notify_warning(
-                    title="No Roster Data Found",
-                    message=f"No roster data found for {season_year}-{season_year+1} season from any source",
-                    details={
-                        'season_year': season_year,
-                        'sources_checked': list(roster_sources.keys()),
-                        'processor': 'roster_registry'
-                    }
-                )
-            except Exception as e:
-                logger.warning(f"Failed to send notification: {e}")
-        elif total_players < 400:
-            try:
-                notify_warning(
-                    title="Low Roster Data Count",
-                    message=f"Found only {total_players} total players for {season_year}-{season_year+1} season (expected 450+)",
-                    details={
-                        'season_year': season_year,
-                        'total_players': total_players,
-                        'source_counts': {k: len(v) for k, v in roster_sources.items()},
-                        'processor': 'roster_registry'
-                    }
-                )
-            except Exception as e:
-                logger.warning(f"Failed to send notification: {e}")
         
         return roster_sources
     
-    def _get_espn_roster_players(self, season_year: int) -> Set[str]:
-        """Get current roster players from ESPN team rosters."""
+    def _get_espn_roster_players_strict(self, season_year: int, data_date: date,
+                                    allow_fallback: bool = False) -> Tuple[Set[str], Optional[date], bool]:
+        """
+        Get ESPN roster players with strict date matching.
+        
+        Returns:
+            Tuple of (player_set, actual_date_used, matched_requested_date)
+        """
+        # First try exact date match
         query = """
-        SELECT DISTINCT player_lookup, team_abbr, jersey_number, position
+        SELECT DISTINCT player_lookup, roster_date
         FROM `{project}.nba_raw.espn_team_rosters`
-        WHERE roster_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
-        AND roster_date = (
-            SELECT MAX(roster_date) 
+        WHERE roster_date = @data_date
+        AND season_year = @season_year
+        """.format(project=self.project_id)
+        
+        job_config = bigquery.QueryJobConfig(query_parameters=[
+            bigquery.ScalarQueryParameter("data_date", "DATE", data_date),
+            bigquery.ScalarQueryParameter("season_year", "INT64", season_year)
+        ])
+        
+        try:
+            results = self.bq_client.query(query, job_config=job_config).to_dataframe()
+            
+            if not results.empty:
+                players = set(results['player_lookup'].unique())
+                actual_date = results['roster_date'].iloc[0]
+                if isinstance(actual_date, pd.Timestamp):
+                    actual_date = actual_date.date()
+                
+                logger.info(f"✓ ESPN exact match: {len(players)} players for {data_date}")
+                return players, actual_date, True
+            
+            # No exact match found
+            if not allow_fallback:
+                logger.error(f"✗ ESPN: No data for {data_date} (strict mode)")
+                return set(), None, False
+            
+            # Fallback: Get latest available within 30 days
+            logger.warning(f"⚠️ ESPN: No data for {data_date}, using fallback")
+            
+            fallback_query = """
+            SELECT DISTINCT player_lookup, roster_date
             FROM `{project}.nba_raw.espn_team_rosters`
-            WHERE season_year = @season_year
-            AND roster_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
-        )
-        AND season_year = @season_year
-        """.format(project=self.project_id)
-        
-        job_config = bigquery.QueryJobConfig(query_parameters=[
-            bigquery.ScalarQueryParameter("season_year", "INT64", season_year)
-        ])
-        
-        try:
-            results = self.bq_client.query(query, job_config=job_config).to_dataframe()
-            players = set(results['player_lookup'].unique()) if not results.empty else set()
-            logger.info(f"ESPN rosters: {len(players)} players found")
-            return players
+            WHERE roster_date >= DATE_SUB(@data_date, INTERVAL 30 DAY)
+            AND roster_date <= @data_date
+            AND roster_date = (
+                SELECT MAX(roster_date)
+                FROM `{project}.nba_raw.espn_team_rosters`
+                WHERE season_year = @season_year
+                AND roster_date >= DATE_SUB(@data_date, INTERVAL 30 DAY)
+                AND roster_date <= @data_date
+            )
+            AND season_year = @season_year
+            """.format(project=self.project_id)
+            
+            fallback_results = self.bq_client.query(fallback_query, job_config=job_config).to_dataframe()
+            
+            if not fallback_results.empty:
+                players = set(fallback_results['player_lookup'].unique())
+                actual_date = fallback_results['roster_date'].iloc[0]
+                if isinstance(actual_date, pd.Timestamp):
+                    actual_date = actual_date.date()
+                
+                logger.warning(f"⚠️ ESPN fallback: {len(players)} players from {actual_date}")
+                return players, actual_date, False
+            else:
+                logger.error(f"✗ ESPN: No fallback data available")
+                return set(), None, False
+                
         except Exception as e:
-            logger.warning(f"Error querying ESPN roster data: {e}")
-            try:
-                notify_error(
-                    title="ESPN Roster Query Failed",
-                    message=f"Failed to query ESPN roster data: {str(e)}",
-                    details={
-                        'season_year': season_year,
-                        'error_type': type(e).__name__,
-                        'processor': 'roster_registry'
-                    },
-                    processor_name="Roster Registry Processor"
-                )
-            except Exception as notify_ex:
-                logger.warning(f"Failed to send notification: {notify_ex}")
-            return set()
-    
-    def _get_nba_official_players(self, season_year: int) -> Set[str]:
-        """Get active players from NBA.com official player list."""
+            logger.error(f"Error querying ESPN roster data: {e}")
+            return set(), None, False
+
+
+    def _get_nba_official_players_strict(self, season_year: int, data_date: date,
+                                        allow_fallback: bool = False) -> Tuple[Set[str], Optional[date], bool]:
+        """
+        Get NBA.com players with strict date matching.
+        
+        Returns:
+            Tuple of (player_set, actual_date_used, matched_requested_date)
+        """
+        # Try exact date match
         query = """
-        SELECT DISTINCT player_lookup, team_abbr
+        SELECT DISTINCT player_lookup, source_file_date
         FROM `{project}.nba_raw.nbac_player_list_current`
-        WHERE is_active = TRUE
+        WHERE source_file_date = @data_date
+        AND season_year = @season_year
+        AND is_active = TRUE
+        """.format(project=self.project_id)
+        
+        job_config = bigquery.QueryJobConfig(query_parameters=[
+            bigquery.ScalarQueryParameter("data_date", "DATE", data_date),
+            bigquery.ScalarQueryParameter("season_year", "INT64", season_year)
+        ])
+        
+        try:
+            results = self.bq_client.query(query, job_config=job_config).to_dataframe()
+            
+            if not results.empty:
+                players = set(results['player_lookup'].unique())
+                actual_date = results['source_file_date'].iloc[0]
+                if isinstance(actual_date, pd.Timestamp):
+                    actual_date = actual_date.date()
+                
+                logger.info(f"✓ NBA.com exact match: {len(players)} players for {data_date}")
+                return players, actual_date, True
+            
+            # No exact match
+            if not allow_fallback:
+                logger.error(f"✗ NBA.com: No data for {data_date} (strict mode)")
+                return set(), None, False
+            
+            # Fallback: Get latest within 7 days
+            logger.warning(f"⚠️ NBA.com: No data for {data_date}, using fallback")
+            
+            fallback_query = """
+            SELECT DISTINCT player_lookup, source_file_date
+            FROM `{project}.nba_raw.nbac_player_list_current`
+            WHERE source_file_date >= DATE_SUB(@data_date, INTERVAL 7 DAY)
+            AND source_file_date <= @data_date
+            AND source_file_date = (
+                SELECT MAX(source_file_date)
+                FROM `{project}.nba_raw.nbac_player_list_current`
+                WHERE season_year = @season_year
+                AND is_active = TRUE
+                AND source_file_date >= DATE_SUB(@data_date, INTERVAL 7 DAY)
+                AND source_file_date <= @data_date
+            )
+            AND season_year = @season_year
+            AND is_active = TRUE
+            """.format(project=self.project_id)
+            
+            fallback_results = self.bq_client.query(fallback_query, job_config=job_config).to_dataframe()
+            
+            if not fallback_results.empty:
+                players = set(fallback_results['player_lookup'].unique())
+                actual_date = fallback_results['source_file_date'].iloc[0]
+                if isinstance(actual_date, pd.Timestamp):
+                    actual_date = actual_date.date()
+                
+                logger.warning(f"⚠️ NBA.com fallback: {len(players)} players from {actual_date}")
+                return players, actual_date, False
+            else:
+                logger.error(f"✗ NBA.com: No fallback data available")
+                return set(), None, False
+                
+        except Exception as e:
+            logger.error(f"Error querying NBA.com player list: {e}")
+            return set(), None, False
+
+
+    def _get_basketball_reference_players_strict(self, season_year: int, data_date: date,
+                                                allow_fallback: bool = False) -> Tuple[Set[str], Optional[date], bool]:
+        """
+        Get BR players with strict date matching.
+        
+        Returns:
+            Tuple of (player_set, actual_date_used, matched_requested_date)
+        """
+        # Try exact date match
+        query = """
+        SELECT DISTINCT player_lookup, last_scraped_date
+        FROM `{project}.nba_raw.br_rosters_current`
+        WHERE last_scraped_date = @data_date
         AND season_year = @season_year
         """.format(project=self.project_id)
         
         job_config = bigquery.QueryJobConfig(query_parameters=[
+            bigquery.ScalarQueryParameter("data_date", "DATE", data_date),
             bigquery.ScalarQueryParameter("season_year", "INT64", season_year)
         ])
         
         try:
             results = self.bq_client.query(query, job_config=job_config).to_dataframe()
-            players = set(results['player_lookup'].unique()) if not results.empty else set()
-            logger.info(f"NBA.com player list: {len(players)} players found")
-            return players
+            
+            if not results.empty:
+                players = set(results['player_lookup'].unique())
+                actual_date = results['last_scraped_date'].iloc[0]
+                if isinstance(actual_date, pd.Timestamp):
+                    actual_date = actual_date.date()
+                
+                logger.info(f"✓ BR exact match: {len(players)} players for {data_date}")
+                return players, actual_date, True
+            
+            # No exact match
+            if not allow_fallback:
+                logger.error(f"✗ BR: No data for {data_date} (strict mode)")
+                return set(), None, False
+            
+            # Fallback: Get latest within 30 days
+            logger.warning(f"⚠️ BR: No data for {data_date}, using fallback")
+            
+            fallback_query = """
+            SELECT DISTINCT player_lookup, last_scraped_date
+            FROM `{project}.nba_raw.br_rosters_current`
+            WHERE last_scraped_date >= DATE_SUB(@data_date, INTERVAL 30 DAY)
+            AND last_scraped_date <= @data_date
+            AND last_scraped_date = (
+                SELECT MAX(last_scraped_date)
+                FROM `{project}.nba_raw.br_rosters_current`
+                WHERE season_year = @season_year
+                AND last_scraped_date >= DATE_SUB(@data_date, INTERVAL 30 DAY)
+                AND last_scraped_date <= @data_date
+            )
+            AND season_year = @season_year
+            """.format(project=self.project_id)
+            
+            fallback_results = self.bq_client.query(fallback_query, job_config=job_config).to_dataframe()
+            
+            if not fallback_results.empty:
+                players = set(fallback_results['last_scraped_date'].unique())
+                actual_date = fallback_results['last_scraped_date'].iloc[0]
+                if isinstance(actual_date, pd.Timestamp):
+                    actual_date = actual_date.date()
+                
+                logger.warning(f"⚠️ BR fallback: {len(players)} players from {actual_date}")
+                return players, actual_date, False
+            else:
+                logger.error(f"✗ BR: No fallback data available")
+                return set(), None, False
+                
         except Exception as e:
-            logger.warning(f"Error querying NBA.com player list: {e}")
-            try:
-                notify_error(
-                    title="NBA.com Player List Query Failed",
-                    message=f"Failed to query NBA.com player list: {str(e)}",
-                    details={
-                        'season_year': season_year,
-                        'error_type': type(e).__name__,
-                        'processor': 'roster_registry'
-                    },
-                    processor_name="Roster Registry Processor"
-                )
-            except Exception as notify_ex:
-                logger.warning(f"Failed to send notification: {notify_ex}")
-            return set()
-    
-    def _get_basketball_reference_players(self, season_year: int) -> Set[str]:
-        """Get players from Basketball Reference season rosters."""
-        query = """
-        SELECT DISTINCT player_lookup, team_abbrev as team_abbr
-        FROM `{project}.nba_raw.br_rosters_current`
-        WHERE season_year = @season_year
-        """.format(project=self.project_id)
-        
-        job_config = bigquery.QueryJobConfig(query_parameters=[
-            bigquery.ScalarQueryParameter("season_year", "INT64", season_year)
-        ])
-        
-        try:
-            results = self.bq_client.query(query, job_config=job_config).to_dataframe()
-            players = set(results['player_lookup'].unique()) if not results.empty else set()
-            logger.info(f"Basketball Reference rosters: {len(players)} players found")
-            return players
-        except Exception as e:
-            logger.warning(f"Error querying Basketball Reference roster data: {e}")
-            try:
-                notify_error(
-                    title="Basketball Reference Query Failed",
-                    message=f"Failed to query Basketball Reference roster data: {str(e)}",
-                    details={
-                        'season_year': season_year,
-                        'error_type': type(e).__name__,
-                        'processor': 'roster_registry'
-                    },
-                    processor_name="Roster Registry Processor"
-                )
-            except Exception as notify_ex:
-                logger.warning(f"Failed to send notification: {notify_ex}")
-            return set()
+            logger.error(f"Error querying BR roster data: {e}")
+            return set(), None, False
     
     def get_existing_registry_players(self, season: str) -> Set[str]:
         """Get players already in registry for current season."""
@@ -264,16 +430,18 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
             return set()
     
     def aggregate_roster_assignments(self, roster_data: Dict[str, Set[str]], season_year: int, 
-                                    data_date: date, allow_backfill: bool = False) -> Tuple[List[Dict], Dict]:
+                                data_date: date, allow_backfill: bool = False,
+                                allow_source_fallback: bool = False) -> Tuple[List[Dict], Dict]:
         """
         Aggregate roster data into registry records with NBA.com validation and staleness checking.
-        Now includes freshness and authority checks.
+        Now includes freshness and authority checks with strict date matching for detailed data.
         
         Args:
             roster_data: Dict of roster sources and their players
             season_year: NBA season starting year
             data_date: Date this roster data represents
             allow_backfill: If True, skip freshness checks for historical data
+            allow_source_fallback: If True, use latest available data if exact date missing
         
         Returns:
             Tuple of (registry records, validation info dict)
@@ -310,7 +478,11 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
             
             for source, players in roster_data.items():
                 all_roster_players.update(players)
-                detailed_data = self._get_detailed_roster_data(source, season_year)
+                
+                # GET DETAILED DATA WITH STRICT DATE MATCHING
+                detailed_data = self._get_detailed_roster_data(
+                    source, season_year, data_date, allow_source_fallback
+                )
                 
                 for player_lookup, details in detailed_data.items():
                     team_abbr = details['team_abbr']
@@ -616,96 +788,242 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
         
         return source_priority, confidence_score
     
-    def _get_detailed_roster_data(self, source: str, season_year: int) -> Dict[str, Dict]:
-        """Get detailed roster data for a specific source."""
+    def _get_detailed_roster_data(self, source: str, season_year: int, 
+                                data_date: date, allow_fallback: bool = False) -> Dict[str, Dict]:
+        """
+        Get detailed roster data for a specific source with strict date matching.
+        
+        Args:
+            source: Source name ('espn_rosters', 'nba_player_list', 'basketball_reference')
+            season_year: NBA season starting year
+            data_date: Required date for source data
+            allow_fallback: If True, use latest available if exact date missing
+        
+        Returns:
+            Dictionary mapping player_lookup to their details
+        """
         if source == 'espn_rosters':
-            return self._get_espn_detailed_data(season_year)
+            return self._get_espn_detailed_data(season_year, data_date, allow_fallback)
         elif source == 'nba_player_list':
-            return self._get_nba_detailed_data(season_year)
+            return self._get_nba_detailed_data(season_year, data_date, allow_fallback)
         elif source == 'basketball_reference':
-            return self._get_br_detailed_data(season_year)
+            return self._get_br_detailed_data(season_year, data_date, allow_fallback)
         else:
             logger.warning(f"Unknown roster source: {source}")
             return {}
-    
-    def _get_espn_detailed_data(self, season_year: int) -> Dict[str, Dict]:
-        """Get detailed data from ESPN rosters."""
+
+    def _get_espn_detailed_data(self, season_year: int, data_date: date, 
+                                allow_fallback: bool = False) -> Dict[str, Dict]:
+        """
+        Get detailed data from ESPN rosters with strict date matching.
+        
+        Returns jersey numbers, positions, and full names that match the exact date
+        or uses fallback to latest available within 30 days.
+        """
+        # Try exact date match first
         query = """
         SELECT 
             player_lookup,
             player_full_name,
             team_abbr,
             jersey_number,
-            position
+            position,
+            roster_date
         FROM `{project}.nba_raw.espn_team_rosters`
-        WHERE roster_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
-        AND roster_date = (
-            SELECT MAX(roster_date) 
-            FROM `{project}.nba_raw.espn_team_rosters`
-            WHERE season_year = @season_year
-            AND roster_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
-        )
+        WHERE roster_date = @data_date
         AND season_year = @season_year
         """.format(project=self.project_id)
         
         job_config = bigquery.QueryJobConfig(query_parameters=[
+            bigquery.ScalarQueryParameter("data_date", "DATE", data_date),
             bigquery.ScalarQueryParameter("season_year", "INT64", season_year)
         ])
         
         try:
             results = self.bq_client.query(query, job_config=job_config).to_dataframe()
-            detailed_data = {}
             
-            for _, row in results.iterrows():
-                detailed_data[row['player_lookup']] = {
-                    'player_full_name': row['player_full_name'],
-                    'team_abbr': row['team_abbr'],
-                    'jersey_number': row['jersey_number'] if pd.notna(row['jersey_number']) else None,
-                    'position': row['position'] if pd.notna(row['position']) else None
-                }
+            if not results.empty:
+                detailed_data = self._process_espn_detailed_results(results)
+                actual_date = results['roster_date'].iloc[0]
+                if isinstance(actual_date, pd.Timestamp):
+                    actual_date = actual_date.date()
+                
+                logger.info(f"✓ ESPN detailed data exact match: {len(detailed_data)} players for {data_date}")
+                return detailed_data
             
-            return detailed_data
+            # No exact match
+            if not allow_fallback:
+                logger.warning(f"✗ ESPN detailed: No data for {data_date} (strict mode)")
+                return {}
+            
+            # Fallback to latest within 30 days
+            logger.warning(f"⚠️ ESPN detailed: No data for {data_date}, using fallback")
+            
+            fallback_query = """
+            SELECT 
+                player_lookup,
+                player_full_name,
+                team_abbr,
+                jersey_number,
+                position,
+                roster_date
+            FROM `{project}.nba_raw.espn_team_rosters`
+            WHERE roster_date >= DATE_SUB(@data_date, INTERVAL 30 DAY)
+            AND roster_date <= @data_date
+            AND roster_date = (
+                SELECT MAX(roster_date)
+                FROM `{project}.nba_raw.espn_team_rosters`
+                WHERE season_year = @season_year
+                AND roster_date >= DATE_SUB(@data_date, INTERVAL 30 DAY)
+                AND roster_date <= @data_date
+            )
+            AND season_year = @season_year
+            """.format(project=self.project_id)
+            
+            fallback_results = self.bq_client.query(fallback_query, job_config=job_config).to_dataframe()
+            
+            if not fallback_results.empty:
+                detailed_data = self._process_espn_detailed_results(fallback_results)
+                actual_date = fallback_results['roster_date'].iloc[0]
+                if isinstance(actual_date, pd.Timestamp):
+                    actual_date = actual_date.date()
+                
+                logger.warning(f"⚠️ ESPN detailed fallback: {len(detailed_data)} players from {actual_date}")
+                return detailed_data
+            else:
+                logger.error(f"✗ ESPN detailed: No fallback data available")
+                return {}
+                
         except Exception as e:
             logger.warning(f"Error getting ESPN detailed data: {e}")
             return {}
+
+    def _process_espn_detailed_results(self, results: pd.DataFrame) -> Dict[str, Dict]:
+        """Helper to process ESPN results into detailed data dict."""
+        detailed_data = {}
+        
+        for _, row in results.iterrows():
+            detailed_data[row['player_lookup']] = {
+                'player_full_name': row['player_full_name'],
+                'team_abbr': row['team_abbr'],
+                'jersey_number': row['jersey_number'] if pd.notna(row['jersey_number']) else None,
+                'position': row['position'] if pd.notna(row['position']) else None
+            }
+        
+        return detailed_data
     
-    def _get_nba_detailed_data(self, season_year: int) -> Dict[str, Dict]:
-        """Get detailed data from NBA.com player list."""
+    def _get_nba_detailed_data(self, season_year: int, data_date: date,
+                            allow_fallback: bool = False) -> Dict[str, Dict]:
+        """
+        Get detailed data from NBA.com player list with strict date matching.
+        
+        Returns jersey numbers, positions, and full names that match the exact date
+        or uses fallback to latest available within 7 days.
+        """
+        # Try exact date match first
         query = """
         SELECT 
             player_lookup,
             player_full_name,
             team_abbr,
             jersey_number,
-            position
+            position,
+            source_file_date
         FROM `{project}.nba_raw.nbac_player_list_current`
-        WHERE is_active = TRUE
+        WHERE source_file_date = @data_date
         AND season_year = @season_year
+        AND is_active = TRUE
         """.format(project=self.project_id)
         
         job_config = bigquery.QueryJobConfig(query_parameters=[
+            bigquery.ScalarQueryParameter("data_date", "DATE", data_date),
             bigquery.ScalarQueryParameter("season_year", "INT64", season_year)
         ])
         
         try:
             results = self.bq_client.query(query, job_config=job_config).to_dataframe()
-            detailed_data = {}
             
-            for _, row in results.iterrows():
-                detailed_data[row['player_lookup']] = {
-                    'player_full_name': row['player_full_name'],
-                    'team_abbr': row['team_abbr'],
-                    'jersey_number': row['jersey_number'] if pd.notna(row['jersey_number']) else None,
-                    'position': row['position'] if pd.notna(row['position']) else None
-                }
+            if not results.empty:
+                detailed_data = self._process_nba_detailed_results(results)
+                actual_date = results['source_file_date'].iloc[0]
+                if isinstance(actual_date, pd.Timestamp):
+                    actual_date = actual_date.date()
+                
+                logger.info(f"✓ NBA.com detailed data exact match: {len(detailed_data)} players for {data_date}")
+                return detailed_data
             
-            return detailed_data
+            # No exact match
+            if not allow_fallback:
+                logger.warning(f"✗ NBA.com detailed: No data for {data_date} (strict mode)")
+                return {}
+            
+            # Fallback to latest within 7 days
+            logger.warning(f"⚠️ NBA.com detailed: No data for {data_date}, using fallback")
+            
+            fallback_query = """
+            SELECT 
+                player_lookup,
+                player_full_name,
+                team_abbr,
+                jersey_number,
+                position,
+                source_file_date
+            FROM `{project}.nba_raw.nbac_player_list_current`
+            WHERE source_file_date >= DATE_SUB(@data_date, INTERVAL 7 DAY)
+            AND source_file_date <= @data_date
+            AND source_file_date = (
+                SELECT MAX(source_file_date)
+                FROM `{project}.nba_raw.nbac_player_list_current`
+                WHERE season_year = @season_year
+                AND is_active = TRUE
+                AND source_file_date >= DATE_SUB(@data_date, INTERVAL 7 DAY)
+                AND source_file_date <= @data_date
+            )
+            AND season_year = @season_year
+            AND is_active = TRUE
+            """.format(project=self.project_id)
+            
+            fallback_results = self.bq_client.query(fallback_query, job_config=job_config).to_dataframe()
+            
+            if not fallback_results.empty:
+                detailed_data = self._process_nba_detailed_results(fallback_results)
+                actual_date = fallback_results['source_file_date'].iloc[0]
+                if isinstance(actual_date, pd.Timestamp):
+                    actual_date = actual_date.date()
+                
+                logger.warning(f"⚠️ NBA.com detailed fallback: {len(detailed_data)} players from {actual_date}")
+                return detailed_data
+            else:
+                logger.error(f"✗ NBA.com detailed: No fallback data available")
+                return {}
+                
         except Exception as e:
             logger.warning(f"Error getting NBA.com detailed data: {e}")
             return {}
+
+    def _process_nba_detailed_results(self, results: pd.DataFrame) -> Dict[str, Dict]:
+        """Helper to process NBA.com results into detailed data dict."""
+        detailed_data = {}
+        
+        for _, row in results.iterrows():
+            detailed_data[row['player_lookup']] = {
+                'player_full_name': row['player_full_name'],
+                'team_abbr': row['team_abbr'],
+                'jersey_number': row['jersey_number'] if pd.notna(row['jersey_number']) else None,
+                'position': row['position'] if pd.notna(row['position']) else None
+            }
+        
+        return detailed_data
     
-    def _get_br_detailed_data(self, season_year: int) -> Dict[str, Dict]:
-        """Get detailed data from Basketball Reference rosters with staleness checking."""
+    def _get_br_detailed_data(self, season_year: int, data_date: date,
+                           allow_fallback: bool = False) -> Dict[str, Dict]:
+        """
+        Get detailed data from Basketball Reference rosters with strict date matching and staleness checking.
+        
+        Returns jersey numbers, positions, and full names that match the exact date
+        or uses fallback to latest available within 30 days.
+        """
+        # Try exact date match first
         query = """
         SELECT 
             player_lookup,
@@ -713,74 +1031,121 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
             team_abbrev as team_abbr,
             jersey_number,
             position,
-            MAX(last_scraped_date) as latest_scrape_date
+            last_scraped_date
         FROM `{project}.nba_raw.br_rosters_current`
-        WHERE season_year = @season_year
-        GROUP BY player_lookup, player_full_name, team_abbrev, jersey_number, position
+        WHERE last_scraped_date = @data_date
+        AND season_year = @season_year
         """.format(project=self.project_id)
         
         job_config = bigquery.QueryJobConfig(query_parameters=[
+            bigquery.ScalarQueryParameter("data_date", "DATE", data_date),
             bigquery.ScalarQueryParameter("season_year", "INT64", season_year)
         ])
         
         try:
             results = self.bq_client.query(query, job_config=job_config).to_dataframe()
             
-            if results.empty:
-                logger.warning(f"No Basketball Reference roster data found for season {season_year}")
+            if not results.empty:
+                detailed_data = self._process_br_detailed_results(results, data_date)
+                actual_date = results['last_scraped_date'].iloc[0]
+                if isinstance(actual_date, pd.Timestamp):
+                    actual_date = actual_date.date()
+                
+                logger.info(f"✓ BR detailed data exact match: {len(detailed_data)} players for {data_date}")
+                return detailed_data
+            
+            # No exact match
+            if not allow_fallback:
+                logger.warning(f"✗ BR detailed: No data for {data_date} (strict mode)")
                 return {}
             
-            # Check staleness
-            latest_scrape = pd.to_datetime(results['latest_scrape_date']).max()
-            if isinstance(latest_scrape, pd.Timestamp):
-                latest_scrape_date = latest_scrape.date()
-            else:
-                latest_scrape_date = latest_scrape
+            # Fallback to latest within 30 days
+            logger.warning(f"⚠️ BR detailed: No data for {data_date}, using fallback")
             
-            staleness_days = (date.today() - latest_scrape_date).days
+            fallback_query = """
+            SELECT 
+                player_lookup,
+                player_full_name,
+                team_abbrev as team_abbr,
+                jersey_number,
+                position,
+                last_scraped_date
+            FROM `{project}.nba_raw.br_rosters_current`
+            WHERE last_scraped_date >= DATE_SUB(@data_date, INTERVAL 30 DAY)
+            AND last_scraped_date <= @data_date
+            AND last_scraped_date = (
+                SELECT MAX(last_scraped_date)
+                FROM `{project}.nba_raw.br_rosters_current`
+                WHERE season_year = @season_year
+                AND last_scraped_date >= DATE_SUB(@data_date, INTERVAL 30 DAY)
+                AND last_scraped_date <= @data_date
+            )
+            AND season_year = @season_year
+            """.format(project=self.project_id)
             
-            logger.info(f"Basketball Reference data latest scrape: {latest_scrape_date} ({staleness_days} days old)")
+            fallback_results = self.bq_client.query(fallback_query, job_config=job_config).to_dataframe()
             
-            if staleness_days > 30:
-                logger.warning(
-                    f"⚠️ Basketball Reference data is {staleness_days} days stale "
-                    f"(last scraped: {latest_scrape_date}). "
-                    f"Jersey numbers and positions may be outdated."
-                )
-                try:
-                    notify_warning(
-                        title="Stale Basketball Reference Data",
-                        message=f"BR roster data is {staleness_days} days old",
-                        details={
-                            'latest_scrape_date': str(latest_scrape_date),
-                            'staleness_days': staleness_days,
-                            'season_year': season_year,
-                            'threshold_days': 30,
-                            'impact': 'Jersey numbers and positions may be outdated',
-                            'processor': 'roster_registry'
-                        }
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to send notification: {e}")
-            
-            detailed_data = {}
-            
-            for _, row in results.iterrows():
-                team_abbr = normalize_team_abbr(row['team_abbr'])
+            if not fallback_results.empty:
+                detailed_data = self._process_br_detailed_results(fallback_results, data_date)
+                actual_date = fallback_results['last_scraped_date'].iloc[0]
+                if isinstance(actual_date, pd.Timestamp):
+                    actual_date = actual_date.date()
                 
-                detailed_data[row['player_lookup']] = {
-                    'player_full_name': row['player_full_name'],
-                    'team_abbr': team_abbr,
-                    'jersey_number': row['jersey_number'] if pd.notna(row['jersey_number']) else None,
-                    'position': row['position'] if pd.notna(row['position']) else None,
-                    'data_staleness_days': staleness_days
-                }
-            
-            return detailed_data
-            
+                # Check staleness
+                staleness_days = (data_date - actual_date).days
+                if staleness_days > 30:
+                    logger.warning(
+                        f"⚠️ BR detailed fallback data is {staleness_days} days stale "
+                        f"(from {actual_date}). Jersey numbers and positions may be outdated."
+                    )
+                else:
+                    logger.warning(f"⚠️ BR detailed fallback: {len(detailed_data)} players from {actual_date}")
+                
+                return detailed_data
+            else:
+                logger.error(f"✗ BR detailed: No fallback data available")
+                return {}
+                
         except Exception as e:
             logger.warning(f"Error getting Basketball Reference detailed data: {e}")
             return {}
+
+
+    def _process_br_detailed_results(self, results: pd.DataFrame, data_date: date) -> Dict[str, Dict]:
+        """Helper to process BR results into detailed data dict with staleness warning."""
+        detailed_data = {}
+        
+        if results.empty:
+            return detailed_data
+        
+        # Check staleness for warning
+        latest_scrape = pd.to_datetime(results['last_scraped_date']).max()
+        if isinstance(latest_scrape, pd.Timestamp):
+            latest_scrape_date = latest_scrape.date()
+        else:
+            latest_scrape_date = latest_scrape
+        
+        staleness_days = (data_date - latest_scrape_date).days
+        
+        if staleness_days > 30:
+            logger.warning(
+                f"⚠️ Basketball Reference data is {staleness_days} days stale "
+                f"(last scraped: {latest_scrape_date}). "
+                f"Jersey numbers and positions may be outdated."
+            )
+        
+        for _, row in results.iterrows():
+            team_abbr = normalize_team_abbr(row['team_abbr'])
+            
+            detailed_data[row['player_lookup']] = {
+                'player_full_name': row['player_full_name'],
+                'team_abbr': team_abbr,
+                'jersey_number': row['jersey_number'] if pd.notna(row['jersey_number']) else None,
+                'position': row['position'] if pd.notna(row['position']) else None,
+                'data_staleness_days': staleness_days
+            }
+        
+        return detailed_data
         
     def _get_nba_canonical_set(self, season_year: int, data_date: date) -> Tuple[Set[Tuple[str, str]], Dict]:
         """
@@ -1257,17 +1622,22 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
                 logger.warning(f"Error finding team assignment: {e}")
         
         return 'UNK'
-    
+
     def transform_data(self, raw_data: Dict, file_path: str = None) -> List[Dict]:
         """Transform roster data into registry records."""
         try:
             season_year = raw_data.get('season_year', date.today().year)
             data_date = raw_data.get('data_date', date.today())
             allow_backfill = raw_data.get('allow_backfill', False)
+            allow_source_fallback = raw_data.get('allow_source_fallback', False)  # NEW
             
             logger.info(f"Processing roster data for season {season_year}, date {data_date}")
             
-            roster_data = self.get_current_roster_data(season_year)
+            roster_data = self.get_current_roster_data(
+                season_year, 
+                data_date=data_date,  # NEW
+                allow_source_fallback=allow_source_fallback  # NEW
+            )
             season_str = self.calculate_season_string(season_year)
             existing_players = self.get_existing_registry_players(season_str)
             
@@ -1296,7 +1666,8 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
                         logger.warning(f"Failed to send notification: {e}")
             
             registry_records, validation_info = self.aggregate_roster_assignments(
-                roster_data, season_year, data_date, allow_backfill=allow_backfill
+                roster_data, season_year, data_date, allow_backfill=allow_backfill,
+                allow_source_fallback=allow_source_fallback
             )
             
             logger.info(f"Created {len(registry_records)} registry records")
@@ -1322,8 +1693,9 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
             raise
     
     def _build_registry_for_season_impl(self, season: str, team: str = None, 
-                                       data_date: date = None, allow_backfill: bool = False) -> Dict:
-        """Implementation of season building."""
+                                   data_date: date = None, allow_backfill: bool = False,
+                                   allow_source_fallback: bool = False) -> Dict:
+        """Implementation of season building with source fallback support."""
         logger.info(f"Building roster registry for season {season}")
         
         try:
@@ -1346,7 +1718,8 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
             filter_data = {
                 'season_year': season_year,
                 'data_date': data_date,
-                'allow_backfill': allow_backfill
+                'allow_backfill': allow_backfill,
+                'allow_source_fallback': allow_source_fallback  # NEW
             }
             
             rows = self.transform_data(filter_data)
@@ -1395,11 +1768,21 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
             raise
     
     def process_daily_rosters(self, season_year: int = None, data_date: date = None,
-                            allow_backfill: bool = False) -> Dict:
+                         allow_backfill: bool = False,
+                         allow_source_fallback: bool = False) -> Dict:
         """
-        Process daily roster updates with complete protection.
+        Process daily roster updates with complete protection and strict date matching.
         
         Main entry point for daily processing after roster scrapers complete.
+        
+        Args:
+            season_year: NBA season starting year (defaults to current season)
+            data_date: Date to process (defaults to today)
+            allow_backfill: If True, allow processing earlier dates (insert-only mode)
+            allow_source_fallback: If True, use latest available data if exact date missing
+        
+        Returns:
+            Dict with processing results and status
         """
         if not season_year:
             current_month = date.today().month
@@ -1413,6 +1796,7 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
 
         season_str = self.calculate_season_string(season_year)
         logger.info(f"Processing daily rosters for {season_str}, date {data_date}")
+        logger.info(f"Strict date matching: {'disabled (using fallback)' if allow_source_fallback else 'ENABLED'}")
         
         # =======================================================================
         # PROTECTION 1: Season Protection - Don't process historical seasons
@@ -1483,6 +1867,17 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
         
         logger.info(f"Starting run: {self.current_run_id}")
         
+        # Initialize source date tracking
+        self.source_dates_used = {
+            'espn_roster_date': None,
+            'nbacom_source_date': None,
+            'br_scrape_date': None,
+            'espn_matched': None,
+            'nbacom_matched': None,
+            'br_matched': None,
+            'used_fallback': False
+        }
+        
         # Determine validation mode and freshness (will be filled in during processing)
         validation_mode = None
         source_data_freshness_days = None
@@ -1491,7 +1886,8 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
             result = self._build_registry_for_season_impl(
                 season_str, 
                 data_date=data_date, 
-                allow_backfill=allow_backfill
+                allow_backfill=allow_backfill,
+                allow_source_fallback=allow_source_fallback
             )
             
             # Extract validation info from result
@@ -1522,6 +1918,7 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
                         'records_processed': result['records_processed'],
                         'new_players': len(result.get('new_players_discovered', [])),
                         'validation_mode': validation_mode,
+                        'source_fallback_used': self.source_dates_used.get('used_fallback', False),
                         'run_id': self.current_run_id
                     }
                 )
@@ -1529,6 +1926,31 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
                 logger.warning(f"Failed to send notification: {e}")
             
             return result
+            
+        except SourceDataMissingError as e:
+            logger.error(f"Source data missing: {e}")
+            
+            # Record failed completion
+            self.record_run_complete(
+                data_date=data_date,
+                season_year=season_year,
+                status='failed',
+                error=e,
+                data_source_primary='espn_roster',
+                data_source_enhancement='nbacom_roster',
+                validation_mode=validation_mode,
+                source_data_freshness_days=source_data_freshness_days,
+                backfill_mode=allow_backfill
+            )
+            
+            return {
+                'status': 'failed',
+                'reason': str(e),
+                'season': season_str,
+                'data_date': str(data_date),
+                'error_type': 'source_data_missing',
+                'source_dates': self.source_dates_used
+            }
             
         except Exception as e:
             logger.error(f"Daily roster processing failed: {e}")
@@ -1713,11 +2135,14 @@ def process_daily_rosters(season_year: int = None, data_date: date = None,
 
 if __name__ == "__main__":
     import argparse
-    
+
     parser = argparse.ArgumentParser(description="Process roster registry")
     parser.add_argument("--season-year", type=int, help="NBA season starting year")
     parser.add_argument("--data-date", type=str, help="Date to process (YYYY-MM-DD)")
-    parser.add_argument("--allow-backfill", action="store_true", help="Allow processing earlier dates")
+    parser.add_argument("--allow-backfill", action="store_true", 
+                    help="Allow processing earlier dates")
+    parser.add_argument("--allow-source-fallback", action="store_true",
+                    help="Use latest available data if exact date missing")
     parser.add_argument("--strategy", default="merge", choices=["merge", "replace", "append"])
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
     
@@ -1737,7 +2162,8 @@ if __name__ == "__main__":
     result = processor.process_daily_rosters(
         season_year=args.season_year,
         data_date=data_date,
-        allow_backfill=args.allow_backfill
+        allow_backfill=args.allow_backfill,
+        allow_source_fallback=args.allow_source_fallback  # NEW
     )
     
     print(f"\n{'='*60}")
