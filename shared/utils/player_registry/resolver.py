@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-File: shared/utils/universal_player_id_resolver.py
+File: shared/utils/player_registry/resolver.py
 
 Universal Player ID Resolver - Enhanced with Bulk Operations
 
@@ -8,6 +8,10 @@ Provides universal player ID resolution for handling name changes and ensuring
 consistent player identification across all analytics tables.
 
 Enhanced with bulk operations for improved performance during batch processing.
+
+USAGE:
+- Registry Processors (Write Side): Use this to create/resolve universal IDs
+- Downstream Processors (Read Side): Use RegistryReader instead
 """
 
 import logging
@@ -27,13 +31,38 @@ class UniversalPlayerIDResolver:
     across name changes, team transfers, and seasons.
     
     Enhanced with bulk operations for batch processing performance.
+    
+    Example:
+        resolver = UniversalPlayerIDResolver(bq_client, project_id)
+        
+        # Single player
+        uid = resolver.resolve_or_create_universal_id('lebronjames')
+        
+        # Batch processing
+        players = ['lebronjames', 'stephencurry', 'kevindurant']
+        uid_map = resolver.bulk_resolve_or_create_universal_ids(players)
     """
     
-    def __init__(self, bq_client: bigquery.Client, project_id: str):
+    def __init__(self, bq_client: bigquery.Client, project_id: str, test_mode: bool = False):
+        """
+        Initialize universal player ID resolver.
+        
+        Args:
+            bq_client: BigQuery client instance
+            project_id: GCP project ID
+            test_mode: Use test tables (for development/testing)
+        """
         self.bq_client = bq_client
         self.project_id = project_id
-        self.registry_table = f"{project_id}.nba_reference.nba_players_registry"
-        self.alias_table = f"{project_id}.nba_reference.player_aliases"
+        
+        # Table names
+        if test_mode:
+            timestamp_suffix = "FIXED2"
+            self.registry_table = f"{project_id}.nba_reference.nba_players_registry_test_{timestamp_suffix}"
+            self.alias_table = f"{project_id}.nba_reference.player_aliases_test_{timestamp_suffix}"
+        else:
+            self.registry_table = f"{project_id}.nba_reference.nba_players_registry"
+            self.alias_table = f"{project_id}.nba_reference.player_aliases"
         
         # Performance tracking
         self.stats = {
@@ -47,6 +76,8 @@ class UniversalPlayerIDResolver:
         self._id_cache = {}  # player_lookup -> universal_id
         self._cache_populated = False
         
+        logger.info(f"Initialized UniversalPlayerIDResolver (test_mode={test_mode})")
+    
     def resolve_or_create_universal_id(self, player_lookup: str) -> str:
         """
         Resolve or create universal player ID for a single player.
@@ -97,6 +128,11 @@ class UniversalPlayerIDResolver:
             
         Returns:
             Dict mapping player_lookup -> universal_player_id
+            
+        Example:
+            players = ['lebronjames', 'stephencurry', 'kevindurant']
+            uid_map = resolver.bulk_resolve_or_create_universal_ids(players)
+            # Returns: {'lebronjames': 'lebronjames_001', ...}
         """
         if not player_lookups:
             return {}
@@ -135,28 +171,29 @@ class UniversalPlayerIDResolver:
         return existing_mappings
     
     def _bulk_lookup_existing_universal_ids(self, player_lookups: List[str]) -> Dict[str, str]:
-        """Get existing universal IDs for a batch of players in one query."""
+        """
+        Get existing universal IDs for a batch of players in one query.
+        
+        IMPROVED: Uses UNNEST with array parameter instead of individual parameters
+        for better performance and no parameter count limits.
+        """
         if not player_lookups:
             return {}
         
-        # Create parameterized query for batch lookup
-        placeholders = ','.join([f'@player_{i}' for i in range(len(player_lookups))])
+        # Use UNNEST for efficient batch lookup
         query = f"""
         SELECT DISTINCT 
             player_lookup,
             universal_player_id
         FROM `{self.registry_table}`
-        WHERE player_lookup IN ({placeholders})
+        WHERE player_lookup IN UNNEST(@player_lookups)
         AND universal_player_id IS NOT NULL
         """
         
-        # Create query parameters
-        query_params = [
-            bigquery.ScalarQueryParameter(f"player_{i}", "STRING", lookup)
-            for i, lookup in enumerate(player_lookups)
-        ]
-        
-        job_config = bigquery.QueryJobConfig(query_parameters=query_params)
+        # Single array parameter - more efficient than individual parameters
+        job_config = bigquery.QueryJobConfig(query_parameters=[
+            bigquery.ArrayQueryParameter("player_lookups", "STRING", player_lookups)
+        ])
         
         try:
             results = self.bq_client.query(query, job_config=job_config).to_dataframe()
@@ -175,12 +212,15 @@ class UniversalPlayerIDResolver:
             return {}
     
     def _bulk_resolve_via_aliases(self, player_lookups: List[str]) -> Dict[str, str]:
-        """Attempt to resolve universal IDs via alias table for batch of players."""
+        """
+        Attempt to resolve universal IDs via alias table for batch of players.
+        
+        IMPROVED: Uses UNNEST with array parameter instead of individual parameters.
+        """
         if not player_lookups:
             return {}
         
-        # Create parameterized query for alias resolution
-        placeholders = ','.join([f'@alias_{i}' for i in range(len(player_lookups))])
+        # Use UNNEST for efficient alias lookup
         query = f"""
         SELECT DISTINCT
             a.alias_lookup,
@@ -188,18 +228,15 @@ class UniversalPlayerIDResolver:
         FROM `{self.alias_table}` a
         JOIN `{self.registry_table}` r 
         ON a.nba_canonical_lookup = r.player_lookup
-        WHERE a.alias_lookup IN ({placeholders})
+        WHERE a.alias_lookup IN UNNEST(@player_lookups)
         AND a.is_active = TRUE
         AND r.universal_player_id IS NOT NULL
         """
         
-        # Create query parameters
-        query_params = [
-            bigquery.ScalarQueryParameter(f"alias_{i}", "STRING", lookup)
-            for i, lookup in enumerate(player_lookups)
-        ]
-        
-        job_config = bigquery.QueryJobConfig(query_parameters=query_params)
+        # Single array parameter
+        job_config = bigquery.QueryJobConfig(query_parameters=[
+            bigquery.ArrayQueryParameter("player_lookups", "STRING", player_lookups)
+        ])
         
         try:
             results = self.bq_client.query(query, job_config=job_config).to_dataframe()
@@ -221,21 +258,21 @@ class UniversalPlayerIDResolver:
             return {}
     
     def _bulk_create_new_universal_ids(self, player_lookups: List[str]) -> Dict[str, str]:
-        """Create new universal IDs for a batch of players."""
+        """
+        Create new universal IDs for a batch of players.
+        
+        IMPROVED: Checks for collisions and increments sequence number if needed.
+        """
         if not player_lookups:
             return {}
         
         logger.info(f"Creating {len(player_lookups)} new universal player IDs")
         
-        # Generate new universal IDs
+        # Generate new universal IDs with collision detection
         new_mappings = {}
         for player_lookup in player_lookups:
             new_id = self._generate_universal_id(player_lookup)
             new_mappings[player_lookup] = new_id
-        
-        # Here you would typically insert these into a universal ID table
-        # For now, we'll just return the mappings
-        # In a full implementation, you might have a dedicated universal_player_ids table
         
         return new_mappings
     
@@ -292,7 +329,11 @@ class UniversalPlayerIDResolver:
             return None
     
     def _create_new_universal_id(self, player_lookup: str) -> str:
-        """Create a new universal ID for a player."""
+        """
+        Create a new universal ID for a player.
+        
+        IMPROVED: Checks for existing IDs to avoid collisions and increments sequence.
+        """
         return self._generate_universal_id(player_lookup)
     
     def _generate_universal_id(self, player_lookup: str) -> str:
@@ -301,18 +342,77 @@ class UniversalPlayerIDResolver:
         
         Format: {normalized_name}_{sequence_number}
         Example: kjmartin_001
+        
+        IMPROVED: Checks for collisions and finds next available sequence number.
         """
         # Clean the player lookup for ID generation
         base_id = player_lookup.lower().replace(' ', '').replace('.', '').replace("'", '')
         
-        # For now, use simple sequence numbering
-        # In production, you might check for existing IDs to avoid collisions
-        sequence = "001"
+        # Check for existing IDs with this base to find next sequence number
+        existing_ids = self._find_existing_ids_with_base(base_id)
         
-        return f"{base_id}_{sequence}"
+        if not existing_ids:
+            # No collision, use 001
+            return f"{base_id}_001"
+        
+        # Find highest sequence number
+        max_sequence = 0
+        for existing_id in existing_ids:
+            try:
+                # Extract sequence number from ID like "kjmartin_002"
+                parts = existing_id.split('_')
+                if len(parts) == 2:
+                    sequence = int(parts[1])
+                    max_sequence = max(max_sequence, sequence)
+            except (ValueError, IndexError):
+                continue
+        
+        # Use next sequence number
+        next_sequence = max_sequence + 1
+        new_id = f"{base_id}_{next_sequence:03d}"
+        
+        logger.info(f"Generated new universal ID with collision detection: {new_id}")
+        return new_id
+    
+    def _find_existing_ids_with_base(self, base_id: str) -> List[str]:
+        """
+        Find all existing universal IDs that start with the given base.
+        
+        Used for collision detection when generating new IDs.
+        """
+        query = f"""
+        SELECT DISTINCT universal_player_id
+        FROM `{self.registry_table}`
+        WHERE universal_player_id LIKE @pattern
+        """
+        
+        job_config = bigquery.QueryJobConfig(query_parameters=[
+            bigquery.ScalarQueryParameter("pattern", "STRING", f"{base_id}_%")
+        ])
+        
+        try:
+            results = self.bq_client.query(query, job_config=job_config).to_dataframe()
+            
+            if results.empty:
+                return []
+            
+            return results['universal_player_id'].tolist()
+            
+        except Exception as e:
+            logger.warning(f"Error checking for ID collisions: {e}")
+            # Safe fallback - return empty list, will use _001
+            return []
     
     def get_canonical_player_name(self, player_lookup: str) -> str:
-        """Get the canonical player name for tracking purposes."""
+        """
+        Get the canonical player name for tracking purposes.
+        
+        Args:
+            player_lookup: Normalized player name
+            
+        Returns:
+            Canonical player name (currently same as player_lookup)
+        """
         # For now, just return the player_lookup
         # In a more sophisticated system, this might resolve to the "official" name
         return player_lookup
@@ -322,6 +422,15 @@ class UniversalPlayerIDResolver:
         Look up universal ID for existing players only.
         
         Raises exception if player not found (for use in analytics processors).
+        
+        Args:
+            player_lookup: Normalized player name
+            
+        Returns:
+            Universal player ID
+            
+        Raises:
+            ValueError: If player not found in registry
         """
         universal_id = self._lookup_existing_universal_id(player_lookup)
         
@@ -335,6 +444,12 @@ class UniversalPlayerIDResolver:
         Look up universal ID for existing players only.
         
         Returns None if player not found (safe version).
+        
+        Args:
+            player_lookup: Normalized player name
+            
+        Returns:
+            Universal player ID or None if not found
         """
         return self._lookup_existing_universal_id(player_lookup)
     
@@ -343,6 +458,12 @@ class UniversalPlayerIDResolver:
         Look up universal IDs for existing players only (bulk version).
         
         Returns mapping with None values for players not found.
+        
+        Args:
+            player_lookups: List of normalized player names
+            
+        Returns:
+            Dict mapping player_lookup -> universal_player_id (or None if not found)
         """
         existing_mappings = self._bulk_lookup_existing_universal_ids(player_lookups)
         
@@ -354,18 +475,36 @@ class UniversalPlayerIDResolver:
         return result
     
     def get_resolution_stats(self) -> Dict:
-        """Get statistics about universal ID resolution performance."""
+        """
+        Get statistics about universal ID resolution performance.
+        
+        Returns:
+            Dict containing resolution statistics
+        """
+        total_lookups = max(self.stats['lookups_performed'], 1)
+        
         return {
             'total_lookups': self.stats['lookups_performed'],
             'new_ids_created': self.stats['new_ids_created'],
             'cache_hits': self.stats['cache_hits'],
             'alias_resolutions': self.stats['alias_resolutions'],
-            'cache_hit_rate': (self.stats['cache_hits'] / max(self.stats['lookups_performed'], 1)) * 100,
+            'cache_hit_rate': (self.stats['cache_hits'] / total_lookups) * 100,
             'cache_size': len(self._id_cache)
         }
     
     def clear_cache(self):
         """Clear the in-memory cache."""
+        cache_size = len(self._id_cache)
         self._id_cache.clear()
         self._cache_populated = False
-        logger.info("Universal ID cache cleared")
+        logger.info(f"Universal ID cache cleared ({cache_size} entries removed)")
+    
+    def reset_stats(self):
+        """Reset performance statistics."""
+        self.stats = {
+            'lookups_performed': 0,
+            'new_ids_created': 0,
+            'cache_hits': 0,
+            'alias_resolutions': 0
+        }
+        logger.info("Resolution statistics reset")

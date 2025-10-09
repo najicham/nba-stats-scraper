@@ -1,35 +1,9 @@
 #!/usr/bin/env python3
-# File: processor_backfill/espn_scoreboard/espn_scoreboard_backfill_job.py
+# File: backfill_jobs/raw/espn_scoreboard/espn_scoreboard_backfill_job.py
 # Description: Backfill job for processing ESPN scoreboard data from GCS to BigQuery
 #
-# Usage Examples:
-# =============
-# 
-# 1. Deploy Job:
-#    ./bin/deployment/deploy_processor_backfill_job.sh espn_scoreboard
-#
-# 2. Test with Dry Run:
-#    gcloud run jobs execute espn-scoreboard-processor-backfill --args=--dry-run,--limit=10 --region=us-west2
-#
-# 3. Small Sample Test:
-#    gcloud run jobs execute espn-scoreboard-processor-backfill --args=--limit=50 --region=us-west2
-#
-# 4. Date Range Processing:
-#    gcloud run jobs execute espn-scoreboard-processor-backfill --args=--start-date=2024-01-01,--end-date=2024-01-31 --region=us-west2
-#
-# 5. Full Backfill:
-#    gcloud run jobs execute espn-scoreboard-processor-backfill --region=us-west2
-#
-# 6. Monitor Logs:
-#    gcloud beta run jobs executions logs read [execution-id] --region=us-west2 --follow
-#
-# CRITICAL: Argument Parsing
-# =========================
-# ❌ WRONG (spaces break parsing):
-#    --args="--dry-run --limit 10"
-#
-# ✅ CORRECT (use equals syntax):
-#    --args=--dry-run,--limit=10
+# Monitor Logs:
+#   gcloud beta run jobs executions logs read [execution-id] --region=us-west2
 
 import os
 import sys
@@ -39,10 +13,13 @@ from datetime import datetime, date, timedelta
 from typing import List
 from google.cloud import storage
 
-# Add parent directories to path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+# Add parent directories to path (4 levels up to project root from backfill_jobs/raw/espn_scoreboard/)
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 
 from data_processors.raw.espn.espn_scoreboard_processor import EspnScoreboardProcessor
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 class EspnScoreboardBackfill:
     def __init__(self, bucket_name: str = 'nba-scraped-data'):
@@ -56,7 +33,7 @@ class EspnScoreboardBackfill:
             format='%(asctime)s - %(levelname)s - %(message)s'
         )
         self.logger = logging.getLogger(__name__)
-    
+        
     def list_files(self, start_date: date, end_date: date) -> List[str]:
         """List ESPN scoreboard files in date range."""
         bucket = self.storage_client.bucket(self.bucket_name)
@@ -74,7 +51,7 @@ class EspnScoreboardBackfill:
                     date_files.append(f"gs://{self.bucket_name}/{blob.name}")
             
             if date_files:
-                # Take the latest file for each date (ESPN runs at 5 AM PT)
+                # Take the latest file for each date
                 latest_file = max(date_files)
                 all_files.append(latest_file)
                 self.logger.info(f"Found {len(date_files)} files for {current_date}, selected: {latest_file}")
@@ -161,8 +138,8 @@ def main():
     
     args = parser.parse_args()
     
-    # Set default date range if not provided
-    start_date = datetime.strptime(args.start_date, '%Y-%m-%d').date() if args.start_date else date(2021, 10, 1)
+    # Set default date range if not provided (last 30 days)
+    start_date = datetime.strptime(args.start_date, '%Y-%m-%d').date() if args.start_date else date.today() - timedelta(days=30)
     end_date = datetime.strptime(args.end_date, '%Y-%m-%d').date() if args.end_date else date.today()
     
     backfiller = EspnScoreboardBackfill()

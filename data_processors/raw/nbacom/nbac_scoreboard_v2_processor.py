@@ -342,7 +342,7 @@ class NbacScoreboardV2Processor(ProcessorBase):
             raise e
     
     def load_data(self, rows: List[Dict], **kwargs) -> Dict:
-        """Load transformed data into BigQuery."""
+        """Load transformed data into BigQuery using MERGE."""
         if not rows:
             logging.warning("No rows to load")
             return {'rows_processed': 0, 'errors': []}
@@ -351,77 +351,126 @@ class NbacScoreboardV2Processor(ProcessorBase):
         errors = []
         
         try:
-            if self.processing_strategy == 'MERGE_UPDATE':
-                # Delete existing games for the same date
-                game_date = rows[0]['game_date']
-                if game_date:
-                    delete_query = f"""
-                    DELETE FROM `{table_id}` 
-                    WHERE game_date = '{game_date}'
-                    """
-                    
-                    try:
-                        self.bq_client.query(delete_query).result()
-                        logging.info(f"Deleted existing records for date: {game_date}")
-                    except Exception as e:
-                        logging.error(f"Error deleting existing data: {e}")
-                        
-                        # Notify about delete failure
-                        try:
-                            notify_error(
-                                title="BigQuery Delete Failed",
-                                message=f"Failed to delete existing scoreboard data: {str(e)}",
-                                details={
-                                    'game_date': game_date,
-                                    'table_id': table_id,
-                                    'error_type': type(e).__name__
-                                },
-                                processor_name="NBA.com Scoreboard V2 Processor"
-                            )
-                        except Exception as notify_ex:
-                            logging.warning(f"Failed to send notification: {notify_ex}")
-                        
-                        raise e
+            # Create a temporary table for the new data
+            temp_table_name = f"nbac_scoreboard_v2_temp_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}"
+            temp_table_id = f"{self.project_id}.nba_raw.{temp_table_name}"
             
-            # Insert new data
-            result = self.bq_client.insert_rows_json(table_id, rows)
-            if result:
-                errors.extend([str(e) for e in result])
-                logging.error(f"BigQuery insert errors: {errors}")
+            logging.info(f"Loading data to temporary table: {temp_table_id}")
+            
+            # Get the schema from the main table
+            main_table = self.bq_client.get_table(table_id)
+            
+            # Create temp table with same schema
+            temp_table = bigquery.Table(temp_table_id, schema=main_table.schema)
+            temp_table = self.bq_client.create_table(temp_table)
+            
+            # Load data into temp table using load_table_from_json
+            job_config = bigquery.LoadJobConfig(
+                schema=main_table.schema,
+                write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
+            )
+            
+            load_job = self.bq_client.load_table_from_json(
+                rows, temp_table_id, job_config=job_config
+            )
+            load_job.result()  # Wait for completion
+            
+            if load_job.errors:
+                errors.extend([str(e) for e in load_job.errors])
+                logging.error(f"Failed to load into temp table: {errors}")
                 
-                # Notify about insert errors
                 try:
-                    notify_error(
-                        title="BigQuery Insert Errors",
-                        message=f"Encountered {len(result)} errors inserting scoreboard data",
-                        details={
-                            'table_id': table_id,
-                            'rows_attempted': len(rows),
-                            'error_count': len(result),
-                            'errors': str(result)[:500],
-                            'game_date': rows[0].get('game_date') if rows else None
-                        },
-                        processor_name="NBA.com Scoreboard V2 Processor"
-                    )
-                except Exception as notify_ex:
-                    logging.warning(f"Failed to send notification: {notify_ex}")
-            else:
-                logging.info(f"Successfully inserted {len(rows)} rows")
+                    self.bq_client.delete_table(temp_table_id, not_found_ok=True)
+                except Exception:
+                    pass
                 
-                # Send success notification
-                try:
-                    notify_info(
-                        title="Scoreboard Processing Complete",
-                        message=f"Successfully processed {len(rows)} scoreboard games",
-                        details={
-                            'rows_processed': len(rows),
-                            'games_failed': self.games_failed,
-                            'game_date': rows[0].get('game_date') if rows else None
-                        }
-                    )
-                except Exception as notify_ex:
-                    logging.warning(f"Failed to send notification: {notify_ex}")
-                
+                return {'rows_processed': 0, 'errors': errors}
+            
+            logging.info(f"Loaded {len(rows)} rows into temp table")
+            
+            # Get the game_date for partition filter
+            game_date = rows[0]['game_date']
+            
+            # Use MERGE with CTE to satisfy partition filter requirement
+            merge_query = f"""
+            MERGE `{table_id}` T
+            USING (
+              SELECT * FROM `{temp_table_id}`
+            ) S
+            ON T.game_id = S.game_id 
+               AND T.game_date = S.game_date
+               AND T.game_date = '{game_date}'
+            WHEN MATCHED THEN
+              UPDATE SET
+                season_year = S.season_year,
+                start_time = S.start_time,
+                game_status_id = S.game_status_id,
+                game_state = S.game_state,
+                game_status_text = S.game_status_text,
+                home_team_id = S.home_team_id,
+                home_team_abbr = S.home_team_abbr,
+                home_team_abbr_raw = S.home_team_abbr_raw,
+                home_score = S.home_score,
+                away_team_id = S.away_team_id,
+                away_team_abbr = S.away_team_abbr,
+                away_team_abbr_raw = S.away_team_abbr_raw,
+                away_score = S.away_score,
+                winning_team_abbr = S.winning_team_abbr,
+                winning_team_side = S.winning_team_side,
+                source_file_path = S.source_file_path,
+                scrape_timestamp = S.scrape_timestamp,
+                processed_at = S.processed_at
+            WHEN NOT MATCHED THEN
+              INSERT (
+                game_id, game_date, season_year, start_time,
+                game_status_id, game_state, game_status_text,
+                home_team_id, home_team_abbr, home_team_abbr_raw, home_score,
+                away_team_id, away_team_abbr, away_team_abbr_raw, away_score,
+                winning_team_abbr, winning_team_side,
+                source_file_path, scrape_timestamp, created_at, processed_at
+              )
+              VALUES (
+                S.game_id, S.game_date, S.season_year, S.start_time,
+                S.game_status_id, S.game_state, S.game_status_text,
+                S.home_team_id, S.home_team_abbr, S.home_team_abbr_raw, S.home_score,
+                S.away_team_id, S.away_team_abbr, S.away_team_abbr_raw, S.away_score,
+                S.winning_team_abbr, S.winning_team_side,
+                S.source_file_path, S.scrape_timestamp, S.created_at, S.processed_at
+              )
+            """
+            
+            logging.info("Executing MERGE query")
+            merge_job = self.bq_client.query(merge_query)
+            merge_job.result()  # Wait for completion
+            
+            logging.info(f"MERGE completed: {merge_job.num_dml_affected_rows} rows affected")
+            
+            # Clean up temp table
+            try:
+                self.bq_client.delete_table(temp_table_id, not_found_ok=True)
+                logging.info(f"Deleted temporary table: {temp_table_id}")
+            except Exception as e:
+                logging.warning(f"Failed to delete temp table: {e}")
+            
+            logging.info(f"Successfully loaded {len(rows)} rows using MERGE")
+            
+            # Send success notification
+            try:
+                notify_info(
+                    title="Scoreboard Processing Complete",
+                    message=f"Successfully processed {len(rows)} scoreboard games using MERGE",
+                    details={
+                        'rows_processed': len(rows),
+                        'games_failed': self.games_failed,
+                        'game_date': rows[0].get('game_date') if rows else None,
+                        'rows_affected': merge_job.num_dml_affected_rows
+                    }
+                )
+            except Exception as notify_ex:
+                logging.warning(f"Failed to send notification: {notify_ex}")
+            
+            return {'rows_processed': len(rows), 'errors': []}
+            
         except Exception as e:
             error_msg = str(e)
             errors.append(error_msg)
@@ -442,8 +491,75 @@ class NbacScoreboardV2Processor(ProcessorBase):
                 )
             except Exception as notify_ex:
                 logging.warning(f"Failed to send notification: {notify_ex}")
+            
+            return {'rows_processed': 0, 'errors': errors}
+    
+if __name__ == "__main__":
+    import argparse
+    import sys
+    from google.cloud import storage
+    
+    parser = argparse.ArgumentParser(description="Process NBA.com Scoreboard V2 data")
+    parser.add_argument('--file-path', required=True, help='GCS file path (gs://bucket/path/file.json)')
+    parser.add_argument('--debug', action='store_true', help='Enable debug logging')
+    
+    args = parser.parse_args()
+    
+    # Configure logging
+    log_level = logging.DEBUG if args.debug else logging.INFO
+    logging.basicConfig(
+        level=log_level,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    
+    try:
+        processor = NbacScoreboardV2Processor()
         
-        return {
-            'rows_processed': len(rows) if not errors else 0, 
-            'errors': errors
-        }
+        logging.info(f"Processing file: {args.file_path}")
+        
+        # Parse GCS path: gs://bucket-name/path/to/file.json
+        if not args.file_path.startswith('gs://'):
+            raise ValueError(f"Invalid GCS path: {args.file_path}")
+        
+        path_parts = args.file_path[5:].split('/', 1)  # Remove 'gs://' and split
+        bucket_name = path_parts[0]
+        blob_name = path_parts[1]
+        
+        # Read file directly from GCS
+        storage_client = storage.Client()
+        bucket = storage_client.bucket(bucket_name)
+        blob = bucket.blob(blob_name)
+        
+        if not blob.exists():
+            raise FileNotFoundError(f"File not found: {args.file_path}")
+        
+        content = blob.download_as_text()
+        raw_data = json.loads(content)
+        
+        logging.info(f"Loaded JSON with {len(raw_data.get('games', []))} games")
+        
+        # Validate
+        validation_errors = processor.validate_data(raw_data)
+        if validation_errors:
+            logging.error(f"Validation failed: {validation_errors}")
+            sys.exit(1)
+        
+        logging.info("Validation passed")
+        
+        # Transform
+        rows = processor.transform_data(raw_data, args.file_path)
+        logging.info(f"Transformed {len(rows)} rows")
+        
+        # Load to BigQuery
+        result = processor.load_data(rows)
+        
+        if result.get('errors'):
+            logging.error(f"Load errors: {result['errors']}")
+            sys.exit(1)
+        
+        logging.info(f"Successfully processed {result.get('rows_processed', 0)} rows")
+        sys.exit(0)
+        
+    except Exception as e:
+        logging.error(f"Fatal error: {e}", exc_info=True)
+        sys.exit(1)

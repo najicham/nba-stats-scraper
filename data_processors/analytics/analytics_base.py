@@ -82,7 +82,7 @@ class AnalyticsProcessorBase:
         """
         Main entry point - matches ProcessorBase.run() pattern.
         Returns True on success, False on failure.
-        Enhanced with notifications.
+        Enhanced with notifications and finalize() hook.
         """
         if opts is None:
             opts = {}
@@ -168,6 +168,26 @@ class AnalyticsProcessorBase:
                 
             self.report_error(e)
             return False
+        
+        finally:
+            # Always run finalize, even on error - for cleanup operations
+            try:
+                self.finalize()
+            except Exception as finalize_ex:
+                logger.warning(f"Error in finalize(): {finalize_ex}")
+
+
+    def finalize(self) -> None:
+        """
+        Cleanup hook that runs regardless of success/failure.
+        Child classes override this for cleanup operations like:
+        - Flushing buffered data
+        - Closing connections
+        - Releasing resources
+        
+        Base implementation does nothing.
+        """
+        pass
     
     def _get_current_step(self) -> str:
         """Helper to determine current processing step for error context."""
@@ -271,7 +291,10 @@ class AnalyticsProcessorBase:
         raise NotImplementedError("Child classes must implement calculate_analytics()")
     
     def save_analytics(self) -> None:
-        """Save to analytics BigQuery table - base implementation provided with notifications."""
+        """
+        Save to analytics BigQuery table using batch INSERT.
+        Uses SQL INSERT instead of streaming to avoid streaming buffer issues.
+        """
         if not self.transformed_data:
             logger.warning("No transformed data to save")
             try:
@@ -336,7 +359,7 @@ class AnalyticsProcessorBase:
         # Apply processing strategy
         if self.processing_strategy == 'MERGE_UPDATE':
             try:
-                self._delete_existing_data(rows)
+                self._delete_existing_data_batch(rows)
             except Exception as e:
                 logger.error(f"Failed to delete existing data: {e}")
                 try:
@@ -357,76 +380,98 @@ class AnalyticsProcessorBase:
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
                 raise
-            
-        # Insert to BigQuery
-        logger.info(f"Inserting {len(rows)} rows to {table_id}")
+        
+        # Use batch INSERT via BigQuery load job (not streaming)
+        logger.info(f"Inserting {len(rows)} rows to {table_id} using batch INSERT")
         
         try:
-            errors = self.bq_client.insert_rows_json(table_id, rows)
+            import pandas as pd
+            import io
+            import json
             
-            if errors:
-                error_msg = f"BigQuery insert errors: {errors}"
-                try:
-                    notify_error(
-                        title=f"Analytics Processor BigQuery Insert Failed: {self.__class__.__name__}",
-                        message=f"Failed to insert {len(rows)} analytics rows",
-                        details={
-                            'processor': self.__class__.__name__,
-                            'run_id': self.run_id,
-                            'table': table_id,
-                            'rows_attempted': len(rows),
-                            'errors': errors[:5] if len(errors) > 5 else errors,
-                            'error_count': len(errors),
-                            'date_range': f"{self.opts.get('start_date')} to {self.opts.get('end_date')}"
-                        },
-                        processor_name=self.__class__.__name__
-                    )
-                except Exception as notify_ex:
-                    logger.warning(f"Failed to send notification: {notify_ex}")
-                raise Exception(error_msg)
-                
+            # Convert rows to newline-delimited JSON (more reliable than pandas DataFrame)
+            # This preserves NULL values and doesn't require schema inference
+            ndjson_data = "\n".join(json.dumps(row) for row in rows)
+            ndjson_bytes = ndjson_data.encode('utf-8')
+            
+            # Configure load job for NDJSON
+            job_config = bigquery.LoadJobConfig(
+                source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+                autodetect=False,  # Don't autodetect - use table schema
+                schema_update_options=None  # Don't update schema
+            )
+            
+            # Load directly to target table (no temp table needed)
+            load_job = self.bq_client.load_table_from_file(
+                io.BytesIO(ndjson_bytes),
+                table_id,
+                job_config=job_config
+            )
+            
+            # Wait for load to complete
+            load_job.result()
+            
+            logger.info(f"Successfully inserted {len(rows)} rows via batch load job")
+            
         except Exception as e:
-            # Catch any other BigQuery errors
-            if "BigQuery insert errors:" not in str(e):
-                try:
-                    notify_error(
-                        title=f"Analytics Processor BigQuery Error: {self.__class__.__name__}",
-                        message=f"BigQuery operation failed: {str(e)}",
-                        details={
-                            'processor': self.__class__.__name__,
-                            'run_id': self.run_id,
-                            'table': table_id,
-                            'rows_attempted': len(rows),
-                            'error_type': type(e).__name__,
-                            'error': str(e)
-                        },
-                        processor_name=self.__class__.__name__
-                    )
-                except Exception as notify_ex:
-                    logger.warning(f"Failed to send notification: {notify_ex}")
+            error_msg = f"Batch insert failed: {str(e)}"
+            logger.error(error_msg)
+            try:
+                notify_error(
+                    title=f"Analytics Processor Batch Insert Failed: {self.__class__.__name__}",
+                    message=f"Failed to batch insert {len(rows)} analytics rows",
+                    details={
+                        'processor': self.__class__.__name__,
+                        'run_id': self.run_id,
+                        'table': table_id,
+                        'rows_attempted': len(rows),
+                        'error_type': type(e).__name__,
+                        'error': str(e),
+                        'date_range': f"{self.opts.get('start_date')} to {self.opts.get('end_date')}"
+                    },
+                    processor_name=self.__class__.__name__
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
             raise
             
         self.stats["rows_processed"] = len(rows)
-        logger.info(f"Successfully inserted {len(rows)} rows")
-    
-    def _delete_existing_data(self, rows: List[Dict]) -> None:
-        """Delete existing data for MERGE_UPDATE strategy."""
+        logger.info(f"Successfully saved {len(rows)} rows via batch insert")
+
+
+    def _delete_existing_data_batch(self, rows: List[Dict]) -> None:
+        """
+        Delete existing data using batch DELETE query (no streaming buffer issues).
+        Waits for delete to complete before returning.
+        """
         if not rows:
             return
             
         table_id = f"{self.project_id}.{self.dataset_id}.{self.table_name}"
         
-        # Get date range from rows for deletion
+        # Get date range from opts
         start_date = self.opts.get('start_date')
         end_date = self.opts.get('end_date')
         
         if start_date and end_date:
+            # Use query DELETE (batch operation, not streaming)
             delete_query = f"""
             DELETE FROM `{table_id}`
             WHERE game_date BETWEEN '{start_date}' AND '{end_date}'
             """
-            self.bq_client.query(delete_query).result()
-            logger.info(f"Deleted existing data for date range {start_date} to {end_date}")
+            
+            logger.info(f"Deleting existing data for date range {start_date} to {end_date}")
+            
+            # Execute delete and wait for completion
+            delete_job = self.bq_client.query(delete_query)
+            delete_job.result()  # Wait for delete to complete
+            
+            # Get the number of affected rows
+            if delete_job.num_dml_affected_rows is not None:
+                logger.info(f"Deleted {delete_job.num_dml_affected_rows} existing rows")
+            else:
+                logger.info(f"Delete completed for date range {start_date} to {end_date}")
     
     def log_processing_run(self, success: bool, error: str = None) -> None:
         """Log processing run to monitoring table."""

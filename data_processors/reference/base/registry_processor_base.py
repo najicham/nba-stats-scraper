@@ -21,7 +21,7 @@ import google
 from google.cloud import bigquery
 
 from data_processors.raw.processor_base import ProcessorBase
-from shared.utils.universal_player_id_resolver import UniversalPlayerIDResolver
+from shared.utils.player_registry import UniversalPlayerIDResolver
 from shared.utils.notification_system import (
     notify_error,
     notify_warning,

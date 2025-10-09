@@ -23,6 +23,9 @@ if [[ -z "$1" ]]; then
     exit 1
 fi
 
+# Start timing
+DEPLOY_START_TIME=$(date +%s)
+
 # Discover and source config
 CONFIG_FILE=$(discover_config_file "analytics" "$1")
 if [[ -z "$CONFIG_FILE" ]]; then
@@ -47,7 +50,7 @@ echo "🏀 Deploying Analytics Backfill Job: $JOB_NAME"
 echo "=============================================="
 echo "Script: $JOB_SCRIPT"
 echo "Description: $JOB_DESCRIPTION"
-echo "Resources: ${MEMORY}, ${CPU}, ${TASK_TIMEOUT}"
+echo "Resources: ${MEMORY}, ${CPU}, ${TASK_TIMEOUT}s timeout"
 echo "Region: $REGION"
 echo ""
 
@@ -69,7 +72,9 @@ ENV_VARS="$ENV_VARS,BUCKET_NAME=${BUCKET_NAME:-nba-scraped-data}"
 ENV_VARS=$(add_email_config_to_env_vars "$ENV_VARS")
 EMAIL_RESULT=$?
 
-# Add job-specific configuration variables
+# Add job-specific configuration variables (for backward compatibility)
+# Note: Modern analytics jobs (like player_game_summary) pass these as --args,
+# but some older jobs may still use environment variables
 if [[ -n "${CHUNK_DAYS}" ]]; then
     ENV_VARS="$ENV_VARS,CHUNK_DAYS=${CHUNK_DAYS}"
 fi
@@ -109,23 +114,44 @@ echo ""
 echo "🚀 Deploying Cloud Run job..."
 deploy_cloud_run_job "$JOB_NAME" "$IMAGE_NAME" "$REGION" "$PROJECT_ID" "$TASK_TIMEOUT" "$MEMORY" "$CPU" "$ENV_VARS"
 
+# Calculate deployment time
+DEPLOY_END_TIME=$(date +%s)
+TOTAL_DURATION=$((DEPLOY_END_TIME - DEPLOY_START_TIME))
+
 echo ""
 echo "✅ Analytics job deployed successfully!"
+echo "⏱️  Deployment time: ${TOTAL_DURATION}s"
 
 # Display email configuration status
 echo ""
 display_email_status
 
+# Check if job-specific deploy script exists for detailed commands
+JOB_DEPLOY_SCRIPT="backfill_jobs/analytics/$1/deploy.sh"
+if [[ -f "$JOB_DEPLOY_SCRIPT" ]]; then
+    echo ""
+    echo "📖 For detailed test commands, validation queries, and job-specific guidance:"
+    echo "   Run: $JOB_DEPLOY_SCRIPT"
+    echo "   Or see output when using the job-specific deploy wrapper"
+fi
+
 echo ""
-echo "🧪 Test Commands:"
-echo "   # Safe first test (dry run)"
-echo "   gcloud run jobs execute $JOB_NAME --args=--dry-run,--start-date=2024-01-01,--end-date=2024-01-07 --region=$REGION"
+echo "🧪 Generic Test Commands:"
+echo "   # Dry run (safe first test)"
+echo "   gcloud run jobs execute $JOB_NAME --args=--dry-run,--limit=10 --region=$REGION"
 echo ""
-echo "   # Small batch processing"
+echo "   # Small date range test"
 echo "   gcloud run jobs execute $JOB_NAME --args=--start-date=2024-01-01,--end-date=2024-01-07 --region=$REGION"
 echo ""
 echo "   # Historical backfill (specify date range)"
 echo "   gcloud run jobs execute $JOB_NAME --args=--start-date=2023-10-01,--end-date=2024-06-30 --region=$REGION"
 echo ""
-echo "📊 To monitor progress:"
-echo "   gcloud beta run jobs executions logs read \$(gcloud run jobs executions list --job=$JOB_NAME --region=$REGION --limit=1 --format='value(name)') --region=$REGION"
+echo "📊 Monitor execution:"
+echo "   # List recent executions"
+echo "   gcloud run jobs executions list --job=$JOB_NAME --region=$REGION --limit=5"
+echo ""
+echo "   # View logs (replace EXECUTION_ID)"
+echo "   gcloud beta run jobs executions logs read EXECUTION_ID --region=$REGION"
+echo ""
+echo "💡 Note: Args syntax uses equals (--param=value) with comma separation, no spaces or quotes"
+echo "   For comma-separated values in args, use custom delimiter: --args=\"^|^--dates=val1,val2\""

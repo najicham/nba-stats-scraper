@@ -8,6 +8,8 @@ Aggregates player performance data into team-level offensive metrics.
 Depends on player_game_summary being populated first.
 Processes team offensive stats, advanced metrics, and game context.
 Includes multi-channel notifications for critical failures and data quality issues.
+
+UPDATED: Fixed to use run() instead of buggy process() method.
 """
 
 import logging
@@ -455,55 +457,68 @@ class TeamOffenseGameSummaryProcessor(AnalyticsProcessorBase):
         
         return stats
     
-    def process(self) -> None:
-        """Main processing method with success notification."""
+    def post_process(self) -> None:
+        """Post-processing - send success notification with stats."""
+        super().post_process()
+        
+        # Send success notification
+        analytics_stats = self.get_analytics_stats()
+        
         try:
-            # Run the standard processing pipeline
-            super().process()
-            
-            # Send success notification with stats
-            analytics_stats = self.get_analytics_stats()
-            
-            try:
-                notify_info(
-                    title="Team Offense: Processing Complete",
-                    message=f"Successfully processed {analytics_stats.get('records_processed', 0)} team offensive records",
-                    details={
-                        'processor': 'team_offense_game_summary',
-                        'date_range': f"{self.opts['start_date']} to {self.opts['end_date']}",
-                        'records_processed': analytics_stats.get('records_processed', 0),
-                        'avg_team_points': analytics_stats.get('avg_team_points', 0),
-                        'offensive_stats': {
-                            'total_assists': analytics_stats.get('total_assists', 0),
-                            'total_turnovers': analytics_stats.get('total_turnovers', 0)
-                        },
-                        'game_splits': {
-                            'home_games': analytics_stats.get('home_games', 0),
-                            'road_games': analytics_stats.get('road_games', 0)
-                        },
-                        'data_quality': {
-                            'high_quality_records': analytics_stats.get('high_quality_records', 0)
-                        }
-                    }
-                )
-            except Exception as notify_ex:
-                logger.warning(f"Failed to send success notification: {notify_ex}")
-                
-        except Exception as e:
-            logger.error(f"Processing failed: {e}")
-            try:
-                notify_error(
-                    title="Team Offense: Processing Failed",
-                    message=f"Team offensive analytics processing failed: {str(e)}",
-                    details={
-                        'processor': 'team_offense_game_summary',
-                        'start_date': self.opts.get('start_date'),
-                        'end_date': self.opts.get('end_date'),
-                        'error_type': type(e).__name__,
-                        'stage': 'process_pipeline'
+            notify_info(
+                title="Team Offense: Processing Complete",
+                message=f"Successfully processed {analytics_stats.get('records_processed', 0)} team offensive records",
+                details={
+                    'processor': 'team_offense_game_summary',
+                    'date_range': f"{self.opts['start_date']} to {self.opts['end_date']}",
+                    'records_processed': analytics_stats.get('records_processed', 0),
+                    'avg_team_points': analytics_stats.get('avg_team_points', 0),
+                    'offensive_stats': {
+                        'total_assists': analytics_stats.get('total_assists', 0),
+                        'total_turnovers': analytics_stats.get('total_turnovers', 0)
                     },
-                    processor_name="Team Offense Game Summary Processor"
-                )
-            except Exception as notify_ex:
-                logger.warning(f"Failed to send error notification: {notify_ex}")
-            raise
+                    'game_splits': {
+                        'home_games': analytics_stats.get('home_games', 0),
+                        'road_games': analytics_stats.get('road_games', 0)
+                    },
+                    'data_quality': {
+                        'high_quality_records': analytics_stats.get('high_quality_records', 0)
+                    }
+                }
+            )
+        except Exception as notify_ex:
+            logger.warning(f"Failed to send success notification: {notify_ex}")
+
+
+if __name__ == "__main__":
+    import argparse
+    import sys
+    
+    parser = argparse.ArgumentParser(description="Process team offense game summary analytics")
+    parser.add_argument('--start-date', required=True, help='Start date (YYYY-MM-DD)')
+    parser.add_argument('--end-date', required=True, help='End date (YYYY-MM-DD)')
+    parser.add_argument('--debug', action='store_true', help='Enable debug logging')
+    
+    args = parser.parse_args()
+    
+    # Configure logging
+    log_level = logging.DEBUG if args.debug else logging.INFO
+    logging.basicConfig(
+        level=log_level,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    
+    try:
+        processor = TeamOffenseGameSummaryProcessor()
+        
+        # Call run() with options dict (NOT process()!)
+        success = processor.run({
+            'start_date': args.start_date,
+            'end_date': args.end_date
+        })
+        
+        sys.exit(0 if success else 1)
+        
+    except Exception as e:
+        logger.error(f"Fatal error: {e}", exc_info=True)
+        sys.exit(1)

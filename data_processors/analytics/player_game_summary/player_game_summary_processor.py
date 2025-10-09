@@ -13,6 +13,7 @@ Features:
 - Cross-source validation and error handling
 - Schema-compliant output for BigQuery insertion
 - Multi-channel notifications for critical failures and data quality issues
+- Universal Player ID integration via RegistryReader
 """
 
 import logging
@@ -26,6 +27,8 @@ from shared.utils.notification_system import (
     notify_warning,
     notify_info
 )
+# REGISTRY INTEGRATION: Import RegistryReader
+from shared.utils.player_registry import RegistryReader, PlayerNotFoundError
 
 logger = logging.getLogger(__name__)
 
@@ -38,38 +41,62 @@ class PlayerGameSummaryProcessor(AnalyticsProcessorBase):
         self.table_name = 'player_game_summary'
         self.processing_strategy = 'MERGE_UPDATE'
         
+        # REGISTRY INTEGRATION: Initialize RegistryReader
+        self.registry = RegistryReader(
+            source_name='player_game_summary',
+            cache_ttl_seconds=300  # 5-minute cache for batch processing
+        )
+        
+        # Track registry lookup stats
+        self.registry_stats = {
+            'players_found': 0,
+            'players_not_found': 0,
+            'records_skipped': 0
+        }
+        
     def parse_minutes_to_decimal(self, minutes_str: str) -> Optional[float]:
-        """Parse minutes string to decimal format."""
-        if not minutes_str or minutes_str == '-':
+        """
+        Parse minutes string to decimal format.
+        Handles: "40:11" (MM:SS), "40" (integer), "-" (dash), NaN/None (DNP players)
+        """
+        # Handle None, NaN, empty string, or dash - these are expected for DNP players
+        if pd.isna(minutes_str) or not minutes_str or minutes_str == '-':
             return None
             
         try:
-            # Handle "40:11" format
-            if ':' in minutes_str:
-                parts = minutes_str.split(':')
+            # Handle "40:11" format (MM:SS)
+            if ':' in str(minutes_str):
+                parts = str(minutes_str).split(':')
                 if len(parts) == 2:
                     mins = int(parts[0])
                     secs = int(parts[1])
                     return round(mins + (secs / 60), 2)
             
-            # Handle simple integer format "40"
+            # Handle simple numeric format "40" or 40.0
             return float(minutes_str)
             
-        except (ValueError, TypeError):
-            logger.warning(f"Could not parse minutes: {minutes_str}")
+        except (ValueError, TypeError) as e:
+            # Only log unexpected parsing errors (not NaN/None)
+            logger.debug(f"Could not parse minutes value: {minutes_str} ({type(minutes_str).__name__}): {e}")
             return None
     
     def parse_plus_minus(self, plus_minus_str: str) -> Optional[int]:
-        """Parse plus/minus string to integer."""
-        if not plus_minus_str or plus_minus_str == '-':
+        """
+        Parse plus/minus string to integer.
+        Handles: "+7", "-14", "7", NaN/None (not available)
+        """
+        # Handle None, NaN, empty string, or dash
+        if pd.isna(plus_minus_str) or not plus_minus_str or plus_minus_str == '-':
             return None
             
         try:
             # Handle "+7" or "-14" format
-            cleaned = plus_minus_str.replace('+', '')
+            cleaned = str(plus_minus_str).replace('+', '')
             return int(cleaned)
-        except (ValueError, TypeError):
-            logger.warning(f"Could not parse plus/minus: {plus_minus_str}")
+            
+        except (ValueError, TypeError) as e:
+            # Only log unexpected parsing errors
+            logger.debug(f"Could not parse plus/minus value: {plus_minus_str} ({type(plus_minus_str).__name__}): {e}")
             return None
     
     def extract_raw_data(self) -> None:
@@ -173,7 +200,31 @@ class PlayerGameSummaryProcessor(AnalyticsProcessorBase):
             WHERE game_id NOT IN (SELECT DISTINCT game_id FROM nba_com_data)
         ),
         
-        -- Add props context
+        -- Deduplicate props: DraftKings first, then FanDuel, then others
+        -- Simple priority-based selection for consistent bookmaker per player
+        deduplicated_props AS (
+            SELECT 
+                game_id,
+                player_lookup,
+                points_line,
+                over_price_american,
+                under_price_american,
+                bookmaker,
+                ROW_NUMBER() OVER (
+                    PARTITION BY game_id, player_lookup 
+                    ORDER BY 
+                        CASE bookmaker
+                            WHEN 'draftkings' THEN 1
+                            WHEN 'fanduel' THEN 2
+                            ELSE 3
+                        END,
+                        bookmaker  -- Alphabetical for remaining bookmakers
+                ) as rn
+            FROM `{self.project_id}.nba_raw.odds_api_player_points_props`
+            WHERE game_id IN (SELECT DISTINCT game_id FROM combined_data)
+        ),
+        
+        -- Add props context (now deduplicated - one bookmaker per player-game)
         with_props AS (
             SELECT 
                 c.*,
@@ -182,9 +233,10 @@ class PlayerGameSummaryProcessor(AnalyticsProcessorBase):
                 p.under_price_american,
                 p.bookmaker as points_line_source
             FROM combined_data c
-            LEFT JOIN `{self.project_id}.nba_raw.odds_api_player_points_props` p
+            LEFT JOIN deduplicated_props p
                 ON c.game_id = p.game_id 
                 AND c.player_lookup = p.player_lookup
+                AND p.rn = 1  -- Only take the first (preferred) bookmaker
         ),
         
         -- Add opponent context
@@ -233,6 +285,11 @@ class PlayerGameSummaryProcessor(AnalyticsProcessorBase):
             if not self.raw_data.empty:
                 source_counts = self.raw_data['primary_source'].value_counts()
                 logger.info(f"Data sources: {dict(source_counts)}")
+                
+                # Log bookmaker distribution
+                if 'points_line_source' in self.raw_data.columns:
+                    bookmaker_counts = self.raw_data['points_line_source'].value_counts()
+                    logger.info(f"Bookmakers used: {dict(bookmaker_counts)}")
             else:
                 # Notify if no data extracted
                 logger.warning(f"No data extracted for date range {start_date} to {end_date}")
@@ -653,12 +710,60 @@ class PlayerGameSummaryProcessor(AnalyticsProcessorBase):
                 )
     
     def calculate_analytics(self) -> None:
-        """Calculate analytics metrics with schema-compliant output."""
+        """
+        Calculate analytics metrics with schema-compliant output.
+        UPDATED: Integrated with RegistryReader for universal player IDs.
+        """
+        # =====================================================================
+        # REGISTRY INTEGRATION: Batch lookup universal player IDs
+        # =====================================================================
+        logger.info("Looking up universal player IDs from registry...")
+        
+        # Determine season for context
+        if not self.raw_data.empty and 'season_year' in self.raw_data.columns:
+            # Get most common season year for context
+            season_year = int(self.raw_data['season_year'].mode()[0])
+            season_str = f"{season_year}-{str(season_year + 1)[-2:]}"
+            self.registry.set_default_context(season=season_str)
+            logger.info(f"Set registry context: season={season_str}")
+        
+        # Collect all unique player lookups
+        unique_players = self.raw_data['player_lookup'].dropna().unique().tolist()
+        logger.info(f"Performing batch lookup for {len(unique_players)} unique players")
+        
+        # Batch lookup - single query for all players
+        uid_map = self.registry.get_universal_ids_batch(unique_players)
+        
+        # Log results
+        self.registry_stats['players_found'] = len(uid_map)
+        self.registry_stats['players_not_found'] = len(unique_players) - len(uid_map)
+        
+        logger.info(
+            f"Registry lookup complete: {self.registry_stats['players_found']} found, "
+            f"{self.registry_stats['players_not_found']} not found"
+        )
+        
+        # =====================================================================
+        # Process records with universal IDs
+        # =====================================================================
         records = []
         processing_errors = []
         
         for _, row in self.raw_data.iterrows():
             try:
+                # REGISTRY INTEGRATION: Get universal ID for this player
+                player_lookup = row['player_lookup']
+                universal_player_id = uid_map.get(player_lookup)
+                
+                if universal_player_id is None:
+                    # Player not in registry - skip record (lenient mode for analytics)
+                    self.registry_stats['records_skipped'] += 1
+                    logger.debug(
+                        f"Skipping record - player not in registry: {player_lookup} "
+                        f"(game: {row['game_id']})"
+                    )
+                    continue  # Skip this record, already logged to unresolved by batch lookup
+                
                 # Parse minutes to decimal, then convert to integer for schema compliance
                 minutes_decimal = self.parse_minutes_to_decimal(row['minutes'])
                 minutes_int = int(round(minutes_decimal)) if minutes_decimal else None
@@ -698,10 +803,11 @@ class PlayerGameSummaryProcessor(AnalyticsProcessorBase):
                         if total_shots > 0:
                             ts_pct = row['points'] / (2 * total_shots)
                 
-                # Build analytics record - schema compliant
+                # Build analytics record - schema compliant with universal_player_id
                 record = {
-                    # Core identifiers (all required fields)
-                    'player_lookup': row['player_lookup'],
+                    # Core identifiers (UPDATED: added universal_player_id)
+                    'player_lookup': player_lookup,
+                    'universal_player_id': universal_player_id,  # NEW FIELD
                     'player_full_name': row['player_full_name'],
                     'game_id': row['game_id'],
                     'game_date': row['game_date'].isoformat() if pd.notna(row['game_date']) else None,
@@ -711,7 +817,7 @@ class PlayerGameSummaryProcessor(AnalyticsProcessorBase):
                     
                     # Basic performance stats
                     'points': int(row['points']) if pd.notna(row['points']) else None,
-                    'minutes_played': minutes_int,  # FIXED: Now integer instead of decimal
+                    'minutes_played': minutes_int,
                     'assists': int(row['assists']) if pd.notna(row['assists']) else None,
                     'offensive_rebounds': int(row['offensive_rebounds']) if pd.notna(row['offensive_rebounds']) else None,
                     'defensive_rebounds': int(row['defensive_rebounds']) if pd.notna(row['defensive_rebounds']) else None,
@@ -748,9 +854,9 @@ class PlayerGameSummaryProcessor(AnalyticsProcessorBase):
                     'ts_pct': round(ts_pct, 3) if ts_pct else None,
                     'efg_pct': round(efg_pct, 3) if efg_pct else None,
                     
-                    # FIXED: Ensure boolean flags are always boolean, never null
+                    # Flags
                     'starter_flag': bool(minutes_decimal and minutes_decimal > 20) if minutes_decimal else False,
-                    'win_flag': False,  # FIXED: Default to False instead of None (can enhance later with game results)
+                    'win_flag': False,  # Can enhance later with game results
                     
                     # Prop betting results
                     'points_line': float(row['points_line']) if pd.notna(row['points_line']) else None,
@@ -761,14 +867,14 @@ class PlayerGameSummaryProcessor(AnalyticsProcessorBase):
                     'points_line_source': row['points_line_source'],
                     'opening_line_source': None,
                     
-                    # Player availability (is_active is required boolean)
+                    # Player availability
                     'is_active': bool(row['player_status'] == 'active'),
                     'player_status': row['player_status'],
                     
                     # Data quality
                     'data_quality_tier': 'high' if row['primary_source'] == 'nbac_gamebook' else 'medium',
                     'primary_source_used': row['primary_source'],
-                    'processed_with_issues': False,  # Enhanced later
+                    'processed_with_issues': False,
                     
                     # Processing metadata
                     'processed_at': datetime.now(timezone.utc).isoformat()
@@ -795,7 +901,34 @@ class PlayerGameSummaryProcessor(AnalyticsProcessorBase):
                 continue
         
         self.transformed_data = records
+        
+        # Log results
         logger.info(f"Calculated analytics for {len(records)} player-game records")
+        logger.info(
+            f"Registry integration: {self.registry_stats['records_skipped']} records "
+            f"skipped (players not in registry)"
+        )
+        
+        # Notify if many records were skipped
+        if self.registry_stats['records_skipped'] > 0:
+            skip_rate = (self.registry_stats['records_skipped'] / len(self.raw_data)) * 100
+            
+            if skip_rate > 5:  # More than 5% skipped
+                try:
+                    notify_warning(
+                        title="Player Game Summary: High Registry Miss Rate",
+                        message=f"{self.registry_stats['records_skipped']} records skipped - players not in registry ({skip_rate:.1f}%)",
+                        details={
+                            'processor': 'player_game_summary',
+                            'total_input_records': len(self.raw_data),
+                            'records_skipped': self.registry_stats['records_skipped'],
+                            'skip_rate_pct': round(skip_rate, 2),
+                            'players_not_found': self.registry_stats['players_not_found'],
+                            'action': 'Check unresolved_player_names table and update registry'
+                        }
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
         
         # Notify if processing errors exceed threshold
         if len(processing_errors) > 0:
@@ -819,7 +952,7 @@ class PlayerGameSummaryProcessor(AnalyticsProcessorBase):
                     logger.warning(f"Failed to send notification: {notify_ex}")
     
     def get_analytics_stats(self) -> Dict:
-        """Return analytics-specific stats."""
+        """Return analytics-specific stats including registry lookup results."""
         if not self.transformed_data:
             return {}
             
@@ -832,57 +965,98 @@ class PlayerGameSummaryProcessor(AnalyticsProcessorBase):
             'high_quality_records': sum(1 for r in self.transformed_data if r['data_quality_tier'] == 'high'),
             'avg_points': round(sum(r['points'] for r in self.transformed_data if r['points']) / 
                               len([r for r in self.transformed_data if r['points']]), 1) if any(r['points'] for r in self.transformed_data) else 0,
+            # REGISTRY INTEGRATION: Add registry stats
+            'registry_players_found': self.registry_stats['players_found'],
+            'registry_players_not_found': self.registry_stats['players_not_found'],
+            'registry_records_skipped': self.registry_stats['records_skipped']
         }
         
         return stats
     
-    def process(self) -> None:
-        """Main processing method with success notification."""
+    def post_process(self) -> None:
+        """Post-processing - send success notification with stats."""
+        super().post_process()
+        
+        # Send success notification
+        analytics_stats = self.get_analytics_stats()
+        
         try:
-            # Run the standard processing pipeline
-            super().process()
-            
-            # Send success notification with stats
-            analytics_stats = self.get_analytics_stats()
-            
-            try:
-                notify_info(
-                    title="Player Game Summary: Processing Complete",
-                    message=f"Successfully processed {analytics_stats.get('records_processed', 0)} player-game records",
-                    details={
-                        'processor': 'player_game_summary',
-                        'date_range': f"{self.opts['start_date']} to {self.opts['end_date']}",
-                        'records_processed': analytics_stats.get('records_processed', 0),
-                        'active_players': analytics_stats.get('active_players', 0),
-                        'games_with_props': analytics_stats.get('games_with_props', 0),
-                        'prop_outcomes': {
-                            'overs': analytics_stats.get('prop_overs', 0),
-                            'unders': analytics_stats.get('prop_unders', 0)
-                        },
-                        'data_quality': {
-                            'high_quality_records': analytics_stats.get('high_quality_records', 0),
-                            'avg_points': analytics_stats.get('avg_points', 0)
-                        }
-                    }
-                )
-            except Exception as notify_ex:
-                logger.warning(f"Failed to send success notification: {notify_ex}")
-                
-        except Exception as e:
-            logger.error(f"Processing failed: {e}")
-            try:
-                notify_error(
-                    title="Player Game Summary: Processing Failed",
-                    message=f"Analytics processing failed: {str(e)}",
-                    details={
-                        'processor': 'player_game_summary',
-                        'start_date': self.opts.get('start_date'),
-                        'end_date': self.opts.get('end_date'),
-                        'error_type': type(e).__name__,
-                        'stage': 'process_pipeline'
+            notify_info(
+                title="Player Game Summary: Processing Complete",
+                message=f"Successfully processed {analytics_stats.get('records_processed', 0)} player-game records",
+                details={
+                    'processor': 'player_game_summary',
+                    'date_range': f"{self.opts['start_date']} to {self.opts['end_date']}",
+                    'records_processed': analytics_stats.get('records_processed', 0),
+                    'active_players': analytics_stats.get('active_players', 0),
+                    'games_with_props': analytics_stats.get('games_with_props', 0),
+                    'prop_outcomes': {
+                        'overs': analytics_stats.get('prop_overs', 0),
+                        'unders': analytics_stats.get('prop_unders', 0)
                     },
-                    processor_name="Player Game Summary Processor"
-                )
-            except Exception as notify_ex:
-                logger.warning(f"Failed to send error notification: {notify_ex}")
-            raise
+                    'data_quality': {
+                        'high_quality_records': analytics_stats.get('high_quality_records', 0),
+                        'avg_points': analytics_stats.get('avg_points', 0)
+                    },
+                    'registry_integration': {
+                        'players_found': analytics_stats.get('registry_players_found', 0),
+                        'players_not_found': analytics_stats.get('registry_players_not_found', 0),
+                        'records_skipped': analytics_stats.get('registry_records_skipped', 0)
+                    }
+                }
+            )
+        except Exception as notify_ex:
+            logger.warning(f"Failed to send success notification: {notify_ex}")
+
+    def finalize(self) -> None:
+        """
+        Cleanup operations that run regardless of success/failure.
+        Flushes unresolved players to registry.
+        """
+        logger.info("Flushing unresolved players to registry...")
+        
+        try:
+            self.registry.flush_unresolved_players()
+            
+            # Log cache stats
+            cache_stats = self.registry.get_cache_stats()
+            logger.info(
+                f"Registry cache stats: hit_rate={cache_stats['hit_rate']:.1%}, "
+                f"size={cache_stats['cache_size']}"
+            )
+        except Exception as e:
+            logger.error(f"Failed to flush unresolved players: {e}")
+            # Don't re-raise - finalize should be fault-tolerant
+
+if __name__ == "__main__":
+    import argparse
+    import sys
+    
+    parser = argparse.ArgumentParser(description="Process player game summary analytics")
+    parser.add_argument('--start-date', required=True, help='Start date (YYYY-MM-DD)')
+    parser.add_argument('--end-date', required=True, help='End date (YYYY-MM-DD)')
+    parser.add_argument('--debug', action='store_true', help='Enable debug logging')
+    
+    args = parser.parse_args()
+    
+    # Configure logging
+    log_level = logging.DEBUG if args.debug else logging.INFO
+    logging.basicConfig(
+        level=log_level,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    
+    try:
+        processor = PlayerGameSummaryProcessor()
+        
+        # Call run() with options dict
+        success = processor.run({
+            'start_date': args.start_date,
+            'end_date': args.end_date
+        })
+        
+        sys.exit(0 if success else 1)
+        
+    except Exception as e:
+        logger.error(f"Fatal error: {e}", exc_info=True)
+        sys.exit(1)

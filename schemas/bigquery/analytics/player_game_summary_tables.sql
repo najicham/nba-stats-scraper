@@ -1,11 +1,13 @@
 -- ============================================================================
 -- NBA Props Platform - Player Game Summary Analytics Table
 -- Pure performance results with shot zone tracking - no context duplication
+-- Updated: Added universal_player_id for stable player identification
 -- ============================================================================
 
 CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_analytics.player_game_summary` (
-  -- Core identifiers (7 fields)
+  -- Core identifiers (8 fields - UPDATED: added universal_player_id)
   player_lookup STRING NOT NULL,                    -- Normalized player identifier
+  universal_player_id STRING,                       -- Universal player ID from registry (e.g., lebronjames_001)
   player_full_name STRING,                          -- Display name for reports
   game_id STRING NOT NULL,                          -- Unique game identifier
   game_date DATE NOT NULL,                          -- Game date for partitioning
@@ -75,7 +77,26 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_analytics.player_game_summary
   processed_at TIMESTAMP
 )
 PARTITION BY game_date
-CLUSTER BY player_lookup, team_abbr, game_date
+CLUSTER BY universal_player_id, player_lookup, team_abbr, game_date
 OPTIONS(
-  description="Pure player performance results with shot zone tracking - no context duplication"
+  description="Pure player performance results with shot zone tracking - no context duplication. Updated with universal_player_id for stable player identification across seasons and teams."
 );
+
+-- ============================================================================
+-- Migration Note: Adding universal_player_id to existing table
+-- ============================================================================
+-- If table already exists, add the column:
+-- ALTER TABLE `nba-props-platform.nba_analytics.player_game_summary`
+-- ADD COLUMN IF NOT EXISTS universal_player_id STRING;
+
+-- Optional: Backfill existing records (run after adding column)
+-- UPDATE `nba-props-platform.nba_analytics.player_game_summary` pgs
+-- SET universal_player_id = (
+--   SELECT DISTINCT universal_player_id
+--   FROM `nba-props-platform.nba_reference.nba_players_registry` r
+--   WHERE r.player_lookup = pgs.player_lookup
+--     AND r.season = CONCAT(CAST(pgs.season_year AS STRING), '-', 
+--                           LPAD(CAST(pgs.season_year + 1 - 2000 AS STRING), 2, '0'))
+--   LIMIT 1
+-- )
+-- WHERE universal_player_id IS NULL;

@@ -23,8 +23,8 @@ RUN apt-get update && apt-get install -y \
 COPY shared/requirements.txt /app/shared/
 RUN pip install --no-cache-dir -r /app/shared/requirements.txt
 
-COPY data_processors/raw/requirements_processors.txt /app/data_processors/raw/
-RUN pip install --no-cache-dir -r /app/data_processors/raw/requirements_processors.txt
+COPY data_processors/raw/requirements.txt /app/data_processors/raw/
+RUN pip install --no-cache-dir -r /app/data_processors/raw/requirements.txt
 
 # Copy all code
 COPY shared/ /app/shared/

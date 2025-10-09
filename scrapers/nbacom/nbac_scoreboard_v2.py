@@ -644,7 +644,11 @@ class GetNbaComScoreboardV2(ScraperBase, ScraperFlaskMixin):
             raise DownloadDataException(f"Transformation failed: {e}") from e
 
     def _extract_rich_game_data(self, v2_data: dict) -> List[Dict[str, Any]]:
-        """Extract rich game data from original V2 response"""
+        """Extract rich game data from original V2 response
+        
+        FIX APPLIED: Properly match teams to home/away using HOME_TEAM_ID 
+        instead of just taking teams in order they appear.
+        """
         try:
             # Get GameHeader for main game info
             game_header = next(s for s in v2_data["resultSets"] if s["name"] == "GameHeader")
@@ -656,15 +660,38 @@ class GetNbaComScoreboardV2(ScraperBase, ScraperFlaskMixin):
             ls_headers = line_score["headers"]
             ls_idx = {h: i for i, h in enumerate(ls_headers)}
             
-            # Group LineScore by game
+            # First pass: Build game metadata from GameHeader
+            game_metadata = {}
+            for row in game_header["rowSet"]:
+                game_id = row[gh_idx["GAME_ID"]]
+                game_metadata[game_id] = {
+                    "home_team_id": row[gh_idx["HOME_TEAM_ID"]],
+                    "away_team_id": row[gh_idx["VISITOR_TEAM_ID"]],
+                    "game_sequence": row[gh_idx["GAME_SEQUENCE"]],
+                    "game_status_text": row[gh_idx["GAME_STATUS_TEXT"]],
+                    "season": row[gh_idx["SEASON"]],
+                    "arena_name": row[gh_idx.get("ARENA_NAME")],
+                    "broadcasts": {
+                        "national": row[gh_idx.get("NATL_TV_BROADCASTER_ABBREVIATION")],
+                        "home": row[gh_idx.get("HOME_TV_BROADCASTER_ABBREVIATION")],
+                        "away": row[gh_idx.get("AWAY_TV_BROADCASTER_ABBREVIATION")],
+                    },
+                    "live_period": row[gh_idx.get("LIVE_PERIOD")],
+                    "live_pc_time": row[gh_idx.get("LIVE_PC_TIME")],
+                    "live_period_time_bcast": row[gh_idx.get("LIVE_PERIOD_TIME_BCAST")],
+                }
+            
+            # Second pass: Process LineScore and properly assign home/away
             game_teams = {}
             for row in line_score["rowSet"]:
                 game_id = row[ls_idx["GAME_ID"]]
+                team_id = row[ls_idx["TEAM_ID"]]
+                
                 if game_id not in game_teams:
                     game_teams[game_id] = {"home": None, "away": None}
                 
                 team_data = {
-                    "teamId": row[ls_idx["TEAM_ID"]],
+                    "teamId": team_id,
                     "abbreviation": row[ls_idx["TEAM_ABBREVIATION"]],
                     "cityName": row[ls_idx["TEAM_CITY_NAME"]],
                     "teamName": row[ls_idx["TEAM_NAME"]],
@@ -688,48 +715,51 @@ class GetNbaComScoreboardV2(ScraperBase, ScraperFlaskMixin):
                     }
                 }
                 
-                # Determine home/away (this is simplified - you might need better logic)
-                if game_teams[game_id]["home"] is None:
-                    game_teams[game_id]["home"] = team_data
+                # =====================================================================
+                # FIX: Match teams to home/away using actual HOME_TEAM_ID from metadata
+                # instead of just assigning them in order they appear
+                # =====================================================================
+                if game_id in game_metadata:
+                    if team_id == game_metadata[game_id]["home_team_id"]:
+                        game_teams[game_id]["home"] = team_data
+                    elif team_id == game_metadata[game_id]["away_team_id"]:
+                        game_teams[game_id]["away"] = team_data
+                    else:
+                        logger.warning(f"Game {game_id}: Team {team_id} doesn't match home or away team ID")
                 else:
-                    game_teams[game_id]["away"] = team_data
+                    logger.warning(f"Game {game_id}: Missing metadata, cannot determine home/away")
             
             # Build enriched game data
             enriched_games = []
-            for row in game_header["rowSet"]:
-                game_id = row[gh_idx["GAME_ID"]]
-                
+            for game_id, metadata in game_metadata.items():
                 enriched_data = {
                     # Game details
-                    "gameSequence": row[gh_idx["GAME_SEQUENCE"]],
-                    "gameStatusText": row[gh_idx["GAME_STATUS_TEXT"]],
-                    "season": row[gh_idx["SEASON"]],
+                    "gameSequence": metadata["game_sequence"],
+                    "gameStatusText": metadata["game_status_text"],
+                    "season": metadata["season"],
                     
                     # Venue info
-                    "arenaName": row[gh_idx.get("ARENA_NAME")],
+                    "arenaName": metadata["arena_name"],
                     
                     # Broadcast info
-                    "broadcasts": {
-                        "national": row[gh_idx.get("NATL_TV_BROADCASTER_ABBREVIATION")],
-                        "home": row[gh_idx.get("HOME_TV_BROADCASTER_ABBREVIATION")],
-                        "away": row[gh_idx.get("AWAY_TV_BROADCASTER_ABBREVIATION")],
-                    },
+                    "broadcasts": metadata["broadcasts"],
                     
                     # Live game state
-                    "livePeriod": row[gh_idx.get("LIVE_PERIOD")],
-                    "livePcTime": row[gh_idx.get("LIVE_PC_TIME")],
-                    "livePeriodTimeBcast": row[gh_idx.get("LIVE_PERIOD_TIME_BCAST")],
+                    "livePeriod": metadata["live_period"],
+                    "livePcTime": metadata["live_pc_time"],
+                    "livePeriodTimeBcast": metadata["live_period_time_bcast"],
                     
-                    # Team details and stats
-                    "teams": game_teams.get(game_id, {}),
+                    # Team details and stats (now correctly assigned!)
+                    "teams": game_teams.get(game_id, {"home": None, "away": None}),
                     
                     # NBA.com specific IDs
-                    "homeTeamId": row[gh_idx["HOME_TEAM_ID"]],
-                    "awayTeamId": row[gh_idx["VISITOR_TEAM_ID"]],
+                    "homeTeamId": metadata["home_team_id"],
+                    "awayTeamId": metadata["away_team_id"],
                 }
                 
                 enriched_games.append(enriched_data)
             
+            logger.info(f"Extracted rich data for {len(enriched_games)} games with correct home/away assignment")
             return enriched_games
             
         except Exception as e:
