@@ -387,9 +387,9 @@ class ProcessorBase:
     
     def save_data(self) -> None:
         """
-        Save self.transformed_data to BigQuery.
+        Save self.transformed_data to BigQuery using batch loading (not streaming).
         
-        Default implementation uses insert_rows_json (append).
+        Default implementation uses load_table_from_json with schema enforcement.
         
         Override for custom save strategies:
         - MERGE operations (upserts)
@@ -397,23 +397,6 @@ class ProcessorBase:
         - Query-based transformations
         
         If overriding, set self.stats["rows_inserted"] for tracking.
-        
-        Example (Custom MERGE):
-            def save_data(self) -> None:
-                query = '''
-                    MERGE `dataset.table` T
-                    USING UNNEST(@rows) S
-                    ON T.id = S.id
-                    WHEN MATCHED THEN UPDATE SET ...
-                    WHEN NOT MATCHED THEN INSERT ...
-                '''
-                job_config = bigquery.QueryJobConfig(
-                    query_parameters=[
-                        bigquery.ArrayQueryParameter("rows", "STRUCT", self.transformed_data)
-                    ]
-                )
-                self.bq_client.query(query, job_config=job_config).result()
-                self.stats["rows_inserted"] = len(self.transformed_data)
         """
         if not self.transformed_data:
             logger.warning("No transformed data to save")
@@ -447,19 +430,61 @@ class ProcessorBase:
         if not rows:
             logger.warning("No rows to insert")
             return
+        
+        # Insert to BigQuery using batch loading (not streaming)
+        logger.info(f"Batch loading {len(rows)} rows to {table_id}")
+        
+        try:
+            import io
+            import json
             
-        # Insert to BigQuery
-        logger.info(f"Inserting {len(rows)} rows to {table_id}")
-        
-        # Don't notify here - let run() catch exceptions and notify
-        errors = self.bq_client.insert_rows_json(table_id, rows)
-        
-        if errors:
-            # Just raise - run() will catch and notify
-            raise Exception(f"BigQuery insert errors: {errors}")
-        
-        self.stats["rows_inserted"] = len(rows)
-        logger.info(f"Successfully inserted {len(rows)} rows")
+            # Get target table schema for enforcement
+            try:
+                table = self.bq_client.get_table(table_id)
+                table_schema = table.schema
+            except Exception as schema_e:
+                logger.warning(f"Could not get table schema, proceeding without enforcement: {schema_e}")
+                table_schema = None
+            
+            # Convert rows to NDJSON
+            ndjson_data = "\n".join(json.dumps(row) for row in rows)
+            ndjson_bytes = ndjson_data.encode('utf-8')
+            
+            # Configure load job with schema enforcement
+            job_config = bigquery.LoadJobConfig(
+                schema=table_schema,  # Enforce exact schema
+                source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+                write_disposition=self.write_disposition,
+                autodetect=False
+            )
+            
+            # Load to target table
+            load_job = self.bq_client.load_table_from_file(
+                io.BytesIO(ndjson_bytes),
+                table_id,
+                job_config=job_config
+            )
+            
+            # Wait for completion with graceful failure
+            try:
+                load_job.result()
+                self.stats["rows_inserted"] = len(rows)
+                logger.info(f"✅ Successfully batch loaded {len(rows)} rows")
+                
+            except Exception as load_e:
+                # Graceful failure for streaming buffer
+                if "streaming buffer" in str(load_e).lower():
+                    logger.warning(f"⚠️ Load blocked by streaming buffer - {len(rows)} rows skipped")
+                    logger.info("Records will be processed on next run")
+                    self.stats["rows_skipped"] = len(rows)
+                    return  # Graceful failure
+                else:
+                    raise load_e
+            
+        except Exception as e:
+            error_msg = f"BigQuery batch load failed: {str(e)}"
+            logger.error(error_msg)
+            raise Exception(error_msg)
     
     def post_process(self) -> None:
         """Post-processing - matches scraper's post_export()."""

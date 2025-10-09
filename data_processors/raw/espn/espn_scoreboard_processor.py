@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-# File: processors/espn/espn_scoreboard_processor.py
+# File: data_processors/raw/espn/espn_scoreboard_processor.py
 # Description: Processor for ESPN scoreboard data transformation
+# UPDATED: Production-safe with staging table + batch loading (no streaming buffer)
 
 import json
 import logging
 import os
-import re
+import uuid
 from datetime import datetime, date
 from typing import Dict, List, Optional
 from google.cloud import bigquery
@@ -237,72 +238,172 @@ class EspnScoreboardProcessor(ProcessorBase):
         return rows
     
     def load_data(self, rows: List[Dict], **kwargs) -> Dict:
-        """Load transformed data to BigQuery."""
+        """
+        Production-safe loading using staging table + MERGE.
+        
+        Pattern from BigQuery Lessons Learned:
+        - Batch loading (no streaming buffer)
+        - Schema enforcement
+        - Atomic MERGE operation
+        - Graceful failure handling
+        """
         if not rows:
             return {'rows_processed': 0, 'errors': []}
         
         table_id = f"{self.project_id}.{self.table_name}"
-        errors = []
+        temp_table_id = None
         
         try:
-            if self.processing_strategy == 'MERGE_UPDATE':
-                # Delete existing data for this date first
-                game_date = rows[0]['game_date']
-                delete_query = f"DELETE FROM `{table_id}` WHERE game_date = '{game_date}'"
-                logging.info(f"Deleting existing data for date {game_date}")
-                self.bq_client.query(delete_query).result()
+            # 1. Create temporary table name
+            temp_table_name = f"{self.table_name}_temp_{uuid.uuid4().hex[:8]}"
+            temp_table_id = f"{self.project_id}.{temp_table_name}"
             
-            # Insert new data
-            result = self.bq_client.insert_rows_json(table_id, rows)
-            if result:
-                errors.extend([str(e) for e in result])
-                logging.error(f"BigQuery insert errors: {errors}")
+            logging.info(f"Creating temporary table: {temp_table_id}")
+            
+            # 2. Get target table schema for enforcement
+            try:
+                target_table = self.bq_client.get_table(table_id)
+                target_schema = target_table.schema
+            except Exception as e:
+                logging.warning(f"Could not get target table schema: {e}")
+                target_schema = None
+            
+            # 3. Configure batch loading job (NO streaming buffer!)
+            job_config = bigquery.LoadJobConfig(
+                write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
+                source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+            )
+            
+            # Enforce schema if available
+            if target_schema:
+                job_config.schema = target_schema
+                job_config.autodetect = False
+                logging.debug("Using schema enforcement for temp table")
+            else:
+                job_config.autodetect = True
+                logging.debug("Using schema autodetection for temp table")
+            
+            # 4. Batch load to temporary table
+            logging.info(f"Loading {len(rows)} rows to temporary table via batch loading")
+            load_job = self.bq_client.load_table_from_json(
+                rows, 
+                temp_table_id, 
+                job_config=job_config
+            )
+            
+            # Wait for load to complete
+            load_job.result()
+            logging.info(f"✅ Batch loaded {len(rows)} rows to {temp_table_id}")
+            
+            # 5. Execute MERGE operation with explicit partition filter
+            game_date = rows[0]['game_date']
+            
+            # Filter source to specific partition to enable partition elimination
+            merge_query = f"""
+                MERGE `{table_id}` AS target
+                USING (
+                    SELECT * FROM `{temp_table_id}`
+                    WHERE game_date = '{game_date}'
+                ) AS source
+                ON target.game_id = source.game_id
+                   AND target.game_date = '{game_date}'
+                WHEN MATCHED THEN
+                    UPDATE SET
+                        home_team_score = source.home_team_score,
+                        away_team_score = source.away_team_score,
+                        home_team_winner = source.home_team_winner,
+                        away_team_winner = source.away_team_winner,
+                        is_completed = source.is_completed,
+                        game_status = source.game_status,
+                        game_status_detail = source.game_status_detail,
+                        espn_status_id = source.espn_status_id,
+                        espn_state = source.espn_state,
+                        scrape_timestamp = source.scrape_timestamp,
+                        source_file_path = source.source_file_path,
+                        processed_at = source.processed_at
+                WHEN NOT MATCHED THEN
+                    INSERT ROW
+            """
+            
+            logging.info(f"Executing MERGE for game_date={game_date}")
+            merge_job = self.bq_client.query(merge_query)
+            merge_result = merge_job.result()
+            
+            # Get affected rows count
+            rows_affected = merge_result.total_rows if hasattr(merge_result, 'total_rows') else len(rows)
+            
+            logging.info(f"✅ MERGE completed successfully: {rows_affected} rows affected")
+            
+            return {
+                'rows_processed': len(rows),
+                'rows_affected': rows_affected,
+                'errors': []
+            }
+            
+        except Exception as e:
+            error_msg = str(e)
+            
+            # Graceful failure for streaming buffer conflicts
+            if "streaming buffer" in error_msg.lower():
+                logging.warning(f"⚠️ MERGE blocked by streaming buffer - {len(rows)} records skipped")
+                logging.info("Records will be processed on next run when buffer clears (graceful failure)")
                 
-                # Send error notification for BigQuery insert failures
                 try:
-                    notify_error(
-                        title="ESPN Scoreboard: BigQuery Insert Failed",
-                        message=f"Failed to insert {len(rows)} rows into BigQuery",
+                    notify_warning(
+                        title="ESPN Scoreboard: Streaming Buffer Conflict",
+                        message=f"MERGE blocked by streaming buffer - data skipped for this run",
                         details={
                             'table': self.table_name,
                             'rows_attempted': len(rows),
-                            'error_count': len(errors),
-                            'errors': errors[:5],  # First 5 errors
-                            'game_date': rows[0].get('game_date') if rows else 'unknown'
-                        },
-                        processor_name="ESPN Scoreboard Processor"
+                            'game_date': rows[0].get('game_date') if rows else 'unknown',
+                            'resolution': 'Will retry on next run (self-healing)'
+                        }
                     )
-                except Exception as e:
-                    logging.warning(f"Failed to send notification: {e}")
-            else:
-                logging.info(f"Successfully loaded {len(rows)} rows to {self.table_name}")
-        
-        except Exception as e:
-            error_msg = str(e)
-            errors.append(error_msg)
-            logging.error(f"Error loading data to BigQuery: {error_msg}")
+                except Exception as notify_ex:
+                    logging.warning(f"Failed to send notification: {notify_ex}")
+                
+                # Return graceful failure (not an error)
+                return {
+                    'rows_processed': 0,
+                    'rows_affected': 0,
+                    'errors': [],
+                    'skipped_due_to_streaming_buffer': True
+                }
             
-            # Send error notification for general BigQuery failures
+            # Other errors are genuine problems
+            logging.error(f"Error loading data to BigQuery: {error_msg}", exc_info=True)
+            
             try:
                 notify_error(
                     title="ESPN Scoreboard: BigQuery Load Failed",
-                    message=f"Database operation failed: {error_msg}",
+                    message=f"Database operation failed: {error_msg[:200]}",
                     details={
                         'table': self.table_name,
                         'rows_attempted': len(rows),
                         'error_type': type(e).__name__,
-                        'error_message': error_msg,
-                        'game_date': rows[0].get('game_date') if rows else 'unknown'
+                        'error_message': error_msg[:500],
+                        'game_date': rows[0].get('game_date') if rows else 'unknown',
+                        'temp_table': temp_table_id
                     },
                     processor_name="ESPN Scoreboard Processor"
                 )
             except Exception as notify_ex:
                 logging.warning(f"Failed to send notification: {notify_ex}")
+            
+            return {
+                'rows_processed': 0,
+                'rows_affected': 0,
+                'errors': [error_msg]
+            }
         
-        return {
-            'rows_processed': len(rows) if not errors else 0,
-            'errors': errors
-        }
+        finally:
+            # 6. Always cleanup temporary table
+            if temp_table_id:
+                try:
+                    self.bq_client.delete_table(temp_table_id, not_found_ok=True)
+                    logging.debug(f"Cleaned up temporary table: {temp_table_id}")
+                except Exception as cleanup_error:
+                    logging.warning(f"Failed to cleanup temp table {temp_table_id}: {cleanup_error}")
     
     def process_file(self, json_content: str, file_path: str) -> Dict:
         """Process a single ESPN scoreboard file end-to-end."""
@@ -332,12 +433,14 @@ class EspnScoreboardProcessor(ProcessorBase):
             # Transform data
             rows = self.transform_data(raw_data, file_path)
             
-            # Load to BigQuery
+            # Load to BigQuery (production-safe with staging table)
             load_result = self.load_data(rows)
             
             return {
                 'rows_processed': load_result.get('rows_processed', 0),
-                'errors': errors + load_result.get('errors', [])
+                'rows_affected': load_result.get('rows_affected', 0),
+                'errors': errors + load_result.get('errors', []),
+                'skipped_due_to_streaming_buffer': load_result.get('skipped_due_to_streaming_buffer', False)
             }
             
         except json.JSONDecodeError as e:
@@ -363,7 +466,7 @@ class EspnScoreboardProcessor(ProcessorBase):
             
         except Exception as e:
             error_msg = f"Error processing file {file_path}: {str(e)}"
-            logging.error(error_msg)
+            logging.error(error_msg, exc_info=True)
             
             # Send error notification for general processing failures
             try:

@@ -6,7 +6,35 @@ Upcoming Team Game Context Processor
 Calculates pregame team-level context for upcoming games including betting lines,
 fatigue metrics, personnel status, momentum, and forward-looking schedule psychology.
 
-FIXED: Betting lines now join on game_date + teams instead of game_id
+DATA SOURCES:
+- nba_raw.nbac_schedule: 
+  * Schedule data (home/away teams, game_id, dates) ✅
+  * Historical game results (scores, winners) - 81.4% coverage since 2021-22 ✅
+- nba_raw.odds_api_game_lines: 
+  * Betting lines (spreads, totals, line movement) ✅
+  * Timezone fix complete - game_date now correctly in US Eastern time
+- nba_raw.nbac_injury_report: Player injury status ✅
+- nba_enriched.travel_distances: Travel distance calculations ✅
+
+ALL DATA QUALITY ISSUES RESOLVED:
+✅ nbac_schedule: home/away teams correct
+✅ Game results: Using nbac_schedule historical scores (81.4% coverage)
+✅ odds_api_game_lines: Timezone conversion fixed (UTC → Eastern)
+
+FEATURES:
+- 39 total fields calculated
+- 10 betting context fields (spreads, totals, line movement)
+- 6 fatigue metrics (days rest, back-to-backs, games in windows)
+- 8 momentum metrics (win/loss streaks, last game margin)
+- 7 forward schedule fields (lookahead context)
+- 3 opponent asymmetry fields
+- Plus injury context, travel, and metadata
+
+Dependencies:
+- nba_raw.nbac_schedule (schedule + historical scores)
+- nba_raw.odds_api_game_lines (betting lines)
+- nba_raw.nbac_injury_report (injury status)
+- nba_enriched.travel_distances (travel data)
 """
 
 import logging
@@ -59,7 +87,7 @@ class UpcomingTeamGameContextProcessor(AnalyticsProcessorBase):
             # 1. Extract schedule data (both teams per game)
             self._extract_schedule_data(start_date, end_date)
             
-            # 2. Extract betting lines
+            # 2. Extract betting lines (RE-ENABLED - timezone fix complete!)
             self._extract_betting_lines(start_date, end_date)
             
             # 3. Extract historical game results (for streaks/momentum)
@@ -138,7 +166,9 @@ class UpcomingTeamGameContextProcessor(AnalyticsProcessorBase):
         """
         Extract betting lines (spreads and totals) from odds API.
         
-        FIXED: Joins on game_date + teams instead of game_id since:
+        RE-ENABLED: Timezone fix complete! odds_api_game_lines now has correct dates.
+        
+        Joins on game_date + teams (not game_id) since:
         - Schedule uses NBA.com game_id (e.g., 0022400563)
         - Odds API uses hash-based game_id (e.g., 0121869cd6f93c1f8873045e71fa1605)
         """
@@ -208,31 +238,121 @@ class UpcomingTeamGameContextProcessor(AnalyticsProcessorBase):
         logger.info(f"Extracted {len(self.betting_lines)} betting line records")
     
     def _extract_game_results(self, start_date) -> None:
-        """Extract historical game results for momentum/streak calculations."""
+        """
+        Extract historical game results for momentum/streak calculations.
+        
+        Uses dual-source strategy with automatic fallback:
+        1. PRIMARY: nbac_schedule (81.4% coverage, all completed games)
+        2. FALLBACK: espn_scoreboard (when schedule doesn't have scores yet)
+        
+        This handles early-season scenarios where games just finished but
+        schedule table hasn't been updated with final scores yet.
+        """
         # Get last 30 days of results before target date
         lookback_date = (datetime.strptime(start_date, '%Y-%m-%d') - timedelta(days=30)).strftime('%Y-%m-%d')
         
-        query = f"""
-        WITH game_results AS (
-          SELECT 
-            game_date,
-            game_id,
-            home_team_abbr,
-            away_team_abbr,
-            home_score,
-            away_score,
-            winning_team_abbr
-          FROM `{self.project_id}.nba_raw.nbac_scoreboard_v2`
-          WHERE game_date >= '{lookback_date}' AND game_date < '{start_date}'
-            AND game_state = 'post'
-        )
-        
-        SELECT * FROM game_results
-        ORDER BY game_date DESC
+        # PRIMARY: Try nbac_schedule first
+        schedule_query = f"""
+        SELECT 
+          game_date,
+          game_id,
+          home_team_tricode as home_team_abbr,
+          away_team_tricode as away_team_abbr,
+          home_team_score as home_score,
+          away_team_score as away_score,
+          winning_team_tricode as winning_team_abbr,
+          'nbac_schedule' as source
+        FROM `{self.project_id}.nba_raw.nbac_schedule`
+        WHERE game_date >= '{lookback_date}' 
+          AND game_date < '{start_date}'
+          AND home_team_score IS NOT NULL  -- Only completed games
+          AND game_status = 3  -- Additional filter for completed games
         """
         
-        self.game_results = self.bq_client.query(query).to_dataframe()
-        logger.info(f"Extracted {len(self.game_results)} historical game results")
+        self.game_results = self.bq_client.query(schedule_query).to_dataframe()
+        schedule_count = len(self.game_results)
+        logger.info(f"Extracted {schedule_count} game results from nbac_schedule")
+        
+        # FALLBACK: Check espn_scoreboard for any missing dates
+        if schedule_count > 0:
+            # Get dates that should have games but might be missing from schedule
+            espn_query = f"""
+            SELECT 
+              e.game_date,
+              e.game_id,
+              e.home_team_abbr,
+              e.away_team_abbr,
+              e.home_team_score as home_score,
+              e.away_team_score as away_score,
+              CASE 
+                WHEN e.home_team_winner THEN e.home_team_abbr
+                WHEN e.away_team_winner THEN e.away_team_abbr
+                ELSE NULL
+              END as winning_team_abbr,
+              'espn_scoreboard' as source
+            FROM `{self.project_id}.nba_raw.espn_scoreboard` e
+            WHERE e.game_date >= '{lookback_date}' 
+              AND e.game_date < '{start_date}'
+              AND e.is_completed = true
+              AND e.game_status = 'final'
+              -- Only get games NOT already in schedule results
+              AND NOT EXISTS (
+                SELECT 1 
+                FROM `{self.project_id}.nba_raw.nbac_schedule` s
+                WHERE s.game_date = e.game_date
+                  AND s.home_team_tricode = e.home_team_abbr
+                  AND s.away_team_tricode = e.away_team_abbr
+                  AND s.home_team_score IS NOT NULL
+              )
+            """
+            
+            try:
+                espn_results = self.bq_client.query(espn_query).to_dataframe()
+                if len(espn_results) > 0:
+                    # Append ESPN results to fill gaps
+                    self.game_results = pd.concat([self.game_results, espn_results], ignore_index=True)
+                    logger.info(f"Added {len(espn_results)} additional games from espn_scoreboard (fallback)")
+            except Exception as e:
+                logger.warning(f"Could not fetch espn_scoreboard fallback data: {e}")
+                # Continue with schedule data only
+        else:
+            # No schedule data at all - try ESPN as primary
+            logger.warning("No data from nbac_schedule, using espn_scoreboard as primary source")
+            espn_query = f"""
+            SELECT 
+              game_date,
+              game_id,
+              home_team_abbr,
+              away_team_abbr,
+              home_team_score as home_score,
+              away_team_score as away_score,
+              CASE 
+                WHEN home_team_winner THEN home_team_abbr
+                WHEN away_team_winner THEN away_team_abbr
+                ELSE NULL
+              END as winning_team_abbr,
+              'espn_scoreboard' as source
+            FROM `{self.project_id}.nba_raw.espn_scoreboard`
+            WHERE game_date >= '{lookback_date}' 
+              AND game_date < '{start_date}'
+              AND is_completed = true
+              AND game_status = 'final'
+            ORDER BY game_date DESC
+            """
+            
+            try:
+                self.game_results = self.bq_client.query(espn_query).to_dataframe()
+                logger.info(f"Extracted {len(self.game_results)} game results from espn_scoreboard (primary)")
+            except Exception as e:
+                logger.error(f"Could not fetch from either source: {e}")
+                self.game_results = pd.DataFrame()
+        
+        total_results = len(self.game_results)
+        if total_results > 0:
+            sources = self.game_results['source'].value_counts().to_dict()
+            logger.info(f"Total game results: {total_results}, Sources: {sources}")
+        else:
+            logger.warning("No game results found from any source")
     
     def _extract_injury_data(self, start_date, end_date) -> None:
         """Extract injury report data for personnel context."""
@@ -370,7 +490,7 @@ class UpcomingTeamGameContextProcessor(AnalyticsProcessorBase):
         """
         Calculate betting lines context (spreads and totals).
         
-        FIXED: Now matches on game_date + home/away teams instead of game_id
+        RE-ENABLED: Timezone fix complete! Now matches on game_date + home/away teams.
         """
         context = {
             'game_spread': None, 

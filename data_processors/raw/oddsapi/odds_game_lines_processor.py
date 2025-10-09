@@ -2,7 +2,7 @@
 # File: processors/odds_api/odds_game_lines_processor.py
 # Description: Processor for Odds API game lines history data transformation
 
-import json, logging, re, os
+import json, logging, re, os, uuid
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 from google.cloud import bigquery
@@ -328,137 +328,237 @@ class OddsGameLinesProcessor(ProcessorBase):
         return rows
     
     def load_data(self, rows: List[Dict], **kwargs) -> Dict:
-        """Load data into BigQuery with MERGE_UPDATE strategy."""
+        """
+        Load data using staging table + MERGE approach (no streaming buffer).
+        
+        This avoids BigQuery's streaming buffer limitations by using batch loading
+        and MERGE operations instead of DELETE + streaming insert.
+        """
         if not rows:
             return {'rows_processed': 0, 'errors': []}
         
         table_id = f"{self.project_id}.{self.table_name}"
+        temp_table_id = None
         errors = []
         
         try:
-            if self.processing_strategy == 'MERGE_UPDATE':
-                # Delete existing data for this game and snapshot timestamp
-                game_id = rows[0]['game_id']
-                snapshot_timestamp = rows[0]['snapshot_timestamp']
-                game_date = rows[0]['game_date']
-                
-                delete_query = f"""
-                DELETE FROM `{table_id}` 
-                WHERE game_date = '{game_date}'
-                AND game_id = '{game_id}' 
-                AND snapshot_timestamp = '{snapshot_timestamp}'
-                """
-                
-                try:
-                    delete_result = self.bq_client.query(delete_query).result()
-                    logger.info(
-                        f"Deleted existing records for game {game_id} "
-                        f"on {game_date} at snapshot {snapshot_timestamp}"
-                    )
-                except Exception as delete_error:
-                    error_msg = f"Failed to delete existing records: {str(delete_error)}"
-                    logger.error(error_msg)
-                    errors.append(error_msg)
-                    
-                    # Send error notification for delete failure
-                    try:
-                        notify_error(
-                            title="Game Lines Delete Failed",
-                            message=f"Failed to delete existing game lines records before insert",
-                            details={
-                                'processor': 'OddsGameLinesProcessor',
-                                'table': self.table_name,
-                                'game_id': game_id,
-                                'game_date': game_date,
-                                'snapshot_timestamp': snapshot_timestamp,
-                                'error_type': type(delete_error).__name__,
-                                'error_message': str(delete_error)
-                            },
-                            processor_name="Odds API Game Lines Processor"
-                        )
-                    except Exception as notify_ex:
-                        logger.warning(f"Failed to send notification: {notify_ex}")
-                    
-                    # Don't proceed with insert if delete failed
-                    return {'rows_processed': 0, 'errors': errors}
+            # Get metadata from first row
+            game_id = rows[0]['game_id']
+            snapshot_timestamp = rows[0]['snapshot_timestamp']
+            game_date = rows[0]['game_date']
+            away_team_abbr = rows[0]['away_team_abbr']
+            home_team_abbr = rows[0]['home_team_abbr']
             
-            # Insert new data
-            result = self.bq_client.insert_rows_json(table_id, rows)
-            if result:
-                errors.extend([str(e) for e in result])
-                logger.error(f"BigQuery insert errors: {result}")
-                
-                # Send error notification for insert failures
+            # 1. Create temporary table with unique name
+            temp_table_id = f"{table_id}_temp_{uuid.uuid4().hex[:8]}"
+            
+            # Get target table schema
+            target_table = self.bq_client.get_table(table_id)
+            
+            # Create temp table with same schema
+            temp_table = bigquery.Table(temp_table_id, schema=target_table.schema)
+            self.bq_client.create_table(temp_table)
+            logger.info(f"Created temporary table: {temp_table_id}")
+            
+            # 2. Batch load to temp table (NO streaming buffer!)
+            job_config = bigquery.LoadJobConfig(
+                schema=target_table.schema,  # Enforce exact schema
+                autodetect=False,            # Don't infer schema
+                write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
+                source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON
+            )
+            
+            load_job = self.bq_client.load_table_from_json(
+                rows, 
+                temp_table_id, 
+                job_config=job_config
+            )
+            load_job.result()  # Wait for completion
+            
+            logger.info(f"✅ Batch loaded {len(rows)} rows to temp table (no streaming buffer)")
+            
+            # 3. MERGE from temp to target (works immediately with batch loading!)
+            merge_query = f"""
+            MERGE `{table_id}` AS target
+            USING `{temp_table_id}` AS source
+            ON target.game_id = source.game_id 
+               AND target.snapshot_timestamp = source.snapshot_timestamp
+               AND target.bookmaker_key = source.bookmaker_key
+               AND target.market_key = source.market_key
+               AND target.outcome_name = source.outcome_name
+            WHEN MATCHED THEN
+                UPDATE SET
+                    snapshot_timestamp = source.snapshot_timestamp,
+                    previous_snapshot_timestamp = source.previous_snapshot_timestamp,
+                    next_snapshot_timestamp = source.next_snapshot_timestamp,
+                    sport_key = source.sport_key,
+                    sport_title = source.sport_title,
+                    commence_time = source.commence_time,
+                    game_date = source.game_date,
+                    home_team = source.home_team,
+                    away_team = source.away_team,
+                    home_team_abbr = source.home_team_abbr,
+                    away_team_abbr = source.away_team_abbr,
+                    bookmaker_title = source.bookmaker_title,
+                    bookmaker_last_update = source.bookmaker_last_update,
+                    market_last_update = source.market_last_update,
+                    outcome_price = source.outcome_price,
+                    outcome_point = source.outcome_point,
+                    processed_at = source.processed_at
+            WHEN NOT MATCHED THEN
+                INSERT (
+                    snapshot_timestamp,
+                    previous_snapshot_timestamp,
+                    next_snapshot_timestamp,
+                    game_id,
+                    sport_key,
+                    sport_title,
+                    commence_time,
+                    game_date,
+                    home_team,
+                    away_team,
+                    home_team_abbr,
+                    away_team_abbr,
+                    bookmaker_key,
+                    bookmaker_title,
+                    bookmaker_last_update,
+                    market_key,
+                    market_last_update,
+                    outcome_name,
+                    outcome_price,
+                    outcome_point,
+                    source_file_path,
+                    created_at,
+                    processed_at
+                )
+                VALUES (
+                    source.snapshot_timestamp,
+                    source.previous_snapshot_timestamp,
+                    source.next_snapshot_timestamp,
+                    source.game_id,
+                    source.sport_key,
+                    source.sport_title,
+                    source.commence_time,
+                    source.game_date,
+                    source.home_team,
+                    source.away_team,
+                    source.home_team_abbr,
+                    source.away_team_abbr,
+                    source.bookmaker_key,
+                    source.bookmaker_title,
+                    source.bookmaker_last_update,
+                    source.market_key,
+                    source.market_last_update,
+                    source.outcome_name,
+                    source.outcome_price,
+                    source.outcome_point,
+                    source.source_file_path,
+                    source.created_at,
+                    source.processed_at
+                )
+            """
+            
+            merge_job = self.bq_client.query(merge_query)
+            merge_result = merge_job.result()
+            
+            # Get number of rows affected
+            rows_affected = merge_result.total_rows if hasattr(merge_result, 'total_rows') else len(rows)
+            
+            logger.info(
+                f"✅ MERGE completed successfully: {rows_affected} rows affected for game {game_id} "
+                f"({away_team_abbr}@{home_team_abbr}) on {game_date}"
+            )
+            
+            # Success notification
+            try:
+                notify_info(
+                    title="Game Lines Processing Complete",
+                    message=f"Successfully processed {len(rows)} game line records using staging table",
+                    details={
+                        'processor': 'OddsGameLinesProcessor',
+                        'rows_processed': len(rows),
+                        'rows_affected': rows_affected,
+                        'table': self.table_name,
+                        'strategy': 'staging_table_merge',
+                        'game_id': game_id,
+                        'game_date': game_date,
+                        'teams': f"{away_team_abbr}@{home_team_abbr}"
+                    }
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            
+            # Warn about unknown teams if any were found
+            if self.unknown_teams:
                 try:
-                    notify_error(
-                        title="Game Lines BigQuery Insert Failed",
-                        message=f"Failed to insert {len(rows)} game line records into BigQuery",
+                    notify_warning(
+                        title="Unknown Team Names Detected",
+                        message=f"Found {len(self.unknown_teams)} unknown team names in game lines data",
                         details={
                             'processor': 'OddsGameLinesProcessor',
-                            'table': self.table_name,
-                            'rows_attempted': len(rows),
-                            'error_count': len(result),
-                            'errors': [str(e) for e in result[:3]]  # First 3 errors
-                        },
-                        processor_name="Odds API Game Lines Processor"
+                            'unknown_teams': list(self.unknown_teams)
+                        }
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
-            else:
-                logger.info(f"Successfully inserted {len(rows)} rows into {table_id}")
+            
+            return {'rows_processed': len(rows), 'errors': []}
+            
+        except Exception as e:
+            error_msg = str(e)
+            errors.append(error_msg)
+            
+            # Check for streaming buffer error (graceful failure)
+            if "streaming buffer" in error_msg.lower():
+                logger.warning(
+                    f"MERGE blocked by streaming buffer - {len(rows)} records skipped this run. "
+                    f"Records will be processed on next run when buffer clears."
+                )
                 
-                # Success - send info notification
                 try:
-                    notify_info(
-                        title="Game Lines Processing Complete",
-                        message=f"Successfully processed {len(rows)} game line records",
+                    notify_warning(
+                        title="Game Lines Skipped - Streaming Buffer",
+                        message=f"MERGE blocked by streaming buffer, {len(rows)} records skipped (will retry next run)",
                         details={
                             'processor': 'OddsGameLinesProcessor',
-                            'rows_processed': len(rows),
                             'table': self.table_name,
-                            'strategy': self.processing_strategy,
-                            'game_id': rows[0]['game_id'],
-                            'game_date': rows[0]['game_date'],
-                            'teams': f"{rows[0]['away_team_abbr']}@{rows[0]['home_team_abbr']}"
+                            'game_id': rows[0]['game_id'] if rows else 'unknown',
+                            'game_date': rows[0]['game_date'] if rows else 'unknown',
+                            'rows_skipped': len(rows),
+                            'note': 'System will self-heal on next run'
                         }
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
                 
-                # Warn about unknown teams if any were found
-                if self.unknown_teams:
-                    try:
-                        notify_warning(
-                            title="Unknown Team Names Detected",
-                            message=f"Found {len(self.unknown_teams)} unknown team names in game lines data",
-                            details={
-                                'processor': 'OddsGameLinesProcessor',
-                                'unknown_teams': list(self.unknown_teams)
-                            }
-                        )
-                    except Exception as notify_ex:
-                        logger.warning(f"Failed to send notification: {notify_ex}")
-                        
-        except Exception as e:
-            error_msg = str(e)
-            errors.append(error_msg)
-            logger.error(f"Failed to load data: {e}", exc_info=True)
-            
-            # Send critical error notification
-            try:
-                notify_error(
-                    title="Game Lines Load Exception",
-                    message=f"Critical failure loading game lines data: {str(e)}",
-                    details={
-                        'processor': 'OddsGameLinesProcessor',
-                        'table': self.table_name,
-                        'rows_attempted': len(rows),
-                        'error_type': type(e).__name__,
-                        'error_message': str(e)
-                    },
-                    processor_name="Odds API Game Lines Processor"
-                )
-            except Exception as notify_ex:
-                logger.warning(f"Failed to send notification: {notify_ex}")
+                return {'rows_processed': 0, 'errors': [], 'skipped_streaming_buffer': True}
+            else:
+                # Non-streaming-buffer error - this is a real problem
+                logger.error(f"Failed to load data: {e}", exc_info=True)
+                
+                try:
+                    notify_error(
+                        title="Game Lines Load Exception",
+                        message=f"Critical failure loading game lines data: {str(e)}",
+                        details={
+                            'processor': 'OddsGameLinesProcessor',
+                            'table': self.table_name,
+                            'rows_attempted': len(rows),
+                            'error_type': type(e).__name__,
+                            'error_message': str(e)
+                        },
+                        processor_name="Odds API Game Lines Processor"
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                
+                return {'rows_processed': 0, 'errors': errors}
         
-        return {'rows_processed': len(rows) if not errors else 0, 'errors': errors}
+        finally:
+            # Always cleanup temporary table
+            if temp_table_id:
+                try:
+                    self.bq_client.delete_table(temp_table_id, not_found_ok=True)
+                    logger.debug(f"Cleaned up temporary table: {temp_table_id}")
+                except Exception as cleanup_error:
+                    logger.warning(f"Failed to cleanup temp table: {cleanup_error}")

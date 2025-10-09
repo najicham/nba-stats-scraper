@@ -342,7 +342,12 @@ class OddsApiPropsProcessor(ProcessorBase):
         return rows
     
     def load_data(self, rows: List[Dict], **kwargs) -> Dict:
-        """Load data to BigQuery using APPEND_ALWAYS strategy."""
+        """
+        Load data to BigQuery using batch loading (no streaming buffer).
+        
+        Uses load_table_from_json instead of insert_rows_json to avoid
+        streaming buffer issues and enable immediate DML operations.
+        """
         import datetime
         
         if not rows:
@@ -355,82 +360,105 @@ class OddsApiPropsProcessor(ProcessorBase):
                     row[key] = value.isoformat()
         
         table_id = f"{self.project_id}.{self.table_name}"
-        
-        # Load to BigQuery
         errors = []
+        
         try:
-            result = self.bq_client.insert_rows_json(table_id, rows)
-            if result:
-                errors.extend(result)
-                logger.error(f"BigQuery insert errors: {result}")
+            # Get target table for schema
+            target_table = self.bq_client.get_table(table_id)
+            
+            # Use batch loading instead of streaming insert
+            job_config = bigquery.LoadJobConfig(
+                schema=target_table.schema,  # Enforce exact schema
+                autodetect=False,            # Don't infer schema
+                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,  # Append mode
+                source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON
+            )
+            
+            # Batch load (NO streaming buffer!)
+            load_job = self.bq_client.load_table_from_json(
+                rows,
+                table_id,
+                job_config=job_config
+            )
+            load_job.result()  # Wait for completion
+            
+            logger.info(f"✅ Batch loaded {len(rows)} prop records (no streaming buffer)")
+            
+            # Success - send info notification
+            try:
+                notify_info(
+                    title="Props Processing Complete",
+                    message=f"Successfully processed {len(rows)} prop records using batch loading",
+                    details={
+                        'processor': 'OddsApiPropsProcessor',
+                        'rows_processed': len(rows),
+                        'table': self.table_name,
+                        'strategy': 'batch_append'
+                    }
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
                 
-                # Send error notification for BigQuery failures
+            # Warn about unknown teams if any were found
+            if self.unknown_teams:
+                try:
+                    notify_warning(
+                        title="Unknown Team Names Detected",
+                        message=f"Found {len(self.unknown_teams)} unknown team names in props data",
+                        details={
+                            'processor': 'OddsApiPropsProcessor',
+                            'unknown_teams': list(self.unknown_teams)
+                        }
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+            
+            return {'rows_processed': len(rows), 'errors': []}
+                    
+        except Exception as e:
+            error_msg = str(e)
+            errors.append(error_msg)
+            
+            # Check for streaming buffer error (shouldn't happen with batch loading, but handle gracefully)
+            if "streaming buffer" in error_msg.lower():
+                logger.warning(
+                    f"Unexpected streaming buffer issue - {len(rows)} records skipped. "
+                    f"Records will be processed on next run."
+                )
+                
+                try:
+                    notify_warning(
+                        title="Props Skipped - Streaming Buffer",
+                        message=f"Unexpected streaming buffer conflict, {len(rows)} records skipped",
+                        details={
+                            'processor': 'OddsApiPropsProcessor',
+                            'table': self.table_name,
+                            'rows_skipped': len(rows),
+                            'note': 'Should not happen with batch loading - investigate'
+                        }
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                
+                return {'rows_processed': 0, 'errors': [], 'skipped_streaming_buffer': True}
+            else:
+                # Real error
+                logger.error(f"Failed to insert rows: {e}", exc_info=True)
+                
                 try:
                     notify_error(
-                        title="Props BigQuery Insert Failed",
-                        message=f"Failed to insert {len(rows)} prop records into BigQuery",
+                        title="Props BigQuery Insert Exception",
+                        message=f"Critical failure inserting props data: {str(e)}",
                         details={
                             'processor': 'OddsApiPropsProcessor',
                             'table': self.table_name,
                             'rows_attempted': len(rows),
-                            'error_count': len(result),
-                            'errors': result[:3]  # First 3 errors
+                            'error_type': type(e).__name__,
+                            'error_message': str(e)
                         },
                         processor_name="Odds API Props Processor"
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
-            else:
-                # Success - send info notification
-                try:
-                    notify_info(
-                        title="Props Processing Complete",
-                        message=f"Successfully processed {len(rows)} prop records",
-                        details={
-                            'processor': 'OddsApiPropsProcessor',
-                            'rows_processed': len(rows),
-                            'table': self.table_name
-                        }
-                    )
-                except Exception as notify_ex:
-                    logger.warning(f"Failed to send notification: {notify_ex}")
-                    
-                # Warn about unknown teams if any were found
-                if self.unknown_teams:
-                    try:
-                        notify_warning(
-                            title="Unknown Team Names Detected",
-                            message=f"Found {len(self.unknown_teams)} unknown team names in props data",
-                            details={
-                                'processor': 'OddsApiPropsProcessor',
-                                'unknown_teams': list(self.unknown_teams)
-                            }
-                        )
-                    except Exception as notify_ex:
-                        logger.warning(f"Failed to send notification: {notify_ex}")
-                    
-        except Exception as e:
-            logger.error(f"Failed to insert rows: {e}", exc_info=True)
-            errors.append(str(e))
-            
-            # Send critical error notification
-            try:
-                notify_error(
-                    title="Props BigQuery Insert Exception",
-                    message=f"Critical failure inserting props data: {str(e)}",
-                    details={
-                        'processor': 'OddsApiPropsProcessor',
-                        'table': self.table_name,
-                        'rows_attempted': len(rows),
-                        'error_type': type(e).__name__,
-                        'error_message': str(e)
-                    },
-                    processor_name="Odds API Props Processor"
-                )
-            except Exception as notify_ex:
-                logger.warning(f"Failed to send notification: {notify_ex}")
-        
-        return {
-            'rows_processed': len(rows) if not errors else 0,
-            'errors': errors
-        }
+                
+                return {'rows_processed': 0, 'errors': errors}

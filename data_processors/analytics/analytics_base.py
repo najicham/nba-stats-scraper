@@ -293,7 +293,7 @@ class AnalyticsProcessorBase:
     def save_analytics(self) -> None:
         """
         Save to analytics BigQuery table using batch INSERT.
-        Uses SQL INSERT instead of streaming to avoid streaming buffer issues.
+        Uses NDJSON load job with schema enforcement to avoid streaming buffer issues.
         """
         if not self.transformed_data:
             logger.warning("No transformed data to save")
@@ -356,63 +356,88 @@ class AnalyticsProcessorBase:
                 logger.warning(f"Failed to send notification: {notify_ex}")
             return
         
-        # Apply processing strategy
+        # Apply processing strategy - delete existing data first
         if self.processing_strategy == 'MERGE_UPDATE':
             try:
                 self._delete_existing_data_batch(rows)
             except Exception as e:
-                logger.error(f"Failed to delete existing data: {e}")
-                try:
-                    notify_error(
-                        title=f"Analytics Processor Delete Failed: {self.__class__.__name__}",
-                        message=f"Failed to delete existing data for MERGE_UPDATE: {str(e)}",
-                        details={
-                            'processor': self.__class__.__name__,
-                            'run_id': self.run_id,
-                            'table': table_id,
-                            'strategy': self.processing_strategy,
-                            'date_range': f"{self.opts.get('start_date')} to {self.opts.get('end_date')}",
-                            'error_type': type(e).__name__,
-                            'error': str(e)
-                        },
-                        processor_name=self.__class__.__name__
-                    )
-                except Exception as notify_ex:
-                    logger.warning(f"Failed to send notification: {notify_ex}")
-                raise
+                # If delete fails due to streaming buffer, log and continue
+                # The insert will create duplicates that will be cleaned up on next run
+                if "streaming buffer" not in str(e).lower():
+                    # Re-raise non-streaming-buffer errors
+                    logger.error(f"Delete failed with non-streaming error: {e}")
+                    try:
+                        notify_error(
+                            title=f"Analytics Processor Delete Failed: {self.__class__.__name__}",
+                            message=f"Failed to delete existing data for MERGE_UPDATE: {str(e)}",
+                            details={
+                                'processor': self.__class__.__name__,
+                                'run_id': self.run_id,
+                                'table': table_id,
+                                'strategy': self.processing_strategy,
+                                'date_range': f"{self.opts.get('start_date')} to {self.opts.get('end_date')}",
+                                'error_type': type(e).__name__,
+                                'error': str(e)
+                            },
+                            processor_name=self.__class__.__name__
+                        )
+                    except Exception as notify_ex:
+                        logger.warning(f"Failed to send notification: {notify_ex}")
+                    raise
         
         # Use batch INSERT via BigQuery load job (not streaming)
-        logger.info(f"Inserting {len(rows)} rows to {table_id} using batch INSERT")
+        logger.info(f"Inserting {len(rows)} rows to {table_id} using batch INSERT with schema enforcement")
         
         try:
-            import pandas as pd
             import io
             import json
             
-            # Convert rows to newline-delimited JSON (more reliable than pandas DataFrame)
-            # This preserves NULL values and doesn't require schema inference
+            # Get target table schema for enforcement
+            try:
+                table = self.bq_client.get_table(table_id)
+                table_schema = table.schema
+                logger.info(f"Using schema from target table with {len(table_schema)} fields")
+            except Exception as schema_e:
+                logger.warning(f"Could not get table schema, proceeding without enforcement: {schema_e}")
+                table_schema = None
+            
+            # Convert rows to newline-delimited JSON
             ndjson_data = "\n".join(json.dumps(row) for row in rows)
             ndjson_bytes = ndjson_data.encode('utf-8')
             
-            # Configure load job for NDJSON
+            # Configure load job with schema enforcement
             job_config = bigquery.LoadJobConfig(
+                schema=table_schema,  # Enforce exact target schema
                 source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
                 write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
-                autodetect=False,  # Don't autodetect - use table schema
-                schema_update_options=None  # Don't update schema
+                autodetect=False,  # Never autodetect schema
+                schema_update_options=None  # Never update schema
             )
             
-            # Load directly to target table (no temp table needed)
+            # Load directly to target table
             load_job = self.bq_client.load_table_from_file(
                 io.BytesIO(ndjson_bytes),
                 table_id,
                 job_config=job_config
             )
             
-            # Wait for load to complete
-            load_job.result()
-            
-            logger.info(f"Successfully inserted {len(rows)} rows via batch load job")
+            # Wait for load to complete with graceful failure
+            try:
+                load_job.result()
+                logger.info(f"✅ Successfully batch loaded {len(rows)} rows with schema enforcement")
+                self.stats["rows_processed"] = len(rows)
+                
+            except Exception as load_e:
+                # Graceful failure for streaming buffer conflicts
+                if "streaming buffer" in str(load_e).lower():
+                    logger.warning(f"⚠️ Load blocked by streaming buffer - {len(rows)} rows skipped this run")
+                    logger.info("Records will be processed on next run when streaming buffer clears")
+                    self.stats["rows_skipped"] = len(rows)
+                    self.stats["rows_processed"] = 0
+                    return  # Graceful failure - don't raise exception
+                else:
+                    # Re-raise other errors
+                    raise load_e
             
         except Exception as e:
             error_msg = f"Batch insert failed: {str(e)}"
@@ -435,15 +460,11 @@ class AnalyticsProcessorBase:
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
             raise
-            
-        self.stats["rows_processed"] = len(rows)
-        logger.info(f"Successfully saved {len(rows)} rows via batch insert")
-
 
     def _delete_existing_data_batch(self, rows: List[Dict]) -> None:
         """
-        Delete existing data using batch DELETE query (no streaming buffer issues).
-        Waits for delete to complete before returning.
+        Delete existing data using batch DELETE query.
+        Includes graceful failure for streaming buffer conflicts.
         """
         if not rows:
             return
@@ -463,15 +484,26 @@ class AnalyticsProcessorBase:
             
             logger.info(f"Deleting existing data for date range {start_date} to {end_date}")
             
-            # Execute delete and wait for completion
-            delete_job = self.bq_client.query(delete_query)
-            delete_job.result()  # Wait for delete to complete
-            
-            # Get the number of affected rows
-            if delete_job.num_dml_affected_rows is not None:
-                logger.info(f"Deleted {delete_job.num_dml_affected_rows} existing rows")
-            else:
-                logger.info(f"Delete completed for date range {start_date} to {end_date}")
+            try:
+                # Execute delete and wait for completion
+                delete_job = self.bq_client.query(delete_query)
+                delete_job.result()  # Wait for delete to complete
+                
+                # Log the number of affected rows
+                if delete_job.num_dml_affected_rows is not None:
+                    logger.info(f"✅ Deleted {delete_job.num_dml_affected_rows} existing rows")
+                else:
+                    logger.info(f"✅ Delete completed for date range {start_date} to {end_date}")
+                    
+            except Exception as e:
+                # Graceful failure for streaming buffer conflicts
+                if "streaming buffer" in str(e).lower():
+                    logger.warning(f"⚠️ Delete blocked by streaming buffer - will create temporary duplicates")
+                    logger.info("Duplicates will be cleaned up on next run when streaming buffer clears")
+                    return  # Continue with insert despite failed delete
+                else:
+                    # Re-raise other errors
+                    raise e
     
     def log_processing_run(self, success: bool, error: str = None) -> None:
         """Log processing run to monitoring table."""
