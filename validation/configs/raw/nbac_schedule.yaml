@@ -1,0 +1,114 @@
+# File: validation/configs/raw/nbac_schedule.yaml
+# Description: NBA.com Schedule Validation Config - Source of truth for all games
+
+processor:
+  name: "nbac_schedule"
+  description: "Validates NBA.com schedule - the source of truth for games"
+  table: "nba_raw.nbac_schedule"
+  partition_required: true
+  partition_field: "game_date"
+  layers:
+    - bigquery
+    - schedule
+
+# BigQuery Layer Validations
+bigquery_validations:
+  enabled: true
+  
+  # Schedule should have all games for season
+  season_completeness:
+    enabled: true
+    query: |
+      SELECT 
+        season_year,
+        COUNT(*) as game_count,
+        COUNT(DISTINCT game_date) as unique_dates,
+        MIN(game_date) as season_start,
+        MAX(game_date) as season_end
+      FROM `{project_id}.nba_raw.nbac_schedule`
+      WHERE season_year = {season_year}
+      GROUP BY season_year
+    expected_regular_season_games: 1230  # 30 teams * 82 / 2
+    tolerance: 10
+    severity: "error"
+  
+  team_presence:
+    target_table: "nba_raw.nbac_schedule"
+    expected_teams: 30
+    check_home: true
+    check_away: true
+    severity: "error"
+  
+  # Game count per team validation
+  team_game_count:
+    enabled: true
+    query: |
+      WITH team_games AS (
+        SELECT home_team_tricode as team, COUNT(*) as home_games
+        FROM `{project_id}.nba_raw.nbac_schedule`
+        WHERE season_year = {season_year}
+        GROUP BY home_team_tricode
+        UNION ALL
+        SELECT away_team_tricode as team, COUNT(*) as away_games
+        FROM `{project_id}.nba_raw.nbac_schedule`
+        WHERE season_year = {season_year}
+        GROUP BY away_team_tricode
+      )
+      SELECT 
+        team,
+        SUM(home_games) as total_games
+      FROM team_games
+      GROUP BY team
+      HAVING total_games < 80 OR total_games > 84
+    expected_games_per_team: 82
+    tolerance: 2
+    severity: "warning"
+  
+  # Date continuity check (detect large gaps)
+  date_gaps:
+    enabled: true
+    query: |
+      WITH date_diffs AS (
+        SELECT 
+          game_date,
+          LAG(game_date) OVER (ORDER BY game_date) as prev_date,
+          DATE_DIFF(game_date, LAG(game_date) OVER (ORDER BY game_date), DAY) as gap_days
+        FROM (
+          SELECT DISTINCT game_date
+          FROM `{project_id}.nba_raw.nbac_schedule`
+          WHERE season_year = {season_year}
+        )
+      )
+      SELECT 
+        prev_date,
+        game_date,
+        gap_days
+      FROM date_diffs
+      WHERE gap_days > 7
+      ORDER BY gap_days DESC
+    max_gap_days: 7
+    severity: "info"
+    message: "Large gap detected (All-Star break or off-season)"
+
+# Schedule Validations
+schedule_validations:
+  enabled: true
+  
+  data_freshness:
+    target_table: "nba_raw.nbac_schedule"
+    timestamp_field: "processed_at"
+    max_age_hours: 24
+    severity: "warning"
+
+# Remediation
+remediation:
+  processor_backfill_template: |
+    gcloud run jobs execute nbac-schedule-processor-backfill \
+      --args=--season-year={season_year} \
+      --region=us-west2
+
+notifications:
+  enabled: true
+  channels: ["slack"]
+  on_failure: true
+  on_success: false

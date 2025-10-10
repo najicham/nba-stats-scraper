@@ -14,18 +14,21 @@ start_deployment_timer
 
 echo "Deploying Odds API Game Lines Scraper Backfill Job..."
 
-# Use scraper-specific backfill deployment script
-./bin/scrapers/deploy/deploy_scraper_backfill_job.sh odds_api_lines
+# Use scraper-specific backfill deployment script (FIXED: added 's' to make plural)
+./bin/scrapers/deploy/deploy_scrapers_backfill_job.sh odds_api_lines
 
 echo "Deployment complete!"
 echo ""
 
 print_section_header "Test Commands"
 echo "  # Dry run (check game dates without API calls):"
-echo "  gcloud run jobs execute nba-odds-api-lines-backfill --args=\"^|^--seasons=2023|--limit=10|--dry-run\" --region=us-west2"
+echo "  gcloud run jobs execute nba-odds-api-lines-backfill --args=\"^|^--seasons=2024|--limit=10|--dry-run\" --region=us-west2"
 echo ""
 echo "  # Small test (limit to 5 dates):"
-echo "  gcloud run jobs execute nba-odds-api-lines-backfill --args=\"^|^--seasons=2023|--limit=5\" --region=us-west2"
+echo "  gcloud run jobs execute nba-odds-api-lines-backfill --args=\"^|^--seasons=2024|--limit=5\" --region=us-west2"
+echo ""
+echo "  # Test January 2025 (includes Clippers games to verify fix):"
+echo "  gcloud run jobs execute nba-odds-api-lines-backfill --args=\"^|^--seasons=2024|--limit=50\" --region=us-west2"
 echo ""
 echo "  # Single season (2023-24):"
 echo "  gcloud run jobs execute nba-odds-api-lines-backfill --args=\"^|^--seasons=2023\" --region=us-west2"
@@ -37,7 +40,7 @@ echo "  # Full 4-season backfill (conservative strategy):"
 echo "  gcloud run jobs execute nba-odds-api-lines-backfill --args=\"^|^--seasons=2021,2022,2023,2024|--strategy=conservative\" --region=us-west2"
 echo ""
 echo "  # Final odds strategy (1 hour before games):"
-echo "  gcloud run jobs execute nba-odds-api-lines-backfill --args=\"^|^--seasons=2023|--strategy=final\" --region=us-west2"
+echo "  gcloud run jobs execute nba-odds-api-lines-backfill --args=\"^|^--seasons=2024|--strategy=final\" --region=us-west2"
 echo ""
 
 print_section_header "Monitor logs"
@@ -67,6 +70,12 @@ echo "    --args=\"^|^--seasons=2021,2022,2023,2024\""
 echo "  • Strategy parameter also needs pipe when combined:"
 echo "    --args=\"^|^--seasons=2023,2024|--strategy=pregame\""
 echo ""
+echo "  • FIXED IN THIS VERSION:"
+echo "    - LAC team name mapping: 'LA Clippers' → 'Los Angeles Clippers'"
+echo "    - Improved event matching logic to handle team name variants"
+echo "    - Added comprehensive notification system for failures"
+echo "    - Better error tracking for unmatched games"
+echo ""
 
 print_section_header "Validate results"
 echo "  # Check collected game lines in GCS"
@@ -76,10 +85,19 @@ echo "  # Count dates with game lines data:"
 echo "  gsutil ls gs://nba-scraped-data/odds-api/game-lines-history/ | grep -E '[0-9]{4}-[0-9]{2}-[0-9]{2}' | wc -l"
 echo ""
 echo "  # Check specific date (example):"
-echo "  gsutil ls gs://nba-scraped-data/odds-api/game-lines-history/2023-10-24/"
+echo "  gsutil ls gs://nba-scraped-data/odds-api/game-lines-history/2025-01-15/"
+echo ""
+echo "  # Verify Clippers games are captured:"
+echo "  gsutil ls gs://nba-scraped-data/odds-api/game-lines-history/2025-01-15/ | grep LAC"
 echo ""
 echo "  # Sample a file to verify structure:"
-echo "  gsutil cat gs://nba-scraped-data/odds-api/game-lines-history/2023-10-24/*.json | head -50"
+echo "  gsutil cat gs://nba-scraped-data/odds-api/game-lines-history/2025-01-15/*LAC*.json | head -50"
+echo ""
+echo "  # Check for all teams in January 2025:"
+echo "  for team in ATL BOS BKN CHA CHI CLE DAL DEN DET GSW HOU IND LAC LAL MEM MIA MIL MIN NOP NYK OKC ORL PHI PHX POR SAC SAS TOR UTA WAS; do"
+echo "    count=\$(gsutil ls gs://nba-scraped-data/odds-api/game-lines-history/2025-01-*/ 2>/dev/null | grep -c \$team || echo 0)"
+echo "    echo \"\$team: \$count games\""
+echo "  done"
 
 # Print final timing summary
 print_deployment_summary

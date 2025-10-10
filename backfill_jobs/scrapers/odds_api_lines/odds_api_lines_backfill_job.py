@@ -9,12 +9,20 @@ Collects historical NBA game lines betting data for 4 seasons (2021-22 through 2
 Uses real NBA schedule files from GCS to identify exact game dates.
 Works per-game (like props backfill) rather than per-date.
 
+CRITICAL FIXES IN THIS VERSION:
+- Fixed LAC team name mapping: 'LA Clippers' → 'Los Angeles Clippers'
+- Improved partial matching logic to handle team name variants
+- Added comprehensive notification system integration
+- Enhanced error tracking and reporting
+- Better logging for debugging matching failures
+
 Key Features:
 - Reads actual NBA schedule data from GCS
 - Collects game lines for ~1,200 game dates across 4 seasons
 - Conservative rate limiting (1 second between API calls)
 - Resume logic to skip already processed dates
 - Per-game collection with event ID matching
+- Comprehensive notifications for failures and warnings
 
 Usage Examples:
   # Dry run to see what would be processed:
@@ -39,6 +47,13 @@ from typing import List, Dict, Any, Optional
 
 from google.cloud import storage
 
+# Notification system imports
+from shared.utils.notification_system import (
+    notify_error,
+    notify_warning,
+    notify_info
+)
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -49,18 +64,38 @@ logger = logging.getLogger(__name__)
 class OddsApiLinesBackfillJob:
     """Cloud Run Job for collecting NBA game lines data using real schedule data."""
     
-    # NBA team code to full name mapping
+    # FIXED: NBA team code to full name mapping - MUST match Odds API exactly
     NBA_TEAMS = {
-        'ATL': 'Atlanta Hawks', 'BOS': 'Boston Celtics', 'BKN': 'Brooklyn Nets',
-        'CHA': 'Charlotte Hornets', 'CHI': 'Chicago Bulls', 'CLE': 'Cleveland Cavaliers',
-        'DAL': 'Dallas Mavericks', 'DEN': 'Denver Nuggets', 'DET': 'Detroit Pistons',
-        'GSW': 'Golden State Warriors', 'HOU': 'Houston Rockets', 'IND': 'Indiana Pacers',
-        'LAC': 'LA Clippers', 'LAL': 'Los Angeles Lakers', 'MEM': 'Memphis Grizzlies',
-        'MIA': 'Miami Heat', 'MIL': 'Milwaukee Bucks', 'MIN': 'Minnesota Timberwolves',
-        'NOP': 'New Orleans Pelicans', 'NYK': 'New York Knicks', 'OKC': 'Oklahoma City Thunder',
-        'ORL': 'Orlando Magic', 'PHI': 'Philadelphia 76ers', 'PHX': 'Phoenix Suns',
-        'POR': 'Portland Trail Blazers', 'SAC': 'Sacramento Kings', 'SAS': 'San Antonio Spurs',
-        'TOR': 'Toronto Raptors', 'UTA': 'Utah Jazz', 'WAS': 'Washington Wizards'
+        'ATL': 'Atlanta Hawks', 
+        'BOS': 'Boston Celtics', 
+        'BKN': 'Brooklyn Nets',
+        'CHA': 'Charlotte Hornets', 
+        'CHI': 'Chicago Bulls', 
+        'CLE': 'Cleveland Cavaliers',
+        'DAL': 'Dallas Mavericks', 
+        'DEN': 'Denver Nuggets', 
+        'DET': 'Detroit Pistons',
+        'GSW': 'Golden State Warriors', 
+        'HOU': 'Houston Rockets', 
+        'IND': 'Indiana Pacers',
+        'LAC': 'Los Angeles Clippers',  # ✅ FIXED - was 'LA Clippers'
+        'LAL': 'Los Angeles Lakers', 
+        'MEM': 'Memphis Grizzlies',
+        'MIA': 'Miami Heat', 
+        'MIL': 'Milwaukee Bucks', 
+        'MIN': 'Minnesota Timberwolves',
+        'NOP': 'New Orleans Pelicans', 
+        'NYK': 'New York Knicks', 
+        'OKC': 'Oklahoma City Thunder',
+        'ORL': 'Orlando Magic', 
+        'PHI': 'Philadelphia 76ers', 
+        'PHX': 'Phoenix Suns',
+        'POR': 'Portland Trail Blazers', 
+        'SAC': 'Sacramento Kings', 
+        'SAS': 'San Antonio Spurs',
+        'TOR': 'Toronto Raptors', 
+        'UTA': 'Utah Jazz', 
+        'WAS': 'Washington Wizards'
     }
     
     def __init__(self, scraper_service_url: str, seasons: List[int] = None, 
@@ -79,6 +114,7 @@ class OddsApiLinesBackfillJob:
         self.processed_dates = 0
         self.failed_dates = []
         self.skipped_dates = []
+        self.unmatched_games = []  # Track games that couldn't be matched
         
         # Rate limiting (conservative for API limits)
         self.RATE_LIMIT_DELAY = 1.0
@@ -107,13 +143,46 @@ class OddsApiLinesBackfillJob:
         if dry_run:
             logger.info("DRY RUN MODE - No API calls will be performed")
         
+        # Send job start notification
+        try:
+            notify_info(
+                title="Odds API Game Lines Backfill Started",
+                message=f"Starting backfill for seasons: {', '.join(map(str, self.seasons))}",
+                details={
+                    'job': 'odds_api_lines_backfill',
+                    'seasons': self.seasons,
+                    'bucket': self.bucket_name,
+                    'service_url': self.scraper_service_url,
+                    'limit': self.limit,
+                    'dry_run': dry_run,
+                    'start_time': start_time.isoformat()
+                }
+            )
+        except Exception as e:
+            logger.warning(f"Failed to send start notification: {e}")
+        
         try:
             # Collect all game dates from schedule files
             all_game_dates = self._collect_all_game_dates()
             self.total_dates = len(all_game_dates)
             
             if self.total_dates == 0:
-                logger.error("No game dates found! Check schedule files.")
+                error_msg = "No game dates found! Check schedule files."
+                logger.error(error_msg)
+                try:
+                    notify_error(
+                        title="Odds API Lines Backfill Failed - No Game Dates",
+                        message=error_msg,
+                        details={
+                            'job': 'odds_api_lines_backfill',
+                            'seasons': self.seasons,
+                            'bucket': self.bucket_name,
+                            'lines_start_date': str(self.LINES_START_DATE)
+                        },
+                        processor_name="Odds API Game Lines Backfill"
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to send error notification: {e}")
                 return
             
             # Estimate duration (2+ API calls per date: events + lines per game)
@@ -156,7 +225,20 @@ class OddsApiLinesBackfillJob:
                     time.sleep(self.RATE_LIMIT_DELAY)
                     
                 except KeyboardInterrupt:
-                    logger.warning("Job interrupted")
+                    logger.warning("Job interrupted by user")
+                    try:
+                        notify_warning(
+                            title="Odds API Lines Backfill Interrupted",
+                            message="Job was interrupted by user",
+                            details={
+                                'job': 'odds_api_lines_backfill',
+                                'processed': self.processed_dates,
+                                'total': self.total_dates,
+                                'progress_pct': (self.processed_dates / self.total_dates * 100) if self.total_dates > 0 else 0
+                            }
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to send interrupt notification: {e}")
                     break
                 except Exception as e:
                     logger.error("Error processing date %s: %s", game_date, e)
@@ -168,6 +250,21 @@ class OddsApiLinesBackfillJob:
             
         except Exception as e:
             logger.error("Backfill job failed: %s", e, exc_info=True)
+            try:
+                notify_error(
+                    title="Odds API Lines Backfill Job Failed",
+                    message=f"Job crashed with exception: {str(e)}",
+                    details={
+                        'job': 'odds_api_lines_backfill',
+                        'error_type': type(e).__name__,
+                        'error_message': str(e),
+                        'processed': self.processed_dates,
+                        'total': self.total_dates
+                    },
+                    processor_name="Odds API Game Lines Backfill"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send error notification: {notify_ex}")
             raise
     
     def _collect_all_game_dates(self) -> List[Dict[str, Any]]:
@@ -175,6 +272,7 @@ class OddsApiLinesBackfillJob:
         logger.info("Collecting game dates from GCS schedule files...")
         
         all_game_dates = []
+        season_errors = []
         
         for season in self.seasons:
             try:
@@ -210,8 +308,42 @@ class OddsApiLinesBackfillJob:
                 
                 logger.info("Season %d: %d game dates", season, len(date_game_map))
                 
+            except FileNotFoundError as e:
+                error_msg = f"Schedule not found for season {season}: {e}"
+                logger.error(error_msg)
+                season_errors.append({'season': season, 'error': str(e)})
+                try:
+                    notify_warning(
+                        title="Season Schedule Not Found",
+                        message=f"Could not find schedule file for season {season}",
+                        details={
+                            'job': 'odds_api_lines_backfill',
+                            'season': season,
+                            'bucket': self.bucket_name,
+                            'error': str(e)
+                        }
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+                continue
             except Exception as e:
-                logger.error("Error processing season %d: %s", season, e)
+                error_msg = f"Error processing season {season}: {e}"
+                logger.error(error_msg, exc_info=True)
+                season_errors.append({'season': season, 'error': str(e)})
+                try:
+                    notify_error(
+                        title="Season Processing Failed",
+                        message=f"Failed to process schedule for season {season}",
+                        details={
+                            'job': 'odds_api_lines_backfill',
+                            'season': season,
+                            'error_type': type(e).__name__,
+                            'error': str(e)
+                        },
+                        processor_name="Odds API Game Lines Backfill"
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
                 continue
         
         # Sort by date
@@ -237,6 +369,22 @@ class OddsApiLinesBackfillJob:
                        self.limit, filtered_count)
         
         logger.info("Total game dates to process: %d", len(all_game_dates))
+        
+        # Send summary notification if there were season errors
+        if season_errors:
+            try:
+                notify_warning(
+                    title="Some Seasons Failed to Load",
+                    message=f"{len(season_errors)} seasons had errors during schedule loading",
+                    details={
+                        'job': 'odds_api_lines_backfill',
+                        'failed_seasons': season_errors,
+                        'successful_dates': len(all_game_dates)
+                    }
+                )
+            except Exception as e:
+                logger.warning(f"Failed to send season errors notification: {e}")
+        
         return all_game_dates
     
     def _read_schedule_from_gcs(self, season_year: int) -> Dict[str, Any]:
@@ -261,14 +409,25 @@ class OddsApiLinesBackfillJob:
         return json.loads(latest_blob.download_as_text())
     
     def _extract_all_games_from_schedule(self, schedule_data: Dict) -> List[Dict]:
-        """Extract all games from schedule JSON."""
+        """Extract all games from schedule JSON (supports both old and new formats)."""
         games = []
         
-        schedule_games = schedule_data.get('gameDates', [])
-        if not schedule_games:
-            logger.warning("No 'gameDates' found in schedule")
+        # NEW FORMAT (Sept 2025+): Flat 'games' array
+        if 'games' in schedule_data and isinstance(schedule_data['games'], list):
+            logger.info("Detected new schedule format (flat games array)")
+            for game in schedule_data.get('games', []):
+                game_info = self._extract_game_info_new_format(game)
+                if game_info:
+                    games.append(game_info)
             return games
         
+        # OLD FORMAT: 'gameDates' with nested 'games'
+        schedule_games = schedule_data.get('gameDates', [])
+        if not schedule_games:
+            logger.warning("No 'gameDates' or 'games' found in schedule")
+            return games
+        
+        logger.info("Detected old schedule format (gameDates structure)")
         for game_date_entry in schedule_games:
             # Extract date
             game_date = self._extract_game_date(game_date_entry)
@@ -311,7 +470,7 @@ class OddsApiLinesBackfillJob:
         return None
     
     def _extract_game_info(self, game: Dict, date_str: str) -> Optional[Dict[str, Any]]:
-        """Extract game information for lines collection with filtering."""
+        """Extract game information for lines collection with filtering (OLD FORMAT)."""
         try:
             game_code = game.get('gameCode', '')
             if not game_code or '/' not in game_code:
@@ -351,6 +510,94 @@ class OddsApiLinesBackfillJob:
                 return None
             
             if away_team not in self.NBA_TEAMS or home_team not in self.NBA_TEAMS:
+                logger.warning("Unknown team codes: away=%s, home=%s", away_team, home_team)
+                return None
+            
+            return {
+                "date": date_str,
+                "game_code": game_code,
+                "game_id": game.get('gameId'),
+                "away_team": away_team,
+                "home_team": home_team,
+                "matchup": f"{away_team}@{home_team}",
+                "game_status": game_status,
+                "completed": game_status == 3,
+                "commence_time": game.get('gameDateTimeUTC', ''),
+                "game_label": game_label,
+                "game_sub_label": game_sub_label,
+                "game_type": game_type,
+            }
+        except Exception as e:
+            logger.warning("Error processing game %s: %s", 
+                          game.get('gameCode', 'unknown'), e)
+            return None
+    
+    def _extract_game_info_new_format(self, game: Dict) -> Optional[Dict[str, Any]]:
+        """Extract game information for lines collection (NEW FORMAT - Sept 2025+)."""
+        try:
+            game_code = game.get('gameCode', '')
+            if not game_code or '/' not in game_code:
+                return None
+            
+            # Extract game details
+            game_label = game.get('gameLabel', '')
+            game_sub_label = game.get('gameSubLabel', '')
+            week_name = game.get('weekName', '')
+            week_number = game.get('weekNumber', -1)
+            game_status = game.get('gameStatus', 0)
+            
+            # Extract teams (same structure)
+            away_team = game.get('awayTeam', {}).get('teamTricode', '')
+            home_team = game.get('homeTeam', {}).get('teamTricode', '')
+            
+            # Extract date from game object itself
+            game_date_str = game.get('gameDate', '')  # "10/04/2024 00:00:00"
+            if not game_date_str:
+                game_date_str = game.get('gameDateEst', '')
+            
+            # Parse date
+            if not game_date_str:
+                logger.warning("No date found for game %s", game_code)
+                return None
+            
+            try:
+                # Handle "MM/DD/YYYY HH:MM:SS" format
+                if ' ' in game_date_str:
+                    date_part = game_date_str.split(' ')[0]
+                else:
+                    date_part = game_date_str
+                
+                date_obj = datetime.strptime(date_part, "%m/%d/%Y")
+                date_str = date_obj.strftime("%Y-%m-%d")
+            except ValueError as e:
+                logger.warning("Failed to parse date '%s' for game %s: %s", 
+                             game_date_str, game_code, e)
+                return None
+            
+            # Filter out preseason (week 0) unless playoff
+            if week_number == 0:
+                playoff_indicators = ['Play-In', 'First Round', 'Conf. Semifinals', 
+                                    'Conf. Finals', 'NBA Finals']
+                is_playoff_game = any(indicator in (game_label or '') 
+                                    for indicator in playoff_indicators)
+                if not is_playoff_game:
+                    return None
+            
+            # Filter out All-Star week
+            if week_name == "All-Star":
+                return None
+            
+            # Classify and filter All-Star special events
+            game_type = self._classify_game_type(game_label, game_sub_label)
+            if game_type == "all_star_special":
+                return None
+            
+            # Validate teams
+            if not away_team or not home_team:
+                return None
+            
+            if away_team not in self.NBA_TEAMS or home_team not in self.NBA_TEAMS:
+                logger.warning("Unknown team codes: away=%s, home=%s", away_team, home_team)
                 return None
             
             return {
@@ -425,6 +672,18 @@ class OddsApiLinesBackfillJob:
             events_success = self._collect_events_for_date(game_date)
             if not events_success:
                 logger.warning("Failed to collect events for %s", game_date)
+                try:
+                    notify_warning(
+                        title="Events Collection Failed",
+                        message=f"Could not collect events for date {game_date}",
+                        details={
+                            'job': 'odds_api_lines_backfill',
+                            'game_date': game_date,
+                            'games_count': len(games)
+                        }
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to send notification: {e}")
                 return False
             
             time.sleep(self.RATE_LIMIT_DELAY)
@@ -439,7 +698,7 @@ class OddsApiLinesBackfillJob:
             return True
             
         except Exception as e:
-            logger.error("Error processing date %s: %s", game_date, e)
+            logger.error("Error processing date %s: %s", game_date, e, exc_info=True)
             return False
     
     def _collect_events_for_date(self, game_date: str) -> bool:
@@ -461,10 +720,38 @@ class OddsApiLinesBackfillJob:
                 logger.debug("Events collected for %s", game_date)
                 return True
             else:
-                logger.warning("Events failed for %s: HTTP %d", 
-                             game_date, response.status_code)
+                logger.warning("Events failed for %s: HTTP %d - %s", 
+                             game_date, response.status_code, response.text[:200])
+                try:
+                    notify_warning(
+                        title="Events API Request Failed",
+                        message=f"Events collection returned HTTP {response.status_code}",
+                        details={
+                            'job': 'odds_api_lines_backfill',
+                            'game_date': game_date,
+                            'status_code': response.status_code,
+                            'response_preview': response.text[:500] if hasattr(response, 'text') else 'N/A'
+                        }
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
                 return False
                 
+        except requests.Timeout as e:
+            logger.warning("Events request timeout for %s: %s", game_date, e)
+            try:
+                notify_warning(
+                    title="Events API Timeout",
+                    message=f"Events collection timed out for {game_date}",
+                    details={
+                        'job': 'odds_api_lines_backfill',
+                        'game_date': game_date,
+                        'error': 'Request timeout (60s)'
+                    }
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            return False
         except Exception as e:
             logger.warning("Error collecting events for %s: %s", game_date, e)
             return False
@@ -472,27 +759,56 @@ class OddsApiLinesBackfillJob:
     def _collect_game_lines_for_date(self, game_date: str, games: List[Dict]) -> bool:
         """Collect game lines for each game individually (per-game approach)."""
         lines_collected = 0
+        lines_failed = 0
+        games_unmatched = 0
         
         for game in games:
             try:
                 event_id = self._extract_event_id_from_game(game)
                 if not event_id:
                     logger.debug("No event ID found for game %s", game.get('game_code', 'unknown'))
+                    games_unmatched += 1
+                    self.unmatched_games.append({
+                        'date': game_date,
+                        'game': game.get('matchup', 'unknown')
+                    })
                     continue
                 
                 success = self._collect_game_lines_for_game(game, event_id, game_date)
                 if success:
                     lines_collected += 1
+                else:
+                    lines_failed += 1
                 
                 time.sleep(self.RATE_LIMIT_DELAY)
                 
             except Exception as e:
                 logger.warning("Error collecting lines for game %s: %s", 
                               game.get('game_code', 'unknown'), e)
+                lines_failed += 1
                 continue
         
-        logger.info("Game lines collected: %d/%d games for %s", 
-                   lines_collected, len(games), game_date)
+        logger.info("Game lines collected: %d/%d games for %s (unmatched: %d, failed: %d)", 
+                   lines_collected, len(games), game_date, games_unmatched, lines_failed)
+        
+        # Warn if many games unmatched
+        if games_unmatched > len(games) * 0.3:  # >30% unmatched
+            try:
+                notify_warning(
+                    title="High Event Matching Failure Rate",
+                    message=f"{games_unmatched}/{len(games)} games could not be matched to events",
+                    details={
+                        'job': 'odds_api_lines_backfill',
+                        'game_date': game_date,
+                        'total_games': len(games),
+                        'unmatched': games_unmatched,
+                        'collected': lines_collected,
+                        'failed': lines_failed
+                    }
+                )
+            except Exception as e:
+                logger.warning(f"Failed to send notification: {e}")
+        
         return lines_collected > 0
     
     def _collect_game_lines_for_game(self, game: Dict, event_id: str, game_date: str) -> bool:
@@ -521,19 +837,24 @@ class OddsApiLinesBackfillJob:
                              game.get('game_code', 'unknown'), response.status_code)
                 return False
                 
+        except requests.Timeout as e:
+            logger.warning("Game lines timeout for %s: %s", game.get('game_code', 'unknown'), e)
+            return False
         except Exception as e:
             logger.warning("Error collecting game lines for %s: %s", 
                           game.get('game_code', 'unknown'), e)
             return False
     
     def _extract_event_id_from_game(self, game: Dict) -> Optional[str]:
-        """Extract event ID from game by matching with events data."""
+        """Extract event ID from game by matching with events data - FIXED VERSION."""
         try:
             game_date = game.get('date', '')
             away_team_code = game.get('away_team', '')
             home_team_code = game.get('home_team', '')
             
             if not all([game_date, away_team_code, home_team_code]):
+                logger.warning("Missing game data: date=%s, away=%s, home=%s", 
+                             game_date, away_team_code, home_team_code)
                 return None
             
             # Convert team codes to full names
@@ -541,6 +862,8 @@ class OddsApiLinesBackfillJob:
             home_team_full = self.NBA_TEAMS.get(home_team_code)
             
             if not away_team_full or not home_team_full:
+                logger.error("Unknown team codes: away=%s, home=%s", 
+                           away_team_code, home_team_code)
                 return None
             
             # Use cached events data
@@ -549,6 +872,7 @@ class OddsApiLinesBackfillJob:
             
             events_data = self.events_cache[game_date]
             if not events_data:
+                logger.warning("No events data found for date: %s", game_date)
                 return None
             
             # Find matching event by team names
@@ -558,20 +882,69 @@ class OddsApiLinesBackfillJob:
                 
                 # Try exact match first
                 if (event_home == home_team_full and event_away == away_team_full):
+                    logger.debug("✓ Exact match found for %s@%s: event_id=%s", 
+                               away_team_code, home_team_code, event.get('id')[:12])
                     return event.get('id')
                 
-                # Try partial match (in case team names are slightly different)
-                if (home_team_code.lower() in event_home.lower() and 
-                    away_team_code.lower() in event_away.lower()):
+                # IMPROVED: Smarter partial match
+                # Remove spaces, hyphens, and dots for comparison
+                def normalize_for_matching(text):
+                    return text.lower().replace(' ', '').replace('-', '').replace('.', '')
+                
+                home_normalized = normalize_for_matching(event_home)
+                away_normalized = normalize_for_matching(event_away)
+                home_code_normalized = normalize_for_matching(home_team_code)
+                away_code_normalized = normalize_for_matching(away_team_code)
+                
+                # Check if team code appears in normalized team name
+                home_match = home_code_normalized in home_normalized
+                away_match = away_code_normalized in away_normalized
+                
+                if home_match and away_match:
+                    logger.debug("✓ Partial match found for %s@%s: event_id=%s", 
+                               away_team_code, home_team_code, event.get('id')[:12])
+                    logger.debug("  Matched: '%s' ↔ '%s', '%s' ↔ '%s'",
+                               event_away, away_team_full, event_home, home_team_full)
                     return event.get('id')
             
-            logger.debug("No matching event found for %s@%s on %s", 
+            # CRITICAL: No match found - log details and send notification
+            logger.error("❌ NO EVENT MATCH FOUND for %s@%s on %s", 
                         away_team_code, home_team_code, game_date)
+            logger.error("   Expected: home='%s', away='%s'", home_team_full, away_team_full)
+            logger.error("   Available events:")
+            for event in events_data.get('data', [])[:5]:  # Show first 5
+                logger.error("     - %s @ %s (id: %s)", 
+                           event.get('away_team'), event.get('home_team'), 
+                           event.get('id', 'unknown')[:12])
+            
+            # Send notification for unmatched game
+            try:
+                notify_warning(
+                    title="Odds API Event Matching Failed",
+                    message=f"Could not find matching event for {away_team_code}@{home_team_code}",
+                    details={
+                        'job': 'odds_api_lines_backfill',
+                        'game_date': game_date,
+                        'away_team_code': away_team_code,
+                        'home_team_code': home_team_code,
+                        'expected_away': away_team_full,
+                        'expected_home': home_team_full,
+                        'available_events_count': len(events_data.get('data', [])),
+                        'available_events': [
+                            f"{e.get('away_team')} @ {e.get('home_team')}" 
+                            for e in events_data.get('data', [])[:5]
+                        ],
+                        'game_code': game.get('game_code', 'unknown')
+                    }
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            
             return None
             
         except Exception as e:
-            logger.warning("Error extracting event ID for game %s: %s", 
-                          game.get('game_code', 'unknown'), e)
+            logger.error("Error extracting event ID for game %s: %s", 
+                        game.get('game_code', 'unknown'), e, exc_info=True)
             return None
     
     def _read_events_for_date(self, game_date: str) -> Optional[Dict]:
@@ -590,8 +963,31 @@ class OddsApiLinesBackfillJob:
             latest_blob = max(events_blobs, key=lambda b: b.time_created)
             
             events_json = latest_blob.download_as_text()
-            return json.loads(events_json)
+            events_data = json.loads(events_json)
             
+            # Validate events data structure
+            if not events_data or 'data' not in events_data:
+                logger.warning("Invalid events data structure for %s", game_date)
+                return None
+            
+            return events_data
+            
+        except json.JSONDecodeError as e:
+            logger.error("Failed to parse events JSON for %s: %s", game_date, e)
+            try:
+                notify_error(
+                    title="Events JSON Parse Error",
+                    message=f"Could not parse events file for {game_date}",
+                    details={
+                        'job': 'odds_api_lines_backfill',
+                        'game_date': game_date,
+                        'error': str(e)
+                    },
+                    processor_name="Odds API Game Lines Backfill"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            return None
         except Exception as e:
             logger.warning("Error reading events for date %s: %s", game_date, e)
             return None
@@ -632,7 +1028,7 @@ class OddsApiLinesBackfillJob:
                    progress_pct, current, self.total_dates, eta_hours)
     
     def _print_final_summary(self, start_time: datetime):
-        """Print final job summary."""
+        """Print final job summary with notification."""
         duration = datetime.now() - start_time
         
         logger.info("=" * 60)
@@ -642,8 +1038,10 @@ class OddsApiLinesBackfillJob:
         logger.info("Processed: %d", self.processed_dates)
         logger.info("Skipped: %d", len(self.skipped_dates))
         logger.info("Failed: %d", len(self.failed_dates))
+        logger.info("Unmatched games: %d", len(self.unmatched_games))
         logger.info("Duration: %s", duration)
         
+        success_rate = 0
         if self.total_dates > 0:
             success_rate = (self.processed_dates / self.total_dates) * 100
             logger.info("Success rate: %.1f%%", success_rate)
@@ -651,11 +1049,47 @@ class OddsApiLinesBackfillJob:
         if self.failed_dates:
             logger.warning("Failed dates (first 10): %s", self.failed_dates[:10])
         
+        if self.unmatched_games:
+            logger.warning("Unmatched games (first 10): %s", self.unmatched_games[:10])
+        
         logger.info("Next steps:")
         logger.info("  - Check data: gs://nba-scraped-data/odds-api/game-lines-history/")
         logger.info("  - Validate quality and coverage")
         logger.info("  - Create processors for BigQuery")
         logger.info("  - Set up real-time collection")
+        
+        # Send completion notification
+        try:
+            # Determine notification type based on results
+            if success_rate >= 90:
+                notify_func = notify_info
+                title = "Odds API Game Lines Backfill Completed Successfully"
+            elif success_rate >= 70:
+                notify_func = notify_warning
+                title = "Odds API Game Lines Backfill Completed with Warnings"
+            else:
+                notify_func = notify_error
+                title = "Odds API Game Lines Backfill Completed with Many Failures"
+            
+            notify_func(
+                title=title,
+                message=f"Processed {self.processed_dates}/{self.total_dates} dates ({success_rate:.1f}% success)",
+                details={
+                    'job': 'odds_api_lines_backfill',
+                    'total_dates': self.total_dates,
+                    'processed': self.processed_dates,
+                    'skipped': len(self.skipped_dates),
+                    'failed': len(self.failed_dates),
+                    'unmatched_games': len(self.unmatched_games),
+                    'success_rate': round(success_rate, 1),
+                    'duration_seconds': int(duration.total_seconds()),
+                    'duration_hours': round(duration.total_seconds() / 3600, 2),
+                    'failed_dates_sample': self.failed_dates[:10] if self.failed_dates else [],
+                    'unmatched_games_sample': self.unmatched_games[:10] if self.unmatched_games else []
+                }
+            )
+        except Exception as e:
+            logger.warning(f"Failed to send completion notification: {e}")
 
 
 def main():

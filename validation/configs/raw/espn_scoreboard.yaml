@@ -1,0 +1,144 @@
+# File: validation/configs/raw/espn_scoreboard.yaml
+# Description: ESPN Scoreboard Validation Config - Backup validation source for final game scores
+
+processor:
+  name: "espn_scoreboard"
+  description: "Validates ESPN scoreboard data - backup validation source"
+  table: "nba_raw.espn_scoreboard"
+  partition_required: true  # CRITICAL: All queries must filter on game_date
+  partition_field: "game_date"
+  layers:
+    - gcs
+    - bigquery
+    - schedule
+
+# GCS Layer Validations
+gcs_validations:
+  enabled: true
+  
+  file_presence:
+    bucket: "nba-scraped-data"
+    path_pattern: "espn/scoreboard/{date}/*.json"
+    severity: "error"
+    
+  file_structure:
+    format: "json"
+    required_keys:
+      - timestamp
+      - gamedate
+      - gameCount
+      - games
+    severity: "error"
+    
+  file_quality:
+    min_size_bytes: 100        # Detect empty files
+    max_size_bytes: 50000      # Detect anomalies
+    check_corrupted: true
+    severity: "error"
+  
+  # ESPN-specific GCS validation
+  game_count_consistency:
+    enabled: true
+    check: "gameCount field matches games array length"
+    severity: "warning"
+
+# BigQuery Layer Validations
+bigquery_validations:
+  enabled: true
+  
+  completeness:
+    target_table: "nba_raw.espn_scoreboard"
+    reference_table: "nba_raw.nbac_schedule"
+    match_field: "game_date"
+    reference_filter: "game_status = 3"  # Only completed games
+    severity: "error"
+    
+  team_presence:
+    target_table: "nba_raw.espn_scoreboard"
+    expected_teams: 30
+    check_home: true
+    check_away: true
+    severity: "warning"
+  
+  field_validation:
+    target_table: "nba_raw.espn_scoreboard"
+    
+    required_not_null:
+      - game_id
+      - game_date
+      - home_team_abbr
+      - away_team_abbr
+      - home_team_score
+      - away_team_score
+      - is_completed
+      - processing_confidence
+    
+    # ESPN stores scores as INT64
+    value_ranges:
+      - field: home_team_score
+        min: 0
+        max: 200
+        severity: "warning"
+      - field: away_team_score
+        min: 0
+        max: 200
+        severity: "warning"
+      - field: processing_confidence
+        min: 0.0
+        max: 1.0
+        severity: "error"
+    
+    # Data quality threshold
+    confidence_check:
+      field: processing_confidence
+      min_value: 0.8
+      severity: "warning"
+      message: "Low confidence data detected"
+  
+  # Cross-validation with other sources
+  cross_validation:
+    enabled: true
+    compare_with:
+      - source_table: "nba_raw.bdl_player_boxscores"
+        join_on: "game_id"
+        compare_fields:
+          - espn_field: "home_team_score"
+            source_field: "home_team_score"
+            tolerance: 0
+        severity: "warning"
+
+# Schedule Validations
+schedule_validations:
+  enabled: true
+  
+  data_freshness:
+    target_table: "nba_raw.espn_scoreboard"
+    timestamp_field: "processed_at"
+    max_age_hours: 12
+    severity: "warning"
+  
+  # ESPN runs in Early Morning Final Check (5 AM PT)
+  expected_run_time:
+    hour: 5
+    timezone: "America/Los_Angeles"
+    tolerance_hours: 2
+    severity: "info"
+
+# Remediation Commands
+remediation:
+  processor_backfill_template: |
+    gcloud run jobs execute espn-scoreboard-processor-backfill \
+      --args=--start-date={start_date},--end-date={end_date} \
+      --region=us-west2
+  
+  scraper_backfill_template: |
+    gcloud run jobs execute espn-scoreboard-scraper \
+      --args=--date={date} \
+      --region=us-west2
+
+# Notifications
+notifications:
+  enabled: true
+  channels: ["slack"]
+  on_failure: true
+  on_success: false

@@ -2,6 +2,7 @@
 # File: data_processors/raw/espn/espn_scoreboard_processor.py
 # Description: Processor for ESPN scoreboard data transformation
 # UPDATED: Production-safe with staging table + batch loading (no streaming buffer)
+# FIXED: Handles 0-game days gracefully (All-Star Weekend, off-days)
 
 import json
 import logging
@@ -39,7 +40,7 @@ class EspnScoreboardProcessor(ProcessorBase):
             'OKC': 'OKC', 'ORL': 'ORL', 'PHI': 'PHI', 'PHX': 'PHX',
             'POR': 'POR', 'SA': 'SAS',  # ESPN uses SA
             'SAC': 'SAC', 'TOR': 'TOR', 'UTAH': 'UTA',  # ESPN uses UTAH
-            'WAS': 'WAS'
+            'WSH': 'WAS'  # FIXED: ESPN uses WSH
         }
     
     def map_team_abbreviation(self, espn_abbr: str) -> str:
@@ -126,6 +127,11 @@ class EspnScoreboardProcessor(ProcessorBase):
         scrape_timestamp = raw_data.get('timestamp')
         games_in_file = len(raw_data.get('games', []))
         skipped_games = 0
+        
+        # FIXED: Handle 0-game days (All-Star Weekend, off-days)
+        if games_in_file == 0:
+            logging.info(f"ESPN data has 0 games for {game_date} (All-Star or off-day)")
+            return rows  # Return empty list - this is VALID, not an error
         
         for game in raw_data.get('games', []):
             try:
@@ -241,14 +247,23 @@ class EspnScoreboardProcessor(ProcessorBase):
         """
         Production-safe loading using staging table + MERGE.
         
+        FIXED: Handles 0 rows gracefully (valid for All-Star Weekend, off-days)
+        
         Pattern from BigQuery Lessons Learned:
         - Batch loading (no streaming buffer)
         - Schema enforcement
         - Atomic MERGE operation
         - Graceful failure handling
         """
+        # FIXED: 0 rows is valid (not an error)
         if not rows:
-            return {'rows_processed': 0, 'errors': []}
+            logging.info("No games to load (valid for All-Star Weekend or off-days)")
+            return {
+                'rows_processed': 0,
+                'rows_affected': 0,
+                'errors': [],
+                'zero_games_valid': True  # Flag to distinguish from errors
+            }
         
         table_id = f"{self.project_id}.{self.table_name}"
         temp_table_id = None
@@ -440,7 +455,8 @@ class EspnScoreboardProcessor(ProcessorBase):
                 'rows_processed': load_result.get('rows_processed', 0),
                 'rows_affected': load_result.get('rows_affected', 0),
                 'errors': errors + load_result.get('errors', []),
-                'skipped_due_to_streaming_buffer': load_result.get('skipped_due_to_streaming_buffer', False)
+                'skipped_due_to_streaming_buffer': load_result.get('skipped_due_to_streaming_buffer', False),
+                'zero_games_valid': load_result.get('zero_games_valid', False)  # NEW: Flag valid 0-game days
             }
             
         except json.JSONDecodeError as e:

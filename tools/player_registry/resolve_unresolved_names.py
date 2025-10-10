@@ -43,8 +43,13 @@ logger = logging.getLogger(__name__)
 class ActionLogger:
     """Logs resolution actions to both local file and BigQuery."""
     
-    def __init__(self, project_id: str, local_log_path: str = "logs/unresolved_resolutions.log"):
+    def __init__(self, project_id: str, local_log_path: str = None):
         self.project_id = project_id
+        
+        # Default to /tmp if no path specified
+        if local_log_path is None:
+            local_log_path = "/tmp/unresolved_resolutions.log"
+        
         self.local_log_path = Path(local_log_path)
         self.bq_client = bigquery.Client(project=project_id)
         self.log_table = f"{project_id}.nba_reference.unresolved_resolution_log"
@@ -553,6 +558,7 @@ class UnresolvedNameResolver:
         print(f"\nFound {len(pending)} pending names")
         print(f"Reviewer: {self.reviewer}")
         print(f"Session started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"Logs: /tmp/unresolved_resolutions.log")
         
         actions_taken = []
         
@@ -715,6 +721,7 @@ class UnresolvedNameResolver:
             for action, count in action_counts.items():
                 print(f"  {action}: {count}")
         
+        print(f"\nLogs saved to: /tmp/unresolved_resolutions.log")
         print("="*80 + "\n")
     
     def _handle_create_alias(self, unresolved_row) -> bool:
@@ -1014,4 +1021,3 @@ Shell alias recommendation:
 
 if __name__ == "__main__":
     main()
-    

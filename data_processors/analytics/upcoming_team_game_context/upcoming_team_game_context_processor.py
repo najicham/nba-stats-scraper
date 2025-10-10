@@ -2,39 +2,21 @@
 """
 File: data_processors/analytics/upcoming_team_game_context/upcoming_team_game_context_processor.py
 
-Upcoming Team Game Context Processor
+Upcoming Team Game Context Processor - FIXED VERSION WITH DEBUG LOGGING
 Calculates pregame team-level context for upcoming games including betting lines,
 fatigue metrics, personnel status, momentum, and forward-looking schedule psychology.
 
+CRITICAL FIXES APPLIED:
+1. Extended date range for window functions (LAG/LEAD now work correctly)
+2. Enhanced debug logging for betting lines extraction
+3. Better error handling and validation
+
 DATA SOURCES:
-- nba_raw.nbac_schedule: 
-  * Schedule data (home/away teams, game_id, dates) ✅
-  * Historical game results (scores, winners) - 81.4% coverage since 2021-22 ✅
-- nba_raw.odds_api_game_lines: 
-  * Betting lines (spreads, totals, line movement) ✅
-  * Timezone fix complete - game_date now correctly in US Eastern time
-- nba_raw.nbac_injury_report: Player injury status ✅
-- nba_enriched.travel_distances: Travel distance calculations ✅
-
-ALL DATA QUALITY ISSUES RESOLVED:
-✅ nbac_schedule: home/away teams correct
-✅ Game results: Using nbac_schedule historical scores (81.4% coverage)
-✅ odds_api_game_lines: Timezone conversion fixed (UTC → Eastern)
-
-FEATURES:
-- 39 total fields calculated
-- 10 betting context fields (spreads, totals, line movement)
-- 6 fatigue metrics (days rest, back-to-backs, games in windows)
-- 8 momentum metrics (win/loss streaks, last game margin)
-- 7 forward schedule fields (lookahead context)
-- 3 opponent asymmetry fields
-- Plus injury context, travel, and metadata
-
-Dependencies:
-- nba_raw.nbac_schedule (schedule + historical scores)
-- nba_raw.odds_api_game_lines (betting lines)
-- nba_raw.nbac_injury_report (injury status)
-- nba_enriched.travel_distances (travel data)
+- nba_raw.nbac_schedule: Schedule + historical scores (81.4% coverage)
+- nba_raw.odds_api_game_lines: Betting lines (timezone corrected)
+- nba_raw.nbac_injury_report: Player injury status
+- nba_enriched.travel_distances: Travel calculations
+- nba_raw.espn_scoreboard: Fallback for game results
 """
 
 import logging
@@ -52,6 +34,41 @@ logger = logging.getLogger(__name__)
 
 class UpcomingTeamGameContextProcessor(AnalyticsProcessorBase):
     """Process upcoming team game context analytics."""
+    
+    # Team name to abbreviation mapping for betting lines
+    TEAM_NAME_MAP = {
+        'Atlanta Hawks': 'ATL',
+        'Boston Celtics': 'BOS',
+        'Brooklyn Nets': 'BKN',
+        'Charlotte Hornets': 'CHA',
+        'Chicago Bulls': 'CHI',
+        'Cleveland Cavaliers': 'CLE',
+        'Dallas Mavericks': 'DAL',
+        'Denver Nuggets': 'DEN',
+        'Detroit Pistons': 'DET',
+        'Golden State Warriors': 'GSW',
+        'Houston Rockets': 'HOU',
+        'Indiana Pacers': 'IND',
+        'LA Clippers': 'LAC',
+        'Los Angeles Clippers': 'LAC',
+        'Los Angeles Lakers': 'LAL',
+        'Memphis Grizzlies': 'MEM',
+        'Miami Heat': 'MIA',
+        'Milwaukee Bucks': 'MIL',
+        'Minnesota Timberwolves': 'MIN',
+        'New Orleans Pelicans': 'NOP',
+        'New York Knicks': 'NYK',
+        'Oklahoma City Thunder': 'OKC',
+        'Orlando Magic': 'ORL',
+        'Philadelphia 76ers': 'PHI',
+        'Phoenix Suns': 'PHX',
+        'Portland Trail Blazers': 'POR',
+        'Sacramento Kings': 'SAC',
+        'San Antonio Spurs': 'SAS',
+        'Toronto Raptors': 'TOR',
+        'Utah Jazz': 'UTA',
+        'Washington Wizards': 'WAS',
+    }
     
     def __init__(self):
         super().__init__()
@@ -84,10 +101,10 @@ class UpcomingTeamGameContextProcessor(AnalyticsProcessorBase):
             
             logger.info(f"Processing team context for games from {start_date} to {end_date}")
             
-            # 1. Extract schedule data (both teams per game)
+            # 1. Extract schedule data (both teams per game) - FIXED with extended window
             self._extract_schedule_data(start_date, end_date)
             
-            # 2. Extract betting lines (RE-ENABLED - timezone fix complete!)
+            # 2. Extract betting lines
             self._extract_betting_lines(start_date, end_date)
             
             # 3. Extract historical game results (for streaks/momentum)
@@ -103,10 +120,28 @@ class UpcomingTeamGameContextProcessor(AnalyticsProcessorBase):
             raise
     
     def _extract_schedule_data(self, start_date, end_date) -> None:
-        """Extract schedule with forward-looking context."""
+        """
+        Extract schedule with forward-looking context.
+        
+        CRITICAL FIX: Extended date range for window functions to work correctly.
+        Window functions (LAG/LEAD) need to see games outside the target date range
+        to calculate days_rest and next_game_days_rest properly.
+        """
+        # Calculate extended date range for window functions
+        start_dt = datetime.strptime(start_date, '%Y-%m-%d')
+        end_dt = datetime.strptime(end_date, '%Y-%m-%d')
+        
+        # Extend window: 30 days before (for LAG) and 7 days after (for LEAD)
+        extended_start = (start_dt - timedelta(days=30)).strftime('%Y-%m-%d')
+        extended_end = (end_dt + timedelta(days=7)).strftime('%Y-%m-%d')
+        
+        logger.info(f"Schedule query window: {extended_start} to {extended_end} (extended)")
+        logger.info(f"Target date range: {start_date} to {end_date} (filtered)")
+        
         query = f"""
-        WITH team_schedule AS (
-          -- Get all games for each team (home and away)
+        WITH all_team_games AS (
+          -- Get ALL games in EXTENDED window for LAG/LEAD calculations
+          -- HOME TEAM PERSPECTIVE
           SELECT 
             game_date,
             game_id,
@@ -117,10 +152,11 @@ class UpcomingTeamGameContextProcessor(AnalyticsProcessorBase):
             home_team_tricode,  -- Keep for betting lines join
             away_team_tricode   -- Keep for betting lines join
           FROM `{self.project_id}.nba_raw.nbac_schedule`
-          WHERE game_date >= '{start_date}' AND game_date <= '{end_date}'
+          WHERE game_date BETWEEN '{extended_start}' AND '{extended_end}'
           
           UNION ALL
           
+          -- AWAY TEAM PERSPECTIVE
           SELECT 
             game_date,
             game_id,
@@ -131,46 +167,55 @@ class UpcomingTeamGameContextProcessor(AnalyticsProcessorBase):
             home_team_tricode,  -- Keep for betting lines join
             away_team_tricode   -- Keep for betting lines join
           FROM `{self.project_id}.nba_raw.nbac_schedule`
-          WHERE game_date >= '{start_date}' AND game_date <= '{end_date}'
+          WHERE game_date BETWEEN '{extended_start}' AND '{extended_end}'
         ),
         
-        team_schedule_with_next AS (
+        team_schedule_with_context AS (
           SELECT 
             *,
-            -- Forward-looking schedule context
+            -- Forward-looking schedule context (LEAD sees future games now)
             LEAD(game_date) OVER (PARTITION BY team_abbr ORDER BY game_date) as next_game_date,
             LEAD(opponent_team_abbr) OVER (PARTITION BY team_abbr ORDER BY game_date) as next_opponent,
+            
+            -- Backward-looking context (LAG sees past games now)
             LAG(game_date) OVER (PARTITION BY team_abbr ORDER BY game_date) as last_game_date,
             LAG(opponent_team_abbr) OVER (PARTITION BY team_abbr ORDER BY game_date) as last_opponent,
             LAG(home_game) OVER (PARTITION BY team_abbr ORDER BY game_date) as last_game_home
-          FROM team_schedule
+          FROM all_team_games
         )
         
         SELECT 
           *,
-          -- Calculate days rest
+          -- Calculate days rest (should work now!)
           DATE_DIFF(game_date, last_game_date, DAY) as team_days_rest,
           DATE_DIFF(next_game_date, game_date, DAY) as team_next_game_days_rest,
           
           -- Back-to-back flag
           CASE WHEN DATE_DIFF(game_date, last_game_date, DAY) = 1 THEN TRUE ELSE FALSE END as team_back_to_back
           
-        FROM team_schedule_with_next
+        FROM team_schedule_with_context
+        WHERE game_date BETWEEN '{start_date}' AND '{end_date}'  -- Filter to target dates
         ORDER BY game_date, team_abbr
         """
         
         self.schedule_data = self.bq_client.query(query).to_dataframe()
         logger.info(f"Extracted {len(self.schedule_data)} team-game schedule records")
+        
+        # DEBUG: Check if days_rest is populated
+        if len(self.schedule_data) > 0:
+            null_rest = self.schedule_data['team_days_rest'].isna().sum()
+            if null_rest > 0:
+                logger.warning(f"⚠️  {null_rest}/{len(self.schedule_data)} records have NULL team_days_rest")
+                logger.warning("This suggests window functions not seeing previous games")
+            else:
+                rest_values = self.schedule_data['team_days_rest'].value_counts().sort_index()
+                logger.info(f"✓ team_days_rest distribution: {dict(rest_values)}")
     
     def _extract_betting_lines(self, start_date, end_date) -> None:
         """
         Extract betting lines (spreads and totals) from odds API.
         
-        RE-ENABLED: Timezone fix complete! odds_api_game_lines now has correct dates.
-        
-        Joins on game_date + teams (not game_id) since:
-        - Schedule uses NBA.com game_id (e.g., 0022400563)
-        - Odds API uses hash-based game_id (e.g., 0121869cd6f93c1f8873045e71fa1605)
+        ENHANCED WITH DEBUG LOGGING to diagnose spread extraction issues.
         """
         query = f"""
         WITH latest_lines AS (
@@ -232,24 +277,55 @@ class UpcomingTeamGameContextProcessor(AnalyticsProcessorBase):
           AND l.outcome_name = o.outcome_name
           AND o.rn = 1
         WHERE l.rn = 1
+        ORDER BY l.game_date, l.home_team_abbr, l.market_key, l.outcome_name
         """
         
         self.betting_lines = self.bq_client.query(query).to_dataframe()
         logger.info(f"Extracted {len(self.betting_lines)} betting line records")
+        
+        # DEBUG: Show what betting lines look like
+        if len(self.betting_lines) > 0:
+            # Count by market
+            market_counts = self.betting_lines['market_key'].value_counts()
+            logger.info(f"Market breakdown: {dict(market_counts)}")
+            
+            # Count by bookmaker
+            bookmaker_counts = self.betting_lines['bookmaker_key'].value_counts()
+            logger.info(f"Bookmaker breakdown: {dict(bookmaker_counts)}")
+            
+            # Show sample spread lines
+            spread_sample = self.betting_lines[
+                (self.betting_lines['market_key'] == 'spreads') &
+                (self.betting_lines['bookmaker_key'] == 'draftkings')
+            ].head(5)
+            
+            if len(spread_sample) > 0:
+                logger.info("Sample DraftKings spreads:")
+                for _, line in spread_sample.iterrows():
+                    logger.info(f"  {line['game_date']} {line['home_team_abbr']} vs {line['away_team_abbr']}: "
+                               f"outcome_name='{line['outcome_name']}', point={line['current_line']}")
+            else:
+                logger.warning("⚠️  No DraftKings spreads found in sample!")
+                
+            # Check unique outcome_name values for spreads
+            if 'spreads' in market_counts.index:
+                spread_outcomes = self.betting_lines[
+                    self.betting_lines['market_key'] == 'spreads'
+                ]['outcome_name'].unique()
+                logger.info(f"Unique spread outcome_name values: {list(spread_outcomes)[:10]}")
+        else:
+            logger.warning("⚠️  No betting lines extracted!")
     
     def _extract_game_results(self, start_date) -> None:
         """
         Extract historical game results for momentum/streak calculations.
         
-        Uses dual-source strategy with automatic fallback:
-        1. PRIMARY: nbac_schedule (81.4% coverage, all completed games)
-        2. FALLBACK: espn_scoreboard (when schedule doesn't have scores yet)
-        
-        This handles early-season scenarios where games just finished but
-        schedule table hasn't been updated with final scores yet.
+        Uses dual-source strategy with automatic fallback.
         """
         # Get last 30 days of results before target date
         lookback_date = (datetime.strptime(start_date, '%Y-%m-%d') - timedelta(days=30)).strftime('%Y-%m-%d')
+        
+        logger.info(f"Extracting game results from {lookback_date} to {start_date}")
         
         # PRIMARY: Try nbac_schedule first
         schedule_query = f"""
@@ -266,7 +342,8 @@ class UpcomingTeamGameContextProcessor(AnalyticsProcessorBase):
         WHERE game_date >= '{lookback_date}' 
           AND game_date < '{start_date}'
           AND home_team_score IS NOT NULL  -- Only completed games
-          AND game_status = 3  -- Additional filter for completed games
+          AND game_status = 3  -- Status 3 = Final
+        ORDER BY game_date DESC
         """
         
         self.game_results = self.bq_client.query(schedule_query).to_dataframe()
@@ -275,7 +352,6 @@ class UpcomingTeamGameContextProcessor(AnalyticsProcessorBase):
         
         # FALLBACK: Check espn_scoreboard for any missing dates
         if schedule_count > 0:
-            # Get dates that should have games but might be missing from schedule
             espn_query = f"""
             SELECT 
               e.game_date,
@@ -309,15 +385,12 @@ class UpcomingTeamGameContextProcessor(AnalyticsProcessorBase):
             try:
                 espn_results = self.bq_client.query(espn_query).to_dataframe()
                 if len(espn_results) > 0:
-                    # Append ESPN results to fill gaps
                     self.game_results = pd.concat([self.game_results, espn_results], ignore_index=True)
                     logger.info(f"Added {len(espn_results)} additional games from espn_scoreboard (fallback)")
             except Exception as e:
                 logger.warning(f"Could not fetch espn_scoreboard fallback data: {e}")
-                # Continue with schedule data only
         else:
-            # No schedule data at all - try ESPN as primary
-            logger.warning("No data from nbac_schedule, using espn_scoreboard as primary source")
+            logger.warning("No data from nbac_schedule, trying espn_scoreboard as primary")
             espn_query = f"""
             SELECT 
               game_date,
@@ -405,10 +478,15 @@ class UpcomingTeamGameContextProcessor(AnalyticsProcessorBase):
             if null_teams > 0:
                 issues.append(f"{null_teams} records missing team_abbr")
         
+        # CRITICAL: Check if days_rest is NULL (window function failure)
+        if self.schedule_data is not None:
+            null_rest = self.schedule_data['team_days_rest'].isna().sum()
+            if null_rest > 0:
+                issues.append(f"⚠️  CRITICAL: {null_rest} records missing team_days_rest (window function issue)")
+        
         # Log validation results
         if issues:
             logger.warning(f"Data quality issues found: {'; '.join(issues)}")
-            # Store quality issues but don't fail processing
             for issue in issues:
                 self.log_quality_issue(
                     issue_type='missing_data',
@@ -447,7 +525,7 @@ class UpcomingTeamGameContextProcessor(AnalyticsProcessorBase):
             'season_year': int(game['season_year']) if pd.notna(game['season_year']) else None,
         }
         
-        # Betting context
+        # Betting context (with debug logging)
         record.update(self._calculate_betting_context(game))
         
         # Fatigue metrics
@@ -476,7 +554,7 @@ class UpcomingTeamGameContextProcessor(AnalyticsProcessorBase):
         
         # Data quality tracking
         record.update({
-            'data_quality_tier': 'high',  # Can be enhanced with more checks
+            'data_quality_tier': 'high',
             'primary_source_used': 'nba_schedule',
             'processed_with_issues': False,
             'context_version': 1,
@@ -489,8 +567,7 @@ class UpcomingTeamGameContextProcessor(AnalyticsProcessorBase):
     def _calculate_betting_context(self, game: pd.Series) -> Dict:
         """
         Calculate betting lines context (spreads and totals).
-        
-        RE-ENABLED: Timezone fix complete! Now matches on game_date + home/away teams.
+        ENHANCED WITH DEBUG LOGGING.
         """
         context = {
             'game_spread': None, 
@@ -512,6 +589,7 @@ class UpcomingTeamGameContextProcessor(AnalyticsProcessorBase):
         game_date = game['game_date']
         home_team = game['home_team_tricode']
         away_team = game['away_team_tricode']
+        team_abbr = game['team_abbr']
         
         game_lines = self.betting_lines[
             (self.betting_lines['game_date'] == game_date) &
@@ -523,21 +601,62 @@ class UpcomingTeamGameContextProcessor(AnalyticsProcessorBase):
             logger.debug(f"No betting lines found for {game_date} {home_team} vs {away_team}")
             return context
         
+        # DEBUG: Log what we found
+        logger.debug(f"Found {len(game_lines)} lines for {game_date} {home_team} vs {away_team}")
+        
         # Get spread lines (prioritize DraftKings)
         spread_lines = game_lines[game_lines['market_key'] == 'spreads']
         dk_spreads = spread_lines[spread_lines['bookmaker_key'] == 'draftkings']
         
+        logger.debug(f"  Spread lines available: {len(spread_lines)} total, {len(dk_spreads)} from DraftKings")
+        
         if len(dk_spreads) > 0:
-            # Find the line for this team
-            team_abbr = game['team_abbr']
+            # DEBUG: Show what outcome_name values we have
+            unique_outcomes = dk_spreads['outcome_name'].unique()
+            logger.debug(f"  DraftKings spread outcome_name values: {list(unique_outcomes)}")
             
-            # Check both outcome_name formats (might be team abbr or full name)
-            team_spread = dk_spreads[
-                (dk_spreads['outcome_name'] == team_abbr) |
-                (dk_spreads['outcome_name'].str.contains(team_abbr, na=False))
-            ]
+            # Find the spread for this team using reverse mapping
+            team_spread = None
             
-            if len(team_spread) > 0:
+            # Strategy 1: Direct lookup using outcome_name (full team name)
+            # Find which full name in the outcomes corresponds to our team_abbr
+            target_full_name = None
+            for outcome in unique_outcomes:
+                if outcome in self.TEAM_NAME_MAP and self.TEAM_NAME_MAP[outcome] == team_abbr:
+                    target_full_name = outcome
+                    break
+            
+            if target_full_name:
+                team_spread = dk_spreads[dk_spreads['outcome_name'] == target_full_name]
+                if len(team_spread) > 0:
+                    logger.debug(f"  ✓ Matched spread using team name mapping: {team_abbr} → '{target_full_name}'")
+            
+            # Strategy 2 (fallback): Try exact abbreviation match
+            if team_spread is None or len(team_spread) == 0:
+                team_spread = dk_spreads[dk_spreads['outcome_name'] == team_abbr]
+                if len(team_spread) > 0:
+                    logger.debug(f"  ✓ Matched spread using exact team_abbr: {team_abbr}")
+            
+            # Strategy 3 (fallback): Contains team_abbr (case insensitive)
+            if team_spread is None or len(team_spread) == 0:
+                team_spread = dk_spreads[dk_spreads['outcome_name'].str.contains(team_abbr, na=False, case=False)]
+                if len(team_spread) > 0:
+                    logger.debug(f"  ✓ Matched spread using contains: {team_abbr}")
+            
+            # Strategy 4 (last resort): Home/Away designation
+            if team_spread is None or len(team_spread) == 0:
+                is_home = game['home_game']
+                if is_home:
+                    team_spread = dk_spreads[dk_spreads['outcome_name'].str.lower().isin(['home', home_team.lower()])]
+                    if len(team_spread) > 0:
+                        logger.debug(f"  ✓ Matched spread using 'home' designation")
+                else:
+                    team_spread = dk_spreads[dk_spreads['outcome_name'].str.lower().isin(['away', away_team.lower()])]
+                    if len(team_spread) > 0:
+                        logger.debug(f"  ✓ Matched spread using 'away' designation")
+            
+            # If we found a match
+            if team_spread is not None and len(team_spread) > 0:
                 current = team_spread.iloc[0]['current_line']
                 opening = team_spread.iloc[0]['opening_line']
                 context['game_spread'] = float(current) if pd.notna(current) else None
@@ -547,6 +666,12 @@ class UpcomingTeamGameContextProcessor(AnalyticsProcessorBase):
                     context['spread_movement'] = float(current - opening)
                 
                 context['game_spread_source'] = 'draftkings'
+                logger.debug(f"  ✓ Spread extracted: {context['game_spread']} (opened: {context['opening_spread']})")
+            else:
+                logger.warning(f"  ✗ Could not match spread for team {team_abbr} in outcome_name values: {list(unique_outcomes)}")
+                logger.warning(f"     Consider adding '{team_abbr}' mapping if outcome uses full team name")
+        else:
+            logger.debug(f"  No DraftKings spreads available")
         
         # Get total lines
         total_lines = game_lines[game_lines['market_key'] == 'totals']
@@ -564,10 +689,7 @@ class UpcomingTeamGameContextProcessor(AnalyticsProcessorBase):
                     context['total_movement'] = float(current - opening)
                 
                 context['game_total_source'] = 'draftkings'
-        
-        # Public betting percentages (not available - set to NULL)
-        context['spread_public_betting_pct'] = None
-        context['total_public_betting_pct'] = None
+                logger.debug(f"  ✓ Total extracted: {context['game_total']} (opened: {context['opening_total']})")
         
         return context
     
@@ -576,7 +698,7 @@ class UpcomingTeamGameContextProcessor(AnalyticsProcessorBase):
         team_abbr = game['team_abbr']
         game_date = game['game_date']
         
-        # Get days rest from schedule data (already calculated in query)
+        # Get days rest from schedule data (already calculated in query with FIXED window)
         days_rest = game.get('team_days_rest')
         back_to_back = game.get('team_back_to_back')
         
@@ -646,11 +768,9 @@ class UpcomingTeamGameContextProcessor(AnalyticsProcessorBase):
             players_out = 0
             questionable = 0
         
-        # Note: We don't have explicit "starters" or "star players" designation
-        # For now, using players_out as a proxy
         return {
             'starters_out_count': players_out,  # Simplified
-            'star_players_out_count': 0,  # Not available - would need additional data
+            'star_players_out_count': 0,  # Not available
             'questionable_players_count': questionable
         }
     
@@ -712,18 +832,15 @@ class UpcomingTeamGameContextProcessor(AnalyticsProcessorBase):
         else:
             margin = last_game['away_score'] - last_game['home_score']
         
-        # ATS calculations (simplified - would need spread data)
-        # TODO: Calculate actual ATS from spreads in odds_api_game_lines
-        
         return {
             'team_win_streak_entering': win_streak,
             'team_loss_streak_entering': loss_streak,
             'last_game_margin': int(margin) if pd.notna(margin) else None,
-            'ats_cover_streak': 0,  # TODO: Calculate
-            'ats_fail_streak': 0,  # TODO: Calculate
-            'over_streak': 0,  # TODO: Calculate
-            'under_streak': 0,  # TODO: Calculate
-            'ats_record_last_10': '0-0'  # TODO: Calculate
+            'ats_cover_streak': 0,  # TODO
+            'ats_fail_streak': 0,  # TODO
+            'over_streak': 0,  # TODO
+            'under_streak': 0,  # TODO
+            'ats_record_last_10': '0-0'  # TODO
         }
     
     def _calculate_basic_context(self, game: pd.Series) -> Dict:
@@ -751,26 +868,14 @@ class UpcomingTeamGameContextProcessor(AnalyticsProcessorBase):
     
     def _calculate_forward_schedule(self, game: pd.Series) -> Dict:
         """Calculate forward-looking schedule context."""
-        # Already calculated in schedule query
+        # Already calculated in schedule query (FIXED with extended window)
         next_game_days_rest = game.get('team_next_game_days_rest')
-        
-        # Games in next 7 days (would need full schedule)
-        # TODO: Calculate from complete schedule
-        games_in_next_7 = 0
-        
-        # Next opponent win percentage (would need standings data)
-        # TODO: Calculate from standings
-        next_opponent_win_pct = None
-        
-        # Next game primetime flag (would need schedule details)
-        # TODO: Calculate from schedule broadcast data
-        next_game_primetime = False
         
         return {
             'team_next_game_days_rest': int(next_game_days_rest) if pd.notna(next_game_days_rest) else None,
-            'team_games_in_next_7_days': games_in_next_7,
-            'next_opponent_win_pct': next_opponent_win_pct,
-            'next_game_is_primetime': next_game_primetime
+            'team_games_in_next_7_days': 0,  # TODO
+            'next_opponent_win_pct': None,  # TODO
+            'next_game_is_primetime': False  # TODO
         }
     
     def _calculate_opponent_asymmetry(self, game: pd.Series) -> Dict:
@@ -787,7 +892,7 @@ class UpcomingTeamGameContextProcessor(AnalyticsProcessorBase):
             opp = opponent_game.iloc[0]
             return {
                 'opponent_days_rest': int(opp.get('team_days_rest')) if pd.notna(opp.get('team_days_rest')) else None,
-                'opponent_games_in_next_7_days': 0,  # TODO: Calculate
+                'opponent_games_in_next_7_days': 0,  # TODO
                 'opponent_next_game_days_rest': int(opp.get('team_next_game_days_rest')) if pd.notna(opp.get('team_next_game_days_rest')) else None
             }
         
@@ -799,7 +904,6 @@ class UpcomingTeamGameContextProcessor(AnalyticsProcessorBase):
     
     def _calculate_market_context(self, game: pd.Series) -> Dict:
         """Calculate closing market context (NULL for upcoming games)."""
-        # These fields are for post-game analysis
         return {
             'closing_spread': None,
             'closing_total': None,
@@ -809,10 +913,8 @@ class UpcomingTeamGameContextProcessor(AnalyticsProcessorBase):
     
     def _calculate_referee_context(self, game: pd.Series) -> Dict:
         """Get referee crew assignment."""
-        # Would query nbac_referee_game_pivot view
-        # For now, return NULL - can be enhanced
         return {
-            'referee_crew_id': None
+            'referee_crew_id': None  # TODO
         }
     
     def get_analytics_stats(self) -> Dict:
@@ -834,6 +936,5 @@ class UpcomingTeamGameContextProcessor(AnalyticsProcessorBase):
         """Send success notification with stats."""
         stats = self.get_analytics_stats()
         
-        # Base class handles notifications via step_info
         logger.info(f"Team game context processing complete: {stats['records_processed']} records processed")
         logger.info(f"Date range: {stats['date_range']}, {stats['unique_teams']} teams, {stats['unique_games']} games")

@@ -2,6 +2,7 @@
 # File: backfill_jobs/raw/espn_scoreboard/espn_scoreboard_backfill_job.py
 # Description: Backfill job for processing ESPN scoreboard data from GCS to BigQuery
 #              SCHEDULE-BASED VERSION - Only processes actual game dates
+#              FIXED: Handles 0-game days gracefully (All-Star Weekend, off-days)
 #
 # Monitor Logs:
 #   gcloud beta run jobs executions logs read [execution-id] --region=us-west2
@@ -37,6 +38,8 @@ class EspnScoreboardBackfill:
     - Skips ~500 off-days automatically
     - 37% fewer GCS operations
     - Validates ESPN data against schedule
+    
+    FIXED: Handles 0-game days gracefully (All-Star Weekend, off-days)
     """
     
     def __init__(self, bucket_name: str = 'nba-scraped-data', seasons: List[int] = None):
@@ -49,6 +52,7 @@ class EspnScoreboardBackfill:
         self.total_dates = 0
         self.processed_dates = 0
         self.skipped_dates = []
+        self.zero_game_dates = []  # NEW: Track valid 0-game days
         self.failed_dates = []
         self.missing_files = []
         
@@ -116,13 +120,25 @@ class EspnScoreboardBackfill:
                     # Process the file
                     result = self._process_file(file_path, game_date)
                     
-                    if result.get('rows_processed', 0) > 0:
+                    # FIXED: Check for valid 0-game days (not errors!)
+                    if result.get('zero_games_valid'):
+                        self.zero_game_dates.append(game_date)
+                        logger.info("[%d/%d] 🎯 Processed %s: 0 games (All-Star or off-day)", 
+                                  i, self.total_dates, game_date)
+                        self.processed_dates += 1
+                    elif result.get('rows_processed', 0) > 0:
                         self.processed_dates += 1
                         logger.info("[%d/%d] ✅ Processed %s: %d rows", 
                                   i, self.total_dates, game_date, result['rows_processed'])
-                    else:
+                    elif result.get('errors'):
+                        # Only mark as failed if there are actual errors
                         self.failed_dates.append(game_date)
-                        logger.warning("[%d/%d] ❌ Failed to process %s", 
+                        logger.warning("[%d/%d] ❌ Failed to process %s: %s", 
+                                     i, self.total_dates, game_date, result['errors'][:1])
+                    else:
+                        # No rows, no errors, not marked as zero_games_valid - unexpected state
+                        self.failed_dates.append(game_date)
+                        logger.warning("[%d/%d] ❌ Failed to process %s (unexpected state)", 
                                      i, self.total_dates, game_date)
                     
                     # Progress update every 50 dates
@@ -454,6 +470,7 @@ class EspnScoreboardBackfill:
         logger.info("Total dates: %d", self.total_dates)
         logger.info("Processed: %d", self.processed_dates)
         logger.info("Skipped (already in DB): %d", len(self.skipped_dates))
+        logger.info("Zero-game days (valid): %d", len(self.zero_game_dates))  # NEW
         logger.info("Missing ESPN files: %d", len(self.missing_files))
         logger.info("Failed: %d", len(self.failed_dates))
         logger.info("Duration: %s", duration)
@@ -461,6 +478,9 @@ class EspnScoreboardBackfill:
         if self.total_dates > 0:
             success_rate = (self.processed_dates / self.total_dates) * 100
             logger.info("Success rate: %.1f%%", success_rate)
+        
+        if self.zero_game_dates:
+            logger.info("Zero-game dates (All-Star/off-days): %s", self.zero_game_dates)
         
         if self.missing_files:
             logger.warning("Missing ESPN files (first 10): %s", self.missing_files[:10])

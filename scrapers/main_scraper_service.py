@@ -3,6 +3,7 @@ main_scraper_service.py
 
 Single Cloud Run service that routes to all scrapers based on the 'scraper' parameter.
 FIXED: Import paths for sophisticated base image deployment.
+FIXED: Params can be None bug (handles empty/malformed JSON)
 
 Usage:
   # Start service
@@ -92,7 +93,7 @@ def create_app():
         return jsonify({
             "status": "healthy",
             "service": "nba-scrapers",
-            "version": "2.0.0",
+            "version": "2.0.1",
             "deployment": "sophisticated-base-image",
             "available_scrapers": list(SCRAPER_REGISTRY.keys()),
             "timestamp": datetime.now(timezone.utc).isoformat()
@@ -118,18 +119,27 @@ def create_app():
     def route_scraper():
         """Route to the appropriate scraper based on 'scraper' parameter."""
         try:
-            # Get parameters from JSON body or query params
+            # FIXED: Get parameters from JSON body or query params
+            # Handle case where get_json() returns None
+            params = None
             if request.is_json:
-                params = request.get_json()
-            else:
+                params = request.get_json(silent=True)  # silent=True prevents exceptions
+            
+            # Fallback to query params if JSON is None or not provided
+            if params is None:
                 params = request.args.to_dict()
+            
+            # Final safety check - ensure params is never None
+            if params is None:
+                params = {}
             
             # Get scraper name
             scraper_name = params.get("scraper")
             if not scraper_name:
                 return jsonify({
                     "error": "Missing required parameter: scraper",
-                    "available_scrapers": list(SCRAPER_REGISTRY.keys())
+                    "available_scrapers": list(SCRAPER_REGISTRY.keys()),
+                    "note": "Provide scraper name in JSON body or query parameter"
                 }), 400
             
             # Look up scraper in registry
@@ -200,7 +210,8 @@ def create_app():
             return jsonify({
                 "status": "error",
                 "message": str(e),
-                "scraper": params.get("scraper", "unknown")
+                "scraper": params.get("scraper", "unknown") if params else "unknown",
+                "error_type": type(e).__name__
             }), 500
     
     return app
@@ -219,3 +230,4 @@ if __name__ == "__main__":
     app.run(host=args.host, port=args.port, debug=args.debug)
     # Force rebuild Sun Jul 20 18:09:47 PDT 2025
 # FORCE REBUILD 1753060619
+# FIXED: Params None bug - 2025-10-10

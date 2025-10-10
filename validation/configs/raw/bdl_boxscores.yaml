@@ -1,0 +1,137 @@
+# File: validation/configs/raw/bdl_boxscores.yaml
+# Description: Ball Don't Lie Box Scores Validation Config - Primary game results source
+
+processor:
+  name: "bdl_boxscores"
+  description: "Validates Ball Don't Lie box score data"
+  table: "nba_raw.bdl_player_boxscores"
+  partition_required: true
+  partition_field: "game_date"
+  layers:
+    - gcs
+    - bigquery
+    - schedule
+
+# GCS Layer Validations
+gcs_validations:
+  enabled: true
+  
+  file_presence:
+    bucket: "nba-scraped-data"
+    path_pattern: "ball-dont-lie/boxscores/{date}/*.json"
+    severity: "error"
+  
+  file_structure:
+    format: "json"
+    required_keys:
+      - date
+      - timestamp
+      - rowCount
+      - boxScores
+    severity: "error"
+  
+  # BDL-specific validation
+  row_count_consistency:
+    enabled: true
+    check: "rowCount field matches boxScores array length"
+    severity: "warning"
+
+# BigQuery Layer Validations
+bigquery_validations:
+  enabled: true
+  
+  completeness:
+    target_table: "nba_raw.bdl_player_boxscores"
+    reference_table: "nba_raw.nbac_schedule"
+    match_field: "game_date"
+    reference_filter: "game_status = 3"
+    severity: "error"
+  
+  team_presence:
+    target_table: "nba_raw.bdl_player_boxscores"
+    expected_teams: 30
+    severity: "warning"
+  
+  field_validation:
+    target_table: "nba_raw.bdl_player_boxscores"
+    
+    required_not_null:
+      - game_id
+      - game_date
+      - player_full_name
+      - player_lookup
+      - team_abbr
+      - points  # CRITICAL for props validation
+      - minutes
+    
+    # Player stats ranges
+    value_ranges:
+      - field: points
+        min: 0
+        max: 100
+        severity: "warning"
+      - field: assists
+        min: 0
+        max: 40
+        severity: "warning"
+      - field: total_rebounds
+        min: 0
+        max: 50
+        severity: "warning"
+  
+  # Player count per game validation
+  player_count:
+    enabled: true
+    query: |
+      SELECT 
+        game_id,
+        game_date,
+        COUNT(*) as player_count
+      FROM `{project_id}.nba_raw.bdl_player_boxscores`
+      WHERE game_date >= '{start_date}'
+        AND game_date <= '{end_date}'
+      GROUP BY game_id, game_date
+      HAVING player_count < 20 OR player_count > 40
+    severity: "warning"
+    message: "Unusual player count detected"
+  
+  # Cross-validation
+  cross_validation:
+    enabled: true
+    compare_with:
+      - source_table: "nba_raw.nbac_gamebook_player_stats"
+        join_on: ["game_id", "player_lookup"]
+        compare_fields:
+          - bdl_field: "points"
+            source_field: "points"
+            tolerance: 0
+        filter: "player_status = 'active'"
+        severity: "warning"
+
+# Schedule Validations
+schedule_validations:
+  enabled: true
+  
+  data_freshness:
+    target_table: "nba_raw.bdl_player_boxscores"
+    timestamp_field: "processed_at"
+    max_age_hours: 6  # Should be updated within 6 hours post-game
+    severity: "error"
+
+# Remediation
+remediation:
+  processor_backfill_template: |
+    gcloud run jobs execute bdl-boxscores-processor-backfill \
+      --args=--start-date={start_date},--end-date={end_date} \
+      --region=us-west2
+  
+  scraper_backfill_template: |
+    gcloud run jobs execute bdl-boxscores-scraper \
+      --args=--date={date} \
+      --region=us-west2
+
+notifications:
+  enabled: true
+  channels: ["slack"]
+  on_failure: true
+  on_success: false

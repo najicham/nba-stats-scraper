@@ -42,3 +42,7 @@ sentry-sdk==1.38.0
 # Common utilities
 six==1.17.0
 cachetools==5.5.2
+
+# Fuzzy string matching (for team name mapping)
+fuzzywuzzy==0.18.0
+python-Levenshtein==0.21.1
