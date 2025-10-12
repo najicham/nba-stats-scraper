@@ -35,7 +35,15 @@ from google.cloud import bigquery
 # Add project root to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
-from shared.utils.universal_player_id_resolver import resolve_or_create_universal_id
+# Try to import universal player ID resolver, use fallback if not available
+try:
+    from shared.utils.universal_player_id_resolver import resolve_or_create_universal_id
+    HAS_RESOLVER = True
+except ImportError:
+    HAS_RESOLVER = False
+    def resolve_or_create_universal_id(player_lookup: str) -> str:
+        """Fallback function if resolver not available."""
+        return f"{player_lookup}_001"
 
 logger = logging.getLogger(__name__)
 
@@ -116,6 +124,10 @@ class UnresolvedNameResolver:
         
         self.reviewer = os.environ.get('USER', 'unknown')
         self.action_logger = ActionLogger(self.project_id)
+        
+        # Warn if resolver not available
+        if not HAS_RESOLVER and not test_mode:
+            logger.warning("Universal player ID resolver not found - using fallback pattern {player_lookup}_001")
         
     # =========================================================================
     # QUERY OPERATIONS
@@ -345,6 +357,8 @@ class UnresolvedNameResolver:
         # Get universal player ID
         try:
             universal_player_id = resolve_or_create_universal_id(player_lookup)
+            if not HAS_RESOLVER:
+                print(f"  Note: Using fallback ID pattern (resolver not available)")
         except Exception as e:
             print(f"\nError resolving universal ID: {e}")
             universal_player_id = f"{player_lookup}_001"

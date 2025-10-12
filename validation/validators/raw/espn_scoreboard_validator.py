@@ -205,7 +205,10 @@ class EspnScoreboardValidator(BaseValidator):
           s.game_id,
           s.game_date
         FROM schedule_games s
-        LEFT JOIN espn_games e ON s.game_id = e.game_id
+        LEFT JOIN espn_games e 
+            ON s.game_date = e.game_date
+            AND s.home_team_abbr = e.home_team_abbr
+            AND s.away_team_abbr = e.away_team_abbr
         WHERE e.game_id IS NULL
         ORDER BY s.game_date
         LIMIT 20

@@ -1,0 +1,476 @@
+# File: validation/configs/raw/odds_game_lines.yaml
+# Odds API Game Lines Validator Configuration v2
+# NEW: Added GCS validation configuration
+
+name: "odds_game_lines"
+description: "Validates Odds API game lines data (spreads and totals) from DraftKings and FanDuel"
+type: "raw"  # Raw data validator
+
+# Processor information
+processor:
+  name: "odds_api_game_lines"
+  description: "Processes Odds API game lines data into BigQuery"
+  schedule: "hourly during game days"
+  table: "nba_raw.odds_api_game_lines"
+
+# Data source information
+data_source:
+  api: "The Odds API"
+  endpoint: "odds"
+  update_frequency: "hourly during game days"
+  bookmakers: ["draftkings", "fanduel"]
+  markets: ["spreads", "totals"]
+
+# BigQuery table configuration
+bigquery:
+  project: "nba-props-platform"
+  dataset: "nba_raw"
+  table: "odds_api_game_lines"
+  partition_field: "game_date"
+  require_partition_filter: true
+  cluster_fields: ["game_id", "bookmaker_key", "market_key", "snapshot_timestamp"]
+
+# NEW: GCS configuration for file validation
+gcs:
+  bucket: "nba-scraped-data"
+  prefix: "odds-api/game-lines-history"
+  file_pattern: "{date}/"  # Pattern to check for files
+  
+  # Validation settings
+  validation:
+    enabled: true
+    check_playoffs: true  # Ensure playoff games aren't skipped
+    check_regular_season: true
+    
+  # Known gaps (acceptable missing files)
+  known_gaps:
+    - dates: ["2024-02-16", "2024-02-17", "2024-02-18"]
+      reason: "All-Star break - no games"
+    - dates: ["2023-02-17", "2023-02-18", "2023-02-19"]
+      reason: "All-Star break - no games"
+
+# Expected data completeness
+# Each game should have 8 rows: 2 bookmakers × 2 markets × 2 outcomes
+expected_coverage:
+  rows_per_game: 8
+  bookmakers: 2  # DraftKings + FanDuel
+  markets: 2     # spreads + totals
+  outcomes: 2    # home + away (or over/under)
+  
+  # Historical data ranges (INCLUDING PLAYOFFS)
+  seasons:
+    - name: "2021-22"
+      start_date: "2021-10-19"
+      end_date: "2022-06-16"  # Extended to include playoffs
+      expected_games: 1312  # 1230 regular season + ~82 playoff games
+      playoff_start: "2022-04-16"
+    - name: "2022-23"  
+      start_date: "2022-10-18"
+      end_date: "2023-06-12"  # Extended to include playoffs
+      expected_games: 1312
+      playoff_start: "2023-04-15"
+    - name: "2023-24"
+      start_date: "2023-10-24"
+      end_date: "2024-06-17"  # Extended to include playoffs
+      expected_games: 1312
+      playoff_start: "2024-04-20"
+    - name: "2024-25"
+      start_date: "2024-10-22"
+      end_date: "2025-06-30"  # Extended to include playoffs
+      expected_games: 1312
+      playoff_start: "2025-04-19"
+
+# NBA Schedule Service integration for cross-validation
+schedule_service:
+  enabled: true
+  mode: "database_first"  # Try BigQuery first, fallback to GCS
+  
+  # Schedule table configuration (correct table from Schedule Service doc)
+  schedule_table:
+    project: "nba-props-platform"
+    dataset: "nba_reference"
+    table: "nba_schedule"
+    
+  # Cross-validation settings
+  cross_validation:
+    enabled: true
+    check_missing_dates: true      # Alert if entire dates missing
+    check_missing_games: true      # Alert if specific games missing
+    check_game_counts: true        # Verify game counts match schedule
+    check_playoffs: true           # NEW: Specifically check playoff games
+    
+    # Severity levels for different issues
+    missing_games_severity: "critical"     # Complete date failure (API scraper issue)
+    game_count_mismatch_severity: "error"  # Some games missing
+    partial_data_severity: "warning"       # Game exists but incomplete rows
+    missing_playoff_severity: "critical"   # NEW: Playoff games missing
+
+# Known issues and acceptable gaps
+known_issues:
+  acceptable_gaps:
+    - dates: ["2023-11-21", "2023-11-25"]  # Thanksgiving 2023
+      reason: "API rate limits during holiday"
+    - dates: ["2024-04-05", "2024-04-15"]  # End of 2023-24 season
+      reason: "API subscription lapse"
+    - dates: ["2025-02-14", "2025-02-15", "2025-02-16"]  # All-Star break 2025
+      reason: "No games scheduled"
+    - dates: ["2024-02-16", "2024-02-17", "2024-02-18"]  # All-Star break 2024
+      reason: "No games scheduled"
+    - dates: ["2023-02-17", "2023-02-18", "2023-02-19"]  # All-Star break 2023
+      reason: "No games scheduled"
+    - dates: ["2022-02-18", "2022-02-19", "2022-02-20"]  # All-Star break 2022
+      reason: "No games scheduled"
+  
+  acceptable_incomplete:
+    description: "Some games may have <8 rows due to bookmaker availability"
+    max_percentage: 1.0  # Allow up to 1% incomplete games
+    
+  known_bookmaker_gaps:
+    - bookmaker: "fanduel"
+      date_range: ["2021-10-19", "2021-11-01"]
+      reason: "FanDuel not tracked in early backfill"
+
+# Validation checks configuration
+validations:
+  
+  # ============================================================================
+  # GCS Layer Validations (NEW)
+  # ============================================================================
+  
+  gcs:
+    - name: "file_existence"
+      type: "file_check"
+      severity: "critical"
+      description: "Verify GCS files exist for ALL scheduled games (regular season + playoffs)"
+      enabled: true
+      
+    - name: "playoff_file_existence"
+      type: "file_check"
+      severity: "critical"
+      description: "Specifically verify playoff games have GCS files"
+      enabled: true
+      
+  # ============================================================================
+  # BigQuery Layer Validations  
+  # ============================================================================
+  
+  bigquery:
+    
+    # ------------------------------------------------------------------------
+    # Basic Data Quality
+    # ------------------------------------------------------------------------
+    
+    - name: "row_count"
+      type: "count"
+      severity: "error"
+      description: "Verify minimum row count for date range"
+      query: |
+        SELECT COUNT(*) as row_count
+        FROM `{project}.{dataset}.{table}`
+        WHERE {partition_filter}
+      threshold:
+        min: 1
+        
+    - name: "null_critical_fields"
+      type: "null_check"
+      severity: "critical"
+      description: "Check for nulls in critical fields"
+      query: |
+        SELECT 
+          COUNTIF(game_id IS NULL) as null_game_id,
+          COUNTIF(bookmaker_key IS NULL) as null_bookmaker,
+          COUNTIF(market_key IS NULL) as null_market,
+          COUNTIF(outcome_name IS NULL) as null_outcome,
+          COUNTIF(outcome_price IS NULL) as null_price,
+          COUNTIF(commence_time IS NULL) as null_commence_time,
+          COUNTIF(snapshot_timestamp IS NULL) as null_snapshot
+        FROM `{project}.{dataset}.{table}`
+        WHERE {partition_filter}
+      threshold:
+        max: 0
+        
+    - name: "duplicate_rows"
+      type: "duplicate_check"
+      severity: "error"
+      description: "Check for duplicate rows (same game, bookmaker, market, outcome, snapshot)"
+      query: |
+        SELECT 
+          game_id,
+          bookmaker_key,
+          market_key,
+          outcome_name,
+          snapshot_timestamp,
+          COUNT(*) as duplicate_count
+        FROM `{project}.{dataset}.{table}`
+        WHERE {partition_filter}
+        GROUP BY 1, 2, 3, 4, 5
+        HAVING COUNT(*) > 1
+      threshold:
+        max_rows: 0
+        
+    # ------------------------------------------------------------------------
+    # Bookmaker Coverage
+    # ------------------------------------------------------------------------
+    
+    - name: "bookmaker_presence"
+      type: "value_check"
+      severity: "error"
+      description: "Verify both DraftKings and FanDuel are present"
+      query: |
+        SELECT 
+          game_date,
+          COUNTIF(bookmaker_key = 'draftkings') as dk_count,
+          COUNTIF(bookmaker_key = 'fanduel') as fd_count
+        FROM `{project}.{dataset}.{table}`
+        WHERE {partition_filter}
+        GROUP BY game_date
+        HAVING dk_count = 0 OR fd_count = 0
+      threshold:
+        max_rows: 0
+        
+    - name: "valid_bookmakers"
+      type: "value_check"
+      severity: "error"
+      description: "Check for invalid bookmaker keys"
+      query: |
+        SELECT DISTINCT bookmaker_key
+        FROM `{project}.{dataset}.{table}`
+        WHERE {partition_filter}
+          AND bookmaker_key NOT IN ('draftkings', 'fanduel')
+      threshold:
+        max_rows: 0
+        
+    # ------------------------------------------------------------------------
+    # Market Coverage
+    # ------------------------------------------------------------------------
+    
+    - name: "market_presence"
+      type: "value_check"
+      severity: "error"
+      description: "Verify both spreads and totals are present"
+      query: |
+        SELECT 
+          game_date,
+          game_id,
+          COUNTIF(market_key = 'spreads') as spread_count,
+          COUNTIF(market_key = 'totals') as total_count
+        FROM `{project}.{dataset}.{table}`
+        WHERE {partition_filter}
+        GROUP BY game_date, game_id
+        HAVING spread_count = 0 OR total_count = 0
+      threshold:
+        max_rows: 0
+        
+    - name: "valid_markets"
+      type: "value_check"
+      severity: "error"
+      description: "Check for invalid market keys"
+      query: |
+        SELECT DISTINCT market_key
+        FROM `{project}.{dataset}.{table}`
+        WHERE {partition_filter}
+          AND market_key NOT IN ('spreads', 'totals')
+      threshold:
+        max_rows: 0
+        
+    # ------------------------------------------------------------------------
+    # Data Value Ranges
+    # ------------------------------------------------------------------------
+    
+    - name: "spread_range"
+      type: "range_check"
+      severity: "warning"
+      description: "Check for spreads outside expected range (-25 to +25)"
+      query: |
+        SELECT 
+          game_id,
+          bookmaker_key,
+          outcome_name,
+          outcome_point,
+          game_date
+        FROM `{project}.{dataset}.{table}`
+        WHERE {partition_filter}
+          AND market_key = 'spreads'
+          AND (outcome_point < -25 OR outcome_point > 25)
+      threshold:
+        max_rows: 0
+        
+    - name: "totals_range"
+      type: "range_check"
+      severity: "warning"
+      description: "Check for totals outside expected range (180-260)"
+      query: |
+        SELECT 
+          game_id,
+          bookmaker_key,
+          outcome_name,
+          outcome_point,
+          game_date
+        FROM `{project}.{dataset}.{table}`
+        WHERE {partition_filter}
+          AND market_key = 'totals'
+          AND (outcome_point < 180 OR outcome_point > 260)
+      threshold:
+        max_rows: 0
+        
+    # ------------------------------------------------------------------------
+    # Team Name Validation
+    # ------------------------------------------------------------------------
+    
+    - name: "valid_team_names"
+      type: "value_check"
+      severity: "error"
+      description: "Check for invalid NBA team names"
+      query: |
+        WITH valid_teams AS (
+          SELECT team FROM UNNEST([
+            'Atlanta Hawks', 'Boston Celtics', 'Brooklyn Nets', 'Charlotte Hornets', 'Chicago Bulls',
+            'Cleveland Cavaliers', 'Dallas Mavericks', 'Denver Nuggets', 'Detroit Pistons',
+            'Golden State Warriors', 'Houston Rockets', 'Indiana Pacers', 'LA Clippers',
+            'Los Angeles Lakers', 'Memphis Grizzlies', 'Miami Heat', 'Milwaukee Bucks',
+            'Minnesota Timberwolves', 'New Orleans Pelicans', 'New York Knicks',
+            'Oklahoma City Thunder', 'Orlando Magic', 'Philadelphia 76ers', 'Phoenix Suns',
+            'Portland Trail Blazers', 'Sacramento Kings', 'San Antonio Spurs', 'Toronto Raptors',
+            'Utah Jazz', 'Washington Wizards'
+          ]) AS team
+        )
+        SELECT DISTINCT home_team
+        FROM `{project}.{dataset}.{table}`
+        WHERE {partition_filter}
+          AND home_team NOT IN (SELECT team FROM valid_teams)
+        UNION DISTINCT
+        SELECT DISTINCT away_team
+        FROM `{project}.{dataset}.{table}`
+        WHERE {partition_filter}
+          AND away_team NOT IN (SELECT team FROM valid_teams)
+      threshold:
+        max_rows: 0
+        
+    # ------------------------------------------------------------------------
+    # Timing Validation
+    # ------------------------------------------------------------------------
+    
+    - name: "snapshot_before_game"
+      type: "timing_check"
+      severity: "warning"
+      description: "Check for snapshots taken after game started (data quality issue)"
+      query: |
+        SELECT 
+          game_id,
+          game_date,
+          commence_time,
+          snapshot_timestamp,
+          TIMESTAMP_DIFF(snapshot_timestamp, commence_time, MINUTE) as minutes_after
+        FROM `{project}.{dataset}.{table}`
+        WHERE {partition_filter}
+          AND snapshot_timestamp > commence_time
+        ORDER BY minutes_after DESC
+        LIMIT 100
+      threshold:
+        max_rows: 0
+
+# Custom validation rules (implemented in validator class)
+custom_validations:
+  
+  # NEW: GCS file validation
+  - name: "gcs_file_validation"
+    severity: "critical"
+    description: "Check GCS files exist for all scheduled games (INCLUDING PLAYOFFS)"
+    details: |
+      Validates that scraper created GCS files for:
+      - All regular season games
+      - All playoff games (April-June)
+      - Detects scraper failures at the source
+      
+      This is the ROOT CAUSE detector - if file missing, scraper didn't run!
+  
+  - name: "game_completeness"
+    severity: "error"
+    description: "Check each game has 8 rows (2 bookmakers × 2 markets × 2 outcomes)"
+    details: |
+      Perfect game structure:
+      - DraftKings spread home
+      - DraftKings spread away
+      - DraftKings total over
+      - DraftKings total under
+      - FanDuel spread home
+      - FanDuel spread away
+      - FanDuel total over
+      - FanDuel total under
+      
+  - name: "bookmaker_coverage"
+    severity: "error"
+    description: "Verify both DraftKings and FanDuel present for each game"
+    
+  - name: "market_coverage"
+    severity: "error"  
+    description: "Verify both spreads and totals present for each game"
+    
+  - name: "spread_reasonableness"
+    severity: "warning"
+    description: "Flag spreads outside reasonable range (-20 to +20)"
+    
+  - name: "totals_reasonableness"
+    severity: "warning"
+    description: "Flag totals outside reasonable range (200 to 245)"
+    
+  - name: "team_name_consistency"
+    severity: "error"
+    description: "Verify team names match valid NBA teams"
+    
+  - name: "odds_timing"
+    severity: "info"
+    description: "Verify snapshots taken before game commence time"
+    
+  - name: "schedule_service_validation"
+    severity: "critical"
+    description: "Cross-validate with NBA Schedule Service to detect missing games/dates"
+    details: |
+      Uses NBAScheduleService to:
+      1. Get expected game dates from schedule
+      2. Check if odds data exists for those dates
+      3. Alert on missing dates (CRITICAL - API scraper failure)
+      4. Alert on missing games (ERROR - partial scraper failure)
+      5. Verify game counts match (ERROR - data quality issue)
+      6. NEW: Specifically validate playoff games aren't skipped
+
+# Notification configuration
+notifications:
+  email:
+    enabled: true
+    recipients: ["alerts@example.com"]
+    
+  slack:
+    enabled: true
+    channel: "#data-quality-alerts"
+    
+  # When to notify
+  notify_on:
+    - "error"
+    - "critical"
+    
+  # Suppress notifications for known issues
+  suppress_known_issues: true
+
+# Remediation
+remediation:
+  auto_fix: false  # Don't auto-fix, just report
+  
+  commands:
+    missing_date: |
+      # Re-run scraper for missing date
+      gcloud run jobs execute odds-api-game-lines-scraper \
+        --args=--date={date} \
+        --region=us-west2
+        
+    incomplete_game: |
+      # Re-run scraper for specific game date
+      gcloud run jobs execute odds-api-game-lines-scraper \
+        --args=--date={game_date} \
+        --region=us-west2
+        
+    missing_gcs_file: |
+      # Re-run scraper for date with missing GCS file
+      gcloud run jobs execute odds-api-game-lines-scraper \
+        --args=--date={date} \
+        --region=us-west2

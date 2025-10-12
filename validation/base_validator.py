@@ -227,25 +227,27 @@ class BaseValidator:
     # ========================================================================
     
     def validate(
-        self, 
+        self,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         season_year: Optional[int] = None,
-        layers: Optional[List[str]] = None,
-        notify: bool = True
+        notify: bool = True,
+        output_mode: str = 'summary',  # NEW PARAMETER
+        layers: Optional[List[str]] = None  # Add this line
     ) -> ValidationReport:
         """
-        Run all validations for this processor.
-        
+        Run all validations for this processor
+
         Args:
             start_date: Start date (YYYY-MM-DD) or None for auto-detect
             end_date: End date (YYYY-MM-DD) or None for auto-detect
-            season_year: Filter by season (2024 for 2024-25) or None
-            layers: Which layers to validate ['gcs', 'bigquery', 'schedule']
+            season_year: Season year or None
             notify: Send notifications on failure
-        
+            output_mode: 'summary' (default), 'detailed', or 'quiet'
+            layers: List of layers to validate ['gcs', 'bigquery'] or None for default
+
         Returns:
-            ValidationReport with all results
+            ValidationReport with results
         """
         self._start_time = time.time()
         self.results = []
@@ -255,8 +257,14 @@ class BaseValidator:
         run_id = f"{self.processor_name}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}"
         
         # Auto-detect date range if not provided
+        # Auto-detect date range if not provided
         if not start_date or not end_date:
             start_date, end_date = self._auto_detect_date_range(season_year)
+        
+        # Store as instance variables for custom validators
+        self.start_date = start_date
+        self.end_date = end_date
+        self.season_year = season_year
         
         logger.info("=" * 80)
         logger.info(f"Starting validation: {self.processor_name}")
@@ -282,7 +290,12 @@ class BaseValidator:
                 self._validate_schedule_layer(start_date, end_date)
             
             # Run custom validations (override in subclass)
+            logger.info(f"DEBUG: About to call _run_custom_validations, layers={layers}")
+            logger.info(f"DEBUG: Method exists? {hasattr(self, '_run_custom_validations')}")
+            
+            # Run custom validations (override in subclass)
             self._run_custom_validations(start_date, end_date, season_year)
+            logger.info(f"DEBUG: Finished _run_custom_validations, results count: {len(self.results)}")
             
         except Exception as e:
             logger.error(f"Validation failed with error: {e}")
@@ -299,17 +312,110 @@ class BaseValidator:
         # Generate report
         report = self._generate_report(run_id, start_date, end_date, season_year)
         
-        # Send notifications
-        if notify and report.overall_status != ValidationStatus.PASS.value:
-            self._send_notification(report)
+        # Print based on output mode (NEW!)
+        if output_mode == 'summary':
+            self._print_validation_summary(report)
+        elif output_mode == 'detailed':
+            self._print_detailed_report(report)
+        elif output_mode == 'quiet':
+            pass  # No console output
+        else:
+            # Default to summary for unknown modes
+            self._print_validation_summary(report)
         
-        # Save results to BigQuery
+        # Save results to BigQuery (existing)
         try:
             self._save_results(report)
         except Exception as e:
             logger.error(f"Failed to save results to BigQuery: {e}")
         
+        # Send notifications (existing)
+        if notify and report.overall_status != "pass":
+            try:
+                self._send_notification(report)
+            except Exception as e:
+                logger.error(f"Failed to send notifications: {e}")
+        
         return report
+    
+    def _print_validation_summary(self, report: ValidationReport):
+        """Print concise validation summary (10-20 lines)"""
+        status_emoji = "✅" if report.overall_status == "pass" else "❌"
+        status_text = report.overall_status.upper()
+        
+        print("=" * 80)
+        print(f"VALIDATION SUMMARY: {report.processor_name}")
+        print("=" * 80)
+        print(f"Status: {status_emoji} {status_text}")
+        print(f"Checks: {report.passed_checks}/{report.total_checks} passed")
+        print(f"Duration: {report.execution_duration:.1f}s")
+        print(f"Date Range: {report.date_range_start} to {report.date_range_end}")
+        print()
+        
+        if report.overall_status == "pass":
+            print("✅ All validations passed!")
+        else:
+            # Show failed checks
+            failed_results = [r for r in report.results if r.status in ['fail', 'error']]
+            if failed_results:
+                print(f"❌ Failed Checks ({len(failed_results)}):")
+                for result in failed_results:
+                    severity_emoji = "🔴" if result.severity == 'critical' else "🟡"
+                    # Truncate message to 60 chars
+                    msg = result.message[:60] + "..." if len(result.message) > 60 else result.message
+                    affected = f"Affected: {result.affected_count} items" if result.affected_count else ""
+                    print(f"  {severity_emoji} {result.check_name}: {msg}")
+                    if affected:
+                        print(f"     {affected}")
+        
+        # Show layer stats
+        print()
+        print("📊 By Layer:")
+        layer_stats = self._get_layer_stats(report)
+        for layer, stats in layer_stats.items():
+            print(f"  {layer}: {stats['passed']} passed, {stats['failed']} failed")
+        
+        print("=" * 80)
+
+    def _print_detailed_report(self, report: ValidationReport):
+        """Print detailed validation report (existing behavior)"""
+        # Print the existing detailed report
+        logger.info("=" * 80)
+        logger.info(f"VALIDATION REPORT: {report.processor_name}")
+        logger.info("=" * 80)
+        logger.info(f"Run ID: {report.validation_run_id}")
+        logger.info(f"Date Range: {report.date_range_start} to {report.date_range_end}")
+        logger.info(f"Status: {report.overall_status}")
+        logger.info(f"Checks: {report.passed_checks}/{report.total_checks} passed")
+        logger.info(f"Duration: {report.execution_duration:.2f} seconds")
+        logger.info("")
+        
+        if report.overall_status == "pass":
+            logger.info("✅ All validations passed!")
+        else:
+            logger.info("❌ Validation failures detected")
+        
+        logger.info("")
+        logger.info("📊 Summary:")
+        for key, value in report.summary.items():
+            logger.info(f"  {key}: {value}")
+        logger.info("=" * 80)
+
+    def _get_layer_stats(self, report: ValidationReport):
+        """Get pass/fail stats by layer"""
+        stats = {}
+        
+        for result in report.results:
+            layer = result.layer or "Other"
+            if layer not in stats:
+                stats[layer] = {"passed": 0, "failed": 0}
+            
+            if result.status == "pass":
+                stats[layer]["passed"] += 1
+            else:
+                stats[layer]["failed"] += 1
+        
+        return stats
     
     # ========================================================================
     # Layer Validation Methods
@@ -363,13 +469,27 @@ class BaseValidator:
             )
     
     def _validate_schedule_layer(self, start_date: str, end_date: str):
-        """Validate schedule adherence"""
+        """Validate schedule adherence checks"""
         logger.info("Validating schedule adherence...")
         
-        schedule_config = self.config.get('schedule_validations', {})
+        schedule_config = self.config.get('schedule_checks', {})
         
-        if 'data_freshness' in schedule_config:
-            self._check_data_freshness(schedule_config['data_freshness'])
+        # Data freshness check
+        if schedule_config.get('data_freshness', {}).get('enabled', False):
+            # UPDATED: Pass start_date and end_date as parameters
+            self._check_data_freshness(
+                schedule_config['data_freshness'],
+                start_date,
+                end_date
+            )
+        
+        # Processing schedule check
+        if schedule_config.get('processing_schedule', {}).get('enabled', False):
+            self._check_processing_schedule(
+                schedule_config['processing_schedule'],
+                start_date,
+                end_date
+            )
     
     # ========================================================================
     # Specific Validation Checks
@@ -611,8 +731,8 @@ class BaseValidator:
                 execution_duration=duration
             ))
     
-    def _check_data_freshness(self, config: Dict):
-        """Check if data is recent enough"""
+    def _check_data_freshness(self, config: Dict, start_date: str, end_date: str):
+        """Check if data is recent enough within the validation date range"""
         
         check_start = time.time()
         
@@ -620,15 +740,19 @@ class BaseValidator:
         max_age_hours = config.get('max_age_hours', 24)
         timestamp_field = config.get('timestamp_field', 'processed_at')
         
+        # Use validation date range to check freshness within that window
+        # This ensures we check the data we're actually validating
         query = f"""
         SELECT 
           MAX({timestamp_field}) as last_processed,
           TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), MAX({timestamp_field}), HOUR) as hours_old
         FROM `{self.project_id}.{target_table}`
+        WHERE game_date >= '{start_date}'
+          AND game_date <= '{end_date}'
         """
         
         try:
-            # Freshness check doesn't need partition filter (uses MAX aggregate)
+            # Freshness check uses direct query (partition filter already in WHERE clause)
             result = self.bq_client.query(query).result()
             row = next(result)
             
@@ -651,7 +775,7 @@ class BaseValidator:
                 layer="schedule",
                 passed=passed,
                 severity=severity,
-                message=f"Data is {hours_old:.1f} hours old (max: {max_age_hours})" if row.hours_old else "No data found",
+                message=f"Data is {hours_old:.1f} hours old (max: {max_age_hours})" if row.hours_old else "No data found in date range",
                 affected_count=int(hours_old) if not passed and row.hours_old else 0,
                 execution_duration=duration
             ))
@@ -800,24 +924,26 @@ class BaseValidator:
     # Custom Validations (Override in Subclass)
     # ========================================================================
     
-    def _run_custom_validations(
-        self, 
-        start_date: str, 
-        end_date: str,
-        season_year: Optional[int]
-    ):
+    def _run_custom_validations(self, start_date: str, end_date: str, season_year: Optional[int]):
         """
-        Override this method for processor-specific validations.
+        Run odds-specific custom validations (overrides base class method)
         
-        Example:
-            def _run_custom_validations(self, start_date, end_date, season_year):
-                check_start = time.time()
-                # Custom validation logic
-                result = self._check_custom_business_logic()
-                result.execution_duration = time.time() - check_start
-                self.results.append(result)
+        Args:
+            start_date: Start date for validation
+            end_date: End date for validation
+            season_year: Season year (optional)
         """
-        pass
+        logger.info("Running Odds API custom validations...")
+        logger.info(f"DEBUG: start_date={start_date}, end_date={end_date}")
+        logger.info(f"DEBUG: self.start_date={getattr(self, 'start_date', 'NOT SET')}")
+        logger.info(f"DEBUG: self.end_date={getattr(self, 'end_date', 'NOT SET')}")
+        
+        # 1. Game completeness check
+        logger.info("DEBUG: Calling _validate_game_completeness...")
+        result = self._validate_game_completeness()
+        logger.info(f"DEBUG: Got result: {result}")
+        self.results.append(result)
+        logger.info(f"DEBUG: Results now has {len(self.results)} items")
     
     # ========================================================================
     # Reporting
@@ -1002,8 +1128,8 @@ class BaseValidator:
         """Save validation results to BigQuery using batch load"""
         
         # Save to validation_results table
-        results_table_id = f"{self.project_id}.nba_processing.validation_results"
-        runs_table_id = f"{self.project_id}.nba_processing.validation_runs"
+        results_table_id = f"{self.project_id}.validation.validation_results"
+        runs_table_id = f"{self.project_id}.validation.validation_runs"
         
         # Prepare result rows
         result_rows = []

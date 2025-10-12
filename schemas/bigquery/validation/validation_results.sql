@@ -1,6 +1,6 @@
 -- File: schemas/bigquery/validation/validation_results.sql
 -- Description: BigQuery schema for validation system - stores validation results, history, and summaries
--- Dataset: nba_processing
+-- Dataset: validation
 -- Tables:
 --   - validation_results: Individual validation check results
 --   - validation_runs: Metadata about validation runs
@@ -13,9 +13,9 @@
 -- Dataset Creation (if not exists)
 -- ============================================================================
 
-CREATE SCHEMA IF NOT EXISTS `nba_processing`
+CREATE SCHEMA IF NOT EXISTS `validation`
 OPTIONS (
-  description = "Processing metadata, validation results, and operational data",
+  description = "Data validation results, runs, and monitoring",
   location = "us"
 );
 
@@ -23,7 +23,7 @@ OPTIONS (
 -- Main Validation Results Table
 -- ============================================================================
 
-CREATE TABLE IF NOT EXISTS `nba_processing.validation_results` (
+CREATE TABLE IF NOT EXISTS `validation.validation_results` (
   -- Run identification
   validation_run_id STRING NOT NULL,           -- UUID for this validation run
   validation_timestamp TIMESTAMP NOT NULL,     -- When validation ran
@@ -78,7 +78,7 @@ OPTIONS (
 -- Validation Runs Table (Run-level metadata)
 -- ============================================================================
 
-CREATE TABLE IF NOT EXISTS `nba_processing.validation_runs` (
+CREATE TABLE IF NOT EXISTS `validation.validation_runs` (
   -- Run identification
   validation_run_id STRING NOT NULL,           -- UUID for this run (matches validation_results)
   validation_timestamp TIMESTAMP NOT NULL,     -- When run started
@@ -126,7 +126,7 @@ OPTIONS (
 -- View: Recent Failures (Last 7 Days)
 -- ============================================================================
 
-CREATE OR REPLACE VIEW `nba_processing.validation_failures_recent` AS
+CREATE OR REPLACE VIEW `validation.validation_failures_recent` AS
 SELECT 
   validation_timestamp,
   processor_name,
@@ -139,7 +139,7 @@ SELECT
   affected_items,
   remediation_commands,
   overall_status
-FROM `nba_processing.validation_results`
+FROM `validation.validation_results`
 WHERE passed = FALSE
   AND validation_timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAY)
 ORDER BY 
@@ -155,7 +155,7 @@ ORDER BY
 -- View: Processor Health Summary (Last 30 Days)
 -- ============================================================================
 
-CREATE OR REPLACE VIEW `nba_processing.processor_health_summary` AS
+CREATE OR REPLACE VIEW `validation.processor_health_summary` AS
 WITH daily_stats AS (
   SELECT 
     processor_name,
@@ -168,7 +168,7 @@ WITH daily_stats AS (
     SUM(CASE WHEN NOT passed AND severity = 'error' THEN 1 ELSE 0 END) as error_failures,
     SUM(CASE WHEN NOT passed AND severity = 'warning' THEN 1 ELSE 0 END) as warning_failures,
     MAX(validation_timestamp) as last_validation
-  FROM `nba_processing.validation_results`
+  FROM `validation.validation_results`
   WHERE validation_timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 30 DAY)
   GROUP BY processor_name, processor_type, DATE(validation_timestamp)
 )
@@ -191,7 +191,7 @@ ORDER BY validation_date DESC, processor_name;
 -- View: Data Quality Trends (Last 90 Days)
 -- ============================================================================
 
-CREATE OR REPLACE VIEW `nba_processing.validation_trends` AS
+CREATE OR REPLACE VIEW `validation.validation_trends` AS
 WITH weekly_stats AS (
   SELECT 
     processor_name,
@@ -202,7 +202,7 @@ WITH weekly_stats AS (
     SUM(CASE WHEN NOT passed THEN 1 ELSE 0 END) as failed_checks,
     ROUND(SUM(CASE WHEN passed THEN 1 ELSE 0 END) / COUNT(*) * 100, 2) as pass_rate,
     COUNT(DISTINCT validation_run_id) as validation_runs
-  FROM `nba_processing.validation_results`
+  FROM `validation.validation_results`
   WHERE validation_timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 90 DAY)
   GROUP BY processor_name, processor_type, DATE_TRUNC(DATE(validation_timestamp), WEEK)
 )
@@ -227,13 +227,13 @@ ORDER BY week_start DESC, processor_name;
 -- View: Current Processor Status (Latest Run Per Processor)
 -- ============================================================================
 
-CREATE OR REPLACE VIEW `nba_processing.processor_status_current` AS
+CREATE OR REPLACE VIEW `validation.processor_status_current` AS
 WITH latest_runs AS (
   SELECT 
     processor_name,
     processor_type,
     MAX(validation_timestamp) as latest_validation
-  FROM `nba_processing.validation_runs`
+  FROM `validation.validation_runs`
   GROUP BY processor_name, processor_type
 )
 SELECT 
@@ -258,7 +258,7 @@ SELECT
     WHEN TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), r.validation_timestamp, HOUR) > 48 THEN '⚠️ STALE'
     ELSE '✅ HEALTHY'
   END as health_status
-FROM `nba_processing.validation_runs` r
+FROM `validation.validation_runs` r
 INNER JOIN latest_runs l
   ON r.processor_name = l.processor_name
   AND r.processor_type = l.processor_type
@@ -275,22 +275,22 @@ ORDER BY
 -- View: Validation Coverage (Which Processors Are Validated?)
 -- ============================================================================
 
-CREATE OR REPLACE VIEW `nba_processing.validation_coverage` AS
+CREATE OR REPLACE VIEW `validation.validation_coverage` AS
 WITH processor_list AS (
   -- All processors that have ever been validated
   SELECT DISTINCT 
     processor_name,
     processor_type
-  FROM `nba_processing.validation_runs`
+  FROM `validation.validation_runs`
 ),
 last_7_days AS (
   SELECT DISTINCT processor_name
-  FROM `nba_processing.validation_runs`
+  FROM `validation.validation_runs`
   WHERE validation_timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAY)
 ),
 last_30_days AS (
   SELECT DISTINCT processor_name
-  FROM `nba_processing.validation_runs`
+  FROM `validation.validation_runs`
   WHERE validation_timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 30 DAY)
 )
 SELECT 
@@ -302,10 +302,10 @@ SELECT
     ELSE '🔴 No Recent Validation'
   END as validation_status,
   (SELECT MAX(validation_timestamp) 
-   FROM `nba_processing.validation_runs` 
+   FROM `validation.validation_runs` 
    WHERE processor_name = p.processor_name) as last_validated,
   (SELECT COUNT(DISTINCT DATE(validation_timestamp))
-   FROM `nba_processing.validation_runs`
+   FROM `validation.validation_runs`
    WHERE processor_name = p.processor_name
      AND validation_timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 30 DAY)
   ) as validations_last_30d
@@ -322,25 +322,17 @@ ORDER BY
   p.processor_name;
 
 -- ============================================================================
--- Indexes (Clustering already defined, these are query hints)
--- ============================================================================
-
--- The following indexes are implicit from CLUSTER BY but documented here:
--- validation_results: (processor_name, check_type, passed, severity)
--- validation_runs: (processor_name, overall_status)
-
--- ============================================================================
 -- Usage Examples
 -- ============================================================================
 
 /*
 -- Example 1: Get all failures from last validation run
-SELECT * FROM `nba_processing.validation_failures_recent`
+SELECT * FROM `validation.validation_failures_recent`
 WHERE processor_name = 'espn_scoreboard'
 ORDER BY severity DESC;
 
 -- Example 2: Check processor health
-SELECT * FROM `nba_processing.processor_status_current`
+SELECT * FROM `validation.processor_status_current`
 WHERE overall_status IN ('fail', 'warn');
 
 -- Example 3: Get remediation commands for failures
@@ -349,7 +341,7 @@ SELECT
   check_name,
   message,
   remediation_commands
-FROM `nba_processing.validation_results`
+FROM `validation.validation_results`
 WHERE passed = FALSE
   AND validation_timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)
   AND remediation_commands IS NOT NULL;
@@ -360,7 +352,7 @@ SELECT
   pass_rate,
   pass_rate_change,
   total_checks
-FROM `nba_processing.validation_trends`
+FROM `validation.validation_trends`
 WHERE processor_name = 'bdl_boxscores'
   AND processor_type = 'raw'
 ORDER BY week_start DESC
@@ -374,14 +366,14 @@ SELECT
   message,
   affected_count,
   remediation_commands
-FROM `nba_processing.validation_results`
+FROM `validation.validation_results`
 WHERE severity = 'critical'
   AND passed = FALSE
   AND validation_timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)
 ORDER BY validation_timestamp DESC;
 
 -- Example 6: Validation coverage report
-SELECT * FROM `nba_processing.validation_coverage`
+SELECT * FROM `validation.validation_coverage`
 ORDER BY 
   CASE validation_status
     WHEN '✅ Active (7d)' THEN 1
