@@ -232,8 +232,9 @@ class BaseValidator:
         end_date: Optional[str] = None,
         season_year: Optional[int] = None,
         notify: bool = True,
-        output_mode: str = 'summary',  # NEW PARAMETER
-        layers: Optional[List[str]] = None  # Add this line
+        output_mode: str = 'summary',
+        output_file: Optional[str] = None,  # NEW: Add output_file parameter
+        layers: Optional[List[str]] = None
     ) -> ValidationReport:
         """
         Run all validations for this processor
@@ -312,11 +313,14 @@ class BaseValidator:
         # Generate report
         report = self._generate_report(run_id, start_date, end_date, season_year)
         
-        # Print based on output mode (NEW!)
+        # Print based on output mode
         if output_mode == 'summary':
             self._print_validation_summary(report)
         elif output_mode == 'detailed':
             self._print_detailed_report(report)
+        elif output_mode == 'dates':
+            # Special mode: output dates
+            self._print_dates_only(report, output_file)  # Pass output_file
         elif output_mode == 'quiet':
             pass  # No console output
         else:
@@ -400,6 +404,63 @@ class BaseValidator:
         for key, value in report.summary.items():
             logger.info(f"  {key}: {value}")
         logger.info("=" * 80)
+
+    def _print_dates_only(self, report: ValidationReport, output_file: Optional[str] = None):
+        """
+        Print or write missing dates.
+        
+        If output_file is provided, writes dates to file.
+        Otherwise, prints to stdout (for backward compatibility).
+        
+        Args:
+            report: ValidationReport with results
+            output_file: Optional file path to write dates to
+        """
+        # Extract dates from validation results
+        missing_dates = set()
+        
+        # Check if validator has custom date extraction method
+        if hasattr(self, '_extract_dates_from_results'):
+            missing_dates = self._extract_dates_from_results()
+        else:
+            # Fallback: generic extraction from affected_items
+            for result in report.results:
+                if not result.passed and result.affected_items:
+                    for item in result.affected_items:
+                        item_str = str(item).strip()
+                        
+                        # Try to extract date
+                        if ':' in item_str:
+                            potential_date = item_str.split(':')[0].strip()
+                        else:
+                            potential_date = item_str
+                        
+                        # Validate date format YYYY-MM-DD
+                        if (len(potential_date) == 10 and 
+                            potential_date[4] == '-' and 
+                            potential_date[7] == '-' and
+                            potential_date[:4].isdigit() and
+                            potential_date[5:7].isdigit() and
+                            potential_date[8:10].isdigit()):
+                            missing_dates.add(potential_date)
+        
+        # Sort dates chronologically
+        sorted_dates = sorted(missing_dates)
+        
+        # Write to file or print to stdout
+        if output_file:
+            try:
+                with open(output_file, 'w') as f:
+                    for date in sorted_dates:
+                        f.write(f"{date}\n")
+                logger.info(f"✅ Wrote {len(sorted_dates)} dates to {output_file}")
+            except Exception as e:
+                logger.error(f"Failed to write dates to file: {e}")
+                raise
+        else:
+            # Print to stdout (backward compatibility)
+            for date in sorted_dates:
+                print(date)
 
     def _get_layer_stats(self, report: ValidationReport):
         """Get pass/fail stats by layer"""

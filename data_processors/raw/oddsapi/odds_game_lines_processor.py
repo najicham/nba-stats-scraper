@@ -381,11 +381,13 @@ class OddsGameLinesProcessor(ProcessorBase):
             merge_query = f"""
             MERGE `{table_id}` AS target
             USING `{temp_table_id}` AS source
-            ON target.game_id = source.game_id 
-               AND target.snapshot_timestamp = source.snapshot_timestamp
-               AND target.bookmaker_key = source.bookmaker_key
-               AND target.market_key = source.market_key
-               AND target.outcome_name = source.outcome_name
+            ON target.game_date = '{game_date}'          -- Move the literal filter HERE
+            AND target.game_id = source.game_id 
+            AND target.snapshot_timestamp = source.snapshot_timestamp
+            AND target.bookmaker_key = source.bookmaker_key
+            AND target.market_key = source.market_key
+            AND target.outcome_name = source.outcome_name
+            AND target.game_date = source.game_date   -- Keep this too
             WHEN MATCHED THEN
                 UPDATE SET
                     snapshot_timestamp = source.snapshot_timestamp,

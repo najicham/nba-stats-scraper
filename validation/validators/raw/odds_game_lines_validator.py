@@ -1008,7 +1008,43 @@ class OddsGameLinesValidator(BaseValidator):
                 severity=ValidationSeverity.INFO.value,
                 message=f"Failed to check odds timing: {str(e)}"
             )
-    
+        
+    def _extract_dates_from_results(self) -> set:
+      """
+      Extract all unique dates from validation results.
+      
+      Returns:
+          Set of date strings in YYYY-MM-DD format
+      """
+      missing_dates = set()
+      
+      for result in self.results:
+          if not result.passed and result.affected_items:
+              for item in result.affected_items:
+                  # Handle different item formats:
+                  # - "2024-04-23: DAL@LAC" (from GCS validation)
+                  # - "2024-04-23" (from schedule validation)
+                  # - Game IDs or other non-date strings (ignore these)
+                  
+                  item_str = str(item).strip()
+                  
+                  # Extract date from "YYYY-MM-DD: ..." format
+                  if ':' in item_str:
+                      potential_date = item_str.split(':')[0].strip()
+                  else:
+                      potential_date = item_str
+                  
+                  # Validate it's a proper date format (YYYY-MM-DD)
+                  if (len(potential_date) == 10 and 
+                      potential_date[4] == '-' and 
+                      potential_date[7] == '-' and
+                      potential_date[:4].isdigit() and
+                      potential_date[5:7].isdigit() and
+                      potential_date[8:10].isdigit()):
+                      missing_dates.add(potential_date)
+      
+      return missing_dates
+
     def _validate_against_schedule(self) -> ValidationResult:
         """
         Cross-validate with NBA Schedule Service to detect missing games/dates
@@ -1188,8 +1224,14 @@ Examples:
     parser.add_argument('--check-gcs', action='store_true', 
                        help='Validate GCS files exist for all scheduled games (includes playoffs)')
     
-    parser.add_argument('--output', choices=['summary', 'detailed', 'quiet'], 
-                       default='summary', help='Output verbosity (default: summary)')
+    parser.add_argument('--output', 
+                       choices=['summary', 'detailed', 'dates', 'quiet'], 
+                       default='summary', 
+                       help='Output format: summary (human-readable), detailed (full report), dates (date list only for scripting), quiet (no output)')
+    
+    parser.add_argument('--output-file',
+                   help='Write output to file (useful with --output dates)')
+    
     parser.add_argument('--no-notify', action='store_true', 
                        help='Disable email/Slack notifications')
     parser.add_argument('--verbose', action='store_true', 
@@ -1224,7 +1266,8 @@ Examples:
             start_date=start_date.isoformat(),
             end_date=end_date.isoformat(),
             notify=(not args.no_notify),
-            output_mode=args.output
+            output_mode=args.output,
+            output_file=args.output_file  # NEW: Pass output file
         )
         
         # Exit with appropriate code
