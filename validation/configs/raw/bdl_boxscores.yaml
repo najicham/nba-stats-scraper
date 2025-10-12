@@ -1,137 +1,374 @@
 # File: validation/configs/raw/bdl_boxscores.yaml
-# Description: Ball Don't Lie Box Scores Validation Config - Primary game results source
+# Ball Don't Lie Box Scores Validator Configuration
+# Player performance data for prop bet validation and settlement
 
+name: "bdl_boxscores"
+description: "Validates Ball Don't Lie player box scores - individual player performance by game"
+type: "raw"  # Raw data validator
+
+# Processor information
 processor:
-  name: "bdl_boxscores"
-  description: "Validates Ball Don't Lie box score data"
+  name: "bdl_player_boxscores"
+  description: "Processes Ball Don't Lie box scores into BigQuery"
+  schedule: "post-game (8 PM & 11 PM PT) + recovery workflows"
   table: "nba_raw.bdl_player_boxscores"
-  partition_required: true
+
+# Data source information
+data_source:
+  api: "Ball Don't Lie API"
+  endpoint: "box_scores"
+  update_frequency: "post-game (within 30-90 minutes after game completion)"
+  coverage: "active players only (no DNP/inactive)"
+  data_format: "JSON with player stats"
+
+# BigQuery table configuration
+bigquery:
+  project: "nba-props-platform"
+  dataset: "nba_raw"
+  table: "bdl_player_boxscores"
   partition_field: "game_date"
-  layers:
-    - gcs
-    - bigquery
-    - schedule
+  require_partition_filter: true
+  cluster_fields: ["player_lookup", "team_abbr", "game_date"]
+  primary_key: ["player_lookup", "game_id"]
 
-# GCS Layer Validations
-gcs_validations:
-  enabled: true
+# Expected data completeness
+expected_coverage:
+  players_per_game: "~30-35"  # Varies by rotation, not exact
+  players_per_team: "~15-18"  # Varies by coach's rotation decisions
+  active_only: true  # BDL does not include DNP/inactive players
   
-  file_presence:
-    bucket: "nba-scraped-data"
-    path_pattern: "ball-dont-lie/boxscores/{date}/*.json"
-    severity: "error"
+  # Sanity check thresholds
+  thresholds:
+    min_total_players_per_game: 20  # Alert if < 20 total players
+    max_total_players_per_game: 40  # Alert if > 40 (data quality issue)
+    min_players_per_team: 10  # Alert if team has < 10 players
   
-  file_structure:
-    format: "json"
-    required_keys:
-      - date
-      - timestamp
-      - rowCount
-      - boxScores
-    severity: "error"
-  
-  # BDL-specific validation
-  row_count_consistency:
-    enabled: true
-    check: "rowCount field matches boxScores array length"
-    severity: "warning"
+  # Historical data ranges (INCLUDING PLAYOFFS)
+  seasons:
+    - name: "2021-22"
+      start_date: "2021-10-19"
+      end_date: "2022-06-20"  # Extended to include playoffs
+      expected_games: 1312  # 1230 regular season + ~82 playoff games
+      playoff_start: "2022-04-16"
+    - name: "2022-23"  
+      start_date: "2022-10-18"
+      end_date: "2023-06-20"  # Extended to include playoffs
+      expected_games: 1312
+      playoff_start: "2023-04-15"
+    - name: "2023-24"
+      start_date: "2023-10-24"
+      end_date: "2024-06-20"  # Extended to include playoffs
+      expected_games: 1312
+      playoff_start: "2024-04-20"
+    - name: "2024-25"
+      start_date: "2024-10-22"
+      end_date: "2025-06-30"  # Extended to include playoffs
+      expected_games: 1312
+      playoff_start: "2025-04-19"
 
-# BigQuery Layer Validations
-bigquery_validations:
+# Cross-validation with NBA.com gamebook
+gamebook_validation:
   enabled: true
+  table: "nba_raw.nbac_gamebook_player_stats"
+  filter: "player_status = 'active'"  # Match BDL (active players only)
   
-  completeness:
-    target_table: "nba_raw.bdl_player_boxscores"
-    reference_table: "nba_raw.nbac_schedule"
-    match_field: "game_date"
-    reference_filter: "game_status = 3"
-    severity: "error"
+  # Discrepancy thresholds
+  thresholds:
+    points_diff_critical: 2  # >2 points = critical issue
+    points_diff_warning: 1   # 1-2 points = warning
+    assists_diff_warning: 2  # >2 assists = warning
+    rebounds_diff_warning: 2 # >2 rebounds = warning
   
-  team_presence:
-    target_table: "nba_raw.bdl_player_boxscores"
-    expected_teams: 30
-    severity: "warning"
+  # What to check
+  compare_fields:
+    - points      # CRITICAL - used for prop settlement
+    - assists     # HIGH - used for future props
+    - rebounds    # HIGH - used for future props
+    - minutes     # MEDIUM - consistency check
+
+# Known issues and acceptable gaps
+known_issues:
+  acceptable_gaps:
+    - dates: ["2024-02-16", "2024-02-17", "2024-02-18"]  # All-Star break 2024
+      reason: "No games scheduled"
+    - dates: ["2023-02-17", "2023-02-18", "2023-02-19"]  # All-Star break 2023
+      reason: "No games scheduled"
+    - dates: ["2022-02-18", "2022-02-19", "2022-02-20"]  # All-Star break 2022
+      reason: "No games scheduled"
   
-  field_validation:
-    target_table: "nba_raw.bdl_player_boxscores"
+  acceptable_player_count_variations:
+    description: "Player counts vary by coach rotations, injuries, and game situation"
+    examples:
+      - "Blowout games: coaches rest starters, use bench (higher player count)"
+      - "Close games: shorter rotations (lower player count 25-28)"
+      - "Overtime games: starters play more (normal count 30-35)"
     
-    required_not_null:
-      - game_id
-      - game_date
-      - player_full_name
-      - player_lookup
-      - team_abbr
-      - points  # CRITICAL for props validation
-      - minutes
-    
-    # Player stats ranges
-    value_ranges:
-      - field: points
-        min: 0
-        max: 100
-        severity: "warning"
-      - field: assists
-        min: 0
-        max: 40
-        severity: "warning"
-      - field: total_rebounds
-        min: 0
-        max: 50
-        severity: "warning"
-  
-  # Player count per game validation
-  player_count:
-    enabled: true
-    query: |
-      SELECT 
-        game_id,
-        game_date,
-        COUNT(*) as player_count
-      FROM `{project_id}.nba_raw.bdl_player_boxscores`
-      WHERE game_date >= '{start_date}'
-        AND game_date <= '{end_date}'
-      GROUP BY game_id, game_date
-      HAVING player_count < 20 OR player_count > 40
-    severity: "warning"
-    message: "Unusual player count detected"
-  
-  # Cross-validation
-  cross_validation:
-    enabled: true
-    compare_with:
-      - source_table: "nba_raw.nbac_gamebook_player_stats"
-        join_on: ["game_id", "player_lookup"]
-        compare_fields:
-          - bdl_field: "points"
-            source_field: "points"
-            tolerance: 0
-        filter: "player_status = 'active'"
-        severity: "warning"
+  known_data_quality:
+    - issue: "BDL does not include DNP players"
+      impact: "Normal - not a bug"
+      comparison: "NBA.com gamebook includes DNP with 0 stats"
+    - issue: "Player counts lower than gamebook"
+      impact: "Expected - BDL filters out inactive players"
+      resolution: "Cross-validate only active players"
 
-# Schedule Validations
-schedule_validations:
-  enabled: true
+# Validation checks configuration
+validations:
   
-  data_freshness:
-    target_table: "nba_raw.bdl_player_boxscores"
-    timestamp_field: "processed_at"
-    max_age_hours: 6  # Should be updated within 6 hours post-game
+  # ============================================================================
+  # BigQuery Layer Validations  
+  # ============================================================================
+  
+  bigquery:
+    
+    # ------------------------------------------------------------------------
+    # Basic Data Quality
+    # ------------------------------------------------------------------------
+    
+    - name: "row_count"
+      type: "count"
+      severity: "error"
+      description: "Verify minimum row count for date range"
+      query: |
+        SELECT COUNT(*) as row_count
+        FROM `{project}.{dataset}.{table}`
+        WHERE {partition_filter}
+      threshold:
+        min: 1
+        
+    - name: "null_critical_fields"
+      type: "null_check"
+      severity: "critical"
+      description: "Check for nulls in critical fields"
+      query: |
+        SELECT 
+          COUNTIF(game_id IS NULL) as null_game_id,
+          COUNTIF(player_lookup IS NULL) as null_player_lookup,
+          COUNTIF(team_abbr IS NULL) as null_team,
+          COUNTIF(points IS NULL) as null_points,
+          COUNTIF(game_date IS NULL) as null_game_date
+        FROM `{project}.{dataset}.{table}`
+        WHERE {partition_filter}
+      threshold:
+        max: 0
+        
+    - name: "duplicate_player_game_records"
+      type: "duplicate_check"
+      severity: "error"
+      description: "Check for duplicate player-game combinations"
+      query: |
+        SELECT 
+          game_id,
+          player_lookup,
+          COUNT(*) as duplicate_count
+        FROM `{project}.{dataset}.{table}`
+        WHERE {partition_filter}
+        GROUP BY game_id, player_lookup
+        HAVING COUNT(*) > 1
+      threshold:
+        max_rows: 0
+        
+    # ------------------------------------------------------------------------
+    # Game Completeness
+    # ------------------------------------------------------------------------
+    
+    - name: "games_with_both_teams"
+      type: "completeness_check"
+      severity: "error"
+      description: "Verify each game has players from both home and away teams"
+      query: |
+        WITH game_teams AS (
+          SELECT 
+            game_id,
+            game_date,
+            COUNT(DISTINCT team_abbr) as team_count,
+            COUNT(DISTINCT player_lookup) as total_players
+          FROM `{project}.{dataset}.{table}`
+          WHERE {partition_filter}
+          GROUP BY game_id, game_date
+        )
+        SELECT *
+        FROM game_teams
+        WHERE team_count < 2  -- Should have both home and away
+      threshold:
+        max_rows: 0
+        
+    - name: "player_count_sanity"
+      type: "range_check"
+      severity: "warning"
+      description: "Check for games with suspiciously low or high player counts"
+      query: |
+        WITH game_player_counts AS (
+          SELECT 
+            game_id,
+            game_date,
+            COUNT(DISTINCT player_lookup) as total_players
+          FROM `{project}.{dataset}.{table}`
+          WHERE {partition_filter}
+          GROUP BY game_id, game_date
+        )
+        SELECT *
+        FROM game_player_counts
+        WHERE total_players < 20 OR total_players > 40
+      threshold:
+        max_rows: 0
+        
+    # ------------------------------------------------------------------------
+    # Data Value Ranges
+    # ------------------------------------------------------------------------
+    
+    - name: "points_range"
+      type: "range_check"
+      severity: "warning"
+      description: "Check for unrealistic point totals"
+      query: |
+        SELECT 
+          game_id,
+          game_date,
+          player_full_name,
+          team_abbr,
+          points
+        FROM `{project}.{dataset}.{table}`
+        WHERE {partition_filter}
+          AND points > 80  -- NBA record: 100 points (Wilt Chamberlain)
+      threshold:
+        max_rows: 0
+        
+    - name: "negative_stats"
+      type: "value_check"
+      severity: "critical"
+      description: "Check for negative values in stat fields (data corruption)"
+      query: |
+        SELECT 
+          game_id,
+          player_lookup,
+          points,
+          assists,
+          rebounds
+        FROM `{project}.{dataset}.{table}`
+        WHERE {partition_filter}
+          AND (points < 0 OR assists < 0 OR rebounds < 0)
+      threshold:
+        max_rows: 0
+        
+    - name: "valid_team_abbreviations"
+      type: "value_check"
+      severity: "error"
+      description: "Check for invalid NBA team abbreviations"
+      query: |
+        WITH valid_teams AS (
+          SELECT team FROM UNNEST([
+            'ATL', 'BOS', 'BKN', 'CHA', 'CHI', 'CLE', 'DAL', 'DEN', 'DET',
+            'GSW', 'HOU', 'IND', 'LAC', 'LAL', 'MEM', 'MIA', 'MIL', 'MIN',
+            'NOP', 'NYK', 'OKC', 'ORL', 'PHI', 'PHX', 'POR', 'SAC', 'SAS',
+            'TOR', 'UTA', 'WAS'
+          ]) AS team
+        )
+        SELECT DISTINCT team_abbr
+        FROM `{project}.{dataset}.{table}`
+        WHERE {partition_filter}
+          AND team_abbr NOT IN (SELECT team FROM valid_teams)
+      threshold:
+        max_rows: 0
+
+# Custom validation rules (implemented in validator class)
+custom_validations:
+  
+  - name: "game_completeness"
     severity: "error"
+    description: "Verify each game has reasonable player counts from both teams"
+    details: |
+      Checks:
+      - Both home and away teams have players
+      - Total players per game: 20-40 (flexible range)
+      - Each team has at least 10 players (minimum rotation)
+      
+      Note: BDL only includes active players (no DNP/inactive)
+  
+  - name: "cross_validate_gamebook"
+    severity: "critical"
+    description: "Compare BDL stats with NBA.com official gamebook"
+    details: |
+      Compares critical stats between sources:
+      - Points (CRITICAL - used for prop settlement)
+      - Assists (HIGH - future props)
+      - Rebounds (HIGH - future props)
+      
+      Thresholds:
+      - Points diff >2: CRITICAL
+      - Points diff 1-2: WARNING
+      - Assists/rebounds diff >2: WARNING
+  
+  - name: "player_count_balance"
+    severity: "warning"
+    description: "Check for balanced player counts between teams"
+    details: |
+      Sanity check to detect one-sided data:
+      - Both teams should have similar player counts (±5 players)
+      - Alert if one team has <10 players
+      - Alert if significant imbalance (>10 player difference)
+  
+  - name: "playoff_completeness"
+    severity: "critical"
+    description: "Verify all playoff games captured (dynamic from schedule)"
+    details: |
+      Uses schedule as source of truth:
+      - Play-in games (April)
+      - First round (April-May)
+      - Conference semifinals (May)
+      - Conference finals (May-June)
+      - NBA Finals (June)
+  
+  - name: "stat_consistency"
+    severity: "warning"
+    description: "Check for statistical anomalies"
+    details: |
+      Internal consistency checks:
+      - Field goals made <= field goals attempted
+      - Three pointers made <= field goals made
+      - Free throws made <= free throws attempted
+      - Total rebounds = offensive + defensive rebounds
+
+# Notification configuration
+notifications:
+  email:
+    enabled: true
+    recipients: ["data-quality@example.com"]
+    
+  slack:
+    enabled: true
+    channel: "#bdl-box-scores-alerts"
+    
+  # When to notify
+  notify_on:
+    - "error"
+    - "critical"
+    
+  # Suppress notifications for known issues
+  suppress_known_issues: true
 
 # Remediation
 remediation:
-  processor_backfill_template: |
-    gcloud run jobs execute bdl-boxscores-processor-backfill \
-      --args=--start-date={start_date},--end-date={end_date} \
-      --region=us-west2
+  auto_fix: false  # Don't auto-fix, just report
   
-  scraper_backfill_template: |
-    gcloud run jobs execute bdl-boxscores-scraper \
-      --args=--date={date} \
-      --region=us-west2
-
-notifications:
-  enabled: true
-  channels: ["slack"]
-  on_failure: true
-  on_success: false
+  commands:
+    missing_game: |
+      # Re-run scraper for missing game date
+      gcloud run jobs execute bdl-boxscores-processor-backfill \
+        --args="--start-date={game_date},--end-date={game_date}" \
+        --region=us-west2
+        
+    data_quality_issue: |
+      # Re-scrape and re-process game with data issues
+      # 1. Check GCS for source data
+      # 2. If GCS file corrupt, re-run scraper
+      # 3. If GCS file OK, re-run processor
+      gcloud run jobs execute bdl-boxscores-processor-backfill \
+        --args="--start-date={game_date},--end-date={game_date}" \
+        --region=us-west2
+        
+    cross_validation_failure: |
+      # Investigate discrepancy between BDL and NBA.com
+      # 1. Run cross_validate_with_gamebook.sql for details
+      # 2. Check both source APIs manually
+      # 3. Determine authoritative source (usually NBA.com)
+      # 4. Document any known BDL API issues

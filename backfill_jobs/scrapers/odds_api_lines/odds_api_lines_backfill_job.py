@@ -5,36 +5,29 @@
 NBA Odds API Game Lines Backfill - PURE SCHEDULE SERVICE INTEGRATION
 ====================================================================
 
-MAJOR REFACTORING - CODE REDUCTION: 1,100 lines → ~550 lines (50% reduction)
-
-✅ Schedule Service integration: Removed 400+ lines of duplicate schedule code
-✅ Team Mapper integration: Removed NBA_TEAMS dictionary, robust team handling
-✅ Date file support: Process specific dates from file for targeted backfills
-✅ Pure implementation: No fallbacks - services must work or job fails properly
-
-REMOVED DUPLICATE CODE:
-- _read_schedule_from_gcs() - Schedule Service handles this
-- _extract_all_games_from_schedule() - Schedule Service handles this
-- _extract_game_date() - Schedule Service handles this
-- _extract_game_info() - Schedule Service handles this
-- _extract_game_info_new_format() - Schedule Service handles this
-- _classify_game_type() - Schedule Service handles this
-- NBA_TEAMS dictionary - Team Mapper handles this
+ENHANCEMENTS IN THIS VERSION:
+✅ Retry logic for HTTP 5xx errors (3 attempts with exponential backoff)
+✅ Detailed tracking of skipped/failed games with reasons
+✅ Post-run validation report with actionable missing_games_dates.txt
+✅ Enhanced logging for debugging failures
+✅ --reprocess flag for true force reprocessing (ignores existing data)
 
 Usage Examples:
   # Process specific dates from file (RECOMMENDED):
   python3 odds_api_lines_backfill_job.py \
       --dates-file all_dates_to_backfill.txt
   
+  # Force reprocess everything (for testing):
+  python3 odds_api_lines_backfill_job.py \
+      --dates-file test_missing_games.txt \
+      --force \
+      --reprocess
+  
   # Dry run:
   python3 odds_api_lines_backfill_job.py \
       --dates-file all_dates_to_backfill.txt \
       --dry-run \
       --limit 5
-  
-  # Season-based (via Schedule Service):
-  python3 odds_api_lines_backfill_job.py \
-      --seasons=2021,2022,2023,2024
 """
 
 import json
@@ -82,7 +75,8 @@ class OddsApiLinesBackfillJob:
     
     def __init__(self, scraper_service_url: str, seasons: List[int] = None, 
                  bucket_name: str = "nba-scraped-data", limit: Optional[int] = None,
-                 dates_file: Optional[str] = None, skip_existing_dates: bool = False):
+                 dates_file: Optional[str] = None, skip_existing_dates: bool = False,
+                 reprocess_all: bool = False):
         """
         Initialize backfill job.
         
@@ -93,6 +87,7 @@ class OddsApiLinesBackfillJob:
             limit: Limit number of dates (for testing)
             dates_file: Path to file with dates to backfill (YYYY-MM-DD format)
             skip_existing_dates: Skip entire dates if ANY data exists (default: False, checks per-game)
+            reprocess_all: Reprocess all games, ignore existing data (default: False, for testing)
         """
         self.scraper_service_url = scraper_service_url.rstrip('/')
         self.seasons = seasons or [2021, 2022, 2023, 2024]
@@ -100,6 +95,7 @@ class OddsApiLinesBackfillJob:
         self.limit = limit
         self.dates_file = dates_file
         self.skip_existing_dates = skip_existing_dates
+        self.reprocess_all = reprocess_all
         
         # Initialize GCS client
         self.storage_client = storage.Client()
@@ -124,6 +120,10 @@ class OddsApiLinesBackfillJob:
         self.failed_dates = []
         self.skipped_dates = []
         self.unmatched_games = []
+        
+        # NEW: Detailed tracking for root cause analysis
+        self.skipped_games_detail = []  # Track WHY games were skipped
+        self.failed_games_detail = []   # Track failures with reasons
         
         # Configuration
         self.RATE_LIMIT_DELAY = 1.0
@@ -151,6 +151,8 @@ class OddsApiLinesBackfillJob:
             logger.info("Limit: %d dates", self.limit)
         if self.skip_existing_dates:
             logger.info("Mode: Skip entire dates if any data exists")
+        elif self.reprocess_all:
+            logger.info("Mode: REPROCESS ALL (ignore existing data)")
         else:
             logger.info("Mode: Smart per-game checking (default)")
         logger.info("=" * 60)
@@ -173,7 +175,8 @@ class OddsApiLinesBackfillJob:
                     'dates_file': self.dates_file,
                     'seasons': self.seasons if not self.dates_file else None,
                     'limit': self.limit,
-                    'dry_run': dry_run
+                    'dry_run': dry_run,
+                    'reprocess_all': self.reprocess_all
                 }
             )
         except Exception as e:
@@ -205,8 +208,8 @@ class OddsApiLinesBackfillJob:
                 game_date = date_info['date']
                 
                 try:
-                    # Optional: Skip entire date if any data exists
-                    if self.skip_existing_dates and self._date_already_processed(game_date):
+                    # Optional: Skip entire date if any data exists (unless reprocess_all)
+                    if not self.reprocess_all and self.skip_existing_dates and self._date_already_processed(game_date):
                         self.skipped_dates.append(game_date)
                         logger.info("[%d/%d] Skipping %s (date has existing data)", 
                                   i, self.total_dates, game_date)
@@ -403,7 +406,7 @@ class OddsApiLinesBackfillJob:
             return exists
         except Exception:
             return False
-        
+    
     def _game_already_has_data(self, game_date: str, game: Dict) -> bool:
         """
         Check if this specific game already has lines data in GCS.
@@ -493,10 +496,12 @@ class OddsApiLinesBackfillJob:
     
     def _collect_game_lines_for_date(self, game_date: str, games: List[Dict]) -> bool:
         """
-        Collect lines for all games on date.
+        Collect lines for all games on date - ENHANCED VERSION.
         
         DEFAULT BEHAVIOR: Checks each game individually, only scrapes missing games.
-        This allows re-running on same dates when new games are added.
+        REPROCESS MODE: Scrapes all games, even if data exists (for testing).
+        
+        NEW: Detailed tracking of skip/fail reasons
         """
         lines_collected = 0
         lines_failed = 0
@@ -505,25 +510,54 @@ class OddsApiLinesBackfillJob:
         
         for game in games:
             try:
-                # Check if this specific game already has data
-                if self._game_already_has_data(game_date, game):
+                matchup = game.get('matchup', 'unknown')
+                
+                # Check if this specific game already has data (SKIP IF reprocess_all=False)
+                if not self.reprocess_all and self._game_already_has_data(game_date, game):
                     lines_skipped += 1
-                    logger.debug("Skipping %s (already has data)", game.get('matchup', 'unknown'))
+                    self.skipped_games_detail.append({
+                        'date': game_date,
+                        'game': matchup,
+                        'reason': 'data_exists',
+                        'away_team': game.get('away_team'),
+                        'home_team': game.get('home_team')
+                    })
+                    logger.debug("Skipping %s (already has data)", matchup)
                     continue
+                
+                # If reprocess_all=True, we get here even if data exists
+                if self.reprocess_all:
+                    logger.info("Reprocessing %s (--reprocess mode)", matchup)
                 
                 event_id = self._extract_event_id_from_game(game)
                 if not event_id:
                     games_unmatched += 1
                     self.unmatched_games.append({
                         'date': game_date,
-                        'game': game.get('matchup', 'unknown')
+                        'game': matchup
                     })
+                    self.skipped_games_detail.append({
+                        'date': game_date,
+                        'game': matchup,
+                        'reason': 'no_event_match',
+                        'away_team': game.get('away_team'),
+                        'home_team': game.get('home_team')
+                    })
+                    logger.warning("No event ID found for %s", matchup)
                     continue
                 
                 if self._collect_game_lines_for_game(game, event_id, game_date):
                     lines_collected += 1
                 else:
                     lines_failed += 1
+                    self.failed_games_detail.append({
+                        'date': game_date,
+                        'game': matchup,
+                        'reason': 'scrape_failed',
+                        'event_id': event_id,
+                        'away_team': game.get('away_team'),
+                        'home_team': game.get('home_team')
+                    })
                 
                 time.sleep(self.RATE_LIMIT_DELAY)
                 
@@ -540,34 +574,111 @@ class OddsApiLinesBackfillJob:
         
         return lines_collected > 0 or lines_skipped > 0  # Success if we got data OR it already existed
     
-    def _collect_game_lines_for_game(self, game: Dict, event_id: str, game_date: str) -> bool:
-        """Collect lines for single game."""
+    def _collect_game_lines_for_game(self, game: Dict, event_id: str, 
+                                      game_date: str, max_retries: int = 3) -> bool:
+        """
+        Collect lines for single game - ENHANCED WITH TIMESTAMP CASCADE.
+        
+        NEW: On 404 errors, tries earlier timestamps (cascade fallback)
+        NEW: On 5xx errors, retries same timestamp with exponential backoff
+        """
+        # Calculate primary timestamp using existing logic
+        primary_timestamp = self._calculate_optimal_lines_timestamp(game_date)
+        
+        # Timestamp cascade: try multiple times working backwards
+        # Format: extract hour from calculated timestamp, then try earlier times
         try:
-            timestamp = self._calculate_optimal_lines_timestamp(game_date)
+            primary_hour = datetime.fromisoformat(primary_timestamp.replace('Z', '+00:00')).hour
+        except:
+            primary_hour = 19  # Fallback to 7pm UTC if parsing fails
+        
+        # Build cascade: calculated time, then 2/4/6/8 hours earlier
+        timestamp_hours = [
+            primary_hour,
+            max(0, primary_hour - 2),
+            max(0, primary_hour - 4), 
+            max(0, primary_hour - 6),
+            max(0, primary_hour - 8),
+        ]
+        # Remove duplicates and keep order
+        timestamp_hours = list(dict.fromkeys(timestamp_hours))
+        
+        # Try each timestamp in cascade
+        for ts_index, hour in enumerate(timestamp_hours):
+            base_date = datetime.strptime(game_date, "%Y-%m-%d")
+            timestamp = base_date.replace(hour=hour, minute=0, tzinfo=timezone.utc).isoformat().replace('+00:00', 'Z')
             
-            response = requests.post(
-                f"{self.scraper_service_url}/scrape",
-                json={
-                    "scraper": "oddsa_game_lines_his",
-                    "event_id": event_id,
-                    "game_date": game_date,
-                    "snapshot_timestamp": timestamp,
-                    "markets": "spreads,totals",
-                    "group": "prod"
-                },
-                timeout=60
-            )
+            if ts_index > 0:
+                logger.info(f"Trying timestamp cascade attempt {ts_index + 1}/{len(timestamp_hours)}: {timestamp}")
             
-            if response.status_code == 200:
-                logger.debug("✓ Lines collected for game")
-                return True
-            else:
-                logger.warning("Lines failed: HTTP %d", response.status_code)
-                return False
+            # For each timestamp, try with retries (for 5xx errors)
+            for attempt in range(max_retries):
+                try:
+                    response = requests.post(
+                        f"{self.scraper_service_url}/scrape",
+                        json={
+                            "scraper": "oddsa_game_lines_his",
+                            "event_id": event_id,
+                            "game_date": game_date,
+                            "snapshot_timestamp": timestamp,
+                            "markets": "spreads,totals",
+                            "group": "prod"
+                        },
+                        timeout=60
+                    )
+                    
+                    if response.status_code == 200:
+                        if ts_index > 0:
+                            logger.info(f"✓ Lines collected using cascade timestamp {ts_index + 1}")
+                        else:
+                            logger.debug("✓ Lines collected for game")
+                        return True
+                    
+                    elif response.status_code == 404:
+                        # 404 means no data at this timestamp - try next timestamp in cascade
+                        logger.debug(f"404 for timestamp {timestamp}, trying earlier time...")
+                        break  # Break retry loop, go to next timestamp
+                    
+                    elif response.status_code >= 500 and attempt < max_retries - 1:
+                        # Retry on 5xx errors with same timestamp
+                        wait_time = (attempt + 1) * 2  # Exponential backoff: 2s, 4s, 6s
+                        logger.warning(
+                            "HTTP %d (attempt %d/%d), retrying in %ds...",
+                            response.status_code, attempt + 1, max_retries, wait_time
+                        )
+                        time.sleep(wait_time)
+                        continue  # Retry same timestamp
+                    
+                    else:
+                        # Other error codes or final retry attempt failed
+                        logger.warning("Lines failed: HTTP %d", response.status_code)
+                        if ts_index < len(timestamp_hours) - 1:
+                            break  # Try next timestamp
+                        else:
+                            return False  # No more timestamps to try
+                        
+                except requests.exceptions.RequestException as e:
+                    if attempt < max_retries - 1:
+                        wait_time = (attempt + 1) * 2
+                        logger.warning(
+                            "Request error (attempt %d/%d): %s, retrying in %ds...",
+                            attempt + 1, max_retries, e, wait_time
+                        )
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        logger.warning("Error collecting lines (final attempt): %s", e)
+                        if ts_index < len(timestamp_hours) - 1:
+                            break  # Try next timestamp
+                        else:
+                            return False
                 
-        except Exception as e:
-            logger.warning("Error collecting lines: %s", e)
-            return False
+                except Exception as e:
+                    logger.warning("Unexpected error collecting lines: %s", e)
+                    return False
+        
+        logger.warning(f"Failed to collect lines after trying {len(timestamp_hours)} timestamps")
+        return False
     
     def _extract_event_id_from_game(self, game: Dict) -> Optional[str]:
         """
@@ -597,6 +708,7 @@ class OddsApiLinesBackfillJob:
             
             events_data = self.events_cache[game_date]
             if not events_data:
+                logger.error("No events data for %s", game_date)
                 return None
             
             # Match event
@@ -690,7 +802,7 @@ class OddsApiLinesBackfillJob:
                    progress_pct, current, self.total_dates, eta_hours)
     
     def _print_final_summary(self, start_time: datetime):
-        """Print final summary."""
+        """Print final summary - ENHANCED WITH DETAILED REPORTING."""
         duration = datetime.now() - start_time
         
         logger.info("=" * 60)
@@ -707,6 +819,52 @@ class OddsApiLinesBackfillJob:
         if self.total_dates > 0:
             success_rate = (self.processed_dates / self.total_dates) * 100
             logger.info("Success rate: %.1f%%", success_rate)
+        
+        # NEW: Detailed skip/fail reporting
+        if self.skipped_games_detail:
+            logger.info("\n" + "=" * 60)
+            logger.info("SKIPPED GAMES DETAIL")
+            logger.info("=" * 60)
+            
+            # Group by reason
+            by_reason = {}
+            for skip in self.skipped_games_detail:
+                reason = skip['reason']
+                if reason not in by_reason:
+                    by_reason[reason] = []
+                by_reason[reason].append(skip)
+            
+            for reason, games in by_reason.items():
+                logger.info(f"\n{reason.upper()}: {len(games)} games")
+                for game in games[:10]:  # Show first 10
+                    logger.info(f"  {game['date']}: {game['game']}")
+                if len(games) > 10:
+                    logger.info(f"  ... and {len(games) - 10} more")
+        
+        if self.failed_games_detail:
+            logger.info("\n" + "=" * 60)
+            logger.info("FAILED GAMES DETAIL")
+            logger.info("=" * 60)
+            for fail in self.failed_games_detail:
+                logger.info(f"  {fail['date']}: {fail['game']} - {fail['reason']}")
+        
+        # NEW: Generate missing games file for easy reprocessing
+        missing_dates = set()
+        for skip in self.skipped_games_detail:
+            if skip['reason'] == 'no_event_match':
+                missing_dates.add(skip['date'])
+        for fail in self.failed_games_detail:
+            missing_dates.add(fail['date'])
+        
+        if missing_dates:
+            output_file = 'missing_games_dates.txt'
+            with open(output_file, 'w') as f:
+                for date in sorted(missing_dates):
+                    f.write(f"{date}\n")
+            logger.info(
+                f"\n✓ Created {output_file} with {len(missing_dates)} dates to retry"
+            )
+            logger.info(f"  Rerun with: --dates-file {output_file} --force")
         
         if self.failed_dates:
             logger.warning("Failed dates (first 10): %s", self.failed_dates[:10])
@@ -735,6 +893,7 @@ class OddsApiLinesBackfillJob:
                     'total': self.total_dates,
                     'processed': self.processed_dates,
                     'failed': len(self.failed_dates),
+                    'unmatched_games': len(self.unmatched_games),
                     'success_rate': round(success_rate, 1),
                     'duration_hours': round(duration.total_seconds() / 3600, 2)
                 }
@@ -750,6 +909,9 @@ def main():
 Examples:
   # Process dates from file:
   %(prog)s --dates-file all_dates_to_backfill.txt
+  
+  # Force reprocess for testing:
+  %(prog)s --dates-file test_dates.txt --force --reprocess
   
   # Dry run:
   %(prog)s --dates-file all_dates_to_backfill.txt --dry-run
@@ -776,7 +938,9 @@ Examples:
     parser.add_argument("--limit", type=int,
                        help="Limit dates (for testing)")
     parser.add_argument("--force", action="store_true",
-                       help="Reprocess all dates (skip 'already processed' check)")
+                       help="Use smart per-game checking instead of skipping entire dates")
+    parser.add_argument("--reprocess", action="store_true",
+                       help="Reprocess all games, even if data exists (for testing/debugging)")
     
     args = parser.parse_args()
     
@@ -797,7 +961,8 @@ Examples:
             bucket_name=args.bucket,
             limit=args.limit,
             dates_file=args.dates_file,
-            skip_existing_dates=not args.force
+            skip_existing_dates=not args.force,
+            reprocess_all=args.reprocess
         )
         
         job.lines_strategy = args.strategy

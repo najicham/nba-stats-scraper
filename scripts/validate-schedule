@@ -1,0 +1,240 @@
+#!/bin/bash
+# =============================================================================
+# File: scripts/validate-schedule
+# Purpose: CLI tool for running NBA.com Schedule validation queries
+# Usage: ./scripts/validate-schedule [command] [options]
+# =============================================================================
+
+set -e  # Exit on error
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Base directory
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+PROJECT_ROOT="$( cd "$SCRIPT_DIR/.." && pwd )"
+QUERIES_DIR="$PROJECT_ROOT/validation/queries/raw/nbac_schedule"
+
+# =============================================================================
+# Helper Functions
+# =============================================================================
+
+print_header() {
+    echo -e "${BLUE}=================================================${NC}"
+    echo -e "${BLUE}$1${NC}"
+    echo -e "${BLUE}=================================================${NC}"
+}
+
+print_success() {
+    echo -e "${GREEN}✅ $1${NC}"
+}
+
+print_warning() {
+    echo -e "${YELLOW}⚠️  $1${NC}"
+}
+
+print_error() {
+    echo -e "${RED}❌ $1${NC}"
+}
+
+# =============================================================================
+# Show Available Commands
+# =============================================================================
+
+show_help() {
+    cat << EOF
+${GREEN}NBA.com Schedule Validation Tool${NC}
+
+Usage: validate-schedule [command] [options]
+
+${YELLOW}HISTORICAL VALIDATION:${NC}
+  completeness          Full season completeness check (all seasons)
+  missing               Find regular season gaps and anomalies
+  playoffs              Verify playoff structure and team runs
+  balance               Check team game count balance
+  gaps                  Detect suspicious schedule gaps (7+ days)
+
+${YELLOW}DAILY MONITORING:${NC}
+  yesterday             Check if yesterday's games are in schedule
+  horizon               Check how far ahead we have schedule data
+  fields                Validate 18 enhanced analytical fields
+
+${YELLOW}OPTIONS:${NC}
+  --csv                 Save results to CSV file
+  --table               Save results to BigQuery table
+  --help                Show this help message
+
+${YELLOW}EXAMPLES:${NC}
+  validate-schedule completeness          # Run full season check
+  validate-schedule yesterday --csv       # Check yesterday, save to CSV
+  validate-schedule missing               # Find schedule gaps
+  validate-schedule playoffs              # Verify playoff completeness
+  validate-schedule fields                # Check enhanced field quality
+
+${YELLOW}QUICK COMMANDS:${NC}
+  validate-schedule list                  # List all available queries
+  validate-schedule help                  # Show this help
+
+EOF
+}
+
+# =============================================================================
+# List All Queries
+# =============================================================================
+
+list_queries() {
+    print_header "Available Validation Queries"
+    echo ""
+    echo "Historical Validation:"
+    echo "  1. season_completeness_check.sql            (alias: completeness)"
+    echo "  2. find_missing_regular_season_games.sql    (alias: missing)"
+    echo "  3. verify_playoff_completeness.sql          (alias: playoffs)"
+    echo "  4. team_balance_check.sql                   (alias: balance)"
+    echo "  5. team_schedule_gaps.sql                   (alias: gaps)"
+    echo ""
+    echo "Daily Monitoring:"
+    echo "  6. daily_freshness_check.sql                (alias: yesterday)"
+    echo "  7. schedule_horizon_check.sql               (alias: horizon)"
+    echo ""
+    echo "Data Quality:"
+    echo "  8. enhanced_field_quality.sql               (alias: fields)"
+    echo ""
+}
+
+# =============================================================================
+# Run Query
+# =============================================================================
+
+run_query() {
+    local query_file=$1
+    local output_format=$2
+    local query_path="$QUERIES_DIR/$query_file"
+    
+    if [ ! -f "$query_path" ]; then
+        print_error "Query file not found: $query_file"
+        echo "Run 'validate-schedule list' to see available queries"
+        exit 1
+    fi
+    
+    print_header "Running: $query_file"
+    echo ""
+    
+    case $output_format in
+        csv)
+            local timestamp=$(date +%Y%m%d_%H%M%S)
+            local output_file="validation_${query_file%.sql}_${timestamp}.csv"
+            print_warning "Saving results to: $output_file"
+            bq query --use_legacy_sql=false --format=csv < "$query_path" > "$output_file"
+            print_success "Results saved to $output_file"
+            ;;
+        table)
+            local timestamp=$(date +%Y%m%d)
+            local table_name="validation.schedule_${query_file%.sql}_${timestamp}"
+            print_warning "Saving to BigQuery table: $table_name"
+            bq query --use_legacy_sql=false --destination_table="nba-props-platform:${table_name}" < "$query_path"
+            print_success "Results saved to nba-props-platform:${table_name}"
+            ;;
+        *)
+            bq query --use_legacy_sql=false < "$query_path"
+            ;;
+    esac
+}
+
+# =============================================================================
+# Main Command Handler
+# =============================================================================
+
+main() {
+    local command=$1
+    local output_format=""
+    
+    # Parse options
+    shift || true
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --csv)
+                output_format="csv"
+                shift
+                ;;
+            --table)
+                output_format="table"
+                shift
+                ;;
+            --help|-h)
+                show_help
+                exit 0
+                ;;
+            *)
+                print_error "Unknown option: $1"
+                show_help
+                exit 1
+                ;;
+        esac
+    done
+    
+    # Handle commands
+    case $command in
+        # Show help
+        help|--help|-h|"")
+            show_help
+            ;;
+        
+        # List queries
+        list|ls)
+            list_queries
+            ;;
+        
+        # Historical validation
+        completeness|complete|full|season)
+            run_query "season_completeness_check.sql" "$output_format"
+            ;;
+        
+        missing|regular)
+            run_query "find_missing_regular_season_games.sql" "$output_format"
+            ;;
+        
+        playoffs|playoff)
+            run_query "verify_playoff_completeness.sql" "$output_format"
+            ;;
+        
+        balance|teams)
+            run_query "team_balance_check.sql" "$output_format"
+            ;;
+        
+        gaps|schedule-gaps)
+            run_query "team_schedule_gaps.sql" "$output_format"
+            ;;
+        
+        # Daily monitoring
+        yesterday|daily|freshness)
+            run_query "daily_freshness_check.sql" "$output_format"
+            ;;
+        
+        horizon|future|ahead)
+            run_query "schedule_horizon_check.sql" "$output_format"
+            ;;
+        
+        # Data quality
+        fields|enhanced|quality)
+            run_query "enhanced_field_quality.sql" "$output_format"
+            ;;
+        
+        # Unknown command
+        *)
+            print_error "Unknown command: $command"
+            echo ""
+            show_help
+            exit 1
+            ;;
+    esac
+}
+
+# =============================================================================
+# Run
+# =============================================================================
+
+main "$@"
