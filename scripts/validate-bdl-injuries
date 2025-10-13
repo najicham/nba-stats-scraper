@@ -1,0 +1,221 @@
+#!/bin/bash
+# ============================================================================
+# File: scripts/validate-bdl-injuries
+# Purpose: CLI tool for BDL Injuries validation queries
+# Usage: ./validate-bdl-injuries [command] [options]
+# ============================================================================
+
+set -e
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+QUERIES_DIR="validation/queries/raw/bdl_injuries"
+
+# Function to print colored output
+print_header() {
+    echo -e "${BLUE}========================================${NC}"
+    echo -e "${BLUE}$1${NC}"
+    echo -e "${BLUE}========================================${NC}"
+}
+
+print_success() {
+    echo -e "${GREEN}✓ $1${NC}"
+}
+
+print_error() {
+    echo -e "${RED}✗ $1${NC}"
+}
+
+print_warning() {
+    echo -e "${YELLOW}⚠ $1${NC}"
+}
+
+# Function to run a query
+run_query() {
+    local query_file=$1
+    local query_name=$2
+    
+    if [ ! -f "$QUERIES_DIR/$query_file" ]; then
+        print_error "Query file not found: $QUERIES_DIR/$query_file"
+        exit 1
+    fi
+    
+    print_header "$query_name"
+    
+    if [ "$OUTPUT_FORMAT" = "csv" ]; then
+        bq query --use_legacy_sql=false --format=csv < "$QUERIES_DIR/$query_file"
+    else
+        bq query --use_legacy_sql=false --format=pretty < "$QUERIES_DIR/$query_file"
+    fi
+    
+    echo ""
+}
+
+# Function to save to BigQuery table
+save_to_table() {
+    local query_file=$1
+    local table_name=$2
+    
+    if [ ! -f "$QUERIES_DIR/$query_file" ]; then
+        print_error "Query file not found: $QUERIES_DIR/$query_file"
+        exit 1
+    fi
+    
+    print_header "Saving results to table: $table_name"
+    
+    bq query --use_legacy_sql=false \
+        --destination_table="nba-props-platform.nba_validation.$table_name" \
+        --replace \
+        < "$QUERIES_DIR/$query_file"
+    
+    print_success "Results saved to nba_validation.$table_name"
+    echo ""
+}
+
+# Show usage
+show_usage() {
+    cat << EOF
+BDL Injuries Validation Tool
+
+USAGE:
+    validate-bdl-injuries [COMMAND] [OPTIONS]
+
+COMMANDS:
+    daily              Check yesterday's scraper run (morning routine)
+    weekly             Check last 7 days trend
+    confidence         Monitor parsing quality
+    quality            Comprehensive data quality check
+    realtime           Check if today's scraper has run
+    all                Run all validation queries
+    
+OPTIONS:
+    --csv              Output in CSV format
+    --table [name]     Save results to BigQuery table
+
+EXAMPLES:
+    # Morning routine - check yesterday
+    validate-bdl-injuries daily
+
+    # Check recent trends
+    validate-bdl-injuries weekly
+
+    # Full validation suite
+    validate-bdl-injuries all
+
+    # Export to CSV
+    validate-bdl-injuries daily --csv > yesterday.csv
+
+    # Save to BigQuery table
+    validate-bdl-injuries daily --table bdl_injuries_daily_check
+
+TYPICAL WORKFLOWS:
+
+    Morning Check (9 AM daily):
+        validate-bdl-injuries daily
+
+    Weekly Review (Monday):
+        validate-bdl-injuries weekly
+        validate-bdl-injuries confidence
+        validate-bdl-injuries quality
+
+    Real-Time Check (anytime):
+        validate-bdl-injuries realtime
+
+    Full Validation:
+        validate-bdl-injuries all
+
+EOF
+}
+
+# Parse options
+OUTPUT_FORMAT="pretty"
+SAVE_TABLE=""
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --csv)
+            OUTPUT_FORMAT="csv"
+            shift
+            ;;
+        --table)
+            SAVE_TABLE="$2"
+            shift 2
+            ;;
+        *)
+            COMMAND="$1"
+            shift
+            ;;
+    esac
+done
+
+# Handle commands
+case ${COMMAND:-help} in
+    daily)
+        if [ -n "$SAVE_TABLE" ]; then
+            save_to_table "daily_check_yesterday.sql" "$SAVE_TABLE"
+        else
+            run_query "daily_check_yesterday.sql" "Daily Check: Yesterday's Scraper Run"
+        fi
+        ;;
+    
+    weekly)
+        if [ -n "$SAVE_TABLE" ]; then
+            save_to_table "weekly_check_last_7_days.sql" "$SAVE_TABLE"
+        else
+            run_query "weekly_check_last_7_days.sql" "Weekly Check: Last 7 Days Trend"
+        fi
+        ;;
+    
+    confidence)
+        if [ -n "$SAVE_TABLE" ]; then
+            save_to_table "confidence_score_monitoring.sql" "$SAVE_TABLE"
+        else
+            run_query "confidence_score_monitoring.sql" "Confidence Score Monitoring"
+        fi
+        ;;
+    
+    quality)
+        if [ -n "$SAVE_TABLE" ]; then
+            save_to_table "data_quality_check.sql" "$SAVE_TABLE"
+        else
+            run_query "data_quality_check.sql" "Comprehensive Data Quality Check"
+        fi
+        ;;
+    
+    realtime)
+        if [ -n "$SAVE_TABLE" ]; then
+            save_to_table "realtime_scraper_check.sql" "$SAVE_TABLE"
+        else
+            run_query "realtime_scraper_check.sql" "Real-Time Scraper Status"
+        fi
+        ;;
+    
+    all)
+        print_header "Running Full BDL Injuries Validation Suite"
+        echo ""
+        
+        run_query "daily_check_yesterday.sql" "1/5: Daily Check"
+        run_query "weekly_check_last_7_days.sql" "2/5: Weekly Trend"
+        run_query "confidence_score_monitoring.sql" "3/5: Confidence Monitoring"
+        run_query "data_quality_check.sql" "4/5: Data Quality"
+        run_query "realtime_scraper_check.sql" "5/5: Real-Time Status"
+        
+        print_success "Full validation complete!"
+        ;;
+    
+    help|--help|-h)
+        show_usage
+        ;;
+    
+    *)
+        print_error "Unknown command: ${COMMAND}"
+        echo ""
+        show_usage
+        exit 1
+        ;;
+esac

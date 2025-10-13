@@ -21,22 +21,28 @@ WITH yesterday_schedule AS (
   WHERE game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
 ),
 
+-- Get per-game player counts
+game_player_counts AS (
+  SELECT
+    game_id,
+    COUNT(DISTINCT player_lookup) as players_per_game
+  FROM `nba-props-platform.nba_raw.bdl_player_boxscores`
+  WHERE game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
+  GROUP BY game_id
+),
+
+-- Get overall stats
 yesterday_boxscores AS (
   SELECT
-    COUNT(DISTINCT game_id) as games_with_data,
-    COUNT(*) as total_player_records,
-    COUNT(DISTINCT player_lookup) as unique_players,
+    (SELECT COUNT(DISTINCT game_id) FROM game_player_counts) as games_with_data,
+    (SELECT COUNT(*) FROM `nba-props-platform.nba_raw.bdl_player_boxscores` 
+     WHERE game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)) as total_player_records,
+    (SELECT COUNT(DISTINCT player_lookup) FROM `nba-props-platform.nba_raw.bdl_player_boxscores` 
+     WHERE game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)) as unique_players,
     ROUND(AVG(players_per_game), 1) as avg_players_per_game,
     MIN(players_per_game) as min_players_per_game,
     MAX(players_per_game) as max_players_per_game
-  FROM (
-    SELECT
-      game_id,
-      COUNT(DISTINCT player_lookup) as players_per_game
-    FROM `nba-props-platform.nba_raw.bdl_player_boxscores`
-    WHERE game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
-    GROUP BY game_id
-  )
+  FROM game_player_counts
 )
 
 SELECT

@@ -1,0 +1,65 @@
+-- ============================================================================
+-- File: validation/queries/raw/nbac_injury_report/confidence_score_monitoring.sql
+-- Purpose: Monitor PDF parsing quality via confidence scores
+-- Usage: Run to detect parsing degradation
+-- ============================================================================
+-- Expected Results:
+--   - Average confidence should be >0.8
+--   - Sudden drops indicate PDF format changes or parsing issues
+--   - Low confidence records may need manual review
+-- ============================================================================
+
+WITH 
+-- Daily confidence trends (OPTIMIZED: Added date filter in base query)
+daily_confidence AS (
+  SELECT 
+    report_date,
+    COUNT(*) as total_records,
+    AVG(confidence_score) as avg_confidence,
+    MIN(confidence_score) as min_confidence,
+    MAX(confidence_score) as max_confidence,
+    -- Count low confidence records
+    COUNTIF(confidence_score < 0.5) as very_low_confidence,
+    COUNTIF(confidence_score BETWEEN 0.5 AND 0.7) as low_confidence,
+    COUNTIF(confidence_score BETWEEN 0.7 AND 0.9) as medium_confidence,
+    COUNTIF(confidence_score >= 0.9) as high_confidence,
+    -- Calculate percentages
+    ROUND(COUNTIF(confidence_score < 0.7) * 100.0 / COUNT(*), 1) as pct_below_70
+  FROM `nba-props-platform.nba_raw.nbac_injury_report`
+  WHERE report_date BETWEEN DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY) AND CURRENT_DATE()
+  GROUP BY report_date
+),
+
+-- Add rolling averages
+with_trends AS (
+  SELECT 
+    *,
+    AVG(avg_confidence) OVER (
+      ORDER BY report_date 
+      ROWS BETWEEN 6 PRECEDING AND CURRENT ROW
+    ) as rolling_7day_avg
+  FROM daily_confidence
+)
+
+SELECT 
+  report_date,
+  FORMAT_DATE('%A', report_date) as day_of_week,
+  total_records,
+  ROUND(avg_confidence, 3) as avg_confidence,
+  ROUND(rolling_7day_avg, 3) as avg_7day,
+  ROUND(min_confidence, 3) as min_confidence,
+  very_low_confidence,
+  low_confidence,
+  medium_confidence,
+  high_confidence,
+  pct_below_70,
+  CASE
+    WHEN avg_confidence < 0.6 THEN '🔴 CRITICAL: Very low confidence'
+    WHEN avg_confidence < 0.7 THEN '🟡 ERROR: Low confidence'
+    WHEN avg_confidence < rolling_7day_avg * 0.9 THEN '⚠️  WARNING: Below recent average'
+    WHEN pct_below_70 > 20 THEN '⚠️  WARNING: >20% low confidence'
+    ELSE '✅ Healthy'
+  END as status
+FROM with_trends
+ORDER BY report_date DESC
+LIMIT 30;  -- Added LIMIT for faster results

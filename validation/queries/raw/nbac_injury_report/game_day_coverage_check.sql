@@ -14,11 +14,12 @@ all_game_dates AS (
   SELECT DISTINCT
     game_date,
     COUNT(*) as games_scheduled,
-    STRING_AGG(DISTINCT CONCAT(away_team_tricode, '@', home_team_tricode) ORDER BY game_id) as matchups
+    -- FIXED: Removed DISTINCT to allow ORDER BY on different column
+    STRING_AGG(CONCAT(away_team_tricode, '@', home_team_tricode) ORDER BY game_id) as matchups
   FROM `nba-props-platform.nba_raw.nbac_schedule`
-  WHERE game_date BETWEEN '2024-10-01' AND '2025-04-30'  -- UPDATE: Season range
+  WHERE game_date BETWEEN '2021-10-01' AND '2025-06-30'  -- UPDATE: Season range
     AND is_playoffs = FALSE
-    AND game_date BETWEEN '2024-10-01' AND '2025-04-30'  -- Partition filter
+    AND game_date BETWEEN '2021-10-01' AND '2025-06-30'  -- Partition filter
   GROUP BY game_date
 ),
 
@@ -34,7 +35,7 @@ injury_report_coverage AS (
     MAX(CASE WHEN report_hour = 17 THEN 1 ELSE 0 END) as has_5pm,
     MAX(CASE WHEN report_hour = 20 THEN 1 ELSE 0 END) as has_8pm
   FROM `nba-props-platform.nba_raw.nbac_injury_report`
-  WHERE report_date BETWEEN '2024-10-01' AND '2025-04-30'
+  WHERE report_date BETWEEN '2021-10-01' AND '2025-06-30'
   GROUP BY report_date
 )
 
@@ -54,7 +55,7 @@ SELECT
     WHEN i.unique_players < 20 THEN '⚠️  WARNING: Low player count'
     ELSE '✅ Complete'
   END as status,
-  -- Show sample matchups for context
+  -- Show sample matchups for context (truncated to avoid long strings)
   CASE 
     WHEN LENGTH(g.matchups) > 100 THEN CONCAT(SUBSTR(g.matchups, 1, 97), '...')
     ELSE g.matchups

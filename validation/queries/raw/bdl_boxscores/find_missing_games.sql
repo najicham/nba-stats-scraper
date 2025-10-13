@@ -3,6 +3,10 @@
 -- Purpose: Identify specific games missing from BDL box scores
 -- Usage: Run when season_completeness_check shows teams with <82 games
 -- ============================================================================
+-- FIXED: Now joins on date+teams instead of game_id (format mismatch issue)
+-- BDL uses format: YYYYMMDD_AWAY_HOME
+-- Schedule uses format: 00SSGGGGGG
+-- ============================================================================
 -- Instructions:
 --   1. Update the date range for the season you're checking
 --   2. Run the query
@@ -12,7 +16,6 @@
 --   - List of specific games (date, matchup) that need to be scraped
 --   - Empty result = all regular season games present
 -- ============================================================================
-
 WITH
 -- Get all regular season games from schedule
 all_scheduled_games AS (
@@ -28,19 +31,17 @@ all_scheduled_games AS (
   WHERE s.game_date BETWEEN '2024-10-22' AND '2025-04-20'  -- UPDATE: Regular season only
     AND s.is_playoffs = FALSE
 ),
-
 -- Get all games we have box scores for
 boxscore_games AS (
   SELECT DISTINCT
     game_date,
-    game_id,
     home_team_abbr,
     away_team_abbr
   FROM `nba-props-platform.nba_raw.bdl_player_boxscores`
   WHERE game_date BETWEEN '2024-10-22' AND '2025-04-20'  -- UPDATE: Match schedule range
 )
-
 -- Find games in schedule but not in box scores
+-- JOIN ON DATE + TEAMS (not game_id - formats don't match!)
 SELECT
   s.game_date,
   s.home_team,

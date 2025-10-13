@@ -16,9 +16,9 @@ game_dates AS (
     game_date,
     COUNT(*) as games_count
   FROM `nba-props-platform.nba_raw.nbac_schedule`
-  WHERE game_date BETWEEN '2024-10-01' AND '2025-04-30'  -- UPDATE: Season range
+  WHERE game_date BETWEEN '2021-10-01' AND '2025-06-30'  -- UPDATE: Season range
     AND is_playoffs = FALSE
-    AND game_date BETWEEN '2024-10-01' AND '2025-04-30'  -- Partition filter
+    AND game_date BETWEEN '2021-10-01' AND '2025-06-30'  -- Partition filter
   GROUP BY game_date
 ),
 
@@ -32,7 +32,7 @@ peak_hour_reports AS (
     AVG(confidence_score) as avg_confidence,
     STRING_AGG(DISTINCT injury_status ORDER BY injury_status) as statuses_present
   FROM `nba-props-platform.nba_raw.nbac_injury_report`
-  WHERE report_date BETWEEN '2024-10-01' AND '2025-04-30'
+  WHERE report_date BETWEEN '2021-10-01' AND '2025-06-30'
     AND report_hour IN (17, 20)  -- 5 PM and 8 PM ET
   GROUP BY report_date, report_hour
 ),

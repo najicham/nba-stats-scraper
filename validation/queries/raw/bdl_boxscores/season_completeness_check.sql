@@ -51,28 +51,31 @@ diagnostics AS (
   WHERE season IS NOT NULL
 ),
 
--- Count games per team with player statistics
+-- Get player counts per game first, before aggregating
+game_level_stats AS (
+  SELECT
+    season,
+    team_abbr,
+    game_id,
+    is_playoffs,
+    COUNT(DISTINCT player_lookup) as players_in_game
+  FROM boxscores_with_season_info
+  WHERE season IS NOT NULL
+  GROUP BY season, team_abbr, game_id, is_playoffs
+),
+
+-- Now aggregate to team level
 team_games AS (
   SELECT
     season,
     team_abbr,
     COALESCE(is_playoffs, FALSE) as is_playoffs,
     COUNT(DISTINCT game_id) as games,
-    COUNT(DISTINCT player_lookup) as unique_players_used,
-    ROUND(AVG(players_per_game), 1) as avg_players_per_game,
-    MIN(players_per_game) as min_players,
-    MAX(players_per_game) as max_players
-  FROM (
-    SELECT
-      season,
-      team_abbr,
-      game_id,
-      is_playoffs,
-      COUNT(DISTINCT player_lookup) as players_per_game
-    FROM boxscores_with_season_info
-    WHERE season IS NOT NULL
-    GROUP BY season, team_abbr, game_id, is_playoffs
-  )
+    COUNT(DISTINCT CASE WHEN players_in_game > 0 THEN game_id END) as games_with_players,
+    ROUND(AVG(players_in_game), 1) as avg_players_per_game,
+    MIN(players_in_game) as min_players,
+    MAX(players_in_game) as max_players
+  FROM game_level_stats
   GROUP BY season, team_abbr, is_playoffs
 )
 
@@ -97,21 +100,21 @@ SELECT
   'TEAM' as row_type,
   season,
   team_abbr as team,
-  CAST(SUM(CASE WHEN is_playoffs = FALSE THEN games END) AS STRING) as reg_games,
-  CAST(SUM(CASE WHEN is_playoffs = TRUE THEN games END) AS STRING) as playoff_games,
-  CAST(MAX(unique_players_used) AS STRING) as unique_players,
+  CAST(SUM(CASE WHEN is_playoffs = FALSE THEN games ELSE 0 END) AS STRING) as reg_games,
+  CAST(SUM(CASE WHEN is_playoffs = TRUE THEN games ELSE 0 END) AS STRING) as playoff_games,
+  CAST(MAX(games_with_players) AS STRING) as unique_players,
   CAST(MAX(CASE WHEN is_playoffs = FALSE THEN avg_players_per_game END) AS STRING) as avg_players,
   CAST(MIN(CASE WHEN is_playoffs = FALSE THEN min_players END) AS STRING) as min_players,
   CAST(MAX(CASE WHEN is_playoffs = FALSE THEN max_players END) AS STRING) as max_players,
   CASE
-    WHEN SUM(CASE WHEN is_playoffs = FALSE THEN games END) < 82 THEN '⚠️ Missing regular season games'
+    WHEN SUM(CASE WHEN is_playoffs = FALSE THEN games ELSE 0 END) < 82 THEN '⚠️ Missing regular season games'
     WHEN MIN(CASE WHEN is_playoffs = FALSE THEN min_players END) < 10 THEN '⚠️ Suspiciously low player count'
     ELSE ''
   END as notes
 FROM team_games
 GROUP BY season, team_abbr
 ORDER BY
-  row_type,
-  season,
-  CAST(SUM(CASE WHEN is_playoffs = TRUE THEN games END) AS INT64) DESC,
+  row_type DESC,  -- DIAGNOSTICS first, then TEAM
+  season DESC,    -- Most recent season first
+  CAST(playoff_games AS INT64) DESC,  -- Teams with more playoff games first
   team;

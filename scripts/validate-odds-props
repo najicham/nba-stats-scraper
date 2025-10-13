@@ -1,0 +1,250 @@
+#!/bin/bash
+# =============================================================================
+# File: scripts/validate-odds-props
+# Purpose: CLI tool for running Odds API player props validation queries
+# Usage: ./scripts/validate-odds-props [command] [options]
+# =============================================================================
+
+set -e  # Exit on error
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Base directory
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+PROJECT_ROOT="$( cd "$SCRIPT_DIR/.." && pwd )"
+QUERIES_DIR="$PROJECT_ROOT/validation/queries/raw/odds_api_props"
+
+# =============================================================================
+# Helper Functions
+# =============================================================================
+
+print_header() {
+    echo -e "${BLUE}=================================================${NC}"
+    echo -e "${BLUE}$1${NC}"
+    echo -e "${BLUE}=================================================${NC}"
+}
+
+print_success() {
+    echo -e "${GREEN}✅ $1${NC}"
+}
+
+print_warning() {
+    echo -e "${YELLOW}⚠️  $1${NC}"
+}
+
+print_error() {
+    echo -e "${RED}❌ $1${NC}"
+}
+
+# =============================================================================
+# Show Available Commands
+# =============================================================================
+
+show_help() {
+    cat << EOF
+${GREEN}Odds API Player Props Validation Tool${NC}
+
+Usage: validate-odds-props [command] [options]
+
+${YELLOW}HISTORICAL VALIDATION:${NC}
+  gaps                  Complete gap analysis across all 4 seasons
+  may-2023              Verify May 2023 start date and find gaps since then
+  completeness          Team-by-team season completeness check
+  missing               Find games with ZERO props (CRITICAL)
+  low-coverage          Find games with < 6 players (WARNING)
+  playoffs              Verify playoff game completeness
+
+${YELLOW}DAILY MONITORING:${NC}
+  yesterday             Check if yesterday's games have props
+  week                  Review last 7 days coverage
+  today                 Real-time scraper health check
+
+${YELLOW}OPTIONS:${NC}
+  --csv                 Save results to CSV file
+  --table               Save results to BigQuery table
+  --help                Show this help message
+
+${YELLOW}EXAMPLES:${NC}
+  validate-odds-props may-2023                 # Verify May 2023 coverage
+  validate-odds-props gaps                     # Full 4-season gap analysis
+  validate-odds-props yesterday --csv          # Check yesterday, save to CSV
+  validate-odds-props missing                  # Find games with no props
+  validate-odds-props low-coverage             # Find games with few players
+
+${YELLOW}QUICK COMMANDS:${NC}
+  validate-odds-props list                     # List all available queries
+  validate-odds-props help                     # Show this help
+
+${YELLOW}KNOWN DATA GAPS:${NC}
+  Expected Start: May 2023 (2022-23 NBA Finals)
+  2021-22: Complete season missing (0% coverage)
+  2022-23: Regular season missing, partial playoffs (34%)
+  2023-24: Good coverage (70% reg, 89% playoffs)
+  2024-25: Good coverage (74% reg, 92% playoffs)
+
+EOF
+}
+
+# =============================================================================
+# List All Queries
+# =============================================================================
+
+list_queries() {
+    print_header "Available Odds API Player Props Validation Queries"
+    echo ""
+    echo "Historical Validation:"
+    echo "  1. comprehensive_gap_analysis.sql       (alias: gaps)"
+    echo "  2. verify_may_2023_coverage.sql         (alias: may-2023)"
+    echo "  3. season_completeness_check.sql        (alias: completeness)"
+    echo "  4. find_missing_games.sql               (alias: missing)"
+    echo "  5. find_low_coverage_games.sql          (alias: low-coverage)"
+    echo "  6. verify_playoff_completeness.sql      (alias: playoffs)"
+    echo ""
+    echo "Daily Monitoring:"
+    echo "  7. daily_check_yesterday.sql            (alias: yesterday)"
+    echo "  8. weekly_check_last_7_days.sql         (alias: week)"
+    echo "  9. realtime_scraper_check.sql           (alias: today)"
+    echo ""
+}
+
+# =============================================================================
+# Run Query
+# =============================================================================
+
+run_query() {
+    local query_file=$1
+    local output_format=$2
+    local query_path="$QUERIES_DIR/$query_file"
+    
+    if [ ! -f "$query_path" ]; then
+        print_error "Query file not found: $query_file"
+        echo "Run 'validate-odds-props list' to see available queries"
+        exit 1
+    fi
+    
+    print_header "Running: $query_file"
+    echo ""
+    
+    case $output_format in
+        csv)
+            local timestamp=$(date +%Y%m%d_%H%M%S)
+            local output_file="validation_props_${query_file%.sql}_${timestamp}.csv"
+            print_warning "Saving results to: $output_file"
+            bq query --use_legacy_sql=false --format=csv < "$query_path" > "$output_file"
+            print_success "Results saved to $output_file"
+            ;;
+        table)
+            local timestamp=$(date +%Y%m%d)
+            local table_name="validation.props_${query_file%.sql}_${timestamp}"
+            print_warning "Saving to BigQuery table: $table_name"
+            bq query --use_legacy_sql=false --destination_table="nba-props-platform:${table_name}" < "$query_path"
+            print_success "Results saved to nba-props-platform:${table_name}"
+            ;;
+        *)
+            bq query --use_legacy_sql=false < "$query_path"
+            ;;
+    esac
+}
+
+# =============================================================================
+# Main Command Handler
+# =============================================================================
+
+main() {
+    local command=$1
+    local output_format=""
+    
+    # Parse options
+    shift || true
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --csv)
+                output_format="csv"
+                shift
+                ;;
+            --table)
+                output_format="table"
+                shift
+                ;;
+            --help|-h)
+                show_help
+                exit 0
+                ;;
+            *)
+                print_error "Unknown option: $1"
+                show_help
+                exit 1
+                ;;
+        esac
+    done
+    
+    # Handle commands
+    case $command in
+        # Show help
+        help|--help|-h|"")
+            show_help
+            ;;
+        
+        # List queries
+        list|ls)
+            list_queries
+            ;;
+        
+        # Historical validation
+        gaps|gap-analysis|overview)
+            run_query "comprehensive_gap_analysis.sql" "$output_format"
+            ;;
+        
+        may-2023|may2023|verify-may|since-may)
+            run_query "verify_may_2023_coverage.sql" "$output_format"
+            ;;
+        
+        completeness|complete|teams)
+            run_query "season_completeness_check.sql" "$output_format"
+            ;;
+        
+        missing|no-props|critical)
+            run_query "find_missing_games.sql" "$output_format"
+            ;;
+        
+        low-coverage|low|sparse)
+            run_query "find_low_coverage_games.sql" "$output_format"
+            ;;
+        
+        playoffs|playoff)
+            run_query "verify_playoff_completeness.sql" "$output_format"
+            ;;
+        
+        # Daily monitoring
+        yesterday|daily)
+            run_query "daily_check_yesterday.sql" "$output_format"
+            ;;
+        
+        week|weekly|7days)
+            run_query "weekly_check_last_7_days.sql" "$output_format"
+            ;;
+        
+        today|now|realtime)
+            run_query "realtime_scraper_check.sql" "$output_format"
+            ;;
+        
+        # Unknown command
+        *)
+            print_error "Unknown command: $command"
+            echo ""
+            show_help
+            exit 1
+            ;;
+    esac
+}
+
+# =============================================================================
+# Run
+# =============================================================================
+
+main "$@"

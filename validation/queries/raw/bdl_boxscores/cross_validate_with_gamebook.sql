@@ -1,133 +1,126 @@
 -- ============================================================================
 -- File: validation/queries/raw/bdl_boxscores/cross_validate_with_gamebook.sql
--- Purpose: Compare BDL box scores with NBA.com gamebook for data quality
--- Usage: Run to detect discrepancies between sources
--- ============================================================================
--- Instructions:
---   1. Update date range to check specific period
---   2. Adjust point_diff_threshold if needed (default: 2 points)
---   3. Results show players with stat discrepancies between sources
+-- Purpose: Compare BDL stats against NBA.com official gamebook (source of truth)
+-- Usage: Run weekly to verify data quality and identify discrepancies
 -- ============================================================================
 -- Expected Results:
---   - Empty or minimal results = data sources agree
---   - Large point_diff = investigate scraper/processor issues
---   - Missing players = one source has incomplete data
+--   - Most players should show "✅ Match" for all stats
+--   - Points discrepancies are CRITICAL (affect prop settlement)
+--   - Assists/rebounds discrepancies are concerning but less critical
+--   - Missing players should be investigated
 -- ============================================================================
 
 WITH
--- BDL data (active players only)
-bdl_data AS (
+-- Get BDL stats for active players only (those who played)
+bdl_stats AS (
   SELECT
-    game_id,
     game_date,
+    game_id,
     player_lookup,
-    player_full_name as bdl_player_name,
+    player_full_name,
     team_abbr,
-    points as bdl_points,
-    assists as bdl_assists,
-    rebounds as bdl_rebounds,
-    minutes as bdl_minutes
+    points,
+    assists,
+    rebounds as total_rebounds
   FROM `nba-props-platform.nba_raw.bdl_player_boxscores`
-  WHERE game_date BETWEEN DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY) AND CURRENT_DATE()  -- UPDATE: Date range
+  WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
+    AND points IS NOT NULL
 ),
 
--- NBA.com gamebook data (active players only)
-gamebook_data AS (
+-- Get gamebook stats for players who actually played
+gamebook_stats AS (
   SELECT
-    game_id,
     game_date,
+    game_id,
     player_lookup,
-    player_name as gamebook_player_name,
+    player_name,
     team_abbr,
-    points as gamebook_points,
-    assists as gamebook_assists,
-    rebounds as gamebook_rebounds,
-    minutes as gamebook_minutes
+    points,
+    assists,
+    total_rebounds
   FROM `nba-props-platform.nba_raw.nbac_gamebook_player_stats`
-  WHERE game_date BETWEEN DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY) AND CURRENT_DATE()  -- UPDATE: Match BDL range
-    AND player_status = 'active'  -- Only active players (DNP excluded)
+  WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
+    AND player_status = 'ACTIVE'
+    AND points IS NOT NULL
 ),
 
--- Join and compare
+-- Full outer join to catch missing players in either source
 comparison AS (
   SELECT
     COALESCE(b.game_date, g.game_date) as game_date,
     COALESCE(b.game_id, g.game_id) as game_id,
     COALESCE(b.player_lookup, g.player_lookup) as player_lookup,
-    COALESCE(b.bdl_player_name, g.gamebook_player_name) as player_name,
+    COALESCE(b.player_full_name, g.player_name) as player_name,
     COALESCE(b.team_abbr, g.team_abbr) as team_abbr,
     
     -- BDL stats
-    b.bdl_points,
-    b.bdl_assists,
-    b.bdl_rebounds,
-    b.bdl_minutes,
+    b.points as bdl_points,
+    b.assists as bdl_assists,
+    b.total_rebounds as bdl_rebounds,
     
     -- Gamebook stats
-    g.gamebook_points,
-    g.gamebook_assists,
-    g.gamebook_rebounds,
-    g.gamebook_minutes,
+    g.points as gamebook_points,
+    g.assists as gamebook_assists,
+    g.total_rebounds as gamebook_rebounds,
     
-    -- Differences
-    ABS(COALESCE(b.bdl_points, 0) - COALESCE(g.gamebook_points, 0)) as point_diff,
-    ABS(COALESCE(b.bdl_assists, 0) - COALESCE(g.gamebook_assists, 0)) as assist_diff,
-    ABS(COALESCE(b.bdl_rebounds, 0) - COALESCE(g.gamebook_rebounds, 0)) as rebound_diff,
-    
-    -- Data presence flags
-    CASE 
-      WHEN b.player_lookup IS NULL THEN 'missing_from_bdl'
-      WHEN g.player_lookup IS NULL THEN 'missing_from_gamebook'
-      ELSE 'in_both'
+    -- Presence flags
+    CASE
+      WHEN b.player_lookup IS NOT NULL AND g.player_lookup IS NOT NULL THEN 'in_both'
+      WHEN b.player_lookup IS NOT NULL THEN 'bdl_only'
+      WHEN g.player_lookup IS NOT NULL THEN 'gamebook_only'
     END as presence_status
     
-  FROM bdl_data b
-  FULL OUTER JOIN gamebook_data g
-    ON b.game_id = g.game_id
+  FROM bdl_stats b
+  FULL OUTER JOIN gamebook_stats g
+    ON b.game_date = g.game_date
+    AND b.game_id = g.game_id
     AND b.player_lookup = g.player_lookup
 )
 
--- Report discrepancies
 SELECT
   game_date,
-  game_id,
   player_name,
   team_abbr,
   presence_status,
-  
-  -- Points comparison
   bdl_points,
   gamebook_points,
-  point_diff,
-  
-  -- Assists comparison
+  ABS(COALESCE(bdl_points, 0) - COALESCE(gamebook_points, 0)) as point_diff,
   bdl_assists,
   gamebook_assists,
-  assist_diff,
-  
-  -- Rebounds comparison
+  ABS(COALESCE(bdl_assists, 0) - COALESCE(gamebook_assists, 0)) as assist_diff,
   bdl_rebounds,
   gamebook_rebounds,
-  rebound_diff,
+  ABS(COALESCE(bdl_rebounds, 0) - COALESCE(gamebook_rebounds, 0)) as rebound_diff,
   
-  -- Issue classification
+  -- Issue severity
   CASE
-    WHEN presence_status = 'missing_from_bdl' THEN '🔴 CRITICAL: Missing from BDL'
-    WHEN presence_status = 'missing_from_gamebook' THEN '🟡 WARNING: Missing from Gamebook'
-    WHEN point_diff > 2 THEN '🔴 CRITICAL: Point discrepancy'
-    WHEN assist_diff > 2 OR rebound_diff > 2 THEN '🟡 WARNING: Stat discrepancy'
+    -- Critical issues (affect prop settlement)
+    WHEN presence_status = 'gamebook_only' THEN '🔴 CRITICAL: Missing from BDL'
+    WHEN presence_status = 'bdl_only' THEN '🟡 WARNING: Missing from Gamebook'
+    WHEN ABS(COALESCE(bdl_points, 0) - COALESCE(gamebook_points, 0)) > 2 
+      THEN '🔴 CRITICAL: Point discrepancy'
+    
+    -- Moderate issues
+    WHEN ABS(COALESCE(bdl_assists, 0) - COALESCE(gamebook_assists, 0)) > 2 
+      THEN '🟡 WARNING: Assist discrepancy'
+    WHEN ABS(COALESCE(bdl_rebounds, 0) - COALESCE(gamebook_rebounds, 0)) > 2 
+      THEN '🟡 WARNING: Rebound discrepancy'
+    
+    -- All stats match
     ELSE '✅ Match'
   END as issue_severity
 
 FROM comparison
-WHERE 
-  -- Filter to only show issues
-  presence_status != 'in_both'
-  OR point_diff > 2
-  OR assist_diff > 2
-  OR rebound_diff > 2
 
-ORDER BY 
+-- Show issues first, then perfect matches
+ORDER BY
+  CASE issue_severity
+    WHEN '🔴 CRITICAL: Missing from BDL' THEN 1
+    WHEN '🔴 CRITICAL: Point discrepancy' THEN 2
+    WHEN '🟡 WARNING: Missing from Gamebook' THEN 3
+    WHEN '🟡 WARNING: Assist discrepancy' THEN 4
+    WHEN '🟡 WARNING: Rebound discrepancy' THEN 5
+    ELSE 6
+  END,
   game_date DESC,
-  point_diff DESC,
   player_name;

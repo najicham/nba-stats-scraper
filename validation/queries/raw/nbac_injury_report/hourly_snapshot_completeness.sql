@@ -24,7 +24,7 @@ daily_snapshot_counts AS (
     MIN(report_hour) as earliest_hour,
     MAX(report_hour) as latest_hour
   FROM `nba-props-platform.nba_raw.nbac_injury_report`
-  WHERE report_date BETWEEN '2024-10-01' AND '2025-04-30'  -- UPDATE: Active season
+  WHERE report_date BETWEEN '2021-10-01' AND '2025-06-30'  -- UPDATE: Active season
   GROUP BY report_date
 ),
 
@@ -34,9 +34,9 @@ schedule_context AS (
     game_date,
     COUNT(*) as games_scheduled
   FROM `nba-props-platform.nba_raw.nbac_schedule`
-  WHERE game_date BETWEEN '2024-10-01' AND '2025-04-30'  -- UPDATE: Match injury report range
+  WHERE game_date BETWEEN '2021-10-01' AND '2025-06-30'  -- UPDATE: Match injury report range
     AND is_playoffs = FALSE
-    AND game_date BETWEEN '2024-10-01' AND '2025-04-30'  -- Partition filter
+    AND game_date BETWEEN '2021-10-01' AND '2025-06-30'  -- Partition filter
   GROUP BY game_date
 ),
 

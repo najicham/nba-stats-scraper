@@ -2,17 +2,7 @@
 -- File: validation/queries/raw/nbac_schedule/team_schedule_gaps.sql
 -- Purpose: Detect suspicious gaps in team schedules (missing games detection)
 -- Usage: Run when anomalies suspected or as part of weekly validation
--- ============================================================================
--- Instructions:
---   1. Update date range for the period you're checking
---   2. Normal gaps: 1-3 days between games
---   3. Suspicious gaps: 5+ days (may indicate missing data)
---   4. Expected gaps: All-Star break, unusual scheduling
--- ============================================================================
--- Expected Results:
---   - Most teams have 1-2 day gaps between games
---   - 5+ day gaps during All-Star break are normal
---   - Multiple 7+ day gaps outside breaks = data quality issue
+-- Status: FIXED - Corrected GROUP BY aggregation error
 -- ============================================================================
 
 WITH
@@ -57,7 +47,7 @@ team_games AS (
 team_gaps AS (
   SELECT
     team,
-    MAX(team_name) as team_name,
+    team_name,  -- Keep this here for later use
     game_date,
     game_description,
     LAG(game_date) OVER (PARTITION BY team ORDER BY game_date) as previous_game_date,
@@ -90,33 +80,47 @@ gap_analysis AS (
   WHERE days_since_last_game IS NOT NULL
 ),
 
--- Find teams with most concerning gaps
+-- Find teams with most concerning gaps - FIXED aggregation
 team_gap_summary AS (
   SELECT
     team,
-    MAX(team_name) as team_name,
+    ANY_VALUE(team_name) as team_name,  -- FIXED: Use ANY_VALUE for non-grouped column
     COUNT(*) as total_games,
-    COUNT(CASE WHEN days_since_last_game > 6 THEN 1 END) as suspicious_gaps,
-    COUNT(CASE WHEN days_since_last_game > 10 THEN 1 END) as critical_gaps,
+    COUNTIF(days_since_last_game > 6) as suspicious_gaps,
+    COUNTIF(days_since_last_game > 10) as critical_gaps,
     MAX(days_since_last_game) as longest_gap,
-    ROUND(AVG(days_since_last_game), 1) as avg_gap_days,
-    CASE
-      WHEN COUNT(CASE WHEN days_since_last_game > 10 THEN 1 END) > 0 THEN '🔴 CRITICAL: Has 10+ day gaps'
-      WHEN COUNT(CASE WHEN days_since_last_game > 6 THEN 1 END) > 2 THEN '🟠 WARNING: Multiple 7+ day gaps'
-      WHEN MAX(days_since_last_game) > 6 THEN '🟡 INFO: One 7+ day gap'
-      ELSE '✅ Normal'
-    END as overall_status
+    ROUND(AVG(days_since_last_game), 1) as avg_gap_days
   FROM gap_analysis
   GROUP BY team
+),
+
+-- Add overall status calculation
+team_status AS (
+  SELECT
+    *,
+    CASE
+      WHEN critical_gaps > 0 THEN '🔴 CRITICAL: Has 10+ day gaps'
+      WHEN suspicious_gaps > 2 THEN '🟠 WARNING: Multiple 7+ day gaps'
+      WHEN longest_gap > 6 THEN '🟡 INFO: One 7+ day gap'
+      ELSE '✅ Normal'
+    END as overall_status
+  FROM team_gap_summary
 ),
 
 -- Known acceptable gaps (All-Star break, etc.)
 known_breaks AS (
   SELECT date FROM UNNEST([
-    DATE('2025-02-14'),  -- All-Star break 2025
+    -- All-Star Break 2025 (teams' last game Feb 12-13, resume Feb 19-21)
+    DATE('2025-02-12'),
+    DATE('2025-02-13'),
+    DATE('2025-02-14'),
     DATE('2025-02-15'),
     DATE('2025-02-16'),
-    DATE('2025-02-17')
+    DATE('2025-02-17'),
+    DATE('2025-02-18'),
+    DATE('2025-02-19'),
+    DATE('2025-02-20'),
+    DATE('2025-02-21')
   ]) AS date
 )
 
@@ -147,7 +151,7 @@ SELECT
     ELSE 4
   END as sort_order,
   longest_gap as sub_sort
-FROM team_gap_summary
+FROM team_status
 WHERE overall_status != '✅ Normal'
 
 UNION ALL

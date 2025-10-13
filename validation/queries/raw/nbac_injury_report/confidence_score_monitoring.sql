@@ -10,7 +10,7 @@
 -- ============================================================================
 
 WITH 
--- Daily confidence trends
+-- Daily confidence trends (OPTIMIZED: Added date filter in base query)
 daily_confidence AS (
   SELECT 
     report_date,
@@ -26,7 +26,7 @@ daily_confidence AS (
     -- Calculate percentages
     ROUND(COUNTIF(confidence_score < 0.7) * 100.0 / COUNT(*), 1) as pct_below_70
   FROM `nba-props-platform.nba_raw.nbac_injury_report`
-  WHERE report_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
+  WHERE report_date BETWEEN DATE_SUB(CURRENT_DATE(), INTERVAL 120 DAY) AND CURRENT_DATE()
   GROUP BY report_date
 ),
 
@@ -61,4 +61,5 @@ SELECT
     ELSE '✅ Healthy'
   END as status
 FROM with_trends
-ORDER BY report_date DESC;
+ORDER BY report_date DESC
+LIMIT 30;  -- Added LIMIT for faster results

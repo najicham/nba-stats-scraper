@@ -1,0 +1,304 @@
+#!/bin/bash
+# ============================================================================
+# FILE: scripts/validate-bigdataball
+# ============================================================================
+# validate-bigdataball - CLI tool for BigDataBall Play-by-Play validation
+# ============================================================================
+# Usage:
+#   ./validate-bigdataball [command] [options]
+#
+# Commands:
+#   discover          Run all 5 discovery queries
+#   season            Check season completeness
+#   missing           Find missing games
+#   daily             Check yesterday's games
+#   weekly            Check last 7 days
+#   quality           Run event quality checks
+#   realtime          Check scraper status
+#   all               Run all validation queries
+#
+# Options:
+#   --csv             Output as CSV
+#   --table NAME      Save to BigQuery table
+#   --season YYYY     Specify season (default: current)
+#
+# Examples:
+#   ./validate-bigdataball daily
+#   ./validate-bigdataball season --season 2024
+#   ./validate-bigdataball all --csv > validation_report.csv
+# ============================================================================
+
+set -e  # Exit on error
+
+# Configuration
+PROJECT_ID="nba-props-platform"
+DATASET="nba_raw"
+TABLE="bigdataball_play_by_play"
+QUERIES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../validation/queries/raw/bigdataball_pbp" && pwd)"
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Help text
+show_help() {
+    cat << EOF
+BigDataBall Play-by-Play Validation Tool
+
+USAGE:
+    validate-bigdataball [COMMAND] [OPTIONS]
+
+COMMANDS:
+    discover       Run all 5 discovery queries (MANDATORY first step)
+    season         Check season completeness
+    missing        Find missing games  
+    daily          Check yesterday's games (for automation)
+    weekly         Check last 7 days trend
+    quality        Run event quality checks (shots, lineups, sequences)
+    realtime       Check if scraper is current
+    all            Run all validation queries
+
+OPTIONS:
+    --csv          Output results as CSV format
+    --table NAME   Save results to BigQuery table
+    --season YYYY  Specify season year (default: current)
+    --help, -h     Show this help message
+
+EXAMPLES:
+    # Morning routine - check yesterday
+    validate-bigdataball daily
+
+    # Full season validation
+    validate-bigdataball season --season 2024
+
+    # Investigate data quality
+    validate-bigdataball quality
+
+    # Export all checks to CSV
+    validate-bigdataball all --csv > report.csv
+
+    # Run discovery phase (do this first!)
+    validate-bigdataball discover
+
+NOTES:
+    - Always run 'discover' command first for new seasons
+    - Schedule 'daily' command in cron for automated monitoring
+    - Use 'quality' command to investigate specific data issues
+    - BigDataBall data appears ~2 hours after game completion
+
+EOF
+}
+
+# Run a BigQuery query
+run_query() {
+    local query_file="$1"
+    local output_format="$2"
+    local output_table="$3"
+
+    if [ ! -f "$query_file" ]; then
+        echo -e "${RED}Error: Query file not found: $query_file${NC}"
+        exit 1
+    fi
+
+    echo -e "${BLUE}Running: $(basename "$query_file")${NC}"
+    
+    if [ "$output_format" = "csv" ]; then
+        bq query --use_legacy_sql=false --format=csv < "$query_file"
+    elif [ -n "$output_table" ]; then
+        bq query --use_legacy_sql=false \
+            --destination_table="$output_table" \
+            --replace \
+            < "$query_file"
+        echo -e "${GREEN}Results saved to: $output_table${NC}"
+    else
+        bq query --use_legacy_sql=false --format=prettyjson < "$query_file"
+    fi
+}
+
+# Color-code output based on status
+colorize_output() {
+    while IFS= read -r line; do
+        if echo "$line" | grep -q "✅\|Complete\|CURRENT"; then
+            echo -e "${GREEN}$line${NC}"
+        elif echo "$line" | grep -q "⚠️\|WARNING\|Low"; then
+            echo -e "${YELLOW}$line${NC}"
+        elif echo "$line" | grep -q "❌\|CRITICAL\|Missing"; then
+            echo -e "${RED}$line${NC}"
+        else
+            echo "$line"
+        fi
+    done
+}
+
+# Discovery command - run all 5 discovery queries
+cmd_discover() {
+    echo -e "${BLUE}========================================${NC}"
+    echo -e "${BLUE}BigDataBall Discovery Phase${NC}"
+    echo -e "${BLUE}========================================${NC}"
+    echo ""
+    
+    echo -e "${YELLOW}This will run 5 discovery queries to understand your data.${NC}"
+    echo -e "${YELLOW}Document the results before creating validation queries!${NC}"
+    echo ""
+    
+    # Discovery queries would be in discovery/ subdirectory
+    local discovery_dir="$QUERIES_DIR/discovery"
+    
+    if [ -d "$discovery_dir" ]; then
+        for i in {1..5}; do
+            if [ -f "$discovery_dir/discovery_query_${i}.sql" ]; then
+                echo -e "${BLUE}Discovery Query $i:${NC}"
+                run_query "$discovery_dir/discovery_query_${i}.sql" "$output_format" ""
+                echo ""
+            fi
+        done
+    else
+        echo -e "${YELLOW}Note: Discovery queries not in separate directory${NC}"
+        echo -e "${YELLOW}Run them manually from the artifacts provided${NC}"
+    fi
+}
+
+# Season completeness check
+cmd_season() {
+    run_query "$QUERIES_DIR/season_completeness_check.sql" "$output_format" "$output_table" | colorize_output
+}
+
+# Find missing games
+cmd_missing() {
+    run_query "$QUERIES_DIR/find_missing_games.sql" "$output_format" "$output_table" | colorize_output
+}
+
+# Daily check
+cmd_daily() {
+    echo -e "${BLUE}========================================${NC}"
+    echo -e "${BLUE}Daily Validation - Yesterday's Games${NC}"
+    echo -e "${BLUE}========================================${NC}"
+    echo ""
+    run_query "$QUERIES_DIR/daily_check_yesterday.sql" "$output_format" "$output_table" | colorize_output
+}
+
+# Weekly check
+cmd_weekly() {
+    run_query "$QUERIES_DIR/weekly_check_last_7_days.sql" "$output_format" "$output_table" | colorize_output
+}
+
+# Quality checks
+cmd_quality() {
+    echo -e "${BLUE}========================================${NC}"
+    echo -e "${BLUE}Event Quality Checks${NC}"
+    echo -e "${BLUE}========================================${NC}"
+    echo ""
+    run_query "$QUERIES_DIR/event_quality_checks.sql" "$output_format" "$output_table" | colorize_output
+}
+
+# Realtime check
+cmd_realtime() {
+    run_query "$QUERIES_DIR/realtime_scraper_check.sql" "$output_format" "$output_table" | colorize_output
+}
+
+# Run all validations
+cmd_all() {
+    echo -e "${BLUE}========================================${NC}"
+    echo -e "${BLUE}Full Validation Report${NC}"
+    echo -e "${BLUE}========================================${NC}"
+    echo ""
+    
+    echo -e "${BLUE}1. Season Completeness${NC}"
+    cmd_season
+    echo ""
+    
+    echo -e "${BLUE}2. Missing Games${NC}"
+    cmd_missing
+    echo ""
+    
+    echo -e "${BLUE}3. Yesterday's Check${NC}"
+    cmd_daily
+    echo ""
+    
+    echo -e "${BLUE}4. Weekly Trend${NC}"
+    cmd_weekly
+    echo ""
+    
+    echo -e "${BLUE}5. Event Quality${NC}"
+    cmd_quality
+    echo ""
+    
+    echo -e "${BLUE}6. Realtime Status${NC}"
+    cmd_realtime
+    echo ""
+}
+
+# Parse arguments
+command=""
+output_format="pretty"
+output_table=""
+season_year=""
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        discover|season|missing|daily|weekly|quality|realtime|all)
+            command="$1"
+            shift
+            ;;
+        --csv)
+            output_format="csv"
+            shift
+            ;;
+        --table)
+            output_table="$2"
+            shift 2
+            ;;
+        --season)
+            season_year="$2"
+            shift 2
+            ;;
+        --help|-h)
+            show_help
+            exit 0
+            ;;
+        *)
+            echo -e "${RED}Error: Unknown option: $1${NC}"
+            show_help
+            exit 1
+            ;;
+    esac
+done
+
+# Validate command
+if [ -z "$command" ]; then
+    echo -e "${RED}Error: No command specified${NC}"
+    echo ""
+    show_help
+    exit 1
+fi
+
+# Execute command
+case $command in
+    discover)
+        cmd_discover
+        ;;
+    season)
+        cmd_season
+        ;;
+    missing)
+        cmd_missing
+        ;;
+    daily)
+        cmd_daily
+        ;;
+    weekly)
+        cmd_weekly
+        ;;
+    quality)
+        cmd_quality
+        ;;
+    realtime)
+        cmd_realtime
+        ;;
+    all)
+        cmd_all
+        ;;
+esac

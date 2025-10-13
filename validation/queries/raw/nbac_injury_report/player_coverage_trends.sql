@@ -24,7 +24,7 @@ daily_player_counts AS (
     COUNTIF(injury_status = 'doubtful') as doubtful_count,
     COUNTIF(injury_status = 'probable') as probable_count
   FROM `nba-props-platform.nba_raw.nbac_injury_report`
-  WHERE report_date BETWEEN '2024-10-01' AND '2025-04-30'  -- UPDATE: Season range
+  WHERE report_date BETWEEN '2021-10-01' AND '2025-06-30'  -- UPDATE: Season range
   GROUP BY report_date
 ),
 
@@ -55,9 +55,9 @@ with_schedule_context AS (
       game_date,
       COUNT(*) as games_count
     FROM `nba-props-platform.nba_raw.nbac_schedule`
-    WHERE game_date BETWEEN '2024-10-01' AND '2025-04-30'
+    WHERE game_date BETWEEN '2021-10-01' AND '2025-06-30'
       AND is_playoffs = FALSE
-      AND game_date BETWEEN '2024-10-01' AND '2025-04-30'  -- Partition filter
+      AND game_date BETWEEN '2021-10-01' AND '2025-06-30'  -- Partition filter
     GROUP BY game_date
   ) s ON t.report_date = s.game_date
 )
