@@ -15,27 +15,22 @@
 -- ============================================================================
 
 WITH
--- Get most recent roster date
-latest_date AS (
-  SELECT MAX(roster_date) as latest_roster_date
-  FROM `nba-props-platform.nba_raw.espn_team_rosters`
-  WHERE roster_date >= '2025-01-01'  -- Partition filter
-),
-
 -- Team roster counts
 team_rosters AS (
   SELECT
-    r.team_abbr,
-    ANY_VALUE(r.team_name) as team_name,
-    COUNT(DISTINCT r.player_lookup) as player_count,
+    team_abbr,
+    ANY_VALUE(team_display_name) as team_name,
+    COUNT(DISTINCT player_lookup) as player_count,
     COUNT(*) as total_records,
-    l.latest_roster_date as latest_update,
-    STRING_AGG(DISTINCT r.espn_player_id ORDER BY r.espn_player_id LIMIT 3) as sample_player_ids
-  FROM `nba-props-platform.nba_raw.espn_team_rosters` r
-  CROSS JOIN latest_date l
-  WHERE r.roster_date = l.latest_roster_date
-    AND r.roster_date >= '2025-01-01'  -- Partition filter
-  GROUP BY r.team_abbr, l.latest_roster_date
+    MAX(roster_date) as latest_update
+  FROM `nba-props-platform.nba_raw.espn_team_rosters`
+  WHERE roster_date = (
+      SELECT MAX(roster_date) 
+      FROM `nba-props-platform.nba_raw.espn_team_rosters`
+      WHERE roster_date >= '2025-01-01'
+    )
+    AND roster_date >= '2025-01-01'  -- Partition filter
+  GROUP BY team_abbr
 ),
 
 -- Calculate league stats

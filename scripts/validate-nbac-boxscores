@@ -1,0 +1,256 @@
+#!/bin/bash
+# ============================================================================
+# NBA.com Player Boxscores Validation CLI
+# Purpose: Run validation queries for NBA.com player boxscore data
+# Usage: ./validate-nbac-boxscores [command] [options]
+# ============================================================================
+
+set -e  # Exit on error
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+PURPLE='\033[0;35m'
+CYAN='\033[0;36m'
+NC='\033[0m' # No Color
+
+# Configuration
+QUERIES_DIR="validation/queries/raw/nbac_player_boxscores"
+PROJECT_ID="nba-props-platform"
+
+# Function to print colored status messages
+print_status() {
+    echo -e "${BLUE}[INFO]${NC} $1"
+}
+
+print_success() {
+    echo -e "${GREEN}[✓]${NC} $1"
+}
+
+print_warning() {
+    echo -e "${YELLOW}[!]${NC} $1"
+}
+
+print_error() {
+    echo -e "${RED}[✗]${NC} $1"
+}
+
+print_section() {
+    echo ""
+    echo -e "${PURPLE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${PURPLE} $1${NC}"
+    echo -e "${PURPLE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+}
+
+# Function to run a BigQuery query
+run_query() {
+    local query_file=$1
+    local output_format=$2
+    local output_table=$3
+    
+    if [ ! -f "$query_file" ]; then
+        print_error "Query file not found: $query_file"
+        return 1
+    fi
+    
+    print_status "Running query: $(basename $query_file)"
+    
+    if [ "$output_format" = "csv" ]; then
+        bq query --use_legacy_sql=false --format=csv < "$query_file"
+    elif [ "$output_format" = "table" ]; then
+        if [ -z "$output_table" ]; then
+            print_error "Table name required for --table option"
+            return 1
+        fi
+        bq query --use_legacy_sql=false --destination_table="$PROJECT_ID.$output_table" --replace < "$query_file"
+        print_success "Results saved to $PROJECT_ID.$output_table"
+    else
+        # Default: Pretty formatted terminal output
+        bq query --use_legacy_sql=false --format=pretty < "$query_file"
+    fi
+}
+
+# Function to show help
+show_help() {
+    cat << EOF
+${CYAN}NBA.com Player Boxscores Validation CLI${NC}
+${CYAN}========================================${NC}
+
+⚠️  NOTE: Table is currently empty (awaiting NBA season start)
+    All queries will return "No data yet" messages until season begins
+
+${YELLOW}Usage:${NC}
+    ./validate-nbac-boxscores [command] [options]
+
+${YELLOW}Commands:${NC}
+    ${GREEN}all${NC}                      Run all validation queries
+    ${GREEN}season-completeness${NC}      Check coverage by season/team
+    ${GREEN}missing-games${NC}            Find specific missing games
+    ${GREEN}cross-validate-bdl${NC}       Compare NBA.com vs BDL (CRITICAL!)
+    ${GREEN}daily-check${NC}              Verify yesterday's games
+    ${GREEN}data-quality${NC}             Check enhanced metrics availability
+    ${GREEN}playoff-completeness${NC}     Verify playoff coverage
+    ${GREEN}weekly-check${NC}             Review last 7 days trends
+
+${YELLOW}Options:${NC}
+    ${GREEN}--csv${NC}                    Output results as CSV
+    ${GREEN}--table${NC} <table_name>     Save results to BigQuery table
+    ${GREEN}--help${NC}, ${GREEN}-h${NC}              Show this help message
+
+${YELLOW}Examples:${NC}
+    # Run all validation queries
+    ./validate-nbac-boxscores all
+
+    # Check yesterday's games (daily monitoring)
+    ./validate-nbac-boxscores daily-check
+
+    # Compare with BDL (critical validation)
+    ./validate-nbac-boxscores cross-validate-bdl
+
+    # Export season completeness to CSV
+    ./validate-nbac-boxscores season-completeness --csv > results.csv
+
+    # Save daily check to tracking table
+    ./validate-nbac-boxscores daily-check --table nba_processing.nbac_boxscore_daily_checks
+
+${YELLOW}Query Details:${NC}
+    ${CYAN}season-completeness${NC}   - Game coverage, player counts, schedule validation
+    ${CYAN}missing-games${NC}         - Specific dates/matchups without data
+    ${CYAN}cross-validate-bdl${NC}    - Point/assist/rebound comparison (props critical!)
+    ${CYAN}daily-check${NC}           - Yesterday's games validation + BDL comparison
+    ${CYAN}data-quality${NC}          - Enhanced metrics availability, NBA ID completeness
+    ${CYAN}playoff-completeness${NC}  - Playoff game coverage by team
+    ${CYAN}weekly-check${NC}          - 7-day trends + BDL consistency
+
+${YELLOW}Monitoring Schedule:${NC}
+    ${GREEN}Daily (9 AM):${NC}     ./validate-nbac-boxscores daily-check
+    ${GREEN}Weekly (Monday):${NC}  ./validate-nbac-boxscores weekly-check
+    ${GREEN}Weekly (any day):${NC} ./validate-nbac-boxscores cross-validate-bdl
+    ${GREEN}After backfills:${NC}  ./validate-nbac-boxscores season-completeness
+
+${YELLOW}Alert Priority:${NC}
+    🔴 ${RED}CRITICAL:${NC} Point discrepancies >2, no data for scheduled games
+    ⚠️  ${YELLOW}WARNING:${NC}  Any point discrepancy, missing games, unusual counts
+    🟡 ${YELLOW}INFO:${NC}     Minor stat differences, enhanced metrics not available
+    ✅ ${GREEN}SUCCESS:${NC}  All checks passed, data complete
+
+${YELLOW}Related Documentation:${NC}
+    README: validation/queries/raw/nbac_player_boxscores/README.md
+    Processor: data_processors/raw/nbacom/nbac_player_boxscore_processor.py
+    Table: nba-props-platform.nba_raw.nbac_player_boxscores
+
+EOF
+}
+
+# Parse command
+COMMAND=${1:-"help"}
+OUTPUT_FORMAT="pretty"
+OUTPUT_TABLE=""
+
+# Parse options
+shift || true
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --csv)
+            OUTPUT_FORMAT="csv"
+            shift
+            ;;
+        --table)
+            OUTPUT_FORMAT="table"
+            OUTPUT_TABLE="$2"
+            shift 2
+            ;;
+        --help|-h)
+            show_help
+            exit 0
+            ;;
+        *)
+            print_error "Unknown option: $1"
+            echo "Run './validate-nbac-boxscores --help' for usage information"
+            exit 1
+            ;;
+    esac
+done
+
+# Execute command
+case $COMMAND in
+    all)
+        print_section "Running All Validation Queries for NBA.com Player Boxscores"
+        print_warning "Note: Table is currently empty - awaiting NBA season start"
+        echo ""
+        
+        print_section "1. Season Completeness Check"
+        run_query "$QUERIES_DIR/season_completeness_check.sql" "$OUTPUT_FORMAT" "$OUTPUT_TABLE"
+        
+        print_section "2. Find Missing Games"
+        run_query "$QUERIES_DIR/find_missing_games.sql" "$OUTPUT_FORMAT" "$OUTPUT_TABLE"
+        
+        print_section "3. Cross-Validate with BDL (CRITICAL)"
+        run_query "$QUERIES_DIR/cross_validate_with_bdl.sql" "$OUTPUT_FORMAT" "$OUTPUT_TABLE"
+        
+        print_section "4. Daily Check (Yesterday)"
+        run_query "$QUERIES_DIR/daily_check_yesterday.sql" "$OUTPUT_FORMAT" "$OUTPUT_TABLE"
+        
+        print_section "5. Data Quality Checks"
+        run_query "$QUERIES_DIR/data_quality_checks.sql" "$OUTPUT_FORMAT" "$OUTPUT_TABLE"
+        
+        print_section "6. Playoff Completeness"
+        run_query "$QUERIES_DIR/verify_playoff_completeness.sql" "$OUTPUT_FORMAT" "$OUTPUT_TABLE"
+        
+        print_section "7. Weekly Check (Last 7 Days)"
+        run_query "$QUERIES_DIR/weekly_check_last_7_days.sql" "$OUTPUT_FORMAT" "$OUTPUT_TABLE"
+        
+        print_success "All validation queries completed!"
+        ;;
+        
+    season-completeness)
+        print_section "Season Completeness Check"
+        run_query "$QUERIES_DIR/season_completeness_check.sql" "$OUTPUT_FORMAT" "$OUTPUT_TABLE"
+        ;;
+        
+    missing-games)
+        print_section "Find Missing Games"
+        run_query "$QUERIES_DIR/find_missing_games.sql" "$OUTPUT_FORMAT" "$OUTPUT_TABLE"
+        ;;
+        
+    cross-validate-bdl)
+        print_section "Cross-Validate with BDL (CRITICAL for Props)"
+        run_query "$QUERIES_DIR/cross_validate_with_bdl.sql" "$OUTPUT_FORMAT" "$OUTPUT_TABLE"
+        ;;
+        
+    daily-check)
+        print_section "Daily Check - Yesterday's Games"
+        run_query "$QUERIES_DIR/daily_check_yesterday.sql" "$OUTPUT_FORMAT" "$OUTPUT_TABLE"
+        ;;
+        
+    data-quality)
+        print_section "Data Quality Checks"
+        run_query "$QUERIES_DIR/data_quality_checks.sql" "$OUTPUT_FORMAT" "$OUTPUT_TABLE"
+        ;;
+        
+    playoff-completeness)
+        print_section "Verify Playoff Completeness"
+        run_query "$QUERIES_DIR/verify_playoff_completeness.sql" "$OUTPUT_FORMAT" "$OUTPUT_TABLE"
+        ;;
+        
+    weekly-check)
+        print_section "Weekly Check - Last 7 Days"
+        run_query "$QUERIES_DIR/weekly_check_last_7_days.sql" "$OUTPUT_FORMAT" "$OUTPUT_TABLE"
+        ;;
+        
+    help|--help|-h)
+        show_help
+        ;;
+        
+    *)
+        print_error "Unknown command: $COMMAND"
+        echo ""
+        echo "Run './validate-nbac-boxscores --help' for usage information"
+        echo ""
+        echo "Available commands: all, season-completeness, missing-games, cross-validate-bdl,"
+        echo "                   daily-check, data-quality, playoff-completeness, weekly-check"
+        exit 1
+        ;;
+esac

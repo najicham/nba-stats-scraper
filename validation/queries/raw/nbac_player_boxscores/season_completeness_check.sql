@@ -1,0 +1,149 @@
+-- ============================================================================
+-- File: validation/queries/raw/nbac_player_boxscores/season_completeness_check.sql
+-- Purpose: Comprehensive season validation for NBA.com player box scores
+-- Usage: Run after backfills or to verify historical data integrity
+-- ============================================================================
+-- ⚠️ NOTE: Table is currently empty (awaiting NBA season start)
+-- This query is ready to execute once data arrives
+-- ============================================================================
+-- Expected Results:
+--   - DIAGNOSTICS row should show 0 for null_playoff, failed_joins, null_teams
+--   - Regular season: ~1,230 games per season with balanced player counts
+--   - Playoffs: Variable games based on series length
+--   - Player counts: ~30-35 per game (active players only)
+--   - Should match BDL boxscore coverage closely
+-- ============================================================================
+
+WITH
+-- Check if table has any data (handles empty table gracefully)
+data_check AS (
+  SELECT COUNT(*) as total_records
+  FROM `nba-props-platform.nba_raw.nbac_player_boxscores`
+  WHERE game_date >= '2021-10-19'  -- Earliest supported season
+),
+
+boxscores_with_season_info AS (
+  SELECT
+    b.game_date,
+    b.game_id,
+    b.team_abbr,
+    b.player_lookup,
+    b.nba_player_id,
+    b.points,
+    b.starter,
+    s.is_playoffs,
+    s.home_team_tricode,
+    s.away_team_tricode,
+    s.game_id as schedule_game_id,
+    CASE
+      WHEN b.game_date BETWEEN '2021-10-19' AND '2022-06-20' THEN '2021-22'
+      WHEN b.game_date BETWEEN '2022-10-18' AND '2023-06-20' THEN '2022-23'
+      WHEN b.game_date BETWEEN '2023-10-24' AND '2024-06-20' THEN '2023-24'
+      WHEN b.game_date BETWEEN '2024-10-22' AND '2025-06-20' THEN '2024-25'
+    END as season
+  FROM `nba-props-platform.nba_raw.nbac_player_boxscores` b
+  LEFT JOIN `nba-props-platform.nba_raw.nbac_schedule` s
+    ON b.game_date = s.game_date
+    AND b.game_id = s.game_id  -- NBA.com uses consistent game_id format
+  WHERE b.game_date BETWEEN '2021-10-19' AND '2025-06-20'
+    AND s.game_date BETWEEN '2021-10-19' AND '2025-06-20'
+),
+
+-- Diagnostic checks for data quality
+diagnostics AS (
+  SELECT
+    'DIAGNOSTICS' as row_type,
+    (SELECT total_records FROM data_check) as total_records,
+    COUNT(DISTINCT game_id) as total_games,
+    COUNT(DISTINCT CASE WHEN is_playoffs IS NULL THEN game_id END) as null_playoff_flag_games,
+    COUNT(DISTINCT CASE WHEN schedule_game_id IS NULL THEN game_id END) as failed_join_games,
+    COUNT(DISTINCT CASE WHEN team_abbr IS NULL THEN game_id END) as null_team_games,
+    COUNT(DISTINCT CASE WHEN nba_player_id IS NULL THEN player_lookup END) as null_player_id_count,
+    COUNT(DISTINCT CASE WHEN is_playoffs = TRUE THEN game_id END) as playoff_games_found,
+    COUNT(DISTINCT CASE WHEN is_playoffs = FALSE THEN game_id END) as regular_season_games_found,
+    COUNT(DISTINCT CASE WHEN starter = TRUE THEN player_lookup END) as total_starters
+  FROM boxscores_with_season_info
+  WHERE season IS NOT NULL
+),
+
+-- Get player counts per game first, before aggregating
+game_level_stats AS (
+  SELECT
+    season,
+    team_abbr,
+    game_id,
+    is_playoffs,
+    COUNT(DISTINCT player_lookup) as players_in_game,
+    COUNT(DISTINCT CASE WHEN starter = TRUE THEN player_lookup END) as starters_in_game
+  FROM boxscores_with_season_info
+  WHERE season IS NOT NULL
+  GROUP BY season, team_abbr, game_id, is_playoffs
+),
+
+-- Now aggregate to team level
+team_games AS (
+  SELECT
+    season,
+    team_abbr,
+    COALESCE(is_playoffs, FALSE) as is_playoffs,
+    COUNT(DISTINCT game_id) as games,
+    COUNT(DISTINCT CASE WHEN players_in_game > 0 THEN game_id END) as games_with_players,
+    ROUND(AVG(players_in_game), 1) as avg_players_per_game,
+    ROUND(AVG(starters_in_game), 1) as avg_starters_per_game,
+    MIN(players_in_game) as min_players,
+    MAX(players_in_game) as max_players
+  FROM game_level_stats
+  GROUP BY season, team_abbr, is_playoffs
+)
+
+-- Output diagnostics first
+SELECT
+  row_type,
+  CAST(total_records AS STRING) as season,
+  'diagnostics' as team,
+  CAST(total_games AS STRING) as reg_games,
+  CAST(null_playoff_flag_games AS STRING) as playoff_games,
+  CAST(failed_join_games AS STRING) as games_w_data,
+  CAST(null_team_games AS STRING) as avg_players,
+  CAST(null_player_id_count AS STRING) as avg_starters,
+  '' as min_players,
+  '' as max_players,
+  CASE
+    WHEN total_records = 0 THEN '⚪ No data yet (awaiting season start)'
+    WHEN null_playoff_flag_games > 0 OR null_team_games > 0 THEN '⚠️ Data quality issues found'
+    ELSE '✅ All diagnostic checks passed'
+  END as notes
+FROM diagnostics
+
+UNION ALL
+
+-- Then team stats (only if data exists)
+SELECT
+  'TEAM' as row_type,
+  season,
+  team_abbr as team,
+  CAST(SUM(CASE WHEN is_playoffs = FALSE THEN games ELSE 0 END) AS STRING) as reg_games,
+  CAST(SUM(CASE WHEN is_playoffs = TRUE THEN games ELSE 0 END) AS STRING) as playoff_games,
+  CAST(MAX(games_with_players) AS STRING) as games_w_data,
+  CAST(MAX(CASE WHEN is_playoffs = FALSE THEN avg_players_per_game END) AS STRING) as avg_players,
+  CAST(MAX(CASE WHEN is_playoffs = FALSE THEN avg_starters_per_game END) AS STRING) as avg_starters,
+  CAST(MIN(CASE WHEN is_playoffs = FALSE THEN min_players END) AS STRING) as min_players,
+  CAST(MAX(CASE WHEN is_playoffs = FALSE THEN max_players END) AS STRING) as max_players,
+  CASE
+    WHEN SUM(CASE WHEN is_playoffs = FALSE THEN games ELSE 0 END) < 82 
+      THEN '⚠️ Missing regular season games'
+    WHEN MIN(CASE WHEN is_playoffs = FALSE THEN min_players END) < 20 
+      THEN '⚠️ Suspiciously low player count'
+    WHEN MAX(CASE WHEN is_playoffs = FALSE THEN avg_starters_per_game END) > 5.5 
+      THEN '⚠️ Too many starters (should be ~5)'
+    ELSE '✅ Complete'
+  END as notes
+FROM team_games
+WHERE EXISTS (SELECT 1 FROM data_check WHERE total_records > 0)
+GROUP BY season, team_abbr
+
+ORDER BY
+  row_type DESC,  -- DIAGNOSTICS first, then TEAM
+  season DESC,    -- Most recent season first
+  CAST(playoff_games AS INT64) DESC,  -- Teams with more playoff games first
+  team;

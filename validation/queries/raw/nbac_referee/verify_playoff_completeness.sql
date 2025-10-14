@@ -16,8 +16,7 @@ playoff_schedule AS (
     s.game_id,
     s.home_team_tricode,
     s.away_team_tricode,
-    CONCAT(s.away_team_tricode, ' @ ', s.home_team_tricode) as matchup,
-    s.playoff_round_desc as round
+    CONCAT(s.away_team_tricode, ' @ ', s.home_team_tricode) as matchup
   FROM `nba-props-platform.nba_raw.nbac_schedule` s
   WHERE s.game_date BETWEEN '2024-04-13' AND '2025-06-30'  -- UPDATE: Playoff dates
     AND s.is_playoffs = TRUE
@@ -41,7 +40,6 @@ SELECT
   s.game_date,
   FORMAT_DATE('%A', s.game_date) as day_of_week,
   s.matchup,
-  s.round,
   COALESCE(r.official_count, 0) as official_count,
   CASE
     WHEN r.game_date IS NULL THEN '❌ MISSING ALL REFEREE DATA'

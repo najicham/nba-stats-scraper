@@ -1,0 +1,187 @@
+#!/bin/bash
+# File: scripts/validate-nbac-pbp
+# NBA.com Play-by-Play Validation CLI
+# Usage: ./validate-nbac-pbp [command] [options]
+
+set -e
+
+QUERIES_DIR="validation/queries/raw/nbac_play_by_play"
+PROJECT_ID="nba-props-platform"
+
+# Color codes
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+print_header() {
+    echo -e "${BLUE}================================================${NC}"
+    echo -e "${BLUE}$1${NC}"
+    echo -e "${BLUE}================================================${NC}"
+}
+
+print_success() {
+    echo -e "${GREEN}✅ $1${NC}"
+}
+
+print_warning() {
+    echo -e "${YELLOW}⚠️  $1${NC}"
+}
+
+print_error() {
+    echo -e "${RED}🔴 $1${NC}"
+}
+
+run_query() {
+    local query_file=$1
+    local output_format=${2:-"pretty"}
+    
+    if [ ! -f "$QUERIES_DIR/$query_file" ]; then
+        print_error "Query file not found: $query_file"
+        exit 1
+    fi
+    
+    if [ "$output_format" = "csv" ]; then
+        bq query --use_legacy_sql=false --format=csv < "$QUERIES_DIR/$query_file"
+    else
+        bq query --use_legacy_sql=false --format=pretty < "$QUERIES_DIR/$query_file"
+    fi
+}
+
+save_to_table() {
+    local query_file=$1
+    local dest_table=$2
+    local timestamp=$(date +%Y%m%d_%H%M%S)
+    local table_name="${dest_table}_${timestamp}"
+    
+    print_header "Saving results to: ${PROJECT_ID}.nba_validation.${table_name}"
+    
+    bq query \
+        --use_legacy_sql=false \
+        --destination_table="${PROJECT_ID}.nba_validation.${table_name}" \
+        --replace \
+        < "$QUERIES_DIR/$query_file"
+    
+    print_success "Results saved to nba_validation.${table_name}"
+}
+
+# Command handlers
+cmd_games() {
+    print_header "NBA.com Play-by-Play: Game-Level Completeness"
+    run_query "game_level_completeness.sql" "$1"
+}
+
+cmd_missing() {
+    print_header "NBA.com Play-by-Play: Missing Games"
+    run_query "find_missing_games.sql" "$1"
+}
+
+cmd_events() {
+    print_header "NBA.com Play-by-Play: Event Type Distribution"
+    run_query "event_type_distribution.sql" "$1"
+}
+
+cmd_players() {
+    print_header "NBA.com Play-by-Play: Player Coverage"
+    run_query "player_coverage_validation.sql" "$1"
+}
+
+cmd_scores() {
+    print_header "NBA.com Play-by-Play: Score Progression"
+    run_query "score_progression_validation.sql" "$1"
+}
+
+cmd_yesterday() {
+    print_header "NBA.com Play-by-Play: Yesterday's Check"
+    run_query "daily_check_yesterday.sql" "$1"
+}
+
+cmd_week() {
+    print_header "NBA.com Play-by-Play: Last 7 Days"
+    run_query "weekly_check_last_7_days.sql" "$1"
+}
+
+cmd_all() {
+    print_header "NBA.com Play-by-Play: Running All Validation Checks"
+    echo ""
+    
+    cmd_games
+    echo ""
+    cmd_missing
+    echo ""
+    cmd_events
+    echo ""
+    cmd_players
+    echo ""
+    cmd_scores
+    echo ""
+    cmd_yesterday
+    echo ""
+    cmd_week
+    
+    print_success "All validation checks complete!"
+}
+
+# Help text
+show_help() {
+    cat << EOF
+NBA.com Play-by-Play Validation Tool
+
+USAGE:
+    validate-nbac-pbp <command> [options]
+
+COMMANDS:
+    games       Game-level completeness (event counts, player coverage)
+    missing     Find scheduled games without play-by-play data
+    events      Event type distribution analysis
+    players     Player coverage validation (cross-check with box scores)
+    scores      Score progression and final score validation
+    yesterday   Quick check for yesterday's games
+    week        7-day collection trend
+    all         Run all validation checks
+
+OPTIONS:
+    --csv       Output in CSV format
+    --table     Save results to BigQuery table (nba_validation dataset)
+
+EXAMPLES:
+    # Check game completeness
+    validate-nbac-pbp games
+    
+    # Find missing games in CSV format
+    validate-nbac-pbp missing --csv
+    
+    # Save yesterday's validation to table
+    validate-nbac-pbp yesterday --table
+    
+    # Run all checks
+    validate-nbac-pbp all
+
+NOTES:
+    - All queries require partition filter (game_date >= date)
+    - Current coverage: 2 games (more coming when scraper runs)
+    - Expected: 450-600 events per game, 15-20 players
+    - Cross-validates against: schedule, box scores
+
+EOF
+}
+
+# Main command dispatcher
+case "${1:-help}" in
+    games)      cmd_games "$2" ;;
+    missing)    cmd_missing "$2" ;;
+    events)     cmd_events "$2" ;;
+    players)    cmd_players "$2" ;;
+    scores)     cmd_scores "$2" ;;
+    yesterday)  cmd_yesterday "$2" ;;
+    week)       cmd_week "$2" ;;
+    all)        cmd_all "$2" ;;
+    help|--help|-h) show_help ;;
+    *)          
+        print_error "Unknown command: $1"
+        echo ""
+        show_help
+        exit 1
+        ;;
+esac

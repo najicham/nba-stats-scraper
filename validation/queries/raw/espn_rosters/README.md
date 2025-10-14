@@ -58,9 +58,15 @@ bq query --use_legacy_sql=false < validation/queries/raw/espn_rosters/daily_fres
 # Team coverage verification
 bq query --use_legacy_sql=false < validation/queries/raw/espn_rosters/team_coverage_check.sql
 
-# Cross-source validation
+# Cross-source validation (weekly)
 bq query --use_legacy_sql=false < validation/queries/raw/espn_rosters/cross_validate_with_nbac.sql
 ```
+
+## 📚 Additional Documentation
+
+- **SCHEDULING_OPERATIONS.md** - Complete guide for running queries during season (schedules, alerts, troubleshooting)
+- **QUICK_REFERENCE.md** - One-page reference card for daily use (print this!)
+- **DISCOVERY_FINDINGS.md** - What we learned about the data structure
 
 ## Expected Results
 

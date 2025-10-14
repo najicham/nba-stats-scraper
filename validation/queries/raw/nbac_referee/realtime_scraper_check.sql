@@ -11,16 +11,14 @@
 
 WITH todays_schedule AS (
   SELECT
-    COUNT(*) as games_today,
-    STRING_AGG(CONCAT(away_team_tricode, '@', home_team_tricode), ', ' ORDER BY game_time) as matchups
+    COUNT(*) as games_today
   FROM `nba-props-platform.nba_raw.nbac_schedule`
   WHERE game_date = CURRENT_DATE()
 ),
 
 tomorrows_schedule AS (
   SELECT
-    COUNT(*) as games_tomorrow,
-    STRING_AGG(CONCAT(away_team_tricode, '@', home_team_tricode), ', ' ORDER BY game_time) as matchups
+    COUNT(*) as games_tomorrow
   FROM `nba-props-platform.nba_raw.nbac_schedule`
   WHERE game_date = DATE_ADD(CURRENT_DATE(), INTERVAL 1 DAY)
 ),
@@ -48,7 +46,8 @@ recent_activity AS (
     MAX(created_at) as last_data_processed,
     COUNT(DISTINCT game_date) as dates_processed_today
   FROM `nba-props-platform.nba_raw.nbac_referee_game_assignments`
-  WHERE DATE(created_at) = CURRENT_DATE()
+  WHERE game_date BETWEEN DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY) AND DATE_ADD(CURRENT_DATE(), INTERVAL 1 DAY)
+    AND DATE(created_at) = CURRENT_DATE()
 )
 
 SELECT
@@ -83,9 +82,9 @@ SELECT
   CASE
     WHEN ra.last_data_processed IS NULL THEN '❌ CRITICAL: No data processed today'
     WHEN TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), ra.last_data_processed, MINUTE) > 180 THEN '⚠️ WARNING: No updates in 3+ hours'
-    WHEN ts.games_today > 0 AND tr.games_with_refs = 0 THEN '⚠️ WARNING: Today''s games missing refs'
+    WHEN ts.games_today > 0 AND tr.games_with_refs = 0 THEN '⚠️ WARNING: Today games missing refs'
     WHEN toms.games_tomorrow > 0 AND tomr.games_with_refs = 0 
-     AND EXTRACT(HOUR FROM CURRENT_TIMESTAMP()) > 12 THEN '⚠️ WARNING: Tomorrow''s refs not published yet'
+     AND EXTRACT(HOUR FROM CURRENT_TIMESTAMP()) > 12 THEN '⚠️ WARNING: Tomorrow refs not published yet'
     ELSE '✅ Scraper healthy'
   END as scraper_health
 

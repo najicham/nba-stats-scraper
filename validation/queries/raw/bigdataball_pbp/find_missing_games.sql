@@ -29,9 +29,9 @@ all_scheduled_games AS (
     s.away_team_tricode,
     CONCAT(s.away_team_tricode, ' @ ', s.home_team_tricode) as matchup
   FROM `nba-props-platform.nba_raw.nbac_schedule` s
-  WHERE s.game_date BETWEEN '2024-10-22' AND '2025-06-22'  -- UPDATE: 2024-25 season
+  WHERE s.game_date BETWEEN '2024-10-22' AND '2025-04-13'  -- Regular season only (no future games)
     AND s.is_playoffs = FALSE
-    AND s.game_date BETWEEN '2024-10-22' AND '2025-06-22'  -- Partition filter
+    AND s.game_date BETWEEN '2024-10-22' AND '2025-04-13'  -- Partition filter
 ),
 
 -- Get all games we have play-by-play for
@@ -43,7 +43,7 @@ pbp_games AS (
     away_team_abbr,
     COUNT(*) as event_count
   FROM `nba-props-platform.nba_raw.bigdataball_play_by_play`
-  WHERE game_date BETWEEN '2024-10-22' AND '2025-06-22'  -- UPDATE: Match schedule range
+  WHERE game_date BETWEEN '2024-10-22' AND '2025-04-13'  -- Match schedule range
   GROUP BY game_date, game_id, home_team_abbr, away_team_abbr
 )
 

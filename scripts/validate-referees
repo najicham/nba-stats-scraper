@@ -1,0 +1,315 @@
+#!/bin/bash
+# ============================================================================
+# validate-referees - NBA.com Referee Assignments Validation CLI
+# ============================================================================
+# Purpose: Run validation queries against nbac_referee_game_assignments table
+# Usage: validate-referees [command] [options]
+# ============================================================================
+
+set -e
+
+# Configuration
+PROJECT_ID="nba-props-platform"
+DATASET="nba_raw"
+TABLE="nbac_referee_game_assignments"
+QUERIES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../validation/queries/raw/nbac_referee" && pwd)"
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# ============================================================================
+# Helper Functions
+# ============================================================================
+
+print_header() {
+    echo -e "${BLUE}================================${NC}"
+    echo -e "${BLUE}$1${NC}"
+    echo -e "${BLUE}================================${NC}"
+}
+
+print_success() {
+    echo -e "${GREEN}✅ $1${NC}"
+}
+
+print_warning() {
+    echo -e "${YELLOW}⚠️  $1${NC}"
+}
+
+print_error() {
+    echo -e "${RED}❌ $1${NC}"
+}
+
+print_info() {
+    echo -e "${BLUE}ℹ️  $1${NC}"
+}
+
+run_query() {
+    local query_file=$1
+    local output_format=${2:-""}
+    local output_file=${3:-""}
+    
+    if [ ! -f "$query_file" ]; then
+        print_error "Query file not found: $query_file"
+        return 1
+    fi
+    
+    print_info "Running: $(basename "$query_file")"
+    
+    if [ "$output_format" = "csv" ]; then
+        bq query --use_legacy_sql=false --format=csv < "$query_file" > "$output_file"
+        print_success "Results saved to: $output_file"
+    elif [ "$output_format" = "table" ]; then
+        # Load to BigQuery table
+        local temp_table="nba_processing.validation_referee_$(date +%Y%m%d_%H%M%S)"
+        bq query --use_legacy_sql=false --destination_table="$temp_table" --replace < "$query_file"
+        print_success "Results saved to table: $temp_table"
+    else
+        bq query --use_legacy_sql=false < "$query_file"
+    fi
+}
+
+check_table_exists() {
+    if ! bq show "${PROJECT_ID}:${DATASET}.${TABLE}" &> /dev/null; then
+        print_error "Table not found: ${PROJECT_ID}:${DATASET}.${TABLE}"
+        exit 1
+    fi
+}
+
+# ============================================================================
+# Command Functions
+# ============================================================================
+
+cmd_season_completeness() {
+    print_header "Season Completeness Check"
+    print_info "Validates data coverage across all seasons (2021-22 to 2024-25)"
+    print_info "Expected: 82 regular season games per team, variable playoffs"
+    echo ""
+    run_query "${QUERIES_DIR}/season_completeness_check.sql" "$1" "$2"
+}
+
+cmd_find_missing() {
+    print_header "Find Missing Regular Season Games"
+    print_info "Lists specific games missing referee assignments"
+    print_info "Note: Update date range in query for specific season"
+    echo ""
+    run_query "${QUERIES_DIR}/find_missing_regular_season_games.sql" "$1" "$2"
+}
+
+cmd_verify_playoffs() {
+    print_header "Verify Playoff Completeness"
+    print_info "Checks all playoff games have 4 officials"
+    echo ""
+    run_query "${QUERIES_DIR}/verify_playoff_completeness.sql" "$1" "$2"
+}
+
+cmd_daily() {
+    print_header "Daily Check - Yesterday's Games"
+    print_info "Validates yesterday's referee assignments"
+    print_info "Status: ✅ Complete | ⚠️ WARNING | ❌ CRITICAL"
+    echo ""
+    run_query "${QUERIES_DIR}/daily_check_yesterday.sql" "$1" "$2"
+}
+
+cmd_weekly() {
+    print_header "Weekly Check - Last 7 Days"
+    print_info "Shows trend of referee data collection over past week"
+    echo ""
+    run_query "${QUERIES_DIR}/weekly_check_last_7_days.sql" "$1" "$2"
+}
+
+cmd_realtime() {
+    print_header "Real-Time Scraper Check"
+    print_info "Monitors scraper health and today/tomorrow's game coverage"
+    echo ""
+    run_query "${QUERIES_DIR}/realtime_scraper_check.sql" "$1" "$2"
+}
+
+cmd_official_count() {
+    print_header "Official Count Validation"
+    print_info "Identifies games with wrong number of officials"
+    print_info "Expected: 3 officials (regular season), 4 officials (playoffs)"
+    echo ""
+    run_query "${QUERIES_DIR}/official_count_validation.sql" "$1" "$2"
+}
+
+cmd_all() {
+    print_header "Running All Validation Queries"
+    echo ""
+    
+    cmd_season_completeness
+    echo ""
+    
+    cmd_daily
+    echo ""
+    
+    cmd_official_count
+    echo ""
+    
+    print_success "All validation queries completed!"
+}
+
+cmd_quick() {
+    print_header "Quick Validation (Daily + Official Count)"
+    echo ""
+    
+    cmd_daily
+    echo ""
+    
+    cmd_official_count
+    echo ""
+    
+    print_success "Quick validation completed!"
+}
+
+cmd_help() {
+    cat << EOF
+${BLUE}NBA.com Referee Assignments Validation Tool${NC}
+
+${GREEN}USAGE:${NC}
+    validate-referees [COMMAND] [OPTIONS]
+
+${GREEN}COMMANDS:${NC}
+    ${YELLOW}season${NC}              Run season completeness check
+    ${YELLOW}missing${NC}             Find missing regular season games
+    ${YELLOW}playoffs${NC}            Verify playoff completeness
+    ${YELLOW}daily${NC}               Check yesterday's games (for automation)
+    ${YELLOW}weekly${NC}              Check last 7 days trend
+    ${YELLOW}realtime${NC}            Monitor scraper health right now
+    ${YELLOW}official-count${NC}      Validate official counts (3 vs 4)
+    ${YELLOW}all${NC}                 Run all validation queries
+    ${YELLOW}quick${NC}               Run daily + official-count (fast check)
+    ${YELLOW}help${NC}                Show this help message
+
+${GREEN}OPTIONS:${NC}
+    ${YELLOW}--csv FILE${NC}          Save results to CSV file
+    ${YELLOW}--table${NC}             Save results to BigQuery table
+
+${GREEN}EXAMPLES:${NC}
+    # Daily monitoring (run every morning)
+    validate-referees daily
+
+    # Quick health check
+    validate-referees quick
+
+    # Full season validation
+    validate-referees season
+
+    # Export to CSV
+    validate-referees season --csv results.csv
+
+    # Save to BigQuery table
+    validate-referees season --table
+
+    # Check playoff coverage
+    validate-referees playoffs
+
+    # Real-time scraper monitoring
+    validate-referees realtime
+
+${GREEN}TYPICAL WORKFLOWS:${NC}
+
+    ${BLUE}Morning Check (Daily):${NC}
+        validate-referees daily
+
+    ${BLUE}Weekly Review:${NC}
+        validate-referees weekly
+        validate-referees official-count
+
+    ${BLUE}After Backfill:${NC}
+        validate-referees season
+        validate-referees playoffs
+
+    ${BLUE}During Season:${NC}
+        validate-referees realtime  # Check scraper health
+        validate-referees daily     # Verify yesterday
+
+${GREEN}DATA QUALITY EXPECTATIONS:${NC}
+    • Regular Season: 3 officials per game
+    • Playoffs: 4 officials per game
+    • Coverage: 2024-01-01 to Present
+    • Missing: 2021-2024 historical data (needs backfill)
+
+${GREEN}ALERT THRESHOLDS:${NC}
+    ✅ Complete - All games have correct official counts
+    ⚠️  WARNING - Some games missing or incomplete
+    ❌ CRITICAL - No referee data captured
+
+EOF
+}
+
+# ============================================================================
+# Main Script
+# ============================================================================
+
+# Check if table exists
+check_table_exists
+
+# Parse command line arguments
+COMMAND=${1:-help}
+OUTPUT_FORMAT=""
+OUTPUT_FILE=""
+
+shift || true
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --csv)
+            OUTPUT_FORMAT="csv"
+            OUTPUT_FILE=${2:-"referee_validation_$(date +%Y%m%d_%H%M%S).csv"}
+            shift 2
+            ;;
+        --table)
+            OUTPUT_FORMAT="table"
+            shift
+            ;;
+        *)
+            print_error "Unknown option: $1"
+            cmd_help
+            exit 1
+            ;;
+    esac
+done
+
+# Execute command
+case $COMMAND in
+    season|completeness)
+        cmd_season_completeness "$OUTPUT_FORMAT" "$OUTPUT_FILE"
+        ;;
+    missing|find-missing)
+        cmd_find_missing "$OUTPUT_FORMAT" "$OUTPUT_FILE"
+        ;;
+    playoffs|playoff)
+        cmd_verify_playoffs "$OUTPUT_FORMAT" "$OUTPUT_FILE"
+        ;;
+    daily|yesterday)
+        cmd_daily "$OUTPUT_FORMAT" "$OUTPUT_FILE"
+        ;;
+    weekly|week)
+        cmd_weekly "$OUTPUT_FORMAT" "$OUTPUT_FILE"
+        ;;
+    realtime|scraper|health)
+        cmd_realtime "$OUTPUT_FORMAT" "$OUTPUT_FILE"
+        ;;
+    official-count|officials|count)
+        cmd_official_count "$OUTPUT_FORMAT" "$OUTPUT_FILE"
+        ;;
+    all)
+        cmd_all
+        ;;
+    quick)
+        cmd_quick
+        ;;
+    help|--help|-h)
+        cmd_help
+        ;;
+    *)
+        print_error "Unknown command: $COMMAND"
+        echo ""
+        cmd_help
+        exit 1
+        ;;
+esac
