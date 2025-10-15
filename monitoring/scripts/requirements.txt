@@ -1,0 +1,4 @@
+# Google Cloud dependencies for monitoring tools
+google-cloud-logging>=3.12.0
+google-cloud-workflows>=1.18.0
+google-cloud-storage>=3.0.0

@@ -1,0 +1,405 @@
+#!/usr/bin/env python3
+"""
+File: monitoring/scripts/nba-monitor
+
+NBA Props Platform Monitoring Tool
+Provides clean, actionable insights into scraper and workflow status
+
+Installation:
+    chmod +x monitoring/scripts/nba-monitor
+    # Optional: Add to PATH or create symlink
+    ln -s $(pwd)/monitoring/scripts/nba-monitor /usr/local/bin/nba-monitor
+
+Usage:
+    ./monitoring/scripts/nba-monitor status                  # Today's status
+    ./monitoring/scripts/nba-monitor status yesterday        # Yesterday's status
+    ./monitoring/scripts/nba-monitor status 2025-10-14       # Specific date
+    ./monitoring/scripts/nba-monitor workflows               # Recent workflow executions
+    ./monitoring/scripts/nba-monitor errors                  # Recent errors
+    ./monitoring/scripts/nba-monitor summary                 # Full daily summary
+"""
+
+import sys
+import json
+from datetime import datetime, timedelta, timezone
+from google.cloud import logging as cloud_logging
+from google.cloud.workflows import executions_v1
+from collections import defaultdict
+from typing import List, Dict, Tuple
+
+PROJECT_ID = "nba-props-platform"
+LOCATION = "us-west2"
+
+WORKFLOWS = [
+    "morning-operations",
+    "early-morning-final-check",
+    "late-night-recovery",
+    "post-game-collection",
+    "real-time-business"
+]
+
+class Colors:
+    """Terminal colors"""
+    GREEN = '\033[92m'
+    RED = '\033[91m'
+    YELLOW = '\033[93m'
+    BLUE = '\033[94m'
+    BOLD = '\033[1m'
+    END = '\033[0m'
+
+def parse_date_arg(date_arg: str = "today") -> Tuple[datetime, datetime, str]:
+    """Parse date argument and return (start_time, end_time, date_string)"""
+    if date_arg == "today":
+        date = datetime.now(timezone.utc).date()
+    elif date_arg == "yesterday":
+        date = (datetime.now(timezone.utc) - timedelta(days=1)).date()
+    else:
+        try:
+            date = datetime.strptime(date_arg, "%Y-%m-%d").date()
+        except ValueError:
+            print(f"❌ Invalid date format: {date_arg}")
+            print("Use: today, yesterday, or YYYY-MM-DD")
+            sys.exit(1)
+    
+    start = datetime.combine(date, datetime.min.time(), tzinfo=timezone.utc)
+    end = datetime.combine(date, datetime.max.time(), tzinfo=timezone.utc)
+    date_str = date.strftime("%Y-%m-%d")
+    
+    return start, end, date_str
+
+def get_workflow_executions(start_time: datetime, end_time: datetime) -> Dict:
+    """Get workflow executions for the time period"""
+    executions_client = executions_v1.ExecutionsClient()
+    results = {}
+    
+    for workflow_name in WORKFLOWS:
+        parent = f"projects/{PROJECT_ID}/locations/{LOCATION}/workflows/{workflow_name}"
+        
+        try:
+            request = executions_v1.ListExecutionsRequest(parent=parent)
+            page_result = executions_client.list_executions(request=request)
+            
+            workflow_runs = []
+            for execution in page_result:
+                exec_time = execution.start_time
+                
+                # Filter by date range
+                if exec_time < start_time or exec_time > end_time:
+                    continue
+                
+                duration = None
+                if execution.end_time:
+                    duration = (execution.end_time.timestamp() - execution.start_time.timestamp())
+                
+                workflow_runs.append({
+                    'time': exec_time.strftime("%H:%M:%S"),
+                    'status': str(execution.state.name),
+                    'id': execution.name.split('/')[-1][:8],
+                    'duration': duration,
+                    'error': str(execution.error.payload) if execution.error else None
+                })
+            
+            results[workflow_name] = sorted(workflow_runs, key=lambda x: x['time'])
+        
+        except Exception as e:
+            results[workflow_name] = {'error': str(e)}
+    
+    return results
+
+def get_error_logs(start_time: datetime, end_time: datetime, limit: int = 100) -> List[Dict]:
+    """Get error logs from Cloud Run"""
+    logging_client = cloud_logging.Client(project=PROJECT_ID)
+    
+    filter_str = f"""
+    resource.type="cloud_run_revision"
+    resource.labels.service_name="nba-scrapers"
+    severity>=ERROR
+    timestamp>="{start_time.isoformat()}"
+    timestamp<="{end_time.isoformat()}"
+    """
+    
+    errors = []
+    
+    try:
+        for entry in logging_client.list_entries(filter_=filter_str, max_results=limit):
+            timestamp = entry.timestamp.strftime("%H:%M:%S")
+            
+            # Extract error message
+            message = None
+            if hasattr(entry, 'json_payload') and entry.json_payload:
+                payload = dict(entry.json_payload)
+                message = payload.get('message') or payload.get('error') or str(payload)
+            elif hasattr(entry, 'text_payload'):
+                message = entry.text_payload
+            
+            if message:
+                errors.append({
+                    'time': timestamp,
+                    'severity': entry.severity,
+                    'message': message[:300],  # Truncate long messages
+                    'full_payload': dict(entry.json_payload) if hasattr(entry, 'json_payload') else None
+                })
+    
+    except Exception as e:
+        print(f"⚠️  Warning: Could not fetch error logs: {e}")
+    
+    return errors
+
+def get_scraper_activity(start_time: datetime, end_time: datetime) -> Dict:
+    """Get scraper activity from logs"""
+    logging_client = cloud_logging.Client(project=PROJECT_ID)
+    
+    filter_str = f"""
+    resource.type="cloud_run_revision"
+    resource.labels.service_name="nba-scrapers"
+    timestamp>="{start_time.isoformat()}"
+    timestamp<="{end_time.isoformat()}"
+    """
+    
+    scraper_activity = defaultdict(list)
+    
+    try:
+        for entry in logging_client.list_entries(filter_=filter_str, max_results=5000):
+            timestamp = entry.timestamp.strftime("%H:%M:%S")
+            
+            # Look for structured logs with scraper information
+            if hasattr(entry, 'json_payload'):
+                payload = dict(entry.json_payload)
+                
+                # Check for our structured logging format
+                if payload.get('event') in ['START', 'END']:
+                    scraper_name = payload.get('scraper', 'unknown')
+                    scraper_activity[scraper_name].append({
+                        'time': timestamp,
+                        'event': payload['event'],
+                        'status': payload.get('status', 'N/A'),
+                        'records': payload.get('records_processed'),
+                        'duration': payload.get('duration_seconds')
+                    })
+    
+    except Exception as e:
+        print(f"⚠️  Warning: Could not fetch scraper activity: {e}")
+    
+    return dict(scraper_activity)
+
+def print_header(title: str):
+    """Print a styled header"""
+    width = 80
+    print(f"\n{Colors.BOLD}{'='*width}{Colors.END}")
+    print(f"{Colors.BOLD}{title.center(width)}{Colors.END}")
+    print(f"{Colors.BOLD}{'='*width}{Colors.END}\n")
+
+def print_workflows_status(workflows: Dict, date_str: str):
+    """Print workflow execution status"""
+    print_header(f"🔄 WORKFLOWS - {date_str}")
+    
+    total_runs = 0
+    total_success = 0
+    total_failed = 0
+    
+    for workflow_name, runs in workflows.items():
+        if isinstance(runs, dict) and 'error' in runs:
+            print(f"{Colors.RED}✗{Colors.END} {workflow_name:35s} | Error: {runs['error']}")
+            continue
+        
+        if not runs:
+            print(f"○ {workflow_name:35s} | No executions")
+            continue
+        
+        success = sum(1 for r in runs if r['status'] == 'SUCCEEDED')
+        failed = sum(1 for r in runs if r['status'] == 'FAILED')
+        
+        total_runs += len(runs)
+        total_success += success
+        total_failed += failed
+        
+        if failed == 0:
+            status = f"{Colors.GREEN}✓{Colors.END}"
+        else:
+            status = f"{Colors.RED}✗{Colors.END}"
+        
+        print(f"{status} {workflow_name:35s} | Runs: {len(runs):2d} | "
+              f"{Colors.GREEN}✓ {success:2d}{Colors.END} | "
+              f"{Colors.RED}✗ {failed:2d}{Colors.END}")
+        
+        # Show execution times and durations
+        times_with_duration = []
+        for r in runs:
+            time_str = r['time']
+            if r.get('duration'):
+                duration_str = f"{r['duration']:.0f}s"
+                times_with_duration.append(f"{time_str}({duration_str})")
+            else:
+                times_with_duration.append(time_str)
+        
+        print(f"  └─ Times: {', '.join(times_with_duration)}")
+        
+        # Show errors
+        if failed > 0:
+            for run in runs:
+                if run['status'] == 'FAILED':
+                    error_msg = run['error'] if run['error'] else "Unknown error"
+                    # Truncate long errors
+                    if len(error_msg) > 100:
+                        error_msg = error_msg[:97] + "..."
+                    print(f"     {Colors.RED}└─ Failed at {run['time']}: {error_msg}{Colors.END}")
+    
+    print("-" * 80)
+    print(f"Total: {total_runs} executions | "
+          f"{Colors.GREEN}✓ {total_success}{Colors.END} | "
+          f"{Colors.RED}✗ {total_failed}{Colors.END}\n")
+
+def print_scraper_activity(activity: Dict):
+    """Print scraper activity if available"""
+    if not activity:
+        return
+    
+    print(f"{Colors.BOLD}🔍 SCRAPER ACTIVITY{Colors.END}")
+    print("-" * 80)
+    
+    for scraper_name, events in sorted(activity.items()):
+        success_count = sum(1 for e in events if e['event'] == 'END' and e['status'] == 'SUCCESS')
+        failed_count = sum(1 for e in events if e['event'] == 'END' and e['status'] != 'SUCCESS')
+        
+        if failed_count == 0:
+            status = f"{Colors.GREEN}✓{Colors.END}"
+        else:
+            status = f"{Colors.RED}✗{Colors.END}"
+        
+        print(f"{status} {scraper_name:35s} | "
+              f"{Colors.GREEN}✓ {success_count:2d}{Colors.END} | "
+              f"{Colors.RED}✗ {failed_count:2d}{Colors.END}")
+        
+        # Show completion times
+        end_events = [e for e in events if e['event'] == 'END']
+        if end_events:
+            times = [e['time'] for e in end_events[:5]]
+            print(f"  └─ Times: {', '.join(times)}")
+    
+    print("-" * 80 + "\n")
+
+def print_errors(errors: List[Dict], max_show: int = 15):
+    """Print error summary"""
+    if not errors:
+        print(f"{Colors.GREEN}✓ No errors found{Colors.END}\n")
+        return
+    
+    print(f"{Colors.BOLD}⚠️  ERRORS ({len(errors)}){Colors.END}")
+    print("-" * 80)
+    
+    # Group errors by type/message
+    error_groups = defaultdict(list)
+    for error in errors:
+        # Group by first 100 chars of message
+        key = error['message'][:100]
+        error_groups[key].append(error)
+    
+    # Show grouped errors
+    shown = 0
+    for error_msg, occurrences in list(error_groups.items())[:max_show]:
+        count = len(occurrences)
+        first_time = occurrences[0]['time']
+        last_time = occurrences[-1]['time']
+        
+        if count == 1:
+            print(f"{Colors.RED}•{Colors.END} [{first_time}] {error_msg}")
+        else:
+            print(f"{Colors.RED}•{Colors.END} [{first_time} - {last_time}] ({count}x) {error_msg}")
+        
+        shown += count
+        if shown >= max_show:
+            break
+    
+    if len(errors) > shown:
+        print(f"\n... and {len(errors) - shown} more errors")
+    
+    print("-" * 80 + "\n")
+
+def cmd_status(date_arg: str = "today"):
+    """Show status for a specific date"""
+    start_time, end_time, date_str = parse_date_arg(date_arg)
+    
+    print(f"\n{Colors.BLUE}Fetching status for {date_str}...{Colors.END}")
+    
+    # Get data
+    workflows = get_workflow_executions(start_time, end_time)
+    scraper_activity = get_scraper_activity(start_time, end_time)
+    errors = get_error_logs(start_time, end_time)
+    
+    # Print summaries
+    print_workflows_status(workflows, date_str)
+    print_scraper_activity(scraper_activity)
+    print_errors(errors)
+
+def cmd_workflows(hours: int = 24):
+    """Show recent workflow executions"""
+    end_time = datetime.now(timezone.utc)
+    start_time = end_time - timedelta(hours=hours)
+    
+    print_header(f"🔄 WORKFLOW EXECUTIONS (Last {hours}h)")
+    
+    workflows = get_workflow_executions(start_time, end_time)
+    
+    for workflow_name, runs in workflows.items():
+        if isinstance(runs, dict) and 'error' in runs:
+            print(f"\n{Colors.RED}✗ {workflow_name}: {runs['error']}{Colors.END}")
+            continue
+        
+        if not runs:
+            continue
+        
+        print(f"\n{Colors.BOLD}{workflow_name}{Colors.END}")
+        print("-" * 80)
+        
+        for run in runs[:10]:  # Show last 10
+            status_color = Colors.GREEN if run['status'] == 'SUCCEEDED' else Colors.RED
+            duration_str = f"({run['duration']:.0f}s)" if run.get('duration') else ""
+            
+            print(f"  {status_color}{run['status']:10s}{Colors.END} "
+                  f"| {run['time']} {duration_str} | {run['id']}")
+            
+            if run.get('error'):
+                print(f"    └─ {Colors.RED}{run['error'][:100]}{Colors.END}")
+
+def cmd_errors(hours: int = 24):
+    """Show recent errors"""
+    end_time = datetime.now(timezone.utc)
+    start_time = end_time - timedelta(hours=hours)
+    
+    print_header(f"⚠️  ERRORS (Last {hours}h)")
+    
+    errors = get_error_logs(start_time, end_time, limit=200)
+    print_errors(errors, max_show=50)
+
+def main():
+    if len(sys.argv) < 2:
+        cmd = "status"
+        args = ["today"]
+    else:
+        cmd = sys.argv[1]
+        args = sys.argv[2:] if len(sys.argv) > 2 else []
+    
+    if cmd == "status":
+        date_arg = args[0] if args else "today"
+        cmd_status(date_arg)
+    
+    elif cmd == "workflows":
+        hours = int(args[0]) if args else 24
+        cmd_workflows(hours)
+    
+    elif cmd == "errors":
+        hours = int(args[0]) if args else 24
+        cmd_errors(hours)
+    
+    elif cmd == "summary":
+        # Full summary - same as status but with more detail
+        date_arg = args[0] if args else "today"
+        cmd_status(date_arg)
+    
+    else:
+        print(f"Unknown command: {cmd}")
+        print(__doc__)
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()

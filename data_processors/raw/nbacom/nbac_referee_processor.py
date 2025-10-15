@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
 # File: processors/nbacom/nbac_referee_processor.py
 # Description: Processor for NBA.com referee assignments data transformation
-# Enhanced with monitoring to detect duplication issues
-# Integrated notification system for monitoring and alerts
+# Version 2.0 - Refactored to use batch loading + MERGE pattern
+# Follows best practices from BigQuery Lessons Learned document
 
 import json
 import logging
 import os
 import re
-from datetime import datetime
+import uuid
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 from google.cloud import bigquery
+from google.cloud.exceptions import NotFound
 from data_processors.raw.processor_base import ProcessorBase
 from shared.utils.notification_system import (
     notify_error,
@@ -23,18 +25,35 @@ class NbacRefereeProcessor(ProcessorBase):
         super().__init__()
         self.table_name = 'nba_raw.nbac_referee_game_assignments'
         self.replay_table_name = 'nba_raw.nbac_referee_replay_center'
-        self.processing_strategy = 'MERGE_UPDATE'
         
         # Initialize BigQuery client and project ID
         self.bq_client = bigquery.Client()
         self.project_id = os.environ.get('GCP_PROJECT_ID', self.bq_client.project)
+        
+        # Get table schemas for enforcement
+        self.main_table = None
+        self.replay_table = None
+        self._load_table_schemas()
+    
+    def _load_table_schemas(self):
+        """Load table schemas for schema enforcement."""
+        try:
+            main_table_id = f"{self.project_id}.{self.table_name}"
+            self.main_table = self.bq_client.get_table(main_table_id)
+            
+            replay_table_id = f"{self.project_id}.{self.replay_table_name}"
+            self.replay_table = self.bq_client.get_table(replay_table_id)
+            
+            logging.info(f"Loaded schemas for {self.table_name} and {self.replay_table_name}")
+        except NotFound as e:
+            logging.error(f"Table not found: {e}")
+            raise
     
     def normalize_text(self, text: str) -> str:
         """Normalize text for data consistency."""
         if not text:
             return ""
         normalized = text.strip()
-        # Remove extra spaces
         normalized = re.sub(r'\s+', ' ', normalized)
         return normalized
     
@@ -45,13 +64,11 @@ class NbacRefereeProcessor(ProcessorBase):
             return None
             
         try:
-            # Handle different timestamp formats
             if timestamp_str.endswith('Z'):
                 return datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
             elif '+' in timestamp_str or timestamp_str.endswith('+00:00'):
                 return datetime.fromisoformat(timestamp_str)
             else:
-                # Try parsing as ISO format
                 return datetime.fromisoformat(timestamp_str)
         except (ValueError, AttributeError):
             logging.warning(f"Could not parse timestamp: {timestamp_str}")
@@ -73,7 +90,6 @@ class NbacRefereeProcessor(ProcessorBase):
         if 'Table' not in nba_data or 'rows' not in nba_data['Table']:
             errors.append("Missing Table/rows in NBA referee data")
         
-        # Notify about validation failures
         if errors:
             try:
                 notify_warning(
@@ -90,18 +106,43 @@ class NbacRefereeProcessor(ProcessorBase):
             
         return errors
     
+    def ensure_required_defaults(self, record: Dict, table_schema: bigquery.Table) -> Dict:
+        """Ensure all REQUIRED fields have non-null values."""
+        output = dict(record)
+        current_utc = datetime.now(timezone.utc)
+        
+        # Get required field names from schema
+        required_fields = {
+            field.name: field for field in table_schema.schema 
+            if field.mode == 'REQUIRED'
+        }
+        
+        # Ensure required timestamp fields have values
+        if 'created_at' in required_fields and not output.get('created_at'):
+            output['created_at'] = current_utc
+        if 'processed_at' in required_fields and not output.get('processed_at'):
+            output['processed_at'] = current_utc
+            
+        # Ensure other required fields have non-null values
+        for field_name, field in required_fields.items():
+            if not output.get(field_name):
+                if field.field_type == 'STRING':
+                    output[field_name] = ''
+                elif field.field_type == 'INT64':
+                    output[field_name] = 0
+                # Don't default DATE or TIMESTAMP - these should be present
+                    
+        return output
+    
     def transform_data(self, raw_data: Dict, file_path: str) -> List[Dict]:
         """Transform game referee assignments into normalized rows."""
         rows = []
         
         try:
-            # Extract scrape timestamp
             scrape_timestamp = self.extract_scrape_timestamp(raw_data)
-            
             nba_assignments = raw_data['refereeAssignments']['nba']['Table']['rows']
             
             for game_row in nba_assignments:
-                # Extract game information
                 game_id = game_row.get('game_id', '')
                 game_date_str = game_row.get('game_date', '')
                 
@@ -114,11 +155,10 @@ class NbacRefereeProcessor(ProcessorBase):
                         logging.warning(f"Invalid game_date format: {game_date_str}")
                         continue
                         
-                # Extract season info
                 season = game_row.get('season', '')
                 
                 # Process each official (1-4 officials per game)
-                for official_num in range(1, 5):  # officials 1-4
+                for official_num in range(1, 5):
                     official_key = f'official{official_num}'
                     official_code_key = f'official{official_num}_code'
                     official_jnum_key = f'official{official_num}_JNum'
@@ -127,32 +167,24 @@ class NbacRefereeProcessor(ProcessorBase):
                     official_code = game_row.get(official_code_key)
                     official_jersey = game_row.get(official_jnum_key)
                     
-                    # Skip if no official assigned to this position
                     if not official_name or not official_code:
                         continue
                     
                     row = {
-                        # Game identifiers
                         'game_id': game_id,
                         'game_date': game_date.isoformat() if game_date else None,
                         'season': season,
                         'game_code': game_row.get('game_code', ''),
-                        
-                        # Team information
                         'home_team_id': game_row.get('home_team_id'),
                         'home_team': self.normalize_text(game_row.get('home_team', '')),
                         'home_team_abbr': game_row.get('home_team_abbr', ''),
                         'away_team_id': game_row.get('away_team_id'),
                         'away_team': self.normalize_text(game_row.get('away_team', '')),
                         'away_team_abbr': game_row.get('away_team_abbr', ''),
-                        
-                        # Official information
                         'official_position': official_num,
                         'official_name': self.normalize_text(official_name),
                         'official_code': official_code,
                         'official_jersey_number': official_jersey,
-                        
-                        # Processing metadata
                         'source_file_path': file_path,
                         'scrape_timestamp': scrape_timestamp.isoformat() if scrape_timestamp else None,
                         'created_at': datetime.utcnow().isoformat(),
@@ -165,8 +197,6 @@ class NbacRefereeProcessor(ProcessorBase):
             
         except Exception as e:
             logging.error(f"Error in transform_data: {e}")
-            
-            # Notify about transformation failure
             try:
                 notify_error(
                     title="Referee Data Transformation Failed",
@@ -179,7 +209,6 @@ class NbacRefereeProcessor(ProcessorBase):
                 )
             except Exception as notify_ex:
                 logging.warning(f"Failed to send notification: {notify_ex}")
-            
             raise e
     
     def transform_replay_center_data(self, raw_data: Dict, file_path: str) -> List[Dict]:
@@ -187,10 +216,8 @@ class NbacRefereeProcessor(ProcessorBase):
         rows = []
         
         try:
-            # Extract scrape timestamp
             scrape_timestamp = self.extract_scrape_timestamp(raw_data)
             
-            # Check if replay center data exists
             nba_data = raw_data.get('refereeAssignments', {}).get('nba', {})
             if 'Table1' not in nba_data or 'rows' not in nba_data['Table1']:
                 return rows
@@ -200,7 +227,6 @@ class NbacRefereeProcessor(ProcessorBase):
             for replay_row in replay_rows:
                 game_date_str = replay_row.get('game_date', '')
                 
-                # Parse game date
                 game_date = None
                 if game_date_str:
                     try:
@@ -225,8 +251,6 @@ class NbacRefereeProcessor(ProcessorBase):
             
         except Exception as e:
             logging.error(f"Error in transform_replay_center_data: {e}")
-            
-            # Notify about replay center transformation failure
             try:
                 notify_error(
                     title="Replay Center Data Transformation Failed",
@@ -239,335 +263,211 @@ class NbacRefereeProcessor(ProcessorBase):
                 )
             except Exception as notify_ex:
                 logging.warning(f"Failed to send notification: {notify_ex}")
-            
             return rows
     
-    def load_data(self, rows: List[Dict], **kwargs) -> Dict:
-        """Load game assignment data into BigQuery with duplicate detection and verification."""
+    def load_data_with_merge(self, rows: List[Dict], table_id: str, table_schema: bigquery.Table) -> Dict:
+        """
+        Load data using batch loading + MERGE pattern.
+        Follows best practices from BigQuery Lessons Learned document.
+        """
         if not rows:
             return {'rows_processed': 0, 'errors': []}
         
-        # Check for duplicates in input data
-        unique_keys = set()
-        duplicates = []
-        for row in rows:
-            key = (row['game_id'], row['official_position'], row['official_code'])
-            if key in unique_keys:
-                duplicates.append(key)
-            unique_keys.add(key)
-        
-        if duplicates:
-            logging.warning(f"Found {len(duplicates)} duplicate keys in input data: {duplicates[:3]}...")
-            
-            # Notify about duplicates
-            try:
-                notify_warning(
-                    title="Referee Assignment Duplicates Detected",
-                    message=f"Found {len(duplicates)} duplicate referee assignments in input data",
-                    details={
-                        'duplicate_count': len(duplicates),
-                        'sample_duplicates': str(duplicates[:3]),
-                        'total_rows': len(rows)
-                    }
-                )
-            except Exception as notify_ex:
-                logging.warning(f"Failed to send notification: {notify_ex}")
-        
-        table_id = f"{self.project_id}.{self.table_name}"
-        errors = []
-        file_path = rows[0].get('source_file_path', 'unknown') if rows else 'unknown'
+        temp_table_id = None
         
         try:
-            if self.processing_strategy == 'MERGE_UPDATE':
-                # Get unique game_dates from the data to delete
-                game_dates = set(row['game_date'] for row in rows if row['game_date'])
+            # 1. Create temporary table
+            temp_table_name = f"{table_id}_temp_{uuid.uuid4().hex[:8]}"
+            temp_table_id = f"{self.project_id}.{temp_table_name}"
+            
+            temp_table = bigquery.Table(temp_table_id, schema=table_schema.schema)
+            self.bq_client.create_table(temp_table)
+            logging.info(f"Created temp table: {temp_table_id}")
+            
+            # 2. Validate and prepare data
+            validated_rows = [
+                self.ensure_required_defaults(row, table_schema) 
+                for row in rows
+            ]
+            
+            # 3. Batch load to temp table (NO streaming buffer)
+            job_config = bigquery.LoadJobConfig(
+                schema=table_schema.schema,  # Enforce exact schema
+                autodetect=False,            # No inference
+                source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+                write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
+                ignore_unknown_values=True
+            )
+            
+            load_start = datetime.utcnow()
+            load_job = self.bq_client.load_table_from_json(
+                validated_rows, 
+                temp_table_id, 
+                job_config=job_config
+            )
+            load_job.result()  # Wait for completion
+            load_duration = (datetime.utcnow() - load_start).total_seconds()
+            
+            logging.info(f"✅ Data loaded to temp table: {len(rows)} rows ({load_duration:.2f}s)")
+            
+            # 4. MERGE from temp table to target table
+            full_table_id = f"{self.project_id}.{table_id}"
+            
+            # Get unique game dates for partition filter
+            game_dates = list(set(row['game_date'] for row in rows if row['game_date']))
+            if not game_dates:
+                logging.error("No valid game_dates found in rows")
+                return {'rows_processed': 0, 'errors': ['No valid game_dates']}
+            
+            game_dates_str = "', '".join(game_dates)
+            
+            # Determine merge key and query based on table
+            if 'replay_center' in table_id:
+                merge_key = "T.game_date = S.game_date AND T.official_code = S.official_code"
                 
-                for game_date in game_dates:
-                    # Log delete operation with timing
-                    delete_start = datetime.utcnow()
-                    delete_query = f"""
-                    DELETE FROM `{table_id}` 
-                    WHERE game_date = '{game_date}'
-                    """
-                    
-                    try:
-                        self.bq_client.query(delete_query).result()
-                        delete_duration = (datetime.utcnow() - delete_start).total_seconds()
-                        logging.info(f"Deleted existing referee assignments for {game_date} ({delete_duration:.2f}s)")
-                    except Exception as e:
-                        logging.error(f"Error deleting existing data: {e}")
-                        
-                        # Notify about delete failure
-                        try:
-                            notify_error(
-                                title="BigQuery Delete Failed",
-                                message=f"Failed to delete existing referee data: {str(e)}",
-                                details={
-                                    'game_date': game_date,
-                                    'table_id': table_id,
-                                    'error_type': type(e).__name__
-                                },
-                                processor_name="NBA.com Referee Processor"
-                            )
-                        except Exception as notify_ex:
-                            logging.warning(f"Failed to send notification: {notify_ex}")
-                        
-                        raise e
-            
-            # Log insert operation with timing
-            insert_start = datetime.utcnow()
-            logging.info(f"Inserting {len(rows)} rows into {self.table_name}")
-            
-            # Insert new data
-            result = self.bq_client.insert_rows_json(table_id, rows)
-            insert_duration = (datetime.utcnow() - insert_start).total_seconds()
-            
-            if result:
-                errors.extend([str(e) for e in result])
-                logging.error(f"BigQuery insert errors: {errors}")
+                # For replay center, use filtered MERGE to satisfy partition requirement
+                merge_query = f"""
+                MERGE `{full_table_id}` AS T
+                USING (
+                    SELECT * FROM `{temp_table_id}`
+                ) AS S
+                ON {merge_key}
+                    AND T.game_date IN ('{game_dates_str}')
+                WHEN MATCHED THEN
+                    UPDATE SET
+                        official_name = S.official_name,
+                        source_file_path = S.source_file_path,
+                        scrape_timestamp = S.scrape_timestamp,
+                        processed_at = S.processed_at
+                WHEN NOT MATCHED BY TARGET THEN
+                    INSERT ROW
+                """
+            else:
+                merge_key = """
+                    T.game_id = S.game_id 
+                    AND T.official_position = S.official_position 
+                    AND T.official_code = S.official_code
+                """
                 
-                # Notify about insert errors
+                # For game assignments, use filtered MERGE to satisfy partition requirement
+                merge_query = f"""
+                MERGE `{full_table_id}` AS T
+                USING (
+                    SELECT * FROM `{temp_table_id}`
+                ) AS S
+                ON {merge_key}
+                    AND T.game_date IN ('{game_dates_str}')
+                WHEN MATCHED THEN
+                    UPDATE SET
+                        game_date = S.game_date,
+                        season = S.season,
+                        game_code = S.game_code,
+                        home_team_id = S.home_team_id,
+                        home_team = S.home_team,
+                        home_team_abbr = S.home_team_abbr,
+                        away_team_id = S.away_team_id,
+                        away_team = S.away_team,
+                        away_team_abbr = S.away_team_abbr,
+                        official_name = S.official_name,
+                        official_jersey_number = S.official_jersey_number,
+                        source_file_path = S.source_file_path,
+                        scrape_timestamp = S.scrape_timestamp,
+                        processed_at = S.processed_at
+                WHEN NOT MATCHED BY TARGET THEN
+                    INSERT ROW
+                """
+            
+            merge_start = datetime.utcnow()
+            merge_job = self.bq_client.query(merge_query)
+            merge_result = merge_job.result()
+            merge_duration = (datetime.utcnow() - merge_start).total_seconds()
+            
+            logging.info(f"✅ MERGE completed successfully ({merge_duration:.2f}s)")
+            
+            return {
+                'rows_processed': len(rows),
+                'errors': [],
+                'merge_stats': {
+                    'rows_inserted': merge_result.num_dml_affected_rows if hasattr(merge_result, 'num_dml_affected_rows') else None
+                }
+            }
+            
+        except Exception as e:
+            error_msg = str(e)
+            
+            # Check for streaming buffer conflict
+            if "streaming buffer" in error_msg.lower():
+                logging.warning(f"⚠️  MERGE blocked by streaming buffer - {len(rows)} records skipped")
+                logging.info("Records will be processed on next run when buffer clears")
+                
+                try:
+                    notify_warning(
+                        title="Referee MERGE Blocked by Streaming Buffer",
+                        message=f"MERGE operation blocked - {len(rows)} records skipped (will retry next run)",
+                        details={
+                            'table_id': table_id,
+                            'rows_skipped': len(rows),
+                            'reason': 'streaming_buffer_conflict'
+                        }
+                    )
+                except Exception as notify_ex:
+                    logging.warning(f"Failed to send notification: {notify_ex}")
+                
+                # Graceful failure - return success with note
+                return {
+                    'rows_processed': 0,
+                    'errors': [],
+                    'skipped': len(rows),
+                    'reason': 'streaming_buffer'
+                }
+            else:
+                # Real error - log and notify
+                logging.error(f"Error in MERGE operation: {error_msg}")
+                
                 try:
                     notify_error(
-                        title="BigQuery Insert Errors",
-                        message=f"Encountered {len(result)} errors inserting referee data",
+                        title="Referee MERGE Failed",
+                        message=f"Failed to merge referee data: {error_msg}",
                         details={
                             'table_id': table_id,
                             'rows_attempted': len(rows),
-                            'error_count': len(result),
-                            'errors': str(result)[:500]
+                            'error_type': type(e).__name__
                         },
                         processor_name="NBA.com Referee Processor"
                     )
                 except Exception as notify_ex:
                     logging.warning(f"Failed to send notification: {notify_ex}")
-            else:
-                logging.info(f"Successfully inserted {len(rows)} rows to {self.table_name} ({insert_duration:.2f}s)")
                 
-                # Verify row count post-insertion
-                game_date = rows[0].get('game_date') if rows else None
-                verify_query = f"""
-                SELECT COUNT(*) as count 
-                FROM `{table_id}` 
-                WHERE source_file_path = '{file_path}'
-                AND game_date = '{game_date}'
-                """
+                return {
+                    'rows_processed': 0,
+                    'errors': [error_msg]
+                }
+        
+        finally:
+            # 5. Always cleanup temp table
+            if temp_table_id:
                 try:
-                    actual_count = list(self.bq_client.query(verify_query))[0].count
-                    if actual_count != len(rows):
-                        logging.error(f"ROW COUNT MISMATCH! Expected {len(rows)}, got {actual_count}")
-                        
-                        # Notify about row count mismatch
-                        try:
-                            notify_warning(
-                                title="Referee Row Count Mismatch",
-                                message=f"Row count mismatch after insert: expected {len(rows)}, got {actual_count}",
-                                details={
-                                    'expected': len(rows),
-                                    'actual': actual_count,
-                                    'difference': abs(len(rows) - actual_count),
-                                    'game_date': game_date
-                                }
-                            )
-                        except Exception as notify_ex:
-                            logging.warning(f"Failed to send notification: {notify_ex}")
-                    else:
-                        logging.info(f"Row count verified: {actual_count} rows")
-                except Exception as verify_error:
-                    logging.warning(f"Could not verify row count: {verify_error}")
-                
-        except Exception as e:
-            error_msg = str(e)
-            errors.append(error_msg)
-            logging.error(f"Error loading referee assignments data: {error_msg}")
-            
-            # Notify about load failure
-            try:
-                notify_error(
-                    title="Referee Data Load Failed",
-                    message=f"Failed to load referee assignment data: {error_msg}",
-                    details={
-                        'table_id': table_id,
-                        'rows_attempted': len(rows),
-                        'error_type': type(e).__name__
-                    },
-                    processor_name="NBA.com Referee Processor"
-                )
-            except Exception as notify_ex:
-                logging.warning(f"Failed to send notification: {notify_ex}")
-        
-        return {'rows_processed': len(rows) if not errors else 0, 'errors': errors}
-    
-    def load_replay_center_data(self, replay_rows: List[Dict]) -> Dict:
-        """Load replay center data with duplicate detection and verification."""
-        if not replay_rows:
-            return {'rows_processed': 0, 'errors': []}
-        
-        # Check for duplicates in replay center data
-        unique_keys = set()
-        duplicates = []
-        for row in replay_rows:
-            key = (row['game_date'], row['official_code'])
-            if key in unique_keys:
-                duplicates.append(key)
-            unique_keys.add(key)
-        
-        if duplicates:
-            logging.warning(f"Found {len(duplicates)} duplicate replay center keys: {duplicates}")
-            
-            # Notify about replay center duplicates
-            try:
-                notify_warning(
-                    title="Replay Center Duplicates Detected",
-                    message=f"Found {len(duplicates)} duplicate replay center records",
-                    details={
-                        'duplicate_count': len(duplicates),
-                        'sample_duplicates': str(duplicates[:3]),
-                        'total_rows': len(replay_rows)
-                    }
-                )
-            except Exception as notify_ex:
-                logging.warning(f"Failed to send notification: {notify_ex}")
-        
-        table_id = f"{self.project_id}.{self.replay_table_name}"
-        errors = []
-        file_path = replay_rows[0].get('source_file_path', 'unknown') if replay_rows else 'unknown'
-        
-        try:
-            if self.processing_strategy == 'MERGE_UPDATE':
-                # Get unique game_dates from the data to delete
-                game_dates = set(row['game_date'] for row in replay_rows if row['game_date'])
-                
-                for game_date in game_dates:
-                    delete_start = datetime.utcnow()
-                    delete_query = f"""
-                    DELETE FROM `{table_id}` 
-                    WHERE game_date = '{game_date}'
-                    """
-                    
-                    try:
-                        self.bq_client.query(delete_query).result()
-                        delete_duration = (datetime.utcnow() - delete_start).total_seconds()
-                        logging.info(f"Deleted existing replay center data for {game_date} ({delete_duration:.2f}s)")
-                    except Exception as e:
-                        logging.error(f"Error deleting replay center data: {e}")
-                        
-                        # Notify about delete failure
-                        try:
-                            notify_error(
-                                title="Replay Center Delete Failed",
-                                message=f"Failed to delete existing replay center data: {str(e)}",
-                                details={
-                                    'game_date': game_date,
-                                    'table_id': table_id,
-                                    'error_type': type(e).__name__
-                                },
-                                processor_name="NBA.com Referee Processor"
-                            )
-                        except Exception as notify_ex:
-                            logging.warning(f"Failed to send notification: {notify_ex}")
-                        
-                        raise e
-            
-            # Enhanced insert logging with timing
-            insert_start = datetime.utcnow()
-            logging.info(f"Inserting {len(replay_rows)} replay center rows")
-            
-            # Insert new data
-            result = self.bq_client.insert_rows_json(table_id, replay_rows)
-            insert_duration = (datetime.utcnow() - insert_start).total_seconds()
-            
-            if result:
-                errors.extend([str(e) for e in result])
-                logging.error(f"BigQuery replay center insert errors: {errors}")
-                
-                # Notify about replay center insert errors
-                try:
-                    notify_error(
-                        title="Replay Center Insert Errors",
-                        message=f"Encountered {len(result)} errors inserting replay center data",
-                        details={
-                            'table_id': table_id,
-                            'rows_attempted': len(replay_rows),
-                            'error_count': len(result),
-                            'errors': str(result)[:500]
-                        },
-                        processor_name="NBA.com Referee Processor"
-                    )
-                except Exception as notify_ex:
-                    logging.warning(f"Failed to send notification: {notify_ex}")
-            else:
-                logging.info(f"Successfully inserted {len(replay_rows)} rows to {self.replay_table_name} ({insert_duration:.2f}s)")
-                
-                # Verify replay center row count
-                verify_query = f"""
-                SELECT COUNT(*) as count 
-                FROM `{table_id}` 
-                WHERE source_file_path = '{file_path}'
-                """
-                try:
-                    actual_count = list(self.bq_client.query(verify_query))[0].count
-                    if actual_count != len(replay_rows):
-                        logging.error(f"REPLAY CENTER ROW COUNT MISMATCH! Expected {len(replay_rows)}, got {actual_count}")
-                        
-                        # Notify about replay center row count mismatch
-                        try:
-                            notify_warning(
-                                title="Replay Center Row Count Mismatch",
-                                message=f"Row count mismatch: expected {len(replay_rows)}, got {actual_count}",
-                                details={
-                                    'expected': len(replay_rows),
-                                    'actual': actual_count,
-                                    'difference': abs(len(replay_rows) - actual_count)
-                                }
-                            )
-                        except Exception as notify_ex:
-                            logging.warning(f"Failed to send notification: {notify_ex}")
-                    else:
-                        logging.info(f"Replay center row count verified: {actual_count} rows")
-                except Exception as verify_error:
-                    logging.warning(f"Could not verify replay center row count: {verify_error}")
-                
-        except Exception as e:
-            error_msg = str(e)
-            errors.append(error_msg)
-            logging.error(f"Error loading replay center data: {error_msg}")
-            
-            # Notify about replay center load failure
-            try:
-                notify_error(
-                    title="Replay Center Load Failed",
-                    message=f"Failed to load replay center data: {error_msg}",
-                    details={
-                        'table_id': table_id,
-                        'rows_attempted': len(replay_rows),
-                        'error_type': type(e).__name__
-                    },
-                    processor_name="NBA.com Referee Processor"
-                )
-            except Exception as notify_ex:
-                logging.warning(f"Failed to send notification: {notify_ex}")
-        
-        return {'rows_processed': len(replay_rows) if not errors else 0, 'errors': errors}
+                    self.bq_client.delete_table(temp_table_id, not_found_ok=True)
+                    logging.info(f"Cleaned up temp table: {temp_table_id}")
+                except Exception as cleanup_error:
+                    logging.warning(f"Failed to cleanup temp table: {cleanup_error}")
     
     def process_file(self, file_path: str, **kwargs) -> Dict:
-        """Process a single referee assignments file with enhanced validation."""
+        """Process a single referee assignments file."""
         try:
             logging.info(f"Processing referee file: {file_path}")
             
-            # Read file content directly
+            # Read file content
             from google.cloud import storage
             storage_client = storage.Client()
             
-            # Parse file path to get bucket and blob path
             if file_path.startswith('gs://'):
-                path_parts = file_path[5:].split('/', 1)  # Remove 'gs://' and split once
+                path_parts = file_path[5:].split('/', 1)
                 bucket_name = path_parts[0]
                 blob_path = path_parts[1]
             else:
                 raise ValueError(f"Invalid file path format: {file_path}")
             
-            # Read file
             bucket = storage_client.bucket(bucket_name)
             blob = bucket.blob(blob_path)
             content = blob.download_as_text()
@@ -583,42 +483,49 @@ class NbacRefereeProcessor(ProcessorBase):
                     'status': 'validation_failed',
                     'errors': validation_errors,
                     'game_assignments_processed': 0,
-                    'replay_center_processed': 0,
-                    'expected_game_assignments': 0,
-                    'expected_replay_center': 0
+                    'replay_center_processed': 0
                 }
             
             # Transform data
             game_rows = self.transform_data(raw_data, file_path)
             replay_rows = self.transform_replay_center_data(raw_data, file_path)
             
-            # Log expected counts before processing
-            logging.info(f"Expected: {len(game_rows)} game assignments, {len(replay_rows)} replay center records")
+            logging.info(f"Transformed: {len(game_rows)} game assignments, {len(replay_rows)} replay center records")
             
-            # Transform and load game assignments
-            game_result = self.load_data(game_rows, **kwargs)
+            # Load game assignments using MERGE
+            game_result = self.load_data_with_merge(
+                game_rows, 
+                self.table_name, 
+                self.main_table
+            )
             
-            # Transform and load replay center data
-            replay_result = self.load_replay_center_data(replay_rows)
+            # Load replay center data using MERGE
+            replay_result = self.load_data_with_merge(
+                replay_rows, 
+                self.replay_table_name, 
+                self.replay_table
+            )
             
-            # Enhanced result validation
+            # Process results
             game_processed = game_result.get('rows_processed', 0)
             replay_processed = replay_result.get('rows_processed', 0)
-            
-            # Validate expectations vs actuals
-            if game_processed != len(game_rows):
-                logging.warning(f"GAME ASSIGNMENT COUNT MISMATCH! Expected {len(game_rows)}, processed {game_processed}")
-            
-            if replay_processed != len(replay_rows):
-                logging.warning(f"REPLAY CENTER COUNT MISMATCH! Expected {len(replay_rows)}, processed {replay_processed}")
+            game_skipped = game_result.get('skipped', 0)
+            replay_skipped = replay_result.get('skipped', 0)
             
             all_errors = game_result.get('errors', []) + replay_result.get('errors', [])
-            status = 'success' if not all_errors else 'partial_success' if (game_processed > 0 or replay_processed > 0) else 'failed'
             
-            # Enhanced completion logging
-            logging.info(f"Processed {file_path}: {game_processed} game assignments, {replay_processed} replay center records (status: {status})")
+            if all_errors:
+                status = 'failed'
+            elif game_skipped > 0 or replay_skipped > 0:
+                status = 'skipped'
+            else:
+                status = 'success'
             
-            # Send success notification if no errors
+            logging.info(
+                f"Processed {file_path}: {game_processed} game assignments, "
+                f"{replay_processed} replay center records (status: {status})"
+            )
+            
             if status == 'success':
                 try:
                     notify_info(
@@ -638,8 +545,8 @@ class NbacRefereeProcessor(ProcessorBase):
                 'status': status,
                 'game_assignments_processed': game_processed,
                 'replay_center_processed': replay_processed,
-                'expected_game_assignments': len(game_rows),
-                'expected_replay_center': len(replay_rows),
+                'game_assignments_skipped': game_skipped,
+                'replay_center_skipped': replay_skipped,
                 'errors': all_errors
             }
             
@@ -647,7 +554,6 @@ class NbacRefereeProcessor(ProcessorBase):
             error_msg = str(e)
             logging.error(f"Error processing referee file {file_path}: {error_msg}")
             
-            # Notify about file processing failure
             try:
                 notify_error(
                     title="Referee File Processing Failed",
@@ -666,7 +572,5 @@ class NbacRefereeProcessor(ProcessorBase):
                 'status': 'error',
                 'error': error_msg,
                 'game_assignments_processed': 0,
-                'replay_center_processed': 0,
-                'expected_game_assignments': 0,
-                'expected_replay_center': 0
+                'replay_center_processed': 0
             }

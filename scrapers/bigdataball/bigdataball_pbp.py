@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # File: scrapers/bigdataball/bigdataball_pbp.py
 """
 BIGDATABALL - Game Download endpoint (OPTIMIZED)               v2.0 - 2025-07-22
@@ -18,6 +19,9 @@ Usage examples:
 
   # Via capture tool (recommended):
   python tools/fixtures/capture.py bigdataball_pbp --game_id=0042400407 --debug
+
+CHANGELOG:
+  2025-10-15: Fixed date format conversion (MM/DD/YYYY → YYYY-MM-DD) for correct GCS path
 """
 
 from __future__ import annotations
@@ -547,13 +551,45 @@ class BigDataBallPbpScraper(ScraperBase, ScraperFlaskMixin):
         if game_id and game_id != 'unknown':
             self.opts['game_id'] = game_id
 
-        # Extract game date and derive season
-        game_date = game_info.get('date', '')
-        if game_date:
-            self.opts['date'] = game_date
-            self.opts['nba_season'] = self.derive_nba_season_from_date(game_date)
-            logger.info("Derived NBA season %s from date %s", self.opts['nba_season'], game_date)
+        # ================================================================
+        # FIX: Convert date from BigDataBall format (MM/DD/YYYY) to our format (YYYY-MM-DD)
+        # ================================================================
+        game_date_raw = game_info.get('date', '')
+        
+        if game_date_raw:
+            try:
+                # BigDataBall CSV returns dates in MM/DD/YYYY format
+                date_obj = datetime.strptime(game_date_raw, '%m/%d/%Y')
+                game_date = date_obj.strftime('%Y-%m-%d')  # Convert to YYYY-MM-DD
+                
+                self.opts['date'] = game_date
+                self.opts['nba_season'] = self.derive_nba_season_from_date(game_date)
+                
+                logger.info("Converted date %s to %s, derived season %s", 
+                           game_date_raw, game_date, self.opts['nba_season'])
+                
+            except ValueError as e:
+                # Fallback: try to extract date from filename
+                original_filename = self.decoded_data.get("file_name", "")
+                if '[' in original_filename and ']' in original_filename:
+                    # Extract date from filename: [2024-11-29]-0022400040-NYK@CHA.csv
+                    start = original_filename.find('[')
+                    end = original_filename.find(']')
+                    game_date = original_filename[start+1:end]
+                    
+                    self.opts['date'] = game_date
+                    self.opts['nba_season'] = self.derive_nba_season_from_date(game_date)
+                    
+                    logger.warning("Date parse failed for '%s', extracted from filename: %s", 
+                                 game_date_raw, game_date)
+                else:
+                    # Last resort: use today's date
+                    self.opts['date'] = datetime.now().strftime('%Y-%m-%d')
+                    self.opts['nba_season'] = 'unknown'
+                    logger.error("Could not parse date '%s' or extract from filename: %s", 
+                               game_date_raw, e)
         else:
+            # No date available at all
             self.opts['date'] = datetime.now().strftime('%Y-%m-%d')
             self.opts['nba_season'] = 'unknown'
             logger.warning("No game date available for season derivation")
@@ -591,7 +627,8 @@ class BigDataBallPbpScraper(ScraperBase, ScraperFlaskMixin):
                 details={
                     'scraper': 'bigdataball_pbp',
                     'game_id': game_id,
-                    'game_date': game_date,
+                    'game_date': self.opts.get('date'),
+                    'nba_season': self.opts.get('nba_season'),
                     'teams': f"{game_info.get('away_team')}@{game_info.get('home_team')}",
                     'total_plays': len(plays),
                     'final_score': f"{game_info.get('final_away_score', 0)}-{game_info.get('final_home_score', 0)}"

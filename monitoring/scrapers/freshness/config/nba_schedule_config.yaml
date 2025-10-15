@@ -1,0 +1,245 @@
+# File: monitoring/scrapers/freshness/config/nba_schedule_config.yaml
+#
+# NBA Season Calendar Configuration
+#
+# Defines season phases and key dates for the NBA calendar.
+# Used by season_manager.py to determine current phase and adjust monitoring thresholds.
+
+# Current NBA Season
+current_season:
+  year: 2024  # 2024-25 season
+  label: "2024-25"
+
+# Season Phases
+# These dates determine monitoring behavior and freshness thresholds
+seasons:
+  
+  # 2024-25 Season
+  "2024-25":
+    
+    offseason:
+      start_date: "2024-06-18"  # Day after Finals Game 7 (if needed)
+      end_date: "2024-09-30"    # Day before preseason
+      description: "Offseason - Limited activity"
+      characteristics:
+        - "Few transactions"
+        - "Relaxed monitoring thresholds"
+        - "Only player movement scraping active"
+    
+    preseason:
+      start_date: "2024-10-01"
+      end_date: "2024-10-21"
+      description: "Preseason - Roster building"
+      characteristics:
+        - "Roster cuts and signings"
+        - "Exhibition games"
+        - "Moderate monitoring thresholds"
+    
+    regular_season:
+      start_date: "2024-10-22"
+      end_date: "2025-04-13"
+      season_opener: "2024-10-22"
+      description: "Regular Season - Full operations"
+      characteristics:
+        - "82 games per team"
+        - "Daily games (most days)"
+        - "Strict monitoring thresholds"
+        - "All scrapers active"
+    
+    play_in_tournament:
+      start_date: "2025-04-15"
+      end_date: "2025-04-18"
+      description: "Play-In Tournament"
+      characteristics:
+        - "8 teams competing for playoff spots"
+        - "Very strict monitoring"
+    
+    playoffs:
+      start_date: "2025-04-19"
+      end_date: "2025-06-17"  # Estimated Finals Game 7
+      description: "Playoffs - Critical period"
+      characteristics:
+        - "16 teams"
+        - "Best-of-7 series"
+        - "Very strict monitoring thresholds"
+        - "High-value betting markets"
+  
+  # Future seasons (update annually)
+  "2025-26":
+    offseason:
+      start_date: "2025-06-18"
+      end_date: "2025-09-30"
+    preseason:
+      start_date: "2025-10-01"
+      end_date: "2025-10-21"
+    regular_season:
+      start_date: "2025-10-22"
+      end_date: "2026-04-13"
+      season_opener: "2025-10-22"
+    playoffs:
+      start_date: "2026-04-19"
+      end_date: "2026-06-17"
+
+# Special Dates
+special_dates:
+  
+  # Known breaks/holidays where games are not scheduled
+  breaks:
+    - date: "2024-11-28"
+      name: "Thanksgiving"
+      note: "Limited games"
+    
+    - date: "2024-12-24"
+      name: "Christmas Eve"
+      note: "No games"
+    
+    - date: "2024-12-25"
+      name: "Christmas Day"
+      note: "Special slate of games"
+    
+    - date: "2025-02-14"
+      name: "All-Star Break Start"
+      note: "No games"
+    
+    - date: "2025-02-15"
+      name: "All-Star Saturday"
+      note: "Skills competitions"
+    
+    - date: "2025-02-16"
+      name: "All-Star Game"
+      note: "All-Star Game only"
+    
+    - date: "2025-02-17"
+      name: "All-Star Break End"
+      note: "No games"
+  
+  # Key dates for monitoring
+  important_dates:
+    - date: "2024-10-22"
+      name: "Season Opener"
+      note: "First regular season games"
+    
+    - date: "2025-02-06"
+      name: "Trade Deadline"
+      note: "High transaction volume expected"
+    
+    - date: "2025-04-13"
+      name: "Regular Season End"
+      note: "Last regular season games"
+    
+    - date: "2025-04-15"
+      name: "Play-In Tournament Start"
+      note: "Playoff seeding begins"
+
+# Monitoring Behavior by Phase
+monitoring_profiles:
+  
+  offseason:
+    description: "Minimal monitoring during offseason"
+    scraper_activity: "minimal"
+    alert_threshold_multiplier: 4.0  # 4x more lenient
+    expected_data_frequency: "weekly"
+    critical_scrapers_only: false
+  
+  preseason:
+    description: "Moderate monitoring during preseason"
+    scraper_activity: "moderate"
+    alert_threshold_multiplier: 2.0  # 2x more lenient
+    expected_data_frequency: "daily"
+    critical_scrapers_only: false
+  
+  regular_season:
+    description: "Full monitoring during regular season"
+    scraper_activity: "full"
+    alert_threshold_multiplier: 1.0  # Standard thresholds
+    expected_data_frequency: "hourly"
+    critical_scrapers_only: false
+  
+  playoffs:
+    description: "Enhanced monitoring during playoffs"
+    scraper_activity: "full"
+    alert_threshold_multiplier: 0.75  # 25% stricter
+    expected_data_frequency: "near-realtime"
+    critical_scrapers_only: false
+  
+  play_in:
+    description: "Enhanced monitoring during play-in tournament"
+    scraper_activity: "full"
+    alert_threshold_multiplier: 0.75  # 25% stricter
+    expected_data_frequency: "near-realtime"
+    critical_scrapers_only: false
+
+# Game Schedule Patterns
+game_schedule_patterns:
+  
+  regular_season:
+    typical_game_days:
+      - "Monday"
+      - "Tuesday"
+      - "Wednesday"
+      - "Thursday"
+      - "Friday"
+      - "Saturday"
+      - "Sunday"
+    
+    light_game_days:
+      - "Sunday"  # Often fewer games
+    
+    heavy_game_days:
+      - "Tuesday"   # Often 10+ games
+      - "Wednesday" # Often 10+ games
+      - "Friday"    # Often 10+ games
+    
+    typical_games_per_day: 8
+    max_games_per_day: 15
+    min_games_per_day: 0  # All-Star break, etc.
+  
+  playoffs:
+    typical_games_per_day: 2
+    max_games_per_day: 4
+    min_games_per_day: 0  # Travel days
+
+# Data Source Dependencies
+# Which scrapers depend on games being scheduled
+game_dependent_scrapers:
+  - "odds_api_player_props"
+  - "odds_api_game_lines"
+  - "bdl_box_scores"
+  - "nbacom_scoreboard_v2"
+  - "nbacom_play_by_play"
+  - "espn_scoreboard"
+  - "bigdataball_pbp"
+  - "bettingpros_player_props"
+
+# Season-independent scrapers (run regardless of games)
+always_active_scrapers:
+  - "nbacom_player_list"
+  - "nbacom_player_movement"
+  - "bdl_active_players"
+  - "bdl_standings"
+  - "bdl_injuries"
+  - "espn_team_roster"
+
+# Timezone Configuration
+timezone:
+  primary: "America/New_York"  # ET - NBA's official timezone
+  game_start_hours:
+    earliest: 12  # Noon ET (international games)
+    typical: 19   # 7:00 PM ET
+    latest: 22    # 10:00 PM ET (West Coast)
+
+# Maintenance Windows
+# Times when monitoring alerts should be suppressed
+maintenance_windows:
+  daily:
+    - start_time: "02:00"  # 2 AM ET
+      end_time: "03:00"    # 3 AM ET
+      timezone: "America/New_York"
+      reason: "Daily maintenance window"
+  
+  weekly:
+    - day: "Sunday"
+      start_time: "04:00"  # 4 AM ET
+      end_time: "05:00"    # 5 AM ET
+      timezone: "America/New_York"
+      reason: "Weekly system maintenance"

@@ -1,0 +1,514 @@
+# File: monitoring/scrapers/freshness/config/monitoring_config.yaml
+#
+# Scraper Freshness Monitoring Configuration
+# 
+# This file defines all scrapers to monitor, their schedules, and alert thresholds.
+# Path patterns use variables: {date}, {timestamp}, {hour}, {game_id}
+
+# Global monitoring settings
+global:
+  monitoring_schedule: "0 * * * *"  # Run monitor every hour
+  timezone: "America/New_York"
+  gcs_bucket_default: "nba-raw-data"
+  
+  # Default thresholds (can be overridden per scraper)
+  default_freshness_hours:
+    regular_season: 24
+    preseason: 48
+    playoffs: 12
+    offseason: 168  # 1 week
+  
+  # Alert routing
+  alert_channels:
+    critical: ["slack", "email"]
+    warning: ["slack"]
+    info: ["log"]
+
+# Scraper definitions
+scrapers:
+  
+  # ============================================================================
+  # BALL DON'T LIE API SCRAPERS
+  # ============================================================================
+  
+  bdl_active_players:
+    enabled: true
+    description: "Ball Don't Lie active players list"
+    
+    gcs:
+      bucket: "nba-raw-data"
+      path_pattern: "ball-dont-lie/active-players/{date}/*.json"
+    
+    schedule:
+      cron: "0 6 * * *"  # Daily at 6 AM ET
+      timezone: "America/New_York"
+      description: "Runs every morning"
+    
+    freshness:
+      max_age_hours:
+        regular_season: 24
+        preseason: 48
+        playoffs: 24
+        offseason: 168
+    
+    validation:
+      min_file_size_mb: 0.1
+      max_file_size_mb: 5.0
+      expected_file_count_per_day: 1
+    
+    seasonality:
+      active_during: ["regular_season", "preseason", "playoffs", "offseason"]
+      requires_games_today: false
+    
+    alerting:
+      severity_missing: "critical"
+      severity_stale: "warning"
+      severity_size_anomaly: "warning"
+  
+  bdl_box_scores:
+    enabled: true
+    description: "Ball Don't Lie box scores (live and historical)"
+    
+    gcs:
+      bucket: "nba-raw-data"
+      path_pattern: "ball-dont-lie/boxscores/{date}/*.json"
+    
+    schedule:
+      cron: "*/15 * * * *"  # Every 15 minutes during games
+      timezone: "America/New_York"
+    
+    freshness:
+      max_age_hours:
+        regular_season: 2
+        playoffs: 1
+        preseason: 4
+    
+    validation:
+      min_file_size_mb: 0.05
+    
+    seasonality:
+      active_during: ["regular_season", "playoffs", "preseason"]
+      requires_games_today: true
+    
+    alerting:
+      severity_missing: "critical"
+      severity_stale: "critical"
+  
+  bdl_standings:
+    enabled: true
+    description: "Ball Don't Lie NBA standings"
+    
+    gcs:
+      bucket: "nba-raw-data"
+      path_pattern: "ball-dont-lie/standings/{season_formatted}/{date}/*.json"
+    
+    schedule:
+      cron: "0 9 * * *"  # Daily at 9 AM ET
+      timezone: "America/New_York"
+    
+    freshness:
+      max_age_hours:
+        regular_season: 24
+        playoffs: 24
+        preseason: 48
+        offseason: 168
+    
+    validation:
+      min_file_size_mb: 0.01
+    
+    seasonality:
+      active_during: ["regular_season", "playoffs", "preseason"]
+      requires_games_today: false
+    
+    alerting:
+      severity_missing: "warning"
+      severity_stale: "warning"
+  
+  bdl_injuries:
+    enabled: true
+    description: "Ball Don't Lie injury reports"
+    
+    gcs:
+      bucket: "nba-raw-data"
+      path_pattern: "ball-dont-lie/injuries/{date}/*.json"
+    
+    schedule:
+      cron: "0 */6 * * *"  # Every 6 hours
+      timezone: "America/New_York"
+    
+    freshness:
+      max_age_hours:
+        regular_season: 8
+        playoffs: 8
+        preseason: 24
+    
+    validation:
+      min_file_size_mb: 0.01
+    
+    seasonality:
+      active_during: ["regular_season", "playoffs", "preseason"]
+      requires_games_today: false
+    
+    alerting:
+      severity_missing: "warning"
+      severity_stale: "info"
+  
+  # ============================================================================
+  # ODDS API SCRAPERS
+  # ============================================================================
+  
+  odds_api_events:
+    enabled: true
+    description: "The Odds API - NBA events/games list"
+    
+    gcs:
+      bucket: "nba-raw-data"
+      path_pattern: "odds-api/events/{date}/*.json"
+    
+    schedule:
+      cron: "0 */3 * * *"  # Every 3 hours
+      timezone: "America/New_York"
+    
+    freshness:
+      max_age_hours:
+        regular_season: 4
+        playoffs: 3
+    
+    validation:
+      min_file_size_mb: 0.01
+      expected_file_count_per_day: 8
+    
+    seasonality:
+      active_during: ["regular_season", "playoffs"]
+      requires_games_today: false  # Check schedule regardless
+    
+    alerting:
+      severity_missing: "critical"
+      severity_stale: "critical"
+  
+  odds_api_player_props:
+    enabled: true
+    description: "The Odds API - Player prop bets (CRITICAL for business)"
+    
+    gcs:
+      bucket: "nba-raw-data"
+      path_pattern: "odds-api/player-props/{date}/*/*.json"
+    
+    schedule:
+      cron: "0 */3 * * *"  # Every 3 hours
+      timezone: "America/New_York"
+    
+    freshness:
+      max_age_hours:
+        regular_season: 4
+        playoffs: 2
+    
+    validation:
+      min_file_size_mb: 0.01
+      expected_file_count_per_day: 8
+    
+    seasonality:
+      active_during: ["regular_season", "playoffs"]
+      requires_games_today: true  # Only expect props on game days
+    
+    alerting:
+      severity_missing: "critical"
+      severity_stale: "critical"
+      severity_size_anomaly: "warning"
+  
+  odds_api_game_lines:
+    enabled: true
+    description: "The Odds API - Game betting lines"
+    
+    gcs:
+      bucket: "nba-raw-data"
+      path_pattern: "odds-api/game-lines/{date}/*/*.json"
+    
+    schedule:
+      cron: "0 */3 * * *"  # Every 3 hours
+      timezone: "America/New_York"
+    
+    freshness:
+      max_age_hours:
+        regular_season: 4
+        playoffs: 2
+    
+    validation:
+      min_file_size_mb: 0.01
+    
+    seasonality:
+      active_during: ["regular_season", "playoffs"]
+      requires_games_today: true
+    
+    alerting:
+      severity_missing: "critical"
+      severity_stale: "warning"
+  
+  # ============================================================================
+  # NBA.COM SCRAPERS
+  # ============================================================================
+  
+  nbacom_player_list:
+    enabled: true
+    description: "NBA.com official player list/rosters"
+    
+    gcs:
+      bucket: "nba-raw-data"
+      path_pattern: "nba-com/player-list/{date}/*.json"
+    
+    schedule:
+      cron: "0 6 * * *"  # Daily at 6 AM ET
+      timezone: "America/New_York"
+    
+    freshness:
+      max_age_hours:
+        regular_season: 24
+        preseason: 48
+        playoffs: 24
+        offseason: 168
+    
+    validation:
+      min_file_size_mb: 0.1
+      max_file_size_mb: 5.0
+      expected_file_count_per_day: 1
+    
+    seasonality:
+      active_during: ["regular_season", "preseason", "playoffs"]
+      requires_games_today: false
+    
+    alerting:
+      severity_missing: "critical"
+      severity_stale: "warning"
+  
+  nbacom_player_movement:
+    enabled: true
+    description: "NBA.com player transactions/trades"
+    
+    gcs:
+      bucket: "nba-raw-data"
+      path_pattern: "nba-com/player-movement/{date}/*.json"
+    
+    schedule:
+      cron: "0 6 * * *"  # Daily at 6 AM ET
+      timezone: "America/New_York"
+    
+    freshness:
+      max_age_hours:
+        regular_season: 24
+        preseason: 48
+        playoffs: 24
+        offseason: 168
+    
+    validation:
+      min_file_size_mb: 0.05
+      max_file_size_mb: 2.0
+    
+    seasonality:
+      active_during: ["regular_season", "preseason", "playoffs", "offseason"]
+      requires_games_today: false
+    
+    alerting:
+      severity_missing: "warning"
+      severity_stale: "info"
+  
+  nbacom_scoreboard_v2:
+    enabled: true
+    description: "NBA.com scoreboard (games of the day)"
+    
+    gcs:
+      bucket: "nba-raw-data"
+      path_pattern: "nba-com/scoreboard-v2/{date}/*.json"
+    
+    schedule:
+      cron: "0 */2 * * *"  # Every 2 hours
+      timezone: "America/New_York"
+    
+    freshness:
+      max_age_hours:
+        regular_season: 3
+        playoffs: 2
+    
+    validation:
+      min_file_size_mb: 0.01
+    
+    seasonality:
+      active_during: ["regular_season", "playoffs", "preseason"]
+      requires_games_today: true
+    
+    alerting:
+      severity_missing: "warning"
+      severity_stale: "warning"
+  
+  nbacom_play_by_play:
+    enabled: true
+    description: "NBA.com play-by-play data"
+    
+    gcs:
+      bucket: "nba-raw-data"
+      path_pattern: "nba-com/play-by-play/{date}/game-*/*.json"
+    
+    schedule:
+      cron: "0 */2 * * *"  # Every 2 hours
+      timezone: "America/New_York"
+    
+    freshness:
+      max_age_hours:
+        regular_season: 4
+        playoffs: 3
+    
+    validation:
+      min_file_size_mb: 0.1
+    
+    seasonality:
+      active_during: ["regular_season", "playoffs", "preseason"]
+      requires_games_today: true
+    
+    alerting:
+      severity_missing: "warning"
+      severity_stale: "info"
+  
+  # ============================================================================
+  # ESPN SCRAPERS
+  # ============================================================================
+  
+  espn_scoreboard:
+    enabled: true
+    description: "ESPN scoreboard data"
+    
+    gcs:
+      bucket: "nba-raw-data"
+      path_pattern: "espn/scoreboard/{date}/*.json"
+    
+    schedule:
+      cron: "0 */2 * * *"  # Every 2 hours
+      timezone: "America/New_York"
+    
+    freshness:
+      max_age_hours:
+        regular_season: 3
+        playoffs: 2
+    
+    validation:
+      min_file_size_mb: 0.05
+    
+    seasonality:
+      active_during: ["regular_season", "playoffs", "preseason"]
+      requires_games_today: true
+    
+    alerting:
+      severity_missing: "warning"
+      severity_stale: "info"
+  
+  espn_team_roster:
+    enabled: true
+    description: "ESPN team rosters"
+    
+    gcs:
+      bucket: "nba-raw-data"
+      path_pattern: "espn/rosters/{date}/team_*/*.json"
+    
+    schedule:
+      cron: "0 7 * * *"  # Daily at 7 AM ET
+      timezone: "America/New_York"
+    
+    freshness:
+      max_age_hours:
+        regular_season: 24
+        preseason: 48
+        playoffs: 24
+    
+    validation:
+      min_file_size_mb: 0.01
+    
+    seasonality:
+      active_during: ["regular_season", "preseason", "playoffs"]
+      requires_games_today: false
+    
+    alerting:
+      severity_missing: "warning"
+      severity_stale: "info"
+  
+  # ============================================================================
+  # BIG DATA BALL
+  # ============================================================================
+  
+  bigdataball_pbp:
+    enabled: true
+    description: "Big Data Ball enhanced play-by-play (released 2h after games)"
+    
+    gcs:
+      bucket: "nba-raw-data"
+      path_pattern: "big-data-ball/*/*/game_*/*.csv"
+    
+    schedule:
+      cron: "0 */2 * * *"  # Every 2 hours (checking for completed games)
+      timezone: "America/New_York"
+    
+    freshness:
+      max_age_hours:
+        regular_season: 6  # Released 2h after game, allow buffer
+        playoffs: 4
+    
+    validation:
+      min_file_size_mb: 0.5
+      max_file_size_mb: 50.0
+    
+    seasonality:
+      active_during: ["regular_season", "playoffs", "preseason"]
+      requires_games_today: true
+      delay_after_game_hours: 2  # Don't expect until 2h after game ends
+    
+    alerting:
+      severity_missing: "warning"
+      severity_stale: "warning"
+  
+  # ============================================================================
+  # BETTINGPROS
+  # ============================================================================
+  
+  bettingpros_player_props:
+    enabled: true
+    description: "BettingPros player prop recommendations"
+    
+    gcs:
+      bucket: "nba-raw-data"
+      path_pattern: "bettingpros/player-props/*/{date}/*.json"
+    
+    schedule:
+      cron: "0 */6 * * *"  # Every 6 hours
+      timezone: "America/New_York"
+    
+    freshness:
+      max_age_hours:
+        regular_season: 8
+        playoffs: 6
+    
+    validation:
+      min_file_size_mb: 0.01
+    
+    seasonality:
+      active_during: ["regular_season", "playoffs"]
+      requires_games_today: true
+    
+    alerting:
+      severity_missing: "warning"
+      severity_stale: "info"
+
+# Alert configuration
+alerting:
+  # Notification thresholds
+  thresholds:
+    critical_age_multiplier: 2.0  # Alert critical if age > threshold * 2
+    warning_age_multiplier: 1.5   # Alert warning if age > threshold * 1.5
+  
+  # Batch alerts (reduce noise)
+  batching:
+    enabled: true
+    max_wait_minutes: 5
+    max_batch_size: 10
+  
+  # Rate limiting (prevent alert spam)
+  rate_limiting:
+    enabled: true
+    max_alerts_per_hour: 10
+    cooldown_minutes: 60

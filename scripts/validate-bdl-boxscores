@@ -4,6 +4,11 @@
 # Purpose: CLI tool for running Ball Don't Lie box scores validation queries
 # Usage: ./scripts/validate-bdl-boxscores [command] [options]
 # =============================================================================
+# Exit Codes:
+#   0 = Validation passed (no issues)
+#   1 = Warnings found (investigate next business day)
+#   2 = Critical issues (immediate action required)
+# =============================================================================
 
 set -e  # Exit on error
 
@@ -19,18 +24,31 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 PROJECT_ROOT="$( cd "$SCRIPT_DIR/.." && pwd )"
 QUERIES_DIR="$PROJECT_ROOT/validation/queries/raw/bdl_boxscores"
 
+# Global exit code (0=success, 1=warning, 2=critical)
+EXIT_CODE=0
+
+# Quiet mode flag
+QUIET_MODE=false
+
+# Custom date for historical validation
+CUSTOM_DATE=""
+
 # =============================================================================
 # Helper Functions
 # =============================================================================
 
 print_header() {
-    echo -e "${BLUE}=================================================${NC}"
-    echo -e "${BLUE}$1${NC}"
-    echo -e "${BLUE}=================================================${NC}"
+    if [ "$QUIET_MODE" = false ]; then
+        echo -e "${BLUE}=================================================${NC}"
+        echo -e "${BLUE}$1${NC}"
+        echo -e "${BLUE}=================================================${NC}"
+    fi
 }
 
 print_success() {
-    echo -e "${GREEN}✅ $1${NC}"
+    if [ "$QUIET_MODE" = false ]; then
+        echo -e "${GREEN}✅ $1${NC}"
+    fi
 }
 
 print_warning() {
@@ -41,6 +59,62 @@ print_error() {
     echo -e "${RED}❌ $1${NC}"
 }
 
+print_info() {
+    if [ "$QUIET_MODE" = false ]; then
+        echo -e "${BLUE}ℹ️  $1${NC}"
+    fi
+}
+
+# =============================================================================
+# Parse Validation Status from Query Output
+# =============================================================================
+
+parse_validation_status() {
+    local output="$1"
+    
+    # Check for critical issues (exit code 2)
+    if echo "$output" | grep -q "❌ CRITICAL"; then
+        print_error "CRITICAL issues found in validation results"
+        EXIT_CODE=2
+        return 2
+    fi
+    
+    # Check for point discrepancies (critical for props)
+    if echo "$output" | grep -q "🔴 CRITICAL: Point discrepancy"; then
+        print_error "Point discrepancies detected (affects prop settlement)"
+        EXIT_CODE=2
+        return 2
+    fi
+    
+    # Check for missing data patterns
+    if echo "$output" | grep -q "❌ Missing all"; then
+        print_error "Complete data loss detected"
+        EXIT_CODE=2
+        return 2
+    fi
+    
+    # Check for warnings (exit code 1)
+    if echo "$output" | grep -q "⚠️ WARNING"; then
+        print_warning "Warnings found in validation results"
+        if [ $EXIT_CODE -lt 1 ]; then
+            EXIT_CODE=1
+        fi
+        return 1
+    fi
+    
+    if echo "$output" | grep -q "⚠️ Incomplete"; then
+        print_warning "Incomplete data detected"
+        if [ $EXIT_CODE -lt 1 ]; then
+            EXIT_CODE=1
+        fi
+        return 1
+    fi
+    
+    # No issues found
+    print_success "Validation passed - no issues detected"
+    return 0
+}
+
 # =============================================================================
 # Show Available Commands
 # =============================================================================
@@ -49,7 +123,7 @@ show_help() {
     cat << EOF
 ${GREEN}Ball Don't Lie Box Scores Validation Tool${NC}
 
-Usage: validate-bdl [command] [options]
+Usage: validate-bdl-boxscores [command] [options]
 
 ${YELLOW}HISTORICAL VALIDATION:${NC}
   completeness          Full season completeness check (all teams/seasons)
@@ -64,19 +138,51 @@ ${YELLOW}DAILY MONITORING:${NC}
 
 ${YELLOW}OPTIONS:${NC}
   --csv                 Save results to CSV file
+  --json                Save results to JSON file (for automation)
   --table               Save results to BigQuery table
-  --help                Show this help message
+  --date YYYY-MM-DD     Use custom date instead of current date
+  --quiet, -q           Quiet mode (only show errors and warnings)
+  --help, -h            Show this help message
+
+${YELLOW}EXIT CODES:${NC}
+  0                     Validation passed (no issues)
+  1                     Warnings found (investigate next business day)
+  2                     Critical issues (immediate action required)
 
 ${YELLOW}EXAMPLES:${NC}
-  validate-bdl-boxscores completeness              # Run full season check
-  validate-bdl-boxscores yesterday --csv           # Check yesterday, save to CSV
-  validate-bdl-boxscores missing                   # Find missing games
-  validate-bdl-boxscores cross-validate            # Compare BDL vs NBA.com
-  validate-bdl-boxscores playoffs                  # Check playoff completeness
+  # Morning routine (automated)
+  validate-bdl-boxscores yesterday --json --quiet
+  echo "Exit code: \$?"  # 0=success, 1=warning, 2=critical
+  
+  # Weekly check with CSV export
+  validate-bdl-boxscores week --csv
+  
+  # Find missing games and export
+  validate-bdl-boxscores missing --csv
+  
+  # Cross-validate with NBA.com
+  validate-bdl-boxscores cross-validate
+  
+  # Validate specific date (backfill)
+  validate-bdl-boxscores yesterday --date 2025-11-15
+  
+  # Quiet mode for cron jobs
+  validate-bdl-boxscores yesterday --quiet
+
+${YELLOW}AUTOMATION INTEGRATION:${NC}
+  # Cloud Run wrapper script
+  validate-bdl-boxscores yesterday --json --quiet
+  EXIT_CODE=\$?
+  if [ \$EXIT_CODE -eq 2 ]; then
+    trigger_pagerduty_alert
+  elif [ \$EXIT_CODE -eq 1 ]; then
+    send_slack_warning
+  fi
+  exit \$EXIT_CODE
 
 ${YELLOW}QUICK COMMANDS:${NC}
-  validate-bdl-boxscores list                      # List all available queries
-  validate-bdl-boxscores help                      # Show this help
+  validate-bdl-boxscores list       # List all available queries
+  validate-bdl-boxscores help       # Show this help
 
 EOF
 }
@@ -102,6 +208,33 @@ list_queries() {
 }
 
 # =============================================================================
+# Apply Custom Date Substitution
+# =============================================================================
+
+apply_date_substitution() {
+    local query_path="$1"
+    local temp_file=$(mktemp)
+    
+    if [ -n "$CUSTOM_DATE" ]; then
+        print_info "Using custom date: $CUSTOM_DATE"
+        
+        # Calculate yesterday from custom date
+        local custom_yesterday=$(date -d "$CUSTOM_DATE - 1 day" +%Y-%m-%d 2>/dev/null || \
+                                 date -v-1d -j -f "%Y-%m-%d" "$CUSTOM_DATE" +%Y-%m-%d 2>/dev/null)
+        
+        # Replace date functions with custom dates
+        sed -e "s/CURRENT_DATE()/'$CUSTOM_DATE'/g" \
+            -e "s/DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)/'$custom_yesterday'/g" \
+            -e "s/DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)/DATE_SUB('$CUSTOM_DATE', INTERVAL 7 DAY)/g" \
+            "$query_path" > "$temp_file"
+        
+        echo "$temp_file"
+    else
+        echo "$query_path"
+    fi
+}
+
+# =============================================================================
 # Run Query
 # =============================================================================
 
@@ -109,35 +242,112 @@ run_query() {
     local query_file=$1
     local output_format=$2
     local query_path="$QUERIES_DIR/$query_file"
-    
+
     if [ ! -f "$query_path" ]; then
         print_error "Query file not found: $query_file"
         echo "Run 'validate-bdl-boxscores list' to see available queries"
-        exit 1
+        EXIT_CODE=2
+        exit 2
     fi
-    
+
     print_header "Running: $query_file"
     echo ""
+
+    # Apply date substitution if custom date provided
+    local actual_query_path=$(apply_date_substitution "$query_path")
+    
+    # Capture output for status parsing
+    local output
+    local temp_output=$(mktemp)
     
     case $output_format in
+        json)
+            local timestamp=$(date +%Y%m%d_%H%M%S)
+            local output_file="validation_bdl_${query_file%.sql}_${timestamp}.json"
+            
+            if [ "$QUIET_MODE" = false ]; then
+                print_info "Saving results to: $output_file"
+            fi
+            
+            # Run query and save to file
+            if bq query --use_legacy_sql=false --format=json < "$actual_query_path" > "$output_file" 2>&1; then
+                output=$(cat "$output_file")
+                
+                # Also show formatted output if not quiet
+                if [ "$QUIET_MODE" = false ]; then
+                    cat "$output_file" | jq '.' 2>/dev/null || cat "$output_file"
+                fi
+                
+                print_success "Results saved to $output_file"
+            else
+                print_error "Query execution failed"
+                EXIT_CODE=2
+            fi
+            ;;
+            
         csv)
             local timestamp=$(date +%Y%m%d_%H%M%S)
             local output_file="validation_bdl_${query_file%.sql}_${timestamp}.csv"
-            print_warning "Saving results to: $output_file"
-            bq query --use_legacy_sql=false --format=csv < "$query_path" > "$output_file"
-            print_success "Results saved to $output_file"
+            
+            if [ "$QUIET_MODE" = false ]; then
+                print_info "Saving results to: $output_file"
+            fi
+            
+            # Run query and save to file, also capture for status parsing
+            if bq query --use_legacy_sql=false --format=csv < "$actual_query_path" | tee "$output_file" > "$temp_output" 2>&1; then
+                output=$(cat "$temp_output")
+                print_success "Results saved to $output_file"
+            else
+                print_error "Query execution failed"
+                EXIT_CODE=2
+            fi
             ;;
+            
         table)
             local timestamp=$(date +%Y%m%d)
             local table_name="validation.bdl_${query_file%.sql}_${timestamp}"
-            print_warning "Saving to BigQuery table: $table_name"
-            bq query --use_legacy_sql=false --destination_table="nba-props-platform:${table_name}" < "$query_path"
-            print_success "Results saved to nba-props-platform:${table_name}"
+            
+            if [ "$QUIET_MODE" = false ]; then
+                print_info "Saving to BigQuery table: $table_name"
+            fi
+            
+            # Run query and save to table
+            if bq query --use_legacy_sql=false --destination_table="nba-props-platform:${table_name}" \
+               --replace < "$actual_query_path" > "$temp_output" 2>&1; then
+                output=$(cat "$temp_output")
+                
+                if [ "$QUIET_MODE" = false ]; then
+                    echo "$output"
+                fi
+                
+                print_success "Results saved to nba-props-platform:${table_name}"
+            else
+                print_error "Query execution failed"
+                EXIT_CODE=2
+            fi
             ;;
+            
         *)
-            bq query --use_legacy_sql=false < "$query_path"
+            # Default: output to terminal
+            if bq query --use_legacy_sql=false < "$actual_query_path" | tee "$temp_output"; then
+                output=$(cat "$temp_output")
+            else
+                print_error "Query execution failed"
+                EXIT_CODE=2
+            fi
             ;;
     esac
+    
+    # Parse validation status from output
+    if [ $EXIT_CODE -eq 0 ]; then
+        parse_validation_status "$output"
+    fi
+    
+    # Cleanup temp files
+    rm -f "$temp_output"
+    if [ "$actual_query_path" != "$query_path" ]; then
+        rm -f "$actual_query_path"
+    fi
 }
 
 # =============================================================================
@@ -147,7 +357,7 @@ run_query() {
 main() {
     local command=$1
     local output_format=""
-    
+
     # Parse options
     shift || true
     while [[ $# -gt 0 ]]; do
@@ -156,8 +366,20 @@ main() {
                 output_format="csv"
                 shift
                 ;;
+            --json)
+                output_format="json"
+                shift
+                ;;
             --table)
                 output_format="table"
+                shift
+                ;;
+            --date)
+                CUSTOM_DATE=$2
+                shift 2
+                ;;
+            --quiet|-q)
+                QUIET_MODE=true
                 shift
                 ;;
             --help|-h)
@@ -171,61 +393,81 @@ main() {
                 ;;
         esac
     done
-    
+
     # Handle commands
     case $command in
         # Show help
         help|--help|-h|"")
             show_help
+            exit 0
             ;;
-        
+
         # List queries
         list|ls)
             list_queries
+            exit 0
             ;;
-        
+
         # Historical validation
         completeness|complete|full)
             run_query "season_completeness_check.sql" "$output_format"
             ;;
-        
+
         missing|gaps)
             run_query "find_missing_games.sql" "$output_format"
             ;;
-        
+
         cross-validate|xval|compare|gamebook)
             run_query "cross_validate_with_gamebook.sql" "$output_format"
             ;;
-        
+
         playoffs|playoff)
             run_query "verify_playoff_completeness.sql" "$output_format"
             ;;
-        
+
         # Daily monitoring
         yesterday|daily)
             run_query "daily_check_yesterday.sql" "$output_format"
             ;;
-        
+
         week|weekly|7days)
             run_query "weekly_check_last_7_days.sql" "$output_format"
             ;;
-        
+
         today|now|realtime)
             run_query "realtime_scraper_check.sql" "$output_format"
             ;;
-        
+
         # Unknown command
         *)
             print_error "Unknown command: $command"
             echo ""
             show_help
-            exit 1
+            EXIT_CODE=1
             ;;
     esac
 }
 
 # =============================================================================
-# Run
+# Run Main and Exit with Status Code
 # =============================================================================
 
 main "$@"
+
+# Print final status if not quiet
+if [ "$QUIET_MODE" = false ]; then
+    echo ""
+    case $EXIT_CODE in
+        0)
+            print_success "Validation completed successfully"
+            ;;
+        1)
+            print_warning "Validation completed with warnings"
+            ;;
+        2)
+            print_error "Validation found critical issues"
+            ;;
+    esac
+fi
+
+exit $EXIT_CODE

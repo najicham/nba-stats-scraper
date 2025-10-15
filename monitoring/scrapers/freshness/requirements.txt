@@ -1,0 +1,18 @@
+# File: monitoring/scrapers/freshness/requirements.txt
+#
+# Dependencies for scraper freshness monitoring
+
+# Google Cloud
+google-cloud-storage==2.10.0
+google-auth==2.23.0
+
+# Configuration
+PyYAML==6.0.1
+
+# HTTP requests
+requests==2.31.0
+
+# Shared utils (from project)
+# Note: These are imported from the parent project, not installed via pip
+# - shared.utils.notification_system
+# - shared.utils.email_alerting
