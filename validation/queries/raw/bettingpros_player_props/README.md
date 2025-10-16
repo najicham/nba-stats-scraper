@@ -455,3 +455,70 @@ To add new queries:
 **Data Coverage**: October 2021 - June 2025 (4 complete seasons)  
 **Total Records**: 2,179,496 props across 839 dates  
 **Status**: ✅ Production Ready
+## New Scripts (October 2025)
+
+### coverage_validation.sh
+Comprehensive coverage validation that doesn't require schedule table.
+
+**When to run:**
+- After major backfills
+- Quarterly data quality checks
+- When investigating data gaps
+- Before reporting to stakeholders
+
+**What it checks:**
+- Date range coverage (Oct 2021 → present)
+- Coverage by season
+- Monthly patterns
+- Multi-day gaps (> 7 days)
+- Recent data quality (last 30 days)
+- Low quality dates (< 500 records)
+- Bookmaker coverage over time
+
+**Usage:**
+```bash
+./coverage_validation.sh
+```
+
+### deduplicate_date_template.sh
+Template for removing duplicate data for a specific date.
+
+**When to use:**
+- After accidentally reprocessing a date
+- When duplicate data is detected in validation
+
+**Prerequisites:**
+- Must wait 90+ minutes after last data insert (streaming buffer)
+- Creates backup before deleting
+
+**Usage:**
+```bash
+./deduplicate_date_template.sh 2024-11-12
+```
+
+## Key Learnings (October 2025 Session)
+
+### Processor Strategy: CHECK_BEFORE_INSERT
+- Processor now checks if GCS file already processed before inserting
+- Prevents duplicates from reprocessing
+- Preserves line movement data (different scrapes = different files)
+- Uses batch loading (no streaming buffer issues)
+
+### BigQuery Streaming Buffer Limitation
+- Streaming inserts create 90-minute DML block
+- Must use batch loading for processors that need reprocessing
+- Documented in `docs/database_lessons_learned.md`
+
+### Historical Data Quality
+- 2021-22: 140-2,500 records/date (5-8 bookmakers)
+- 2022-23: 228-2,500 records/date (7-11 bookmakers)
+- 2023-24: 500-5,000 records/date (8-14 bookmakers)
+- 2024-25: 4,000-6,000 records/date (13-18 bookmakers)
+- Quality improves over time as betting market matures
+
+### Coverage Status (October 2025)
+- ✅ 849 dates from Oct 2021 → June 2025
+- ✅ 2.2 million records total
+- ✅ Complete regular season + playoff coverage
+- ✅ All 10 missing Nov/Dec 2024 dates backfilled
+

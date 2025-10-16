@@ -179,7 +179,7 @@ class BettingProsBackfillJob:
         """Lazy-load processor when first needed."""
         if self._processor is None:
             try:
-                from processors.bettingpros.bettingpros_player_props_processor import BettingPropsProcessor
+                from data_processors.raw.bettingpros.bettingpros_player_props_processor import BettingPropsProcessor
                 self._processor = BettingPropsProcessor()
                 logger.info("✓ Processor loaded for reprocessing mode")
             except ImportError as e:

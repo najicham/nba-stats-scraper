@@ -718,7 +718,7 @@ gsutil ls -la gs://nba-data-raw/events/2025/01/15/
 python -m processors.events_processor --reprocess-date 2025-01-15
 
 # 3. Regenerate reports if needed
-python -m reportgen.player_reports --regenerate-date 2025-01-15
+python -m reportgen.prediction --regenerate-date 2025-01-15
 ```
 
 #### BigQuery Data Corruption

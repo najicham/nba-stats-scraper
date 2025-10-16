@@ -169,16 +169,16 @@ Future additions:
 backfill/
 ├── nbac_gamebook/           # NBA.com gamebook data
 │   ├── Dockerfile.nbac_gamebook_backfill
-│   ├── nbac_gamebook_backfill_job.py
+│   ├── nbac_gamebook_backfill.py
 │   └── deploy_nbac_gamebook_backfill.sh
 ├── nbac_injury/             # NBA.com injury reports (ready for implementation)
 ├── odds_api_props/          # Odds API player props
 │   ├── Dockerfile.odds_api_props_backfill
-│   ├── odds_api_props_backfill_job.py
+│   ├── odds_api_props_backfill.py
 │   └── deploy_odds_api_props_backfill.sh
 ├── bp_props/                # BettingPros player props
 │   ├── Dockerfile.bp_props_backfill
-│   ├── bp_props_backfill_job.py
+│   ├── bp_props_backfill.py
 │   └── deploy_bp_props_backfill.sh
 ├── br_rosters/              # Basketball Reference rosters
 │   ├── br_rosters_backfill_job.sh
@@ -186,7 +186,7 @@ backfill/
 ├── bdb_play_by_play/        # Big Data Ball enhanced PBP
 │   └── organize_bdb_files.sh
 └── bdl_boxscore/            # Ball Don't Lie box scores (future)
-    ├── bdl_boxscore_backfill_job.py
+    ├── bdl_boxscore_backfill.py
     └── deploy_bdl_boxscore_backfill.sh
 ```
 

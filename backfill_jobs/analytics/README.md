@@ -9,13 +9,13 @@ This directory contains Cloud Run backfill jobs for processing analytics data fr
 ```
 analytics_backfill/
 ├── player_game_summary/
-│   ├── player_game_summary_backfill_job.py
+│   ├── player_game_summary_backfill.py
 │   └── job-config.env
 ├── team_offense_game_log/
-│   ├── team_offense_backfill_job.py
+│   ├── team_offense_backfill.py
 │   └── job-config.env
 ├── team_defense_game_log/
-│   ├── team_defense_backfill_job.py
+│   ├── team_defense_backfill.py
 │   └── job-config.env
 └── README.md
 ```

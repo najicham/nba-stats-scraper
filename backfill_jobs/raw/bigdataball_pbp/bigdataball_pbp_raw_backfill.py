@@ -1,27 +1,6 @@
 #!/usr/bin/env python3
-# File: processor_backfill/bigdataball_pbp/bigdataball_pbp_backfill_job.py
+# File: backfill_jobs/raw/bigdataball_pbp/bigdataball_pbp_raw_backfill.py
 # Description: Backfill job for processing BigDataBall play-by-play data from GCS to BigQuery
-#
-# Usage Examples:
-# =============
-# 
-# 1. Deploy Job:
-#    ./bin/deployment/deploy_processor_backfill_job.sh bigdataball_pbp
-#
-# 2. Test with Dry Run:
-#    gcloud run jobs execute bigdataball-pbp-processor-backfill --args=--dry-run,--limit=10 --region=us-west2
-#
-# 3. Small Sample Test:
-#    gcloud run jobs execute bigdataball-pbp-processor-backfill --args=--limit=5 --region=us-west2
-#
-# 4. Date Range Processing:
-#    gcloud run jobs execute bigdataball-pbp-processor-backfill --args=--start-date=2024-01-01,--end-date=2024-01-31 --region=us-west2
-#
-# 5. Full Backfill:
-#    gcloud run jobs execute bigdataball-pbp-processor-backfill --region=us-west2
-#
-# 6. Monitor Logs:
-#    gcloud beta run jobs executions logs read [execution-id] --region=us-west2 --follow
 
 import os, sys, argparse, logging
 from datetime import datetime, date, timedelta
@@ -31,12 +10,15 @@ from google.cloud import storage
 # Add parent directories to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
+# Import the processor - FIXED!
+from data_processors.raw.bigdataball.bigdataball_pbp_processor import BigDataBallPbpProcessor
+
 
 class BigDataBallPbpBackfill:
     def __init__(self, bucket_name: str = 'nba-scraped-data'):
         self.bucket_name = bucket_name
         self.storage_client = storage.Client()
-        self.processor = BigDataBallPbpProcessor()
+        self.processor = BigDataBallPbpProcessor()  # Now this will work!
         
         # Set up logging
         logging.basicConfig(
@@ -106,7 +88,7 @@ class BigDataBallPbpBackfill:
         return [f['path'] for f in all_files]
     
     def process_file(self, file_path: str) -> dict:
-        """Process a single BigDataBall file."""
+        """Process a single BigDataBall CSV file (which contains JSON data)."""
         self.logger.info(f"Processing file: {file_path}")
         
         try:
@@ -120,25 +102,27 @@ class BigDataBallPbpBackfill:
             if not blob.exists():
                 return {'success': False, 'error': 'File not found', 'file': file_path}
             
-            # Download and parse JSON
+            # Download content (CSV file that contains JSON)
             content = blob.download_as_text()
+            
+            # Step 1: Parse JSON from the file
             raw_data = self.processor.parse_json(content, file_path)
             
-            # Validate data
+            # Step 2: Validate data structure
             validation_errors = self.processor.validate_data(raw_data)
             if validation_errors:
                 return {
                     'success': False, 
-                    'error': f"Validation failed: {', '.join(validation_errors)}", 
+                    'error': f"Validation errors: {', '.join(validation_errors)}", 
                     'file': file_path
                 }
             
-            # Transform data
+            # Step 3: Transform data to BigQuery rows
             rows = self.processor.transform_data(raw_data, file_path)
             if not rows:
                 return {'success': False, 'error': 'No rows generated', 'file': file_path}
             
-            # Load to BigQuery
+            # Step 4: Load to BigQuery
             result = self.processor.load_data(rows)
             
             if result['errors']:
@@ -159,6 +143,8 @@ class BigDataBallPbpBackfill:
             
         except Exception as e:
             self.logger.error(f"Error processing {file_path}: {e}")
+            import traceback
+            traceback.print_exc()
             return {'success': False, 'error': str(e), 'file': file_path}
     
     def run_backfill(self, start_date: date, end_date: date, dry_run: bool = False, limit: int = None):

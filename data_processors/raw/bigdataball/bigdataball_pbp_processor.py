@@ -70,6 +70,32 @@ class BigDataBallPbpProcessor(ProcessorBase):
         date_part = game_date.replace('-', '')
         return f"{date_part}_{away_team}_{home_team}"
     
+    def parse_game_date(self, date_str: str) -> tuple:
+        """
+        Parse game date and return (iso_date_string, season_year)
+        Handles both formats: '11/12/2024' and '2024-11-12'
+        """
+        if '/' in date_str:
+            # Format: MM/DD/YYYY
+            month, day, year = date_str.split('/')
+            iso_date = f"{year}-{month.zfill(2)}-{day.zfill(2)}"
+            year_int = int(year)
+        else:
+            # Format: YYYY-MM-DD
+            iso_date = date_str
+            year_int = int(date_str.split('-')[0])
+        
+        # Extract month for season determination
+        month_int = int(iso_date.split('-')[1])
+        
+        # Determine season year (October+ = new season starts)
+        if month_int >= 10:
+            season_year = year_int
+        else:
+            season_year = year_int - 1
+        
+        return iso_date, season_year
+    
     def determine_player_role(self, event: Dict) -> Optional[str]:
         """Determine the role of player_2 based on event data"""
         if event.get('assist'):
@@ -191,18 +217,16 @@ class BigDataBallPbpProcessor(ProcessorBase):
         game_info = raw_data['game_info']
         play_by_play = raw_data['playByPlay']
         
+        # Parse date and determine season
+        game_date_raw = game_info['date']
+        game_date, season_year = self.parse_game_date(game_date_raw)
+
         # Construct consistent game_id
         game_id = self.construct_game_id(
-            game_info['date'], 
+            game_date,  # Use ISO format date
             game_info['away_team'], 
             game_info['home_team']
         )
-        
-        # Extract season year (2024 for 2024-25 season)
-        game_date = game_info['date']
-        season_year = int(game_date.split('-')[0])
-        if int(game_date.split('-')[1]) < 10:  # Before October = previous season
-            season_year -= 1
         
         rows = []
         

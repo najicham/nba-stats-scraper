@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# FILE: backfill_jobs/scrapers/bdl_boxscore/bdl_boxscore_backfill_job.py
+# FILE: backfill_jobs/scrapers/bdl_boxscore/bdl_boxscore_scraper_backfill.py
 
 """
 Ball Don't Lie Boxscore Backfill Cloud Run Job
@@ -13,10 +13,14 @@ This script:
 2. Extracts unique game dates from 4 seasons (2021-22 through 2024-25)
 3. Calls BDL API once per date (gets all games for that date)
 4. Downloads box scores with resume logic (skips existing)
-5. Runs for ~15-20 minutes with 0.1s rate limiting (600 req/min = very fast!)
+5. Runs for ~15-20 minutes with 0.5s rate limiting (120 req/min = very fast!)
 6. Auto-terminates when complete
 
-🆕 NEW: --playoffs-only mode for targeted playoff data collection
+🆕 UPDATES:
+- Fixed GCS path to match GCSPathBuilder: ball-dont-lie/boxscores/ (no hyphen!)
+- Added --dates parameter for specific date processing
+- Added notification system integration (INFO/WARNING/ERROR)
+- Enhanced error tracking and reporting
 
 Usage:
   # Deploy as Cloud Run Job:
@@ -24,17 +28,22 @@ Usage:
 
   # Dry run (see date counts without downloading):
   gcloud run jobs execute bdl-boxscore-backfill \
-    --args="--service-url=https://nba-scrapers-f7p3g7f6ya-wl.a.run.app --dry-run --seasons=2023" \
+    --args="--service-url=https://nba-scrapers-f7p3g7f6ya-wl.a.run.app,--dry-run,--seasons=2023" \
+    --region=us-west2
+
+  # 🎯 SPECIFIC DATES (for gap filling from validation):
+  gcloud run jobs execute bdl-boxscore-backfill \
+    --args="--service-url=https://nba-scrapers-f7p3g7f6ya-wl.a.run.app,--dates=2023-11-03,2023-11-10,2023-11-14" \
     --region=us-west2
 
   # 🏆 PLAYOFFS ONLY - Process just playoff games (much faster!):
   gcloud run jobs execute bdl-boxscore-backfill \
-    --args="--service-url=https://nba-scrapers-f7p3g7f6ya-wl.a.run.app --seasons=2024 --playoffs-only" \
+    --args="--service-url=https://nba-scrapers-f7p3g7f6ya-wl.a.run.app,--seasons=2024,--playoffs-only" \
     --region=us-west2
 
   # Single season test (2023-24):
   gcloud run jobs execute bdl-boxscore-backfill \
-    --args="--service-url=https://nba-scrapers-f7p3g7f6ya-wl.a.run.app --seasons=2023" \
+    --args="--service-url=https://nba-scrapers-f7p3g7f6ya-wl.a.run.app,--seasons=2023" \
     --region=us-west2
 
   # Full 4-season backfill (~800-1000 dates):
@@ -54,6 +63,13 @@ import argparse
 # Google Cloud Storage for reading schedules and checking existing files
 from google.cloud import storage
 
+# Notification system
+from shared.utils.notification_system import (
+    notify_error,
+    notify_warning,
+    notify_info
+)
+
 # Configure logging for Cloud Run
 logging.basicConfig(
     level=logging.INFO,
@@ -66,13 +82,15 @@ class BdlBoxscoreBackfillJob:
     
     def __init__(self, scraper_service_url: str, seasons: List[int] = None, 
                  bucket_name: str = "nba-scraped-data", limit: Optional[int] = None, 
-                 start_date: Optional[str] = None, playoffs_only: bool = False):
+                 start_date: Optional[str] = None, playoffs_only: bool = False,
+                 specific_dates: Optional[List[str]] = None):
         self.scraper_service_url = scraper_service_url.rstrip('/')
         self.seasons = seasons or [2021, 2022, 2023, 2024]  # Default: all 4 seasons
         self.bucket_name = bucket_name
         self.limit = limit
         self.start_date = start_date  # Skip dates before this (format: YYYY-MM-DD)
-        self.playoffs_only = playoffs_only  # 🆕 NEW: Only process playoff games
+        self.playoffs_only = playoffs_only
+        self.specific_dates = set(specific_dates) if specific_dates else None  # 🆕 NEW
         
         # Initialize GCS client
         self.storage_client = storage.Client()
@@ -84,7 +102,7 @@ class BdlBoxscoreBackfillJob:
         self.failed_dates = []
         self.skipped_dates = []
         
-        # Rate limiting - BDL allows 600 req/min = 10 req/sec, use 0.2s for conservative approach
+        # Rate limiting - BDL allows 600 req/min = 10 req/sec, use 0.5s for conservative approach
         self.RATE_LIMIT_DELAY = 0.5
         
         logger.info("🏀 Ball Don't Lie Boxscore Backfill Job initialized")
@@ -92,8 +110,10 @@ class BdlBoxscoreBackfillJob:
         logger.info("Seasons: %s", self.seasons)
         if self.playoffs_only:
             logger.info("🏆 PLAYOFFS ONLY MODE - Filtering to playoff games only")
+        if self.specific_dates:
+            logger.info("🎯 SPECIFIC DATES MODE - Processing %d dates", len(self.specific_dates))
         logger.info("GCS bucket: %s", self.bucket_name)
-        logger.info("Rate limit: %.1fs between calls (300 req/min conservative)", self.RATE_LIMIT_DELAY)
+        logger.info("Rate limit: %.1fs between calls (120 req/min conservative)", self.RATE_LIMIT_DELAY)
         if self.limit:
             logger.info("Limit: %d dates (for testing)", self.limit)
         if self.start_date:
@@ -108,16 +128,40 @@ class BdlBoxscoreBackfillJob:
             logger.info("🔍 DRY RUN MODE - No downloads will be performed")
         
         try:
-            # 1. Collect all game dates from schedule files (using NEWEST file per season)
-            all_dates = self._collect_all_game_dates()
+            # 1. Collect all game dates from schedule files (or use specific dates)
+            if self.specific_dates:
+                all_dates = self.specific_dates
+                logger.info("Using %d specific dates provided", len(all_dates))
+            else:
+                all_dates = self._collect_all_game_dates()
+            
             self.total_dates = len(all_dates)
             
             if self.total_dates == 0:
                 logger.error("❌ No game dates found! Check schedule files and season mapping.")
+                
+                # Notify about no dates found
+                try:
+                    notify_error(
+                        title="No Dates Found for Backfill",
+                        message="BDL boxscore scraper backfill found no dates to process",
+                        details={
+                            'seasons': self.seasons,
+                            'playoffs_only': self.playoffs_only,
+                            'specific_dates': bool(self.specific_dates)
+                        },
+                        processor_name="BDL Boxscore Scraper Backfill"
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to send notification: {e}")
+                
                 return
             
             estimated_minutes = (self.total_dates * self.RATE_LIMIT_DELAY) / 60
             mode_description = "playoff dates" if self.playoffs_only else "game dates"
+            if self.specific_dates:
+                mode_description = "specific dates"
+            
             logger.info("Total unique VALID %s found: %d (filtered out pre-season/All-Star)", 
                        mode_description, self.total_dates)
             if self.start_date:
@@ -155,7 +199,7 @@ class BdlBoxscoreBackfillJob:
                     else:
                         self.failed_dates.append(date)
                     
-                    # Rate limiting (0.1 seconds between requests - 10 req/sec)
+                    # Rate limiting (0.5 seconds between requests)
                     time.sleep(self.RATE_LIMIT_DELAY)
                     
                 except KeyboardInterrupt:
@@ -166,11 +210,29 @@ class BdlBoxscoreBackfillJob:
                     self.failed_dates.append(date)
                     continue
             
-            # Final summary
+            # Final summary and notifications
             self._print_final_summary(start_time)
+            self._send_completion_notification(start_time)
             
         except Exception as e:
             logger.error("Backfill job failed: %s", e, exc_info=True)
+            
+            # Send critical error notification
+            try:
+                notify_error(
+                    title="BDL Boxscore Scraper Backfill Failed",
+                    message=f"Backfill job crashed: {str(e)}",
+                    details={
+                        'error': str(e),
+                        'error_type': type(e).__name__,
+                        'processed_dates': self.processed_dates,
+                        'failed_dates': len(self.failed_dates)
+                    },
+                    processor_name="BDL Boxscore Scraper Backfill"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            
             raise
     
     def _collect_all_game_dates(self) -> Set[str]:
@@ -471,11 +533,17 @@ class BdlBoxscoreBackfillJob:
         return None
     
     def _date_already_processed(self, date: str) -> bool:
-        """Check if date's box scores already exist in GCS (resume logic)."""
+        """
+        Check if date's box scores already exist in GCS (resume logic).
+        
+        ✅ FIXED: Now uses correct path matching GCSPathBuilder:
+        ball-dont-lie/boxscores/{date}/ (no hyphen in 'boxscores')
+        """
         try:
-            # BDL boxscore path structure: gs://nba-scraped-data/ball-dont-lie/box-scores/{date}/
-            # Based on the scraper's GCS_PATH_KEY = "bdl_box_scores" 
-            prefix = f"ball-dont-lie/box-scores/{date}/"
+            # ✅ CRITICAL FIX: Correct path from GCSPathBuilder (doc 5)
+            # OLD (WRONG): prefix = f"ball-dont-lie/box-scores/{date}/"
+            # NEW (CORRECT): prefix = f"ball-dont-lie/boxscores/{date}/"
+            prefix = f"ball-dont-lie/boxscores/{date}/"
             
             blobs = list(self.bucket.list_blobs(prefix=prefix, max_results=1))
             
@@ -537,11 +605,15 @@ class BdlBoxscoreBackfillJob:
         """Print final job summary."""
         duration = datetime.now() - start_time
         mode_description = "playoff dates" if self.playoffs_only else "dates"
+        if self.specific_dates:
+            mode_description = "specific dates"
         
         logger.info("="*60)
         logger.info("🏀 BALL DON'T LIE BOXSCORE BACKFILL COMPLETE")
         if self.playoffs_only:
             logger.info("🏆 PLAYOFFS ONLY MODE")
+        if self.specific_dates:
+            logger.info("🎯 SPECIFIC DATES MODE")
         logger.info("="*60)
         logger.info("Total %s: %d", mode_description, self.total_dates)
         logger.info("Downloaded: %d", self.processed_dates) 
@@ -557,12 +629,56 @@ class BdlBoxscoreBackfillJob:
             logger.warning("Failed dates (first 10): %s", self.failed_dates[:10])
         
         logger.info("🎯 Next steps:")
-        logger.info("   - Check data in: gs://nba-scraped-data/ball-dont-lie/box-scores/")
-        logger.info("   - Validate with: bin/validation/validate_bdl_boxscore.sh --recent")
-        if self.playoffs_only:
-            logger.info("   - Process with: bdl-boxscores-processor-backfill --start-date=2024-04-15 --end-date=2024-06-17")
-        logger.info("   - Begin analytics integration")
-        logger.info("   - Set up daily scrapers for ongoing collection")
+        logger.info("   - Check data in: gs://nba-scraped-data/ball-dont-lie/boxscores/")
+        logger.info("   - Run validation: ./scripts/validate-bdl-boxscores missing")
+        logger.info("   - Process data: bdl-boxscores-processor-backfill --dates=...")
+    
+    def _send_completion_notification(self, start_time: datetime):
+        """Send completion notification with appropriate severity."""
+        duration = datetime.now() - start_time
+        
+        success_rate = (self.processed_dates / self.total_dates * 100) if self.total_dates > 0 else 0
+        failure_rate = (len(self.failed_dates) / self.total_dates * 100) if self.total_dates > 0 else 0
+        
+        details = {
+            'total_dates': self.total_dates,
+            'processed': self.processed_dates,
+            'skipped': len(self.skipped_dates),
+            'failed': len(self.failed_dates),
+            'success_rate': f"{success_rate:.1f}%",
+            'duration_seconds': int(duration.total_seconds()),
+            'playoffs_only': self.playoffs_only,
+            'specific_dates_mode': bool(self.specific_dates)
+        }
+        
+        if self.failed_dates:
+            details['failed_dates_sample'] = self.failed_dates[:10]
+        
+        try:
+            # Determine severity and send appropriate notification
+            if failure_rate > 20:
+                # High failure rate = WARNING
+                notify_warning(
+                    title="BDL Boxscore Scraping Complete with High Failure Rate",
+                    message=f"Processed {self.processed_dates}/{self.total_dates} dates, but {len(self.failed_dates)} failed ({failure_rate:.1f}%)",
+                    details=details
+                )
+            elif failure_rate > 0:
+                # Some failures but acceptable = INFO with note
+                notify_info(
+                    title="BDL Boxscore Scraping Complete",
+                    message=f"Successfully processed {self.processed_dates}/{self.total_dates} dates. {len(self.failed_dates)} dates failed - review logs.",
+                    details=details
+                )
+            else:
+                # Perfect success = INFO
+                notify_info(
+                    title="BDL Boxscore Scraping Complete",
+                    message=f"Successfully processed all {self.processed_dates} dates in {int(duration.total_seconds()/60)} minutes",
+                    details=details
+                )
+        except Exception as e:
+            logger.warning(f"Failed to send completion notification: {e}")
 
 
 def main():
@@ -581,6 +697,8 @@ def main():
                        help="Skip dates before this date (YYYY-MM-DD format, e.g., 2021-10-19)")
     parser.add_argument("--playoffs-only", action="store_true",
                        help="🏆 Only process playoff and play-in games (skip regular season)")
+    parser.add_argument("--dates", default=None,
+                       help="🎯 Comma-separated specific dates to process (e.g., 2023-11-03,2023-11-10)")
     
     args = parser.parse_args()
     
@@ -593,14 +711,21 @@ def main():
     # Parse seasons list
     seasons = [int(s.strip()) for s in args.seasons.split(",")]
     
-    # Create and run job with new playoffs_only parameter
+    # Parse specific dates if provided
+    specific_dates = None
+    if args.dates:
+        specific_dates = [d.strip() for d in args.dates.split(",")]
+        logger.info(f"🎯 Processing {len(specific_dates)} specific dates: {specific_dates[:5]}...")
+    
+    # Create and run job with new dates parameter
     job = BdlBoxscoreBackfillJob(
         scraper_service_url=service_url,
         seasons=seasons,
         bucket_name=args.bucket,
         limit=args.limit,
         start_date=args.start_date,
-        playoffs_only=args.playoffs_only  # 🆕 NEW PARAMETER
+        playoffs_only=args.playoffs_only,
+        specific_dates=specific_dates  # 🆕 NEW PARAMETER
     )
     
     job.run(dry_run=args.dry_run)

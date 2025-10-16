@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# File: processor_backfill/bettingpros_player_props/bettingpros_player_props_backfill_job.py
+# File: backfill_jobs/raw/bettingpros_player_props/bettingpros_player_props_raw_backfill.py
 # Description: Backfill job for processing BettingPros player props data from GCS to BigQuery
 #
 # Usage Examples:
@@ -17,13 +17,27 @@
 # 4. Date Range Processing:
 #    gcloud run jobs execute bettingpros-player-props-processor-backfill --args=--start-date=2024-01-01,--end-date=2024-01-31 --region=us-west2
 #
-# 5. Market Type Specific:
+# 5. 🆕 SPECIFIC DATES (NEW - for backfilling missing dates):
+#    # Use pipe delimiter (^|^) for comma-separated dates
+#    gcloud run jobs execute bettingpros-player-props-processor-backfill \
+#      --args="^|^--dates=2024-11-12,2024-11-15,2024-11-19" --region=us-west2
+#
+#    # Process all 10 missing dates
+#    gcloud run jobs execute bettingpros-player-props-processor-backfill \
+#      --args="^|^--dates=2024-11-12,2024-11-15,2024-11-19,2024-11-22,2024-11-26,2024-11-29,2024-12-03,2024-12-10,2024-12-11,2024-12-14" \
+#      --region=us-west2
+#
+#    # Dry run with specific dates
+#    gcloud run jobs execute bettingpros-player-props-processor-backfill \
+#      --args="^|^--dates=2024-11-12,2024-11-15|--dry-run" --region=us-west2
+#
+# 6. Market Type Specific:
 #    gcloud run jobs execute bettingpros-player-props-processor-backfill --args=--market-type=points,--start-date=2024-01-01 --region=us-west2
 #
-# 6. Full Backfill (Oct 2021 - Present):
+# 7. Full Backfill (Oct 2021 - Present):
 #    gcloud run jobs execute bettingpros-player-props-processor-backfill --region=us-west2
 #
-# 7. Monitor Logs:
+# 8. Monitor Logs:
 #    gcloud beta run jobs executions logs read [execution-id] --region=us-west2 --follow
 #
 # CRITICAL: Argument Parsing
@@ -31,8 +45,15 @@
 # ❌ WRONG (spaces break parsing):
 #    --args="--dry-run --limit 10"
 #
-# ✅ CORRECT (use equals syntax):
+# ❌ WRONG (commas in values without delimiter):
+#    --args=--dates=2024-11-12,2024-11-15  # Splits into multiple args!
+#
+# ✅ CORRECT (use equals syntax for simple args):
 #    --args=--dry-run,--limit=10
+#
+# ✅ CORRECT (use pipe delimiter for comma-separated values):
+#    --args="^|^--dates=2024-11-12,2024-11-15|--dry-run"
+#    The ^|^ tells gcloud to use | as delimiter instead of comma
 
 import os
 import sys
@@ -63,6 +84,44 @@ class BettingPropsBackfill:
         # BettingPros path pattern
         self.base_path = "bettingpros/player-props"
         
+    def list_files_for_dates(self, dates: List[date], market_type: str = "points", limit: Optional[int] = None) -> List[str]:
+        """List BettingPros prop files for specific dates."""
+        bucket = self.storage_client.bucket(self.bucket_name)
+        all_files = []
+        
+        logger.info(f"Searching for {market_type} files for {len(dates)} specific dates")
+        
+        for current_date in dates:
+            # Pattern: bettingpros/player-props/{market_type}/{YYYY-MM-DD}/timestamp.json
+            prefix = f"{self.base_path}/{market_type}/{current_date.strftime('%Y-%m-%d')}/"
+            
+            try:
+                blobs = bucket.list_blobs(prefix=prefix)
+                date_files = []
+                
+                for blob in blobs:
+                    if blob.name.endswith('.json'):
+                        file_path = f"gs://{self.bucket_name}/{blob.name}"
+                        date_files.append(file_path)
+                
+                if date_files:
+                    logger.info(f"Found {len(date_files)} files for {current_date}")
+                    all_files.extend(date_files)
+                else:
+                    logger.warning(f"No files found for {current_date}")
+                    
+                # Apply limit if specified
+                if limit and len(all_files) >= limit:
+                    all_files = all_files[:limit]
+                    logger.info(f"Reached limit of {limit} files")
+                    break
+                        
+            except Exception as e:
+                logger.error(f"Error listing files for {current_date}: {str(e)}")
+        
+        logger.info(f"Total files found: {len(all_files)}")
+        return all_files
+        
     def list_files(self, start_date: date, end_date: date, market_type: str = "points", limit: Optional[int] = None) -> List[str]:
         """List BettingPros prop files in date range."""
         bucket = self.storage_client.bucket(self.bucket_name)
@@ -88,11 +147,11 @@ class BettingPropsBackfill:
                     logger.info(f"Found {len(date_files)} files for {current_date}")
                     all_files.extend(date_files)
                     
-                    # Apply limit if specified
-                    if limit and len(all_files) >= limit:
-                        all_files = all_files[:limit]
-                        logger.info(f"Reached limit of {limit} files")
-                        break
+                # Apply limit if specified
+                if limit and len(all_files) >= limit:
+                    all_files = all_files[:limit]
+                    logger.info(f"Reached limit of {limit} files")
+                    break
                         
             except Exception as e:
                 logger.error(f"Error listing files for {current_date}: {str(e)}")
@@ -143,14 +202,23 @@ class BettingPropsBackfill:
             logger.error(f"Failed to process {file_path}: {error_msg}")
             return {"error": error_msg, "file_path": file_path}
     
-    def run_backfill(self, start_date: date, end_date: date, market_type: str = "points", 
+    def run_backfill(self, start_date: Optional[date] = None, end_date: Optional[date] = None, 
+                     dates: Optional[List[date]] = None, market_type: str = "points", 
                      dry_run: bool = False, limit: Optional[int] = None):
-        """Run backfill process for date range."""
-        logger.info(f"Starting BettingPros backfill: {start_date} to {end_date}")
-        logger.info(f"Market type: {market_type}, Dry run: {dry_run}, Limit: {limit}")
+        """Run backfill process for date range or specific dates."""
         
-        # List all files to process
-        files = self.list_files(start_date, end_date, market_type, limit)
+        # Determine which mode we're in
+        if dates:
+            logger.info(f"Starting BettingPros backfill for {len(dates)} specific dates")
+            logger.info(f"Dates: {[d.strftime('%Y-%m-%d') for d in dates[:10]]}")
+            if len(dates) > 10:
+                logger.info(f"... and {len(dates) - 10} more dates")
+            files = self.list_files_for_dates(dates, market_type, limit)
+        else:
+            logger.info(f"Starting BettingPros backfill: {start_date} to {end_date}")
+            files = self.list_files(start_date, end_date, market_type, limit)
+        
+        logger.info(f"Market type: {market_type}, Dry run: {dry_run}, Limit: {limit}")
         
         if not files:
             logger.warning("No files found to process")
@@ -198,16 +266,25 @@ class BettingPropsBackfill:
         logger.info(f"Files processed: {processed}")
         logger.info(f"Files with errors: {errors}")
         logger.info(f"Total rows inserted: {total_rows}")
-        logger.info(f"Date range: {start_date} to {end_date}")
+        if dates:
+            logger.info(f"Specific dates processed: {len(dates)}")
+        else:
+            logger.info(f"Date range: {start_date} to {end_date}")
         logger.info(f"Market type: {market_type}")
         logger.info("="*60)
 
 def main():
     parser = argparse.ArgumentParser(description='Backfill BettingPros player props data')
-    parser.add_argument('--start-date', type=str, 
-                       help='Start date (YYYY-MM-DD). Default: 2021-10-01')
+    
+    # Date selection (mutually exclusive groups)
+    date_group = parser.add_mutually_exclusive_group()
+    date_group.add_argument('--dates', type=str,
+                           help='Comma-separated list of specific dates (e.g., 2024-11-12,2024-11-15)')
+    date_group.add_argument('--start-date', type=str, 
+                           help='Start date (YYYY-MM-DD). Default: 2021-10-01')
+    
     parser.add_argument('--end-date', type=str, 
-                       help='End date (YYYY-MM-DD). Default: today')
+                       help='End date (YYYY-MM-DD). Default: today. Requires --start-date')
     parser.add_argument('--market-type', type=str, default='points',
                        help='Market type to process. Default: points')
     parser.add_argument('--dry-run', action='store_true', 
@@ -217,33 +294,54 @@ def main():
     
     args = parser.parse_args()
     
+    # Validate date arguments
+    if args.end_date and not args.start_date and not args.dates:
+        parser.error("--end-date requires --start-date")
+    
     # Parse dates
-    start_date = date(2021, 10, 1)  # Default to October 2021
-    if args.start_date:
-        try:
-            start_date = datetime.strptime(args.start_date, '%Y-%m-%d').date()
-        except ValueError:
-            logger.error(f"Invalid start date format: {args.start_date}")
-            return
+    specific_dates = None
+    start_date = None
+    end_date = None
     
-    end_date = date.today()
-    if args.end_date:
+    if args.dates:
+        # Parse specific dates
         try:
-            end_date = datetime.strptime(args.end_date, '%Y-%m-%d').date()
-        except ValueError:
-            logger.error(f"Invalid end date format: {args.end_date}")
+            date_strings = [d.strip() for d in args.dates.split(',')]
+            specific_dates = [datetime.strptime(d, '%Y-%m-%d').date() for d in date_strings]
+            specific_dates = sorted(specific_dates)  # Sort chronologically
+            logger.info(f"Processing {len(specific_dates)} specific dates")
+        except ValueError as e:
+            logger.error(f"Invalid date format in --dates: {e}")
             return
-    
-    # Validate date range
-    if start_date > end_date:
-        logger.error("Start date cannot be after end date")
-        return
+    else:
+        # Use date range
+        start_date = date(2021, 10, 1)  # Default to October 2021
+        if args.start_date:
+            try:
+                start_date = datetime.strptime(args.start_date, '%Y-%m-%d').date()
+            except ValueError:
+                logger.error(f"Invalid start date format: {args.start_date}")
+                return
+        
+        end_date = date.today()
+        if args.end_date:
+            try:
+                end_date = datetime.strptime(args.end_date, '%Y-%m-%d').date()
+            except ValueError:
+                logger.error(f"Invalid end date format: {args.end_date}")
+                return
+        
+        # Validate date range
+        if start_date > end_date:
+            logger.error("Start date cannot be after end date")
+            return
     
     # Run backfill
     backfiller = BettingPropsBackfill()
     backfiller.run_backfill(
         start_date=start_date,
         end_date=end_date,
+        dates=specific_dates,
         market_type=args.market_type,
         dry_run=args.dry_run,
         limit=args.limit

@@ -34,7 +34,7 @@ gcloud run jobs execute nba-odds-api-lines-backfill --region=us-west2
 
 ```
 backfill/odds_api_lines/
-├── odds_api_lines_backfill_job.py    # Main backfill script
+├── odds_api_lines_backfill.py    # Main backfill script
 ├── job-config.env                    # Job configuration
 ├── deploy.sh                         # Deployment script
 └── README.md                         # This file

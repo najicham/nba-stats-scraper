@@ -5,7 +5,7 @@ This directory contains backfill jobs for processing scraped NBA data from GCS t
 ## Structure
 
 Each processor has its own subdirectory with:
-- `{processor_name}_backfill_job.py` - The actual job script
+- `{processor_name}_backfill.py` - The actual job script
 - `job-config.env` - Configuration for deployment and runtime
 
 ## Adding a New Processor

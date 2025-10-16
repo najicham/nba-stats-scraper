@@ -245,7 +245,7 @@ def process_events_data(message):
 #### 4. **Report Generation** (Report Generators)
 ```python
 # Triggered by processed data events
-def generate_player_reports(message):
+def generate_prediction(message):
     # Query processed data from BigQuery
     player_stats = query_bigquery('''
         SELECT * FROM nba_analytics.player_stats 
@@ -280,7 +280,7 @@ nba-error-events         # Error handling and alerts
 {
     "event_type": "data_scraped|data_processed|report_generated|error",
     "service": "scrapers|processors|reportgen",
-    "component": "odds_api_events|events_processor|player_reports",
+    "component": "odds_api_events|events_processor|prediction",
     "run_id": "unique_correlation_id",
     "timestamp": "2025-01-15T08:00:00Z",
     "data": {...},  # Event-specific payload
@@ -490,7 +490,7 @@ REPORTGEN_RETRY_CONFIG = {
 # Business metrics
 - daily_games_scraped
 - prop_bets_analyzed
-- player_reports_generated
+- prediction_generated
 - prediction_accuracy_rate
 ```
 

@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
-# File: processors/bettingpros/bettingpros_player_props_processor.py
-# Description: Processor for BettingPros player props data transformation
-# Fixed: Validation confidence calculation and bookmaker mapping
+# File: data_processors/raw/bettingpros/bettingpros_player_props_processor.py
+# Strategy: CHECK_BEFORE_INSERT - Track processed files, preserve time-series data
 
 import json
 import logging
@@ -23,13 +22,13 @@ class BettingPropsProcessor(ProcessorBase):
     def __init__(self):
         super().__init__()
         self.table_name = 'nba_raw.bettingpros_player_points_props'
-        self.processing_strategy = 'APPEND_ALWAYS'  # Track all historical snapshots
+        self.processing_strategy = 'CHECK_BEFORE_INSERT'  # Preserve time-series data
 
         self.project_id = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
         self.bq_client = bigquery.Client(project=self.project_id)
-        self.unknown_bookmakers = set()  # Track unknown bookmakers for batch warning
+        self.unknown_bookmakers = set()
         
-        # Enhanced bookmaker name normalization with comprehensive mapping
+        # Bookmaker mappings (unchanged)
         self.bookmaker_mapping = {
             'bettingpros consensus': 'BettingPros Consensus',
             'betmgm': 'BetMGM',
@@ -53,10 +52,9 @@ class BettingPropsProcessor(ProcessorBase):
             'fubo': 'Fubo',
         }
         
-        # Handle unknown books by ID (from your query results and scraper BOOKS mapping)
         self.book_id_mapping = {
             0: 'BettingPros Consensus',
-            2: 'SuperBook',           # Unknown Book 2
+            2: 'SuperBook',
             10: 'FanDuel',
             12: 'DraftKings', 
             13: 'Caesars',
@@ -75,32 +73,66 @@ class BettingPropsProcessor(ProcessorBase):
             29: 'TwinSpires',
             30: 'Betway',
             31: 'Fubo',
-            33: 'Fanatics',          # Unknown Book 33
-            36: 'ESPN Bet',          # Unknown Book 36  
-            37: 'Hard Rock',         # Unknown Book 37
-            49: 'Fliff',             # Unknown Book 49
+            33: 'Fanatics',
+            36: 'ESPN Bet',
+            37: 'Hard Rock',
+            49: 'Fliff',
         }
+    
+    def file_already_processed(self, file_path: str) -> bool:
+        """
+        Check if this specific GCS file has already been processed.
+        
+        This prevents duplicate processing of the same scrape snapshot
+        while allowing multiple scrapes per day to track line movements.
+        """
+        table_id = f"{self.project_id}.{self.table_name}"
+        
+        # Query to check if this file path exists
+        query = f"""
+        SELECT COUNT(*) as count
+        FROM `{table_id}`
+        WHERE source_file_path = @file_path
+        LIMIT 1
+        """
+        
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("file_path", "STRING", file_path)
+            ]
+        )
+        
+        try:
+            query_job = self.bq_client.query(query, job_config=job_config)
+            results = list(query_job.result())
+            
+            if results and results[0]['count'] > 0:
+                logger.info(f"File already processed, skipping: {file_path}")
+                return True
+            
+            return False
+            
+        except Exception as e:
+            logger.error(f"Error checking if file processed: {e}")
+            # If check fails, assume not processed to avoid data loss
+            return False
     
     def normalize_player_name(self, player_name: str) -> str:
         """Create normalized player lookup key."""
         if not player_name:
             return ""
         
-        # Convert to lowercase and remove common suffixes
         normalized = player_name.lower().strip()
         normalized = re.sub(r'\s+(jr\.?|sr\.?|ii|iii|iv)$', '', normalized)
-        
-        # Remove all non-alphanumeric characters
         normalized = re.sub(r'[^a-z0-9]', '', normalized)
         
         return normalized
     
     def extract_scrape_timestamp_from_path(self, file_path: str) -> Optional[datetime]:
         """Extract when the scraper actually ran from filename timestamp."""
-        # Pattern: /2021-12-04/20250813_011358.json -> actual scrape time
         try:
-            filename = file_path.split('/')[-1]  # Get "20250813_011358.json"
-            timestamp_part = filename.split('.')[0]  # Get "20250813_011358"
+            filename = file_path.split('/')[-1]
+            timestamp_part = filename.split('.')[0]
             return datetime.strptime(timestamp_part, '%Y%m%d_%H%M%S')
         except Exception as e:
             logger.warning(f"Could not parse scrape timestamp from {file_path}: {e}")
@@ -108,7 +140,6 @@ class BettingPropsProcessor(ProcessorBase):
     
     def extract_game_date_from_path(self, file_path: str) -> Optional[datetime]:
         """Extract game date from BettingPros file path."""
-        # Pattern: /bettingpros/player-props/points/2021-12-04/timestamp.json
         try:
             parts = file_path.split('/')
             for part in parts:
@@ -124,20 +155,17 @@ class BettingPropsProcessor(ProcessorBase):
         if not scrape_time or not game_date:
             return 0.1
             
-        # Compare actual scrape timestamp vs game date
         days_diff = abs((scrape_time.date() - game_date.date()).days)
         
-        logger.debug(f"Validation confidence: scrape_time={scrape_time.date()}, game_date={game_date.date()}, days_diff={days_diff}")
-        
-        if days_diff == 0:          # Same day - high confidence
+        if days_diff == 0:
             return 0.95
-        elif days_diff <= 7:        # Within week
+        elif days_diff <= 7:
             return 0.7
-        elif days_diff <= 30:       # Within month
+        elif days_diff <= 30:
             return 0.5
-        elif days_diff <= 365:      # Within year
+        elif days_diff <= 365:
             return 0.3
-        else:                       # Over year old
+        else:
             return 0.1
     
     def determine_validation_notes(self, player_team: str, confidence: float, days_diff: int = None, forced_historical: bool = False) -> str:
@@ -164,26 +192,20 @@ class BettingPropsProcessor(ProcessorBase):
                 return self.book_id_mapping.get(book_id, f"Unknown Book {book_id}")
             return ""
         
-        # First try name mapping
         normalized_key = book_name.lower().strip()
         mapped_name = self.bookmaker_mapping.get(normalized_key, book_name)
         
-        # If still unknown and we have book_id, try ID mapping
         if book_id is not None and (mapped_name == book_name or mapped_name.startswith('Unknown Book')):
             mapped_name = self.book_id_mapping.get(book_id, f"Unknown Book {book_id}")
             
-            # Track unknown bookmaker if we're using fallback
             if mapped_name.startswith('Unknown Book'):
                 self.unknown_bookmakers.add(f"{book_name} (ID: {book_id})")
         
-        # Handle existing "Unknown Book X" format by extracting ID
         elif mapped_name.startswith('Unknown Book'):
             try:
-                # Extract ID from "Unknown Book 33" format
                 extracted_id = int(mapped_name.split()[-1])
                 mapped_name = self.book_id_mapping.get(extracted_id, mapped_name)
                 
-                # Track if still unknown after ID lookup
                 if mapped_name.startswith('Unknown Book'):
                     self.unknown_bookmakers.add(f"{book_name} (ID: {extracted_id})")
             except (ValueError, IndexError):
@@ -213,7 +235,6 @@ class BettingPropsProcessor(ProcessorBase):
         rows = []
         
         try:
-            # Extract metadata - Use actual scrape timestamp vs game date
             actual_scrape_time = self.extract_scrape_timestamp_from_path(file_path)
             game_date = None
             if 'date' in raw_data:
@@ -222,7 +243,6 @@ class BettingPropsProcessor(ProcessorBase):
                 except ValueError:
                     logger.warning(f"Could not parse game date: {raw_data.get('date')}")
             
-            # Fallback for game date if not in JSON
             if not game_date:
                 game_date = self.extract_game_date_from_path(file_path)
             
@@ -230,14 +250,6 @@ class BettingPropsProcessor(ProcessorBase):
             market_id = raw_data.get('market_id')
             current_time = datetime.utcnow()
             
-            # Debug logging once per file
-            if actual_scrape_time and game_date:
-                days_diff = abs((actual_scrape_time.date() - game_date.date()).days)
-                logger.debug(f"Processing {file_path}: scrape={actual_scrape_time.date()}, game={game_date.date()}, days_diff={days_diff}")
-            else:
-                logger.warning(f"Missing timestamps for {file_path}: scrape_time={actual_scrape_time}, game_date={game_date}")
-            
-            # Process each prop
             for prop in raw_data.get('props', []):
                 offer_id = prop.get('offer_id')
                 bp_event_id = prop.get('event_id')
@@ -246,39 +258,27 @@ class BettingPropsProcessor(ProcessorBase):
                 player_team = prop.get('player_team', '')
                 player_position = prop.get('player_position', '')
                 
-                # Normalize player lookup
                 player_lookup = self.normalize_player_name(player_name)
                 
-                # Calculate validation confidence using processing time vs game date
-                # This measures how "fresh" the game data is for current betting decisions
-                # processing_time = today (Sept 2025), game_date = historical (2021) = ~1400 days = 0.1 confidence
                 if game_date:
-                    processing_time = current_time  # When we're inserting into database
+                    processing_time = current_time
                     validation_confidence = self.calculate_validation_confidence(processing_time, game_date)
                     validation_method = "bettingpros_freshness_based"
                     days_diff = abs((processing_time.date() - game_date.date()).days)
-                    
-                    # Debug logging for troubleshooting
-                    logger.debug(f"Processing {file_path}: processing_time={processing_time.date()}, game_date={game_date.date()}, days_diff={days_diff}, confidence={validation_confidence}")
-                    
                     validation_notes = self.determine_validation_notes(player_team, validation_confidence, days_diff)
                 else:
-                    # Fallback when game date extraction fails
                     validation_confidence = 0.1
                     validation_method = "bettingpros_no_game_date"
                     validation_notes = "game_date_extraction_failed"
-                    logger.warning(f"Game date extraction failed for {file_path}")
 
                 has_team_issues = True
                 team_source = "bettingpros"
                 
-                # Process over and under sides
                 for bet_side in ['over', 'under']:
                     side_data = prop.get(bet_side)
                     if not side_data:
                         continue
                     
-                    # Get opening line data
                     opening_line_data = side_data.get('opening_line', {})
                     opening_line = opening_line_data.get('line')
                     opening_odds = opening_line_data.get('cost')
@@ -290,7 +290,6 @@ class BettingPropsProcessor(ProcessorBase):
                         except ValueError:
                             pass
                     
-                    # Process each sportsbook for this side
                     for sportsbook in side_data.get('sportsbooks', []):
                         book_id = sportsbook.get('book_id')
                         book_name = sportsbook.get('book_name', '')
@@ -300,7 +299,6 @@ class BettingPropsProcessor(ProcessorBase):
                         is_active = sportsbook.get('active', True)
                         is_best_line = sportsbook.get('best', False)
                         
-                        # Parse bookmaker last update
                         bookmaker_last_update = current_time
                         if sportsbook.get('updated'):
                             try:
@@ -308,33 +306,25 @@ class BettingPropsProcessor(ProcessorBase):
                             except ValueError:
                                 pass
                         
-                        # Create flattened record
                         row = {
-                            # Core identifiers
                             'game_date': game_date.date().isoformat() if game_date else None,
                             'market_type': market_type,
                             'market_id': market_id,
                             'bp_event_id': bp_event_id,
                             'offer_id': offer_id,
                             'bet_side': bet_side,
-                            
-                            # Player identification
                             'bp_player_id': bp_player_id,
                             'player_name': player_name,
                             'player_lookup': player_lookup,
                             'player_team': player_team,
                             'player_position': player_position,
-                            
-                            # Team validation - FIXED: Consistent confidence calculation
                             'team_source': team_source,
                             'has_team_issues': has_team_issues,
-                            'validated_team': None,  # To be filled by future validation
+                            'validated_team': None,
                             'validation_confidence': validation_confidence,
                             'validation_method': validation_method,
                             'validation_notes': validation_notes,
-                            'player_complications': None,  # To be filled if complications detected
-                            
-                            # Sportsbook details - ENHANCED: Better normalization
+                            'player_complications': None,
                             'book_id': book_id,
                             'bookmaker': self.normalize_bookmaker_name(book_name, book_id),
                             'line_id': line_id,
@@ -343,14 +333,10 @@ class BettingPropsProcessor(ProcessorBase):
                             'is_active': is_active,
                             'is_best_line': is_best_line,
                             'bookmaker_last_update': bookmaker_last_update.isoformat() if bookmaker_last_update else None,
-                            
-                            # Opening line tracking
                             'opening_line': opening_line,
                             'opening_odds': opening_odds,
                             'opening_book_id': opening_book_id,
                             'opening_timestamp': opening_timestamp.isoformat() if opening_timestamp else None,
-                            
-                            # Processing metadata
                             'source_file_path': file_path,
                             'created_at': current_time.isoformat(),
                             'processed_at': current_time.isoformat()
@@ -361,7 +347,6 @@ class BettingPropsProcessor(ProcessorBase):
         except Exception as e:
             logger.error(f"Transform failed for {file_path}: {e}", exc_info=True)
             
-            # Send error notification
             try:
                 notify_error(
                     title="BettingPros Props Transform Failed",
@@ -382,7 +367,12 @@ class BettingPropsProcessor(ProcessorBase):
         return rows
     
     def load_data(self, rows: List[Dict], **kwargs) -> Dict:
-        """Load flattened records to BigQuery."""
+        """
+        Load flattened records to BigQuery using BATCH LOADING.
+        
+        Preserves time-series data (multiple scrapes per day) while avoiding
+        streaming buffer issues that would block future operations.
+        """
         if not rows:
             return {'rows_processed': 0, 'errors': []}
         
@@ -390,33 +380,48 @@ class BettingPropsProcessor(ProcessorBase):
         errors = []
         
         try:
-            # APPEND_ALWAYS strategy - just insert all records
-            result = self.bq_client.insert_rows_json(table_id, rows)
-            if result:
-                errors.extend([str(e) for e in result])
-                logger.error(f"BigQuery insert errors: {errors}")
+            # BATCH LOADING: Use load_table_from_json instead of insert_rows_json
+            # This avoids streaming buffer and allows immediate DML operations
+            job_config = bigquery.LoadJobConfig(
+                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+                source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+            )
+            
+            load_job = self.bq_client.load_table_from_json(
+                rows, 
+                table_id, 
+                job_config=job_config
+            )
+            load_result = load_job.result()  # Wait for completion (2-5 seconds)
+            
+            # Check for errors
+            if load_job.errors:
+                errors.extend([str(e) for e in load_job.errors])
+                logger.error(f"BigQuery batch load errors: {errors}")
                 
-                # Send error notification for BigQuery failures
                 try:
                     notify_error(
-                        title="BettingPros Props BigQuery Insert Failed",
-                        message=f"Failed to insert {len(rows)} BettingPros prop records into BigQuery",
+                        title="BettingPros Props BigQuery Batch Load Failed",
+                        message=f"Failed to batch load {len(rows)} BettingPros prop records",
                         details={
                             'processor': 'BettingPropsProcessor',
                             'table': self.table_name,
                             'rows_attempted': len(rows),
-                            'error_count': len(result),
-                            'errors': [str(e) for e in result[:3]]  # First 3 errors
+                            'error_count': len(load_job.errors),
+                            'errors': [str(e) for e in load_job.errors[:3]]
                         },
                         processor_name="BettingPros Props Processor"
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
             else:
-                # Success - send info notification
+                # Success
                 unique_players = len(set(row['player_lookup'] for row in rows))
                 unique_bookmakers = len(set(row['bookmaker'] for row in rows))
                 props_processed = len(set(row['offer_id'] for row in rows))
+                game_dates = set(row['game_date'] for row in rows)
+                
+                logger.info(f"✅ Batch loaded {len(rows)} rows successfully")
                 
                 try:
                     notify_info(
@@ -428,18 +433,19 @@ class BettingPropsProcessor(ProcessorBase):
                             'unique_players': unique_players,
                             'unique_bookmakers': unique_bookmakers,
                             'props_processed': props_processed,
-                            'table': self.table_name
+                            'table': self.table_name,
+                            'strategy': 'CHECK_BEFORE_INSERT (Batch Loading)',
+                            'dates_processed': sorted(game_dates)
                         }
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
                 
-                # Warn about unknown bookmakers if any were found
                 if self.unknown_bookmakers:
                     try:
                         notify_warning(
                             title="Unknown Bookmakers Detected",
-                            message=f"Found {len(self.unknown_bookmakers)} unknown bookmakers in BettingPros data",
+                            message=f"Found {len(self.unknown_bookmakers)} unknown bookmakers",
                             details={
                                 'processor': 'BettingPropsProcessor',
                                 'unknown_bookmakers': list(self.unknown_bookmakers)
@@ -451,9 +457,8 @@ class BettingPropsProcessor(ProcessorBase):
         except Exception as e:
             error_msg = str(e)
             errors.append(error_msg)
-            logger.error(f"Failed to insert to BigQuery: {error_msg}", exc_info=True)
+            logger.error(f"Failed to load to BigQuery: {error_msg}", exc_info=True)
             
-            # Send critical error notification
             try:
                 notify_error(
                     title="BettingPros Props Load Exception",
@@ -479,21 +484,37 @@ class BettingPropsProcessor(ProcessorBase):
         }
 
     def process_file_content(self, json_content: str, file_path: str) -> Dict:
-        """Main processing method called by backfill jobs."""
+        """
+        Main processing method called by backfill jobs.
+        
+        Checks if file already processed to prevent duplicates while
+        allowing multiple scrapes per day for line movement tracking.
+        """
         try:
+            # CHECK: Has this specific file been processed before?
+            if self.file_already_processed(file_path):
+                return {
+                    'rows_processed': 0,
+                    'errors': [],
+                    'unique_players': 0,
+                    'unique_bookmakers': 0,
+                    'props_processed': 0,
+                    'skipped': True,
+                    'reason': 'file_already_processed'
+                }
+            
             # Parse JSON
             raw_data = json.loads(json_content)
             
-            # Validate data structure
+            # Validate
             validation_errors = self.validate_data(raw_data)
             if validation_errors:
                 logger.error(f"Validation errors for {file_path}: {validation_errors}")
                 
-                # Send warning notification for validation errors
                 try:
                     notify_warning(
                         title="BettingPros Props Data Validation Errors",
-                        message=f"Validation errors found in BettingPros props data: {', '.join(validation_errors[:3])}",
+                        message=f"Validation errors: {', '.join(validation_errors[:3])}",
                         details={
                             'processor': 'BettingPropsProcessor',
                             'file_path': file_path,
@@ -512,10 +533,10 @@ class BettingPropsProcessor(ProcessorBase):
                     'props_processed': 0
                 }
             
-            # Transform data
+            # Transform
             rows = self.transform_data(raw_data, file_path)
             
-            # Load to BigQuery
+            # Load (batch loading, preserves time-series)
             result = self.load_data(rows)
             
             return result
@@ -524,11 +545,10 @@ class BettingPropsProcessor(ProcessorBase):
             error_msg = f"Invalid JSON: {str(e)}"
             logger.error(f"{error_msg} in {file_path}")
             
-            # Send error notification for JSON parse failure
             try:
                 notify_error(
                     title="BettingPros Props JSON Parse Failed",
-                    message=f"Failed to parse JSON from BettingPros props file",
+                    message=f"Failed to parse JSON from file",
                     details={
                         'processor': 'BettingPropsProcessor',
                         'file_path': file_path,
@@ -550,11 +570,10 @@ class BettingPropsProcessor(ProcessorBase):
             error_msg = f"Processing error: {str(e)}"
             logger.error(f"{error_msg} in {file_path}", exc_info=True)
             
-            # Send error notification for general processing failure
             try:
                 notify_error(
                     title="BettingPros Props Processing Failed",
-                    message=f"Unexpected error processing BettingPros props file: {str(e)}",
+                    message=f"Unexpected error processing file: {str(e)}",
                     details={
                         'processor': 'BettingPropsProcessor',
                         'file_path': file_path,

@@ -29,16 +29,16 @@ python scripts/test_odds_api_props_processor.py \
 ### 2. Run Local Backfill (Small Date Range)
 ```bash
 # Process a single day
-python processor_backfill/odds_api_props/odds_api_props_backfill_job.py \
+python processor_backfill/odds_api_props/odds_api_props_backfill.py \
   --dates 2023-10-24
 
 # Process a week
-python processor_backfill/odds_api_props/odds_api_props_backfill_job.py \
+python processor_backfill/odds_api_props/odds_api_props_backfill.py \
   --start-date 2023-10-24 \
   --end-date 2023-10-30
 
 # Dry run to see what would be processed
-python processor_backfill/odds_api_props/odds_api_props_backfill_job.py \
+python processor_backfill/odds_api_props/odds_api_props_backfill.py \
   --start-date 2023-10-24 \
   --end-date 2023-10-30 \
   --dry-run

@@ -1,19 +1,23 @@
 # File: scrapers/bigdataball/bigdataball_discovery.py
 """
-BIGDATABALL DISCOVERY - Game ID Discovery endpoint (OPTIMIZED)  v2.0 - 2025-07-22
+BIGDATABALL DISCOVERY - Game ID Discovery endpoint (FIXED)     v2.1 - 2025-10-15
 -------------------------------------------------------------------------------
-Discover available BigDataBall game IDs via Google Drive (optimized for game ID extraction):
+Discover available BigDataBall game IDs via Google Drive (date filter fixed):
 
     Fast discovery of game IDs for targeted downloading
 
 --date param defaults to **yesterday (UTC)**.
 
+CHANGELOG:
+  2025-10-15: CRITICAL FIX - Removed orderBy parameter that was causing date filter to be ignored
+              Added pagination support to handle dates with >20 games
+
 Usage examples:
   # Get game IDs for specific date:
-  python scrapers/bigdataball/bigdataball_discovery.py --debug --date=2025-06-22
+  python scrapers/bigdataball/bigdataball_discovery.py --debug --date=2024-11-11
 
   # Via capture tool (recommended):
-  python tools/fixtures/capture.py bigdataball_discovery --date=2025-06-22 --debug
+  python tools/fixtures/capture.py bigdataball_discovery --date=2024-11-11 --debug
 """
 
 from __future__ import annotations
@@ -52,7 +56,7 @@ from shared.utils.notification_system import (
 logger = logging.getLogger(__name__)
 
 # --------------------------------------------------------------------------- #
-# Optimized Discovery Scraper (FOCUSED ON GAME IDS)
+# Optimized Discovery Scraper (DATE FILTER FIXED)
 # --------------------------------------------------------------------------- #
 class BigDataBallDiscoveryScraper(ScraperBase, ScraperFlaskMixin):
     """Optimized discovery scraper for BigDataBall game IDs only."""
@@ -260,23 +264,75 @@ class BigDataBallDiscoveryScraper(ScraperBase, ScraperFlaskMixin):
         
         return self._search_drive_files(query)
 
-    def _search_drive_files(self, query: str, max_results: int = 20) -> List[Dict]:
-        """Search for files in the shared BigDataBall folder"""
+    def _search_drive_files(self, query: str, max_results_per_page: int = 100) -> List[Dict]:
+        """
+        Search for files in the shared BigDataBall folder with pagination support.
+        
+        CRITICAL FIX (2025-10-15): Removed orderBy parameter that was causing the 
+        date filter to be ignored. The Google Drive API was returning the 20 most 
+        recently modified files regardless of the date filter when orderBy was present.
+        
+        Args:
+            query: Drive API query string (e.g., "name contains '[2024-11-11]'")
+            max_results_per_page: Results per page (max 100, default 100)
+            
+        Returns:
+            List of all files matching the query across all pages
+        """
+        all_files = []
+        page_token = None
+        page_num = 0
+        
         try:
-            results = self.drive_service.files().list(
-                q=query,
-                supportsAllDrives=True,
-                includeItemsFromAllDrives=True,
-                fields="files(id, name, modifiedTime, size)",
-                pageSize=max_results,
-                orderBy="modifiedTime desc"
-            ).execute()
+            while True:
+                page_num += 1
+                
+                # Build request parameters
+                request_params = {
+                    'q': query,
+                    'supportsAllDrives': True,
+                    'includeItemsFromAllDrives': True,
+                    'fields': 'nextPageToken, files(id, name, modifiedTime, size)',
+                    'pageSize': max_results_per_page,
+                    # CRITICAL: Do NOT use orderBy - it causes date filter to be ignored!
+                    # When orderBy="modifiedTime desc" was present, the API returned
+                    # recently modified files from ANY date instead of filtering by date.
+                }
+                
+                # Add page token if we're paginating
+                if page_token:
+                    request_params['pageToken'] = page_token
+                
+                # Execute search
+                results = self.drive_service.files().list(**request_params).execute()
+                
+                # Get files from this page
+                page_files = results.get('files', [])
+                all_files.extend(page_files)
+                
+                self.step_info(
+                    "drive_search_page", 
+                    f"Page {page_num}: Found {len(page_files)} files",
+                    extra={
+                        "query": query, 
+                        "page": page_num, 
+                        "page_count": len(page_files),
+                        "total_so_far": len(all_files)
+                    }
+                )
+                
+                # Check if there are more pages
+                page_token = results.get('nextPageToken')
+                if not page_token:
+                    break  # No more pages
+                    
+            self.step_info(
+                "drive_search_complete", 
+                f"Found {len(all_files)} total files across {page_num} page(s)",
+                extra={"query": query, "total_files": len(all_files), "pages": page_num}
+            )
             
-            files = results.get('files', [])
-            self.step_info("drive_search_complete", f"Found {len(files)} files", 
-                          extra={"query": query, "count": len(files)})
-            
-            return files
+            return all_files
             
         except Exception as e:
             logger.error(f"Error searching Drive files: {e}")
@@ -290,7 +346,9 @@ class BigDataBallDiscoveryScraper(ScraperBase, ScraperFlaskMixin):
                         'scraper': 'bigdataball_discovery',
                         'error_type': type(e).__name__,
                         'query': query,
-                        'date': self.opts.get('date')
+                        'date': self.opts.get('date'),
+                        'page_num': page_num,
+                        'files_found_before_error': len(all_files)
                     },
                     processor_name="BigDataBall Discovery Scraper"
                 )
@@ -302,6 +360,7 @@ class BigDataBallDiscoveryScraper(ScraperBase, ScraperFlaskMixin):
     def _process_game_files(self, files: List[Dict]) -> Dict:
         """Process files into simple game ID format"""
         games = []
+        requested_date = self.opts["date"]
         
         for file in files:
             name = file['name']
@@ -309,6 +368,12 @@ class BigDataBallDiscoveryScraper(ScraperBase, ScraperFlaskMixin):
             # Extract game metadata from filename
             game_info = self._extract_game_info(name)
             if game_info:
+                # CRITICAL FILTER: Google Drive 'contains' operator matches substrings
+                # Query for '[2024-11-11]' also matches '[2024-11-01]', '[2024-11-12]', etc.
+                # We must filter to exact date match in Python
+                if game_info.get('date') != requested_date:
+                    continue
+                
                 # Apply team filter if provided
                 if self.opts.get("teams"):
                     team_filter = self.opts["teams"].upper()
@@ -327,23 +392,24 @@ class BigDataBallDiscoveryScraper(ScraperBase, ScraperFlaskMixin):
         games.sort(key=lambda x: (x.get('date', ''), x.get('game_id', '')))
         
         return {
-            'date': self.opts["date"],
+            'date': requested_date,
             'teams_filter': self.opts.get("teams"),
             'processed_at': datetime.now(timezone.utc).isoformat(),
             'count': len(games),
-            'games': games
+            'games': games,
+            'total_files_searched': len(files)  # For debugging
         }
 
     def _extract_game_info(self, filename: str) -> Optional[Dict]:
         """Extract game information from filename"""
         try:
-            # Parse filename like: [2025-06-22]-0042400407-IND@OKC.csv
+            # Parse filename like: [2024-11-11]-0022400212-CLE@CHI.csv
             if '[' in filename and ']' in filename and '@' in filename:
                 # Extract date
                 date_start = filename.find('[')
                 date_end = filename.find(']')
                 if date_start >= 0 and date_end > date_start:
-                    date_part = filename[date_start + 1:date_end]  # "2025-06-22"
+                    date_part = filename[date_start + 1:date_end]  # "2024-11-11"
                     
                     # Extract game_id and teams
                     after_date = filename[date_end + 2:]  # Skip "]-"
