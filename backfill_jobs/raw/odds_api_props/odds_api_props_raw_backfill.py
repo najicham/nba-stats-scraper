@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-File: processor_backfill/odds_api_props/odds_api_props_backfill_job.py
+File: backfill_jobs/raw/odds_api_props/odds_api_props_raw_backfill.py
 
 Odds API Player Props Processor Backfill Job
 Processes historical player props data from GCS.
@@ -206,7 +206,7 @@ class OddsApiPropsBackfill:
         
         return results
     
-    def run_backfill(self, start_date: str, end_date: str, 
+    def run_backfill(self, start_date: str = None, end_date: str = None, 
                     specific_dates: Optional[List[str]] = None,
                     dry_run: bool = False) -> Dict:
         """Run the backfill process."""
@@ -215,10 +215,13 @@ class OddsApiPropsBackfill:
         # Determine dates to process
         if specific_dates:
             dates_to_process = [datetime.strptime(d, '%Y-%m-%d').date() for d in specific_dates]
-            logger.info(f"Processing specific dates: {specific_dates}")
-        else:
+            logger.info(f"Processing specific dates: {', '.join(specific_dates)}")
+        elif start_date and end_date:
             dates_to_process = self.get_date_range(start_date, end_date)
             logger.info(f"Processing date range: {start_date} to {end_date} ({len(dates_to_process)} days)")
+        else:
+            logger.error("Must provide either specific_dates or start_date/end_date")
+            return self.stats
         
         # Collect all files to process
         all_files = []
@@ -231,6 +234,8 @@ class OddsApiPropsBackfill:
                 files_by_date[process_date] = date_files
                 all_files.extend(date_files)
                 logger.info(f"  {process_date}: {len(date_files)} files")
+            else:
+                logger.warning(f"  {process_date}: No files found")
         
         self.stats['total_files'] = len(all_files)
         
@@ -324,18 +329,15 @@ def main():
     )
     parser.add_argument(
         '--start-date',
-        default='2023-05-01',
-        help='Start date (YYYY-MM-DD, default: 2023-05-01)'
+        help='Start date (YYYY-MM-DD)'
     )
     parser.add_argument(
         '--end-date',
-        default='2025-04-30',
-        help='End date (YYYY-MM-DD, default: 2025-04-30)'
+        help='End date (YYYY-MM-DD)'
     )
     parser.add_argument(
         '--dates',
-        nargs='+',
-        help='Specific dates to process (YYYY-MM-DD format)'
+        help='Comma-separated dates to process (YYYY-MM-DD,YYYY-MM-DD,...)'
     )
     parser.add_argument(
         '--bucket',
@@ -375,13 +377,26 @@ def main():
         global BATCH_SIZE
         BATCH_SIZE = args.batch_size
     
+    # Parse dates if provided as comma-separated
+    specific_dates = None
+    if args.dates:
+        specific_dates = [d.strip() for d in args.dates.split(',')]
+    
+    # Validate arguments
+    if not specific_dates and not (args.start_date and args.end_date):
+        logger.error("Must provide either --dates or both --start-date and --end-date")
+        sys.exit(1)
+    
     # Log configuration
     logger.info("Odds API Props Backfill Job")
     logger.info("=" * 60)
     logger.info(f"Project: {args.project}")
     logger.info(f"Bucket: {args.bucket}")
-    logger.info(f"Start date: {args.start_date}")
-    logger.info(f"End date: {args.end_date}")
+    if specific_dates:
+        logger.info(f"Dates: {', '.join(specific_dates)}")
+    else:
+        logger.info(f"Start date: {args.start_date}")
+        logger.info(f"End date: {args.end_date}")
     logger.info(f"Max workers: {MAX_WORKERS}")
     logger.info(f"Batch size: {BATCH_SIZE}")
     logger.info(f"Dry run: {args.dry_run}")
@@ -394,7 +409,7 @@ def main():
         stats = backfill.run_backfill(
             start_date=args.start_date,
             end_date=args.end_date,
-            specific_dates=args.dates,
+            specific_dates=specific_dates,
             dry_run=args.dry_run
         )
         

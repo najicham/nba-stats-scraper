@@ -59,6 +59,10 @@ ${YELLOW}HISTORICAL VALIDATION:${NC}
   low-coverage          Find games with < 6 players (WARNING)
   playoffs              Verify playoff game completeness
 
+${YELLOW}BACKFILL SUPPORT:${NC}
+  identify-missing      Identify exact missing playoff games for backfill
+  validate-backfill     Comprehensive validation after backfill operations
+
 ${YELLOW}DAILY MONITORING:${NC}
   yesterday             Check if yesterday's games have props
   week                  Review last 7 days coverage
@@ -70,11 +74,26 @@ ${YELLOW}OPTIONS:${NC}
   --help                Show this help message
 
 ${YELLOW}EXAMPLES:${NC}
-  validate-odds-props may-2023                 # Verify May 2023 coverage
-  validate-odds-props gaps                     # Full 4-season gap analysis
-  validate-odds-props yesterday --csv          # Check yesterday, save to CSV
-  validate-odds-props missing                  # Find games with no props
-  validate-odds-props low-coverage             # Find games with few players
+  validate-odds-props may-2023                      # Verify May 2023 coverage
+  validate-odds-props gaps                          # Full 4-season gap analysis
+  validate-odds-props identify-missing --csv        # Find missing games, export to CSV
+  validate-odds-props validate-backfill             # Check backfill results
+  validate-odds-props yesterday --csv               # Check yesterday, save to CSV
+  validate-odds-props missing                       # Find games with no props
+  validate-odds-props low-coverage                  # Find games with few players
+
+${YELLOW}BACKFILL WORKFLOW:${NC}
+  ${GREEN}1. Identify what's missing:${NC}
+     validate-odds-props identify-missing --csv
+     validate-odds-props playoffs
+     validate-odds-props missing --csv
+  
+  ${GREEN}2. Run backfill script:${NC}
+     ./scripts/backfill_missing_props.sh 2023-24
+  
+  ${GREEN}3. Validate results:${NC}
+     validate-odds-props validate-backfill
+     validate-odds-props playoffs
 
 ${YELLOW}QUICK COMMANDS:${NC}
   validate-odds-props list                     # List all available queries
@@ -105,10 +124,14 @@ list_queries() {
     echo "  5. find_low_coverage_games.sql          (alias: low-coverage)"
     echo "  6. verify_playoff_completeness.sql      (alias: playoffs)"
     echo ""
+    echo "Backfill Support:"
+    echo "  7. identify_missing_playoff_games.sql   (alias: identify-missing)"
+    echo "  8. validate_backfill_results.sql        (alias: validate-backfill)"
+    echo ""
     echo "Daily Monitoring:"
-    echo "  7. daily_check_yesterday.sql            (alias: yesterday)"
-    echo "  8. weekly_check_last_7_days.sql         (alias: week)"
-    echo "  9. realtime_scraper_check.sql           (alias: today)"
+    echo "  9. daily_check_yesterday.sql            (alias: yesterday)"
+    echo " 10. weekly_check_last_7_days.sql         (alias: week)"
+    echo " 11. realtime_scraper_check.sql           (alias: today)"
     echo ""
 }
 
@@ -218,6 +241,15 @@ main() {
         
         playoffs|playoff)
             run_query "verify_playoff_completeness.sql" "$output_format"
+            ;;
+        
+        # Backfill support (NEW)
+        identify-missing|identify|backfill-list)
+            run_query "identify_missing_playoff_games.sql" "$output_format"
+            ;;
+        
+        validate-backfill|check-backfill|after-backfill)
+            run_query "validate_backfill_results.sql" "$output_format"
             ;;
         
         # Daily monitoring

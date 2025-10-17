@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 # File: processors/bigdataball/bigdataball_pbp_processor.py
 # Description: Processor for BigDataBall play-by-play data transformation
+# UPDATED: Now handles both CSV and JSON formats
 
 import os
 import json
 import logging
 import re
+import io
+import pandas as pd
 from typing import Dict, List, Optional
 from datetime import datetime
 from google.cloud import bigquery
@@ -29,30 +32,120 @@ class BigDataBallPbpProcessor(ProcessorBase):
         self.bq_client = bigquery.Client(project=self.project_id)
         
     def parse_json(self, json_content: str, file_path: str) -> Dict:
-        """Parse BigDataBall JSON content from .csv file"""
-        try:
-            data = json.loads(json_content)
-            return data
-        except json.JSONDecodeError as e:
-            logging.error(f"Failed to parse JSON from {file_path}: {e}")
-            
-            # Notify JSON parse error
-            try:
-                notify_error(
-                    title="BigDataBall Play-by-Play JSON Parse Failed",
-                    message=f"Failed to parse play-by-play JSON: {str(e)}",
-                    details={
-                        'file_path': file_path,
-                        'error_type': type(e).__name__,
-                        'error_message': str(e)
-                    },
-                    processor_name="BigDataBall Play-by-Play Processor"
-                )
-            except Exception as notify_ex:
-                logging.warning(f"Failed to send notification: {notify_ex}")
-            
-            raise
+        """
+        Parse BigDataBall data - handles BOTH JSON and CSV formats.
         
+        Args:
+            json_content: File content (either JSON or CSV format)
+            file_path: GCS file path for context
+            
+        Returns:
+            Standardized dict with 'game_info' and 'playByPlay' keys
+        """
+        try:
+            # Try JSON first (backward compatibility with existing files)
+            data = json.loads(json_content)
+            logging.info(f"Parsed as JSON format: {file_path}")
+            return data
+            
+        except json.JSONDecodeError:
+            # Not JSON - try CSV format
+            logging.info(f"JSON parse failed, trying CSV format: {file_path}")
+            
+            try:
+                # Read CSV content
+                df = pd.read_csv(io.StringIO(json_content))
+                
+                if df.empty:
+                    raise ValueError("CSV file is empty")
+                
+                # Extract game info from first row
+                first_row = df.iloc[0]
+                
+                # Extract team names from filename
+                # Pattern: [2024-10-22]-0022400001-NYK@BOS.csv
+                filename = os.path.basename(file_path)
+                teams = self._extract_teams_from_filename(filename)
+                
+                # Build standardized structure matching JSON format
+                game_info = {
+                    'game_id': str(first_row.get('game_id', '')),
+                    'date': str(first_row.get('date', '')),
+                    'data_set': str(first_row.get('data_set', '')),
+                    'away_team': teams['away_team'],
+                    'home_team': teams['home_team']
+                }
+                
+                # Convert DataFrame to dict records, handling NaN values
+                play_records = df.to_dict('records')
+                
+                # Clean up NaN values
+                import math
+                for record in play_records:
+                    for key, value in record.items():
+                        if pd.isna(value) or (isinstance(value, float) and math.isnan(value)):
+                            record[key] = None
+                
+                # Return in same format as JSON files
+                data = {
+                    'file_info': {
+                        'name': filename,
+                        'processed_at': datetime.utcnow().isoformat(),
+                        'total_plays': len(df),
+                        'columns': df.columns.tolist()
+                    },
+                    'game_info': game_info,
+                    'playByPlay': play_records
+                }
+                
+                logging.info(f"Successfully parsed CSV: {len(play_records)} plays")
+                return data
+                
+            except Exception as csv_error:
+                logging.error(f"Failed to parse as CSV: {csv_error}")
+                
+                # Notify parse failure
+                try:
+                    notify_error(
+                        title="BigDataBall Play-by-Play Parse Failed",
+                        message=f"Failed to parse file as both JSON and CSV: {str(csv_error)}",
+                        details={
+                            'file_path': file_path,
+                            'json_error': 'JSONDecodeError',
+                            'csv_error': str(csv_error),
+                            'content_preview': json_content[:200]
+                        },
+                        processor_name="BigDataBall Play-by-Play Processor"
+                    )
+                except Exception as notify_ex:
+                    logging.warning(f"Failed to send notification: {notify_ex}")
+                
+                raise ValueError(f"Could not parse file as JSON or CSV: {csv_error}")
+    
+    def _extract_teams_from_filename(self, filename: str) -> Dict[str, str]:
+        """
+        Extract team abbreviations from filename.
+        Pattern: [2024-10-22]-0022400001-NYK@BOS.csv
+        """
+        import re
+        
+        # Try to match the standard pattern
+        pattern = r'\[[\d-]+\]-\d+-(.+)@(.+)\.csv'
+        match = re.search(pattern, filename)
+        
+        if match:
+            return {
+                'away_team': match.group(1),
+                'home_team': match.group(2)
+            }
+        
+        # Fallback if pattern doesn't match
+        logging.warning(f"Could not extract teams from filename: {filename}")
+        return {
+            'away_team': 'UNK',
+            'home_team': 'UNK'
+        }
+    
     def normalize_player_name(self, name: str) -> str:
         """Convert player name to lookup format: 'LeBron James' -> 'lebronjames'"""
         if not name:

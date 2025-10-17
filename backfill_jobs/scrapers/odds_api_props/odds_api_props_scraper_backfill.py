@@ -80,7 +80,7 @@ class OddsApiSeasonBackfillJob:
         'GSW': 'Golden State Warriors',
         'HOU': 'Houston Rockets',
         'IND': 'Indiana Pacers',
-        'LAC': 'LA Clippers',
+        'LAC': 'Los Angeles Clippers',
         'LAL': 'Los Angeles Lakers',
         'MEM': 'Memphis Grizzlies',
         'MIA': 'Miami Heat',
