@@ -1,6 +1,7 @@
 -- ============================================================================
 -- NBA Props Platform - Upcoming Team Game Context Analytics Table
 -- Team-level context for upcoming games with fatigue, personnel, and betting intelligence
+-- File: schemas/bigquery/analytics/upcoming_team_game_context_tables.sql
 -- ============================================================================
 
 CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_analytics.upcoming_team_game_context` (
@@ -43,6 +44,7 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_analytics.upcoming_team_game_
   team_loss_streak_entering INT64,                  -- Current loss streak (0 if none)
   
   -- Recent performance context (6 fields)
+  -- TODO: ATS and over/under streaks return 0 until implemented
   last_game_margin INT64,                           -- Point margin last game (+ = won, - = lost)
   ats_cover_streak INT64,                           -- Covers streak (0 if none)
   ats_fail_streak INT64,                            -- ATS losing streak (0 if none)
@@ -54,25 +56,27 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_analytics.upcoming_team_game_
   home_game BOOLEAN NOT NULL,                       -- Home court advantage
   travel_miles INT64,                               -- Travel distance
   
-  -- NEW: Team Forward-Looking Schedule Context (4 fields)
-  team_next_game_days_rest INT64,                   -- Days until team's next game (energy management at team level)
-  team_games_in_next_7_days INT64,                  -- Team's upcoming game density (team fatigue management)
-  next_opponent_win_pct NUMERIC(5,3),               -- Win percentage of team's next opponent (team motivation factor)
-  next_game_is_primetime BOOLEAN,                   -- Whether team's next game is nationally televised (team motivation)
+  -- Team Forward-Looking Schedule Context (4 fields)
+  -- TODO: Partially implemented, some fields return 0/NULL/FALSE
+  team_next_game_days_rest INT64,                   -- Days until team's next game
+  team_games_in_next_7_days INT64,                  -- Team's upcoming game density
+  next_opponent_win_pct NUMERIC(5,3),               -- Win percentage of team's next opponent
+  next_game_is_primetime BOOLEAN,                   -- Whether team's next game is nationally televised
   
-  -- NEW: Opponent Asymmetry Context (3 fields)
-  opponent_days_rest INT64,                         -- Current opponent's rest before this game (energy mismatch at team level)
-  opponent_games_in_next_7_days INT64,              -- Current opponent's upcoming schedule density (opponent team fatigue)
-  opponent_next_game_days_rest INT64,               -- Current opponent's rest after this game (opponent team conservation)
+  -- Opponent Asymmetry Context (3 fields)
+  opponent_days_rest INT64,                         -- Current opponent's rest before this game
+  opponent_games_in_next_7_days INT64,              -- Current opponent's upcoming schedule density
+  opponent_next_game_days_rest INT64,               -- Current opponent's rest after this game
   
   -- Market context (4 fields)
+  -- TODO: These are populated post-game, NULL for pre-game context
   closing_spread NUMERIC(4,1),                      -- Final betting spread
   closing_total NUMERIC(5,1),                       -- Final game total
   team_implied_total NUMERIC(5,1),                  -- Team's expected scoring
   opp_implied_total NUMERIC(5,1),                   -- Opponent's expected scoring
   
   -- Referee integration (1 field)
-  referee_crew_id STRING,                           -- Links to game_referees table
+  referee_crew_id STRING,                           -- Links to nba_raw.nbac_referee_game_pivot view
   
   -- Data quality (3 fields)
   data_quality_tier STRING,                        -- 'high', 'medium', 'low'
@@ -87,5 +91,34 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_analytics.upcoming_team_game_
 PARTITION BY game_date
 CLUSTER BY team_abbr, game_date
 OPTIONS(
-  description="Team-level context for upcoming games with fatigue, personnel, betting intelligence, and forward-looking schedule psychology"
+  description="Team-level context for upcoming games with fatigue, personnel, betting intelligence, and forward-looking schedule psychology. Deferred fields noted in comments."
 );
+
+-- ============================================================================
+-- NOTES ON DEFERRED FIELDS
+-- ============================================================================
+-- The following fields are included in the schema but return default values
+-- until their processing logic is fully implemented:
+--
+-- ATS Streaks (ats_cover_streak, ats_fail_streak, ats_record_last_10):
+--   - Schema ready for future implementation
+--   - Requires matching historical spreads with game results
+--   - Currently returns 0 or "0-0"
+--
+-- Over/Under Streaks (over_streak, under_streak):
+--   - Schema ready for future implementation  
+--   - Requires matching historical totals with game results
+--   - Currently returns 0
+--
+-- Forward Schedule Details (team_games_in_next_7_days, next_opponent_win_pct,
+-- next_game_is_primetime):
+--   - Partially implemented (team_next_game_days_rest works)
+--   - Rest require additional schedule parsing logic
+--   - Currently returns 0/NULL/FALSE
+--
+-- Market Closing Lines (closing_spread, closing_total, team_implied_total,
+-- opp_implied_total):
+--   - These are populated POST-GAME
+--   - Always NULL for pre-game context records
+--   - Updated after game completes for historical analysis
+-- ============================================================================

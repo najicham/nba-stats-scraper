@@ -1,22 +1,11 @@
 -- ============================================================================
 -- File: validation/queries/raw/nbac_schedule/enhanced_field_quality.sql
 -- Purpose: Validate 18 enhanced analytical fields are populated correctly
--- Usage: Run after processor updates or to verify data quality
--- ============================================================================
--- Instructions:
---   1. Update date range for the period you're checking
---   2. All enhanced fields should have minimal NULL values
---   3. Special event flags should show reasonable counts
--- ============================================================================
--- Expected Results:
---   - Broadcaster fields should be populated for all games
---   - Special events (Christmas, MLK Day) should have expected counts
---   - Primetime games should be ~15-20% of total games
---   - All 30 teams should be represented
+-- Status: FIXED - Corrected variable name inconsistencies
 -- ============================================================================
 
 WITH
--- Get all games in date range
+-- Get all games in date range (excluding special event games)
 all_games AS (
   SELECT
     game_date,
@@ -46,8 +35,15 @@ all_games AS (
     international_game,
     arena_timezone
   FROM `nba-props-platform.nba_raw.nbac_schedule`
-  WHERE game_date BETWEEN '2024-10-22' AND '2025-06-20'  -- UPDATE: Season range
+  WHERE game_date BETWEEN '2024-10-22' AND '2025-06-20'  -- UPDATE: Current season
     AND game_date >= '2024-10-22'  -- Partition filter
+    -- Exclude special event games (All-Star, exhibitions)
+    AND home_team_tricode NOT IN ('BAR', 'DRT', 'IAH', 'LBN', 'PAY', 'WOR', 
+                                   'DRN', 'GNS', 'JAS', 'JKM', 'PAU', 
+                                   'DLF', 'EST')
+    AND away_team_tricode NOT IN ('BAR', 'DRT', 'IAH', 'LBN', 'PAY', 'WOR',
+                                   'DRN', 'GNS', 'JAS', 'JKM', 'PAU',
+                                   'DLF', 'EST')
 ),
 
 -- Calculate NULL counts for each enhanced field
@@ -61,16 +57,16 @@ null_analysis AS (
     COUNT(CASE WHEN traditional_networks IS NULL THEN 1 END) as null_traditional_networks,
     COUNT(CASE WHEN streaming_platforms IS NULL THEN 1 END) as null_streaming_platforms,
     -- Game Classification
-    COUNT(CASE WHEN is_regular_season IS NULL THEN 1 END) as null_is_regular_season,
-    COUNT(CASE WHEN is_playoffs IS NULL THEN 1 END) as null_is_playoffs,
+    COUNT(CASE WHEN is_regular_season IS NULL THEN 1 END) as null_regular_season,
+    COUNT(CASE WHEN is_playoffs IS NULL THEN 1 END) as null_playoffs,
     COUNT(CASE WHEN is_playoffs = TRUE AND playoff_round IS NULL THEN 1 END) as null_playoff_round,
-    COUNT(CASE WHEN is_all_star IS NULL THEN 1 END) as null_is_all_star,
-    COUNT(CASE WHEN is_emirates_cup IS NULL THEN 1 END) as null_is_emirates_cup,
-    COUNT(CASE WHEN is_christmas IS NULL THEN 1 END) as null_is_christmas,
-    COUNT(CASE WHEN is_mlk_day IS NULL THEN 1 END) as null_is_mlk_day,
+    COUNT(CASE WHEN is_all_star IS NULL THEN 1 END) as null_all_star,
+    COUNT(CASE WHEN is_emirates_cup IS NULL THEN 1 END) as null_emirates_cup,
+    COUNT(CASE WHEN is_christmas IS NULL THEN 1 END) as null_christmas,
+    COUNT(CASE WHEN is_mlk_day IS NULL THEN 1 END) as null_mlk_day,
     -- Scheduling Context
     COUNT(CASE WHEN day_of_week IS NULL THEN 1 END) as null_day_of_week,
-    COUNT(CASE WHEN is_weekend IS NULL THEN 1 END) as null_is_weekend,
+    COUNT(CASE WHEN is_weekend IS NULL THEN 1 END) as null_weekend,
     COUNT(CASE WHEN time_slot IS NULL THEN 1 END) as null_time_slot,
     -- Venue Context
     COUNT(CASE WHEN neutral_site_flag IS NULL THEN 1 END) as null_neutral_site,
@@ -108,12 +104,12 @@ network_distribution AS (
   LIMIT 10
 ),
 
--- Validate data quality
+-- Validate data quality (FIXED: corrected variable names)
 quality_check AS (
   SELECT
     -- Critical fields should have 0 NULLs
     CASE
-      WHEN null_is_primetime = 0 AND null_is_regular_season = 0 AND null_is_playoffs = 0 
+      WHEN null_primetime = 0 AND null_regular_season = 0 AND null_playoffs = 0
       THEN '✅ All critical fields populated'
       ELSE '🔴 CRITICAL: Missing required fields'
     END as critical_status,
@@ -143,7 +139,7 @@ SELECT
 UNION ALL
 
 SELECT
-  'Total Games' as section,
+  'Total Games (NBA only)' as section,
   CAST(total_games AS STRING) as field_name,
   '' as null_count,
   '' as percentage,
@@ -195,11 +191,77 @@ SELECT
   '' as field_name,
   CAST(null_primary_network AS STRING) as null_count,
   CONCAT(CAST(ROUND(null_primary_network * 100.0 / total_games, 1) AS STRING), '%') as percentage,
-  CASE 
+  CASE
     WHEN null_primary_network = 0 THEN '✅'
     WHEN null_primary_network < total_games * 0.1 THEN '🟡'
     ELSE '🔴'
   END as status
+FROM null_analysis
+
+UNION ALL
+
+SELECT
+  '  traditional_networks' as section,
+  '' as field_name,
+  CAST(null_traditional_networks AS STRING) as null_count,
+  CONCAT(CAST(ROUND(null_traditional_networks * 100.0 / total_games, 1) AS STRING), '%') as percentage,
+  CASE
+    WHEN null_traditional_networks = 0 THEN '✅'
+    WHEN null_traditional_networks < total_games * 0.2 THEN '🟡'
+    ELSE '🔴'
+  END as status
+FROM null_analysis
+
+UNION ALL
+
+SELECT
+  '  streaming_platforms' as section,
+  '' as field_name,
+  CAST(null_streaming_platforms AS STRING) as null_count,
+  CONCAT(CAST(ROUND(null_streaming_platforms * 100.0 / total_games, 1) AS STRING), '%') as percentage,
+  CASE
+    WHEN null_streaming_platforms = 0 THEN '✅'
+    WHEN null_streaming_platforms < total_games * 0.2 THEN '🟡'
+    ELSE '🔴'
+  END as status
+FROM null_analysis
+
+UNION ALL
+
+SELECT
+  '' as section,
+  '' as field_name,
+  '' as null_count,
+  '' as percentage,
+  '' as status
+
+UNION ALL
+
+SELECT
+  'GAME CLASSIFICATION' as section,
+  '' as field_name,
+  '' as null_count,
+  '' as percentage,
+  '' as status
+
+UNION ALL
+
+SELECT
+  '  is_regular_season' as section,
+  '' as field_name,
+  CAST(null_regular_season AS STRING) as null_count,
+  CONCAT(CAST(ROUND(null_regular_season * 100.0 / total_games, 1) AS STRING), '%') as percentage,
+  CASE WHEN null_regular_season = 0 THEN '✅' ELSE '🔴' END as status
+FROM null_analysis
+
+UNION ALL
+
+SELECT
+  '  is_playoffs' as section,
+  '' as field_name,
+  CAST(null_playoffs AS STRING) as null_count,
+  CONCAT(CAST(ROUND(null_playoffs * 100.0 / total_games, 1) AS STRING), '%') as percentage,
+  CASE WHEN null_playoffs = 0 THEN '✅' ELSE '🔴' END as status
 FROM null_analysis
 
 UNION ALL
@@ -264,6 +326,16 @@ FROM special_events
 UNION ALL
 
 SELECT
+  'Weekend Games' as section,
+  CAST(weekend_games AS STRING) as field_name,
+  CONCAT(CAST(ROUND(weekend_games * 100.0 / (SELECT total_games FROM null_analysis), 1) AS STRING), '%') as null_count,
+  '' as percentage,
+  '' as status
+FROM special_events
+
+UNION ALL
+
+SELECT
   '' as section,
   '' as field_name,
   '' as null_count,
@@ -288,4 +360,53 @@ SELECT
   CONCAT(CAST(percentage AS STRING), '%') as null_count,
   '' as percentage,
   '' as status
-FROM network_distribution;
+FROM network_distribution
+
+UNION ALL
+
+SELECT
+  '' as section,
+  '' as field_name,
+  '' as null_count,
+  '' as percentage,
+  '' as status
+
+UNION ALL
+
+-- Output 4: Overall status
+SELECT
+  '=== OVERALL STATUS ===' as section,
+  '' as field_name,
+  '' as null_count,
+  '' as percentage,
+  '' as status
+
+UNION ALL
+
+SELECT
+  'Critical Fields' as section,
+  critical_status as field_name,
+  '' as null_count,
+  '' as percentage,
+  '' as status
+FROM quality_check
+
+UNION ALL
+
+SELECT
+  'Network Data' as section,
+  network_status as field_name,
+  '' as null_count,
+  '' as percentage,
+  '' as status
+FROM quality_check
+
+UNION ALL
+
+SELECT
+  'Christmas Games' as section,
+  christmas_status as field_name,
+  '' as null_count,
+  '' as percentage,
+  '' as status
+FROM quality_check;

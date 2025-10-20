@@ -1,5 +1,6 @@
--- File: schemas/bigquery/nbac_schedule_tables.sql
+-- File: schemas/bigquery/raw/nbac_schedule_tables.sql
 -- Description: BigQuery table schemas for NBA.com schedule data
+-- UPDATED: Added data_source and source_updated_at columns for scraper tracking
 
 CREATE TABLE IF NOT EXISTS `nba_raw.nbac_schedule` (
   -- Core identifiers
@@ -59,6 +60,12 @@ CREATE TABLE IF NOT EXISTS `nba_raw.nbac_schedule` (
   away_team_score INT64,
   winning_team_tricode STRING,
   
+  -- =========================================================================
+  -- NEW: Source tracking (added 2025-10-19)
+  -- =========================================================================
+  data_source STRING,                       -- "api_stats" or "cdn_static"
+  source_updated_at TIMESTAMP,              -- When this source last updated the record
+  
   -- Processing metadata
   source_file_path STRING NOT NULL,
   scrape_timestamp TIMESTAMP,
@@ -66,7 +73,7 @@ CREATE TABLE IF NOT EXISTS `nba_raw.nbac_schedule` (
   processed_at TIMESTAMP NOT NULL
 )
 PARTITION BY game_date
-CLUSTER BY game_date, home_team_tricode, away_team_tricode, season_year
+CLUSTER BY game_date, data_source, home_team_tricode, away_team_tricode, season_year
 OPTIONS (
   description = "NBA.com official game schedule with team, venue, and broadcast information. Source of truth for game timing and team matchups.",
   require_partition_filter = true
@@ -79,6 +86,7 @@ FROM `nba_raw.nbac_schedule`
 WHERE season_year = (
   SELECT MAX(season_year) 
   FROM `nba_raw.nbac_schedule`
+  WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 365 DAY)
 );
 
 CREATE OR REPLACE VIEW `nba_raw.nbac_schedule_upcoming` AS
@@ -99,12 +107,14 @@ CREATE OR REPLACE VIEW `nba_raw.nbac_schedule_primetime` AS
 SELECT *
 FROM `nba_raw.nbac_schedule`
 WHERE is_primetime = TRUE
+  AND game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 365 DAY)
 ORDER BY game_date DESC;
 
 CREATE OR REPLACE VIEW `nba_raw.nbac_schedule_playoffs` AS
 SELECT *
 FROM `nba_raw.nbac_schedule`
 WHERE is_playoffs = TRUE
+  AND game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 365 DAY)
 ORDER BY game_date, playoff_round;
 
 CREATE OR REPLACE VIEW `nba_raw.nbac_schedule_national_tv` AS
@@ -116,14 +126,17 @@ SELECT
   is_primetime,
   is_weekend,
   time_slot,
-  game_status
+  game_status,
+  data_source
 FROM `nba_raw.nbac_schedule`
 WHERE has_national_tv = TRUE
+  AND game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 365 DAY)
 ORDER BY game_date DESC;
 
 CREATE OR REPLACE VIEW `nba_raw.nbac_schedule_analytics` AS
 SELECT 
   season_nba_format,
+  data_source,
   COUNT(*) as total_games,
   COUNT(CASE WHEN is_primetime THEN 1 END) as primetime_games,
   COUNT(CASE WHEN has_national_tv THEN 1 END) as national_tv_games,
@@ -132,5 +145,6 @@ SELECT
   COUNT(CASE WHEN is_playoffs THEN 1 END) as playoff_games,
   ROUND(COUNT(CASE WHEN is_primetime THEN 1 END) * 100.0 / COUNT(*), 1) as primetime_percentage
 FROM `nba_raw.nbac_schedule`
-GROUP BY season_nba_format
-ORDER BY season_nba_format DESC;
+WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 730 DAY)
+GROUP BY season_nba_format, data_source
+ORDER BY season_nba_format DESC, data_source;

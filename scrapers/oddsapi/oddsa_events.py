@@ -17,13 +17,25 @@ The endpoint returns **a list of event objects**.
 
 Usage examples
 --------------
+  # Get events for a specific game date (auto-calculates Eastern day boundaries):
+  python scrapers/oddsapi/oddsa_events.py \
+      --sport basketball_nba \
+      --game_date 2025-10-21 \
+      --debug
+
   # Via capture tool (recommended for data collection):
   python tools/fixtures/capture.py oddsa_events \
       --sport basketball_nba \
+      --game_date 2025-10-21 \
       --debug
 
-  # Direct CLI execution:
-  python scrapers/oddsapi/oddsa_events.py --sport basketball_nba --debug
+  # Manual time filtering (overrides game_date auto-calculation):
+  python scrapers/oddsapi/oddsa_events.py \
+      --sport basketball_nba \
+      --game_date 2025-10-21 \
+      --commenceTimeFrom 2025-10-21T00:00:00Z \
+      --commenceTimeTo 2025-10-21T23:59:59Z \
+      --debug
 
   # Flask web service:
   python scrapers/oddsapi/oddsa_events.py --serve --debug
@@ -34,6 +46,7 @@ from __future__ import annotations
 import os
 import logging
 import sys
+from datetime import datetime, time
 from urllib.parse import urlencode
 from typing import Any, Dict, List
 
@@ -71,16 +84,17 @@ class GetOddsApiEvents(ScraperBase, ScraperFlaskMixin):
     """
     Required opts:
       • sport - e.g. basketball_nba
+      • game_date - Eastern date (e.g., "2025-10-21") - auto-calculates commence times
 
     Optional opts (all map 1-to-1 onto query params):
       • api_key  - falls back to env ODDS_API_KEY
-      • commenceTimeFrom / commenceTimeTo
+      • commenceTimeFrom / commenceTimeTo - manual UTC time filters (override game_date)
       • dateFormat
     """
 
     # Flask Mixin Configuration
     scraper_name = "oddsa_events"
-    required_params = ["sport"]
+    required_params = ["sport", "game_date"]
     optional_params = {
         "api_key": None,  # Falls back to env ODDS_API_KEY
         "commenceTimeFrom": None,
@@ -88,7 +102,7 @@ class GetOddsApiEvents(ScraperBase, ScraperFlaskMixin):
         "dateFormat": None,
     }
 
-    required_opts: List[str] = ["sport"]  # api_key via env if omitted
+    required_opts: List[str] = ["sport", "game_date"]  # api_key via env if omitted
     proxy_enabled = False
     browser_enabled = False
 
@@ -127,6 +141,43 @@ class GetOddsApiEvents(ScraperBase, ScraperFlaskMixin):
     ]
 
     # ------------------------------------------------------------------ #
+    # Additional opts                                                    #
+    # ------------------------------------------------------------------ #
+    def set_additional_opts(self) -> None:
+        """
+        Convert game_date to API time filters.
+        Matches pattern from historical events scraper.
+        """
+        # Call base class first for standard processing
+        super().set_additional_opts()  # Base class handles game_date → date conversion
+        
+        # Calculate commence time boundaries (Eastern day → UTC)
+        import pytz
+        
+        eastern = pytz.timezone('America/New_York')
+        game_date_str = self.opts["game_date"]
+        
+        # Parse the game date (YYYY-MM-DD)
+        game_date = datetime.strptime(game_date_str, "%Y-%m-%d").date()
+        
+        # Create Eastern timezone boundaries for the day
+        day_start = eastern.localize(datetime.combine(game_date, time.min))  # 00:00:00 ET
+        day_end = eastern.localize(datetime.combine(game_date, time.max))    # 23:59:59.999999 ET
+        
+        # Convert to UTC for API (only if not already set by user)
+        if not self.opts.get("commenceTimeFrom"):
+            self.opts["commenceTimeFrom"] = day_start.astimezone(pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        if not self.opts.get("commenceTimeTo"):
+            self.opts["commenceTimeTo"] = day_end.astimezone(pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        
+        logger.info(
+            "Game date %s → commence times: %s to %s (ET day → UTC)",
+            game_date_str,
+            self.opts["commenceTimeFrom"],
+            self.opts["commenceTimeTo"]
+        )
+
+    # ------------------------------------------------------------------ #
     # URL & headers                                                      #
     # ------------------------------------------------------------------ #
     _API_ROOT_TMPL = "https://api.the-odds-api.com/v4/sports/{sport}/events"
@@ -144,6 +195,7 @@ class GetOddsApiEvents(ScraperBase, ScraperFlaskMixin):
                     details={
                         'scraper': 'oddsa_events',
                         'sport': self.opts.get('sport', 'unknown'),
+                        'game_date': self.opts.get('game_date', 'not specified'),
                         'error': 'ODDS_API_KEY environment variable not set'
                     },
                     processor_name="Odds API Events Scraper"
@@ -164,7 +216,7 @@ class GetOddsApiEvents(ScraperBase, ScraperFlaskMixin):
         # strip None values
         query = {k: v for k, v in query.items() if v is not None}
         self.url = f"{base}?{urlencode(query, doseq=True)}"
-        logger.info("Odds-API Events URL: %s", self.url)
+        logger.info("Odds-API Events URL: %s", self.url.replace(api_key, "***"))
 
     def set_headers(self) -> None:
         self.headers = {"Accept": "application/json"}
@@ -186,6 +238,7 @@ class GetOddsApiEvents(ScraperBase, ScraperFlaskMixin):
                 details={
                     'scraper': 'oddsa_events',
                     'sport': self.opts.get('sport', 'unknown'),
+                    'game_date': self.opts.get('game_date', 'not specified'),
                     'status_code': status_code,
                     'commence_time_from': self.opts.get('commenceTimeFrom', 'not specified'),
                     'commence_time_to': self.opts.get('commenceTimeTo', 'not specified'),
@@ -216,6 +269,7 @@ class GetOddsApiEvents(ScraperBase, ScraperFlaskMixin):
                     details={
                         'scraper': 'oddsa_events',
                         'sport': self.opts.get('sport', 'unknown'),
+                        'game_date': self.opts.get('game_date', 'not specified'),
                         'api_error': error_msg
                     },
                     processor_name="Odds API Events Scraper"
@@ -234,6 +288,7 @@ class GetOddsApiEvents(ScraperBase, ScraperFlaskMixin):
                     details={
                         'scraper': 'oddsa_events',
                         'sport': self.opts.get('sport', 'unknown'),
+                        'game_date': self.opts.get('game_date', 'not specified'),
                         'received_type': type(self.decoded_data).__name__,
                         'expected_type': 'list'
                     },
@@ -253,6 +308,7 @@ class GetOddsApiEvents(ScraperBase, ScraperFlaskMixin):
 
         self.data = {
             "sport": self.opts["sport"],
+            "game_date": self.opts.get("game_date"),  # Include game_date if provided
             "rowCount": len(events),
             "events": events,
         }
@@ -266,6 +322,7 @@ class GetOddsApiEvents(ScraperBase, ScraperFlaskMixin):
                     details={
                         'scraper': 'oddsa_events',
                         'sport': self.opts.get('sport', 'unknown'),
+                        'game_date': self.opts.get('game_date', 'not specified'),
                         'commence_time_from': self.opts.get('commenceTimeFrom', 'not specified'),
                         'commence_time_to': self.opts.get('commenceTimeTo', 'not specified'),
                         'note': 'May be expected if no games scheduled in specified time range'
@@ -286,6 +343,7 @@ class GetOddsApiEvents(ScraperBase, ScraperFlaskMixin):
                     details={
                         'scraper': 'oddsa_events',
                         'sport': self.opts.get('sport', 'unknown'),
+                        'game_date': self.opts.get('game_date', 'not specified'),
                         'event_count': len(events),
                         'earliest_commence_time': earliest_time,
                         'latest_commence_time': latest_time,
@@ -311,6 +369,7 @@ class GetOddsApiEvents(ScraperBase, ScraperFlaskMixin):
         return {
             "rowCount": self.data.get("rowCount", 0),
             "sport": self.opts.get("sport"),
+            "game_date": self.opts.get("game_date"),
         }
 
 

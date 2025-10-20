@@ -14,48 +14,20 @@ from shared.utils.notification_system import (
     notify_info
 )
 
+# Import NBATeamMapper for proper team code normalization
+from shared.utils.nba_team_mapper import NBATeamMapper
+
 logger = logging.getLogger(__name__)
 
 class OddsApiPropsProcessor(ProcessorBase):
-    """Process Odds API player props data."""
+    """
+    Process Odds API player props data.
     
-    # Team name mapping
-    TEAM_MAPPING = {
-        'Atlanta Hawks': 'ATL',
-        'Boston Celtics': 'BOS',
-        'Brooklyn Nets': 'BRK',
-        'Charlotte Hornets': 'CHO',
-        'Chicago Bulls': 'CHI',
-        'Cleveland Cavaliers': 'CLE',
-        'Dallas Mavericks': 'DAL',
-        'Denver Nuggets': 'DEN',
-        'Detroit Pistons': 'DET',
-        'Golden State Warriors': 'GSW',
-        'Houston Rockets': 'HOU',
-        'Indiana Pacers': 'IND',
-        'Los Angeles Clippers': 'LAC',
-        'Los Angeles Lakers': 'LAL',
-        'Memphis Grizzlies': 'MEM',
-        'Miami Heat': 'MIA',
-        'Milwaukee Bucks': 'MIL',
-        'Minnesota Timberwolves': 'MIN',
-        'New Orleans Pelicans': 'NOP',
-        'New York Knicks': 'NYK',
-        'Oklahoma City Thunder': 'OKC',
-        'Orlando Magic': 'ORL',
-        'Philadelphia 76ers': 'PHI',
-        'Phoenix Suns': 'PHO',
-        'Portland Trail Blazers': 'POR',
-        'Sacramento Kings': 'SAC',
-        'San Antonio Spurs': 'SAS',
-        'Toronto Raptors': 'TOR',
-        'Utah Jazz': 'UTA',
-        'Washington Wizards': 'WAS'
-    }
+    Handles both:
+    - Current/live data: odds-api/player-props/2025-10-21/...
+    - Historical data: odds-api/player-props-history/2023-10-24/...
+    """
     
-    # Abbreviated team codes for parsing file paths
-    TEAM_ABBR_MAP = {v: k for k, v in TEAM_MAPPING.items()}
-
     def __init__(self):
         super().__init__()
         self.project_id = "nba-props-platform"
@@ -64,20 +36,75 @@ class OddsApiPropsProcessor(ProcessorBase):
         self.processing_strategy = 'APPEND_ALWAYS'
         self.unknown_teams = set()  # Track unknown teams for batch warning
         
+        # Initialize team mapper for proper normalization
+        # use_database=False to avoid dependency on BigQuery during processing
+        self.team_mapper = NBATeamMapper(use_database=False)
+        
+        logger.info("OddsApiPropsProcessor initialized with NBATeamMapper")
+        
+    def is_historical_format(self, data: Dict) -> bool:
+        """
+        Detect if data is in historical format (wrapped) or current format (unwrapped).
+        
+        Historical format has:
+        - 'data' key containing the event
+        - 'timestamp' key for snapshot time
+        - 'previous_timestamp' and 'next_timestamp'
+        
+        Current format is just the event object directly.
+        """
+        return 'data' in data and 'timestamp' in data
+    
+    def detect_data_source(self, raw_data: Dict, file_path: str = None) -> str:
+        """
+        Detect whether data came from historical or current endpoint.
+        
+        Args:
+            raw_data: Raw API response
+            file_path: Optional source file path
+            
+        Returns:
+            'historical' or 'current'
+        """
+        # Primary detection: Check data structure
+        if self.is_historical_format(raw_data):
+            return 'historical'
+        
+        # Secondary detection: Check file path pattern
+        if file_path:
+            if 'player-props-history' in file_path or '/historical/' in file_path:
+                return 'historical'
+            elif 'player-props' in file_path or '/current/' in file_path:
+                return 'current'
+        
+        # Default to 'current' for live data
+        return 'current'
+        
     def get_team_abbr(self, team_name: str) -> str:
-        """Get team abbreviation from full name."""
-        # Direct lookup
-        if team_name in self.TEAM_MAPPING:
-            return self.TEAM_MAPPING[team_name]
+        """
+        Get NBA standard team abbreviation from full name using NBATeamMapper.
         
-        # Try partial matching for slight variations
-        team_lower = team_name.lower()
-        for full_name, abbr in self.TEAM_MAPPING.items():
-            if team_lower in full_name.lower() or full_name.lower() in team_lower:
-                return abbr
+        This normalizes all team names to NBA.com standard (e.g., PHO → PHX).
+        """
+        if not team_name:
+            return ''
         
+        # Use team mapper to get NBA standard tricode
+        tricode = self.team_mapper.get_nba_tricode(team_name)
+        
+        if tricode:
+            return tricode
+        
+        # If not found, try fuzzy matching
+        tricode = self.team_mapper.get_nba_tricode_fuzzy(team_name, min_confidence=85)
+        
+        if tricode:
+            logger.info(f"Fuzzy matched team: '{team_name}' → {tricode}")
+            return tricode
+        
+        # Still not found - log warning and track
         logger.warning(f"Unknown team name: {team_name}")
-        self.unknown_teams.add(team_name)  # Track for notification
+        self.unknown_teams.add(team_name)
         return team_name  # Return as-is if not found
     
     def decimal_to_american(self, decimal_odds: float) -> int:
@@ -92,15 +119,17 @@ class OddsApiPropsProcessor(ProcessorBase):
             # Negative American odds
             return int(-100 / (decimal_odds - 1))
     
-    def extract_metadata_from_path(self, file_path: str) -> Dict:
+    def extract_metadata_from_path(self, file_path: str, is_historical: bool) -> Dict:
         """
         Extract metadata from file path.
-        Example: odds-api/player-props-history/2023-10-24/fd55db2fa9ee5be1f108be5151e2ecb0-LALDEN/20250812_035909-snap-2130.json
+        
+        Historical: odds-api/player-props-history/2023-10-24/fd55db2fa9ee5be1f108be5151e2ecb0-LALDEN/20250812_035909-snap-2130.json
+        Current:    odds-api/player-props/2025-10-21/bbde7751a144b98ed150d7a5f7dc8f87-HOUOKC/20251019_032435-snap-0324.json
         """
         path_parts = file_path.split('/')
         
-        # Extract date
-        date_str = path_parts[-3]  # "2023-10-24"
+        # Extract date (same position for both formats)
+        date_str = path_parts[-3]  # "2023-10-24" or "2025-10-21"
         
         # Extract event ID and teams
         event_folder = path_parts[-2]  # "fd55db2fa9ee5be1f108be5151e2ecb0-LALDEN"
@@ -134,7 +163,8 @@ class OddsApiPropsProcessor(ProcessorBase):
             'home_team_abbr': home_team,
             'capture_timestamp': capture_timestamp,
             'snapshot_tag': snapshot_tag,
-            'source_file_path': file_path
+            'source_file_path': file_path,
+            'is_historical': is_historical
         }
     
     def calculate_minutes_before_tipoff(self, game_start: datetime, snapshot: datetime) -> int:
@@ -142,21 +172,29 @@ class OddsApiPropsProcessor(ProcessorBase):
         diff = game_start - snapshot
         return int(diff.total_seconds() / 60)
     
-    def validate_data(self, data: Dict) -> List[str]:
+    def validate_data(self, data: Dict, is_historical: bool) -> List[str]:
         """Validate the JSON data structure."""
         errors = []
         
         if not data:
             errors.append("Empty data")
             return errors
-            
-        if 'data' not in data:
-            errors.append("Missing 'data' field")
-            return errors
-            
-        game_data = data.get('data', {})
         
-        # Check required fields
+        # Get the game data (either wrapped or unwrapped)
+        if is_historical:
+            if 'data' not in data:
+                errors.append("Missing 'data' field in historical format")
+                return errors
+            game_data = data.get('data', {})
+            
+            # Validate historical-specific fields
+            if 'timestamp' not in data:
+                errors.append("Missing 'timestamp' field in historical format")
+        else:
+            # Current format - data is the game object itself
+            game_data = data
+            
+        # Check required fields in game data
         required_fields = ['id', 'commence_time', 'home_team', 'away_team', 'bookmakers']
         for field in required_fields:
             if field not in game_data:
@@ -174,8 +212,17 @@ class OddsApiPropsProcessor(ProcessorBase):
         rows = []
         
         try:
+            # Detect format and data source
+            is_historical = self.is_historical_format(raw_data)
+            data_source = self.detect_data_source(raw_data, file_path)
+            
+            logger.debug(
+                f"Processing {data_source} data ({'historical' if is_historical else 'current'} format) "
+                f"from {file_path}"
+            )
+            
             # Validate data first
-            errors = self.validate_data(raw_data)
+            errors = self.validate_data(raw_data, is_historical)
             if errors:
                 logger.error(f"Validation errors for {file_path}: {errors}")
                 
@@ -187,6 +234,8 @@ class OddsApiPropsProcessor(ProcessorBase):
                         details={
                             'processor': 'OddsApiPropsProcessor',
                             'file_path': file_path,
+                            'format': 'historical' if is_historical else 'current',
+                            'data_source': data_source,
                             'error_count': len(errors),
                             'errors': errors[:5]  # First 5 errors
                         }
@@ -197,17 +246,30 @@ class OddsApiPropsProcessor(ProcessorBase):
                 return rows
             
             # Extract metadata from file path
-            metadata = self.extract_metadata_from_path(file_path)
+            metadata = self.extract_metadata_from_path(file_path, is_historical)
             
-            # Get main data
-            game_data = raw_data.get('data', {})
+            # Get game data based on format
+            if is_historical:
+                game_data = raw_data.get('data', {})
+                snapshot_timestamp = raw_data.get('timestamp')
+            else:
+                game_data = raw_data
+                # For current data, snapshot timestamp might not be in the data
+                # Try to extract from filename or use current time
+                snapshot_timestamp = None
+                if metadata.get('capture_timestamp'):
+                    try:
+                        # Convert capture timestamp to ISO format
+                        capture_dt = datetime.strptime(metadata['capture_timestamp'], '%Y%m%d_%H%M%S')
+                        snapshot_timestamp = capture_dt.isoformat() + 'Z'
+                    except:
+                        pass
             
             # Parse timestamps
-            snapshot_timestamp = raw_data.get('timestamp')
             if snapshot_timestamp:
                 snapshot_dt = datetime.fromisoformat(snapshot_timestamp.replace('Z', '+00:00'))
             else:
-                logger.warning(f"No snapshot timestamp in {file_path}")
+                logger.warning(f"No snapshot timestamp in {file_path}, using current time")
                 snapshot_dt = datetime.now()
             
             game_date = datetime.strptime(metadata['game_date'], '%Y-%m-%d').date()
@@ -223,9 +285,18 @@ class OddsApiPropsProcessor(ProcessorBase):
             if game_start_dt:
                 minutes_before = self.calculate_minutes_before_tipoff(game_start_dt, snapshot_dt)
             
-            # Get team abbreviations
-            home_team_abbr = self.get_team_abbr(game_data.get('home_team', ''))
-            away_team_abbr = self.get_team_abbr(game_data.get('away_team', ''))
+            # Get team abbreviations using NBATeamMapper (PHO → PHX, etc.)
+            home_team_full = game_data.get('home_team', '')
+            away_team_full = game_data.get('away_team', '')
+            
+            home_team_abbr = self.get_team_abbr(home_team_full)
+            away_team_abbr = self.get_team_abbr(away_team_full)
+            
+            # Log the conversion for debugging
+            if home_team_full and home_team_abbr:
+                logger.debug(f"Normalized home team: '{home_team_full}' → {home_team_abbr}")
+            if away_team_full and away_team_abbr:
+                logger.debug(f"Normalized away team: '{away_team_full}' → {away_team_abbr}")
             
             # Create game_id in format YYYYMMDD_AWAY_HOME
             game_id = f"{metadata['game_date'].replace('-', '')}_{away_team_abbr}_{home_team_abbr}"
@@ -287,7 +358,7 @@ class OddsApiPropsProcessor(ProcessorBase):
                             'game_date': game_date.isoformat() if hasattr(game_date, "isoformat") else game_date,
                             'game_start_time': game_start_dt,
                             
-                            # Teams
+                            # Teams (NORMALIZED TO NBA STANDARD)
                             'home_team_abbr': home_team_abbr,
                             'away_team_abbr': away_team_abbr,
                             
@@ -311,12 +382,16 @@ class OddsApiPropsProcessor(ProcessorBase):
                             
                             # Metadata
                             'bookmaker_last_update': bookmaker_update_dt,
-                            'source_file_path': file_path
+                            'source_file_path': file_path,
+                            'data_source': data_source  # NEW: Track data source
                         }
                         
                         rows.append(row)
             
-            logger.info(f"Processed {len(rows)} prop records from {file_path}")
+            logger.info(
+                f"Processed {len(rows)} prop records from {file_path} "
+                f"(data_source={data_source}, format={'historical' if is_historical else 'current'})"
+            )
             
         except Exception as e:
             logger.error(f"Transform failed for {file_path}: {e}", exc_info=True)
@@ -393,7 +468,8 @@ class OddsApiPropsProcessor(ProcessorBase):
                         'processor': 'OddsApiPropsProcessor',
                         'rows_processed': len(rows),
                         'table': self.table_name,
-                        'strategy': 'batch_append'
+                        'strategy': 'batch_append',
+                        'data_source': rows[0].get('data_source') if rows else None
                     }
                 )
             except Exception as notify_ex:

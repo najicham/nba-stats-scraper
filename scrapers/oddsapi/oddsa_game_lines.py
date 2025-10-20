@@ -140,13 +140,18 @@ class GetOddsApiCurrentGameLines(ScraperBase, ScraperFlaskMixin):
     ]
 
     def set_additional_opts(self) -> None:
-        """Fill season-wide defaults for optional opts."""
+        """Fill season-wide defaults for optional opts (FIXED: handle None values)."""
         super().set_additional_opts()  # Base class handles game_date → date conversion
         
-        self.opts.setdefault("sport", "basketball_nba")
-        self.opts.setdefault("regions", "us")
-        self.opts.setdefault("markets", "spreads,totals")  # Default to both spreads and totals
-        self.opts.setdefault("bookmakers", "draftkings,fanduel")
+        # ── season‑wide defaults (FIXED: handle None values) ──────────────────────────────
+        if not self.opts.get("sport"):
+            self.opts["sport"] = "basketball_nba"
+        if not self.opts.get("regions"):
+            self.opts["regions"] = "us"
+        if not self.opts.get("markets"):
+            self.opts["markets"] = "spreads,totals"  # Default to both spreads and totals
+        if not self.opts.get("bookmakers"):
+            self.opts["bookmakers"] = "draftkings,fanduel"
 
     # ------------------------------------------------------------------ #
     # URL & headers                                                      #

@@ -32,6 +32,8 @@ WITH season_summary AS (
     AND s.home_team_tricode = p.home_team_abbr
     AND s.away_team_tricode = p.away_team_abbr
   WHERE s.game_date BETWEEN '2021-10-19' AND '2025-06-20'
+    AND s.is_all_star = FALSE  -- Exclude All-Star games
+    AND (s.is_regular_season = TRUE OR s.is_playoffs = TRUE)  -- Only regular season and playoffs
   GROUP BY season, s.is_playoffs
 ),
 
@@ -62,6 +64,7 @@ player_coverage AS (
   ) p
   LEFT JOIN `nba-props-platform.nba_raw.nbac_schedule` s
     ON p.game_date = s.game_date
+  WHERE s.is_all_star = FALSE  -- Exclude All-Star games from player coverage stats
   GROUP BY season, s.is_playoffs
 ),
 
@@ -127,6 +130,8 @@ WITH missing_game_dates AS (
     AND s.home_team_tricode = p.home_team_abbr
     AND s.away_team_tricode = p.away_team_abbr
   WHERE s.game_date BETWEEN '2021-10-19' AND '2025-06-20'
+    AND s.is_all_star = FALSE  -- Exclude All-Star games
+    AND (s.is_regular_season = TRUE OR s.is_playoffs = TRUE)  -- Only regular season and playoffs
     AND p.game_date IS NULL
   GROUP BY s.game_date, s.is_playoffs
 ),
@@ -157,9 +162,9 @@ SELECT
   END as period
 FROM date_ranges
 WHERE days_since_prev IS NULL OR days_since_prev <= 7
-GROUP BY 
-  CASE 
-    WHEN days_since_prev IS NULL OR days_since_prev <= 7 
+GROUP BY
+  CASE
+    WHEN days_since_prev IS NULL OR days_since_prev <= 7
     THEN DATE_DIFF(game_date, prev_date, DAY)
   END
 ORDER BY range_start;

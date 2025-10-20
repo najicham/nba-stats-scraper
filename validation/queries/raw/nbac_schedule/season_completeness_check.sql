@@ -1,13 +1,7 @@
 -- ============================================================================
 -- File: validation/queries/raw/nbac_schedule/season_completeness_check.sql
 -- Purpose: Comprehensive season validation for NBA schedule data
--- Usage: Run after updates or to verify historical data integrity
--- ============================================================================
--- Expected Results:
---   - DIAGNOSTICS row should show 0 for nulls and quality issues
---   - Each team should have ~41 home games + ~41 away games per season
---   - Playoff games vary by team (4-28 games depending on playoff run)
---   - Enhanced fields (primetime, network, etc.) should be populated
+-- Status: UPDATED - Excludes special event games (All-Star, exhibitions)
 -- ============================================================================
 
 WITH
@@ -39,6 +33,13 @@ schedule_with_season AS (
     END as season
   FROM `nba-props-platform.nba_raw.nbac_schedule`
   WHERE game_date BETWEEN '2021-10-19' AND '2026-06-20'
+    -- Exclude special event games (All-Star, exhibitions, international)
+    AND home_team_tricode NOT IN ('BAR', 'DRT', 'IAH', 'LBN', 'PAY', 'WOR', 
+                                   'DRN', 'GNS', 'JAS', 'JKM', 'PAU', 
+                                   'DLF', 'EST')
+    AND away_team_tricode NOT IN ('BAR', 'DRT', 'IAH', 'LBN', 'PAY', 'WOR',
+                                   'DRN', 'GNS', 'JAS', 'JKM', 'PAU',
+                                   'DLF', 'EST')
 ),
 
 -- Diagnostic checks for data quality
@@ -117,7 +118,7 @@ SELECT
   CAST(distinct_away_teams AS STRING) as total,
   '' as home_teams,
   '' as away_teams,
-  'Expect 30 teams' as notes
+  'Expect 30 teams each' as notes
 FROM diagnostics
 
 UNION ALL
@@ -142,5 +143,5 @@ FROM team_stats
 ORDER BY
   row_type,
   season,
-  playoffs DESC,  -- Changed from CAST(playoff_games AS INT64)
+  playoffs DESC,
   team;

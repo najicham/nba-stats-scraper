@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # File: processors/nbacom/nbac_schedule_processor.py
 # Description: Processor for NBA.com enhanced schedule data transformation
+# UPDATED: Added source tracking (API vs CDN) for dual scraper support
 # Integrated notification system for monitoring and alerts
 
 import json
@@ -31,6 +32,29 @@ class NbacScheduleProcessor(ProcessorBase):
         # Tracking counters
         self.games_processed = 0
         self.games_failed = 0
+        
+        # NEW: Source tracking
+        self.data_source = None  # Will be set from file path
+    
+    def detect_data_source(self, file_path: str) -> str:
+        """
+        Detect data source from GCS file path.
+        
+        Paths:
+        - nba-com/schedule/... = "api_stats" (API scraper)
+        - nba-com/schedule-cdn/... = "cdn_static" (CDN scraper)
+        
+        Returns:
+            "api_stats" or "cdn_static"
+        """
+        if '/schedule-cdn/' in file_path:
+            return "cdn_static"
+        elif '/schedule/' in file_path:
+            return "api_stats"
+        else:
+            # Default to api_stats for backwards compatibility
+            logging.warning(f"Could not detect source from path: {file_path}, defaulting to api_stats")
+            return "api_stats"
     
     def get_file_content(self, file_path: str) -> Dict:
         """Read and parse JSON file from GCS."""
@@ -58,7 +82,8 @@ class NbacScheduleProcessor(ProcessorBase):
                         details={
                             'file_path': file_path,
                             'bucket': bucket_name,
-                            'blob_name': blob_name
+                            'blob_name': blob_name,
+                            'data_source': self.data_source
                         },
                         processor_name="NBA.com Schedule Processor"
                     )
@@ -81,7 +106,8 @@ class NbacScheduleProcessor(ProcessorBase):
                     message=f"Failed to parse schedule JSON file: {str(e)}",
                     details={
                         'file_path': file_path,
-                        'error_type': 'JSONDecodeError'
+                        'error_type': 'JSONDecodeError',
+                        'data_source': self.data_source
                     },
                     processor_name="NBA.com Schedule Processor"
                 )
@@ -100,7 +126,8 @@ class NbacScheduleProcessor(ProcessorBase):
                     message=f"Failed to read schedule file from GCS: {str(e)}",
                     details={
                         'file_path': file_path,
-                        'error_type': type(e).__name__
+                        'error_type': type(e).__name__,
+                        'data_source': self.data_source
                     },
                     processor_name="NBA.com Schedule Processor"
                 )
@@ -232,7 +259,8 @@ class NbacScheduleProcessor(ProcessorBase):
                             'season': data.get('season'),
                             'has_season': 'season' in data,
                             'has_game_count': 'game_count' in data,
-                            'game_count_value': data.get('game_count')
+                            'game_count_value': data.get('game_count'),
+                            'data_source': self.data_source
                         }
                     )
                 except Exception as notify_ex:
@@ -259,7 +287,8 @@ class NbacScheduleProcessor(ProcessorBase):
                             'expected_count': expected_count,
                             'actual_count': actual_count,
                             'difference': abs(expected_count - actual_count),
-                            'season': data.get('season')
+                            'season': data.get('season'),
+                            'data_source': self.data_source
                         }
                     )
                 except Exception as notify_ex:
@@ -274,7 +303,8 @@ class NbacScheduleProcessor(ProcessorBase):
                     details={
                         'errors': errors[:5],  # First 5 errors
                         'total_errors': len(errors),
-                        'season': data.get('season')
+                        'season': data.get('season'),
+                        'data_source': self.data_source
                     }
                 )
             except Exception as notify_ex:
@@ -332,6 +362,9 @@ class NbacScheduleProcessor(ProcessorBase):
             scrape_timestamp = self.extract_scrape_timestamp(raw_data)
             season = raw_data.get('season', '')
             season_nba_format = raw_data.get('season_nba_format', '')
+            
+            # NEW: Current timestamp for source tracking
+            current_timestamp = datetime.utcnow()
             
             total_games = len(raw_data.get('games', []))
             business_relevant_games = 0
@@ -410,11 +443,15 @@ class NbacScheduleProcessor(ProcessorBase):
                         'away_team_score': away_score,
                         'winning_team_tricode': winning_team,
                         
+                        # NEW: Source tracking fields
+                        'data_source': self.data_source,
+                        'source_updated_at': current_timestamp.isoformat(),
+                        
                         # Standard metadata
                         'source_file_path': file_path,
                         'scrape_timestamp': scrape_timestamp.isoformat() if scrape_timestamp else None,
-                        'created_at': datetime.utcnow().isoformat(),
-                        'processed_at': datetime.utcnow().isoformat()
+                        'created_at': current_timestamp.isoformat(),
+                        'processed_at': current_timestamp.isoformat()
                     }
                     rows.append(row)
                     self.games_processed += 1
@@ -432,7 +469,8 @@ class NbacScheduleProcessor(ProcessorBase):
                                 details={
                                     'game_id': game.get('gameId', 'unknown'),
                                     'error_type': type(e).__name__,
-                                    'season': season
+                                    'season': season,
+                                    'data_source': self.data_source
                                 },
                                 processor_name="NBA.com Schedule Processor"
                             )
@@ -453,7 +491,8 @@ class NbacScheduleProcessor(ProcessorBase):
                                 'games_failed': self.games_failed,
                                 'games_processed': self.games_processed,
                                 'failure_rate': f"{failure_rate:.1%}",
-                                'season': season
+                                'season': season,
+                                'data_source': self.data_source
                             }
                         )
                     except Exception as notify_ex:
@@ -478,7 +517,8 @@ class NbacScheduleProcessor(ProcessorBase):
                         'file_path': file_path,
                         'error_type': type(e).__name__,
                         'games_processed': self.games_processed,
-                        'games_failed': self.games_failed
+                        'games_failed': self.games_failed,
+                        'data_source': self.data_source
                     },
                     processor_name="NBA.com Schedule Processor"
                 )
@@ -528,7 +568,8 @@ class NbacScheduleProcessor(ProcessorBase):
                                     'season_year': season_year,
                                     'date_range': f"{start_date} to {end_date}",
                                     'table_id': table_id,
-                                    'error_type': type(e).__name__
+                                    'error_type': type(e).__name__,
+                                    'data_source': self.data_source
                                 },
                                 processor_name="NBA.com Schedule Processor"
                             )
@@ -553,14 +594,15 @@ class NbacScheduleProcessor(ProcessorBase):
                             'rows_attempted': len(rows),
                             'error_count': len(result),
                             'errors': str(result)[:500],
-                            'season': rows[0].get('season') if rows else None
+                            'season': rows[0].get('season') if rows else None,
+                            'data_source': self.data_source
                         },
                         processor_name="NBA.com Schedule Processor"
                     )
                 except Exception as notify_ex:
                     logging.warning(f"Failed to send notification: {notify_ex}")
             else:
-                logging.info(f"Successfully inserted {len(rows)} rows to {self.table_name}")
+                logging.info(f"Successfully inserted {len(rows)} rows to {self.table_name} (source: {self.data_source})")
                 
         except Exception as e:
             error_msg = str(e)
@@ -576,7 +618,8 @@ class NbacScheduleProcessor(ProcessorBase):
                         'table_id': table_id,
                         'rows_attempted': len(rows),
                         'error_type': type(e).__name__,
-                        'season': rows[0].get('season') if rows else None
+                        'season': rows[0].get('season') if rows else None,
+                        'data_source': self.data_source
                     },
                     processor_name="NBA.com Schedule Processor"
                 )
@@ -588,7 +631,9 @@ class NbacScheduleProcessor(ProcessorBase):
     def process_file(self, file_path: str, **kwargs) -> Dict:
         """Process a single file - CRITICAL method for backfill integration."""
         try:
-            logging.info(f"Processing file: {file_path}")
+            # NEW: Detect data source from file path
+            self.data_source = self.detect_data_source(file_path)
+            logging.info(f"Processing file: {file_path} (source: {self.data_source})")
             
             # Get and validate data
             raw_data = self.get_file_content(file_path)
@@ -600,7 +645,8 @@ class NbacScheduleProcessor(ProcessorBase):
                     'file_path': file_path,
                     'status': 'validation_failed',
                     'errors': validation_errors,
-                    'rows_processed': 0
+                    'rows_processed': 0,
+                    'data_source': self.data_source
                 }
             
             # Transform and load
@@ -612,18 +658,19 @@ class NbacScheduleProcessor(ProcessorBase):
                 logging.warning(f"{status.title()}: {len(result['errors'])} errors for {file_path}")
             else:
                 status = 'success'
-                logging.info(f"Successfully processed {file_path}: {result['rows_processed']} rows")
+                logging.info(f"Successfully processed {file_path}: {result['rows_processed']} rows from {self.data_source}")
                 
                 # Send success notification
                 try:
                     notify_info(
                         title="Schedule Processing Complete",
-                        message=f"Successfully processed {result['rows_processed']} schedule games",
+                        message=f"Successfully processed {result['rows_processed']} schedule games from {self.data_source}",
                         details={
                             'file_path': file_path,
                             'rows_processed': result['rows_processed'],
                             'games_failed': self.games_failed,
-                            'season': rows[0].get('season') if rows else None
+                            'season': rows[0].get('season') if rows else None,
+                            'data_source': self.data_source
                         }
                     )
                 except Exception as notify_ex:
@@ -633,7 +680,8 @@ class NbacScheduleProcessor(ProcessorBase):
                 'file_path': file_path,
                 'status': status,
                 'rows_processed': result.get('rows_processed', 0),
-                'errors': result.get('errors', [])
+                'errors': result.get('errors', []),
+                'data_source': self.data_source
             }
             
         except Exception as e:
@@ -647,7 +695,8 @@ class NbacScheduleProcessor(ProcessorBase):
                     message=f"Error processing schedule file: {error_msg}",
                     details={
                         'file_path': file_path,
-                        'error_type': type(e).__name__
+                        'error_type': type(e).__name__,
+                        'data_source': self.data_source
                     },
                     processor_name="NBA.com Schedule Processor"
                 )
@@ -658,5 +707,6 @@ class NbacScheduleProcessor(ProcessorBase):
                 'file_path': file_path,
                 'status': 'error',
                 'error': error_msg,
-                'rows_processed': 0
+                'rows_processed': 0,
+                'data_source': self.data_source if hasattr(self, 'data_source') else None
             }

@@ -2,6 +2,8 @@
 # File: data_processors/raw/espn/espn_scoreboard_processor.py
 # Description: Processor for ESPN scoreboard data transformation
 # UPDATED: Production-safe with staging table + batch loading (no streaming buffer)
+# UPDATED: Schedule Service integration to filter All-Star games automatically
+# UPDATED: Filter postponed/canceled games (these never happened)
 # FIXED: Handles 0-game days gracefully (All-Star Weekend, off-days)
 
 import json
@@ -17,6 +19,8 @@ from shared.utils.notification_system import (
     notify_warning,
     notify_info
 )
+# Import Schedule Service for All-Star game filtering
+from shared.utils.schedule import NBAScheduleService, GameType
 
 class EspnScoreboardProcessor(ProcessorBase):
     def __init__(self):
@@ -27,6 +31,9 @@ class EspnScoreboardProcessor(ProcessorBase):
         # Initialize BigQuery client and project_id
         self.bq_client = bigquery.Client()
         self.project_id = os.environ.get('GCP_PROJECT_ID', self.bq_client.project)
+        
+        # Initialize Schedule Service (use database for speed in processor)
+        self.schedule = NBAScheduleService(use_database=True)
         
         # ESPN team abbreviation mapping to standard NBA codes
         self.team_mapping = {
@@ -40,12 +47,94 @@ class EspnScoreboardProcessor(ProcessorBase):
             'OKC': 'OKC', 'ORL': 'ORL', 'PHI': 'PHI', 'PHX': 'PHX',
             'POR': 'POR', 'SA': 'SAS',  # ESPN uses SA
             'SAC': 'SAC', 'TOR': 'TOR', 'UTAH': 'UTA',  # ESPN uses UTAH
-            'WSH': 'WAS'  # FIXED: ESPN uses WSH
+            'WSH': 'WAS'  # ESPN uses WSH
+        }
+        
+        # Known special event codes (for quick rejection)
+        # Schedule Service handles the actual filtering, this is just for logging
+        self.known_special_event_codes = {
+            # All-Star Games
+            'EAST', 'WEST',
+            
+            # Rising Stars Challenge (various years)
+            'CHK', 'SHQ', 'KEN', 'CAN', 'DUR', 'LEB', 'GIA',
+        }
+        
+        # International teams (these are VALID - preseason games)
+        self.international_teams = {
+            'ADL',   # Adelaide 36ers (Australia)
+            'MRC',   # Morocco team (Africa Game)
+            'NZL',   # New Zealand Breakers
+            'REAL',  # Real Madrid
+            'CNS',   # China team
+            'FLMG',  # Flamingos Mexico
+        }
+        
+        # Game statuses to filter (these games never happened)
+        self.filtered_statuses = {
+            'postponed',
+            'canceled',
+            'cancelled',  # Handle both spellings
         }
     
     def map_team_abbreviation(self, espn_abbr: str) -> str:
         """Map ESPN team abbreviations to standard NBA codes."""
         return self.team_mapping.get(espn_abbr, espn_abbr)
+    
+    def should_include_game(self, game_date: date, away_team: str, home_team: str) -> tuple[bool, str]:
+        """
+        Check if game should be included using Schedule Service validation.
+        
+        This automatically filters:
+        - All-Star games (EAST vs WEST)
+        - Rising Stars Challenge (CHK, SHQ, KEN, CAN, etc.)
+        - All-Star Saturday events
+        - Any other special events not in official schedule
+        
+        Args:
+            game_date: Date of the game
+            away_team: Away team NBA code
+            home_team: Home team NBA code
+            
+        Returns:
+            (should_include: bool, reason: str)
+        """
+        # Quick check: If either team code is in known special events, reject immediately
+        if away_team in self.known_special_event_codes or home_team in self.known_special_event_codes:
+            return False, f"Special event game (All-Star Weekend): {away_team} @ {home_team}"
+        
+        # Validate against NBA schedule (excludes All-Star games automatically)
+        # Note: Schedule Service uses GameType.REGULAR_PLAYOFF which excludes All-Star
+        try:
+            games_on_date = self.schedule.get_games_for_date(
+                game_date.isoformat(),
+                game_type=GameType.REGULAR_PLAYOFF  # Excludes All-Star games
+            )
+        except Exception as e:
+            logging.warning(f"Could not validate against schedule for {game_date}: {e}")
+            # If schedule service fails, fall back to allowing the game
+            # (better to have extra data than missing data)
+            return True, f"Schedule validation failed, allowing game: {away_team} @ {home_team}"
+        
+        # Check if this matchup exists in the official schedule
+        matchup = f"{away_team}@{home_team}"
+        for scheduled_game in games_on_date:
+            if scheduled_game.matchup == matchup:
+                # Found in official schedule - include it
+                return True, "Valid game in official schedule"
+        
+        # Not in schedule - could be:
+        # 1. All-Star game (filtered by GameType.REGULAR_PLAYOFF)
+        # 2. International preseason game (valid but not in schedule)
+        # 3. Data error
+        
+        # Check if it's an international preseason game (these are valid)
+        if away_team in self.international_teams or home_team in self.international_teams:
+            # International preseason games are valid but not in schedule
+            return True, f"International preseason game: {away_team} @ {home_team}"
+        
+        # Not in schedule and not international - filter it out
+        return False, f"Game not in official schedule: {away_team} @ {home_team} on {game_date}"
     
     def extract_game_date_from_path(self, file_path: str) -> Optional[date]:
         """Extract game date from ESPN scoreboard file path."""
@@ -127,8 +216,9 @@ class EspnScoreboardProcessor(ProcessorBase):
         scrape_timestamp = raw_data.get('timestamp')
         games_in_file = len(raw_data.get('games', []))
         skipped_games = 0
+        filtered_games = 0  # Track filtered special events and postponed games
         
-        # FIXED: Handle 0-game days (All-Star Weekend, off-days)
+        # Handle 0-game days (All-Star Weekend, off-days)
         if games_in_file == 0:
             logging.info(f"ESPN data has 0 games for {game_date} (All-Star or off-day)")
             return rows  # Return empty list - this is VALID, not an error
@@ -159,12 +249,33 @@ class EspnScoreboardProcessor(ProcessorBase):
                     skipped_games += 1
                     continue
                 
-                # Construct standardized game_id
-                game_id = self.construct_game_id(game_date, away_team['team_abbr'], home_team['team_abbr'])
-                
                 # Parse game status
                 game_status = game.get('status', '').lower()
                 is_completed = game_status == 'final' or game.get('state') == 'post'
+                
+                # NEW: Filter postponed/canceled games (these never happened)
+                if game_status in self.filtered_statuses:
+                    logging.info(
+                        f"Filtering {game_status} game: {away_team['espn_abbr']} @ {home_team['espn_abbr']} "
+                        f"on {game_date} (game never happened)"
+                    )
+                    filtered_games += 1
+                    continue
+                
+                # Check if game should be included (filters All-Star automatically)
+                should_include, reason = self.should_include_game(
+                    game_date, 
+                    away_team['team_abbr'], 
+                    home_team['team_abbr']
+                )
+                
+                if not should_include:
+                    logging.info(f"Filtering game: {reason}")
+                    filtered_games += 1
+                    continue
+                
+                # Construct standardized game_id
+                game_id = self.construct_game_id(game_date, away_team['team_abbr'], home_team['team_abbr'])
                 
                 # Parse start time
                 start_time = None
@@ -222,7 +333,17 @@ class EspnScoreboardProcessor(ProcessorBase):
                 skipped_games += 1
                 continue
         
-        # Send warning if significant games were skipped
+        # Log summary including filtered games
+        logging.info(
+            f"Transformed {len(rows)} games from ESPN scoreboard data "
+            f"(filtered {filtered_games} special events/postponed, skipped {skipped_games} errors)"
+        )
+        
+        # Info notification if games were filtered (normal behavior)
+        if filtered_games > 0:
+            logging.info(f"Filtered {filtered_games} All-Star/postponed/canceled games - this is expected")
+        
+        # Send warning if significant games were skipped due to errors
         if skipped_games > 0 and skipped_games >= games_in_file * 0.3:  # 30% threshold
             try:
                 notify_warning(
@@ -231,6 +352,7 @@ class EspnScoreboardProcessor(ProcessorBase):
                     details={
                         'games_total': games_in_file,
                         'games_skipped': skipped_games,
+                        'games_filtered': filtered_games,
                         'games_processed': len(rows),
                         'skip_rate': f"{(skipped_games/games_in_file)*100:.1f}%",
                         'game_date': game_date.isoformat(),
@@ -240,7 +362,6 @@ class EspnScoreboardProcessor(ProcessorBase):
             except Exception as e:
                 logging.warning(f"Failed to send notification: {e}")
         
-        logging.info(f"Transformed {len(rows)} games from ESPN scoreboard data")
         return rows
     
     def load_data(self, rows: List[Dict], **kwargs) -> Dict:
@@ -255,9 +376,9 @@ class EspnScoreboardProcessor(ProcessorBase):
         - Atomic MERGE operation
         - Graceful failure handling
         """
-        # FIXED: 0 rows is valid (not an error)
+        # 0 rows is valid (not an error)
         if not rows:
-            logging.info("No games to load (valid for All-Star Weekend or off-days)")
+            logging.info("No games to load (valid for All-Star Weekend, off-days, or filtered games)")
             return {
                 'rows_processed': 0,
                 'rows_affected': 0,
@@ -456,7 +577,7 @@ class EspnScoreboardProcessor(ProcessorBase):
                 'rows_affected': load_result.get('rows_affected', 0),
                 'errors': errors + load_result.get('errors', []),
                 'skipped_due_to_streaming_buffer': load_result.get('skipped_due_to_streaming_buffer', False),
-                'zero_games_valid': load_result.get('zero_games_valid', False)  # NEW: Flag valid 0-game days
+                'zero_games_valid': load_result.get('zero_games_valid', False)
             }
             
         except json.JSONDecodeError as e:

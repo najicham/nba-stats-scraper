@@ -1,19 +1,7 @@
 -- ============================================================================
 -- File: validation/queries/raw/nbac_schedule/verify_playoff_completeness.sql
 -- Purpose: Verify playoff structure and game counts make sense
--- Usage: Run after season ends or during playoffs to validate data
--- ============================================================================
--- Instructions:
---   1. Update date range for the playoff period you're checking
---   2. Run the query - it validates bracket structure and game counts
---   3. Playoff games vary by team (4-28 games depending on playoff run)
--- ============================================================================
--- Expected Results:
---   - 16 teams in first round (8 per conference)
---   - 8 teams in conference semis (4 per conference)
---   - 4 teams in conference finals (2 per conference)
---   - 2 teams in NBA Finals
---   - Game counts should be 4-7 per series
+-- Status: FIXED - Removed trailing UNION ALL causing syntax error
 -- ============================================================================
 
 WITH
@@ -29,23 +17,23 @@ playoff_games AS (
     playoff_round,
     CONCAT(away_team_tricode, ' @ ', home_team_tricode) as matchup
   FROM `nba-props-platform.nba_raw.nbac_schedule`
-  WHERE game_date BETWEEN '2024-04-19' AND '2024-06-20'  -- UPDATE: Playoff period
+  WHERE game_date BETWEEN '2023-04-15' AND '2024-06-20'  -- UPDATE: Latest complete playoff period
     AND is_playoffs = TRUE
-    AND game_date >= '2024-04-19'  -- Partition filter
+    AND game_date >= '2023-04-15'  -- Partition filter
 ),
 
 -- Expand to team-round combinations
 team_playoff_rounds AS (
-  SELECT 
-    home_team_tricode as team, 
+  SELECT
+    home_team_tricode as team,
     home_team_name as team_name,
-    playoff_round, 
+    playoff_round,
     game_id
   FROM playoff_games
-  
+
   UNION ALL
-  
-  SELECT 
+
+  SELECT
     away_team_tricode as team,
     away_team_name as team_name,
     playoff_round,
@@ -119,8 +107,8 @@ team_validation AS (
     t.team,
     t.team_name,
     COUNT(DISTINCT t.playoff_round) as rounds_played,
-    STRING_AGG(t.round_display ORDER BY 
-      CASE t.playoff_round 
+    STRING_AGG(t.round_display ORDER BY
+      CASE t.playoff_round
         WHEN 'first_round' THEN 1
         WHEN 'conference_semis' THEN 2
         WHEN 'conference_finals' THEN 3
@@ -157,7 +145,7 @@ SELECT
   CONCAT('Avg: ', CAST(avg_games AS STRING)) as detail4,
   status
 FROM round_validation
-ORDER BY 
+ORDER BY
   CASE section
     WHEN '=== PLAYOFF STRUCTURE ===' THEN 0
     WHEN 'First Round' THEN 1

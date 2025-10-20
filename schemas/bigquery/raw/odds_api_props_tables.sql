@@ -3,7 +3,6 @@
 -- BigQuery schema for Odds API player props data
 -- Tracks player prop lines and odds over time with snapshots
 
--- Create the main props table
 CREATE TABLE IF NOT EXISTS `nba_raw.odds_api_player_points_props` (
   -- Game identifiers
   game_id STRING NOT NULL,           -- "20231024_LAL_DEN"
@@ -36,15 +35,58 @@ CREATE TABLE IF NOT EXISTS `nba_raw.odds_api_player_points_props` (
   -- Metadata
   bookmaker_last_update TIMESTAMP,        -- From API response
   source_file_path STRING,                -- Full GCS path
+  data_source STRING,                     -- 'current' | 'historical' | 'backfill' | 'manual' | NULL (legacy)
   processing_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
 )
 PARTITION BY game_date
 CLUSTER BY player_lookup, game_date, bookmaker
 OPTIONS(
-  description = "Player points prop odds from The Odds API with historical snapshots",
+  description = "Player points prop odds from The Odds API with historical snapshots. data_source indicates collection method: 'current' (live scraper), 'historical' (backfill endpoint), 'backfill' (manual), 'manual' (corrections), or NULL (legacy).",
   labels = [("source", "odds_api"), ("type", "props"), ("sport", "nba")]
 );
 
+-- Helpful views for player props
+CREATE OR REPLACE VIEW `nba_raw.odds_api_player_points_props_recent` AS
+SELECT *
+FROM `nba_raw.odds_api_player_points_props`
+WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY);
+
+CREATE OR REPLACE VIEW `nba_raw.odds_api_player_points_props_latest_by_player` AS
+WITH ranked_snapshots AS (
+  SELECT *,
+    ROW_NUMBER() OVER (
+      PARTITION BY game_id, player_lookup, bookmaker
+      ORDER BY snapshot_timestamp DESC
+    ) as rn
+  FROM `nba_raw.odds_api_player_points_props`
+  WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+)
+SELECT * EXCEPT(rn)
+FROM ranked_snapshots 
+WHERE rn = 1;
+
+-- View for data source analysis
+CREATE OR REPLACE VIEW `nba_raw.odds_api_player_points_props_source_stats` AS
+SELECT 
+  game_date,
+  data_source,
+  COUNT(*) as row_count,
+  COUNT(DISTINCT game_id) as unique_games,
+  COUNT(DISTINCT player_lookup) as unique_players,
+  COUNT(DISTINCT bookmaker) as unique_bookmakers,
+  MIN(snapshot_timestamp) as earliest_snapshot,
+  MAX(snapshot_timestamp) as latest_snapshot,
+  AVG(minutes_before_tipoff) as avg_minutes_before_tipoff
+FROM `nba_raw.odds_api_player_points_props`
+WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY)
+GROUP BY game_date, data_source
+ORDER BY game_date DESC, data_source;
+
+-- View for live-only data
+CREATE OR REPLACE VIEW `nba_raw.odds_api_player_points_props_live_only` AS
+SELECT *
+FROM `nba_raw.odds_api_player_points_props`
+WHERE data_source = 'current' OR data_source IS NULL;
 -- Create view for latest props per game
 CREATE OR REPLACE VIEW `nba_raw.odds_api_latest_props` AS
 WITH latest_snapshots AS (

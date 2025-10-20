@@ -38,13 +38,14 @@ CREATE TABLE IF NOT EXISTS `nba_raw.odds_api_game_lines` (
   
   -- Processing metadata
   source_file_path STRING NOT NULL,
+  data_source STRING,  -- 'current' | 'historical' | 'backfill' | 'manual' | NULL (legacy)
   created_at TIMESTAMP NOT NULL,
   processed_at TIMESTAMP NOT NULL
 )
 PARTITION BY game_date
 CLUSTER BY game_id, bookmaker_key, market_key, snapshot_timestamp
 OPTIONS (
-  description = "Historical snapshots of NBA game lines (spreads and totals) from various sportsbooks via Odds API",
+  description = "Historical snapshots of NBA game lines (spreads and totals) from various sportsbooks via Odds API. data_source indicates collection method: 'current' (live scraper), 'historical' (backfill endpoint), 'backfill' (manual), 'manual' (corrections), or NULL (legacy).",
   require_partition_filter = true
 );
 
@@ -67,3 +68,26 @@ WITH ranked_snapshots AS (
 SELECT * EXCEPT(rn)
 FROM ranked_snapshots 
 WHERE rn = 1;
+
+-- View for data source analysis
+CREATE OR REPLACE VIEW `nba_raw.odds_api_game_lines_source_stats` AS
+SELECT 
+  game_date,
+  data_source,
+  COUNT(*) as row_count,
+  COUNT(DISTINCT game_id) as unique_games,
+  COUNT(DISTINCT bookmaker_key) as unique_bookmakers,
+  MIN(snapshot_timestamp) as earliest_snapshot,
+  MAX(snapshot_timestamp) as latest_snapshot,
+  COUNTIF(previous_snapshot_timestamp IS NOT NULL) as has_previous_link,
+  COUNTIF(next_snapshot_timestamp IS NOT NULL) as has_next_link
+FROM `nba_raw.odds_api_game_lines`
+WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY)
+GROUP BY game_date, data_source
+ORDER BY game_date DESC, data_source;
+
+-- View for live-only data (excluding historical backfills)
+CREATE OR REPLACE VIEW `nba_raw.odds_api_game_lines_live_only` AS
+SELECT *
+FROM `nba_raw.odds_api_game_lines`
+WHERE data_source = 'current' OR data_source IS NULL;

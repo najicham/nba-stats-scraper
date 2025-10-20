@@ -70,12 +70,35 @@ logger = logging.getLogger("scraper_base")
 
 # ESPN Team ID Mapping (abbreviation -> numeric ID)
 ESPN_TEAM_IDS = {
+    # ESPN Code: Team ID
     "ATL": 1,   "BOS": 2,   "BKN": 17,  "CHA": 30,  "CHI": 4,
-    "CLE": 5,   "DAL": 6,   "DEN": 7,   "DET": 8,   "GSW": 9,
+    "CLE": 5,   "DAL": 6,   "DEN": 7,   "DET": 8,   
+    "GS": 9,    # ✅ ESPN code (was GSW)
     "HOU": 10,  "IND": 11,  "LAC": 12,  "LAL": 13,  "MEM": 29,
-    "MIA": 14,  "MIL": 15,  "MIN": 16,  "NOP": 3,   "NYK": 18,
+    "MIA": 14,  "MIL": 15,  "MIN": 16,  
+    "NO": 3,    # ✅ ESPN code (was NOP)
+    "NY": 18,   # ✅ ESPN code (was NYK)
     "OKC": 25,  "ORL": 19,  "PHI": 20,  "PHX": 21,  "POR": 22,
-    "SAC": 23,  "SAS": 24,  "TOR": 28,  "UTA": 26,  "WAS": 27
+    "SAC": 23,  
+    "SA": 24,   # ✅ ESPN code (was SAS)
+    "TOR": 28,  
+    "UTAH": 26, # ✅ ESPN code (was UTA)
+    "WAS": 27
+}
+
+ESPN_TO_NBA_TRICODE = {
+    # ESPN codes that differ from NBA.com standard
+    "GS": "GSW",
+    "NY": "NYK",
+    "NO": "NOP",
+    "SA": "SAS",
+    "UTAH": "UTA",
+    # All others are the same, but include them for completeness
+    "ATL": "ATL", "BOS": "BOS", "BKN": "BKN", "CHA": "CHA", "CHI": "CHI",
+    "CLE": "CLE", "DAL": "DAL", "DEN": "DEN", "DET": "DET", "HOU": "HOU",
+    "IND": "IND", "LAC": "LAC", "LAL": "LAL", "MEM": "MEM", "MIA": "MIA",
+    "MIL": "MIL", "MIN": "MIN", "OKC": "OKC", "ORL": "ORL", "PHI": "PHI",
+    "PHX": "PHX", "POR": "POR", "SAC": "SAC", "TOR": "TOR", "WAS": "WAS"
 }
 
 
@@ -271,28 +294,36 @@ class GetEspnTeamRosterAPI(ScraperBase, ScraperFlaskMixin):
                 }
             )
 
-        # Get the ESPN team ID for reference
-        team_id = ESPN_TEAM_IDS.get(self.opts["team_abbr"])
+        # Get ESPN team code from opts
+        espn_team_abbr = self.opts["team_abbr"]  # e.g., "GS"
+        
+        # Convert to NBA.com standard code
+        nba_team_abbr = ESPN_TO_NBA_TRICODE.get(espn_team_abbr, espn_team_abbr)  # e.g., "GSW"
+        
+        # Get ESPN team ID for API call
+        team_id = ESPN_TEAM_IDS.get(espn_team_abbr)
 
         self.data = {
-            "team_abbr": self.opts["team_abbr"],
+            "team_abbr": nba_team_abbr,           # ✅ Store NBA.com code
+            "espn_team_abbr": espn_team_abbr,     # 📝 Optional: keep original for reference
             "espn_team_id": team_id,
             "teamName": team_obj.get("displayName"),
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "playerCount": len(players),
             "players": players,
         }
-        logger.info("Parsed %d players for %s (ESPN ID: %s)", 
-                   len(players), self.opts["team_abbr"], team_id)
+        logger.info("Parsed %d players for %s (ESPN: %s, NBA.com: %s, ESPN ID: %s)",
+                len(players), espn_team_abbr, nba_team_abbr, team_id)
 
-        # Send success notification
+        # Update success notification
         try:
             notify_info(
                 title="ESPN Roster API Scraped Successfully",
-                message=f"Successfully scraped {len(players)} players for {self.opts['team_abbr']}",
+                message=f"Successfully scraped {len(players)} players for {nba_team_abbr}",
                 details={
                     'scraper': 'espn_roster_api',
-                    'team_abbr': self.opts['team_abbr'],
+                    'espn_team_abbr': espn_team_abbr,
+                    'nba_team_abbr': nba_team_abbr,
                     'espn_team_id': team_id,
                     'team_name': team_obj.get("displayName"),
                     'player_count': len(players)
@@ -300,6 +331,39 @@ class GetEspnTeamRosterAPI(ScraperBase, ScraperFlaskMixin):
             )
         except Exception as notify_ex:
             logger.warning(f"Failed to send notification: {notify_ex}")
+
+    def resolve_url(self) -> None:
+        espn_team_abbr = self.opts['team_abbr']
+        team_id = ESPN_TEAM_IDS.get(espn_team_abbr)
+
+        if not team_id:
+            error_msg = f"Unknown ESPN team abbreviation: {espn_team_abbr}"
+            
+            # Send error notification
+            try:
+                notify_error(
+                    title="ESPN Roster API: Invalid Team",
+                    message=f"Unknown ESPN team abbreviation '{espn_team_abbr}'",
+                    details={
+                        'scraper': 'espn_roster_api',
+                        'espn_team_abbr': espn_team_abbr,
+                        'valid_espn_abbreviations': sorted(ESPN_TEAM_IDS.keys()),
+                        'error': error_msg
+                    },
+                    processor_name="ESPN Roster API Scraper"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+
+            raise ValueError(f"{error_msg}. "
+                        f"Valid ESPN abbreviations: {', '.join(sorted(ESPN_TEAM_IDS.keys()))}")
+
+        nba_team_abbr = ESPN_TO_NBA_TRICODE.get(espn_team_abbr, espn_team_abbr)
+        base = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams"
+        self.url = f"{base}/{team_id}?enable=roster"
+        logger.info("Resolved ESPN roster API URL for %s (ESPN: %s, NBA.com: %s, teamId %s): %s", 
+                espn_team_abbr, nba_team_abbr, team_id, self.url)
+
 
     # ------------------------------------------------------------------ #
     # Stats

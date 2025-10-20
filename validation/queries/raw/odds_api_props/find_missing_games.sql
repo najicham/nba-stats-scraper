@@ -14,7 +14,7 @@
 -- ============================================================================
 
 WITH
--- Get all games from schedule
+-- Get all games from schedule (excluding All-Star and preseason)
 all_scheduled_games AS (
   SELECT DISTINCT
     s.game_date,
@@ -26,7 +26,9 @@ all_scheduled_games AS (
     s.is_playoffs,
     CONCAT(s.away_team_tricode, ' @ ', s.home_team_tricode) as matchup
   FROM `nba-props-platform.nba_raw.nbac_schedule` s
-  WHERE s.game_date BETWEEN '2023-10-24' AND '2024-06-20'  -- UPDATE: Season range
+  WHERE s.game_date BETWEEN '2023-05-03' AND '2025-06-30'  -- Full date range (May 2023 - end of 2024-25)
+    AND s.is_all_star = FALSE  -- Exclude All-Star games
+    AND (s.is_regular_season = TRUE OR s.is_playoffs = TRUE)  -- Only regular season and playoffs
 ),
 
 -- Get all games we have props for
@@ -39,7 +41,7 @@ props_games AS (
     COUNT(DISTINCT player_lookup) as player_count,
     COUNT(DISTINCT bookmaker) as bookmaker_count
   FROM `nba-props-platform.nba_raw.odds_api_player_points_props`
-  WHERE game_date BETWEEN '2023-10-24' AND '2024-06-20'  -- UPDATE: Match schedule range
+  WHERE game_date BETWEEN '2023-05-03' AND '2025-06-30'  -- Match schedule range
   GROUP BY game_date, game_id, home_team_abbr, away_team_abbr
 )
 

@@ -1,7 +1,7 @@
 -- ============================================================================
 -- PROCESSING TABLES (Monitoring & Data Quality Tracking)
 -- ============================================================================
--- Location: nba-stats-scraper/schemas/bigquery/analytics/processing_tables.sql
+-- Location: nba-stats-scraper/schemas/bigquery/processing/processing_tables.sql
 -- Purpose: Analytics processor execution logs, performance tracking, and data quality monitoring
 
 -- Analytics processor execution logs and performance tracking

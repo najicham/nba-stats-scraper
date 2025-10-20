@@ -1,306 +1,516 @@
-# NBA.com Player Boxscores Validation Queries
+# NBA.com Player Boxscore Pipeline
 
-**Status:** ✅ Production Deployed (Awaiting Season Data)  
-**Processor:** NbacPlayerBoxscoreProcessor  
-**Table:** `nba-props-platform.nba_raw.nbac_player_boxscores`  
-**Pattern:** Pattern 3 (Game-Based Single Event) - Similar to BDL Boxscores
+Complete pipeline for scraping and processing NBA.com player boxscore data (via `leaguegamelog` API).
 
-## ⚠️ Important: Table is Currently Empty
-
-This validation suite is **production-ready** and waiting for NBA season data. The processor is deployed and validated, but the scraper only runs during actual NBA games. All queries are designed to:
-- Handle empty table gracefully (no errors)
-- Work immediately once season starts
-- Provide "no data yet" messaging
-
-## Overview
-
-NBA.com Player Boxscores provide **official NBA statistics** for all active players in each game. This is the authoritative source of truth for player performance data and serves as the primary validation source for other box score data (BDL, ESPN).
-
-### Key Features
-
-**Official NBA Data:**
-- Authoritative `nba_player_id` for cross-source linking
-- Enhanced metrics (True Shooting %, Usage Rate, etc.) - *coming soon*
-- Quarter-by-quarter breakdowns - *coming soon*
-- Plus/minus ratings
-- Flagrant and technical foul tracking
-
-**Active Players Only:**
-- ~30-35 players per game
-- No DNP (Did Not Play) records
-- No inactive players
-- Starter flag for rotation analysis
-
-**Critical Cross-Validation:**
-- Primary comparison source: Ball Don't Lie (BDL) boxscores
-- Should match BDL stats closely (points, rebounds, assists)
-- NBA.com is source of truth when discrepancies exist
-
-## Data Characteristics
-
-### Expected Metrics (Once Data Arrives)
-
-| Metric | Expected Value |
-|--------|----------------|
-| **Games per season** | ~1,230 (regular season) + ~250 (playoffs) |
-| **Players per game** | ~30-35 active players |
-| **Starters per game** | ~10 (5 per team) |
-| **Coverage vs BDL** | Should match 95%+ of games |
-| **Core stats accuracy** | 99%+ match with BDL points/assists/rebounds |
-
-### Key Differences from BDL
-
-| Feature | NBA.com | BDL |
-|---------|---------|-----|
-| **Source** | Official NBA | Third-party API |
-| **Player ID** | `nba_player_id` (official) | `bdl_player_id` |
-| **Enhanced metrics** | TS%, Usage%, PIE (planned) | Basic stats only |
-| **Quarter breakdowns** | Q1-Q4, OT (planned) | Not available |
-| **Plus/minus** | ✅ Available | ❌ Not available |
-| **Flagrant/Technical fouls** | ✅ Available | ❌ Not available |
-| **Starter flag** | ✅ Available | ❌ Not available |
-
-## Validation Queries
-
-### 1. season_completeness_check.sql
-**Purpose:** Comprehensive season validation across all teams  
-**When to run:** After backfills, weekly during season  
-**What it checks:**
-- Game coverage by season/team
-- Player counts per game
-- Starter counts (should be ~10 per game)
-- Schedule join success
-- NBA player ID completeness
-
-**Expected output:**
-```
-DIAGNOSTICS row: Shows 0 for null values (good)
-TEAM rows: ~82 regular season games per team
-Status: "✅ Complete" when all checks pass
-```
-
-### 2. find_missing_games.sql
-**Purpose:** Identify specific games without player boxscore data  
-**When to run:** When completeness check shows missing games  
-**What it checks:**
-- Games in schedule but not in boxscores
-- Games with suspiciously low player counts (<20)
-- Direct game_id join (formats match!)
-
-**Key advantage:** NBA.com uses same game_id format as schedule (YYYYMMDD_AWAY_HOME)
-
-### 3. cross_validate_with_bdl.sql ⭐ **CRITICAL**
-**Purpose:** Compare NBA.com official stats against BDL  
-**When to run:** Daily/weekly during season  
-**What it checks:**
-- Points discrepancies (CRITICAL for props)
-- Assists/rebounds discrepancies
-- Field goals, three-pointers, free throws
-- Players in one source but not the other
-
-**Priority:**
-- 🔴 **CRITICAL:** Point discrepancies >2 points
-- ⚠️ **WARNING:** Any point discrepancy, major stat differences
-- ✅ **Match:** All stats within acceptable range
-
-**Important:** NBA.com is source of truth when discrepancies exist!
-
-### 4. daily_check_yesterday.sql
-**Purpose:** Morning validation that yesterday's games were captured  
-**When to run:** Daily at ~9 AM (after overnight processing)  
-**What it checks:**
-- All scheduled games have data
-- Player counts reasonable (~30-35 per game)
-- Starter counts normal (~10 per game)
-- Consistency with BDL
-
-**Alerting thresholds:**
-- ❌ CRITICAL: No data when games scheduled
-- ⚠️ WARNING: Missing games or unusual player/starter counts
-
-### 5. data_quality_checks.sql
-**Purpose:** Validate enhanced metrics and data quality  
-**When to run:** Weekly  
-**What it checks:**
-
-**Feature Availability:**
-- Enhanced metrics (TS%, Usage Rate, etc.) - *currently 0%, planned*
-- Quarter breakdowns - *currently 0%, planned*
-- Plus/minus availability
-- Technical/flagrant foul tracking
-
-**Quality Checks:**
-- NBA player ID completeness
-- Starter counts per game
-- Field goal percentage calculations
-- Data integrity
-
-### 6. verify_playoff_completeness.sql
-**Purpose:** Ensure all playoff games captured  
-**When to run:** After playoffs, or during playoffs weekly  
-**What it checks:**
-- Each playoff team has expected game count
-- Player counts reasonable
-- Starter counts normal
-- Consistency with BDL playoff data
-
-### 7. weekly_check_last_7_days.sql
-**Purpose:** Weekly trends and pattern detection  
-**When to run:** Monday mornings  
-**What it checks:**
-- Daily coverage for past week
-- Day-of-week patterns
-- Consistency with BDL across the week
-
-**Use cases:**
-- Spot recurring issues (e.g., Saturday games always missing)
-- Verify scraper runs consistently
-- Monitor week-over-week trends
-
-## CLI Usage
-
-```bash
-# Run all validation queries
-./validate-nbac-boxscores
-
-# Run specific query
-./validate-nbac-boxscores season-completeness
-./validate-nbac-boxscores cross-validate-bdl
-./validate-nbac-boxscores daily-check
-
-# CSV output (for analysis)
-./validate-nbac-boxscores season-completeness --csv > results.csv
-
-# BigQuery table output (for tracking)
-./validate-nbac-boxscores daily-check --table nba_processing.nbac_boxscore_validation
-```
-
-## Current Status & Timeline
-
-### Now (Pre-Season)
-- ✅ Processor deployed and validated
-- ✅ All validation queries created and tested
-- ⚪ Table empty (awaiting season start)
-- ⚪ All queries return "No data yet" messages
-
-### Season Start (Expected October 2024)
-- 🔄 Scraper begins collecting data
-- 🔄 First games processed
-- 🔄 Validation queries start reporting real results
-- 🔄 Daily monitoring begins
-
-### Expected Backfill Scope
-Once season starts and historical data becomes available:
-- **2024-25 season:** ~1,230 regular season + playoffs
-- **Historical seasons:** Potentially 2021-2025 (4 seasons)
-- **Total records:** ~165,000 player-game records (matching BDL)
-- **Processing time:** 90-120 minutes for full backfill
-
-## Enhanced Features Coming Soon
-
-Currently **NULL** but planned for future implementation:
-
-### Advanced Metrics
-- `true_shooting_pct` - True Shooting Percentage
-- `effective_fg_pct` - Effective Field Goal Percentage  
-- `usage_rate` - Usage Rate
-- `offensive_rating` - Offensive Rating
-- `defensive_rating` - Defensive Rating
-- `pace` - Pace
-- `pie` - Player Impact Estimate
-
-### Quarter Breakdowns
-- `points_q1` through `points_q4` - Quarter-by-quarter scoring
-- `points_ot` - Overtime points
-
-**Monitoring:** Run `data_quality_checks.sql` weekly to track when these features become available.
-
-## Cross-Source Validation Strategy
-
-### Primary Validation: NBA.com vs BDL
-
-**Both sources should show:**
-- Same games covered (95%+ overlap)
-- Same players per game (within 1-2 players)
-- Identical core stats (points, assists, rebounds)
-
-**When discrepancies occur:**
-1. NBA.com is official source of truth
-2. Document discrepancy in validation log
-3. Investigate if discrepancy >2 points (CRITICAL)
-4. Update BDL if NBA.com data is correct
-
-### Validation Hierarchy
-1. **NBA.com** (this source) - Official, authoritative
-2. **BDL** - Primary comparison, usually matches
-3. **ESPN** - Backup validation when needed
-
-## Alert Thresholds
-
-### Critical (Immediate Action Required)
-- ❌ No data for scheduled games
-- 🔴 Point discrepancies >2 points vs BDL
-- ❌ Multiple games missing from daily check
-
-### Warning (Investigate Within 24 Hours)
-- ⚠️ Any point discrepancy vs BDL
-- ⚠️ Missing games (1-2)
-- ⚠️ Unusual player/starter counts
-- ⚠️ Major stat discrepancies vs BDL
-
-### Info (Monitor)
-- 🟡 Minor differences in rebounds/assists
-- 🟡 Players in NBA.com but not BDL (expected)
-- ⚪ Enhanced metrics not yet available
-
-## Troubleshooting
-
-### Query returns "No data yet"
-✅ **This is normal before season starts!** Queries are designed to handle empty table gracefully.
-
-### After season starts, still no data
-1. Check scraper logs: Is it running during games?
-2. Check processor logs: Are files being processed?
-3. Verify GCS paths: `gs://nba-scraped-data/nba-com/player-boxscores/`
-4. Run `daily_check_yesterday.sql` for detailed status
-
-### Discrepancies with BDL
-1. Run `cross_validate_with_bdl.sql`
-2. NBA.com is source of truth - BDL may have errors
-3. Document discrepancies >2 points
-4. Investigate if pattern emerges (specific team, date range)
-
-### Missing games
-1. Run `find_missing_games.sql` for specifics
-2. Check scraper logs for those dates
-3. Verify games actually occurred (check schedule)
-4. Create backfill plan if needed
-
-## Related Documentation
-
-- **Processor:** `data_processors/raw/nbacom/nbac_player_boxscore_processor.py`
-- **Master Validation Guide:** `validation/NBA_DATA_VALIDATION_MASTER_GUIDE.md`
-- **BDL Boxscores:** `validation/queries/raw/bdl_boxscores/` (similar pattern)
-- **Pattern 3 Reference:** See Master Guide for game-based single event pattern
-
-## Revenue Impact
-
-**Status:** ✅ HIGH - Official NBA source for prop validation
-
-**Business Value:**
-- Authoritative prop bet settlement data
-- Cross-validation for BDL accuracy
-- Enhanced metrics for advanced modeling (when available)
-- Official NBA player IDs for data linking
-
-**Critical for:**
-- Accurate prop outcome determination
-- Detecting data quality issues in other sources
-- Building trust through official NBA data
-- Future multi-stat props (rebounds, assists)
+**Status:** ✅ Operational (Tested on 2024-10-29)  
+**Last Updated:** October 19, 2025
 
 ---
 
-**Last Updated:** October 13, 2025  
-**Status:** Production Deployed - Awaiting Season Data  
-**Maintainer:** NBA Props Data Engineering Team
+## 📋 Table of Contents
+
+- [Overview](#overview)
+- [Quick Start](#quick-start)
+- [Data Flow](#data-flow)
+- [Scraping Data](#scraping-data)
+- [Processing Data](#processing-data)
+- [Validation](#validation)
+- [Troubleshooting](#troubleshooting)
+- [Known Limitations](#known-limitations)
+
+---
+
+## Overview
+
+This pipeline collects official NBA player statistics from NBA.com and loads them into BigQuery for analysis and prop bet validation.
+
+### What It Does
+- Scrapes player boxscore data from `stats.nba.com/stats/leaguegamelog`
+- Saves raw JSON to Google Cloud Storage
+- Transforms data into structured format
+- Loads into BigQuery with deduplication
+
+### What You Get
+- **Official NBA statistics** (points, rebounds, assists, etc.)
+- **Player identification** via official NBA player IDs
+- **Game context** (date, opponent, home/away)
+- **Historical data** (once backfilled)
+
+---
+
+## Quick Start
+
+### Prerequisites
+- Python virtual environment activated
+- GCP credentials configured (`service-account-dev.json`)
+- BigQuery table `nba_raw.nbac_player_boxscores` created
+
+### Scrape Today's Games
+```bash
+# Scrape data for a specific date
+python scrapers/nbacom/nbac_player_boxscore.py \
+  --gamedate $(date +%Y%m%d) \
+  --group gcs \
+  --debug
+```
+
+### Process Scraped File
+```bash
+# Process the most recent file
+python -m data_processors.raw.nbacom.nbac_player_boxscore_processor \
+  --file gs://nba-scraped-data/nba-com/player-boxscores/2024-10-29/TIMESTAMP.json
+```
+
+### Verify Data
+```bash
+bq query --use_legacy_sql=false '
+SELECT game_date, COUNT(*) as players, COUNT(DISTINCT game_id) as games
+FROM `nba-props-platform.nba_raw.nbac_player_boxscores`
+WHERE game_date = CURRENT_DATE() - 1
+GROUP BY game_date
+'
+```
+
+---
+
+## Data Flow
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         1. SCRAPING                             │
+│  stats.nba.com/stats/leaguegamelog                              │
+│         ↓                                                        │
+│  scrapers/nbacom/nbac_player_boxscore.py                        │
+│         ↓                                                        │
+│  gs://nba-scraped-data/nba-com/player-boxscores/YYYY-MM-DD/    │
+│  └── HHMMSS.json (raw leaguegamelog format)                     │
+└─────────────────────────────────────────────────────────────────┘
+                          ↓
+┌─────────────────────────────────────────────────────────────────┐
+│                      2. PROCESSING                              │
+│  data_processors/raw/nbacom/nbac_player_boxscore_processor.py   │
+│         ↓                                                        │
+│  Transform: leaguegamelog → player boxscore rows                │
+│  Deduplicate: DELETE existing game_ids                          │
+│         ↓                                                        │
+│  BigQuery: nba_raw.nbac_player_boxscores                        │
+└─────────────────────────────────────────────────────────────────┘
+                          ↓
+┌─────────────────────────────────────────────────────────────────┐
+│                      3. VALIDATION                              │
+│  validation/queries/raw/nbac_player_boxscores/*.sql             │
+│  - Cross-validate with BDL                                      │
+│  - Check completeness vs schedule                               │
+│  - Monitor data quality                                         │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Scraping Data
+
+### Basic Usage
+
+```bash
+# Scrape a specific date (YYYYMMDD format)
+python scrapers/nbacom/nbac_player_boxscore.py \
+  --gamedate 20241029 \
+  --group gcs
+```
+
+### Parameters
+
+| Parameter | Required | Description | Example |
+|-----------|----------|-------------|---------|
+| `--gamedate` | Yes | Game date to scrape | `20241029` or `2024-10-29` |
+| `--group` | Yes | Export destination | `gcs` (production), `test` (local) |
+| `--season` | No | NBA season (auto-detected) | `2024` |
+| `--season_type` | No | Season type | `Regular Season` (default) |
+| `--debug` | No | Enable debug logging | (flag) |
+
+### Export Groups
+
+| Group | Destination | Use Case |
+|-------|-------------|----------|
+| `gcs` | `gs://nba-scraped-data/nba-com/player-boxscores/` | Production |
+| `test` | `/tmp/getnbacomplayerboxscore2.json` | Local testing |
+
+### Examples
+
+**Scrape yesterday's games:**
+```bash
+python scrapers/nbacom/nbac_player_boxscore.py \
+  --gamedate $(date -d "yesterday" +%Y%m%d) \
+  --group gcs
+```
+
+**Scrape and test locally:**
+```bash
+python scrapers/nbacom/nbac_player_boxscore.py \
+  --gamedate 20241029 \
+  --group test \
+  --debug
+
+# Inspect the file
+cat /tmp/getnbacomplayerboxscore2.json | jq '.resultSets[0].rowSet | length'
+```
+
+**Scrape multiple dates (batch):**
+```bash
+for date in 20241026 20241027 20241028 20241029; do
+  echo "Scraping $date..."
+  python scrapers/nbacom/nbac_player_boxscore.py --gamedate $date --group gcs
+  sleep 5  # Rate limiting
+done
+```
+
+### Output Format
+
+The scraper saves data in **leaguegamelog format**:
+
+```json
+{
+  "resource": "leaguegamelog",
+  "parameters": {...},
+  "resultSets": [{
+    "name": "LeagueGameLog",
+    "headers": [
+      "SEASON_ID", "PLAYER_ID", "PLAYER_NAME", "TEAM_ID",
+      "TEAM_ABBREVIATION", "GAME_ID", "GAME_DATE", "MATCHUP",
+      "MIN", "FGM", "FGA", "FG_PCT", "FG3M", "FG3A", "FG3_PCT",
+      "FTM", "FTA", "FT_PCT", "OREB", "DREB", "REB",
+      "AST", "STL", "BLK", "TOV", "PF", "PTS", "PLUS_MINUS", ...
+    ],
+    "rowSet": [
+      ["22024", 1629627, "Zion Williamson", 1610612740, "NOP",
+       "0022400116", "2024-10-29", "NOP @ GSW", 30, 12, 19, 0.632,
+       1, 2, 0.5, 6, 8, 0.75, 2, 6, 8, 3, 0, 1, 7, 3, 31, -14, ...]
+    ]
+  }]
+}
+```
+
+**Key fields:**
+- `headers`: Column names (32 columns)
+- `rowSet`: Array of player stat rows (each row = 1 player in 1 game)
+
+---
+
+## Processing Data
+
+### Basic Usage
+
+```bash
+# Process a single file
+python -m data_processors.raw.nbacom.nbac_player_boxscore_processor \
+  --file gs://nba-scraped-data/nba-com/player-boxscores/2024-10-29/20251019_012417.json
+```
+
+### Parameters
+
+| Parameter | Required | Description | Default |
+|-----------|----------|-------------|---------|
+| `--file` | Yes | GCS file path or full gs:// URI | - |
+| `--bucket` | No | GCS bucket (if not in --file) | `nba-scraped-data` |
+| `--project` | No | GCP project ID | `nba-props-platform` |
+
+### Processing Strategy
+
+The processor uses **MERGE_UPDATE** strategy:
+
+1. **Extract game dates** from the data
+2. **DELETE** existing rows for those game_ids and game_dates (deduplication)
+3. **INSERT** new rows with latest data
+
+**Why this works:**
+- Handles re-runs gracefully (idempotent)
+- Updates stats if data changes (e.g., stat corrections)
+- Requires partition filter (game_date) for BigQuery
+
+### Examples
+
+**Process with full gs:// URI:**
+```bash
+python -m data_processors.raw.nbacom.nbac_player_boxscore_processor \
+  --file gs://nba-scraped-data/nba-com/player-boxscores/2024-10-29/20251019_012417.json
+```
+
+**Process with bucket + path:**
+```bash
+python -m data_processors.raw.nbacom.nbac_player_boxscore_processor \
+  --bucket nba-scraped-data \
+  --file nba-com/player-boxscores/2024-10-29/20251019_012417.json
+```
+
+**Process all files for a date:**
+```bash
+# List files for date
+gsutil ls gs://nba-scraped-data/nba-com/player-boxscores/2024-10-29/
+
+# Process each one (or just process the latest)
+python -m data_processors.raw.nbacom.nbac_player_boxscore_processor \
+  --file gs://nba-scraped-data/nba-com/player-boxscores/2024-10-29/[LATEST].json
+```
+
+### Expected Output
+
+**Success:**
+```
+INFO:processor_base:Loaded leaguegamelog data from GCS
+INFO:root:Validated 88 player rows in leaguegamelog data
+INFO:root:Transformed 88 player records from 4 games
+INFO:root:Deleting existing records for 4 games on 1 dates
+INFO:root:Inserting 88 rows into nba-props-platform.nba_raw.nbac_player_boxscores
+INFO:root:Successfully loaded 88 rows for 4 games
+INFO:processor_base:PROCESSOR_STEP Processor completed in 5.5s
+```
+
+**Key metrics:**
+- `player records`: Number of player-game rows created
+- `games`: Number of unique games processed
+- `dates`: Number of unique dates
+
+---
+
+## Validation
+
+### Quick Validation
+
+**Check data loaded:**
+```bash
+bq query --use_legacy_sql=false '
+SELECT game_date, COUNT(*) as players, COUNT(DISTINCT game_id) as games
+FROM `nba-props-platform.nba_raw.nbac_player_boxscores`
+WHERE game_date >= "2024-10-22"
+GROUP BY game_date
+ORDER BY game_date DESC
+'
+```
+
+**Check data quality:**
+```bash
+bq query --use_legacy_sql=false '
+SELECT
+  COUNT(*) as total,
+  COUNT(DISTINCT nba_player_id) as unique_ids,
+  COUNT(CASE WHEN nba_player_id IS NULL THEN 1 END) as missing_ids,
+  COUNT(CASE WHEN points IS NULL THEN 1 END) as missing_points
+FROM `nba-props-platform.nba_raw.nbac_player_boxscores`
+WHERE game_date = "2024-10-29"
+'
+```
+
+### Full Validation Suite
+
+All validation queries are in `validation/queries/raw/nbac_player_boxscores/`:
+
+```bash
+# Run a specific validation
+bq query --use_legacy_sql=false < validation/queries/raw/nbac_player_boxscores/daily_check_yesterday.sql
+
+# Run cross-validation with BDL
+bq query --use_legacy_sql=false < validation/queries/raw/nbac_player_boxscores/cross_validate_with_bdl.sql
+
+# Find missing games
+bq query --use_legacy_sql=false < validation/queries/raw/nbac_player_boxscores/find_missing_games.sql
+```
+
+**See `VALIDATION_STATUS.md` for detailed validation status and plans.**
+
+---
+
+## Troubleshooting
+
+### Scraper Issues
+
+**Error: "No player rows in leaguegamelog JSON"**
+- **Cause:** No games on that date or wrong season
+- **Fix:** Verify date has games in schedule table, check season parameter
+
+**Error: "argument of type 'NoneType' is not iterable"**
+- **Cause:** Season parameter is None
+- **Fix:** Updated scraper (Oct 19, 2025) fixes this automatically
+
+**Warning: "No exporters matched group='dev'"**
+- **Cause:** Wrong export group specified
+- **Fix:** Use `--group gcs` for production or `--group test` for local
+
+**Empty file uploaded (2 bytes, `{}`)**
+- **Cause:** Export mode was `DATA` instead of `DECODED`
+- **Fix:** Updated scraper uses `DECODED` mode
+
+### Processor Issues
+
+**Error: "Cannot query over table without filter over game_date"**
+- **Cause:** DELETE query missing partition filter
+- **Fix:** Updated processor includes `game_date IN (...)` filter
+
+**Error: "AttributeError: 'NBATeamMapper' object has no attribute 'normalize_team_abbr'"**
+- **Cause:** Wrong method name
+- **Fix:** Updated processor uses `get_nba_tricode()` method
+
+**Error: "No module named 'data_processors'"**
+- **Cause:** Running processor as script instead of module
+- **Fix:** Use `python -m data_processors.raw.nbacom.nbac_player_boxscore_processor` (note the `-m`)
+
+**Error: "Missing 'resultSets' in data"**
+- **Cause:** Invalid JSON or wrong data format
+- **Fix:** Check scraped file with `gsutil cat [FILE] | jq .`
+
+### Data Issues
+
+**Fewer games than expected**
+- **Check schedule:** Compare with `nbac_schedule` table
+- **Check file:** Verify all games in scraped JSON
+- **Check API:** Some dates may have fewer games
+
+**Missing players**
+- **Expected:** DNP players are NOT in leaguegamelog (by design)
+- **Check:** Compare with official NBA boxscore
+- **Note:** Only active players (played >0 minutes) appear
+
+**Wrong season detected**
+- **Cause:** Auto-detection uses game date month
+- **Fix:** Manually specify `--season 2024` for 2024-25 season
+
+---
+
+## Known Limitations
+
+### Data Source Limitations
+
+The `leaguegamelog` API does NOT provide:
+- ❌ Starter flag (set to NULL)
+- ❌ Jersey numbers (set to NULL)
+- ❌ Player positions (set to NULL)
+- ❌ Enhanced metrics (TS%, Usage%, PIE - set to NULL)
+- ❌ Quarter breakdowns (Q1-Q4 points - set to NULL)
+- ❌ Technical/Flagrant fouls (set to NULL)
+- ❌ Team scores (set to NULL)
+
+**What IS available:**
+- ✅ All basic stats (points, rebounds, assists, etc.)
+- ✅ Shooting stats (FG%, 3P%, FT%)
+- ✅ Plus/Minus
+- ✅ Official NBA player IDs
+- ✅ Minutes played
+
+**Impact:** For **player points props**, this data is sufficient. Enhanced metrics would require different API endpoint.
+
+### Coverage Limitations
+
+**Current state:**
+- ✅ Single date validated (2024-10-29)
+- ⏳ Historical data: Not yet backfilled
+- ⏳ Daily automation: Not yet set up
+
+**See `VALIDATION_STATUS.md` for detailed coverage status.**
+
+---
+
+## File Locations
+
+### Where to Save These Files
+
+**This README:**
+```bash
+# Save in the validation queries directory
+validation/queries/raw/nbac_player_boxscores/README.md
+```
+
+**Validation Status Doc:**
+```bash
+# Save alongside this README
+validation/queries/raw/nbac_player_boxscores/VALIDATION_STATUS.md
+```
+
+**Or create a docs directory:**
+```bash
+mkdir -p docs/nbac_player_boxscores
+# Save both files there
+docs/nbac_player_boxscores/README.md
+docs/nbac_player_boxscores/VALIDATION_STATUS.md
+```
+
+---
+
+## Quick Reference Commands
+
+### Daily Operations
+
+**Scrape yesterday's games:**
+```bash
+python scrapers/nbacom/nbac_player_boxscore.py \
+  --gamedate $(date -d "yesterday" +%Y%m%d) \
+  --group gcs
+```
+
+**Process latest file:**
+```bash
+# Get latest file
+LATEST=$(gsutil ls gs://nba-scraped-data/nba-com/player-boxscores/YYYY-MM-DD/ | tail -1)
+
+# Process it
+python -m data_processors.raw.nbacom.nbac_player_boxscore_processor --file $LATEST
+```
+
+**Validate yesterday:**
+```bash
+bq query --use_legacy_sql=false < validation/queries/raw/nbac_player_boxscores/daily_check_yesterday.sql
+```
+
+### Backfill Operations
+
+**Scrape date range:**
+```bash
+# Generate date list
+start_date="2024-10-22"
+end_date="2024-10-31"
+
+# Loop through dates
+current_date=$start_date
+while [ "$current_date" != "$end_date" ]; do
+  formatted_date=$(date -d "$current_date" +%Y%m%d)
+  echo "Scraping $formatted_date..."
+  python scrapers/nbacom/nbac_player_boxscore.py --gamedate $formatted_date --group gcs
+  sleep 5
+  current_date=$(date -d "$current_date + 1 day" +%Y-%m-%d)
+done
+```
+
+**Process all files for a date:**
+```bash
+DATE="2024-10-29"
+for file in $(gsutil ls gs://nba-scraped-data/nba-com/player-boxscores/$DATE/); do
+  echo "Processing $file"
+  python -m data_processors.raw.nbacom.nbac_player_boxscore_processor --file "$file"
+done
+```
+
+---
+
+## Related Files
+
+- **Scraper:** `scrapers/nbacom/nbac_player_boxscore.py`
+- **Processor:** `data_processors/raw/nbacom/nbac_player_boxscore_processor.py`
+- **Schema:** `schemas/bigquery/nbac_player_boxscore_tables.sql`
+- **Validation Queries:** `validation/queries/raw/nbac_player_boxscores/*.sql`
+- **Validation Status:** `VALIDATION_STATUS.md` (this directory)
+
+---
+
+## Support & Maintenance
+
+**Last tested:** October 19, 2025  
+**Test date:** 2024-10-29 (4 games, 88 players)  
+**Status:** ✅ All tests passing
+
+**For issues:**
+1. Check `VALIDATION_STATUS.md` for known limitations
+2. Review troubleshooting section above
+3. Check processor logs in `/tmp/processor_debug_*.json`
+4. Validate scraped JSON with `gsutil cat [FILE] | jq .`
+
+---
+
+**End of README**

@@ -89,7 +89,7 @@ class GetNbaComPlayerBoxscore(ScraperBase, ScraperFlaskMixin):
             "type": "gcs",
             #"key": "nbacom/player-boxscore/%(season)s/%(gamedate)s/%(time)s.json",
             "key": GCSPathBuilder.get_path(GCS_PATH_KEY),
-            "export_mode": ExportMode.DATA,
+            "export_mode": ExportMode.DECODED,  # Changed from DATA to DECODED
             "groups": ["prod", "gcs"],
         },
         {
@@ -121,7 +121,7 @@ class GetNbaComPlayerBoxscore(ScraperBase, ScraperFlaskMixin):
     ]
 
     # ------------------------------------------------------------------ #
-    # Additional opts helper
+    # Additional opts helper - FIXED
     # ------------------------------------------------------------------ #
     def set_additional_opts(self) -> None:
         super().set_additional_opts()
@@ -141,9 +141,14 @@ class GetNbaComPlayerBoxscore(ScraperBase, ScraperFlaskMixin):
             season_start_year = year - 1
         else:  # October, November, December
             season_start_year = year
-            
-        self.opts.setdefault("season", str(season_start_year))
-        self.opts.setdefault("season_type", "Regular Season")
+        
+        # FIX: Check if value is None/empty before setting
+        # setdefault() doesn't work if key exists with None value
+        if not self.opts.get("season"):
+            self.opts["season"] = str(season_start_year)
+        if not self.opts.get("season_type"):
+            self.opts["season_type"] = "Regular Season"
+        
         self.opts["time"] = datetime.now(timezone.utc).strftime("%H-%M-%S")
 
     # ------------------------------------------------------------------ #

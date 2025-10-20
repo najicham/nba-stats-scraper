@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # File: processors/odds_api/odds_game_lines_processor.py
-# Description: Processor for Odds API game lines history data transformation
+# Description: Unified processor for Odds API game lines (current and historical)
 
 import json, logging, re, os, uuid
 from datetime import datetime, timezone
@@ -18,6 +18,14 @@ logger = logging.getLogger(__name__)
 
 
 class OddsGameLinesProcessor(ProcessorBase):
+    """
+    Process Odds API game lines data.
+    
+    Handles both:
+    - Current/live data: odds-api/game-lines/2025-10-21/...
+    - Historical data: odds-api/game-lines-history/2023-10-24/...
+    """
+    
     def __init__(self):
         super().__init__()
         self.table_name = 'nba_raw.odds_api_game_lines'
@@ -30,6 +38,44 @@ class OddsGameLinesProcessor(ProcessorBase):
         
         # Initialize Eastern timezone for game date conversions
         self.eastern_tz = pytz.timezone('US/Eastern')
+    
+    def is_historical_format(self, data: Dict) -> bool:
+        """
+        Detect if data is in historical format (wrapped) or current format (unwrapped).
+        
+        Historical format has:
+        - 'data' key containing the event
+        - 'timestamp' key for snapshot time
+        - 'previous_timestamp' and 'next_timestamp'
+        
+        Current format is just the event object directly.
+        """
+        return 'data' in data and 'timestamp' in data
+    
+    def detect_data_source(self, raw_data: Dict, file_path: str = None) -> str:
+        """
+        Detect whether data came from historical or current endpoint.
+        
+        Args:
+            raw_data: Raw API response
+            file_path: Optional source file path
+            
+        Returns:
+            'historical' or 'current'
+        """
+        # Primary detection: Check data structure
+        if self.is_historical_format(raw_data):
+            return 'historical'
+        
+        # Secondary detection: Check file path pattern
+        if file_path:
+            if 'game-lines-history' in file_path or '/historical/' in file_path:
+                return 'historical'
+            elif 'game-lines' in file_path or '/current/' in file_path:
+                return 'current'
+        
+        # Default to 'current' for live data
+        return 'current'
     
     def normalize_team_name(self, team_name: str) -> str:
         """Aggressive normalization for team name consistency."""
@@ -145,18 +191,24 @@ class OddsGameLinesProcessor(ProcessorBase):
             )
             return None
     
-    def validate_data(self, data: Dict) -> List[str]:
+    def validate_data(self, data: Dict, is_historical: bool) -> List[str]:
         """Validate required fields in the odds data."""
         errors = []
         
-        if 'timestamp' not in data:
-            errors.append("Missing timestamp")
+        # Get the game data (either wrapped or unwrapped)
+        if is_historical:
+            if 'timestamp' not in data:
+                errors.append("Missing timestamp in historical format")
+            
+            if 'data' not in data:
+                errors.append("Missing data section in historical format")
+                return errors
+            
+            game_data = data['data']
+        else:
+            # Current format - data is the game object itself
+            game_data = data
         
-        if 'data' not in data:
-            errors.append("Missing data section")
-            return errors
-        
-        game_data = data['data']
         required_fields = ['id', 'commence_time', 'home_team', 'away_team', 'bookmakers']
         
         for field in required_fields:
@@ -173,8 +225,17 @@ class OddsGameLinesProcessor(ProcessorBase):
         rows = []
         
         try:
+            # Detect format and data source
+            is_historical = self.is_historical_format(raw_data)
+            data_source = self.detect_data_source(raw_data, file_path)
+            
+            logger.debug(
+                f"Processing {data_source} data ({'historical' if is_historical else 'current'} format) "
+                f"from {file_path}"
+            )
+            
             # Validate data first
-            errors = self.validate_data(raw_data)
+            errors = self.validate_data(raw_data, is_historical)
             if errors:
                 logger.error(f"Validation errors for {file_path}: {errors}")
                 
@@ -186,6 +247,8 @@ class OddsGameLinesProcessor(ProcessorBase):
                         details={
                             'processor': 'OddsGameLinesProcessor',
                             'file_path': file_path,
+                            'format': 'historical' if is_historical else 'current',
+                            'data_source': data_source,
                             'error_count': len(errors),
                             'errors': errors[:5]  # First 5 errors
                         }
@@ -197,12 +260,39 @@ class OddsGameLinesProcessor(ProcessorBase):
             
             now = datetime.now(timezone.utc).isoformat()
             
-            # Parse timestamps
-            snapshot_timestamp = self.parse_timestamp(raw_data.get('timestamp'))
-            previous_timestamp = self.parse_timestamp(raw_data.get('previous_timestamp'))
-            next_timestamp = self.parse_timestamp(raw_data.get('next_timestamp'))
-            
-            game_data = raw_data['data']
+            # Parse timestamps based on format
+            if is_historical:
+                snapshot_timestamp = self.parse_timestamp(raw_data.get('timestamp'))
+                previous_timestamp = self.parse_timestamp(raw_data.get('previous_timestamp'))
+                next_timestamp = self.parse_timestamp(raw_data.get('next_timestamp'))
+                game_data = raw_data['data']
+            else:
+                # For current data, use the most recent market update time as snapshot
+                # This represents when the odds data was last updated
+                game_data = raw_data
+                
+                # Find the most recent update time from bookmakers/markets
+                latest_update = None
+                for bookmaker in game_data.get('bookmakers', []):
+                    bm_update = bookmaker.get('last_update')
+                    if bm_update:
+                        bm_ts = self.parse_timestamp(bm_update)
+                        if not latest_update or (bm_ts and bm_ts > latest_update):
+                            latest_update = bm_ts
+                    
+                    for market in bookmaker.get('markets', []):
+                        mk_update = market.get('last_update')
+                        if mk_update:
+                            mk_ts = self.parse_timestamp(mk_update)
+                            if not latest_update or (mk_ts and mk_ts > latest_update):
+                                latest_update = mk_ts
+                
+                # Use latest update as snapshot timestamp, or current time as fallback
+                snapshot_timestamp = latest_update if latest_update else datetime.now(timezone.utc).isoformat()
+                previous_timestamp = None
+                next_timestamp = None
+                
+                logger.debug(f"Current data: using snapshot_timestamp = {snapshot_timestamp}")
             
             # Game-level data
             game_id = game_data['id']
@@ -226,6 +316,8 @@ class OddsGameLinesProcessor(ProcessorBase):
                         details={
                             'processor': 'OddsGameLinesProcessor',
                             'file_path': file_path,
+                            'format': 'historical' if is_historical else 'current',
+                            'data_source': data_source,
                             'game_id': game_id,
                             'commence_time': game_data.get('commence_time'),
                             'home_team': home_team,
@@ -247,17 +339,32 @@ class OddsGameLinesProcessor(ProcessorBase):
             for bookmaker in game_data.get('bookmakers', []):
                 bookmaker_key = bookmaker.get('key', '')
                 bookmaker_title = bookmaker.get('title', '')
+                
+                # For current data, bookmaker might not have last_update
+                # Use first market's last_update as fallback
                 bookmaker_last_update = self.parse_timestamp(bookmaker.get('last_update'))
+                if not bookmaker_last_update and bookmaker.get('markets'):
+                    # Use first market's update time as bookmaker update time
+                    first_market = bookmaker['markets'][0]
+                    bookmaker_last_update = self.parse_timestamp(first_market.get('last_update'))
+                
+                # Final fallback to snapshot timestamp if still None
+                if not bookmaker_last_update:
+                    bookmaker_last_update = snapshot_timestamp
                 
                 # Process each market (spreads, totals, etc.)
                 for market in bookmaker.get('markets', []):
                     market_key = market.get('key', '')
                     market_last_update = self.parse_timestamp(market.get('last_update'))
                     
+                    # Market last_update should exist, but use bookmaker's as fallback
+                    if not market_last_update:
+                        market_last_update = bookmaker_last_update
+                    
                     # Process each outcome
                     for outcome in market.get('outcomes', []):
                         row = {
-                            # Snapshot metadata
+                            # Snapshot metadata (may be None for current data)
                             'snapshot_timestamp': snapshot_timestamp,
                             'previous_snapshot_timestamp': previous_timestamp,
                             'next_snapshot_timestamp': next_timestamp,
@@ -267,7 +374,7 @@ class OddsGameLinesProcessor(ProcessorBase):
                             'sport_key': sport_key,
                             'sport_title': sport_title,
                             'commence_time': commence_time,
-                            'game_date': game_date,  # Now correctly extracted in Eastern timezone
+                            'game_date': game_date,  # Correctly extracted in Eastern timezone
                             
                             # Teams
                             'home_team': home_team,
@@ -291,6 +398,7 @@ class OddsGameLinesProcessor(ProcessorBase):
                             
                             # Processing metadata
                             'source_file_path': file_path,
+                            'data_source': data_source,  # NEW: Track data source
                             'created_at': now,
                             'processed_at': now
                         }
@@ -301,7 +409,8 @@ class OddsGameLinesProcessor(ProcessorBase):
                 logger.info(
                     f"Transformed {len(rows)} rows for game {game_id} "
                     f"({away_team_abbr}@{home_team_abbr}) on {game_date} "
-                    f"(commence_time: {game_data['commence_time']})"
+                    f"(commence_time: {game_data['commence_time']}) "
+                    f"[data_source={data_source}, format={'historical' if is_historical else 'current'}]"
                 )
             
         except Exception as e:
@@ -348,6 +457,7 @@ class OddsGameLinesProcessor(ProcessorBase):
             game_date = rows[0]['game_date']
             away_team_abbr = rows[0]['away_team_abbr']
             home_team_abbr = rows[0]['home_team_abbr']
+            data_source = rows[0].get('data_source', 'unknown')
             
             # 1. Create temporary table with unique name
             temp_table_id = f"{table_id}_temp_{uuid.uuid4().hex[:8]}"
@@ -381,13 +491,13 @@ class OddsGameLinesProcessor(ProcessorBase):
             merge_query = f"""
             MERGE `{table_id}` AS target
             USING `{temp_table_id}` AS source
-            ON target.game_date = '{game_date}'          -- Move the literal filter HERE
+            ON target.game_date = '{game_date}'
             AND target.game_id = source.game_id 
-            AND target.snapshot_timestamp = source.snapshot_timestamp
+            AND COALESCE(target.snapshot_timestamp, TIMESTAMP('1970-01-01')) = COALESCE(source.snapshot_timestamp, TIMESTAMP('1970-01-01'))
             AND target.bookmaker_key = source.bookmaker_key
             AND target.market_key = source.market_key
             AND target.outcome_name = source.outcome_name
-            AND target.game_date = source.game_date   -- Keep this too
+            AND target.game_date = source.game_date
             WHEN MATCHED THEN
                 UPDATE SET
                     snapshot_timestamp = source.snapshot_timestamp,
@@ -406,6 +516,7 @@ class OddsGameLinesProcessor(ProcessorBase):
                     market_last_update = source.market_last_update,
                     outcome_price = source.outcome_price,
                     outcome_point = source.outcome_point,
+                    data_source = source.data_source,
                     processed_at = source.processed_at
             WHEN NOT MATCHED THEN
                 INSERT (
@@ -430,6 +541,7 @@ class OddsGameLinesProcessor(ProcessorBase):
                     outcome_price,
                     outcome_point,
                     source_file_path,
+                    data_source,
                     created_at,
                     processed_at
                 )
@@ -455,6 +567,7 @@ class OddsGameLinesProcessor(ProcessorBase):
                     source.outcome_price,
                     source.outcome_point,
                     source.source_file_path,
+                    source.data_source,
                     source.created_at,
                     source.processed_at
                 )
@@ -468,7 +581,7 @@ class OddsGameLinesProcessor(ProcessorBase):
             
             logger.info(
                 f"✅ MERGE completed successfully: {rows_affected} rows affected for game {game_id} "
-                f"({away_team_abbr}@{home_team_abbr}) on {game_date}"
+                f"({away_team_abbr}@{home_team_abbr}) on {game_date} [data_source={data_source}]"
             )
             
             # Success notification
@@ -484,7 +597,8 @@ class OddsGameLinesProcessor(ProcessorBase):
                         'strategy': 'staging_table_merge',
                         'game_id': game_id,
                         'game_date': game_date,
-                        'teams': f"{away_team_abbr}@{home_team_abbr}"
+                        'teams': f"{away_team_abbr}@{home_team_abbr}",
+                        'data_source': data_source
                     }
                 )
             except Exception as notify_ex:

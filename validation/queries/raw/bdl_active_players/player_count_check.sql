@@ -3,19 +3,70 @@
 -- Purpose: Verify expected player counts across teams and validation status
 -- Usage: Run daily to ensure basic data volume is correct
 -- ============================================================================
--- Instructions:
---   1. Should find ~550-600 players across 30 teams
---   2. Each team should have 13-20 players (typical)
---   3. ~60% should be 'validated' status (healthy)
+-- UPDATED: Season-aware thresholds that adjust for training camp, regular season, playoffs
 -- ============================================================================
--- Expected Results:
---   - Total players: 550-600
---   - Teams found: 30
---   - Players per team: 13-20 (average ~19)
---   - Validation rate: 55-65%
+-- Expected Results by Season Phase:
+--   Training Camp (Oct-Nov):
+--     - Total players: 620-720
+--     - Teams found: 30
+--     - Players per team: 17-26 (average ~22)
+--     - Validation rate: 50%+ (higher is better!)
+--   
+--   Regular Season (Dec-Apr):
+--     - Total players: 540-620
+--     - Teams found: 30
+--     - Players per team: 15-21 (average ~19)
+--     - Validation rate: 55%+ (higher is better!)
+--   
+--   Playoffs (May-Jun):
+--     - Total players: 450-550
+--     - Teams found: 16-30 (decreasing as teams eliminated)
+--     - Players per team: 13-18
+--     - Validation rate: 60%+ (higher is better!)
 -- ============================================================================
 
 WITH
+-- Determine current season phase for dynamic thresholds
+season_phase AS (
+  SELECT
+    EXTRACT(MONTH FROM CURRENT_DATE()) as current_month,
+    CASE
+      WHEN EXTRACT(MONTH FROM CURRENT_DATE()) IN (10, 11) THEN 'training_camp'
+      WHEN EXTRACT(MONTH FROM CURRENT_DATE()) IN (12, 1, 2, 3, 4) THEN 'regular_season'
+      WHEN EXTRACT(MONTH FROM CURRENT_DATE()) IN (5, 6) THEN 'playoffs'
+      ELSE 'offseason'
+    END as phase,
+    -- Player count thresholds
+    CASE
+      WHEN EXTRACT(MONTH FROM CURRENT_DATE()) IN (10, 11) THEN 620
+      WHEN EXTRACT(MONTH FROM CURRENT_DATE()) IN (12, 1, 2, 3, 4) THEN 540
+      WHEN EXTRACT(MONTH FROM CURRENT_DATE()) IN (5, 6) THEN 450
+      ELSE 500
+    END as min_players,
+    CASE
+      WHEN EXTRACT(MONTH FROM CURRENT_DATE()) IN (10, 11) THEN 720
+      WHEN EXTRACT(MONTH FROM CURRENT_DATE()) IN (12, 1, 2, 3, 4) THEN 620
+      WHEN EXTRACT(MONTH FROM CURRENT_DATE()) IN (5, 6) THEN 550
+      ELSE 650
+    END as max_players,
+    -- Team roster size thresholds
+    CASE
+      WHEN EXTRACT(MONTH FROM CURRENT_DATE()) IN (10, 11) THEN 17  -- Training camp
+      WHEN EXTRACT(MONTH FROM CURRENT_DATE()) IN (12, 1, 2, 3, 4) THEN 15  -- Regular season
+      ELSE 13  -- Playoffs/offseason
+    END as min_team_players,
+    CASE
+      WHEN EXTRACT(MONTH FROM CURRENT_DATE()) IN (10, 11) THEN 26  -- Training camp
+      WHEN EXTRACT(MONTH FROM CURRENT_DATE()) IN (12, 1, 2, 3, 4) THEN 21  -- Regular season
+      ELSE 18  -- Playoffs/offseason
+    END as max_team_players,
+    -- Validation rate (higher is better!)
+    CASE
+      WHEN EXTRACT(MONTH FROM CURRENT_DATE()) IN (10, 11) THEN 50
+      ELSE 55
+    END as min_validation_pct
+),
+
 -- Calculate overall metrics
 overall_metrics AS (
   SELECT
@@ -50,9 +101,13 @@ team_stats AS (
     MIN(player_count) as min_players,
     MAX(player_count) as max_players,
     STDDEV(player_count) as stddev_players,
-    COUNT(CASE WHEN player_count < 13 THEN 1 END) as teams_low,
-    COUNT(CASE WHEN player_count > 20 THEN 1 END) as teams_high
+    s.min_team_players,
+    s.max_team_players,
+    COUNT(CASE WHEN player_count < s.min_team_players THEN 1 END) as teams_low,
+    COUNT(CASE WHEN player_count > s.max_team_players THEN 1 END) as teams_high
   FROM team_counts
+  CROSS JOIN season_phase s
+  GROUP BY s.min_team_players, s.max_team_players
 )
 
 -- Output: Summary metrics
@@ -65,15 +120,25 @@ SELECT
 UNION ALL
 
 SELECT
+  'Season Phase' as section,
+  s.phase as metric,
+  CONCAT('Expected: ', CAST(s.min_players AS STRING), '-', CAST(s.max_players AS STRING), ' players') as value,
+  '📅 Context' as status
+FROM season_phase s
+
+UNION ALL
+
+SELECT
   'Total Players' as section,
   'Unique player_lookup values' as metric,
-  CAST(total_players AS STRING) as value,
+  CAST(m.total_players AS STRING) as value,
   CASE
-    WHEN total_players BETWEEN 550 AND 600 THEN '✅ Expected range'
-    WHEN total_players BETWEEN 500 AND 650 THEN '🟡 Outside typical range'
+    WHEN m.total_players BETWEEN s.min_players AND s.max_players THEN '✅ Expected range'
+    WHEN m.total_players BETWEEN (s.min_players - 50) AND (s.max_players + 50) THEN '🟡 Outside typical range'
     ELSE '🔴 CRITICAL: Investigate count'
   END as status
-FROM overall_metrics
+FROM overall_metrics m
+CROSS JOIN season_phase s
 
 UNION ALL
 
@@ -82,7 +147,8 @@ SELECT
   'Should match player count' as metric,
   CAST(unique_bdl_ids AS STRING) as value,
   CASE
-    WHEN unique_bdl_ids = total_players THEN '✅ Match'
+    WHEN ABS(total_players - unique_bdl_ids) <= 2 THEN '✅ Match (allowing name collisions)'
+    WHEN ABS(total_players - unique_bdl_ids) <= 5 THEN '🟡 Minor mismatch'
     ELSE '🔴 CRITICAL: Mismatch detected'
   END as status
 FROM overall_metrics
@@ -121,13 +187,16 @@ UNION ALL
 SELECT
   'Validated Players' as section,
   'has_validation_issues = FALSE' as metric,
-  CONCAT(CAST(validated_count AS STRING), ' (', CAST(pct_validated AS STRING), '%)') as value,
+  CONCAT(CAST(m.validated_count AS STRING), ' (', CAST(m.pct_validated AS STRING), '%)') as value,
   CASE
-    WHEN pct_validated >= 55 AND pct_validated <= 65 THEN '✅ Healthy range'
-    WHEN pct_validated >= 45 AND pct_validated <= 75 THEN '🟡 Acceptable'
-    ELSE '🔴 Investigate validation logic'
+    WHEN m.pct_validated >= 80 THEN '✅ Excellent (80%+)'
+    WHEN m.pct_validated >= 70 THEN '✅ Good (70%+)'
+    WHEN m.pct_validated >= s.min_validation_pct THEN '✅ Acceptable'
+    WHEN m.pct_validated >= (s.min_validation_pct - 10) THEN '🟡 Low validation'
+    ELSE '🔴 Very low validation'
   END as status
-FROM overall_metrics
+FROM overall_metrics m
+CROSS JOIN season_phase s
 
 UNION ALL
 
@@ -136,7 +205,7 @@ SELECT
   'has_validation_issues = TRUE' as metric,
   CONCAT(CAST(has_issues_count AS STRING), ' (', CAST(ROUND(100.0 - pct_validated, 1) AS STRING), '%)') as value,
   CASE
-    WHEN has_issues_count <= total_records * 0.45 THEN '✅ Expected'
+    WHEN has_issues_count <= total_records * 0.50 THEN '✅ Expected'
     ELSE '🟡 High issue rate'
   END as status
 FROM overall_metrics
@@ -164,7 +233,7 @@ SELECT
   '' as metric,
   CAST(ROUND(avg_players_per_team, 1) AS STRING) as value,
   CASE
-    WHEN avg_players_per_team BETWEEN 17 AND 20 THEN '✅ Typical'
+    WHEN avg_players_per_team BETWEEN min_team_players AND max_team_players THEN '✅ Typical'
     ELSE '🟡 Check distribution'
   END as status
 FROM team_stats
@@ -174,24 +243,25 @@ UNION ALL
 SELECT
   'Range' as section,
   'Min to Max' as metric,
-  CONCAT(CAST(min_players AS STRING), ' - ', CAST(max_players AS STRING)) as value,
+  CONCAT(CAST(ts.min_players AS STRING), ' - ', CAST(ts.max_players AS STRING)) as value,
   CASE
-    WHEN min_players >= 13 AND max_players <= 20 THEN '✅ Normal'
-    WHEN min_players < 13 THEN '🟡 Some teams low'
-    WHEN max_players > 20 THEN '🟡 Some teams high'
+    WHEN ts.min_players >= ts.min_team_players AND ts.max_players <= ts.max_team_players THEN '✅ Normal'
+    WHEN ts.min_players < ts.min_team_players THEN '🟡 Some teams low'
+    WHEN ts.max_players > ts.max_team_players THEN '🟡 Some teams high'
     ELSE '🟡 Review outliers'
   END as status
-FROM team_stats
+FROM team_stats ts
 
 UNION ALL
 
 SELECT
   'Teams with Issues' as section,
-  'Low (<13) or High (>20) rosters' as metric,
+  CONCAT('Low (<', CAST(min_team_players AS STRING), ') or High (>', CAST(max_team_players AS STRING), ') rosters') as metric,
   CONCAT('Low: ', CAST(teams_low AS STRING), ' | High: ', CAST(teams_high AS STRING)) as value,
   CASE
     WHEN teams_low = 0 AND teams_high = 0 THEN '✅ All teams normal'
     WHEN teams_low + teams_high <= 3 THEN '🟡 Few outliers'
+    WHEN teams_low + teams_high <= 10 THEN '🟡 Moderate outliers'
     ELSE '🔴 Many outliers'
   END as status
 FROM team_stats

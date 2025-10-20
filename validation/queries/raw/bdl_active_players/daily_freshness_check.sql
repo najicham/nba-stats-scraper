@@ -3,20 +3,50 @@
 -- Purpose: Daily morning check - verify BDL active players updated recently
 -- Usage: Run every morning at ~9 AM as part of automated monitoring
 -- ============================================================================
--- Instructions:
---   1. Schedule this to run daily after scraper/processor complete
---   2. Alert if status != "✅ Updated" or update_age_hours > 48
---   3. No date parameters needed - automatically checks recent updates
+-- UPDATED: Season-aware thresholds that adjust for training camp, regular season, playoffs
 -- ============================================================================
 -- Expected Results:
 --   - status = "✅ Updated" when data refreshed within 48 hours
 --   - status = "⚠️ Stale" if 48-96 hours since update
 --   - status = "🔴 CRITICAL" if >96 hours since update
 --   - All 30 teams should be present
---   - ~550-600 players total
+--   - Player counts vary by season phase:
+--     * Oct-Nov (Training Camp): 620-720 players
+--     * Dec-Apr (Regular Season): 540-620 players
+--     * Apr-Jun (Playoffs): 450-550 players
 -- ============================================================================
 
 WITH
+-- Determine current season phase for dynamic thresholds
+season_phase AS (
+  SELECT
+    EXTRACT(MONTH FROM CURRENT_DATE()) as current_month,
+    CASE
+      WHEN EXTRACT(MONTH FROM CURRENT_DATE()) IN (10, 11) THEN 'training_camp'
+      WHEN EXTRACT(MONTH FROM CURRENT_DATE()) IN (12, 1, 2, 3, 4) THEN 'regular_season'
+      WHEN EXTRACT(MONTH FROM CURRENT_DATE()) IN (5, 6) THEN 'playoffs'
+      ELSE 'offseason'
+    END as phase,
+    -- Dynamic player count thresholds based on season phase
+    CASE
+      WHEN EXTRACT(MONTH FROM CURRENT_DATE()) IN (10, 11) THEN 620  -- Training camp min
+      WHEN EXTRACT(MONTH FROM CURRENT_DATE()) IN (12, 1, 2, 3, 4) THEN 540  -- Regular season min
+      WHEN EXTRACT(MONTH FROM CURRENT_DATE()) IN (5, 6) THEN 450  -- Playoffs min
+      ELSE 500  -- Offseason min
+    END as min_players,
+    CASE
+      WHEN EXTRACT(MONTH FROM CURRENT_DATE()) IN (10, 11) THEN 720  -- Training camp max
+      WHEN EXTRACT(MONTH FROM CURRENT_DATE()) IN (12, 1, 2, 3, 4) THEN 620  -- Regular season max
+      WHEN EXTRACT(MONTH FROM CURRENT_DATE()) IN (5, 6) THEN 550  -- Playoffs max
+      ELSE 650  -- Offseason max
+    END as max_players,
+    -- Validation rate expectations (higher is better!)
+    CASE
+      WHEN EXTRACT(MONTH FROM CURRENT_DATE()) IN (10, 11) THEN 50  -- Training camp: more G-League movement
+      ELSE 55  -- Regular season/playoffs: more stable rosters
+    END as min_validation_pct
+),
+
 -- Check when data was last updated
 last_update_check AS (
   SELECT
@@ -34,39 +64,49 @@ last_update_check AS (
   FROM `nba-props-platform.nba_raw.bdl_active_players_current`
 ),
 
--- Determine status based on update recency
+-- Determine status based on update recency and season phase
 status_check AS (
   SELECT
-    *,
+    l.*,
+    s.phase,
+    s.min_players,
+    s.max_players,
+    s.min_validation_pct,
     CASE
-      WHEN hours_since_update <= 48 THEN '✅ Updated'
-      WHEN hours_since_update <= 96 THEN '⚠️ Stale (check scraper)'
-      WHEN hours_since_update > 96 THEN '🔴 CRITICAL: Not updating'
+      WHEN l.hours_since_update <= 48 THEN '✅ Updated'
+      WHEN l.hours_since_update <= 96 THEN '⚠️ Stale (check scraper)'
+      WHEN l.hours_since_update > 96 THEN '🔴 CRITICAL: Not updating'
       ELSE '❓ Unknown'
     END as update_status,
     CASE
-      WHEN unique_teams = 30 THEN '✅ All teams present'
-      WHEN unique_teams < 30 THEN '🔴 CRITICAL: Missing teams'
-      WHEN unique_teams > 30 THEN '🟡 WARNING: Extra teams'
+      WHEN l.unique_teams = 30 THEN '✅ All teams present'
+      WHEN l.unique_teams < 30 THEN '🔴 CRITICAL: Missing teams'
+      WHEN l.unique_teams > 30 THEN '🟡 WARNING: Extra teams'
       ELSE '❓ Unknown'
     END as team_status,
     CASE
-      WHEN unique_players BETWEEN 550 AND 600 THEN '✅ Normal range'
-      WHEN unique_players BETWEEN 500 AND 650 THEN '🟡 Outside typical range'
-      WHEN unique_players < 500 THEN '🔴 CRITICAL: Low player count'
-      WHEN unique_players > 650 THEN '🔴 CRITICAL: High player count'
+      WHEN l.unique_players BETWEEN s.min_players AND s.max_players THEN '✅ Normal range'
+      WHEN l.unique_players BETWEEN (s.min_players - 50) AND (s.max_players + 50) THEN '🟡 Outside typical range'
+      WHEN l.unique_players < (s.min_players - 50) THEN '🔴 CRITICAL: Low player count'
+      WHEN l.unique_players > (s.max_players + 50) THEN '🔴 CRITICAL: High player count'
       ELSE '❓ Unknown'
     END as player_count_status,
+    -- Allow for 1-2 name collisions (Jaylin Williams, etc.)
     CASE
-      WHEN unique_players = unique_bdl_ids THEN '✅ IDs match'
+      WHEN ABS(l.unique_players - l.unique_bdl_ids) <= 2 THEN '✅ IDs match (allowing name collisions)'
+      WHEN ABS(l.unique_players - l.unique_bdl_ids) <= 5 THEN '🟡 Minor ID mismatch'
       ELSE '🔴 CRITICAL: ID mismatch'
     END as id_consistency_status,
+    -- FIXED: Higher validation rate is BETTER, not worse!
     CASE
-      WHEN pct_validated >= 55 AND pct_validated <= 65 THEN '✅ Healthy'
-      WHEN pct_validated >= 45 AND pct_validated <= 75 THEN '🟡 Acceptable'
-      ELSE '🔴 Low validation rate'
+      WHEN l.pct_validated >= 80 THEN '✅ Excellent validation'
+      WHEN l.pct_validated >= 70 THEN '✅ Good validation'
+      WHEN l.pct_validated >= s.min_validation_pct THEN '✅ Acceptable validation'
+      WHEN l.pct_validated >= (s.min_validation_pct - 10) THEN '🟡 Low validation'
+      ELSE '🔴 Very low validation'
     END as validation_status_check
-  FROM last_update_check
+  FROM last_update_check l
+  CROSS JOIN season_phase s
 )
 
 -- Output: Daily freshness report
@@ -83,6 +123,15 @@ SELECT
   CAST(CURRENT_DATE() AS STRING) as metric,
   FORMAT_DATE('%A', CURRENT_DATE()) as value,
   '' as status
+
+UNION ALL
+
+SELECT
+  'Season Phase' as section,
+  phase as metric,
+  CONCAT('Expected: ', CAST(min_players AS STRING), '-', CAST(max_players AS STRING), ' players') as value,
+  '📅 Context' as status
+FROM status_check
 
 UNION ALL
 
@@ -148,7 +197,7 @@ UNION ALL
 SELECT
   'Total Players' as section,
   CAST(unique_players AS STRING) as metric,
-  'Expected: ~550-600' as value,
+  CONCAT('Expected: ', CAST(min_players AS STRING), '-', CAST(max_players AS STRING), ' (', phase, ')') as value,
   player_count_status as status
 FROM status_check
 
@@ -157,7 +206,7 @@ UNION ALL
 SELECT
   'BDL Player IDs' as section,
   CAST(unique_bdl_ids AS STRING) as metric,
-  'Should match player count' as value,
+  'Allows 1-2 name collisions' as value,
   id_consistency_status as status
 FROM status_check
 
@@ -182,7 +231,7 @@ UNION ALL
 SELECT
   'Validated Players' as section,
   CONCAT(CAST(validated_players AS STRING), ' (', CAST(pct_validated AS STRING), '%)') as metric,
-  'Expected: 55-65%' as value,
+  'Higher is better! 80%+ excellent' as value,
   validation_status_check as status
 FROM status_check
 
@@ -235,10 +284,17 @@ SELECT
   '' as metric,
   '' as value,
   CASE
-    WHEN hours_since_update > 96 OR unique_teams != 30 OR unique_players < 500 OR unique_players > 650 OR unique_players != unique_bdl_ids
-    THEN '🔴 CRITICAL: Immediate action required'
-    WHEN hours_since_update > 48 OR pct_validated < 45 OR ROUND(100.0 * missing_nba_com / unique_players, 1) > 40
-    THEN '🟡 WARNING: Investigation recommended'
+    -- Critical conditions (only truly bad things)
+    WHEN hours_since_update > 96 THEN '🔴 CRITICAL: Data not updating'
+    WHEN unique_teams != 30 THEN '🔴 CRITICAL: Missing teams'
+    WHEN unique_players < (min_players - 50) THEN '🔴 CRITICAL: Very low player count'
+    WHEN unique_players > (max_players + 50) THEN '🔴 CRITICAL: Very high player count'
+    WHEN ABS(unique_players - unique_bdl_ids) > 5 THEN '🔴 CRITICAL: Significant ID mismatch'
+    -- Warning conditions
+    WHEN hours_since_update > 48 THEN '🟡 WARNING: Data getting stale'
+    WHEN pct_validated < (min_validation_pct - 10) THEN '🟡 WARNING: Low validation rate'
+    WHEN ROUND(100.0 * missing_nba_com / unique_players, 1) > 40 THEN '🟡 WARNING: High missing rate'
+    -- All good!
     ELSE '✅ All systems operational'
   END as status
 FROM status_check;

@@ -140,13 +140,18 @@ class GetOddsApiCurrentEventOdds(ScraperBase, ScraperFlaskMixin):
     ]
 
     def set_additional_opts(self) -> None:
-        """Fill season-wide defaults for optional opts."""
+        """Fill season-wide defaults for optional opts (FIXED: handle None values)."""
         super().set_additional_opts()  # Base class handles game_date → date conversion
         
-        self.opts.setdefault("sport", "basketball_nba")
-        self.opts.setdefault("regions", "us")
-        self.opts.setdefault("markets", "player_points")
-        self.opts.setdefault("bookmakers", "draftkings,fanduel")
+        # ── season‑wide defaults (FIXED: handle None values) ──────────────────────────────
+        if not self.opts.get("sport"):
+            self.opts["sport"] = "basketball_nba"
+        if not self.opts.get("regions"):
+            self.opts["regions"] = "us"
+        if not self.opts.get("markets"):
+            self.opts["markets"] = "player_points"
+        if not self.opts.get("bookmakers"):
+            self.opts["bookmakers"] = "draftkings,fanduel"
 
     # ------------------------------------------------------------------ #
     # URL & headers                                                      #
@@ -193,7 +198,7 @@ class GetOddsApiCurrentEventOdds(ScraperBase, ScraperFlaskMixin):
         }
         query = {k: v for k, v in query.items() if v is not None}
         self.url = f"{base}?{urlencode(query, doseq=True)}"
-        logger.info("Odds-API Current Event Odds URL: %s", self.url)
+        logger.info("Odds-API Current Event Odds URL: %s", self.url.replace(api_key, "***"))
 
     def set_headers(self) -> None:
         self.headers = {"Accept": "application/json"}
@@ -220,7 +225,7 @@ class GetOddsApiCurrentEventOdds(ScraperBase, ScraperFlaskMixin):
                     'game_date': self.opts.get('game_date', 'unknown'),
                     'markets': self.opts.get('markets', 'player_points'),
                     'status_code': status_code,
-                    'url': self.url if hasattr(self, 'url') else 'unknown',
+                    'url': self.url.replace(self.opts.get("api_key", ""), "***") if hasattr(self, 'url') else 'unknown',
                     'response_text': self.raw_response.text[:500] if hasattr(self.raw_response, 'text') else 'N/A'
                 },
                 processor_name="Odds API Player Props Scraper"

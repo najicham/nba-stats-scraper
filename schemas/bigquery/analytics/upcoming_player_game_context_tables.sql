@@ -1,11 +1,13 @@
 -- ============================================================================
 -- NBA Props Platform - Upcoming Player Game Context Analytics Table
 -- Complete pre-game context for player similarity matching
+-- File: schemas/bigquery/analytics/upcoming_player_game_context_tables.sql
 -- ============================================================================
 
 CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_analytics.upcoming_player_game_context` (
-  -- Core identifiers (5 fields)
+  -- Core identifiers (6 fields - UPDATED: added universal_player_id)
   player_lookup STRING NOT NULL,                    -- Normalized player identifier
+  universal_player_id STRING,                       -- Universal player ID from registry (e.g., lebronjames_001)
   game_id STRING NOT NULL,                          -- Unique game identifier
   game_date DATE NOT NULL,                          -- Game date for partitioning
   team_abbr STRING NOT NULL,                        -- Player's team abbreviation
@@ -76,16 +78,18 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_analytics.upcoming_player_gam
   shooting_pct_decline_last_5 NUMERIC(5,3),         -- Performance decline signal
   fourth_quarter_production_last_7 NUMERIC(5,1),    -- Late-game energy
   
-  -- NEW: Forward-Looking Schedule Context (4 fields)
-  next_game_days_rest INT64,                        -- Days until player's next game (0 = back-to-back tomorrow)
-  games_in_next_7_days INT64,                       -- Player's upcoming game density (energy management factor)
-  next_opponent_win_pct NUMERIC(5,3),               -- Win percentage of player's next opponent (motivation factor)
-  next_game_is_primetime BOOLEAN,                   -- Whether player's next game is nationally televised (motivation factor)
+  -- Forward-Looking Schedule Context (4 fields)
+  -- TODO: Returns 0/NULL for now, implement in future iteration
+  next_game_days_rest INT64,                        -- Days until player's next game
+  games_in_next_7_days INT64,                       -- Player's upcoming game density
+  next_opponent_win_pct NUMERIC(5,3),               -- Win percentage of player's next opponent
+  next_game_is_primetime BOOLEAN,                   -- Whether player's next game is nationally televised
   
-  -- NEW: Opponent Asymmetry Context (3 fields)
-  opponent_days_rest INT64,                         -- Current opponent's rest before this game (energy mismatch opportunity)
-  opponent_games_in_next_7_days INT64,              -- Current opponent's upcoming schedule density (opponent fatigue factor)
-  opponent_next_game_days_rest INT64,               -- Current opponent's rest after this game (opponent conservation risk)
+  -- Opponent Asymmetry Context (3 fields)
+  -- TODO: Implement fully after team context processor is stable
+  opponent_days_rest INT64,                         -- Current opponent's rest before this game
+  opponent_games_in_next_7_days INT64,              -- Current opponent's upcoming schedule density
+  opponent_next_game_days_rest INT64,               -- Current opponent's rest after this game
   
   -- Real-time updates (4 fields)
   player_status STRING,                             -- Injury report status
@@ -104,7 +108,26 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_analytics.upcoming_player_gam
   processed_at TIMESTAMP
 )
 PARTITION BY game_date
-CLUSTER BY player_lookup, game_date
+CLUSTER BY player_lookup, universal_player_id, game_date
 OPTIONS(
-  description="Complete pre-game context for player similarity matching with forward-looking schedule psychology"
+  description="Complete pre-game context for player predictions with universal player identification. Forward-looking schedule fields and opponent asymmetry fields are placeholders for future implementation."
 );
+
+-- ============================================================================
+-- NOTES ON DEFERRED FIELDS
+-- ============================================================================
+-- The following fields are included in the schema but return default values
+-- until their processing logic is fully implemented:
+--
+-- Forward-Looking Schedule (next_game_days_rest, games_in_next_7_days, 
+-- next_opponent_win_pct, next_game_is_primetime):
+--   - Schema ready for future implementation
+--   - Currently returns 0/NULL/FALSE
+--   - Requires forward schedule analysis from team context
+--
+-- Opponent Asymmetry (opponent_days_rest, opponent_games_in_next_7_days,
+-- opponent_next_game_days_rest):
+--   - Partially implemented in team context processor
+--   - Can be fully calculated once team context is stable
+--   - Currently returns values from opponent's team context where available
+-- ============================================================================

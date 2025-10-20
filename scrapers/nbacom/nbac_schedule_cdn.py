@@ -1,8 +1,10 @@
-# scrapers/nbacom/nbac_schedule_cdn.py
 """
-NBA.com CDN static schedule JSON scraper                 v1 - 2025-07-17
+NBA.com CDN static schedule JSON scraper                 v2 - 2025-10-19
 ------------------------------------------------------------------------
 Uses NBA.com CDN static JSON files - very reliable backup source.
+
+Enhanced with shared transformation logic for consistent output format.
+Now produces identical output to nbac_schedule_api for seamless fallback.
 
 Primary URL: https://cdn.nba.com/static/json/staticData/scheduleLeagueV2_1.json
 Backup URL:  https://cdn.nba.com/static/json/staticData/scheduleLeagueV2.json
@@ -39,6 +41,7 @@ try:
     from ..scraper_flask_mixin import convert_existing_flask_scraper
     from ..utils.exceptions import DownloadDataException
     from ..utils.gcs_path_builder import GCSPathBuilder
+    from ..utils.schedule_transformer import ScheduleTransformer
 except ImportError:
     # Direct execution: python scrapers/nbacom/nbac_schedule_cdn.py
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -47,6 +50,7 @@ except ImportError:
     from scrapers.scraper_flask_mixin import convert_existing_flask_scraper
     from scrapers.utils.exceptions import DownloadDataException
     from scrapers.utils.gcs_path_builder import GCSPathBuilder
+    from scrapers.utils.schedule_transformer import ScheduleTransformer
 
 # Import notification system
 try:
@@ -69,8 +73,9 @@ logger = logging.getLogger("scraper_base")
 
 class GetNbaComScheduleCdn(ScraperBase, ScraperFlaskMixin):
     """
-    NBA.com CDN static schedule JSON scraper.
+    NBA.com CDN static schedule JSON scraper with enhanced transformation.
     
+    Uses shared ScheduleTransformer for consistent output with API scraper.
     No parameters required - gets current season from static CDN files.
     """
 
@@ -94,7 +99,10 @@ class GetNbaComScheduleCdn(ScraperBase, ScraperFlaskMixin):
     # BACKUP_URL = "https://cdn.nba.com/static/json/staticData/scheduleLeagueV2.json"
     
     GCS_PATH_KEY = "nba_com_schedule_cdn"
+    METADATA_GCS_PATH_KEY = "nba_com_schedule_cdn_metadata"
+    
     exporters = [
+        # ========== SCHEDULE DATA EXPORTERS ==========
         {
             "type": "gcs",
             "key": GCSPathBuilder.get_path(GCS_PATH_KEY),
@@ -127,7 +135,34 @@ class GetNbaComScheduleCdn(ScraperBase, ScraperFlaskMixin):
         {
             "type": "file",
             "filename": "/tmp/exp_%(run_id)s.json",
-            "export_mode": ExportMode.DECODED,
+            "export_mode": ExportMode.DATA,  # Changed from DECODED to DATA
+            "pretty_print": True,
+            "groups": ["capture"],
+        },
+        
+        # ========== METADATA EXPORTERS ==========
+        {
+            "type": "gcs",
+            "key": GCSPathBuilder.get_path(METADATA_GCS_PATH_KEY),
+            "export_mode": ExportMode.DATA,
+            "data_key": "metadata",  # Export self.data['metadata']
+            "groups": ["prod", "gcs"],
+        },
+        # Local metadata files for development
+        {
+            "type": "file",
+            "filename": "/tmp/nba_schedule_cdn_metadata.json",
+            "export_mode": ExportMode.DATA,
+            "data_key": "metadata",
+            "pretty_print": True,
+            "groups": ["dev", "test"],
+        },
+        # Capture group metadata
+        {
+            "type": "file",
+            "filename": "/tmp/metadata_%(run_id)s.json",
+            "export_mode": ExportMode.DATA,
+            "data_key": "metadata",
             "pretty_print": True,
             "groups": ["capture"],
         },
@@ -293,7 +328,7 @@ class GetNbaComScheduleCdn(ScraperBase, ScraperFlaskMixin):
             raise
     
     def transform_data(self) -> None:
-        """Transform NBA.com CDN response into structured data"""
+        """Transform NBA.com CDN response into structured data with enhanced flags"""
         
         # Handle different possible structures
         if "leagueSchedule" in self.decoded_data:
@@ -342,27 +377,40 @@ class GetNbaComScheduleCdn(ScraperBase, ScraperFlaskMixin):
                 prev_year = current_year - 1
                 self.opts['actual_season_nba_format'] = f"{prev_year}-{current_year % 100:02d}"
         
-        # Flatten all games from all dates
+        # Initialize shared transformer with season
+        transformer = ScheduleTransformer(self.opts['actual_season_nba_format'])
+        
+        # Flatten and enhance all games from all dates
         all_games = []
         for game_date_obj in game_dates:
             game_date = game_date_obj.get("gameDate", "")
             games = game_date_obj.get("games", [])
             
             for game in games:
-                # Add the game date to each game for easier processing
-                game_with_date = {
-                    **game,
+                # Enhance with computed flags using shared logic (same as API scraper)
+                enhanced_game = transformer.enhance_game(game, game_date)
+                
+                # Add metadata
+                enhanced_game.update({
                     "gameDate": game_date,
-                    "source": "cdn_static"
-                }
-                all_games.append(game_with_date)
+                    "gameDateObj": game_date_obj.get("gameDate", ""),
+                    "source": "cdn_static"  # Tag to identify data source
+                })
+                
+                all_games.append(enhanced_game)
         
         # Sort games by date and game sequence
         all_games.sort(key=lambda x: (x.get("gameDateEst", ""), x.get("gameSequence", 0)))
         
+        # Generate season metadata using shared logic
+        metadata = transformer.generate_metadata(all_games)
+        metadata['scraped_at'] = self.opts["timestamp"]
+        metadata['source'] = 'cdn_static'
+        
+        # Store data in same format as API scraper
         self.data = {
-            "source": "nba_cdn_static",
-            "url": self.url,
+            "season": season_year,
+            "season_nba_format": self.opts['actual_season_nba_format'],
             "seasonYear": season_year,
             "leagueId": league_id,
             "timestamp": self.opts["timestamp"],
@@ -370,25 +418,28 @@ class GetNbaComScheduleCdn(ScraperBase, ScraperFlaskMixin):
             "game_count": len(all_games),
             "date_count": len(game_dates),
             "games": all_games,
-            "gameDates": game_dates,  # Keep original structure
-            "raw_response_keys": list(self.decoded_data.keys())  # For debugging
+            "metadata": metadata,  # Add metadata like API scraper
+            "source": "cdn_static"
         }
         
         logger.info("Processed %d games across %d dates for %s season (CDN static)", 
-                   len(all_games), len(game_dates), season_year)
+                   len(all_games), len(game_dates), self.opts['actual_season_nba_format'])
+        logger.info("Generated metadata: %d total games, %d backfill eligible", 
+                   metadata["total_games"], metadata["backfill"]["total_games"])
         
         # Check for suspiciously low game count
-        if len(all_games) < 50:
+        min_games = int(os.environ.get('SCHEDULE_MIN_GAMES', '50'))
+        if len(all_games) < min_games:
             try:
                 notify_warning(
                     title="NBA.com CDN Schedule - Low Game Count",
-                    message=f"Suspiciously low game count: {len(all_games)} games for season {season_year}",
+                    message=f"Suspiciously low game count: {len(all_games)} games for season {self.opts['actual_season_nba_format']}",
                     details={
                         'scraper': 'nbac_schedule_cdn',
                         'game_count': len(all_games),
                         'date_count': len(game_dates),
-                        'season': season_year,
-                        'threshold_min': 50
+                        'season': self.opts['actual_season_nba_format'],
+                        'threshold_min': min_games
                     }
                 )
             except Exception as notify_ex:
@@ -397,8 +448,9 @@ class GetNbaComScheduleCdn(ScraperBase, ScraperFlaskMixin):
     def get_scraper_stats(self) -> dict:
         """Return scraper statistics"""
         return {
-            "source": "nba_cdn_static",
+            "source": "cdn_static",
             "seasonYear": self.data.get("seasonYear", "Unknown"),
+            "season_nba_format": self.data.get("season_nba_format", "Unknown"),
             "game_count": self.data.get("game_count", 0),
             "date_count": self.data.get("date_count", 0),
             "timestamp": self.opts["timestamp"]
