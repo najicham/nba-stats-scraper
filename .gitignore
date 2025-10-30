@@ -22,7 +22,19 @@ venv/
 ENV/
 env/
 venv.bak/
-*.env
+
+# Root level .env file only
+/.env
+
+# Environment file patterns
+.env
+.env.local
+.env.*
+.env.*.local
+
+# Explicitly allow these environment files
+!.env.example
+!**/job-config.env
 
 # pytest cache
 .pytest_cache/
@@ -87,8 +99,6 @@ gcp-key.json
 .config/gcloud/
 
 # API keys and secrets (additional patterns)
-.env.*
-!.env.example
 *_key.txt
 *_secret.txt
 api_keys.json

@@ -29,6 +29,9 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_analytics.team_defense_game_s
   opp_paint_makes INT64,                            -- Paint shot makes allowed
   opp_mid_range_attempts INT64,                     -- Mid-range attempts allowed
   opp_mid_range_makes INT64,                        -- Mid-range makes allowed
+  points_in_paint_allowed INT64,                    -- ✅ Existing (paint)
+  mid_range_points_allowed INT64,                   -- ✅ NEW (mid-range)
+  three_pt_points_allowed INT64,                    -- ✅ NEW (three-point)
   points_in_paint_allowed INT64,                    -- Points in paint allowed
   second_chance_points_allowed INT64,               -- Points from opponent offensive rebounds
   
