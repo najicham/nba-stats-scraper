@@ -1,27 +1,23 @@
 """
+Path: tests/processors/precompute/player_shot_zone_analysis/test_integration.py
+
 Integration Tests for Player Shot Zone Analysis Processor
 
 Tests the full end-to-end processor flow with mocked BigQuery.
 Verifies all methods work together correctly in realistic scenarios.
 
 Run with: pytest test_integration.py -v
-Duration: ~10 seconds (8 tests)
+Duration: ~10 seconds (10 tests)
 
-These tests mock BigQuery but use real processor logic to verify:
-- Complete processing workflow
-- Dependency checking integration
-- Early season handling
-- Error handling and recovery
-- Multiple player processing
-- Data transformation pipeline
-- MERGE strategy behavior
+UPDATED: Fixed to mock parent class save_precompute() method correctly
 
 Created: October 30, 2025
+Updated: October 30, 2025
 """
 
 import pytest
 import pandas as pd
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from unittest.mock import Mock, MagicMock, patch, call
 from decimal import Decimal
 
@@ -97,12 +93,15 @@ class TestFullProcessingFlow:
             'stale_fail': [],
             'is_early_season': False,
             'has_stale_fail': False,
-            'nba_analytics.player_game_summary': {
-                'present': True,
-                'last_updated': datetime(2025, 1, 27, 23, 0, 0),
-                'age_hours': 1.0,
-                'rows_found': 30,
-                'completeness_pct': 100.0
+            'details': {
+                'nba_analytics.player_game_summary': {
+                    'present': True,
+                    'exists': True,
+                    'last_updated': datetime(2025, 1, 27, 23, 0, 0),
+                    'age_hours': 1.0,
+                    'row_count': 30,
+                    'completeness_pct': 100.0
+                }
             }
         }
     
@@ -115,11 +114,8 @@ class TestFullProcessingFlow:
         # Mock dependency check
         with patch.object(processor, 'check_dependencies', return_value=mock_dependency_check_success):
             with patch.object(processor, 'track_source_usage'):
-                # Mock BigQuery insert (save step)
-                processor.bq_client.insert_rows_json.return_value = []
-                
-                # Mock MERGE helper
-                with patch.object(processor, '_merge_to_bigquery', return_value=True):
+                # Mock parent class save_precompute() method
+                with patch.object(processor.__class__.__bases__[0], 'save_precompute'):
                     # Execute full flow
                     processor.extract_raw_data()
                     processor.calculate_precompute()
@@ -165,7 +161,8 @@ class TestFullProcessingFlow:
             'missing': [],
             'is_early_season': True,
             'early_season_reason': 'Only 3 games available, need 10',
-            'has_stale_fail': False
+            'has_stale_fail': False,
+            'details': {}
         }
         
         # Mock active players query for placeholder creation
@@ -178,7 +175,8 @@ class TestFullProcessingFlow:
         
         with patch.object(processor, 'check_dependencies', return_value=early_season_check):
             with patch.object(processor, 'track_source_usage'):
-                with patch.object(processor, '_merge_to_bigquery', return_value=True):
+                # Mock parent class save_precompute()
+                with patch.object(processor.__class__.__bases__[0], 'save_precompute'):
                     # Execute flow
                     processor.extract_raw_data()
                     # calculate_precompute not called - _write_placeholder_rows handles it
@@ -205,7 +203,8 @@ class TestFullProcessingFlow:
             'all_critical_present': False,
             'missing': ['nba_analytics.player_game_summary'],
             'is_early_season': False,
-            'has_stale_fail': False
+            'has_stale_fail': False,
+            'details': {}
         }
         
         with patch.object(processor, 'check_dependencies', return_value=missing_check):
@@ -225,7 +224,8 @@ class TestFullProcessingFlow:
             'missing': [],
             'is_early_season': False,
             'has_stale_fail': True,
-            'stale_fail': ['nba_analytics.player_game_summary']
+            'stale_fail': ['nba_analytics.player_game_summary'],
+            'details': {}
         }
         
         with patch.object(processor, 'check_dependencies', return_value=stale_check):
@@ -460,14 +460,16 @@ class TestSourceTrackingIntegration:
             'all_critical_present': True,
             'missing': [],
             'is_early_season': False,
-            'has_stale_fail': False
+            'has_stale_fail': False,
+            'details': {}
         }
         
         mock_data = pd.DataFrame([
             {'player_lookup': 'test', 'game_rank': 1, 'paint_attempts': 5,
              'paint_makes': 3, 'mid_range_attempts': 2, 'mid_range_makes': 1,
              'three_pt_attempts': 4, 'three_pt_makes': 2, 'fg_makes': 6,
-             'assisted_fg_makes': 4, 'unassisted_fg_makes': 2}
+             'assisted_fg_makes': 4, 'unassisted_fg_makes': 2, 'is_active': True,
+             'minutes_played': 30}
         ])
         
         processor.bq_client.query.return_value.to_dataframe.return_value = mock_data
@@ -482,8 +484,8 @@ class TestSourceTrackingIntegration:
                 assert mock_track.call_args[0][0] == mock_dep_check
 
 
-class TestMergeStrategy:
-    """Test MERGE save strategy behavior."""
+class TestSaveStrategy:
+    """Test save strategy behavior."""
     
     @pytest.fixture
     def processor(self):
@@ -494,32 +496,27 @@ class TestMergeStrategy:
         proc.opts = {'analysis_date': date(2025, 1, 27)}
         return proc
     
-    def test_merge_strategy_integration(self, processor):
-        """Test that MERGE strategy is used for saving data."""
+    def test_save_strategy_with_data(self, processor):
+        """Test that save works with transformed data."""
         # Create sample output data
         processor.transformed_data = [
             {
                 'player_lookup': 'testplayer',
                 'analysis_date': '2025-01-27',
                 'paint_rate_last_10': 45.0,
-                'processed_at': datetime.utcnow().isoformat()
+                'processed_at': datetime.now(timezone.utc).isoformat()
             }
         ]
         
-        # Mock the _merge_to_bigquery method
-        with patch.object(processor, '_merge_to_bigquery', return_value=True) as mock_merge:
-            with patch.object(processor, '_save_failures'):
-                success = processor.save_precompute()
-        
-        # Verify MERGE was called
-        assert success is True
-        mock_merge.assert_called_once()
-        
-        # Verify merge parameters
-        call_args = mock_merge.call_args
-        assert call_args[1]['table'] == 'player_shot_zone_analysis'
-        assert call_args[1]['merge_keys'] == ['player_lookup', 'analysis_date']
-        assert len(call_args[1]['data']) == 1
+        # Mock parent class save_precompute() method
+        with patch.object(processor.__class__.__bases__[0], 'save_precompute') as mock_parent_save:
+            success = processor.save_precompute()
+            
+            # Verify save was attempted
+            assert success is True
+            
+            # Verify parent save was called
+            mock_parent_save.assert_called_once()
 
 
 # Test runner

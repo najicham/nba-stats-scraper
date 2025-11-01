@@ -6,7 +6,7 @@ Run with: pytest tests/precompute/test_team_defense_integration.py -v
 """
 import pytest
 import pandas as pd
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, UTC  # FIX: Added UTC for timezone-aware datetimes
 from unittest.mock import Mock, MagicMock, patch, call
 from types import SimpleNamespace  # FIX: Added for mock objects
 from google.cloud import bigquery
@@ -63,7 +63,7 @@ class TestFullProcessingFlow:
                     'points_allowed': 108 + (game_num % 15),
                     'defensive_rating': 110.0 + (game_num % 10),
                     'opponent_pace': 98.0 + (game_num % 5),
-                    'processed_at': datetime(2025, 1, 27, 23, 5, 0)
+                    'processed_at': datetime(2025, 1, 27, 23, 5, 0, tzinfo=UTC)  # FIX: Added tzinfo=UTC
                 })
         
         return pd.DataFrame(data)
@@ -291,11 +291,11 @@ class TestDependencyChecking:
             'entity_field': 'defending_team_abbr'
         }
         
-        # FIX 2: Changed from dict to SimpleNamespace object
+        # FIX 2: Changed from dict to SimpleNamespace object with timezone-aware datetime
         mock_row = SimpleNamespace(
             teams_with_min_games=28,
             total_games=420,
-            last_updated=datetime(2025, 1, 27, 23, 5, 0),
+            last_updated=datetime(2025, 1, 27, 23, 5, 0, tzinfo=UTC),  # FIX: Added tzinfo=UTC
             total_teams=30
         )
         
@@ -325,11 +325,11 @@ class TestDependencyChecking:
             'entity_field': 'defending_team_abbr'
         }
         
-        # FIX 3: Changed from dict to SimpleNamespace object
+        # FIX 3: Changed from dict to SimpleNamespace object with timezone-aware datetime
         mock_row = SimpleNamespace(
             teams_with_min_games=20,
             total_games=300,
-            last_updated=datetime(2025, 1, 27, 23, 5, 0),
+            last_updated=datetime(2025, 1, 27, 23, 5, 0, tzinfo=UTC),  # FIX: Added tzinfo=UTC
             total_teams=30
         )
         

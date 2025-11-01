@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """
+Path: data_processors/precompute/player_shot_zone_analysis/player_shot_zone_analysis_processor.py
+
 Player Shot Zone Analysis Processor
 
 Analyzes each player's shot distribution and efficiency by court zone over their
@@ -17,12 +19,13 @@ Shot Zones:
 - Three-point: Beyond the arc
 
 Version: 1.0 with v4.0 dependency tracking
+Updated: October 30, 2025 - Fixed save method and datetime deprecations
 """
 
 import logging
 import os
 import pandas as pd
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from typing import Dict, List, Optional
 from google.cloud import bigquery
 
@@ -282,8 +285,8 @@ class PlayerShotZoneAnalysisProcessor(PrecomputeProcessorBase):
                                                               'Season start - insufficient games'),
                     
                     # Processing metadata
-                    'created_at': datetime.utcnow().isoformat(),
-                    'processed_at': datetime.utcnow().isoformat()
+                    'created_at': datetime.now(timezone.utc).isoformat(),
+                    'processed_at': datetime.now(timezone.utc).isoformat()
                 }
                 placeholder_rows.append(row)
             
@@ -404,8 +407,8 @@ class PlayerShotZoneAnalysisProcessor(PrecomputeProcessorBase):
                     'insufficient_data_reason': None,
                     
                     # Processing metadata
-                    'created_at': datetime.utcnow().isoformat(),
-                    'processed_at': datetime.utcnow().isoformat()
+                    'created_at': datetime.now(timezone.utc).isoformat(),
+                    'processed_at': datetime.now(timezone.utc).isoformat()
                 }
                 
                 successful.append(record)
@@ -545,7 +548,12 @@ class PlayerShotZoneAnalysisProcessor(PrecomputeProcessorBase):
     
     def save_precompute(self) -> bool:
         """
-        Save calculated metrics to BigQuery using MERGE strategy.
+        Save calculated metrics to BigQuery using parent class implementation.
+        
+        Parent class handles:
+        - MERGE_UPDATE strategy (delete + insert)
+        - Batch INSERT via BigQuery load jobs
+        - Streaming buffer error handling
         
         Returns:
             bool: True if successful, False otherwise
@@ -554,21 +562,11 @@ class PlayerShotZoneAnalysisProcessor(PrecomputeProcessorBase):
             logger.warning("No data to save")
             return True
         
-        table_ref = f"{self.project_id}.nba_precompute.{self.table_name}"
-        
-        logger.info(f"Saving {len(self.transformed_data)} records to {table_ref}")
+        logger.info(f"Saving {len(self.transformed_data)} records")
         
         try:
-            # Use MERGE strategy (update existing or insert new)
-            success = self._merge_to_bigquery(
-                table=self.table_name,
-                data=self.transformed_data,
-                merge_keys=[self.entity_field, 'analysis_date']
-            )
-            
-            if not success:
-                logger.error("Failed to save results")
-                return False
+            # Use parent class save implementation
+            super().save_precompute()
             
             # Save failure records if any
             if self.failed_entities:
@@ -580,6 +578,33 @@ class PlayerShotZoneAnalysisProcessor(PrecomputeProcessorBase):
         except Exception as e:
             logger.error(f"Error saving to BigQuery: {e}")
             return False
+    
+    def _save_failures(self) -> None:
+        """Save failed entity records for debugging."""
+        if not self.failed_entities:
+            return
+        
+        try:
+            table_id = f"{self.project_id}.nba_processing.precompute_failures"
+            
+            failure_records = []
+            for failure in self.failed_entities:
+                failure_records.append({
+                    'processor_name': self.__class__.__name__,
+                    'run_id': self.run_id,
+                    'analysis_date': self.opts['analysis_date'].isoformat(),
+                    'entity_id': failure['entity_id'],
+                    'failure_category': failure['category'],
+                    'failure_reason': failure['reason'],
+                    'can_retry': failure['can_retry'],
+                    'created_at': datetime.now(timezone.utc).isoformat()
+                })
+            
+            self.bq_client.insert_rows_json(table_id, failure_records)
+            logger.info(f"Saved {len(failure_records)} failure records")
+            
+        except Exception as e:
+            logger.warning(f"Failed to save failure records: {e}")
 
 
 # CLI entry point for testing
