@@ -19,7 +19,7 @@ Key Features:
 """
 
 import logging
-from datetime import datetime, date, timedelta, UTC  # FIX 2: Added UTC
+from datetime import datetime, date, timedelta, UTC
 from typing import Dict, List, Optional
 import pandas as pd
 from google.cloud import bigquery
@@ -193,7 +193,7 @@ class TeamDefenseZoneAnalysisProcessor(PrecomputeProcessorBase):
             
             # Calculate age
             if last_updated:
-                age_hours = (datetime.now(UTC) - last_updated).total_seconds() / 3600  # FIX 3: Changed datetime.utcnow() to datetime.now(UTC)
+                age_hours = (datetime.now(UTC) - last_updated).total_seconds() / 3600
             else:
                 age_hours = None
             
@@ -510,7 +510,7 @@ class TeamDefenseZoneAnalysisProcessor(PrecomputeProcessorBase):
                     **self.build_source_tracking_fields(),
                     
                     # Processing metadata
-                    'processed_at': datetime.now(UTC).isoformat()  # FIX 4: Changed datetime.utcnow() to datetime.now(UTC)
+                    'processed_at': datetime.now(UTC).isoformat()
                 }
                 
                 successful.append(record)
@@ -767,12 +767,12 @@ class TeamDefenseZoneAnalysisProcessor(PrecomputeProcessorBase):
                 # Source tracking (v4.0 - still populated!)
                 **self.build_source_tracking_fields(),
                 
-                # FIX 1: Early season flags - MOVED AFTER source tracking to prevent overwrite
+                # Early season flags (AFTER source tracking to prevent overwrite)
                 'early_season_flag': True,
                 'insufficient_data_reason': f"Only {games_count} games available, need {self.min_games_required}",
                 
                 # Processing metadata
-                'processed_at': datetime.now(UTC).isoformat()  # FIX 5: Changed datetime.utcnow() to datetime.now(UTC)
+                'processed_at': datetime.now(UTC).isoformat()
             }
             
             placeholders.append(placeholder)

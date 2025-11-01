@@ -1,14 +1,16 @@
 """
 Path: tests/processors/precompute/team_defense_zone_analysis/test_integration.py
+
 Integration Tests for Team Defense Zone Analysis Processor
 Tests full end-to-end processing with mocked BigQuery data.
+
 Run with: pytest tests/precompute/test_team_defense_integration.py -v
 """
 import pytest
 import pandas as pd
-from datetime import date, datetime, timedelta, UTC  # FIX: Added UTC for timezone-aware datetimes
+from datetime import date, datetime, timedelta, UTC
 from unittest.mock import Mock, MagicMock, patch, call
-from types import SimpleNamespace  # FIX: Added for mock objects
+from types import SimpleNamespace
 from google.cloud import bigquery
 
 # Import processor
@@ -63,7 +65,7 @@ class TestFullProcessingFlow:
                     'points_allowed': 108 + (game_num % 15),
                     'defensive_rating': 110.0 + (game_num % 10),
                     'opponent_pace': 98.0 + (game_num % 5),
-                    'processed_at': datetime(2025, 1, 27, 23, 5, 0, tzinfo=UTC)  # FIX: Added tzinfo=UTC
+                    'processed_at': datetime(2025, 1, 27, 23, 5, 0, tzinfo=UTC)
                 })
         
         return pd.DataFrame(data)
@@ -199,7 +201,7 @@ class TestFullProcessingFlow:
                 # Context fields should be set
                 assert lal_placeholder['games_in_sample'] == 3
                 assert lal_placeholder['data_quality_tier'] == 'low'
-                assert lal_placeholder['early_season_flag'] is True  # FIX 1: This should now pass
+                assert lal_placeholder['early_season_flag'] is True
                 assert 'Only 3 games available, need 15' in lal_placeholder['insufficient_data_reason']
     
     def test_insufficient_games_handling(self, processor, mock_team_defense_data):
@@ -291,11 +293,11 @@ class TestDependencyChecking:
             'entity_field': 'defending_team_abbr'
         }
         
-        # FIX 2: Changed from dict to SimpleNamespace object with timezone-aware datetime
+        # Use SimpleNamespace instead of dict for mock result
         mock_row = SimpleNamespace(
             teams_with_min_games=28,
             total_games=420,
-            last_updated=datetime(2025, 1, 27, 23, 5, 0, tzinfo=UTC),  # FIX: Added tzinfo=UTC
+            last_updated=datetime(2025, 1, 27, 23, 5, 0, tzinfo=UTC),
             total_teams=30
         )
         
@@ -325,11 +327,11 @@ class TestDependencyChecking:
             'entity_field': 'defending_team_abbr'
         }
         
-        # FIX 3: Changed from dict to SimpleNamespace object with timezone-aware datetime
+        # Use SimpleNamespace instead of dict for mock result
         mock_row = SimpleNamespace(
             teams_with_min_games=20,
             total_games=300,
-            last_updated=datetime(2025, 1, 27, 23, 5, 0, tzinfo=UTC),  # FIX: Added tzinfo=UTC
+            last_updated=datetime(2025, 1, 27, 23, 5, 0, tzinfo=UTC),
             total_teams=30
         )
         
@@ -419,7 +421,7 @@ class TestErrorHandling:
         # Should not raise, just warn
         with patch.object(processor, 'check_dependencies', return_value=mock_dep_check):
             with patch.object(processor, 'track_source_usage'):
-                # FIX 4: Return empty DataFrame with proper columns
+                # Return empty DataFrame with proper columns
                 empty_df = pd.DataFrame(columns=[
                     'defending_team_abbr', 'game_date', 'opp_paint_makes',
                     'opp_paint_attempts', 'opp_mid_range_makes', 'opp_mid_range_attempts',
@@ -465,7 +467,7 @@ class TestSourceTrackingIntegration:
             }
         }
         
-        # FIX 5: Provide 15 games of data instead of 1
+        # Provide 15 games of data instead of 1
         processor.raw_data = pd.DataFrame([
             {
                 'defending_team_abbr': 'LAL',

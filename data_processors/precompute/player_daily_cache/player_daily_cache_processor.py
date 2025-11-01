@@ -32,7 +32,7 @@ Date: October 30, 2025
 
 import logging
 import os
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from typing import Dict, List, Optional
 import pandas as pd
 import numpy as np
@@ -366,6 +366,12 @@ class PlayerDailyCacheProcessor(PrecomputeProcessorBase):
         
         successful = []
         failed = []
+
+        if self.upcoming_context_data.empty:
+            logger.info("No players scheduled today - skipping cache generation")
+            self.transformed_data = successful
+            self.failed_entities = failed
+            return
         
         # Get all players scheduled to play today
         all_players = self.upcoming_context_data['player_lookup'].unique()
@@ -566,8 +572,8 @@ class PlayerDailyCacheProcessor(PrecomputeProcessorBase):
 
             # Metadata
             'cache_version': self.cache_version,
-            'created_at': datetime.now(datetime.UTC).isoformat(),
-            'processed_at': datetime.now(datetime.UTC).isoformat()
+            'created_at': datetime.now(timezone.utc).isoformat(),
+            'processed_at': datetime.now(timezone.utc).isoformat()
         }
         
         return record
