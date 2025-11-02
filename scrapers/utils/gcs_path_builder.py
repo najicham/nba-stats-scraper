@@ -66,6 +66,7 @@ class GCSPathBuilder:
         "nba_com_referee_assignments": "nba-com/referee-assignments/%(date)s/%(timestamp)s.json",
         "nba_com_play_by_play": "nba-com/play-by-play/%(date)s/game-%(game_id)s/%(timestamp)s.json",
         "nba_com_player_boxscore": "nba-com/player-boxscores/%(date)s/%(timestamp)s.json",
+        "nba_com_team_boxscore": "nba-com/team-boxscore/%(game_date)s/%(game_id)s/%(timestamp)s.json",
         "nba_com_team_roster": "nba-com/rosters/%(date)s/team_%(team_abbr)s/%(timestamp)s.json", 
         "nba_com_player_movement": "nba-com/player-movement/%(date)s/%(timestamp)s.json",
         
