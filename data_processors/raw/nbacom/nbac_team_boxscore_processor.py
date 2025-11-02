@@ -2,12 +2,17 @@
 """
 Path: data_processors/raw/nbacom/nbac_team_boxscore_processor.py
 
-NBA.com Team Boxscore Processor
+NBA.com Team Boxscore Processor (v2.0)
 Transforms NBA.com team box score data into BigQuery format.
 
 Input: GCS files at gs://nba-scraped-data/nba-com/team-boxscore/
 Output: BigQuery table nba_raw.nbac_team_boxscore
 Strategy: MERGE_UPDATE (replace existing records per game)
+
+Version 2.0 Changes:
+- Added is_home boolean to distinguish home/away teams
+- Standardized game_id format: YYYYMMDD_AWAY_HOME
+- Preserved nba_game_id for NBA.com API traceability
 """
 
 import json
@@ -15,7 +20,7 @@ import logging
 import os
 import re
 from datetime import datetime, date, timezone
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from google.cloud import bigquery
 
 # Import base class
@@ -39,14 +44,20 @@ class NbacTeamBoxscoreProcessor(ProcessorBase):
             "gameDate": "2025-01-15",
             "teams": [
                 {
-                    "teamAbbreviation": "PHI",
+                    "teamAbbreviation": "LAL",  // Away team (typically teams[0])
+                    "homeAway": "AWAY",          // Optional explicit indicator
                     "fieldGoals": {"made": 46, "attempted": 92, "percentage": 0.5},
+                    ...
+                },
+                {
+                    "teamAbbreviation": "PHI",  // Home team (typically teams[1])
+                    "homeAway": "HOME",          // Optional explicit indicator
                     ...
                 }
             ]
         }
     
-    Output: nba_raw.nbac_team_boxscore
+    Output: nba_raw.nbac_team_boxscore (v2.0 with is_home and dual game IDs)
     """
     
     def __init__(self):
@@ -58,7 +69,7 @@ class NbacTeamBoxscoreProcessor(ProcessorBase):
         self.bq_client = bigquery.Client()
         self.project_id = os.environ.get('GCP_PROJECT_ID', self.bq_client.project)
         
-        logger.info(f"Initialized {self.__class__.__name__}")
+        logger.info(f"Initialized {self.__class__.__name__} v2.0")
         logger.info(f"  Table: {self.table_name}")
         logger.info(f"  Strategy: {self.processing_strategy}")
         logger.info(f"  Project: {self.project_id}")
@@ -127,6 +138,72 @@ class NbacTeamBoxscoreProcessor(ProcessorBase):
             logger.warning(f"Could not parse game date '{game_date}': {e}")
             # Default to current year - 1 as fallback
             return datetime.now().year - 1
+    
+    def determine_home_away(self, teams: List[Dict]) -> Tuple[Dict, Dict]:
+        """
+        Determine which team is home and which is away.
+        
+        NBA.com API typically provides this in one of two ways:
+        1. Explicit field: team['homeAway'] = "HOME" or "AWAY"
+        2. Array order: teams[0] = away, teams[1] = home
+        
+        Args:
+            teams: List of exactly 2 team dictionaries from NBA.com API
+            
+        Returns:
+            Tuple of (away_team_dict, home_team_dict)
+            
+        Raises:
+            ValueError: If home/away cannot be determined
+        """
+        if len(teams) != 2:
+            raise ValueError(f"Expected exactly 2 teams, got {len(teams)}")
+        
+        # Method 1: Check for explicit homeAway field
+        home_away_fields = []
+        for team in teams:
+            home_away = team.get('homeAway', '').upper()
+            if home_away:
+                home_away_fields.append(home_away)
+        
+        # If we have explicit indicators, use them
+        if len(home_away_fields) == 2:
+            if 'HOME' in home_away_fields and 'AWAY' in home_away_fields:
+                away_team = next(t for t in teams if t.get('homeAway', '').upper() == 'AWAY')
+                home_team = next(t for t in teams if t.get('homeAway', '').upper() == 'HOME')
+                logger.debug("Home/away determined from explicit homeAway field")
+                return (away_team, home_team)
+        
+        # Method 2: Use array order (NBA.com standard: teams[0] = away, teams[1] = home)
+        logger.debug("Home/away determined from array order (teams[0]=away, teams[1]=home)")
+        return (teams[0], teams[1])
+    
+    def generate_game_id(self, game_date: str, away_abbr: str, home_abbr: str) -> str:
+        """
+        Generate standardized game ID.
+        
+        Format: YYYYMMDD_AWAY_HOME
+        
+        Args:
+            game_date: Game date in YYYY-MM-DD format
+            away_abbr: Away team abbreviation (e.g., "LAL")
+            home_abbr: Home team abbreviation (e.g., "PHI")
+            
+        Returns:
+            Standardized game ID (e.g., "20250115_LAL_PHI")
+            
+        Examples:
+            ("2025-01-15", "LAL", "PHI") → "20250115_LAL_PHI"
+            ("2024-10-22", "BOS", "NYK") → "20241022_BOS_NYK"
+        """
+        # Remove hyphens from date: "2025-01-15" → "20250115"
+        date_str = game_date.replace('-', '')
+        
+        # Build game_id: YYYYMMDD_AWAY_HOME
+        game_id = f"{date_str}_{away_abbr}_{home_abbr}"
+        
+        logger.debug(f"Generated game_id: {game_id}")
+        return game_id
     
     def safe_int(self, value, default=None) -> Optional[int]:
         """
@@ -197,6 +274,22 @@ class NbacTeamBoxscoreProcessor(ProcessorBase):
         # Check team count
         if len(data['teams']) != 2:
             errors.append(f"Expected 2 teams, got {len(data['teams'])}")
+        
+        # Validate home/away can be determined
+        try:
+            away_team, home_team = self.determine_home_away(data['teams'])
+            
+            # Verify we have team abbreviations
+            away_abbr = away_team.get('teamAbbreviation', '').strip()
+            home_abbr = home_team.get('teamAbbreviation', '').strip()
+            
+            if not away_abbr:
+                errors.append("Away team missing teamAbbreviation")
+            if not home_abbr:
+                errors.append("Home team missing teamAbbreviation")
+            
+        except ValueError as e:
+            errors.append(f"Cannot determine home/away teams: {str(e)}")
         
         # Validate each team's structure
         for i, team in enumerate(data['teams']):
@@ -288,18 +381,33 @@ class NbacTeamBoxscoreProcessor(ProcessorBase):
         rows = []
         
         # Extract top-level metadata
-        game_id = raw_data.get('gameId')
+        nba_game_id = raw_data.get('gameId')  # NBA.com format (e.g., "0022400561")
         game_date = raw_data.get('gameDate')
         
         # Calculate season year
         season_year = self.extract_season_year(game_date)
         
+        # Determine home/away teams
+        try:
+            away_team, home_team = self.determine_home_away(raw_data.get('teams', []))
+        except ValueError as e:
+            logger.error(f"Cannot determine home/away for {file_path}: {e}")
+            return rows
+        
+        # Generate standardized game_id: YYYYMMDD_AWAY_HOME
+        away_abbr = self.normalize_team_abbr(away_team.get('teamAbbreviation', ''))
+        home_abbr = self.normalize_team_abbr(home_team.get('teamAbbreviation', ''))
+        game_id = self.generate_game_id(game_date, away_abbr, home_abbr)
+        
+        logger.info(f"Processing game: {game_id} (NBA.com ID: {nba_game_id})")
+        logger.info(f"  Away: {away_abbr} | Home: {home_abbr}")
+        
         # Get current processing time
         processed_at = datetime.now(timezone.utc)
         created_at = datetime.now(timezone.utc)
         
-        # Process each team
-        for team in raw_data.get('teams', []):
+        # Process both teams
+        for team, is_home in [(away_team, False), (home_team, True)]:
             # Extract shooting stats
             fg = team.get('fieldGoals', {})
             three_pt = team.get('threePointers', {})
@@ -308,14 +416,16 @@ class NbacTeamBoxscoreProcessor(ProcessorBase):
             
             # Build BigQuery record
             row = {
-                # Identity fields
-                'game_id': game_id,
-                'game_date': game_date,  # Keep as string for .isoformat() consistency
+                # Identity fields (v2.0: dual game ID system)
+                'game_id': game_id,                    # Standardized: "20250115_LAL_PHI"
+                'nba_game_id': nba_game_id,            # NBA.com format: "0022400561"
+                'game_date': game_date,                # Keep as string for .isoformat() consistency
                 'season_year': season_year,
                 'team_id': self.safe_int(team.get('teamId')),
                 'team_abbr': self.normalize_team_abbr(team.get('teamAbbreviation', '')),
                 'team_name': self.normalize_text(team.get('teamName', '')),
                 'team_city': self.normalize_text(team.get('teamCity', '')),
+                'is_home': is_home,                    # v2.0: NEW home/away indicator
                 
                 # Game time
                 'minutes': team.get('minutes'),  # Keep as string (e.g., "265:00")
@@ -389,6 +499,7 @@ class NbacTeamBoxscoreProcessor(ProcessorBase):
         
         try:
             # MERGE_UPDATE strategy: Delete existing records for this game
+            # v2.0: Use standardized game_id for deletion
             game_id = rows[0].get('game_id')
             if game_id:
                 delete_query = f"""

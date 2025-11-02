@@ -273,7 +273,7 @@ class TestProcessFile:
             ]
         }
     
-    def test_process_file_success_flow(self, mock_get_file, processor, valid_json_data):
+    def test_process_file_success_flow(self, processor, valid_json_data):
         """Test successful end-to-end file processing."""
         # Mock file content retrieval (inherited from ProcessorBase)
         processor.get_file_content = Mock(return_value=valid_json_data)
@@ -301,7 +301,7 @@ class TestProcessFile:
         assert processor.bq_client.query.called  # Delete
         assert processor.bq_client.insert_rows_json.called  # Insert
     
-    def test_process_file_validation_failure(self, mock_get_file, processor):
+    def test_process_file_validation_failure(self, processor):
         """Test process_file handles validation errors."""
         # Invalid data - missing required field
         invalid_data = {
@@ -324,7 +324,7 @@ class TestProcessFile:
         assert not processor.bq_client.query.called
         assert not processor.bq_client.insert_rows_json.called
     
-    def test_process_file_with_no_teams(self, mock_get_file, processor):
+    def test_process_file_with_no_teams(self, processor):
         """Test process_file handles empty teams list."""
         # Data with no teams
         data = {
@@ -341,7 +341,7 @@ class TestProcessFile:
         assert result['status'] in ['validation_failed', 'no_data']
         assert result['rows_processed'] == 0
     
-    def test_process_file_handles_file_read_error(self, mock_get_file, processor):
+    def test_process_file_handles_file_read_error(self, processor):
         """Test process_file handles file read errors."""
         # Mock file read failure
         processor.get_file_content = Mock(side_effect=Exception("File not found in GCS"))
@@ -354,7 +354,7 @@ class TestProcessFile:
         assert result['rows_processed'] == 0
         assert 'File not found in GCS' in result['error']
     
-    def test_process_file_dry_run_mode(self, mock_get_file, processor, valid_json_data):
+    def test_process_file_dry_run_mode(self, processor, valid_json_data):
         """Test process_file in dry run mode."""
         # Mock file content
         processor.get_file_content = Mock(return_value=valid_json_data)
