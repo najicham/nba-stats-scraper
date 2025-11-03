@@ -1,245 +1,516 @@
 #!/usr/bin/env python3
 """
-File: data_processors/analytics/upcoming_team_game_context/upcoming_team_game_context_processor.py
+Path: data_processors/analytics/upcoming_team_game_context/upcoming_team_game_context_processor.py
 
-Upcoming Team Game Context Processor - FIXED VERSION WITH DEBUG LOGGING
-Calculates pregame team-level context for upcoming games including betting lines,
-fatigue metrics, personnel status, momentum, and forward-looking schedule psychology.
+Phase 3 Analytics Processor: Upcoming Team Game Context
 
-CRITICAL FIXES APPLIED:
-1. Extended date range for window functions (LAG/LEAD now work correctly)
-2. Enhanced debug logging for betting lines extraction
-3. Better error handling and validation
+Purpose:
+    Calculate comprehensive team-level context for upcoming games including:
+    - Fatigue metrics (days rest, back-to-backs, games in windows)
+    - Betting context (spreads, totals, line movement)
+    - Personnel availability (injuries, questionable players)
+    - Recent performance (streaks, margins, momentum)
+    - Travel impact (miles traveled)
 
-DATA SOURCES:
-- nba_raw.nbac_schedule: Schedule + historical scores (81.4% coverage)
-- nba_raw.odds_api_game_lines: Betting lines (timezone corrected)
-- nba_raw.nbac_injury_report: Player injury status
-- nba_enriched.travel_distances: Travel calculations
-- nba_raw.espn_scoreboard: Fallback for game results
+Dependencies (Phase 2 Raw Tables):
+    1. nba_raw.nbac_schedule (CRITICAL) - Game schedule, matchups, results
+    2. nba_raw.odds_api_game_lines (OPTIONAL) - Betting lines
+    3. nba_raw.nbac_injury_report (OPTIONAL) - Player availability
+
+Output:
+    nba_analytics.upcoming_team_game_context
+    - 2 rows per game (home team view + away team view)
+    - Typical: ~60 rows per day (30 team-games)
+
+Update Frequency:
+    - After Phase 2 schedule updates (2-4 hours)
+    - After Phase 2 injury updates (3-5x daily)
+    - On-demand for betting line updates
+
+Version: 2.0 - Added dependency tracking, enhanced validation, quality tracking
+Last Updated: November 2, 2025
 """
 
 import logging
 import os
-from datetime import datetime, timezone, timedelta
-from typing import Dict, List, Optional
-from google.cloud import bigquery
+from datetime import datetime, timedelta, date, timezone
+from typing import Dict, List, Optional, Tuple
 import pandas as pd
+import numpy as np
+from google.cloud import bigquery
 
 from data_processors.analytics.analytics_base import AnalyticsProcessorBase
-from data_processors.analytics.utils.travel_utils import NBATravel
 
 logger = logging.getLogger(__name__)
 
 
+# ============================================================================
+# CUSTOM EXCEPTIONS
+# ============================================================================
+
+class DependencyError(Exception):
+    """Raised when a critical dependency is missing or unavailable."""
+    pass
+
+
+class DataTooStaleError(Exception):
+    """Raised when data dependencies are too old to be reliable."""
+    pass
+
+
+class ValidationError(Exception):
+    """Raised when data validation fails."""
+    pass
+
+
 class UpcomingTeamGameContextProcessor(AnalyticsProcessorBase):
-    """Process upcoming team game context analytics."""
+    """
+    Calculate team-level game context with comprehensive quality tracking.
     
-    # Team name to abbreviation mapping for betting lines
-    TEAM_NAME_MAP = {
-        'Atlanta Hawks': 'ATL',
-        'Boston Celtics': 'BOS',
-        'Brooklyn Nets': 'BKN',
-        'Charlotte Hornets': 'CHA',
-        'Chicago Bulls': 'CHI',
-        'Cleveland Cavaliers': 'CLE',
-        'Dallas Mavericks': 'DAL',
-        'Denver Nuggets': 'DEN',
-        'Detroit Pistons': 'DET',
-        'Golden State Warriors': 'GSW',
-        'Houston Rockets': 'HOU',
-        'Indiana Pacers': 'IND',
-        'LA Clippers': 'LAC',
-        'Los Angeles Clippers': 'LAC',
-        'Los Angeles Lakers': 'LAL',
-        'Memphis Grizzlies': 'MEM',
-        'Miami Heat': 'MIA',
-        'Milwaukee Bucks': 'MIL',
-        'Minnesota Timberwolves': 'MIN',
-        'New Orleans Pelicans': 'NOP',
-        'New York Knicks': 'NYK',
-        'Oklahoma City Thunder': 'OKC',
-        'Orlando Magic': 'ORL',
-        'Philadelphia 76ers': 'PHI',
-        'Phoenix Suns': 'PHX',
-        'Portland Trail Blazers': 'POR',
-        'Sacramento Kings': 'SAC',
-        'San Antonio Spurs': 'SAS',
-        'Toronto Raptors': 'TOR',
-        'Utah Jazz': 'UTA',
-        'Washington Wizards': 'WAS',
-    }
+    Features:
+    - Dependency checking on Phase 2 sources
+    - Source metadata tracking (last_updated, rows_found, completeness)
+    - Dual-source fallback (nbac_schedule → espn_scoreboard)
+    - Extended lookback windows for context calculations
+    - Quality issue logging throughout
+    """
     
     def __init__(self):
         super().__init__()
-        self.table_name = 'upcoming_team_game_context'
-        self.processing_strategy = 'MERGE_UPDATE'
+        self.table_name = 'nba_analytics.upcoming_team_game_context'
+        self.entity_type = 'team_game'
+        self.entity_field = 'team_abbr'
         
-        # CRITICAL: Initialize BigQuery client
-        self.bq_client = bigquery.Client()
-        self.project_id = os.environ.get('GCP_PROJECT_ID', self.bq_client.project)
+        # Initialize BigQuery client
+        self.project_id = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
+        self.bq_client = bigquery.Client(project=self.project_id)
         
-        # Initialize travel utility
-        self.travel = NBATravel(project_id=self.project_id)
+        # Data containers
+        self.schedule_data: Optional[pd.DataFrame] = None
+        self.betting_lines: Optional[pd.DataFrame] = None
+        self.injury_data: Optional[pd.DataFrame] = None
+        self.travel_distances: Optional[Dict] = None
         
-        # Data storage
-        self.raw_data = None
-        self.schedule_data = None
-        self.betting_lines = None
-        self.game_results = None
-        self.injury_data = None
-        self.transformed_data = None
+        # Quality tracking
+        self.quality_issues: List[Dict] = []
+        self.failed_entities: List[Dict] = []
+        
+        # Source tracking attributes (set by track_source_usage)
+        self.source_nbac_schedule_last_updated = None
+        self.source_nbac_schedule_rows_found = None
+        self.source_nbac_schedule_completeness_pct = None
+        self.source_odds_lines_last_updated = None
+        self.source_odds_lines_rows_found = None
+        self.source_odds_lines_completeness_pct = None
+        self.source_injury_report_last_updated = None
+        self.source_injury_report_rows_found = None
+        self.source_injury_report_completeness_pct = None
+        
+        # Early season tracking
+        self.early_season_flag = False
+        self.insufficient_data_reason = None
+    
+    # ========================================================================
+    # DEPENDENCY CONFIGURATION
+    # ========================================================================
+    
+    def get_dependencies(self) -> dict:
+        """
+        Define Phase 2 source requirements following Dependency Tracking v4.0.
+        
+        Returns:
+            dict: Dependency configuration for each source table
+        """
+        return {
+            'nba_raw.nbac_schedule': {
+                'field_prefix': 'source_nbac_schedule',
+                'description': 'Game schedule and matchups',
+                'check_type': 'date_range',
+                
+                # Data requirements
+                'expected_count_min': 20,  # ~10 games × 2 teams per day
+                
+                # Freshness thresholds
+                'max_age_hours_warn': 12,  # Warn if schedule >12h old
+                'max_age_hours_fail': 36,  # Fail if schedule >36h old
+                
+                # Early season handling
+                'early_season_days': 0,  # No early season for schedule
+                'early_season_behavior': 'CONTINUE',
+                
+                'critical': True  # Cannot process without schedule
+            },
+            
+            'nba_raw.odds_api_game_lines': {
+                'field_prefix': 'source_odds_lines',
+                'description': 'Betting lines (spreads and totals)',
+                'check_type': 'date_range',
+                
+                # Data requirements (more lenient - optional source)
+                'expected_count_min': 40,  # Multiple bookmakers × games
+                
+                # Freshness thresholds (more strict - lines change fast)
+                'max_age_hours_warn': 4,   # Warn if lines >4h old
+                'max_age_hours_fail': 12,  # Fail if lines >12h old
+                
+                'critical': False  # Can process without betting lines
+            },
+            
+            'nba_raw.nbac_injury_report': {
+                'field_prefix': 'source_injury_report',
+                'description': 'Player injury and availability status',
+                'check_type': 'date_range',
+                
+                # Data requirements (variable by day)
+                'expected_count_min': 10,  # 0-50 injured players typical
+                
+                # Freshness thresholds
+                'max_age_hours_warn': 8,   # Warn if report >8h old
+                'max_age_hours_fail': 24,  # Fail if report >24h old
+                
+                'critical': False  # Can process without injury data
+            }
+        }
+    
+    # ========================================================================
+    # DATA EXTRACTION
+    # ========================================================================
     
     def extract_raw_data(self) -> None:
-        """Extract all necessary data for team game context calculation."""
-        logger.info("Extracting raw data for team game context...")
-        
-        try:
-            # Get target date range (upcoming games) from opts
-            start_date = self.opts.get('start_date')
-            end_date = self.opts.get('end_date')
-            
-            logger.info(f"Processing team context for games from {start_date} to {end_date}")
-            
-            # 1. Extract schedule data (both teams per game) - FIXED with extended window
-            self._extract_schedule_data(start_date, end_date)
-            
-            # 2. Extract betting lines
-            self._extract_betting_lines(start_date, end_date)
-            
-            # 3. Extract historical game results (for streaks/momentum)
-            self._extract_game_results(start_date)
-            
-            # 4. Extract injury data
-            self._extract_injury_data(start_date, end_date)
-            
-            logger.info(f"Extracted data: {len(self.schedule_data)} team-game records")
-            
-        except Exception as e:
-            logger.error(f"Error extracting raw data: {e}")
-            raise
-    
-    def _extract_schedule_data(self, start_date, end_date) -> None:
         """
-        Extract schedule with forward-looking context.
+        Extract data from Phase 2 sources with full dependency checking.
         
-        CRITICAL FIX: Extended date range for window functions to work correctly.
-        Window functions (LAG/LEAD) need to see games outside the target date range
-        to calculate days_rest and next_game_days_rest properly.
+        Process:
+        1. Check all dependencies (critical and optional)
+        2. Handle missing/stale data appropriately
+        3. Extract schedule data (CRITICAL)
+        4. Extract betting lines (OPTIONAL)
+        5. Extract injury reports (OPTIONAL)
+        6. Load travel distances (static reference)
+        7. Track source usage
+        
+        Raises:
+            DependencyError: If critical dependencies missing
+            DataTooStaleError: If critical dependencies too old
         """
-        # Calculate extended date range for window functions
-        start_dt = datetime.strptime(start_date, '%Y-%m-%d')
-        end_dt = datetime.strptime(end_date, '%Y-%m-%d')
         
-        # Extend window: 30 days before (for LAG) and 7 days after (for LEAD)
-        extended_start = (start_dt - timedelta(days=30)).strftime('%Y-%m-%d')
-        extended_end = (end_dt + timedelta(days=7)).strftime('%Y-%m-%d')
+        logger.info("=" * 80)
+        logger.info("PHASE 3: UPCOMING TEAM GAME CONTEXT - EXTRACTION STARTED")
+        logger.info("=" * 80)
         
-        logger.info(f"Schedule query window: {extended_start} to {extended_end} (extended)")
-        logger.info(f"Target date range: {start_date} to {end_date} (filtered)")
+        # ====================================================================
+        # STEP 1: Check Dependencies
+        # ====================================================================
+        logger.info("Step 1: Checking dependencies...")
         
-        query = f"""
-        WITH all_team_games AS (
-          -- Get ALL games in EXTENDED window for LAG/LEAD calculations
-          -- HOME TEAM PERSPECTIVE
-          SELECT 
-            game_date,
-            game_id,
-            home_team_tricode as team_abbr,
-            away_team_tricode as opponent_team_abbr,
-            TRUE as home_game,
-            season_year,
-            home_team_tricode,  -- Keep for betting lines join
-            away_team_tricode   -- Keep for betting lines join
-          FROM `{self.project_id}.nba_raw.nbac_schedule`
-          WHERE game_date BETWEEN '{extended_start}' AND '{extended_end}'
-          
-          UNION ALL
-          
-          -- AWAY TEAM PERSPECTIVE
-          SELECT 
-            game_date,
-            game_id,
-            away_team_tricode as team_abbr,
-            home_team_tricode as opponent_team_abbr,
-            FALSE as home_game,
-            season_year,
-            home_team_tricode,  -- Keep for betting lines join
-            away_team_tricode   -- Keep for betting lines join
-          FROM `{self.project_id}.nba_raw.nbac_schedule`
-          WHERE game_date BETWEEN '{extended_start}' AND '{extended_end}'
-        ),
+        start_date = self.opts.get('start_date')
+        end_date = self.opts.get('end_date')
         
-        team_schedule_with_context AS (
-          SELECT 
-            *,
-            -- Forward-looking schedule context (LEAD sees future games now)
-            LEAD(game_date) OVER (PARTITION BY team_abbr ORDER BY game_date) as next_game_date,
-            LEAD(opponent_team_abbr) OVER (PARTITION BY team_abbr ORDER BY game_date) as next_opponent,
-            
-            -- Backward-looking context (LAG sees past games now)
-            LAG(game_date) OVER (PARTITION BY team_abbr ORDER BY game_date) as last_game_date,
-            LAG(opponent_team_abbr) OVER (PARTITION BY team_abbr ORDER BY game_date) as last_opponent,
-            LAG(home_game) OVER (PARTITION BY team_abbr ORDER BY game_date) as last_game_home
-          FROM all_team_games
+        if not start_date or not end_date:
+            raise ValueError("start_date and end_date are required")
+        
+        # Check all dependencies
+        dep_check = self.check_dependencies(
+            start_date=start_date,
+            end_date=end_date
         )
         
-        SELECT 
-          *,
-          -- Calculate days rest (should work now!)
-          DATE_DIFF(game_date, last_game_date, DAY) as team_days_rest,
-          DATE_DIFF(next_game_date, game_date, DAY) as team_next_game_days_rest,
-          
-          -- Back-to-back flag
-          CASE WHEN DATE_DIFF(game_date, last_game_date, DAY) = 1 THEN TRUE ELSE FALSE END as team_back_to_back
-          
-        FROM team_schedule_with_context
-        WHERE game_date BETWEEN '{start_date}' AND '{end_date}'  -- Filter to target dates
-        ORDER BY game_date, team_abbr
-        """
+        # Log dependency status
+        logger.info(f"Dependency check results:")
+        logger.info(f"  All critical present: {dep_check['all_critical_present']}")
+        logger.info(f"  Has stale warnings: {dep_check.get('has_stale_warn', False)}")
+        logger.info(f"  Has stale failures: {dep_check.get('has_stale_fail', False)}")
         
-        self.schedule_data = self.bq_client.query(query).to_dataframe()
-        logger.info(f"Extracted {len(self.schedule_data)} team-game schedule records")
+        for table_name, details in dep_check['details'].items():
+            status = "✓" if details.get('exists') else "✗"
+            logger.info(f"  {status} {table_name}: {details.get('row_count', 0)} rows")
         
-        # DEBUG: Check if days_rest is populated
-        if len(self.schedule_data) > 0:
-            null_rest = self.schedule_data['team_days_rest'].isna().sum()
-            if null_rest > 0:
-                logger.warning(f"⚠️  {null_rest}/{len(self.schedule_data)} records have NULL team_days_rest")
-                logger.warning("This suggests window functions not seeing previous games")
-            else:
-                rest_values = self.schedule_data['team_days_rest'].value_counts().sort_index()
-                logger.info(f"✓ team_days_rest distribution: {dict(rest_values)}")
+        # ====================================================================
+        # STEP 2: Handle Critical Failures
+        # ====================================================================
+        
+        # Check critical dependencies
+        if not dep_check['all_critical_present']:
+            missing = dep_check.get('missing', [])
+            error_msg = f"Missing critical dependencies: {', '.join(missing)}"
+            logger.error(error_msg)
+            
+            self.log_quality_issue(
+                severity='CRITICAL',
+                category='MISSING_DEPENDENCY',
+                message=error_msg,
+                details={'missing': missing}
+            )
+            
+            raise DependencyError(error_msg)
+        
+        # Check critical staleness
+        if dep_check.get('has_stale_fail'):
+            stale = dep_check.get('stale_fail', [])
+            error_msg = f"Critical dependencies too stale: {', '.join(stale)}"
+            logger.error(error_msg)
+            
+            self.log_quality_issue(
+                severity='CRITICAL',
+                category='STALE_DEPENDENCY',
+                message=error_msg,
+                details={'stale': stale}
+            )
+            
+            raise DataTooStaleError(error_msg)
+        
+        # ====================================================================
+        # STEP 3: Track Source Usage
+        # ====================================================================
+        logger.info("Step 2: Tracking source usage...")
+        
+        # Populate source tracking attributes
+        self.track_source_usage(dep_check)
+        
+        # Log source metadata
+        logger.info(f"Source Tracking:")
+        logger.info(f"  Schedule: {self.source_nbac_schedule_rows_found} rows, "
+                   f"{self.source_nbac_schedule_completeness_pct}% complete")
+        logger.info(f"  Odds Lines: {self.source_odds_lines_rows_found} rows, "
+                   f"{self.source_odds_lines_completeness_pct}% complete")
+        logger.info(f"  Injury Report: {self.source_injury_report_rows_found} rows, "
+                   f"{self.source_injury_report_completeness_pct}% complete")
+        
+        # ====================================================================
+        # STEP 4: Extract Schedule Data (CRITICAL)
+        # ====================================================================
+        logger.info("Step 3: Extracting schedule data (CRITICAL)...")
+        
+        self.schedule_data = self._extract_schedule_data(start_date, end_date)
+        
+        if self.schedule_data is None or len(self.schedule_data) == 0:
+            error_msg = "No schedule data found - cannot continue"
+            logger.error(error_msg)
+            
+            self.log_quality_issue(
+                severity='CRITICAL',
+                category='NO_DATA',
+                message=error_msg,
+                details={'date_range': f"{start_date} to {end_date}"}
+            )
+            
+            raise DependencyError(error_msg)
+        
+        logger.info(f"✓ Extracted {len(self.schedule_data)} schedule records")
+        
+        # ====================================================================
+        # STEP 5: Extract Betting Lines (OPTIONAL)
+        # ====================================================================
+        logger.info("Step 4: Extracting betting lines (OPTIONAL)...")
+        
+        self.betting_lines = self._extract_betting_lines(start_date, end_date)
+        
+        if self.betting_lines is None or len(self.betting_lines) == 0:
+            logger.warning("No betting lines available - will continue with NULL spreads/totals")
+            self.betting_lines = pd.DataFrame()  # Empty but not None
+        else:
+            logger.info(f"✓ Extracted {len(self.betting_lines)} betting line records")
+        
+        # ====================================================================
+        # STEP 6: Extract Injury Reports (OPTIONAL)
+        # ====================================================================
+        logger.info("Step 5: Extracting injury reports (OPTIONAL)...")
+        
+        self.injury_data = self._extract_injury_data(start_date, end_date)
+        
+        if self.injury_data is None or len(self.injury_data) == 0:
+            logger.warning("No injury data available - will continue with 0 injuries")
+            self.injury_data = pd.DataFrame()  # Empty but not None
+        else:
+            logger.info(f"✓ Extracted {len(self.injury_data)} injury records")
+        
+        # ====================================================================
+        # STEP 7: Load Travel Distances (STATIC)
+        # ====================================================================
+        logger.info("Step 6: Loading travel distances (STATIC)...")
+        
+        self.travel_distances = self._load_travel_distances()
+        logger.info(f"✓ Loaded {len(self.travel_distances)} travel distance mappings")
+        
+        logger.info("=" * 80)
+        logger.info("EXTRACTION COMPLETE")
+        logger.info("=" * 80)
     
-    def _extract_betting_lines(self, start_date, end_date) -> None:
+    def _extract_schedule_data(
+        self, 
+        start_date: date, 
+        end_date: date
+    ) -> pd.DataFrame:
         """
-        Extract betting lines (spreads and totals) from odds API.
+        Extract schedule data with extended lookback window.
         
-        ENHANCED WITH DEBUG LOGGING to diagnose spread extraction issues.
+        Strategy:
+        1. Try primary source (nbac_schedule)
+        2. If gaps found, backfill from ESPN scoreboard
+        3. Use extended window (30 days before, 7 days after)
+        
+        Args:
+            start_date: Start of target date range
+            end_date: End of target date range
+            
+        Returns:
+            DataFrame with schedule data or None if extraction fails
         """
+        
+        # Extended window for context calculations
+        extended_start = start_date - timedelta(days=30)  # 30-day lookback
+        extended_end = end_date + timedelta(days=7)       # 7-day lookahead
+        
+        logger.info(f"Extracting schedule: {extended_start} to {extended_end}")
+        
+        # Primary source: nbac_schedule
         query = f"""
-        WITH latest_lines AS (
-          SELECT 
+        SELECT 
+            game_id,
             game_date,
+            season_year,
+            home_team_tricode as home_team_abbr,
+            away_team_tricode as away_team_abbr,
+            game_status,
+            home_team_score,
+            away_team_score,
+            winning_team_tricode as winning_team_abbr,
+            data_source,
+            processed_at
+        FROM `{self.project_id}.nba_raw.nbac_schedule`
+        WHERE game_date BETWEEN '{extended_start}' AND '{extended_end}'
+          AND game_status IN (1, 3)  -- Scheduled or Final
+        ORDER BY game_date, game_id
+        """
+        
+        try:
+            schedule_df = self.bq_client.query(query).to_dataframe()
+            
+            if len(schedule_df) == 0:
+                logger.warning("nbac_schedule returned 0 rows")
+                return None
+            
+            logger.info(f"Primary source (nbac_schedule): {len(schedule_df)} games")
+            
+            # Check for gaps in target date range
+            dates_found = set(schedule_df['game_date'].dt.date.unique())
+            dates_needed = set(pd.date_range(start_date, end_date).date)
+            missing_dates = dates_needed - dates_found
+            
+            if missing_dates:
+                logger.warning(f"Found {len(missing_dates)} missing dates in schedule")
+                logger.info(f"Missing dates: {sorted(missing_dates)}")
+                
+                # Attempt ESPN fallback
+                espn_df = self._extract_espn_fallback(list(missing_dates))
+                
+                if espn_df is not None and len(espn_df) > 0:
+                    logger.info(f"ESPN fallback: {len(espn_df)} games")
+                    schedule_df = pd.concat([schedule_df, espn_df], ignore_index=True)
+                    logger.info(f"Combined total: {len(schedule_df)} games")
+            
+            return schedule_df
+            
+        except Exception as e:
+            logger.error(f"Error extracting schedule data: {e}")
+            self.log_quality_issue(
+                severity='ERROR',
+                category='EXTRACTION_FAILED',
+                message=f"Schedule extraction failed: {str(e)}",
+                details={'error_type': type(e).__name__}
+            )
+            return None
+    
+    def _extract_espn_fallback(self, missing_dates: List[date]) -> pd.DataFrame:
+        """
+        Fallback to ESPN scoreboard for missing schedule dates.
+        
+        Args:
+            missing_dates: List of dates missing from nbac_schedule
+            
+        Returns:
+            DataFrame with ESPN data or None if unavailable
+        """
+        
+        if not missing_dates:
+            return None
+        
+        logger.info(f"Attempting ESPN fallback for {len(missing_dates)} dates")
+        
+        # Format dates for SQL IN clause
+        date_list = "', '".join([d.isoformat() for d in missing_dates])
+        
+        query = f"""
+        SELECT 
+            game_id,
+            game_date,
+            season_year,
             home_team_abbr,
             away_team_abbr,
-            bookmaker_key,
-            market_key,
-            outcome_name,
-            outcome_point,
-            outcome_price,
-            snapshot_timestamp,
+            3 as game_status,  -- Final (ESPN only has completed games)
+            home_team_score,
+            away_team_score,
+            CASE 
+                WHEN home_team_winner THEN home_team_abbr
+                WHEN away_team_winner THEN away_team_abbr
+            END as winning_team_abbr,
+            'espn_scoreboard' as data_source,
+            processed_at
+        FROM `{self.project_id}.nba_raw.espn_scoreboard`
+        WHERE game_date IN ('{date_list}')
+          AND is_completed = TRUE
+          AND game_status = 'final'
+        """
+        
+        try:
+            espn_df = self.bq_client.query(query).to_dataframe()
+            
+            if len(espn_df) > 0:
+                logger.info(f"✓ ESPN fallback found {len(espn_df)} games")
+            else:
+                logger.warning("ESPN fallback returned 0 rows")
+            
+            return espn_df
+            
+        except Exception as e:
+            logger.warning(f"ESPN fallback failed: {e}")
+            return None
+    
+    def _extract_betting_lines(
+        self, 
+        start_date: date, 
+        end_date: date
+    ) -> pd.DataFrame:
+        """
+        Extract latest betting lines for target date range.
+        
+        Strategy:
+        - Get latest snapshot per game per bookmaker per market
+        - Focus on target dates (no extended window needed)
+        
+        Args:
+            start_date: Start of target date range
+            end_date: End of target date range
+            
+        Returns:
+            DataFrame with betting lines or None if unavailable
+        """
+        
+        logger.info(f"Extracting betting lines: {start_date} to {end_date}")
+        
+        query = f"""
+        WITH latest_lines AS (
+          SELECT *,
             ROW_NUMBER() OVER (
-              PARTITION BY game_date, home_team_abbr, away_team_abbr, bookmaker_key, market_key, outcome_name 
+              PARTITION BY game_date, game_id, bookmaker_key, market_key, outcome_name 
               ORDER BY snapshot_timestamp DESC
             ) as rn
           FROM `{self.project_id}.nba_raw.odds_api_game_lines`
-          WHERE game_date >= '{start_date}' AND game_date <= '{end_date}'
-        ),
-        
-        opening_lines AS (
-          SELECT 
+          WHERE game_date BETWEEN '{start_date}' AND '{end_date}'
+        )
+        SELECT 
             game_date,
+            game_id,
             home_team_abbr,
             away_team_abbr,
             bookmaker_key,
@@ -247,555 +518,737 @@ class UpcomingTeamGameContextProcessor(AnalyticsProcessorBase):
             outcome_name,
             outcome_point,
             outcome_price,
-            snapshot_timestamp,
-            ROW_NUMBER() OVER (
-              PARTITION BY game_date, home_team_abbr, away_team_abbr, bookmaker_key, market_key, outcome_name 
-              ORDER BY snapshot_timestamp ASC
-            ) as rn
-          FROM `{self.project_id}.nba_raw.odds_api_game_lines`
-          WHERE game_date >= '{start_date}' AND game_date <= '{end_date}'
-        )
-        
-        SELECT 
-          l.game_date,
-          l.home_team_abbr,
-          l.away_team_abbr,
-          l.bookmaker_key,
-          l.market_key,
-          l.outcome_name,
-          l.outcome_point as current_line,
-          l.outcome_price as current_price,
-          o.outcome_point as opening_line,
-          o.outcome_price as opening_price
-        FROM latest_lines l
-        LEFT JOIN opening_lines o 
-          ON l.game_date = o.game_date
-          AND l.home_team_abbr = o.home_team_abbr
-          AND l.away_team_abbr = o.away_team_abbr
-          AND l.bookmaker_key = o.bookmaker_key
-          AND l.market_key = o.market_key
-          AND l.outcome_name = o.outcome_name
-          AND o.rn = 1
-        WHERE l.rn = 1
-        ORDER BY l.game_date, l.home_team_abbr, l.market_key, l.outcome_name
+            snapshot_timestamp
+        FROM latest_lines
+        WHERE rn = 1
+        ORDER BY game_date, game_id, market_key
         """
         
-        self.betting_lines = self.bq_client.query(query).to_dataframe()
-        logger.info(f"Extracted {len(self.betting_lines)} betting line records")
-        
-        # DEBUG: Show what betting lines look like
-        if len(self.betting_lines) > 0:
-            # Count by market
-            market_counts = self.betting_lines['market_key'].value_counts()
-            logger.info(f"Market breakdown: {dict(market_counts)}")
+        try:
+            lines_df = self.bq_client.query(query).to_dataframe()
             
-            # Count by bookmaker
-            bookmaker_counts = self.betting_lines['bookmaker_key'].value_counts()
-            logger.info(f"Bookmaker breakdown: {dict(bookmaker_counts)}")
+            if len(lines_df) == 0:
+                logger.warning("No betting lines found for date range")
+                return None
             
-            # Show sample spread lines
-            spread_sample = self.betting_lines[
-                (self.betting_lines['market_key'] == 'spreads') &
-                (self.betting_lines['bookmaker_key'] == 'draftkings')
-            ].head(5)
+            return lines_df
             
-            if len(spread_sample) > 0:
-                logger.info("Sample DraftKings spreads:")
-                for _, line in spread_sample.iterrows():
-                    logger.info(f"  {line['game_date']} {line['home_team_abbr']} vs {line['away_team_abbr']}: "
-                               f"outcome_name='{line['outcome_name']}', point={line['current_line']}")
-            else:
-                logger.warning("⚠️  No DraftKings spreads found in sample!")
-                
-            # Check unique outcome_name values for spreads
-            if 'spreads' in market_counts.index:
-                spread_outcomes = self.betting_lines[
-                    self.betting_lines['market_key'] == 'spreads'
-                ]['outcome_name'].unique()
-                logger.info(f"Unique spread outcome_name values: {list(spread_outcomes)[:10]}")
-        else:
-            logger.warning("⚠️  No betting lines extracted!")
+        except Exception as e:
+            logger.warning(f"Error extracting betting lines: {e}")
+            self.log_quality_issue(
+                severity='WARNING',
+                category='EXTRACTION_FAILED',
+                message=f"Betting lines extraction failed: {str(e)}",
+                details={'error_type': type(e).__name__}
+            )
+            return None
     
-    def _extract_game_results(self, start_date) -> None:
+    def _extract_injury_data(
+        self, 
+        start_date: date, 
+        end_date: date
+    ) -> pd.DataFrame:
         """
-        Extract historical game results for momentum/streak calculations.
+        Extract latest injury reports for target date range.
         
-        Uses dual-source strategy with automatic fallback.
-        """
-        # Get last 30 days of results before target date
-        lookback_date = (datetime.strptime(start_date, '%Y-%m-%d') - timedelta(days=30)).strftime('%Y-%m-%d')
+        Strategy:
+        - Get latest report per player per game
+        - Focus on target dates
         
-        logger.info(f"Extracting game results from {lookback_date} to {start_date}")
-        
-        # PRIMARY: Try nbac_schedule first
-        schedule_query = f"""
-        SELECT 
-          game_date,
-          game_id,
-          home_team_tricode as home_team_abbr,
-          away_team_tricode as away_team_abbr,
-          home_team_score as home_score,
-          away_team_score as away_score,
-          winning_team_tricode as winning_team_abbr,
-          'nbac_schedule' as source
-        FROM `{self.project_id}.nba_raw.nbac_schedule`
-        WHERE game_date >= '{lookback_date}' 
-          AND game_date < '{start_date}'
-          AND home_team_score IS NOT NULL  -- Only completed games
-          AND game_status = 3  -- Status 3 = Final
-        ORDER BY game_date DESC
-        """
-        
-        self.game_results = self.bq_client.query(schedule_query).to_dataframe()
-        schedule_count = len(self.game_results)
-        logger.info(f"Extracted {schedule_count} game results from nbac_schedule")
-        
-        # FALLBACK: Check espn_scoreboard for any missing dates
-        if schedule_count > 0:
-            espn_query = f"""
-            SELECT 
-              e.game_date,
-              e.game_id,
-              e.home_team_abbr,
-              e.away_team_abbr,
-              e.home_team_score as home_score,
-              e.away_team_score as away_score,
-              CASE 
-                WHEN e.home_team_winner THEN e.home_team_abbr
-                WHEN e.away_team_winner THEN e.away_team_abbr
-                ELSE NULL
-              END as winning_team_abbr,
-              'espn_scoreboard' as source
-            FROM `{self.project_id}.nba_raw.espn_scoreboard` e
-            WHERE e.game_date >= '{lookback_date}' 
-              AND e.game_date < '{start_date}'
-              AND e.is_completed = true
-              AND e.game_status = 'final'
-              -- Only get games NOT already in schedule results
-              AND NOT EXISTS (
-                SELECT 1 
-                FROM `{self.project_id}.nba_raw.nbac_schedule` s
-                WHERE s.game_date = e.game_date
-                  AND s.home_team_tricode = e.home_team_abbr
-                  AND s.away_team_tricode = e.away_team_abbr
-                  AND s.home_team_score IS NOT NULL
-              )
-            """
+        Args:
+            start_date: Start of target date range
+            end_date: End of target date range
             
-            try:
-                espn_results = self.bq_client.query(espn_query).to_dataframe()
-                if len(espn_results) > 0:
-                    self.game_results = pd.concat([self.game_results, espn_results], ignore_index=True)
-                    logger.info(f"Added {len(espn_results)} additional games from espn_scoreboard (fallback)")
-            except Exception as e:
-                logger.warning(f"Could not fetch espn_scoreboard fallback data: {e}")
-        else:
-            logger.warning("No data from nbac_schedule, trying espn_scoreboard as primary")
-            espn_query = f"""
-            SELECT 
-              game_date,
-              game_id,
-              home_team_abbr,
-              away_team_abbr,
-              home_team_score as home_score,
-              away_team_score as away_score,
-              CASE 
-                WHEN home_team_winner THEN home_team_abbr
-                WHEN away_team_winner THEN away_team_abbr
-                ELSE NULL
-              END as winning_team_abbr,
-              'espn_scoreboard' as source
-            FROM `{self.project_id}.nba_raw.espn_scoreboard`
-            WHERE game_date >= '{lookback_date}' 
-              AND game_date < '{start_date}'
-              AND is_completed = true
-              AND game_status = 'final'
-            ORDER BY game_date DESC
-            """
-            
-            try:
-                self.game_results = self.bq_client.query(espn_query).to_dataframe()
-                logger.info(f"Extracted {len(self.game_results)} game results from espn_scoreboard (primary)")
-            except Exception as e:
-                logger.error(f"Could not fetch from either source: {e}")
-                self.game_results = pd.DataFrame()
+        Returns:
+            DataFrame with injury data or None if unavailable
+        """
         
-        total_results = len(self.game_results)
-        if total_results > 0:
-            sources = self.game_results['source'].value_counts().to_dict()
-            logger.info(f"Total game results: {total_results}, Sources: {sources}")
-        else:
-            logger.warning("No game results found from any source")
-    
-    def _extract_injury_data(self, start_date, end_date) -> None:
-        """Extract injury report data for personnel context."""
+        logger.info(f"Extracting injury data: {start_date} to {end_date}")
+        
         query = f"""
-        WITH latest_injury_status AS (
-          SELECT 
+        WITH latest_status AS (
+          SELECT *,
+            ROW_NUMBER() OVER (
+              PARTITION BY game_date, player_lookup 
+              ORDER BY report_date DESC, report_hour DESC
+            ) as rn
+          FROM `{self.project_id}.nba_raw.nbac_injury_report`
+          WHERE game_date BETWEEN '{start_date}' AND '{end_date}'
+        )
+        SELECT 
             game_date,
             team,
             player_lookup,
             injury_status,
             reason_category,
-            ROW_NUMBER() OVER (
-              PARTITION BY game_date, team, player_lookup 
-              ORDER BY report_date DESC, report_hour DESC
-            ) as rn
-          FROM `{self.project_id}.nba_raw.nbac_injury_report`
-          WHERE game_date >= '{start_date}' AND game_date <= '{end_date}'
-        )
-        
-        SELECT 
-          game_date,
-          team,
-          COUNT(CASE WHEN injury_status = 'out' THEN 1 END) as players_out,
-          COUNT(CASE WHEN injury_status IN ('questionable', 'doubtful') THEN 1 END) as questionable_players
-        FROM latest_injury_status
+            confidence_score
+        FROM latest_status
         WHERE rn = 1
-        GROUP BY game_date, team
+          AND confidence_score >= 0.8  -- Only use high-confidence records
         """
         
-        self.injury_data = self.bq_client.query(query).to_dataframe()
-        logger.info(f"Extracted {len(self.injury_data)} injury summary records")
+        try:
+            injury_df = self.bq_client.query(query).to_dataframe()
+            
+            if len(injury_df) == 0:
+                logger.warning("No injury data found for date range")
+                return None
+            
+            return injury_df
+            
+        except Exception as e:
+            logger.warning(f"Error extracting injury data: {e}")
+            self.log_quality_issue(
+                severity='WARNING',
+                category='EXTRACTION_FAILED',
+                message=f"Injury data extraction failed: {str(e)}",
+                details={'error_type': type(e).__name__}
+            )
+            return None
+    
+    def _load_travel_distances(self) -> Dict:
+        """
+        Load travel distance mappings from static table.
+        
+        Returns:
+            Dict mapping "FROM_TO" → distance_miles
+        """
+        
+        query = f"""
+        SELECT 
+            from_team,
+            to_team,
+            distance_miles
+        FROM `{self.project_id}.nba_static.travel_distances`
+        """
+        
+        try:
+            df = self.bq_client.query(query).to_dataframe()
+            
+            # Build lookup dict
+            distances = {}
+            for _, row in df.iterrows():
+                key = f"{row['from_team']}_{row['to_team']}"
+                distances[key] = row['distance_miles']
+            
+            return distances
+            
+        except Exception as e:
+            logger.warning(f"Error loading travel distances: {e}")
+            return {}
+    
+    # ========================================================================
+    # DATA VALIDATION
+    # ========================================================================
     
     def validate_extracted_data(self) -> None:
-        """Validate the extracted data quality."""
-        issues = []
+        """
+        Validate extracted data quality with comprehensive checks.
         
-        # Check schedule data
+        Validations:
+        1. Schedule data completeness
+        2. Date range coverage
+        3. Required fields present
+        4. Value ranges valid
+        5. Team abbreviations valid
+        """
+        
+        logger.info("=" * 80)
+        logger.info("VALIDATION STARTED")
+        logger.info("=" * 80)
+        
+        validation_passed = True
+        
+        # ====================================================================
+        # VALIDATION 1: Schedule Data Completeness
+        # ====================================================================
+        logger.info("Validation 1: Checking schedule data completeness...")
+        
         if self.schedule_data is None or len(self.schedule_data) == 0:
-            issues.append("No schedule data extracted")
+            error_msg = "CRITICAL: No schedule data available"
+            logger.error(error_msg)
+            self.log_quality_issue(
+                severity='CRITICAL',
+                category='NO_DATA',
+                message=error_msg
+            )
+            raise ValidationError(error_msg)
         
-        # Check for missing game_ids
-        if self.schedule_data is not None:
-            null_game_ids = self.schedule_data['game_id'].isna().sum()
-            if null_game_ids > 0:
-                issues.append(f"{null_game_ids} records missing game_id")
-        
-        # Check for missing team abbreviations
-        if self.schedule_data is not None:
-            null_teams = self.schedule_data['team_abbr'].isna().sum()
-            if null_teams > 0:
-                issues.append(f"{null_teams} records missing team_abbr")
-        
-        # CRITICAL: Check if days_rest is NULL (window function failure)
-        if self.schedule_data is not None:
-            null_rest = self.schedule_data['team_days_rest'].isna().sum()
-            if null_rest > 0:
-                issues.append(f"⚠️  CRITICAL: {null_rest} records missing team_days_rest (window function issue)")
-        
-        # Log validation results
-        if issues:
-            logger.warning(f"Data quality issues found: {'; '.join(issues)}")
-            for issue in issues:
-                self.log_quality_issue(
-                    issue_type='missing_data',
-                    description=issue,
-                    affected_records=0
-                )
-        else:
-            logger.info("Data validation passed - no critical issues found")
-    
-    def calculate_analytics(self) -> None:
-        """Calculate all team game context analytics."""
-        logger.info("Calculating team game context analytics...")
-        
-        records = []
-        
-        for _, game in self.schedule_data.iterrows():
-            try:
-                record = self._calculate_team_game_context(game)
-                records.append(record)
-            except Exception as e:
-                logger.error(f"Error calculating context for {game.get('game_id')} - {game.get('team_abbr')}: {e}")
-                continue
-        
-        self.transformed_data = records
-        logger.info(f"Calculated context for {len(records)} team-game records")
-    
-    def _calculate_team_game_context(self, game: pd.Series) -> Dict:
-        """Calculate complete context for a single team-game."""
-        
-        # Core identifiers
-        record = {
-            'team_abbr': game['team_abbr'],
-            'game_id': game['game_id'],
-            'game_date': game['game_date'].isoformat() if pd.notna(game['game_date']) else None,
-            'opponent_team_abbr': game['opponent_team_abbr'],
-            'season_year': int(game['season_year']) if pd.notna(game['season_year']) else None,
-        }
-        
-        # Betting context (with debug logging)
-        record.update(self._calculate_betting_context(game))
-        
-        # Fatigue metrics
-        record.update(self._calculate_fatigue_metrics(game))
-        
-        # Personnel context
-        record.update(self._calculate_personnel_context(game))
-        
-        # Momentum context
-        record.update(self._calculate_momentum_context(game))
-        
-        # Basic game context
-        record.update(self._calculate_basic_context(game))
-        
-        # Forward-looking schedule
-        record.update(self._calculate_forward_schedule(game))
-        
-        # Opponent asymmetry
-        record.update(self._calculate_opponent_asymmetry(game))
-        
-        # Market context (closing lines - will be NULL for upcoming games)
-        record.update(self._calculate_market_context(game))
-        
-        # Referee integration
-        record.update(self._calculate_referee_context(game))
-        
-        # Data quality tracking
-        record.update({
-            'data_quality_tier': 'high',
-            'primary_source_used': 'nba_schedule',
-            'processed_with_issues': False,
-            'context_version': 1,
-            'created_at': datetime.now(timezone.utc).isoformat(),
-            'processed_at': datetime.now(timezone.utc).isoformat()
-        })
-        
-        return record
-    
-    def _calculate_betting_context(self, game: pd.Series) -> Dict:
-        """
-        Calculate betting lines context (spreads and totals).
-        ENHANCED WITH DEBUG LOGGING.
-        """
-        context = {
-            'game_spread': None, 
-            'opening_spread': None, 
-            'spread_movement': None,
-            'game_spread_source': None, 
-            'spread_public_betting_pct': None,
-            'game_total': None, 
-            'opening_total': None, 
-            'total_movement': None,
-            'game_total_source': None, 
-            'total_public_betting_pct': None,
-        }
-        
-        if self.betting_lines is None or len(self.betting_lines) == 0:
-            return context
-        
-        # Match betting lines using game_date + teams
-        game_date = game['game_date']
-        home_team = game['home_team_tricode']
-        away_team = game['away_team_tricode']
-        team_abbr = game['team_abbr']
-        
-        game_lines = self.betting_lines[
-            (self.betting_lines['game_date'] == game_date) &
-            (self.betting_lines['home_team_abbr'] == home_team) &
-            (self.betting_lines['away_team_abbr'] == away_team)
+        # Check for required fields
+        required_fields = [
+            'game_id', 'game_date', 'home_team_abbr', 'away_team_abbr',
+            'season_year', 'game_status'
         ]
         
-        if len(game_lines) == 0:
-            logger.debug(f"No betting lines found for {game_date} {home_team} vs {away_team}")
-            return context
+        missing_fields = [f for f in required_fields if f not in self.schedule_data.columns]
         
-        # DEBUG: Log what we found
-        logger.debug(f"Found {len(game_lines)} lines for {game_date} {home_team} vs {away_team}")
+        if missing_fields:
+            error_msg = f"Schedule missing required fields: {missing_fields}"
+            logger.error(error_msg)
+            self.log_quality_issue(
+                severity='CRITICAL',
+                category='MISSING_FIELDS',
+                message=error_msg,
+                details={'missing_fields': missing_fields}
+            )
+            raise ValidationError(error_msg)
         
-        # Get spread lines (prioritize DraftKings)
-        spread_lines = game_lines[game_lines['market_key'] == 'spreads']
-        dk_spreads = spread_lines[spread_lines['bookmaker_key'] == 'draftkings']
+        logger.info("✓ Schedule data has all required fields")
         
-        logger.debug(f"  Spread lines available: {len(spread_lines)} total, {len(dk_spreads)} from DraftKings")
+        # ====================================================================
+        # VALIDATION 2: Date Range Coverage
+        # ====================================================================
+        logger.info("Validation 2: Checking date range coverage...")
         
-        if len(dk_spreads) > 0:
-            # DEBUG: Show what outcome_name values we have
-            unique_outcomes = dk_spreads['outcome_name'].unique()
-            logger.debug(f"  DraftKings spread outcome_name values: {list(unique_outcomes)}")
-            
-            # Find the spread for this team using reverse mapping
-            team_spread = None
-            
-            # Strategy 1: Direct lookup using outcome_name (full team name)
-            # Find which full name in the outcomes corresponds to our team_abbr
-            target_full_name = None
-            for outcome in unique_outcomes:
-                if outcome in self.TEAM_NAME_MAP and self.TEAM_NAME_MAP[outcome] == team_abbr:
-                    target_full_name = outcome
-                    break
-            
-            if target_full_name:
-                team_spread = dk_spreads[dk_spreads['outcome_name'] == target_full_name]
-                if len(team_spread) > 0:
-                    logger.debug(f"  ✓ Matched spread using team name mapping: {team_abbr} → '{target_full_name}'")
-            
-            # Strategy 2 (fallback): Try exact abbreviation match
-            if team_spread is None or len(team_spread) == 0:
-                team_spread = dk_spreads[dk_spreads['outcome_name'] == team_abbr]
-                if len(team_spread) > 0:
-                    logger.debug(f"  ✓ Matched spread using exact team_abbr: {team_abbr}")
-            
-            # Strategy 3 (fallback): Contains team_abbr (case insensitive)
-            if team_spread is None or len(team_spread) == 0:
-                team_spread = dk_spreads[dk_spreads['outcome_name'].str.contains(team_abbr, na=False, case=False)]
-                if len(team_spread) > 0:
-                    logger.debug(f"  ✓ Matched spread using contains: {team_abbr}")
-            
-            # Strategy 4 (last resort): Home/Away designation
-            if team_spread is None or len(team_spread) == 0:
-                is_home = game['home_game']
-                if is_home:
-                    team_spread = dk_spreads[dk_spreads['outcome_name'].str.lower().isin(['home', home_team.lower()])]
-                    if len(team_spread) > 0:
-                        logger.debug(f"  ✓ Matched spread using 'home' designation")
-                else:
-                    team_spread = dk_spreads[dk_spreads['outcome_name'].str.lower().isin(['away', away_team.lower()])]
-                    if len(team_spread) > 0:
-                        logger.debug(f"  ✓ Matched spread using 'away' designation")
-            
-            # If we found a match
-            if team_spread is not None and len(team_spread) > 0:
-                current = team_spread.iloc[0]['current_line']
-                opening = team_spread.iloc[0]['opening_line']
-                context['game_spread'] = float(current) if pd.notna(current) else None
-                context['opening_spread'] = float(opening) if pd.notna(opening) else None
-                
-                if pd.notna(current) and pd.notna(opening):
-                    context['spread_movement'] = float(current - opening)
-                
-                context['game_spread_source'] = 'draftkings'
-                logger.debug(f"  ✓ Spread extracted: {context['game_spread']} (opened: {context['opening_spread']})")
-            else:
-                logger.warning(f"  ✗ Could not match spread for team {team_abbr} in outcome_name values: {list(unique_outcomes)}")
-                logger.warning(f"     Consider adding '{team_abbr}' mapping if outcome uses full team name")
+        start_date = self.opts['start_date']
+        end_date = self.opts['end_date']
+        
+        target_games = self.schedule_data[
+            (self.schedule_data['game_date'].dt.date >= start_date) &
+            (self.schedule_data['game_date'].dt.date <= end_date)
+        ]
+        
+        if len(target_games) == 0:
+            error_msg = f"No games found in target date range: {start_date} to {end_date}"
+            logger.error(error_msg)
+            self.log_quality_issue(
+                severity='CRITICAL',
+                category='NO_DATA',
+                message=error_msg,
+                details={'start_date': str(start_date), 'end_date': str(end_date)}
+            )
+            raise ValidationError(error_msg)
+        
+        logger.info(f"✓ Found {len(target_games)} games in target date range")
+        
+        # Check for date gaps
+        dates_found = set(target_games['game_date'].dt.date.unique())
+        dates_expected = set(pd.date_range(start_date, end_date).date)
+        missing_dates = dates_expected - dates_found
+        
+        if missing_dates and len(missing_dates) > len(dates_expected) * 0.2:  # >20% missing
+            warning_msg = f"Missing {len(missing_dates)} dates (>20% of range)"
+            logger.warning(warning_msg)
+            self.log_quality_issue(
+                severity='WARNING',
+                category='INCOMPLETE_DATA',
+                message=warning_msg,
+                details={'missing_dates': sorted([str(d) for d in missing_dates])}
+            )
+            validation_passed = False
+        
+        # ====================================================================
+        # VALIDATION 3: Value Ranges
+        # ====================================================================
+        logger.info("Validation 3: Checking value ranges...")
+        
+        # Check for NULL game_ids
+        null_game_ids = self.schedule_data['game_id'].isnull().sum()
+        if null_game_ids > 0:
+            error_msg = f"Found {null_game_ids} records with NULL game_id"
+            logger.error(error_msg)
+            self.log_quality_issue(
+                severity='ERROR',
+                category='INVALID_DATA',
+                message=error_msg,
+                details={'null_count': int(null_game_ids)}
+            )
+            validation_passed = False
+        
+        # Check for invalid game_status
+        valid_statuses = [1, 2, 3]
+        invalid_status = self.schedule_data[
+            ~self.schedule_data['game_status'].isin(valid_statuses)
+        ]
+        
+        if len(invalid_status) > 0:
+            warning_msg = f"Found {len(invalid_status)} games with invalid status"
+            logger.warning(warning_msg)
+            self.log_quality_issue(
+                severity='WARNING',
+                category='INVALID_DATA',
+                message=warning_msg,
+                details={'invalid_count': len(invalid_status)}
+            )
+        
+        logger.info("✓ Value range validation complete")
+        
+        # ====================================================================
+        # VALIDATION 4: Team Abbreviations
+        # ====================================================================
+        logger.info("Validation 4: Checking team abbreviations...")
+        
+        # Valid NBA team abbreviations
+        valid_teams = {
+            'ATL', 'BOS', 'BKN', 'CHA', 'CHI', 'CLE', 'DAL', 'DEN', 'DET', 'GSW',
+            'HOU', 'IND', 'LAC', 'LAL', 'MEM', 'MIA', 'MIL', 'MIN', 'NOP', 'NYK',
+            'OKC', 'ORL', 'PHI', 'PHX', 'POR', 'SAC', 'SAS', 'TOR', 'UTA', 'WAS'
+        }
+        
+        home_teams = set(self.schedule_data['home_team_abbr'].unique())
+        away_teams = set(self.schedule_data['away_team_abbr'].unique())
+        all_teams = home_teams.union(away_teams)
+        
+        invalid_teams = all_teams - valid_teams
+        
+        if invalid_teams:
+            warning_msg = f"Found invalid team abbreviations: {invalid_teams}"
+            logger.warning(warning_msg)
+            self.log_quality_issue(
+                severity='WARNING',
+                category='INVALID_DATA',
+                message=warning_msg,
+                details={'invalid_teams': list(invalid_teams)}
+            )
+        
+        logger.info(f"✓ Found {len(all_teams)} unique teams")
+        
+        # ====================================================================
+        # VALIDATION SUMMARY
+        # ====================================================================
+        logger.info("=" * 80)
+        if validation_passed:
+            logger.info("VALIDATION PASSED ✓")
         else:
-            logger.debug(f"  No DraftKings spreads available")
-        
-        # Get total lines
-        total_lines = game_lines[game_lines['market_key'] == 'totals']
-        dk_totals = total_lines[total_lines['bookmaker_key'] == 'draftkings']
-        
-        if len(dk_totals) > 0:
-            over_line = dk_totals[dk_totals['outcome_name'] == 'Over']
-            if len(over_line) > 0:
-                current = over_line.iloc[0]['current_line']
-                opening = over_line.iloc[0]['opening_line']
-                context['game_total'] = float(current) if pd.notna(current) else None
-                context['opening_total'] = float(opening) if pd.notna(opening) else None
-                
-                if pd.notna(current) and pd.notna(opening):
-                    context['total_movement'] = float(current - opening)
-                
-                context['game_total_source'] = 'draftkings'
-                logger.debug(f"  ✓ Total extracted: {context['game_total']} (opened: {context['opening_total']})")
-        
-        return context
+            logger.warning("VALIDATION PASSED WITH WARNINGS ⚠")
+        logger.info("=" * 80)
     
-    def _calculate_fatigue_metrics(self, game: pd.Series) -> Dict:
-        """Calculate team fatigue metrics."""
-        team_abbr = game['team_abbr']
-        game_date = game['game_date']
+    # ========================================================================
+    # DATA TRANSFORMATION
+    # ========================================================================
+    
+    def calculate_analytics(self) -> None:
+        """
+        Calculate team game context with comprehensive tracking.
         
-        # Get days rest from schedule data (already calculated in query with FIXED window)
-        days_rest = game.get('team_days_rest')
-        back_to_back = game.get('team_back_to_back')
+        Process:
+        1. Identify target games
+        2. For each game, create 2 records (home + away view)
+        3. Calculate all context metrics
+        4. Include source tracking
+        5. Handle failures gracefully
+        """
         
-        # Calculate games in last 7 and 14 days
-        if self.game_results is not None:
-            # Get team's recent games
-            recent_games = self.game_results[
-                (self.game_results['home_team_abbr'] == team_abbr) | 
-                (self.game_results['away_team_abbr'] == team_abbr)
-            ]
+        logger.info("=" * 80)
+        logger.info("ANALYTICS CALCULATION STARTED")
+        logger.info("=" * 80)
+        
+        successful_records = []
+        failed_count = 0
+        
+        # Get target games
+        start_date = self.opts['start_date']
+        end_date = self.opts['end_date']
+        
+        target_games = self.schedule_data[
+            (self.schedule_data['game_date'].dt.date >= start_date) &
+            (self.schedule_data['game_date'].dt.date <= end_date)
+        ].copy()
+        
+        logger.info(f"Processing {len(target_games)} games ({len(target_games) * 2} team-game records)")
+        
+        # Process each game
+        for idx, game in target_games.iterrows():
+            try:
+                # Create home team record
+                home_record = self._calculate_team_game_context(
+                    game=game,
+                    team_abbr=game['home_team_abbr'],
+                    opponent_abbr=game['away_team_abbr'],
+                    home_game=True
+                )
+                
+                if home_record:
+                    successful_records.append(home_record)
+                else:
+                    failed_count += 1
+                
+                # Create away team record
+                away_record = self._calculate_team_game_context(
+                    game=game,
+                    team_abbr=game['away_team_abbr'],
+                    opponent_abbr=game['home_team_abbr'],
+                    home_game=False
+                )
+                
+                if away_record:
+                    successful_records.append(away_record)
+                else:
+                    failed_count += 1
+                    
+            except Exception as e:
+                logger.error(f"Error processing game {game.get('game_id')}: {e}")
+                self.log_quality_issue(
+                    severity='ERROR',
+                    category='PROCESSING_ERROR',
+                    message=f"Failed to process game: {str(e)}",
+                    details={
+                        'game_id': game.get('game_id'),
+                        'error_type': type(e).__name__
+                    }
+                )
+                failed_count += 2  # Both home and away failed
+                continue
+        
+        self.transformed_data = successful_records
+        
+        logger.info("=" * 80)
+        logger.info(f"CALCULATION COMPLETE:")
+        logger.info(f"  ✓ Successful: {len(successful_records)} team-game records")
+        logger.info(f"  ✗ Failed: {failed_count} team-game records")
+        logger.info("=" * 80)
+    
+    def _calculate_team_game_context(
+        self,
+        game: pd.Series,
+        team_abbr: str,
+        opponent_abbr: str,
+        home_game: bool
+    ) -> Optional[Dict]:
+        """
+        Calculate complete context for one team-game.
+        
+        Args:
+            game: Game record from schedule
+            team_abbr: Team to calculate context for
+            opponent_abbr: Opposing team
+            home_game: True if team is home
             
-            if len(recent_games) > 0:
-                # Games in last 7 days
-                seven_days_ago = game_date - pd.Timedelta(days=7)
-                games_last_7 = len(recent_games[recent_games['game_date'] >= seven_days_ago])
-                
-                # Games in last 14 days
-                fourteen_days_ago = game_date - pd.Timedelta(days=14)
-                games_last_14 = len(recent_games[recent_games['game_date'] >= fourteen_days_ago])
-                
-                # Count back-to-backs in last 14 days
-                recent_dates = sorted(recent_games[recent_games['game_date'] >= fourteen_days_ago]['game_date'].unique())
-                b2b_count = sum(1 for i in range(len(recent_dates)-1) if (recent_dates[i+1] - recent_dates[i]).days == 1)
-            else:
-                games_last_7 = 0
-                games_last_14 = 0
-                b2b_count = 0
-        else:
-            games_last_7 = 0
-            games_last_14 = 0
-            b2b_count = 0
+        Returns:
+            Dict with all context fields or None if calculation fails
+        """
         
-        # Consecutive road games (simplified - would need full schedule context)
-        consecutive_road = 0  # TODO: Calculate from full schedule
+        try:
+            # Start with business keys
+            record = {
+                'team_abbr': team_abbr,
+                'game_id': game['game_id'],
+                'game_date': game['game_date'].date().isoformat(),
+                'season_year': int(game['season_year']),
+                'opponent_team_abbr': opponent_abbr,
+                'home_game': bool(home_game)
+            }
+            
+            # Calculate each context type
+            basic_context = self._calculate_basic_context(game, team_abbr, home_game)
+            fatigue_context = self._calculate_fatigue_context(game, team_abbr)
+            betting_context = self._calculate_betting_context(game, team_abbr, home_game)
+            personnel_context = self._calculate_personnel_context(game, team_abbr)
+            momentum_context = self._calculate_momentum_context(game, team_abbr)
+            travel_context = self._calculate_travel_context(game, team_abbr, home_game, fatigue_context)
+            
+            # Merge all contexts
+            record.update(basic_context)
+            record.update(fatigue_context)
+            record.update(betting_context)
+            record.update(personnel_context)
+            record.update(momentum_context)
+            record.update(travel_context)
+            
+            # Add source tracking (one line!)
+            record.update(self.build_source_tracking_fields())
+            
+            # Add processing metadata
+            record['processed_at'] = datetime.now(timezone.utc).isoformat()
+            record['created_at'] = datetime.now(timezone.utc).isoformat()
+            
+            return record
+            
+        except Exception as e:
+            logger.error(f"Error calculating context for {team_abbr} in game {game['game_id']}: {e}")
+            return None
+    
+    def _calculate_basic_context(
+        self,
+        game: pd.Series,
+        team_abbr: str,
+        home_game: bool
+    ) -> Dict:
+        """Calculate basic game context fields."""
         
         return {
-            'team_days_rest': int(days_rest) if pd.notna(days_rest) else None,
-            'team_back_to_back': bool(back_to_back) if pd.notna(back_to_back) else False,
-            'games_in_last_7_days': games_last_7,
-            'games_in_last_14_days': games_last_14,
-            'back_to_backs_last_14_days': b2b_count,
-            'consecutive_road_games': consecutive_road
+            'is_back_to_back': False,  # Will be set in fatigue calculation
+            'days_since_last_game': None,  # Will be set in fatigue calculation
+            'game_number_in_season': None  # Will be set in fatigue calculation
         }
     
-    def _calculate_personnel_context(self, game: pd.Series) -> Dict:
-        """Calculate personnel/injury context."""
-        team_abbr = game['team_abbr']
+    def _calculate_fatigue_context(
+        self,
+        game: pd.Series,
+        team_abbr: str
+    ) -> Dict:
+        """
+        Calculate fatigue metrics using team's recent schedule.
+        
+        Metrics:
+        - team_days_rest: Days since last game
+        - team_back_to_back: Boolean for consecutive days
+        - games_in_last_7_days: Count
+        - games_in_last_14_days: Count
+        """
+        
         game_date = game['game_date']
+        
+        # Get team's games before this one
+        team_games = self.schedule_data[
+            (
+                (self.schedule_data['home_team_abbr'] == team_abbr) |
+                (self.schedule_data['away_team_abbr'] == team_abbr)
+            ) &
+            (self.schedule_data['game_date'] < game_date) &
+            (self.schedule_data['game_status'] == 3)  # Only completed games
+        ].sort_values('game_date')
+        
+        if len(team_games) == 0:
+            # First game of season
+            return {
+                'team_days_rest': None,
+                'team_back_to_back': False,
+                'games_in_last_7_days': 0,
+                'games_in_last_14_days': 0,
+                'is_back_to_back': False,
+                'days_since_last_game': None,
+                'game_number_in_season': 1
+            }
+        
+        # Last game date
+        last_game_date = team_games.iloc[-1]['game_date']
+        days_rest = (game_date - last_game_date).days - 1  # Subtract 1 (0 = back-to-back)
+        is_b2b = days_rest == 0
+        
+        # Games in windows
+        seven_days_ago = game_date - timedelta(days=7)
+        fourteen_days_ago = game_date - timedelta(days=14)
+        
+        games_last_7 = len(team_games[team_games['game_date'] > seven_days_ago])
+        games_last_14 = len(team_games[team_games['game_date'] > fourteen_days_ago])
+        
+        return {
+            'team_days_rest': int(days_rest),
+            'team_back_to_back': bool(is_b2b),
+            'games_in_last_7_days': int(games_last_7),
+            'games_in_last_14_days': int(games_last_14),
+            'is_back_to_back': bool(is_b2b),
+            'days_since_last_game': int((game_date - last_game_date).days),
+            'game_number_in_season': int(len(team_games) + 1)
+        }
+    
+    def _calculate_betting_context(
+        self,
+        game: pd.Series,
+        team_abbr: str,
+        home_game: bool
+    ) -> Dict:
+        """
+        Calculate betting context from odds API data.
+        
+        Handles team name mapping: "Los Angeles Lakers" → "LAL"
+        """
+        
+        if self.betting_lines is None or len(self.betting_lines) == 0:
+            return {
+                'game_spread': None,
+                'game_total': None,
+                'game_spread_source': None,
+                'game_total_source': None,
+                'spread_movement': None,
+                'total_movement': None,
+                'betting_lines_updated_at': None
+            }
+        
+        game_date = game['game_date'].date()
+        game_id = game.get('game_id')
+        
+        # Filter lines for this game
+        game_lines = self.betting_lines[
+            (self.betting_lines['game_date'] == game_date)
+        ]
+        
+        # Additional filtering by game_id if available
+        if game_id and 'game_id' in game_lines.columns:
+            game_lines = game_lines[game_lines['game_id'] == game_id]
+        
+        if len(game_lines) == 0:
+            return {
+                'game_spread': None,
+                'game_total': None,
+                'game_spread_source': None,
+                'game_total_source': None,
+                'spread_movement': None,
+                'total_movement': None,
+                'betting_lines_updated_at': None
+            }
+        
+        # Prioritize DraftKings, fallback to FanDuel
+        preferred_books = ['draftkings', 'fanduel']
+        
+        spread = None
+        spread_source = None
+        total = None
+        total_source = None
+        lines_timestamp = None
+        
+        for bookmaker in preferred_books:
+            book_lines = game_lines[game_lines['bookmaker_key'] == bookmaker]
+            
+            if len(book_lines) == 0:
+                continue
+            
+            # Get spread
+            if spread is None:
+                spread_lines = book_lines[book_lines['market_key'] == 'spreads']
+                
+                for _, line in spread_lines.iterrows():
+                    outcome_name = line['outcome_name']
+                    
+                    # Map team name to abbreviation
+                    if self._team_name_matches(outcome_name, team_abbr):
+                        spread = float(line['outcome_point'])
+                        spread_source = bookmaker
+                        lines_timestamp = line['snapshot_timestamp']
+                        break
+            
+            # Get total
+            if total is None:
+                total_lines = book_lines[book_lines['market_key'] == 'totals']
+                over_lines = total_lines[total_lines['outcome_name'] == 'Over']
+                
+                if len(over_lines) > 0:
+                    total = float(over_lines.iloc[0]['outcome_point'])
+                    total_source = bookmaker
+                    if lines_timestamp is None:
+                        lines_timestamp = over_lines.iloc[0]['snapshot_timestamp']
+            
+            # Stop if we found both
+            if spread is not None and total is not None:
+                break
+        
+        return {
+            'game_spread': spread,
+            'game_total': total,
+            'game_spread_source': spread_source,
+            'game_total_source': total_source,
+            'spread_movement': None,  # TODO: Implement with opening line tracking
+            'total_movement': None,   # TODO: Implement with opening line tracking
+            'betting_lines_updated_at': lines_timestamp.isoformat() if lines_timestamp else None
+        }
+    
+    def _team_name_matches(self, outcome_name: str, team_abbr: str) -> bool:
+        """
+        Check if betting line outcome name matches team abbreviation.
+        
+        Handles mapping: "Los Angeles Lakers" → "LAL"
+        """
+        
+        # Team name mapping
+        TEAM_NAME_MAP = {
+            'Atlanta Hawks': 'ATL',
+            'Boston Celtics': 'BOS',
+            'Brooklyn Nets': 'BKN',
+            'Charlotte Hornets': 'CHA',
+            'Chicago Bulls': 'CHI',
+            'Cleveland Cavaliers': 'CLE',
+            'Dallas Mavericks': 'DAL',
+            'Denver Nuggets': 'DEN',
+            'Detroit Pistons': 'DET',
+            'Golden State Warriors': 'GSW',
+            'Houston Rockets': 'HOU',
+            'Indiana Pacers': 'IND',
+            'LA Clippers': 'LAC',
+            'Los Angeles Clippers': 'LAC',
+            'Los Angeles Lakers': 'LAL',
+            'Memphis Grizzlies': 'MEM',
+            'Miami Heat': 'MIA',
+            'Milwaukee Bucks': 'MIL',
+            'Minnesota Timberwolves': 'MIN',
+            'New Orleans Pelicans': 'NOP',
+            'New York Knicks': 'NYK',
+            'Oklahoma City Thunder': 'OKC',
+            'Orlando Magic': 'ORL',
+            'Philadelphia 76ers': 'PHI',
+            'Phoenix Suns': 'PHX',
+            'Portland Trail Blazers': 'POR',
+            'Sacramento Kings': 'SAC',
+            'San Antonio Spurs': 'SAS',
+            'Toronto Raptors': 'TOR',
+            'Utah Jazz': 'UTA',
+            'Washington Wizards': 'WAS'
+        }
+        
+        # Strategy 1: Exact abbreviation match
+        if outcome_name == team_abbr:
+            return True
+        
+        # Strategy 2: Full name mapping
+        if outcome_name in TEAM_NAME_MAP:
+            return TEAM_NAME_MAP[outcome_name] == team_abbr
+        
+        # Strategy 3: Contains abbreviation
+        if team_abbr in outcome_name:
+            return True
+        
+        return False
+    
+    def _calculate_personnel_context(
+        self,
+        game: pd.Series,
+        team_abbr: str
+    ) -> Dict:
+        """
+        Calculate personnel availability from injury reports.
+        """
         
         if self.injury_data is None or len(self.injury_data) == 0:
             return {
                 'starters_out_count': 0,
-                'star_players_out_count': 0,
                 'questionable_players_count': 0
             }
         
-        # Get injury data for this team/date
+        game_date = game['game_date'].date()
+        
+        # Get team's injury data for this game
         team_injuries = self.injury_data[
-            (self.injury_data['team'] == team_abbr) & 
-            (self.injury_data['game_date'] == game_date)
+            (self.injury_data['game_date'] == game_date) &
+            (self.injury_data['team'] == team_abbr)
         ]
         
-        if len(team_injuries) > 0:
-            players_out = int(team_injuries.iloc[0]['players_out'])
-            questionable = int(team_injuries.iloc[0]['questionable_players'])
-        else:
-            players_out = 0
-            questionable = 0
-        
-        return {
-            'starters_out_count': players_out,  # Simplified
-            'star_players_out_count': 0,  # Not available
-            'questionable_players_count': questionable
-        }
-    
-    def _calculate_momentum_context(self, game: pd.Series) -> Dict:
-        """Calculate team momentum/streaks."""
-        team_abbr = game['team_abbr']
-        game_date = game['game_date']
-        
-        if self.game_results is None or len(self.game_results) == 0:
+        if len(team_injuries) == 0:
             return {
-                'team_win_streak_entering': 0,
-                'team_loss_streak_entering': 0,
-                'last_game_margin': None,
-                'ats_cover_streak': 0,
-                'ats_fail_streak': 0,
-                'over_streak': 0,
-                'under_streak': 0,
-                'ats_record_last_10': '0-0'
+                'starters_out_count': 0,
+                'questionable_players_count': 0
             }
         
-        # Get team's recent games (before target date)
-        team_games = self.game_results[
-            ((self.game_results['home_team_abbr'] == team_abbr) | 
-             (self.game_results['away_team_abbr'] == team_abbr)) &
-            (self.game_results['game_date'] < game_date)
+        # Count by status
+        out_count = len(team_injuries[team_injuries['injury_status'] == 'out'])
+        questionable_count = len(team_injuries[
+            team_injuries['injury_status'].isin(['questionable', 'doubtful'])
+        ])
+        
+        return {
+            'starters_out_count': int(out_count),
+            'questionable_players_count': int(questionable_count)
+        }
+    
+    def _calculate_momentum_context(
+        self,
+        game: pd.Series,
+        team_abbr: str
+    ) -> Dict:
+        """
+        Calculate recent performance and momentum.
+        """
+        
+        game_date = game['game_date']
+        
+        # Get team's completed games before this one
+        team_games = self.schedule_data[
+            (
+                (self.schedule_data['home_team_abbr'] == team_abbr) |
+                (self.schedule_data['away_team_abbr'] == team_abbr)
+            ) &
+            (self.schedule_data['game_date'] < game_date) &
+            (self.schedule_data['game_status'] == 3) &  # Final
+            (self.schedule_data['winning_team_abbr'].notna())  # Has result
         ].sort_values('game_date', ascending=False)
         
         if len(team_games) == 0:
@@ -803,138 +1256,248 @@ class UpcomingTeamGameContextProcessor(AnalyticsProcessorBase):
                 'team_win_streak_entering': 0,
                 'team_loss_streak_entering': 0,
                 'last_game_margin': None,
-                'ats_cover_streak': 0,
-                'ats_fail_streak': 0,
-                'over_streak': 0,
-                'under_streak': 0,
-                'ats_record_last_10': '0-0'
+                'last_game_result': None
             }
         
-        # Win/loss streak
+        # Last game result
+        last_game = team_games.iloc[0]
+        last_game_winner = last_game['winning_team_abbr']
+        last_game_won = last_game_winner == team_abbr
+        
+        # Calculate margin
+        if pd.notna(last_game['home_team_score']) and pd.notna(last_game['away_team_score']):
+            if last_game['home_team_abbr'] == team_abbr:
+                margin = int(last_game['home_team_score'] - last_game['away_team_score'])
+            else:
+                margin = int(last_game['away_team_score'] - last_game['home_team_score'])
+        else:
+            margin = None
+        
+        # Calculate streaks
         win_streak = 0
         loss_streak = 0
+        
         for _, g in team_games.iterrows():
-            if g['winning_team_abbr'] == team_abbr:
-                if loss_streak == 0:
-                    win_streak += 1
-                else:
+            winner = g['winning_team_abbr']
+            if pd.isna(winner):
+                break
+            
+            if winner == team_abbr:
+                if loss_streak > 0:
                     break
+                win_streak += 1
             else:
-                if win_streak == 0:
-                    loss_streak += 1
-                else:
+                if win_streak > 0:
                     break
+                loss_streak += 1
         
-        # Last game margin
-        last_game = team_games.iloc[0]
+        return {
+            'team_win_streak_entering': int(win_streak),
+            'team_loss_streak_entering': int(loss_streak),
+            'last_game_margin': margin,
+            'last_game_result': 'W' if last_game_won else 'L'
+        }
+    
+    def _calculate_travel_context(
+        self,
+        game: pd.Series,
+        team_abbr: str,
+        home_game: bool,
+        fatigue_context: Dict
+    ) -> Dict:
+        """
+        Calculate travel distance to this game.
+        """
+        
+        if home_game:
+            return {'travel_miles': 0}
+        
+        # For away games, need last opponent location
+        game_date = game['game_date']
+        
+        team_games = self.schedule_data[
+            (
+                (self.schedule_data['home_team_abbr'] == team_abbr) |
+                (self.schedule_data['away_team_abbr'] == team_abbr)
+            ) &
+            (self.schedule_data['game_date'] < game_date)
+        ].sort_values('game_date')
+        
+        if len(team_games) == 0:
+            return {'travel_miles': 0}
+        
+        # Last game location
+        last_game = team_games.iloc[-1]
         if last_game['home_team_abbr'] == team_abbr:
-            margin = last_game['home_score'] - last_game['away_score']
+            last_location = team_abbr  # Was at home
         else:
-            margin = last_game['away_score'] - last_game['home_score']
+            last_location = last_game['home_team_abbr']  # Was at opponent's arena
         
-        return {
-            'team_win_streak_entering': win_streak,
-            'team_loss_streak_entering': loss_streak,
-            'last_game_margin': int(margin) if pd.notna(margin) else None,
-            'ats_cover_streak': 0,  # TODO
-            'ats_fail_streak': 0,  # TODO
-            'over_streak': 0,  # TODO
-            'under_streak': 0,  # TODO
-            'ats_record_last_10': '0-0'  # TODO
-        }
+        # Current game location (opponent's arena for away game)
+        current_location = game['home_team_abbr']
+        
+        # Lookup travel distance
+        travel_key = f"{last_location}_{current_location}"
+        travel_miles = self.travel_distances.get(travel_key, 0)
+        
+        return {'travel_miles': int(travel_miles)}
     
-    def _calculate_basic_context(self, game: pd.Series) -> Dict:
-        """Calculate basic game context (home/away, travel)."""
-        home_game = game['home_game']
-        
-        # Travel distance
-        travel_miles = 0
-        if not home_game:
-            # Away game - calculate travel from last game location
-            last_opponent = game.get('last_opponent')
-            opponent = game['opponent_team_abbr']
-            if pd.notna(last_opponent):
-                try:
-                    travel_info = self.travel.get_travel_distance(last_opponent, opponent)
-                    if travel_info:
-                        travel_miles = travel_info['distance_miles']
-                except Exception as e:
-                    logger.debug(f"Could not calculate travel for {game['team_abbr']}: {e}")
-        
-        return {
-            'home_game': bool(home_game) if pd.notna(home_game) else None,
-            'travel_miles': travel_miles
-        }
+    # ========================================================================
+    # HELPER METHODS
+    # ========================================================================
     
-    def _calculate_forward_schedule(self, game: pd.Series) -> Dict:
-        """Calculate forward-looking schedule context."""
-        # Already calculated in schedule query (FIXED with extended window)
-        next_game_days_rest = game.get('team_next_game_days_rest')
+    def log_quality_issue(
+        self,
+        severity: str,
+        category: str,
+        message: str,
+        details: Optional[Dict] = None
+    ) -> None:
+        """
+        Log a data quality issue for monitoring.
         
-        return {
-            'team_next_game_days_rest': int(next_game_days_rest) if pd.notna(next_game_days_rest) else None,
-            'team_games_in_next_7_days': 0,  # TODO
-            'next_opponent_win_pct': None,  # TODO
-            'next_game_is_primetime': False  # TODO
-        }
-    
-    def _calculate_opponent_asymmetry(self, game: pd.Series) -> Dict:
-        """Calculate opponent schedule asymmetry."""
-        opponent_abbr = game['opponent_team_abbr']
+        Args:
+            severity: 'CRITICAL', 'ERROR', 'WARNING', 'INFO'
+            category: Issue category
+            message: Human-readable description
+            details: Additional context
+        """
         
-        # Find opponent's record for this same game
-        opponent_game = self.schedule_data[
-            (self.schedule_data['game_id'] == game['game_id']) &
-            (self.schedule_data['team_abbr'] == opponent_abbr)
-        ]
+        issue = {
+            'timestamp': datetime.now(timezone.utc).isoformat(),
+            'severity': severity,
+            'category': category,
+            'message': message,
+            'details': details or {}
+        }
         
-        if len(opponent_game) > 0:
-            opp = opponent_game.iloc[0]
-            return {
-                'opponent_days_rest': int(opp.get('team_days_rest')) if pd.notna(opp.get('team_days_rest')) else None,
-                'opponent_games_in_next_7_days': 0,  # TODO
-                'opponent_next_game_days_rest': int(opp.get('team_next_game_days_rest')) if pd.notna(opp.get('team_next_game_days_rest')) else None
-            }
+        self.quality_issues.append(issue)
         
-        return {
-            'opponent_days_rest': None,
-            'opponent_games_in_next_7_days': 0,
-            'opponent_next_game_days_rest': None
-        }
+        # Also log to standard logger
+        log_method = {
+            'CRITICAL': logger.critical,
+            'ERROR': logger.error,
+            'WARNING': logger.warning,
+            'INFO': logger.info
+        }.get(severity, logger.info)
+        
+        log_method(f"[{category}] {message}")
     
-    def _calculate_market_context(self, game: pd.Series) -> Dict:
-        """Calculate closing market context (NULL for upcoming games)."""
-        return {
-            'closing_spread': None,
-            'closing_total': None,
-            'team_implied_total': None,
-            'opp_implied_total': None
-        }
+    # ========================================================================
+    # SAVE LOGIC
+    # ========================================================================
     
-    def _calculate_referee_context(self, game: pd.Series) -> Dict:
-        """Get referee crew assignment."""
-        return {
-            'referee_crew_id': None  # TODO
-        }
-    
-    def get_analytics_stats(self) -> Dict:
-        """Return statistics about the analytics calculation."""
+    def save_analytics(self) -> bool:
+        """
+        Save results using MERGE strategy.
+        
+        Returns:
+            True if save successful, False otherwise
+        """
+        
         if not self.transformed_data:
-            return {'records_processed': 0}
+            logger.warning("No data to save")
+            return True
         
-        start_date = self.opts.get('start_date', 'unknown')
-        end_date = self.opts.get('end_date', 'unknown')
+        logger.info("=" * 80)
+        logger.info("SAVING TO BIGQUERY")
+        logger.info("=" * 80)
         
-        return {
-            'records_processed': len(self.transformed_data),
-            'date_range': f"{start_date} to {end_date}",
-            'unique_teams': len(set(r['team_abbr'] for r in self.transformed_data)),
-            'unique_games': len(set(r['game_id'] for r in self.transformed_data))
-        }
+        try:
+            # MERGE: Update existing rows or insert new ones
+            table_id = f"{self.project_id}.{self.table_name}"
+            
+            # Delete existing records for this date range first
+            start_date = self.opts['start_date']
+            end_date = self.opts['end_date']
+            
+            delete_query = f"""
+            DELETE FROM `{table_id}`
+            WHERE game_date BETWEEN '{start_date}' AND '{end_date}'
+            """
+            
+            logger.info(f"Deleting existing records: {start_date} to {end_date}")
+            self.bq_client.query(delete_query).result()
+            
+            # Insert new records
+            logger.info(f"Inserting {len(self.transformed_data)} new records")
+            errors = self.bq_client.insert_rows_json(table_id, self.transformed_data)
+            
+            if errors:
+                logger.error(f"Insert errors: {errors}")
+                return False
+            
+            logger.info("✓ Save successful")
+            logger.info("=" * 80)
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error saving data: {e}")
+            return False
+
+
+# ============================================================================
+# ENTRY POINT
+# ============================================================================
+
+def main():
+    """
+    Main entry point for processor.
     
-    def post_process(self) -> None:
-        """Send success notification with stats."""
-        stats = self.get_analytics_stats()
+    Usage:
+        python processor.py --start_date=2024-11-01 --end_date=2024-11-07
+    """
+    import argparse
+    
+    parser = argparse.ArgumentParser(description='Upcoming Team Game Context Processor')
+    parser.add_argument('--start_date', required=True, help='Start date (YYYY-MM-DD)')
+    parser.add_argument('--end_date', required=True, help='End date (YYYY-MM-DD)')
+    parser.add_argument('--debug', action='store_true', help='Enable debug logging')
+    
+    args = parser.parse_args()
+    
+    # Configure logging
+    log_level = logging.DEBUG if args.debug else logging.INFO
+    logging.basicConfig(
+        level=log_level,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    
+    # Parse dates
+    from datetime import datetime as dt
+    start_date = dt.strptime(args.start_date, '%Y-%m-%d').date()
+    end_date = dt.strptime(args.end_date, '%Y-%m-%d').date()
+    
+    # Create and run processor
+    processor = UpcomingTeamGameContextProcessor()
+    processor.opts = {
+        'start_date': start_date,
+        'end_date': end_date
+    }
+    
+    try:
+        # Run processing pipeline
+        processor.extract_raw_data()
+        processor.validate_extracted_data()
+        processor.calculate_analytics()
+        success = processor.save_analytics()
         
-        logger.info(f"Team game context processing complete: {stats['records_processed']} records processed")
-        logger.info(f"Date range: {stats['date_range']}, {stats['unique_teams']} teams, {stats['unique_games']} games")
+        # Print summary
+        print("\n" + "=" * 80)
+        print("PROCESSING COMPLETE")
+        print("=" * 80)
+        print(f"Records saved: {len(processor.transformed_data)}")
+        print(f"Quality issues: {len(processor.quality_issues)}")
+        print(f"Status: {'SUCCESS' if success else 'FAILED'}")
+        print("=" * 80)
+        
+        return 0 if success else 1
+        
+    except Exception as e:
+        logger.error(f"Processing failed: {e}", exc_info=True)
+        return 1
+
+
+if __name__ == '__main__':
+    import sys
+    sys.exit(main())

@@ -159,6 +159,11 @@ class NbacTeamBoxscoreProcessor(ProcessorBase):
         if len(teams) != 2:
             raise ValueError(f"Expected exactly 2 teams, got {len(teams)}")
         
+        # ✅ NEW: Validate teams are dictionaries
+        for i, team in enumerate(teams):
+            if not isinstance(team, dict):
+                raise ValueError(f"Team {i} must be a dictionary, got {type(team).__name__}")
+        
         # Method 1: Check for explicit homeAway field
         home_away_fields = []
         for team in teams:

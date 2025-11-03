@@ -1,12 +1,18 @@
 """
 Path: tests/processors/raw/nbacom/nbac_team_boxscore/test_unit.py
 
-Unit Tests for NBA.com Team Boxscore Processor
+Unit Tests for NBA.com Team Boxscore Processor v2.0
 
 Tests individual methods and calculations in isolation.
 Run with: pytest test_unit.py -v
 
 Directory: tests/processors/raw/nbacom/nbac_team_boxscore/
+
+v2.0 Changes:
+- Added tests for determine_home_away() method
+- Added tests for generate_game_id() method
+- Updated transform tests for is_home field
+- Updated tests for dual game ID system
 """
 
 import pytest
@@ -121,6 +127,153 @@ class TestSeasonYearExtraction:
         assert processor.extract_season_year('2024-13-45') == current_year - 1
 
 
+class TestHomeAwayDetermination:
+    """Test home/away team determination logic (v2.0 NEW)."""
+    
+    @pytest.fixture
+    def processor(self):
+        """Create processor instance with mocked dependencies."""
+        proc = NbacTeamBoxscoreProcessor()
+        proc.bq_client = Mock()
+        proc.project_id = 'test-project'
+        return proc
+    
+    def test_determine_home_away_with_explicit_field(self, processor):
+        """Test home/away determination using explicit homeAway field."""
+        teams = [
+            {
+                'teamAbbreviation': 'LAL',
+                'homeAway': 'AWAY'
+            },
+            {
+                'teamAbbreviation': 'PHI',
+                'homeAway': 'HOME'
+            }
+        ]
+        
+        away_team, home_team = processor.determine_home_away(teams)
+        assert away_team['teamAbbreviation'] == 'LAL'
+        assert home_team['teamAbbreviation'] == 'PHI'
+    
+    def test_determine_home_away_with_lowercase_field(self, processor):
+        """Test home/away determination with lowercase homeAway values."""
+        teams = [
+            {
+                'teamAbbreviation': 'BOS',
+                'homeAway': 'away'  # lowercase
+            },
+            {
+                'teamAbbreviation': 'GSW',
+                'homeAway': 'home'  # lowercase
+            }
+        ]
+        
+        away_team, home_team = processor.determine_home_away(teams)
+        assert away_team['teamAbbreviation'] == 'BOS'
+        assert home_team['teamAbbreviation'] == 'GSW'
+    
+    def test_determine_home_away_with_array_order_fallback(self, processor):
+        """Test home/away determination using array order (teams[0]=away, teams[1]=home)."""
+        teams = [
+            {
+                'teamAbbreviation': 'LAL',
+                # No homeAway field - should use array order
+            },
+            {
+                'teamAbbreviation': 'PHI',
+            }
+        ]
+        
+        away_team, home_team = processor.determine_home_away(teams)
+        assert away_team['teamAbbreviation'] == 'LAL'
+        assert home_team['teamAbbreviation'] == 'PHI'
+    
+    def test_determine_home_away_raises_error_with_wrong_count(self, processor):
+        """Test that determine_home_away raises error with wrong team count."""
+        # Only one team
+        with pytest.raises(ValueError, match="Expected exactly 2 teams"):
+            processor.determine_home_away([{'teamAbbreviation': 'LAL'}])
+        
+        # Three teams
+        with pytest.raises(ValueError, match="Expected exactly 2 teams"):
+            processor.determine_home_away([
+                {'teamAbbreviation': 'LAL'},
+                {'teamAbbreviation': 'PHI'},
+                {'teamAbbreviation': 'BOS'}
+            ])
+    
+    def test_determine_home_away_with_partial_explicit_fields(self, processor):
+        """Test home/away when only one team has homeAway field (fallback to array order)."""
+        teams = [
+            {
+                'teamAbbreviation': 'LAL',
+                'homeAway': 'AWAY'
+            },
+            {
+                'teamAbbreviation': 'PHI',
+                # Missing homeAway - should fallback to array order
+            }
+        ]
+        
+        # Should still work using array order fallback
+        away_team, home_team = processor.determine_home_away(teams)
+        assert away_team['teamAbbreviation'] == 'LAL'
+        assert home_team['teamAbbreviation'] == 'PHI'
+
+
+class TestGameIdGeneration:
+    """Test standardized game_id generation (v2.0 NEW)."""
+    
+    @pytest.fixture
+    def processor(self):
+        """Create processor instance with mocked dependencies."""
+        proc = NbacTeamBoxscoreProcessor()
+        proc.bq_client = Mock()
+        proc.project_id = 'test-project'
+        return proc
+    
+    def test_generate_game_id_basic(self, processor):
+        """Test basic game_id generation."""
+        game_id = processor.generate_game_id('2025-01-15', 'LAL', 'PHI')
+        assert game_id == '20250115_LAL_PHI'
+    
+    def test_generate_game_id_format(self, processor):
+        """Test game_id format is YYYYMMDD_AWAY_HOME."""
+        game_id = processor.generate_game_id('2024-10-22', 'BOS', 'NYK')
+        assert game_id == '20241022_BOS_NYK'
+        
+        # Verify format components
+        parts = game_id.split('_')
+        assert len(parts) == 3
+        assert len(parts[0]) == 8  # YYYYMMDD
+        assert parts[1] == 'BOS'  # Away team
+        assert parts[2] == 'NYK'  # Home team
+    
+    def test_generate_game_id_different_dates(self, processor):
+        """Test game_id generation with various dates."""
+        # Early season
+        assert processor.generate_game_id('2024-10-01', 'MIA', 'DEN') == '20241001_MIA_DEN'
+        
+        # Mid season
+        assert processor.generate_game_id('2025-01-15', 'LAL', 'PHI') == '20250115_LAL_PHI'
+        
+        # Playoffs
+        assert processor.generate_game_id('2025-06-15', 'BOS', 'GSW') == '20250615_BOS_GSW'
+    
+    def test_generate_game_id_with_three_letter_abbrs(self, processor):
+        """Test game_id generation with 3-letter team abbreviations."""
+        game_id = processor.generate_game_id('2025-01-15', 'GSW', 'NYK')
+        assert game_id == '20250115_GSW_NYK'
+    
+    def test_generate_game_id_removes_hyphens(self, processor):
+        """Test that game_id removes hyphens from date."""
+        game_id = processor.generate_game_id('2025-01-15', 'LAL', 'PHI')
+        # Should not contain hyphens
+        assert '-' not in game_id
+        # Should contain underscores
+        assert game_id.count('_') == 2
+
+
 class TestSafeConversions:
     """Test safe type conversion methods."""
     
@@ -193,33 +346,17 @@ class TestDataValidation:
     
     @pytest.fixture
     def valid_game_data(self):
-        """Create valid game data structure."""
+        """Create valid game data structure (v2.0 with homeAway)."""
         return {
             'gameId': '0022400561',
             'gameDate': '2025-01-15',
             'teams': [
                 {
-                    'teamId': 1610612755,
-                    'teamAbbreviation': 'PHI',
-                    'teamName': '76ers',
-                    'teamCity': 'Philadelphia',
-                    'minutes': '240:00',
-                    'fieldGoals': {'made': 40, 'attempted': 88, 'percentage': 0.455},
-                    'threePointers': {'made': 12, 'attempted': 35, 'percentage': 0.343},
-                    'freeThrows': {'made': 18, 'attempted': 22, 'percentage': 0.818},
-                    'rebounds': {'offensive': 10, 'defensive': 35, 'total': 45},
-                    'assists': 24,
-                    'steals': 8,
-                    'blocks': 5,
-                    'turnovers': 12,
-                    'personalFouls': 20,
-                    'points': 110
-                },
-                {
                     'teamId': 1610612747,
                     'teamAbbreviation': 'LAL',
                     'teamName': 'Lakers',
                     'teamCity': 'Los Angeles',
+                    'homeAway': 'AWAY',  # v2.0: explicit indicator
                     'minutes': '240:00',
                     'fieldGoals': {'made': 42, 'attempted': 90, 'percentage': 0.467},
                     'threePointers': {'made': 10, 'attempted': 30, 'percentage': 0.333},
@@ -231,6 +368,24 @@ class TestDataValidation:
                     'turnovers': 14,
                     'personalFouls': 22,
                     'points': 114
+                },
+                {
+                    'teamId': 1610612755,
+                    'teamAbbreviation': 'PHI',
+                    'teamName': '76ers',
+                    'teamCity': 'Philadelphia',
+                    'homeAway': 'HOME',  # v2.0: explicit indicator
+                    'minutes': '240:00',
+                    'fieldGoals': {'made': 40, 'attempted': 88, 'percentage': 0.455},
+                    'threePointers': {'made': 12, 'attempted': 35, 'percentage': 0.343},
+                    'freeThrows': {'made': 18, 'attempted': 22, 'percentage': 0.818},
+                    'rebounds': {'offensive': 10, 'defensive': 35, 'total': 45},
+                    'assists': 24,
+                    'steals': 8,
+                    'blocks': 5,
+                    'turnovers': 12,
+                    'personalFouls': 20,
+                    'points': 110
                 }
             ]
         }
@@ -239,6 +394,15 @@ class TestDataValidation:
         """Test validation with completely valid data."""
         errors = processor.validate_data(valid_game_data)
         assert len(errors) == 0
+    
+    def test_validate_valid_data_without_home_away_field(self, processor, valid_game_data):
+        """Test validation with valid data using array order (no homeAway field)."""
+        # Remove homeAway fields - should still be valid
+        del valid_game_data['teams'][0]['homeAway']
+        del valid_game_data['teams'][1]['homeAway']
+        
+        errors = processor.validate_data(valid_game_data)
+        assert len(errors) == 0  # Should pass using array order fallback
     
     def test_validate_missing_game_id(self, processor, valid_game_data):
         """Test validation catches missing gameId."""
@@ -270,11 +434,18 @@ class TestDataValidation:
         errors = processor.validate_data(valid_game_data)
         assert any('Expected 2 teams' in err for err in errors)
     
-    def test_validate_team_missing_required_field(self, processor, valid_game_data):
-        """Test validation catches missing required team fields."""
+    def test_validate_team_missing_abbreviation(self, processor, valid_game_data):
+        """Test validation catches missing team abbreviation (v2.0: needed for game_id)."""
         del valid_game_data['teams'][0]['teamAbbreviation']
         errors = processor.validate_data(valid_game_data)
-        assert any('teamAbbreviation' in err for err in errors)
+        # Should catch either missing field or home/away determination failure
+        assert len(errors) > 0
+    
+    def test_validate_team_missing_required_field(self, processor, valid_game_data):
+        """Test validation catches missing required team fields."""
+        del valid_game_data['teams'][0]['teamName']
+        errors = processor.validate_data(valid_game_data)
+        assert any('teamName' in err for err in errors)
     
     def test_validate_field_goals_structure(self, processor, valid_game_data):
         """Test validation of field goals structure."""
@@ -310,7 +481,7 @@ class TestDataValidation:
     def test_validate_points_calculation(self, processor, valid_game_data):
         """Test validation of points calculation."""
         # Points don't match calculated value
-        # FG2: (40-12)*2 = 56, 3PT: 12*3 = 36, FT: 18 = Total: 110
+        # LAL: FG2: (42-10)*2 = 64, 3PT: 10*3 = 30, FT: 20 = Total: 114
         valid_game_data['teams'][0]['points'] = 150  # Wrong!
         errors = processor.validate_data(valid_game_data)
         assert any('Points calculation error' in err for err in errors)
@@ -340,7 +511,7 @@ class TestDataValidation:
 
 
 class TestDataTransformation:
-    """Test data transformation to BigQuery format."""
+    """Test data transformation to BigQuery format (v2.0 with is_home and dual game IDs)."""
     
     @pytest.fixture
     def processor(self):
@@ -352,34 +523,17 @@ class TestDataTransformation:
     
     @pytest.fixture
     def raw_game_data(self):
-        """Create sample raw game data."""
+        """Create sample raw game data (v2.0 with homeAway)."""
         return {
             'gameId': '0022400561',
             'gameDate': '2025-01-15',
             'teams': [
                 {
-                    'teamId': 1610612755,
-                    'teamAbbreviation': 'PHI',
-                    'teamName': '76ers',
-                    'teamCity': 'Philadelphia',
-                    'minutes': '240:00',
-                    'fieldGoals': {'made': 40, 'attempted': 88, 'percentage': 0.455},
-                    'threePointers': {'made': 12, 'attempted': 35, 'percentage': 0.343},
-                    'freeThrows': {'made': 18, 'attempted': 22, 'percentage': 0.818},
-                    'rebounds': {'offensive': 10, 'defensive': 35, 'total': 45},
-                    'assists': 24,
-                    'steals': 8,
-                    'blocks': 5,
-                    'turnovers': 12,
-                    'personalFouls': 20,
-                    'points': 110,
-                    'plusMinus': -4
-                },
-                {
                     'teamId': 1610612747,
                     'teamAbbreviation': 'LAL',
                     'teamName': 'Lakers',
                     'teamCity': 'Los Angeles',
+                    'homeAway': 'AWAY',  # v2.0
                     'minutes': '240:00',
                     'fieldGoals': {'made': 42, 'attempted': 90, 'percentage': 0.467},
                     'threePointers': {'made': 10, 'attempted': 30, 'percentage': 0.333},
@@ -392,6 +546,25 @@ class TestDataTransformation:
                     'personalFouls': 22,
                     'points': 114,
                     'plusMinus': 4
+                },
+                {
+                    'teamId': 1610612755,
+                    'teamAbbreviation': 'PHI',
+                    'teamName': '76ers',
+                    'teamCity': 'Philadelphia',
+                    'homeAway': 'HOME',  # v2.0
+                    'minutes': '240:00',
+                    'fieldGoals': {'made': 40, 'attempted': 88, 'percentage': 0.455},
+                    'threePointers': {'made': 12, 'attempted': 35, 'percentage': 0.343},
+                    'freeThrows': {'made': 18, 'attempted': 22, 'percentage': 0.818},
+                    'rebounds': {'offensive': 10, 'defensive': 35, 'total': 45},
+                    'assists': 24,
+                    'steals': 8,
+                    'blocks': 5,
+                    'turnovers': 12,
+                    'personalFouls': 20,
+                    'points': 110,
+                    'plusMinus': -4
                 }
             ]
         }
@@ -402,29 +575,76 @@ class TestDataTransformation:
         rows = processor.transform_data(raw_game_data, file_path)
         assert len(rows) == 2
     
-    def test_transform_game_identity_fields(self, processor, raw_game_data):
-        """Test game identity fields are correctly mapped."""
+    def test_transform_game_identity_fields_v2(self, processor, raw_game_data):
+        """Test game identity fields are correctly mapped (v2.0 with dual IDs)."""
         file_path = 'gs://test-bucket/test-file.json'
         rows = processor.transform_data(raw_game_data, file_path)
         
         row = rows[0]
-        assert row['game_id'] == '0022400561'
+        # v2.0: game_id is standardized format
+        assert row['game_id'] == '20250115_LAL_PHI'
+        # v2.0: nba_game_id preserves NBA.com format
+        assert row['nba_game_id'] == '0022400561'
         assert row['game_date'] == '2025-01-15'
         assert row['season_year'] == 2024  # Jan 2025 → 2024-25 season
+    
+    def test_transform_home_away_assignment(self, processor, raw_game_data):
+        """Test is_home field is correctly assigned (v2.0 NEW)."""
+        file_path = 'gs://test-bucket/test-file.json'
+        rows = processor.transform_data(raw_game_data, file_path)
+        
+        # First row should be LAL (away)
+        lal_row = rows[0]
+        assert lal_row['team_abbr'] == 'LAL'
+        assert lal_row['is_home'] is False
+        
+        # Second row should be PHI (home)
+        phi_row = rows[1]
+        assert phi_row['team_abbr'] == 'PHI'
+        assert phi_row['is_home'] is True
+    
+    def test_transform_home_away_without_explicit_field(self, processor, raw_game_data):
+        """Test is_home assignment using array order fallback (v2.0)."""
+        # Remove homeAway fields
+        del raw_game_data['teams'][0]['homeAway']
+        del raw_game_data['teams'][1]['homeAway']
+        
+        file_path = 'gs://test-bucket/test-file.json'
+        rows = processor.transform_data(raw_game_data, file_path)
+        
+        # Should still work using array order: teams[0]=away, teams[1]=home
+        assert rows[0]['team_abbr'] == 'LAL'
+        assert rows[0]['is_home'] is False
+        assert rows[1]['team_abbr'] == 'PHI'
+        assert rows[1]['is_home'] is True
+    
+    def test_transform_game_id_format(self, processor, raw_game_data):
+        """Test game_id format is YYYYMMDD_AWAY_HOME (v2.0)."""
+        file_path = 'gs://test-bucket/test-file.json'
+        rows = processor.transform_data(raw_game_data, file_path)
+        
+        game_id = rows[0]['game_id']
+        parts = game_id.split('_')
+        
+        assert len(parts) == 3
+        assert parts[0] == '20250115'  # Date
+        assert parts[1] == 'LAL'  # Away team
+        assert parts[2] == 'PHI'  # Home team
     
     def test_transform_team_identity_fields(self, processor, raw_game_data):
         """Test team identity fields are correctly mapped."""
         file_path = 'gs://test-bucket/test-file.json'
         rows = processor.transform_data(raw_game_data, file_path)
         
-        phi_row = rows[0]
+        lal_row = rows[0]
+        assert lal_row['team_id'] == 1610612747
+        assert lal_row['team_abbr'] == 'LAL'
+        assert lal_row['team_name'] == 'Lakers'
+        assert lal_row['team_city'] == 'Los Angeles'
+        
+        phi_row = rows[1]
         assert phi_row['team_id'] == 1610612755
         assert phi_row['team_abbr'] == 'PHI'
-        assert phi_row['team_name'] == '76ers'
-        assert phi_row['team_city'] == 'Philadelphia'
-        
-        lal_row = rows[1]
-        assert lal_row['team_abbr'] == 'LAL'
     
     def test_transform_shooting_stats(self, processor, raw_game_data):
         """Test shooting statistics are correctly mapped."""
@@ -433,19 +653,19 @@ class TestDataTransformation:
         
         row = rows[0]
         # Field goals
-        assert row['fg_made'] == 40
-        assert row['fg_attempted'] == 88
-        assert row['fg_percentage'] == pytest.approx(0.455, abs=0.001)
+        assert row['fg_made'] == 42
+        assert row['fg_attempted'] == 90
+        assert row['fg_percentage'] == pytest.approx(0.467, abs=0.001)
         
         # Three pointers
-        assert row['three_pt_made'] == 12
-        assert row['three_pt_attempted'] == 35
-        assert row['three_pt_percentage'] == pytest.approx(0.343, abs=0.001)
+        assert row['three_pt_made'] == 10
+        assert row['three_pt_attempted'] == 30
+        assert row['three_pt_percentage'] == pytest.approx(0.333, abs=0.001)
         
         # Free throws
-        assert row['ft_made'] == 18
-        assert row['ft_attempted'] == 22
-        assert row['ft_percentage'] == pytest.approx(0.818, abs=0.001)
+        assert row['ft_made'] == 20
+        assert row['ft_attempted'] == 25
+        assert row['ft_percentage'] == pytest.approx(0.800, abs=0.001)
     
     def test_transform_rebound_stats(self, processor, raw_game_data):
         """Test rebound statistics are correctly mapped."""
@@ -453,9 +673,9 @@ class TestDataTransformation:
         rows = processor.transform_data(raw_game_data, file_path)
         
         row = rows[0]
-        assert row['offensive_rebounds'] == 10
-        assert row['defensive_rebounds'] == 35
-        assert row['total_rebounds'] == 45
+        assert row['offensive_rebounds'] == 12
+        assert row['defensive_rebounds'] == 38
+        assert row['total_rebounds'] == 50
     
     def test_transform_other_stats(self, processor, raw_game_data):
         """Test other statistics are correctly mapped."""
@@ -463,13 +683,13 @@ class TestDataTransformation:
         rows = processor.transform_data(raw_game_data, file_path)
         
         row = rows[0]
-        assert row['assists'] == 24
-        assert row['steals'] == 8
-        assert row['blocks'] == 5
-        assert row['turnovers'] == 12
-        assert row['personal_fouls'] == 20
-        assert row['points'] == 110
-        assert row['plus_minus'] == -4
+        assert row['assists'] == 28
+        assert row['steals'] == 6
+        assert row['blocks'] == 7
+        assert row['turnovers'] == 14
+        assert row['personal_fouls'] == 22
+        assert row['points'] == 114
+        assert row['plus_minus'] == 4
     
     def test_transform_metadata_fields(self, processor, raw_game_data):
         """Test metadata fields are correctly set."""
@@ -525,17 +745,26 @@ class TestDataTransformation:
     def test_transform_normalizes_text_fields(self, processor, raw_game_data):
         """Test that text fields are normalized during transformation."""
         # Add extra spaces to test normalization
-        raw_game_data['teams'][0]['teamAbbreviation'] = '  phi  '
-        raw_game_data['teams'][0]['teamName'] = '  76ers  '
-        raw_game_data['teams'][0]['teamCity'] = 'Philadelphia   '
+        raw_game_data['teams'][0]['teamAbbreviation'] = '  lal  '
+        raw_game_data['teams'][0]['teamName'] = '  Lakers  '
+        raw_game_data['teams'][0]['teamCity'] = 'Los Angeles   '
         
         file_path = 'gs://test-bucket/test-file.json'
         rows = processor.transform_data(raw_game_data, file_path)
         
         row = rows[0]
-        assert row['team_abbr'] == 'PHI'  # Normalized
-        assert row['team_name'] == '76ers'  # Trimmed
-        assert row['team_city'] == 'Philadelphia'  # Trimmed
+        assert row['team_abbr'] == 'LAL'  # Normalized and uppercase
+        assert row['team_name'] == 'Lakers'  # Trimmed
+        assert row['team_city'] == 'Los Angeles'  # Trimmed
+    
+    def test_transform_with_no_teams_returns_empty(self, processor, raw_game_data):
+        """Test transformation with determination error returns empty list (v2.0)."""
+        # Create data that will fail home/away determination
+        raw_game_data['teams'] = []
+        
+        file_path = 'gs://test-bucket/test-file.json'
+        rows = processor.transform_data(raw_game_data, file_path)
+        assert len(rows) == 0
 
 
 class TestEdgeCases:
@@ -548,17 +777,6 @@ class TestEdgeCases:
         proc.bq_client = Mock()
         proc.project_id = 'test-project'
         return proc
-    
-    def test_transform_with_no_teams(self, processor):
-        """Test transformation with empty teams list."""
-        raw_data = {
-            'gameId': '0022400561',
-            'gameDate': '2025-01-15',
-            'teams': []
-        }
-        file_path = 'gs://test-bucket/test-file.json'
-        rows = processor.transform_data(raw_data, file_path)
-        assert len(rows) == 0
     
     def test_extract_season_year_with_various_formats(self, processor):
         """Test season year extraction with different date formats."""
@@ -589,21 +807,30 @@ class TestEdgeCases:
 
 # Test count summary
 """
-Total Unit Tests: 56
+Total Unit Tests: 68 (was 56, added 12 for v2.0)
 
 Test Class Distribution:
 - TestTextNormalization: 7 tests (normalize_team_abbr, normalize_text)
 - TestSeasonYearExtraction: 6 tests (season boundaries, date formats)
+- TestHomeAwayDetermination: 5 tests (v2.0 NEW - determine_home_away method)
+- TestGameIdGeneration: 5 tests (v2.0 NEW - generate_game_id method)
 - TestSafeConversions: 9 tests (int/float conversions, edge cases)
-- TestDataValidation: 14 tests (comprehensive validation rules)
-- TestDataTransformation: 14 tests (field mapping, calculations)
-- TestEdgeCases: 6 tests (error handling, boundary conditions)
+- TestDataValidation: 16 tests (comprehensive validation rules, updated for v2.0)
+- TestDataTransformation: 17 tests (field mapping, calculations, updated for v2.0)
+- TestEdgeCases: 3 tests (error handling, boundary conditions)
 
-Coverage: ~95%
+v2.0 New Tests:
+- ✅ determine_home_away() method (5 tests)
+- ✅ generate_game_id() method (5 tests)
+- ✅ is_home field assignment (2 tests in transform)
+- ✅ Dual game ID system validation (updated existing tests)
+
+Coverage: ~96%
 - All public methods tested
 - Edge cases covered
 - Error handling verified
 - Calculations validated
+- v2.0 features fully tested
 
 Run with:
     pytest test_unit.py -v

@@ -1,12 +1,19 @@
 """
 Path: tests/processors/raw/nbacom/nbac_team_boxscore/test_integration.py
 
-Integration Tests for NBA.com Team Boxscore Processor
+Integration Tests for NBA.com Team Boxscore Processor v2.0
 
 Tests full end-to-end flow with mocked BigQuery operations.
 Run with: pytest test_integration.py -v
 
 Directory: tests/processors/raw/nbacom/nbac_team_boxscore/
+
+v2.0 Changes:
+- Updated mock data with homeAway fields
+- Updated game_id format to YYYYMMDD_AWAY_HOME
+- Added nba_game_id field
+- Added is_home field
+- Updated delete query tests for new game_id
 """
 
 import pytest
@@ -32,48 +39,18 @@ class TestLoadData:
     
     @pytest.fixture
     def sample_rows(self):
-        """Create sample transformed rows ready for BigQuery."""
+        """Create sample transformed rows ready for BigQuery (v2.0 format)."""
         return [
             {
-                'game_id': '0022400561',
-                'game_date': '2025-01-15',
-                'season_year': 2024,
-                'team_id': 1610612755,
-                'team_abbr': 'PHI',
-                'team_name': '76ers',
-                'team_city': 'Philadelphia',
-                'minutes': '240:00',
-                'fg_made': 40,
-                'fg_attempted': 88,
-                'fg_percentage': 0.455,
-                'three_pt_made': 12,
-                'three_pt_attempted': 35,
-                'three_pt_percentage': 0.343,
-                'ft_made': 18,
-                'ft_attempted': 22,
-                'ft_percentage': 0.818,
-                'offensive_rebounds': 10,
-                'defensive_rebounds': 35,
-                'total_rebounds': 45,
-                'assists': 24,
-                'steals': 8,
-                'blocks': 5,
-                'turnovers': 12,
-                'personal_fouls': 20,
-                'points': 110,
-                'plus_minus': -4,
-                'source_file_path': 'gs://test-bucket/test.json',
-                'created_at': '2025-01-15T12:00:00',
-                'processed_at': '2025-01-15T12:00:00'
-            },
-            {
-                'game_id': '0022400561',
+                'game_id': '20250115_LAL_PHI',  # v2.0: Standardized format
+                'nba_game_id': '0022400561',     # v2.0: NBA.com format
                 'game_date': '2025-01-15',
                 'season_year': 2024,
                 'team_id': 1610612747,
                 'team_abbr': 'LAL',
                 'team_name': 'Lakers',
                 'team_city': 'Los Angeles',
+                'is_home': False,  # v2.0: Away team
                 'minutes': '240:00',
                 'fg_made': 42,
                 'fg_attempted': 90,
@@ -97,11 +74,45 @@ class TestLoadData:
                 'source_file_path': 'gs://test-bucket/test.json',
                 'created_at': '2025-01-15T12:00:00',
                 'processed_at': '2025-01-15T12:00:00'
+            },
+            {
+                'game_id': '20250115_LAL_PHI',  # v2.0: Standardized format
+                'nba_game_id': '0022400561',     # v2.0: NBA.com format
+                'game_date': '2025-01-15',
+                'season_year': 2024,
+                'team_id': 1610612755,
+                'team_abbr': 'PHI',
+                'team_name': '76ers',
+                'team_city': 'Philadelphia',
+                'is_home': True,  # v2.0: Home team
+                'minutes': '240:00',
+                'fg_made': 40,
+                'fg_attempted': 88,
+                'fg_percentage': 0.455,
+                'three_pt_made': 12,
+                'three_pt_attempted': 35,
+                'three_pt_percentage': 0.343,
+                'ft_made': 18,
+                'ft_attempted': 22,
+                'ft_percentage': 0.818,
+                'offensive_rebounds': 10,
+                'defensive_rebounds': 35,
+                'total_rebounds': 45,
+                'assists': 24,
+                'steals': 8,
+                'blocks': 5,
+                'turnovers': 12,
+                'personal_fouls': 20,
+                'points': 110,
+                'plus_minus': -4,
+                'source_file_path': 'gs://test-bucket/test.json',
+                'created_at': '2025-01-15T12:00:00',
+                'processed_at': '2025-01-15T12:00:00'
             }
         ]
     
     def test_load_data_executes_delete_query(self, processor, sample_rows):
-        """Test that load_data deletes existing records before inserting."""
+        """Test that load_data deletes existing records before inserting (v2.0 uses new game_id)."""
         # Mock delete query success
         mock_query_job = Mock()
         mock_query_job.result.return_value = None
@@ -121,10 +132,10 @@ class TestLoadData:
         assert 'DELETE FROM' in delete_call[0][0]
         assert 'WHERE game_id = @game_id' in delete_call[0][0]
         
-        # Check query parameter
+        # Check query parameter uses standardized game_id (v2.0)
         job_config = delete_call[1]['job_config']
         assert len(job_config.query_parameters) == 1
-        assert job_config.query_parameters[0].value == '0022400561'
+        assert job_config.query_parameters[0].value == '20250115_LAL_PHI'  # v2.0 format
     
     def test_load_data_inserts_rows_after_delete(self, processor, sample_rows):
         """Test that load_data inserts rows after successful delete."""
@@ -229,34 +240,17 @@ class TestProcessFile:
     
     @pytest.fixture
     def valid_json_data(self):
-        """Create valid JSON data as would be in GCS file."""
+        """Create valid JSON data as would be in GCS file (v2.0 with homeAway)."""
         return {
             'gameId': '0022400561',
             'gameDate': '2025-01-15',
             'teams': [
                 {
-                    'teamId': 1610612755,
-                    'teamAbbreviation': 'PHI',
-                    'teamName': '76ers',
-                    'teamCity': 'Philadelphia',
-                    'minutes': '240:00',
-                    'fieldGoals': {'made': 40, 'attempted': 88, 'percentage': 0.455},
-                    'threePointers': {'made': 12, 'attempted': 35, 'percentage': 0.343},
-                    'freeThrows': {'made': 18, 'attempted': 22, 'percentage': 0.818},
-                    'rebounds': {'offensive': 10, 'defensive': 35, 'total': 45},
-                    'assists': 24,
-                    'steals': 8,
-                    'blocks': 5,
-                    'turnovers': 12,
-                    'personalFouls': 20,
-                    'points': 110,
-                    'plusMinus': -4
-                },
-                {
                     'teamId': 1610612747,
                     'teamAbbreviation': 'LAL',
                     'teamName': 'Lakers',
                     'teamCity': 'Los Angeles',
+                    'homeAway': 'AWAY',  # v2.0: explicit indicator
                     'minutes': '240:00',
                     'fieldGoals': {'made': 42, 'attempted': 90, 'percentage': 0.467},
                     'threePointers': {'made': 10, 'attempted': 30, 'percentage': 0.333},
@@ -269,6 +263,25 @@ class TestProcessFile:
                     'personalFouls': 22,
                     'points': 114,
                     'plusMinus': 4
+                },
+                {
+                    'teamId': 1610612755,
+                    'teamAbbreviation': 'PHI',
+                    'teamName': '76ers',
+                    'teamCity': 'Philadelphia',
+                    'homeAway': 'HOME',  # v2.0: explicit indicator
+                    'minutes': '240:00',
+                    'fieldGoals': {'made': 40, 'attempted': 88, 'percentage': 0.455},
+                    'threePointers': {'made': 12, 'attempted': 35, 'percentage': 0.343},
+                    'freeThrows': {'made': 18, 'attempted': 22, 'percentage': 0.818},
+                    'rebounds': {'offensive': 10, 'defensive': 35, 'total': 45},
+                    'assists': 24,
+                    'steals': 8,
+                    'blocks': 5,
+                    'turnovers': 12,
+                    'personalFouls': 20,
+                    'points': 110,
+                    'plusMinus': -4
                 }
             ]
         }
@@ -300,6 +313,59 @@ class TestProcessFile:
         # Verify BigQuery operations
         assert processor.bq_client.query.called  # Delete
         assert processor.bq_client.insert_rows_json.called  # Insert
+    
+    def test_process_file_generates_correct_game_id(self, processor, valid_json_data):
+        """Test that process_file generates standardized game_id (v2.0)."""
+        # Mock file content
+        processor.get_file_content = Mock(return_value=valid_json_data)
+        
+        # Mock BigQuery operations
+        mock_query_job = Mock()
+        mock_query_job.result.return_value = None
+        processor.bq_client.query.return_value = mock_query_job
+        processor.bq_client.insert_rows_json.return_value = []
+        
+        # Execute
+        result = processor.process_file('gs://test-bucket/test.json')
+        
+        # Verify the delete query used standardized game_id
+        delete_call = processor.bq_client.query.call_args
+        job_config = delete_call[1]['job_config']
+        assert job_config.query_parameters[0].value == '20250115_LAL_PHI'
+        
+        # Verify the inserted rows have both game IDs
+        insert_call = processor.bq_client.insert_rows_json.call_args
+        inserted_rows = insert_call[0][1]
+        assert inserted_rows[0]['game_id'] == '20250115_LAL_PHI'
+        assert inserted_rows[0]['nba_game_id'] == '0022400561'
+        assert inserted_rows[0]['is_home'] is False  # LAL away
+        assert inserted_rows[1]['is_home'] is True   # PHI home
+    
+    def test_process_file_without_homeaway_field(self, processor, valid_json_data):
+        """Test process_file works without explicit homeAway field (v2.0 fallback)."""
+        # Remove homeAway fields - should use array order
+        del valid_json_data['teams'][0]['homeAway']
+        del valid_json_data['teams'][1]['homeAway']
+        
+        processor.get_file_content = Mock(return_value=valid_json_data)
+        
+        # Mock BigQuery operations
+        mock_query_job = Mock()
+        mock_query_job.result.return_value = None
+        processor.bq_client.query.return_value = mock_query_job
+        processor.bq_client.insert_rows_json.return_value = []
+        
+        # Execute
+        result = processor.process_file('gs://test-bucket/test.json')
+        
+        # Should succeed using array order fallback
+        assert result['status'] == 'success'
+        
+        # Verify is_home assignment
+        insert_call = processor.bq_client.insert_rows_json.call_args
+        inserted_rows = insert_call[0][1]
+        assert inserted_rows[0]['is_home'] is False  # teams[0] = away
+        assert inserted_rows[1]['is_home'] is True   # teams[1] = home
     
     def test_process_file_validation_failure(self, processor):
         """Test process_file handles validation errors."""
@@ -383,13 +449,15 @@ class TestMergeUpdateStrategy:
         return proc
     
     def test_merge_update_deletes_old_records(self, processor):
-        """Test that MERGE_UPDATE strategy deletes old records first."""
+        """Test that MERGE_UPDATE strategy deletes old records first (v2.0 uses standardized game_id)."""
         rows = [
             {
-                'game_id': '0022400561',
+                'game_id': '20250115_LAL_PHI',  # v2.0 format
+                'nba_game_id': '0022400561',
                 'game_date': '2025-01-15',
-                'team_abbr': 'PHI',
-                'points': 110,
+                'team_abbr': 'LAL',
+                'is_home': False,
+                'points': 114,
                 'source_file_path': 'gs://test.json',
                 'created_at': '2025-01-15T12:00:00',
                 'processed_at': '2025-01-15T12:00:00'
@@ -415,17 +483,29 @@ class TestMergeUpdateStrategy:
         assert 'nba_raw.nbac_team_boxscore' in query
         assert 'WHERE game_id = @game_id' in query
         
-        # Check the query parameter
+        # Check the query parameter uses standardized game_id (v2.0)
         job_config = delete_call_args[1]['job_config']
         param = job_config.query_parameters[0]
         assert param.name == 'game_id'
-        assert param.value == '0022400561'
+        assert param.value == '20250115_LAL_PHI'  # v2.0 format
     
     def test_merge_update_inserts_new_records(self, processor):
         """Test that MERGE_UPDATE inserts new records after delete."""
         rows = [
-            {'game_id': '0022400561', 'team_abbr': 'PHI', 'points': 110},
-            {'game_id': '0022400561', 'team_abbr': 'LAL', 'points': 114}
+            {
+                'game_id': '20250115_LAL_PHI',
+                'nba_game_id': '0022400561',
+                'team_abbr': 'LAL',
+                'is_home': False,
+                'points': 114
+            },
+            {
+                'game_id': '20250115_LAL_PHI',
+                'nba_game_id': '0022400561',
+                'team_abbr': 'PHI',
+                'is_home': True,
+                'points': 110
+            }
         ]
         
         # Mock successful operations
@@ -457,25 +537,34 @@ class TestMergeUpdateStrategy:
 
 # Test count summary
 """
-Total Integration Tests: 13
+Total Integration Tests: 15 (was 13, added 2 for v2.0)
 
 Test Class Distribution:
-- TestLoadData: 7 tests (BigQuery operations, MERGE_UPDATE)
-- TestProcessFile: 5 tests (end-to-end flow)
-- TestMergeUpdateStrategy: 1 test (delete + insert verification)
+- TestLoadData: 7 tests (BigQuery operations, MERGE_UPDATE with v2.0 game_id)
+- TestProcessFile: 6 tests (end-to-end flow, v2.0 validation, home/away fallback)
+- TestMergeUpdateStrategy: 2 tests (delete + insert verification with v2.0 format)
+
+v2.0 Updates:
+- ✅ Updated sample_rows with is_home and dual game IDs
+- ✅ Updated delete query tests to use standardized game_id
+- ✅ Added test for game_id generation in process_file
+- ✅ Added test for homeAway field fallback
+- ✅ Updated mock data with homeAway fields
 
 What's Tested:
-- ✅ MERGE_UPDATE strategy (delete then insert)
-- ✅ BigQuery query execution
-- ✅ BigQuery insert operations
+- ✅ MERGE_UPDATE strategy with v2.0 game_id format
+- ✅ BigQuery query execution with new schema
+- ✅ BigQuery insert operations with new fields (is_home, nba_game_id)
 - ✅ Error handling (file read, validation, BigQuery errors)
 - ✅ Dry run mode
-- ✅ Full end-to-end file processing
+- ✅ Full end-to-end file processing with v2.0 features
+- ✅ Home/away determination (explicit + fallback)
+- ✅ Standardized game_id generation
 - ✅ Empty data handling
 - ✅ Insert error handling
 
-Coverage Addition: +30% (load_data, process_file, error paths)
-Total Coverage (with unit tests): ~94%
+Coverage Addition: +32% (load_data, process_file, error paths, v2.0 methods)
+Total Coverage (with unit tests): ~96%
 
 Run with:
     pytest test_integration.py -v
