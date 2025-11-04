@@ -5,349 +5,478 @@ Ensemble V1 Prediction System
 
 System ID: ensemble_v1
 System Name: Ensemble V1
-Version: 1.0
+Version: 2.0 (Updated to combine 4 systems)
 
 Algorithm:
-1. Run both Moving Average and Zone Matchup systems
+1. Run all 4 base systems (Moving Average, Zone Matchup, Similarity, XGBoost)
 2. Weight each prediction by its confidence score
 3. Calculate weighted average prediction
-4. Use maximum confidence for final confidence
-5. Determine recommendation based on ensemble prediction
+4. Analyze 4-way system agreement
+5. Boost confidence when systems agree
+6. Generate recommendation based on ensemble prediction and agreement
 
 Weighting Logic:
-- Confidence-weighted average: (MA_pred * MA_conf + ZM_pred * ZM_conf) / (MA_conf + ZM_conf)
-- Confidence: max(MA_conf, ZM_conf) * agreement_bonus
-- Agreement bonus: +0.05 if both systems agree on direction
+- Confidence-weighted average: Σ(pred_i * conf_i) / Σ(conf_i)
+- Confidence: base + agreement_bonus + quality_bonus
+- Agreement bonus: +10 points if variance < 2.0, +5 if < 4.0
+- Quality bonus: +5 points if all 4 systems produce predictions
 
 Benefits:
-- Combines complementary strengths of both systems
-- More robust than single system
+- Combines complementary strengths of all systems
+- More robust than any single system
 - Higher confidence when systems agree
-- Balanced view of recent form + matchup advantage
+- Captures momentum, matchups, patterns, and ML insights
 
 System Agreement Analysis:
-- Strong Agreement: Both predict within 2 points
-- Moderate Agreement: Both predict within 4 points
-- Disagreement: Predictions differ by >4 points
+- High Agreement: All within 2 points (variance < 2.0)
+- Good Agreement: All within 4 points (variance < 4.0)
+- Moderate Agreement: All within 6 points (variance < 6.0)
+- Low Agreement: Variance > 6.0
 """
 
-from typing import Dict, Tuple, Optional
+from typing import Dict, Tuple, Optional, List
 from datetime import date
 import logging
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
 
 class EnsembleV1:
-    """Ensemble V1 prediction system combining Moving Average and Zone Matchup"""
+    """Ensemble V1 prediction system combining 4 base prediction systems"""
     
-    def __init__(self, moving_average_system, zone_matchup_system):
+    def __init__(
+        self,
+        moving_average_system,
+        zone_matchup_system,
+        similarity_system,
+        xgboost_system
+    ):
         """
         Initialize Ensemble V1 system
         
         Args:
             moving_average_system: Instance of MovingAverageBaseline
             zone_matchup_system: Instance of ZoneMatchupV1
+            similarity_system: Instance of SimilarityBalancedV1
+            xgboost_system: Instance of XGBoostV1
         """
         self.system_id = 'ensemble_v1'
         self.system_name = 'Ensemble V1'
-        self.version = '1.0'
+        self.version = '2.0'
         
-        # Component systems
+        # Component systems (in priority order)
         self.moving_average = moving_average_system
         self.zone_matchup = zone_matchup_system
+        self.similarity = similarity_system
+        self.xgboost = xgboost_system
         
         # Ensemble parameters
-        self.agreement_bonus = 0.05  # Confidence bonus when systems agree
-        self.strong_agreement_threshold = 2.0  # Within 2 points
-        self.moderate_agreement_threshold = 4.0  # Within 4 points
+        self.high_agreement_threshold = 2.0  # Within 2 points
+        self.good_agreement_threshold = 4.0  # Within 4 points
+        self.moderate_agreement_threshold = 6.0  # Within 6 points
         
-        logger.info(f"Initialized {self.system_name} (v{self.version})")
+        # Confidence adjustments
+        self.high_agreement_bonus = 10  # When variance < 2.0
+        self.good_agreement_bonus = 5   # When variance < 4.0
+        self.all_systems_bonus = 5      # When all 4 systems predict
+        
+        # Recommendation thresholds
+        self.edge_threshold = 1.5  # Ensemble can be more aggressive
+        self.confidence_threshold = 65.0  # Minimum confidence (out of 100)
+        
+        logger.info(f"Initialized {self.system_name} (v{self.version}) with 4 base systems")
     
     def predict(
         self,
         features: Dict[str, float],
         player_lookup: str,
         game_date: date,
-        prop_line: Optional[float] = None
+        prop_line: Optional[float] = None,
+        historical_games: Optional[List[Dict]] = None
     ) -> Tuple[float, float, str, Dict[str, any]]:
         """
-        Make ensemble prediction by combining both systems
+        Make ensemble prediction by combining all 4 systems
         
         Args:
             features: Dictionary with 25 features
             player_lookup: Player identifier
             game_date: Game date
             prop_line: Optional betting line for recommendation
+            historical_games: Optional historical games for similarity system
         
         Returns:
             Tuple of (predicted_points, confidence, recommendation, metadata)
             - predicted_points: Ensemble prediction (weighted average)
-            - confidence: Ensemble confidence (max with agreement bonus)
+            - confidence: Ensemble confidence (0-100)
             - recommendation: 'OVER' | 'UNDER' | 'PASS'
-            - metadata: Dict with component predictions and agreement info
+            - metadata: Dict with all component predictions and agreement info
         """
-        # Get predictions from both systems
-        ma_pred, ma_conf, ma_rec = self.moving_average.predict(
-            features, player_lookup, game_date, prop_line
-        )
+        # Collect predictions from all systems
+        predictions = []
         
-        zm_pred, zm_conf, zm_rec = self.zone_matchup.predict(
-            features, player_lookup, game_date, prop_line
-        )
+        # System 1: Moving Average
+        try:
+            ma_pred, ma_conf, ma_rec = self.moving_average.predict(
+                features, player_lookup, game_date, prop_line
+            )
+            predictions.append({
+                'system': 'moving_average',
+                'prediction': ma_pred,
+                'confidence': ma_conf * 100,  # Convert to 0-100
+                'recommendation': ma_rec
+            })
+        except Exception as e:
+            logger.warning(f"Moving Average failed: {e}")
+            predictions.append(None)
+        
+        # System 2: Zone Matchup
+        try:
+            zm_pred, zm_conf, zm_rec = self.zone_matchup.predict(
+                features, player_lookup, game_date, prop_line
+            )
+            predictions.append({
+                'system': 'zone_matchup',
+                'prediction': zm_pred,
+                'confidence': zm_conf * 100,  # Convert to 0-100
+                'recommendation': zm_rec
+            })
+        except Exception as e:
+            logger.warning(f"Zone Matchup failed: {e}")
+            predictions.append(None)
+        
+        # System 3: Similarity
+        try:
+            if historical_games is None:
+                # If no historical games provided, skip similarity
+                logger.debug("No historical games provided for similarity system")
+                predictions.append(None)
+            else:
+                sim_result = self.similarity.predict(
+                    player_lookup=player_lookup,
+                    features=features,
+                    historical_games=historical_games,
+                    betting_line=prop_line
+                )
+                
+                if sim_result['predicted_points'] is not None:
+                    predictions.append({
+                        'system': 'similarity',
+                        'prediction': sim_result['predicted_points'],
+                        'confidence': sim_result['confidence_score'],
+                        'recommendation': sim_result['recommendation']
+                    })
+                else:
+                    predictions.append(None)
+        except Exception as e:
+            logger.warning(f"Similarity failed: {e}")
+            predictions.append(None)
+        
+        # System 4: XGBoost
+        try:
+            xgb_result = self.xgboost.predict(
+                player_lookup=player_lookup,
+                features=features,
+                betting_line=prop_line
+            )
+            
+            if xgb_result['predicted_points'] is not None:
+                predictions.append({
+                    'system': 'xgboost',
+                    'prediction': xgb_result['predicted_points'],
+                    'confidence': xgb_result['confidence_score'],
+                    'recommendation': xgb_result['recommendation']
+                })
+            else:
+                predictions.append(None)
+        except Exception as e:
+            logger.warning(f"XGBoost failed: {e}")
+            predictions.append(None)
+        
+        # Filter out None predictions
+        valid_predictions = [p for p in predictions if p is not None]
+        
+        # Check if we have enough predictions
+        if len(valid_predictions) < 2:
+            logger.warning(f"Insufficient valid predictions ({len(valid_predictions)}/4)")
+            return (0.0, 0.0, 'PASS', {
+                'error': 'Insufficient valid predictions',
+                'valid_systems': len(valid_predictions),
+                'predictions': predictions
+            })
         
         # Calculate weighted average prediction
-        total_weight = ma_conf + zm_conf
-        ensemble_pred = (ma_pred * ma_conf + zm_pred * zm_conf) / total_weight
+        ensemble_pred = self._calculate_weighted_prediction(valid_predictions)
         
         # Ensure prediction is reasonable
         ensemble_pred = max(0.0, min(60.0, ensemble_pred))
         
         # Calculate ensemble confidence
-        ensemble_conf = self._calculate_ensemble_confidence(
-            ma_pred, ma_conf, zm_pred, zm_conf
-        )
+        ensemble_conf = self._calculate_ensemble_confidence(valid_predictions)
         
         # Determine ensemble recommendation
         if prop_line is not None:
             ensemble_rec = self._determine_ensemble_recommendation(
-                ensemble_pred, prop_line, ensemble_conf, ma_rec, zm_rec
+                ensemble_pred,
+                prop_line,
+                ensemble_conf,
+                valid_predictions
             )
         else:
             ensemble_rec = 'PASS'
         
         # Calculate agreement metrics
-        agreement_type = self._calculate_agreement_type(ma_pred, zm_pred)
-        prediction_diff = abs(ma_pred - zm_pred)
+        agreement_metrics = self._calculate_agreement_metrics(valid_predictions)
         
         # Build metadata
         metadata = {
-            'moving_average': {
-                'prediction': ma_pred,
-                'confidence': ma_conf,
-                'recommendation': ma_rec
-            },
-            'zone_matchup': {
-                'prediction': zm_pred,
-                'confidence': zm_conf,
-                'recommendation': zm_rec
-            },
-            'agreement_type': agreement_type,
-            'prediction_difference': prediction_diff,
-            'systems_agree': agreement_type in ['strong', 'moderate'],
-            'recommendation_agreement': ma_rec == zm_rec
+            'systems_used': len(valid_predictions),
+            'predictions': predictions,
+            'agreement': agreement_metrics,
+            'ensemble': {
+                'prediction': ensemble_pred,
+                'confidence': ensemble_conf,
+                'recommendation': ensemble_rec
+            }
         }
         
         logger.debug(
             f"{player_lookup} ensemble: {ensemble_pred:.1f} "
-            f"(MA={ma_pred:.1f}, ZM={zm_pred:.1f}, diff={prediction_diff:.1f}, "
-            f"agreement={agreement_type}, conf={ensemble_conf:.2f})"
+            f"({len(valid_predictions)} systems, "
+            f"agreement={agreement_metrics['type']}, "
+            f"variance={agreement_metrics['variance']:.2f}, "
+            f"conf={ensemble_conf:.1f})"
         )
         
-        return (ensemble_pred, ensemble_conf, ensemble_rec, metadata)
+        return (ensemble_pred, ensemble_conf / 100.0, ensemble_rec, metadata)
     
-    def _calculate_ensemble_confidence(
-        self,
-        ma_pred: float,
-        ma_conf: float,
-        zm_pred: float,
-        zm_conf: float
-    ) -> float:
+    def _calculate_weighted_prediction(self, predictions: List[Dict]) -> float:
         """
-        Calculate ensemble confidence based on component confidences and agreement
-        
-        Logic:
-        1. Start with max confidence from either system
-        2. Add agreement bonus if predictions are close
-        3. Clamp to [0.2, 0.8] range
+        Calculate confidence-weighted average prediction
         
         Args:
-            ma_pred: Moving Average prediction
-            ma_conf: Moving Average confidence
-            zm_pred: Zone Matchup prediction
-            zm_conf: Zone Matchup confidence
+            predictions: List of valid prediction dicts
         
         Returns:
-            Float confidence (0.2-0.8)
+            Weighted average prediction
         """
-        # Start with maximum confidence
-        base_confidence = max(ma_conf, zm_conf)
+        total_weight = sum(p['confidence'] for p in predictions)
+        weighted_sum = sum(p['prediction'] * p['confidence'] for p in predictions)
         
-        # Calculate agreement
-        prediction_diff = abs(ma_pred - zm_pred)
+        return weighted_sum / total_weight if total_weight > 0 else 0.0
+    
+    def _calculate_ensemble_confidence(self, predictions: List[Dict]) -> float:
+        """
+        Calculate ensemble confidence (0-100)
         
-        # Add bonus if systems agree
-        if prediction_diff <= self.strong_agreement_threshold:
-            # Strong agreement: both within 2 points
-            confidence = base_confidence + self.agreement_bonus
-        elif prediction_diff <= self.moderate_agreement_threshold:
-            # Moderate agreement: both within 4 points
-            confidence = base_confidence + (self.agreement_bonus * 0.5)
-        else:
-            # Disagreement: no bonus
-            confidence = base_confidence
+        Logic:
+        1. Start with average of component confidences
+        2. Add bonus for high agreement (low variance)
+        3. Add bonus if all 4 systems predicted
+        4. Clamp to [20, 95] range
         
-        # Clamp to valid range
-        return max(0.2, min(0.8, confidence))
+        Args:
+            predictions: List of valid prediction dicts
+        
+        Returns:
+            Confidence score (0-100)
+        """
+        # Base confidence: average of components
+        avg_confidence = np.mean([p['confidence'] for p in predictions])
+        
+        # Calculate prediction variance
+        pred_values = [p['prediction'] for p in predictions]
+        variance = np.std(pred_values) if len(pred_values) > 1 else 0.0
+        
+        # Start with average confidence
+        confidence = avg_confidence
+        
+        # Agreement bonus based on variance
+        if variance < self.high_agreement_threshold:
+            # High agreement: all within 2 points
+            confidence += self.high_agreement_bonus
+        elif variance < self.good_agreement_threshold:
+            # Good agreement: all within 4 points
+            confidence += self.good_agreement_bonus
+        # No bonus for moderate/low agreement
+        
+        # Bonus if all 4 systems predicted
+        if len(predictions) == 4:
+            confidence += self.all_systems_bonus
+        
+        # Clamp to reasonable range
+        return max(20.0, min(95.0, confidence))
     
     def _determine_ensemble_recommendation(
         self,
         ensemble_pred: float,
         prop_line: float,
         ensemble_conf: float,
-        ma_rec: str,
-        zm_rec: str,
-        edge_threshold: float = 2.0,
-        confidence_threshold: float = 0.45
+        predictions: List[Dict]
     ) -> str:
         """
         Determine ensemble recommendation
         
         Logic:
-        1. Check if ensemble prediction has sufficient edge and confidence
-        2. If both systems agree on recommendation, boost confidence in that
-        3. If systems disagree, require higher edge/confidence
+        1. Check if we have sufficient confidence
+        2. Calculate edge (prediction vs line)
+        3. Check if edge meets threshold
+        4. Consider system agreement on recommendations
         
         Args:
             ensemble_pred: Ensemble prediction
             prop_line: Betting line
-            ensemble_conf: Ensemble confidence
-            ma_rec: Moving Average recommendation
-            zm_rec: Zone Matchup recommendation
-            edge_threshold: Minimum edge required
-            confidence_threshold: Minimum confidence required
+            ensemble_conf: Ensemble confidence (0-100)
+            predictions: List of valid predictions
         
         Returns:
             'OVER' | 'UNDER' | 'PASS'
         """
+        # Check confidence threshold
+        if ensemble_conf < self.confidence_threshold:
+            return 'PASS'
+        
         # Calculate edge
         edge = abs(ensemble_pred - prop_line)
         
-        # Check if we have enough edge
-        if edge <= edge_threshold:
+        # Check edge threshold
+        if edge < self.edge_threshold:
             return 'PASS'
         
-        # Check if we're confident enough
-        if ensemble_conf <= confidence_threshold:
-            return 'PASS'
+        # Count system recommendations
+        rec_counts = {'OVER': 0, 'UNDER': 0, 'PASS': 0}
+        for pred in predictions:
+            rec = pred.get('recommendation', 'PASS')
+            rec_counts[rec] += 1
         
-        # If both systems agree on recommendation, use it
-        if ma_rec == zm_rec and ma_rec != 'PASS':
-            return ma_rec
+        # If majority agrees on direction, use it
+        if rec_counts['OVER'] > len(predictions) / 2:
+            return 'OVER'
+        elif rec_counts['UNDER'] > len(predictions) / 2:
+            return 'UNDER'
         
-        # Systems disagree or one PASSed - use ensemble prediction
+        # Otherwise, use ensemble prediction
         if ensemble_pred > prop_line:
             return 'OVER'
         else:
             return 'UNDER'
     
-    def _calculate_agreement_type(self, ma_pred: float, zm_pred: float) -> str:
+    def _calculate_agreement_metrics(self, predictions: List[Dict]) -> Dict:
         """
-        Calculate agreement type between systems
+        Calculate agreement metrics across all systems
         
         Args:
-            ma_pred: Moving Average prediction
-            zm_pred: Zone Matchup prediction
+            predictions: List of valid predictions
         
         Returns:
-            'strong' | 'moderate' | 'disagreement'
+            Dict with agreement type, variance, range, etc.
         """
-        diff = abs(ma_pred - zm_pred)
+        pred_values = [p['prediction'] for p in predictions]
         
-        if diff <= self.strong_agreement_threshold:
-            return 'strong'
-        elif diff <= self.moderate_agreement_threshold:
-            return 'moderate'
+        # Calculate statistics
+        mean_pred = np.mean(pred_values)
+        variance = np.std(pred_values)
+        pred_range = max(pred_values) - min(pred_values)
+        
+        # Determine agreement type
+        if variance < self.high_agreement_threshold:
+            agreement_type = 'high'
+            agreement_pct = 95.0
+        elif variance < self.good_agreement_threshold:
+            agreement_type = 'good'
+            agreement_pct = 85.0
+        elif variance < self.moderate_agreement_threshold:
+            agreement_type = 'moderate'
+            agreement_pct = 70.0
         else:
-            return 'disagreement'
-    
-    def get_system_weights(
-        self,
-        ma_conf: float,
-        zm_conf: float
-    ) -> Tuple[float, float]:
-        """
-        Get normalized weights for each system
+            agreement_type = 'low'
+            agreement_pct = max(50.0, 100.0 - (variance * 5))
         
-        Args:
-            ma_conf: Moving Average confidence
-            zm_conf: Zone Matchup confidence
-        
-        Returns:
-            Tuple of (ma_weight, zm_weight) that sum to 1.0
-        """
-        total = ma_conf + zm_conf
-        return (ma_conf / total, zm_conf / total)
+        return {
+            'type': agreement_type,
+            'agreement_percentage': agreement_pct,
+            'variance': variance,
+            'range': pred_range,
+            'mean': mean_pred,
+            'min': min(pred_values),
+            'max': max(pred_values)
+        }
     
-    def analyze_disagreement(
+    def analyze_predictions(
         self,
         features: Dict[str, float],
         player_lookup: str,
-        game_date: date
+        game_date: date,
+        historical_games: Optional[List[Dict]] = None
     ) -> Dict[str, any]:
         """
-        Analyze why systems might disagree
+        Analyze predictions from all systems without making recommendation
         
-        Useful for understanding prediction differences
+        Useful for understanding why systems agree or disagree
         
         Args:
             features: Feature dictionary
             player_lookup: Player identifier
             game_date: Game date
+            historical_games: Optional historical games for similarity
         
         Returns:
-            Dict with analysis of key factors
+            Dict with detailed analysis
         """
-        # Get predictions
-        ma_pred, ma_conf, _ = self.moving_average.predict(
-            features, player_lookup, game_date
-        )
-        zm_pred, zm_conf, _ = self.zone_matchup.predict(
-            features, player_lookup, game_date
+        _, _, _, metadata = self.predict(
+            features,
+            player_lookup,
+            game_date,
+            prop_line=None,
+            historical_games=historical_games
         )
         
         # Extract key factors
         points_last_5 = features.get('points_avg_last_5', 0)
         points_season = features.get('points_avg_season', 0)
-        opponent_def = features.get('opponent_def_rating', 110)
+        zone_mismatch = features.get('shot_zone_mismatch_score', 0)
+        fatigue = features.get('fatigue_score', 70)
+        opponent_def = features.get('opponent_def_rating_last_15', 112)
         
-        recent_vs_season = points_last_5 - points_season
-        defense_vs_avg = opponent_def - 110.0
-        
+        # Analyze key differences
         analysis = {
-            'moving_average_prediction': ma_pred,
-            'zone_matchup_prediction': zm_pred,
-            'difference': abs(ma_pred - zm_pred),
-            'recent_form_vs_season': recent_vs_season,
-            'recent_form_impact': 'Hot streak' if recent_vs_season > 2 else 'Cold streak' if recent_vs_season < -2 else 'Neutral',
-            'defense_vs_average': defense_vs_avg,
-            'defense_impact': 'Weak defense' if defense_vs_avg > 5 else 'Elite defense' if defense_vs_avg < -5 else 'Average defense',
-            'likely_reason': self._identify_disagreement_reason(recent_vs_season, defense_vs_avg, ma_pred, zm_pred)
+            'metadata': metadata,
+            'key_factors': {
+                'recent_form': 'Hot' if points_last_5 > points_season + 3 else 'Cold' if points_last_5 < points_season - 3 else 'Normal',
+                'zone_matchup': 'Favorable' if zone_mismatch > 3 else 'Unfavorable' if zone_mismatch < -3 else 'Neutral',
+                'fatigue_level': 'Fresh' if fatigue > 80 else 'Fatigued' if fatigue < 60 else 'Normal',
+                'opponent_defense': 'Weak' if opponent_def > 115 else 'Elite' if opponent_def < 108 else 'Average'
+            },
+            'system_strengths': {
+                'moving_average': 'Captures recent momentum and trends',
+                'zone_matchup': 'Identifies style matchup advantages',
+                'similarity': 'Finds historical patterns in similar contexts',
+                'xgboost': 'Learns complex interactions from training data'
+            }
         }
         
         return analysis
     
-    def _identify_disagreement_reason(
-        self,
-        recent_vs_season: float,
-        defense_vs_avg: float,
-        ma_pred: float,
-        zm_pred: float
-    ) -> str:
-        """Identify likely reason for prediction disagreement"""
-        if ma_pred > zm_pred and recent_vs_season > 2:
-            return "Moving Average captures hot streak not reflected in matchup"
-        elif zm_pred > ma_pred and defense_vs_avg > 5:
-            return "Zone Matchup identifies favorable matchup despite recent form"
-        elif ma_pred < zm_pred and recent_vs_season < -2:
-            return "Moving Average penalizes cold streak, Zone Matchup focuses on matchup"
-        elif zm_pred < ma_pred and defense_vs_avg < -5:
-            return "Zone Matchup identifies tough matchup despite recent form"
-        else:
-            return "Mixed factors - no single dominant reason"
+    def get_system_weights(self, predictions: List[Dict]) -> Dict[str, float]:
+        """
+        Get normalized weights for each system
+        
+        Args:
+            predictions: List of valid predictions
+        
+        Returns:
+            Dict mapping system name to normalized weight
+        """
+        total_conf = sum(p['confidence'] for p in predictions)
+        
+        weights = {}
+        for pred in predictions:
+            weights[pred['system']] = pred['confidence'] / total_conf
+        
+        return weights
     
     def __str__(self) -> str:
-        return f"{self.system_name} (v{self.version})"
+        return f"{self.system_name} (v{self.version}) - 4 Systems"
     
     def __repr__(self) -> str:
-        return f"EnsembleV1(version='{self.version}')"
+        return f"EnsembleV1(version='{self.version}', systems=4)"
