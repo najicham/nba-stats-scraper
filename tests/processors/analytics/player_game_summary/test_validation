@@ -1,0 +1,751 @@
+"""
+Validation Tests for Player Game Summary Processor
+
+These tests run against ACTUAL production data in BigQuery to verify:
+- Data completeness and coverage
+- Business logic correctness
+- Data quality thresholds
+- Statistical integrity
+- Cross-table consistency
+
+Run with: RUN_VALIDATION_TESTS=true pytest test_validation.py -v
+
+Path: tests/processors/analytics/player_game_summary/test_validation.py
+
+IMPORTANT: These tests require:
+1. BigQuery credentials configured
+2. Actual data in nba_analytics.player_game_summary
+3. RUN_VALIDATION_TESTS=true environment variable
+
+DO NOT run in CI/CD without production data.
+"""
+
+import pytest
+import os
+from datetime import date, datetime, timedelta
+from google.cloud import bigquery
+from typing import Dict, List
+
+
+# Skip all validation tests unless explicitly enabled
+pytestmark = pytest.mark.skipif(
+    os.getenv('RUN_VALIDATION_TESTS', 'false').lower() != 'true',
+    reason="Validation tests only run when RUN_VALIDATION_TESTS=true"
+)
+
+
+@pytest.fixture(scope="module")
+def bq_client():
+    """Create BigQuery client for validation queries."""
+    return bigquery.Client(project='nba-props-platform')
+
+
+@pytest.fixture(scope="module")
+def recent_date():
+    """Get a recent date with data (yesterday or 2 days ago)."""
+    # Use yesterday if it's past noon ET, otherwise 2 days ago
+    days_back = 1 if datetime.now().hour >= 16 else 2
+    return (date.today() - timedelta(days=days_back)).isoformat()
+
+
+@pytest.fixture(scope="module")
+def sample_game_id(bq_client, recent_date):
+    """Get a sample game_id from recent data."""
+    query = f"""
+    SELECT game_id
+    FROM `nba-props-platform.nba_analytics.player_game_summary`
+    WHERE game_date = '{recent_date}'
+    LIMIT 1
+    """
+    result = bq_client.query(query).result()
+    for row in result:
+        return row.game_id
+    return None
+
+
+# =============================================================================
+# Test Class 1: Data Completeness
+# =============================================================================
+
+class TestDataCompleteness:
+    """Verify data exists and covers expected time periods."""
+    
+    def test_table_exists_and_has_data(self, bq_client):
+        """Verify table exists and contains records."""
+        query = """
+        SELECT COUNT(*) as total_records
+        FROM `nba-props-platform.nba_analytics.player_game_summary`
+        """
+        result = bq_client.query(query).result()
+        
+        for row in result:
+            assert row.total_records > 0, "Table should contain data"
+            assert row.total_records > 10000, "Should have substantial historical data"
+    
+    def test_recent_data_exists(self, bq_client, recent_date):
+        """Verify data exists for recent date."""
+        query = f"""
+        SELECT COUNT(*) as record_count
+        FROM `nba-props-platform.nba_analytics.player_game_summary`
+        WHERE game_date = '{recent_date}'
+        """
+        result = bq_client.query(query).result()
+        
+        for row in result:
+            assert row.record_count > 0, f"Should have data for {recent_date}"
+            assert row.record_count >= 100, f"Should have 100+ player records for {recent_date}"
+    
+    def test_no_future_dates(self, bq_client):
+        """Verify no records exist for future dates."""
+        query = """
+        SELECT COUNT(*) as future_count
+        FROM `nba-props-platform.nba_analytics.player_game_summary`
+        WHERE game_date > CURRENT_DATE()
+        """
+        result = bq_client.query(query).result()
+        
+        for row in result:
+            assert row.future_count == 0, "Should not have future-dated records"
+    
+    def test_historical_coverage(self, bq_client):
+        """Verify historical data coverage across seasons."""
+        query = """
+        SELECT 
+            season_year,
+            COUNT(*) as records,
+            COUNT(DISTINCT game_id) as games,
+            MIN(game_date) as first_game,
+            MAX(game_date) as last_game
+        FROM `nba-props-platform.nba_analytics.player_game_summary`
+        GROUP BY season_year
+        ORDER BY season_year DESC
+        LIMIT 4
+        """
+        result = bq_client.query(query).result()
+        
+        seasons = list(result)
+        assert len(seasons) >= 1, "Should have at least current season"
+        
+        for season in seasons:
+            assert season.records > 10000, f"Season {season.season_year} should have 10k+ records"
+            assert season.games >= 100, f"Season {season.season_year} should have 100+ games"
+    
+    def test_no_large_date_gaps(self, bq_client):
+        """Verify no unexplained gaps in data coverage."""
+        query = """
+        WITH date_series AS (
+            SELECT DISTINCT game_date
+            FROM `nba-props-platform.nba_analytics.player_game_summary`
+            WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
+            ORDER BY game_date
+        ),
+        gaps AS (
+            SELECT 
+                game_date,
+                DATE_DIFF(
+                    LEAD(game_date) OVER (ORDER BY game_date),
+                    game_date,
+                    DAY
+                ) as days_until_next
+            FROM date_series
+        )
+        SELECT MAX(days_until_next) as max_gap
+        FROM gaps
+        WHERE days_until_next IS NOT NULL
+        """
+        result = bq_client.query(query).result()
+        
+        for row in result:
+            # Allow up to 7 day gaps (All-Star break, offseason periods)
+            assert row.max_gap <= 7, f"Found {row.max_gap} day gap in last 30 days"
+
+
+# =============================================================================
+# Test Class 2: Critical Fields
+# =============================================================================
+
+class TestCriticalFields:
+    """Verify critical fields are never NULL and have valid values."""
+    
+    def test_no_null_game_ids(self, bq_client, recent_date):
+        """Verify game_id is never NULL."""
+        query = f"""
+        SELECT COUNT(*) as null_count
+        FROM `nba-props-platform.nba_analytics.player_game_summary`
+        WHERE game_date = '{recent_date}'
+          AND game_id IS NULL
+        """
+        result = bq_client.query(query).result()
+        
+        for row in result:
+            assert row.null_count == 0, "game_id should never be NULL"
+    
+    def test_no_null_player_lookups(self, bq_client, recent_date):
+        """Verify player_lookup is never NULL."""
+        query = f"""
+        SELECT COUNT(*) as null_count
+        FROM `nba-props-platform.nba_analytics.player_game_summary`
+        WHERE game_date = '{recent_date}'
+          AND player_lookup IS NULL
+        """
+        result = bq_client.query(query).result()
+        
+        for row in result:
+            assert row.null_count == 0, "player_lookup should never be NULL"
+    
+    def test_no_null_universal_player_ids(self, bq_client, recent_date):
+        """Verify universal_player_id is never NULL (registry working)."""
+        query = f"""
+        SELECT COUNT(*) as null_count
+        FROM `nba-props-platform.nba_analytics.player_game_summary`
+        WHERE game_date = '{recent_date}'
+          AND universal_player_id IS NULL
+        """
+        result = bq_client.query(query).result()
+        
+        for row in result:
+            assert row.null_count == 0, "universal_player_id should never be NULL"
+    
+    def test_no_null_points(self, bq_client, recent_date):
+        """Verify points is never NULL for active players."""
+        query = f"""
+        SELECT COUNT(*) as null_count
+        FROM `nba-props-platform.nba_analytics.player_game_summary`
+        WHERE game_date = '{recent_date}'
+          AND is_active = TRUE
+          AND points IS NULL
+        """
+        result = bq_client.query(query).result()
+        
+        for row in result:
+            assert row.null_count == 0, "points should never be NULL for active players"
+    
+    def test_all_teams_valid(self, bq_client, recent_date):
+        """Verify all team abbreviations are valid NBA teams."""
+        query = f"""
+        SELECT DISTINCT team_abbr
+        FROM `nba-props-platform.nba_analytics.player_game_summary`
+        WHERE game_date = '{recent_date}'
+        ORDER BY team_abbr
+        """
+        result = bq_client.query(query).result()
+        
+        teams = [row.team_abbr for row in result]
+        
+        # Valid NBA team abbreviations (30 teams)
+        valid_teams = {
+            'ATL', 'BOS', 'BKN', 'CHA', 'CHI', 'CLE', 'DAL', 'DEN', 'DET', 'GSW',
+            'HOU', 'IND', 'LAC', 'LAL', 'MEM', 'MIA', 'MIL', 'MIN', 'NOP', 'NYK',
+            'OKC', 'ORL', 'PHI', 'PHX', 'POR', 'SAC', 'SAS', 'TOR', 'UTA', 'WAS'
+        }
+        
+        for team in teams:
+            assert team in valid_teams, f"Invalid team abbreviation: {team}"
+
+
+# =============================================================================
+# Test Class 3: Statistical Integrity
+# =============================================================================
+
+class TestStatisticalIntegrity:
+    """Verify statistical relationships are logically valid."""
+    
+    def test_field_goals_made_never_exceeds_attempted(self, bq_client, recent_date):
+        """Verify FGM <= FGA for all records."""
+        query = f"""
+        SELECT COUNT(*) as violation_count
+        FROM `nba-props-platform.nba_analytics.player_game_summary`
+        WHERE game_date = '{recent_date}'
+          AND fg_makes > fg_attempts
+        """
+        result = bq_client.query(query).result()
+        
+        for row in result:
+            assert row.violation_count == 0, f"Found {row.violation_count} records with FGM > FGA"
+    
+    def test_three_pointers_made_never_exceeds_attempted(self, bq_client, recent_date):
+        """Verify 3PM <= 3PA for all records."""
+        query = f"""
+        SELECT COUNT(*) as violation_count
+        FROM `nba-props-platform.nba_analytics.player_game_summary`
+        WHERE game_date = '{recent_date}'
+          AND three_pt_makes > three_pt_attempts
+        """
+        result = bq_client.query(query).result()
+        
+        for row in result:
+            assert row.violation_count == 0, f"Found {row.violation_count} records with 3PM > 3PA"
+    
+    def test_free_throws_made_never_exceeds_attempted(self, bq_client, recent_date):
+        """Verify FTM <= FTA for all records."""
+        query = f"""
+        SELECT COUNT(*) as violation_count
+        FROM `nba-props-platform.nba_analytics.player_game_summary`
+        WHERE game_date = '{recent_date}'
+          AND ft_makes > ft_attempts
+        """
+        result = bq_client.query(query).result()
+        
+        for row in result:
+            assert row.violation_count == 0, f"Found {row.violation_count} records with FTM > FTA"
+    
+    def test_three_pointers_subset_of_field_goals(self, bq_client, recent_date):
+        """Verify 3PM <= FGM (three-pointers are subset of field goals)."""
+        query = f"""
+        SELECT COUNT(*) as violation_count
+        FROM `nba-props-platform.nba_analytics.player_game_summary`
+        WHERE game_date = '{recent_date}'
+          AND three_pt_makes > fg_makes
+        """
+        result = bq_client.query(query).result()
+        
+        for row in result:
+            assert row.violation_count == 0, f"Found {row.violation_count} records with 3PM > FGM"
+    
+    def test_points_calculation_correct(self, bq_client, recent_date):
+        """Verify points = 2×2PM + 3×3PM + FTM."""
+        query = f"""
+        SELECT 
+            player_full_name,
+            points,
+            fg_makes,
+            three_pt_makes,
+            ft_makes,
+            (2 * (fg_makes - three_pt_makes) + 3 * three_pt_makes + ft_makes) as calculated_points,
+            ABS(points - (2 * (fg_makes - three_pt_makes) + 3 * three_pt_makes + ft_makes)) as diff
+        FROM `nba-props-platform.nba_analytics.player_game_summary`
+        WHERE game_date = '{recent_date}'
+          AND fg_makes IS NOT NULL
+          AND three_pt_makes IS NOT NULL
+          AND ft_makes IS NOT NULL
+          AND points IS NOT NULL
+          AND ABS(points - (2 * (fg_makes - three_pt_makes) + 3 * three_pt_makes + ft_makes)) > 1
+        """
+        result = bq_client.query(query).result()
+        
+        violations = list(result)
+        assert len(violations) == 0, f"Found {len(violations)} records with incorrect points calculation"
+    
+    def test_no_negative_stats(self, bq_client, recent_date):
+        """Verify no negative values in counting stats."""
+        query = f"""
+        SELECT 
+            COUNT(*) as violation_count,
+            COUNTIF(points < 0) as negative_points,
+            COUNTIF(assists < 0) as negative_assists,
+            COUNTIF(steals < 0) as negative_steals,
+            COUNTIF(blocks < 0) as negative_blocks
+        FROM `nba-props-platform.nba_analytics.player_game_summary`
+        WHERE game_date = '{recent_date}'
+          AND (points < 0 OR assists < 0 OR steals < 0 OR blocks < 0)
+        """
+        result = bq_client.query(query).result()
+        
+        for row in result:
+            assert row.violation_count == 0, "Found records with negative counting stats"
+    
+    def test_minutes_within_valid_range(self, bq_client, recent_date):
+        """Verify minutes played is between 0 and 60 (allows OT)."""
+        query = f"""
+        SELECT 
+            player_full_name,
+            minutes_played
+        FROM `nba-props-platform.nba_analytics.player_game_summary`
+        WHERE game_date = '{recent_date}'
+          AND minutes_played IS NOT NULL
+          AND (minutes_played < 0 OR minutes_played > 60)
+        """
+        result = bq_client.query(query).result()
+        
+        violations = list(result)
+        assert len(violations) == 0, f"Found {len(violations)} records with invalid minutes"
+
+
+# =============================================================================
+# Test Class 4: Business Logic Validation
+# =============================================================================
+
+class TestBusinessLogic:
+    """Verify calculated fields match expected business logic."""
+    
+    def test_true_shooting_percentage_calculation(self, bq_client, recent_date):
+        """Verify TS% = Points / (2 × (FGA + 0.44 × FTA))."""
+        query = f"""
+        WITH validation AS (
+            SELECT 
+                player_full_name,
+                points,
+                fg_attempts,
+                ft_attempts,
+                ts_pct,
+                CASE 
+                    WHEN (fg_attempts + 0.44 * ft_attempts) > 0 
+                    THEN points / (2 * (fg_attempts + 0.44 * ft_attempts))
+                    ELSE NULL
+                END as calculated_ts_pct,
+                ABS(ts_pct - (points / (2 * (fg_attempts + 0.44 * ft_attempts)))) as diff
+            FROM `nba-props-platform.nba_analytics.player_game_summary`
+            WHERE game_date = '{recent_date}'
+              AND ts_pct IS NOT NULL
+              AND fg_attempts > 0
+              AND points IS NOT NULL
+        )
+        SELECT COUNT(*) as violations
+        FROM validation
+        WHERE diff > 0.001  -- Allow small rounding difference
+        """
+        result = bq_client.query(query).result()
+        
+        for row in result:
+            assert row.violations == 0, f"Found {row.violations} records with incorrect TS% calculation"
+    
+    def test_effective_field_goal_percentage_calculation(self, bq_client, recent_date):
+        """Verify eFG% = (FGM + 0.5 × 3PM) / FGA."""
+        query = f"""
+        WITH validation AS (
+            SELECT 
+                player_full_name,
+                fg_makes,
+                three_pt_makes,
+                fg_attempts,
+                efg_pct,
+                (fg_makes + 0.5 * three_pt_makes) / fg_attempts as calculated_efg_pct,
+                ABS(efg_pct - ((fg_makes + 0.5 * three_pt_makes) / fg_attempts)) as diff
+            FROM `nba-props-platform.nba_analytics.player_game_summary`
+            WHERE game_date = '{recent_date}'
+              AND efg_pct IS NOT NULL
+              AND fg_attempts > 0
+        )
+        SELECT COUNT(*) as violations
+        FROM validation
+        WHERE diff > 0.001  -- Allow small rounding difference
+        """
+        result = bq_client.query(query).result()
+        
+        for row in result:
+            assert row.violations == 0, f"Found {row.violations} records with incorrect eFG% calculation"
+    
+    def test_prop_outcome_correct(self, bq_client, recent_date):
+        """Verify over_under_result matches points vs points_line."""
+        query = f"""
+        SELECT 
+            player_full_name,
+            points,
+            points_line,
+            over_under_result
+        FROM `nba-props-platform.nba_analytics.player_game_summary`
+        WHERE game_date = '{recent_date}'
+          AND points_line IS NOT NULL
+          AND over_under_result IS NOT NULL
+          AND (
+              (points >= points_line AND over_under_result != 'OVER')
+              OR
+              (points < points_line AND over_under_result != 'UNDER')
+          )
+        """
+        result = bq_client.query(query).result()
+        
+        violations = list(result)
+        assert len(violations) == 0, f"Found {len(violations)} records with incorrect prop outcome"
+    
+    def test_margin_calculation_correct(self, bq_client, recent_date):
+        """Verify margin = points - points_line."""
+        query = f"""
+        WITH validation AS (
+            SELECT 
+                player_full_name,
+                points,
+                points_line,
+                margin,
+                (points - points_line) as calculated_margin,
+                ABS(margin - (points - points_line)) as diff
+            FROM `nba-props-platform.nba_analytics.player_game_summary`
+            WHERE game_date = '{recent_date}'
+              AND margin IS NOT NULL
+              AND points_line IS NOT NULL
+        )
+        SELECT COUNT(*) as violations
+        FROM validation
+        WHERE diff > 0.01  -- Allow small rounding difference
+        """
+        result = bq_client.query(query).result()
+        
+        for row in result:
+            assert row.violations == 0, f"Found {row.violations} records with incorrect margin"
+    
+    def test_starter_flag_logic(self, bq_client, recent_date):
+        """Verify starter_flag = TRUE when minutes > 20."""
+        query = f"""
+        SELECT 
+            player_full_name,
+            minutes_played,
+            starter_flag
+        FROM `nba-props-platform.nba_analytics.player_game_summary`
+        WHERE game_date = '{recent_date}'
+          AND minutes_played IS NOT NULL
+          AND (
+              (minutes_played > 20 AND starter_flag = FALSE)
+              OR
+              (minutes_played <= 20 AND starter_flag = TRUE)
+          )
+        """
+        result = bq_client.query(query).result()
+        
+        violations = list(result)
+        # Allow some violations (bench players can play 25+ min, starters can get injured <20 min)
+        assert len(violations) <= 10, f"Found {len(violations)} potential starter_flag issues"
+
+
+# =============================================================================
+# Test Class 5: Data Quality Thresholds
+# =============================================================================
+
+class TestDataQualityThresholds:
+    """Verify data quality meets minimum thresholds."""
+    
+    def test_high_quality_data_predominant(self, bq_client, recent_date):
+        """Verify majority of data is high quality."""
+        query = f"""
+        SELECT 
+            data_quality_tier,
+            COUNT(*) as record_count,
+            COUNT(*) * 100.0 / SUM(COUNT(*)) OVER () as percentage
+        FROM `nba-props-platform.nba_analytics.player_game_summary`
+        WHERE game_date = '{recent_date}'
+        GROUP BY data_quality_tier
+        """
+        result = bq_client.query(query).result()
+        
+        quality_dist = {row.data_quality_tier: row.percentage for row in result}
+        
+        # At least 70% should be high quality
+        high_quality_pct = quality_dist.get('high', 0)
+        assert high_quality_pct >= 70, f"Only {high_quality_pct:.1f}% high quality (need 70%+)"
+    
+    def test_source_completeness_acceptable(self, bq_client, recent_date):
+        """Verify source completeness percentages are acceptable."""
+        query = f"""
+        SELECT 
+            AVG(source_nbac_completeness_pct) as avg_nbac_pct,
+            AVG(source_bdl_completeness_pct) as avg_bdl_pct,
+            MIN(source_nbac_completeness_pct) as min_nbac_pct,
+            MIN(source_bdl_completeness_pct) as min_bdl_pct
+        FROM `nba-props-platform.nba_analytics.player_game_summary`
+        WHERE game_date = '{recent_date}'
+        """
+        result = bq_client.query(query).result()
+        
+        for row in result:
+            # At least one source should be >80% complete
+            assert (row.avg_nbac_pct > 80 or row.avg_bdl_pct > 80), \
+                f"Low completeness: NBA.com={row.avg_nbac_pct:.1f}%, BDL={row.avg_bdl_pct:.1f}%"
+    
+    def test_reasonable_players_per_game(self, bq_client, recent_date):
+        """Verify reasonable number of players per game (18-26 typically)."""
+        query = f"""
+        SELECT 
+            game_id,
+            COUNT(*) as player_count
+        FROM `nba-props-platform.nba_analytics.player_game_summary`
+        WHERE game_date = '{recent_date}'
+        GROUP BY game_id
+        HAVING COUNT(*) < 15 OR COUNT(*) > 30
+        """
+        result = bq_client.query(query).result()
+        
+        outliers = list(result)
+        assert len(outliers) == 0, f"Found {len(outliers)} games with unusual player counts"
+    
+    def test_no_excessive_processing_issues(self, bq_client, recent_date):
+        """Verify <5% of records have processing issues."""
+        query = f"""
+        SELECT 
+            COUNT(*) as total_records,
+            COUNTIF(processed_with_issues) as records_with_issues,
+            COUNTIF(processed_with_issues) * 100.0 / COUNT(*) as issue_pct
+        FROM `nba-props-platform.nba_analytics.player_game_summary`
+        WHERE game_date = '{recent_date}'
+        """
+        result = bq_client.query(query).result()
+        
+        for row in result:
+            assert row.issue_pct < 5, f"Too many processing issues: {row.issue_pct:.1f}%"
+    
+    def test_prop_coverage_reasonable(self, bq_client, recent_date):
+        """Verify reasonable prop line coverage (40-70% typically)."""
+        query = f"""
+        SELECT 
+            COUNT(*) as total_records,
+            COUNTIF(points_line IS NOT NULL) as records_with_props,
+            COUNTIF(points_line IS NOT NULL) * 100.0 / COUNT(*) as prop_pct
+        FROM `nba-props-platform.nba_analytics.player_game_summary`
+        WHERE game_date = '{recent_date}'
+          AND minutes_played >= 10  -- Only check players who actually played
+        """
+        result = bq_client.query(query).result()
+        
+        for row in result:
+            # Between 30% and 80% should have props
+            assert 30 <= row.prop_pct <= 80, f"Unusual prop coverage: {row.prop_pct:.1f}%"
+
+
+# =============================================================================
+# Test Class 6: Consistency Checks
+# =============================================================================
+
+class TestConsistencyChecks:
+    """Verify data consistency within and across tables."""
+    
+    def test_no_duplicate_player_game_records(self, bq_client, recent_date):
+        """Verify no duplicate player-game combinations."""
+        query = f"""
+        SELECT 
+            game_id,
+            player_lookup,
+            COUNT(*) as record_count
+        FROM `nba-props-platform.nba_analytics.player_game_summary`
+        WHERE game_date = '{recent_date}'
+        GROUP BY game_id, player_lookup
+        HAVING COUNT(*) > 1
+        """
+        result = bq_client.query(query).result()
+        
+        duplicates = list(result)
+        assert len(duplicates) == 0, f"Found {len(duplicates)} duplicate player-game records"
+    
+    def test_universal_player_id_format_valid(self, bq_client, recent_date):
+        """Verify universal_player_id follows format: lookup_season."""
+        query = f"""
+        SELECT 
+            player_lookup,
+            universal_player_id,
+            season_year
+        FROM `nba-props-platform.nba_analytics.player_game_summary`
+        WHERE game_date = '{recent_date}'
+          AND universal_player_id IS NOT NULL
+          AND universal_player_id NOT LIKE CONCAT(player_lookup, '_', CAST(season_year AS STRING))
+        LIMIT 10
+        """
+        result = bq_client.query(query).result()
+        
+        violations = list(result)
+        assert len(violations) == 0, f"Found {len(violations)} invalid universal_player_id formats"
+    
+    def test_opponent_teams_make_sense(self, bq_client, recent_date):
+        """Verify opponent_team_abbr is never same as team_abbr."""
+        query = f"""
+        SELECT COUNT(*) as violation_count
+        FROM `nba-props-platform.nba_analytics.player_game_summary`
+        WHERE game_date = '{recent_date}'
+          AND team_abbr = opponent_team_abbr
+        """
+        result = bq_client.query(query).result()
+        
+        for row in result:
+            assert row.violation_count == 0, "Team cannot be its own opponent"
+    
+    def test_timestamps_reasonable(self, bq_client, recent_date):
+        """Verify processed_at timestamps are reasonable."""
+        query = f"""
+        SELECT 
+            COUNT(*) as violation_count
+        FROM `nba-props-platform.nba_analytics.player_game_summary`
+        WHERE game_date = '{recent_date}'
+          AND (
+              processed_at < game_date  -- Processed before game happened
+              OR 
+              processed_at > TIMESTAMP_ADD(CAST(game_date AS TIMESTAMP), INTERVAL 7 DAY)  -- >7 days after
+          )
+        """
+        result = bq_client.query(query).result()
+        
+        for row in result:
+            assert row.violation_count == 0, f"Found {row.violation_count} records with unreasonable timestamps"
+
+
+# =============================================================================
+# Test Class 7: Performance Benchmarks
+# =============================================================================
+
+class TestPerformanceBenchmarks:
+    """Verify data meets expected performance characteristics."""
+    
+    def test_query_performance_acceptable(self, bq_client, recent_date):
+        """Verify recent data query completes quickly."""
+        import time
+        
+        query = f"""
+        SELECT *
+        FROM `nba-props-platform.nba_analytics.player_game_summary`
+        WHERE game_date = '{recent_date}'
+        """
+        
+        start = time.time()
+        result = bq_client.query(query).result()
+        _ = list(result)  # Materialize results
+        duration = time.time() - start
+        
+        # Should complete in <3 seconds
+        assert duration < 3, f"Query took {duration:.2f}s (expected <3s)"
+    
+    def test_player_lookup_query_fast(self, bq_client):
+        """Verify player lookup query is fast (uses clustering)."""
+        import time
+        
+        query = """
+        SELECT *
+        FROM `nba-props-platform.nba_analytics.player_game_summary`
+        WHERE player_lookup = 'lebronjames'
+          AND game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
+        ORDER BY game_date DESC
+        LIMIT 10
+        """
+        
+        start = time.time()
+        result = bq_client.query(query).result()
+        _ = list(result)
+        duration = time.time() - start
+        
+        # Should be very fast due to clustering
+        assert duration < 2, f"Player lookup took {duration:.2f}s (expected <2s)"
+
+
+# =============================================================================
+# Test Summary and Reporting
+# =============================================================================
+
+def pytest_terminal_summary(terminalreporter, exitstatus, config):
+    """Custom test summary for validation tests."""
+    if os.getenv('RUN_VALIDATION_TESTS', 'false').lower() == 'true':
+        terminalreporter.write_sep("=", "Validation Test Summary")
+        terminalreporter.write_line("Production data validation complete!")
+        terminalreporter.write_line("")
+        terminalreporter.write_line("Categories tested:")
+        terminalreporter.write_line("  ✓ Data Completeness (5 tests)")
+        terminalreporter.write_line("  ✓ Critical Fields (5 tests)")
+        terminalreporter.write_line("  ✓ Statistical Integrity (7 tests)")
+        terminalreporter.write_line("  ✓ Business Logic (5 tests)")
+        terminalreporter.write_line("  ✓ Data Quality Thresholds (5 tests)")
+        terminalreporter.write_line("  ✓ Consistency Checks (4 tests)")
+        terminalreporter.write_line("  ✓ Performance Benchmarks (2 tests)")
+        terminalreporter.write_line("")
+
+
+if __name__ == "__main__":
+    import sys
+    
+    print("=" * 70)
+    print("VALIDATION TEST RUNNER")
+    print("=" * 70)
+    print()
+    print("These tests run against ACTUAL production data.")
+    print("Make sure you have:")
+    print("  1. BigQuery credentials configured")
+    print("  2. Data in nba_analytics.player_game_summary")
+    print("  3. RUN_VALIDATION_TESTS=true set")
+    print()
+    print("Running: RUN_VALIDATION_TESTS=true pytest test_validation.py -v")
+    print("=" * 70)
+    print()
+    
+    sys.exit(pytest.main([__file__, '-v']))

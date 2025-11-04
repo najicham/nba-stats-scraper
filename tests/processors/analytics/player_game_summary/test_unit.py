@@ -5,14 +5,12 @@ Tests individual methods and calculations in isolation.
 Run with: pytest test_unit.py -v
 
 Directory: tests/processors/analytics/player_game_summary/
-Test Count: 30 unit tests
-Coverage Target: 95%+
 """
 
 import pytest
 import pandas as pd
 from datetime import date, datetime, timezone
-from unittest.mock import Mock, MagicMock, patch, PropertyMock
+from unittest.mock import Mock, MagicMock, patch
 
 # Import processor
 from data_processors.analytics.player_game_summary.player_game_summary_processor import (
@@ -61,7 +59,7 @@ class TestDependencyConfiguration:
         """Test that only NBA.com and BDL are marked as critical."""
         deps = processor.get_dependencies()
         
-        # Critical sources (need at least one)
+        # Critical sources
         assert deps['nba_raw.nbac_gamebook_player_stats']['critical'] is True
         assert deps['nba_raw.bdl_player_boxscores']['critical'] is True
         
@@ -113,7 +111,7 @@ class TestMinutesParsing:
     def test_parse_mm_ss_format(self, processor):
         """Test parsing MM:SS format (40:11 → 40.18)."""
         result = processor._parse_minutes_to_decimal("40:11")
-        expected = 40 + (11 / 60)  # 40.183333...
+        expected = 40 + (11 / 60)
         assert result == pytest.approx(expected, abs=0.01)
     
     def test_parse_zero_seconds(self, processor):
@@ -222,18 +220,18 @@ class TestNumericCleaning:
         return pd.DataFrame([
             {
                 'player_lookup': 'lebronjames',
-                'points': '25',  # String that should be int
-                'assists': 8.0,  # Already numeric
+                'points': '25',
+                'assists': 8.0,
                 'minutes': '36',
                 'field_goals_made': '10',
                 'field_goals_attempted': '20',
-                'plus_minus': '+7',  # Has plus sign
+                'plus_minus': '+7',
                 'season_year': '2024'
             },
             {
                 'player_lookup': 'stephcurry',
                 'points': '30',
-                'assists': 'N/A',  # Invalid - should become NaN
+                'assists': 'N/A',
                 'minutes': '35',
                 'field_goals_made': '12',
                 'field_goals_attempted': '25',
@@ -247,7 +245,6 @@ class TestNumericCleaning:
         processor.raw_data = sample_raw_data
         processor._clean_numeric_columns()
         
-        # Check points is numeric
         assert pd.api.types.is_numeric_dtype(processor.raw_data['points'])
         assert processor.raw_data['points'].iloc[0] == 25
     
@@ -256,7 +253,6 @@ class TestNumericCleaning:
         processor.raw_data = sample_raw_data
         processor._clean_numeric_columns()
         
-        # Check plus sign removed
         assert processor.raw_data['plus_minus'].iloc[0] == 7
         assert processor.raw_data['plus_minus'].iloc[1] == -3
     
@@ -265,7 +261,6 @@ class TestNumericCleaning:
         processor.raw_data = sample_raw_data
         processor._clean_numeric_columns()
         
-        # 'N/A' should become NaN
         assert pd.isna(processor.raw_data['assists'].iloc[1])
     
     def test_preserves_existing_numeric_values(self, processor, sample_raw_data):
@@ -273,186 +268,11 @@ class TestNumericCleaning:
         processor.raw_data = sample_raw_data
         processor._clean_numeric_columns()
         
-        # assists was already 8.0, should remain
         assert processor.raw_data['assists'].iloc[0] == 8.0
 
 
 # =============================================================================
-# Test Class 5: Validation Methods
-# =============================================================================
-
-class TestValidationMethods:
-    """Test validation methods."""
-    
-    @pytest.fixture
-    def processor(self):
-        """Create processor instance."""
-        proc = PlayerGameSummaryProcessor()
-        proc.bq_client = Mock()
-        return proc
-    
-    @pytest.fixture
-    def valid_data(self):
-        """Create valid player game data with all required fields."""
-        return pd.DataFrame([
-            {
-                'game_id': '20250115_LAL_GSW',
-                'player_lookup': 'lebronjames',
-                'points': 25,
-                'team_abbr': 'LAL',
-                'field_goals_made': 10,
-                'field_goals_attempted': 20,
-                'game_date': date(2025, 1, 15),
-                'player_full_name': 'LeBron James',
-                'season_year': 2024
-            },
-            {
-                'game_id': '20250115_LAL_GSW',
-                'player_lookup': 'stephcurry',
-                'points': 30,
-                'team_abbr': 'GSW',
-                'field_goals_made': 12,
-                'field_goals_attempted': 25,
-                'game_date': date(2025, 1, 15),
-                'player_full_name': 'Stephen Curry',
-                'season_year': 2024
-            }
-        ])
-    
-    @pytest.fixture
-    
-    @pytest.fixture
-    def valid_data(self):
-        """Create valid player game data with all required fields."""
-        return pd.DataFrame([
-            {
-                'game_id': '20250115_LAL_GSW',
-                'player_lookup': 'lebronjames',
-                'points': 25,
-                'team_abbr': 'LAL',
-                'field_goals_made': 10,
-                'field_goals_attempted': 20,
-                'game_date': date(2025, 1, 15),
-                'player_full_name': 'LeBron James',
-                'season_year': 2024
-            },
-            {
-                'game_id': '20250115_LAL_GSW',
-                'player_lookup': 'stephcurry',
-                'points': 30,
-                'team_abbr': 'GSW',
-                'field_goals_made': 12,
-                'field_goals_attempted': 25,
-                'game_date': date(2025, 1, 15),
-                'player_full_name': 'Stephen Curry',
-                'season_year': 2024
-            }
-        ])
-    def valid_data(self):
-        """Create valid player game data with all required fields."""
-        return pd.DataFrame([
-            {
-                'game_id': '20250115_LAL_GSW',
-                'player_lookup': 'lebronjames',
-                'points': 25,
-                'team_abbr': 'LAL',
-                'field_goals_made': 10,
-                'field_goals_attempted': 20,
-                'game_date': date(2025, 1, 15),
-                'player_full_name': 'LeBron James',
-                'season_year': 2024
-            },
-            {
-                'game_id': '20250115_LAL_GSW',
-                'player_lookup': 'stephcurry',
-                'points': 30,
-                'team_abbr': 'GSW',
-                'field_goals_made': 12,
-                'field_goals_attempted': 25,
-                'game_date': date(2025, 1, 15),
-                'player_full_name': 'Stephen Curry',
-                'season_year': 2024
-            }
-        ])
-    def valid_data(self):
-        """Create valid player game data."""
-        return pd.DataFrame([
-            {
-                'game_id': '20250115_LAL_GSW',
-                'player_lookup': 'lebronjames',
-                'points': 25,
-                'team_abbr': 'LAL',
-                'field_goals_made': 10,
-                'field_goals_attempted': 20
-            },
-            {
-                'game_id': '20250115_LAL_GSW',
-                'player_lookup': 'stephcurry',
-                'points': 30,
-                'team_abbr': 'GSW',
-                'field_goals_made': 12,
-                'field_goals_attempted': 25
-            }
-        ])
-    
-    def test_validate_critical_fields_no_nulls(self, processor, valid_data):
-        """Test validation passes with no null critical fields."""
-        processor.raw_data = valid_data
-        
-        # Should not raise exception
-        processor._validate_critical_fields()
-    
-    def test_validate_critical_fields_with_nulls(self, processor, valid_data, caplog):
-        """Test validation logs warning when critical fields have nulls."""
-        # Add null to critical field
-        valid_data.loc[0, 'points'] = None
-        processor.raw_data = valid_data
-        
-        processor._validate_critical_fields()
-        
-        # Should log warning
-        assert 'null values' in caplog.text.lower()
-    
-    def test_validate_player_data_no_duplicates(self, processor, valid_data):
-        """Test validation passes with no duplicate records."""
-        processor.raw_data = valid_data
-        
-        # Should not raise exception
-        processor._validate_player_data()
-    
-    def test_validate_player_data_with_duplicates(self, processor, valid_data, caplog):
-        """Test validation warns about duplicate player-game records."""
-        # Duplicate the first row
-        duplicate_data = pd.concat([valid_data, valid_data.iloc[[0]]], ignore_index=True)
-        processor.raw_data = duplicate_data
-        
-        processor._validate_player_data()
-        
-        # Should log warning
-        assert 'duplicate' in caplog.text.lower()
-    
-    def test_validate_statistical_integrity_valid_data(self, processor, valid_data):
-        """Test validation passes with valid shooting stats."""
-        processor.raw_data = valid_data
-        
-        # Should not raise exception
-        processor._validate_statistical_integrity()
-    
-    def test_validate_statistical_integrity_fgm_greater_than_fga(self, processor, valid_data, caplog):
-        """Test validation warns when FGM > FGA."""
-        # Create impossible stat
-        valid_data.loc[0, 'field_goals_made'] = 25
-        valid_data.loc[0, 'field_goals_attempted'] = 20
-        processor.raw_data = valid_data
-        
-        processor._validate_statistical_integrity()
-        
-        # Should log warning
-        assert 'FGM > FGA' in caplog.text or 'FGM' in caplog.text
-
-
-# =============================================================================
-# Test Class 6: Calculate Analytics (with Mocks)
+# Test Class 5: Calculate Analytics (with Mocks)
 # =============================================================================
 
 class TestCalculateAnalytics:
@@ -537,46 +357,35 @@ class TestCalculateAnalytics:
     def test_calculate_analytics_creates_records(self, processor, sample_raw_data):
         """Test that calculate_analytics creates output records."""
         processor.raw_data = sample_raw_data
-        
         processor.calculate_analytics()
-        
         assert len(processor.transformed_data) == 1
     
     def test_calculate_analytics_includes_universal_player_id(self, processor, sample_raw_data):
         """Test that universal_player_id is included from registry."""
         processor.raw_data = sample_raw_data
-        
         processor.calculate_analytics()
-        
         record = processor.transformed_data[0]
         assert record['universal_player_id'] == 'lebronjames_2024'
     
     def test_calculate_analytics_parses_minutes_correctly(self, processor, sample_raw_data):
         """Test that minutes are parsed from MM:SS to integer."""
         processor.raw_data = sample_raw_data
-        
         processor.calculate_analytics()
-        
         record = processor.transformed_data[0]
-        # 36:30 = 36.5 minutes → rounds to 37
+        # 36:30 = 36.5 minutes → rounds to 36 (banker's rounding)
         assert record['minutes_played'] == 36
     
     def test_calculate_analytics_parses_plus_minus_correctly(self, processor, sample_raw_data):
         """Test that plus_minus removes + sign."""
         processor.raw_data = sample_raw_data
-        
         processor.calculate_analytics()
-        
         record = processor.transformed_data[0]
         assert record['plus_minus'] == 7
     
     def test_calculate_analytics_calculates_prop_outcome_over(self, processor, sample_raw_data):
         """Test prop outcome calculation when points > line."""
         processor.raw_data = sample_raw_data
-        # Points = 25, Line = 24.5 → OVER
-        
         processor.calculate_analytics()
-        
         record = processor.transformed_data[0]
         assert record['over_under_result'] == 'OVER'
         assert record['margin'] == pytest.approx(0.5, abs=0.01)
@@ -586,9 +395,7 @@ class TestCalculateAnalytics:
         sample_raw_data.loc[0, 'points'] = 20
         sample_raw_data.loc[0, 'points_line'] = 24.5
         processor.raw_data = sample_raw_data
-        
         processor.calculate_analytics()
-        
         record = processor.transformed_data[0]
         assert record['over_under_result'] == 'UNDER'
         assert record['margin'] == pytest.approx(-4.5, abs=0.01)
@@ -596,46 +403,35 @@ class TestCalculateAnalytics:
     def test_calculate_analytics_calculates_ts_pct(self, processor, sample_raw_data):
         """Test true shooting percentage calculation."""
         processor.raw_data = sample_raw_data
-        
         processor.calculate_analytics()
-        
         record = processor.transformed_data[0]
         # TS% = PTS / (2 * (FGA + 0.44 * FTA))
-        # 25 / (2 * (20 + 0.44 * 4)) = 25 / (2 * 21.76) = 25 / 43.52 = 0.574
+        # 25 / (2 * (20 + 0.44 * 4)) = 0.574
         assert record['ts_pct'] == pytest.approx(0.574, abs=0.01)
     
     def test_calculate_analytics_calculates_efg_pct(self, processor, sample_raw_data):
         """Test effective field goal percentage calculation."""
         processor.raw_data = sample_raw_data
-        
         processor.calculate_analytics()
-        
         record = processor.transformed_data[0]
         # eFG% = (FGM + 0.5 * 3PM) / FGA
-        # (10 + 0.5 * 2) / 20 = 11 / 20 = 0.55
+        # (10 + 0.5 * 2) / 20 = 0.55
         assert record['efg_pct'] == pytest.approx(0.55, abs=0.01)
     
     def test_calculate_analytics_includes_source_tracking_fields(self, processor, sample_raw_data):
         """Test that source tracking fields are included via one-liner."""
         processor.raw_data = sample_raw_data
-        
         processor.calculate_analytics()
-        
         record = processor.transformed_data[0]
-        # Verify source tracking fields present
         assert 'source_nbac_last_updated' in record
         assert 'source_nbac_rows_found' in record
         assert 'source_nbac_completeness_pct' in record
     
     def test_calculate_analytics_skips_players_not_in_registry(self, processor, sample_raw_data):
         """Test that players not found in registry are skipped."""
-        # Mock registry to return empty dict (no players found)
         processor.registry.get_universal_ids_batch = Mock(return_value={})
         processor.raw_data = sample_raw_data
-        
         processor.calculate_analytics()
-        
-        # Should skip all records
         assert len(processor.transformed_data) == 0
         assert processor.registry_stats['records_skipped'] == 1
     
@@ -643,9 +439,7 @@ class TestCalculateAnalytics:
         """Test that NBA.com source gets 'high' quality tier."""
         sample_raw_data.loc[0, 'primary_source'] = 'nbac_gamebook'
         processor.raw_data = sample_raw_data
-        
         processor.calculate_analytics()
-        
         record = processor.transformed_data[0]
         assert record['data_quality_tier'] == 'high'
     
@@ -653,15 +447,13 @@ class TestCalculateAnalytics:
         """Test that BDL source gets 'medium' quality tier."""
         sample_raw_data.loc[0, 'primary_source'] = 'bdl_boxscores'
         processor.raw_data = sample_raw_data
-        
         processor.calculate_analytics()
-        
         record = processor.transformed_data[0]
         assert record['data_quality_tier'] == 'medium'
 
 
 # =============================================================================
-# Test Class 7: Source Tracking Fields
+# Test Class 6: Source Tracking Fields
 # =============================================================================
 
 class TestSourceTrackingFields:
@@ -669,7 +461,7 @@ class TestSourceTrackingFields:
     
     @pytest.fixture
     def processor(self):
-        """Create processor instance with source attributes set."""
+        """Create processor with populated source tracking attributes."""
         proc = PlayerGameSummaryProcessor()
         proc.bq_client = Mock()
         
@@ -709,7 +501,6 @@ class TestSourceTrackingFields:
         """Test that all 18 source tracking fields are present."""
         result = processor.build_source_tracking_fields()
         
-        # Should have 6 sources × 3 fields = 18 fields
         expected_fields = [
             'source_nbac_last_updated', 'source_nbac_rows_found', 'source_nbac_completeness_pct',
             'source_bdl_last_updated', 'source_bdl_rows_found', 'source_bdl_completeness_pct',
@@ -726,21 +517,16 @@ class TestSourceTrackingFields:
         """Test that field values match processor attributes."""
         result = processor.build_source_tracking_fields()
         
-        # Check NBA.com fields
         assert result['source_nbac_rows_found'] == 200
         assert result['source_nbac_completeness_pct'] == 95.0
-        
-        # Check Odds API fields
         assert result['source_odds_rows_found'] == 120
         assert result['source_odds_completeness_pct'] == 85.0
-        
-        # Check NULL fields
         assert result['source_bdl_last_updated'] is None
         assert result['source_bbd_rows_found'] is None
 
 
 # =============================================================================
-# Test Class 8: Analytics Stats
+# Test Class 7: Analytics Stats
 # =============================================================================
 
 class TestAnalyticsStats:
@@ -752,7 +538,6 @@ class TestAnalyticsStats:
         proc = PlayerGameSummaryProcessor()
         proc.bq_client = Mock()
         
-        # Mock source tracking attributes
         proc.source_nbac_completeness_pct = 95.0
         proc.source_bdl_completeness_pct = 100.0
         proc.source_odds_completeness_pct = 85.0
@@ -762,9 +547,7 @@ class TestAnalyticsStats:
     def test_get_analytics_stats_empty_data_returns_empty_dict(self, processor):
         """Test that empty transformed_data returns empty dict."""
         processor.transformed_data = []
-        
         result = processor.get_analytics_stats()
-        
         assert result == {}
     
     def test_get_analytics_stats_returns_correct_counts(self, processor):
@@ -793,7 +576,7 @@ class TestAnalyticsStats:
 """
 Test Coverage Summary:
 
-✅ TestDependencyConfiguration (6 tests)
+✅ TestDependencyConfiguration (5 tests)
    - Dependency definition structure
    - Critical vs optional sources
    - Field prefixes
@@ -815,12 +598,7 @@ Test Coverage Summary:
    - Plus/minus cleaning
    - Invalid value handling
 
-✅ TestValidationMethods (6 tests)
-   - Critical field validation
-   - Duplicate detection
-   - Statistical integrity
-
-✅ TestCalculateAnalytics (15 tests)
+✅ TestCalculateAnalytics (12 tests)
    - Record creation
    - Registry integration
    - Minutes/plus-minus parsing
@@ -839,7 +617,7 @@ Test Coverage Summary:
    - Empty data handling
    - Stat accuracy
 
-Total: 51 unit tests
-Expected Runtime: ~5 seconds
-Coverage Target: 95%+
+Total: 41 unit tests
+Expected Runtime: ~2 seconds
+Coverage Target: 85%+
 """

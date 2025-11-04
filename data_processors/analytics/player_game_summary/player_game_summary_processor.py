@@ -391,7 +391,8 @@ class PlayerGameSummaryProcessor(AnalyticsProcessorBase):
         critical_fields = ['game_id', 'player_lookup', 'points', 'team_abbr']
         
         for field in critical_fields:
-            null_count = self.raw_data[field].isnull().sum()
+            # Use isna() and convert to int to handle pd.NA gracefully
+            null_count = int(self.raw_data[field].isna().sum())
             if null_count > 0:
                 logger.warning(f"⚠️ {field}: {null_count} null values ({null_count/len(self.raw_data)*100:.1f}%)")
     
@@ -405,7 +406,9 @@ class PlayerGameSummaryProcessor(AnalyticsProcessorBase):
             logger.warning(f"⚠️ Found {len(duplicate_records)} duplicate player-game records")
     
     def _validate_statistical_integrity(self) -> None:
-        """Check for statistical anomalies."""
+        """Check for statistical anomalies in shooting stats."""
+        
+        # Check Field Goals
         if 'field_goals_made' in self.raw_data.columns:
             valid_fg = self.raw_data[
                 (self.raw_data['field_goals_made'].notna()) &
@@ -419,6 +422,36 @@ class PlayerGameSummaryProcessor(AnalyticsProcessorBase):
                 
                 if not impossible.empty:
                     logger.warning(f"⚠️ Found {len(impossible)} records with FGM > FGA")
+        
+        # Check Three-Pointers (NEW)
+        if 'three_pointers_made' in self.raw_data.columns:
+            valid_3pt = self.raw_data[
+                (self.raw_data['three_pointers_made'].notna()) &
+                (self.raw_data['three_pointers_attempted'].notna())
+            ]
+            
+            if not valid_3pt.empty:
+                impossible_3pt = valid_3pt[
+                    valid_3pt['three_pointers_made'] > valid_3pt['three_pointers_attempted']
+                ]
+                
+                if not impossible_3pt.empty:
+                    logger.warning(f"⚠️ Found {len(impossible_3pt)} records with 3PM > 3PA")
+        
+        # Check Free Throws (NEW)
+        if 'free_throws_made' in self.raw_data.columns:
+            valid_ft = self.raw_data[
+                (self.raw_data['free_throws_made'].notna()) &
+                (self.raw_data['free_throws_attempted'].notna())
+            ]
+            
+            if not valid_ft.empty:
+                impossible_ft = valid_ft[
+                    valid_ft['free_throws_made'] > valid_ft['free_throws_attempted']
+                ]
+                
+                if not impossible_ft.empty:
+                    logger.warning(f"⚠️ Found {len(impossible_ft)} records with FTM > FTA")
     
     def calculate_analytics(self) -> None:
         """
