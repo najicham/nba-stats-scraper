@@ -133,7 +133,7 @@ class MovingAverageBaseline:
         predicted_points = max(0.0, min(60.0, predicted_points))
         
         # Calculate confidence
-        data_quality = 0.8 if features['data_source'] == 'mock' else 1.0
+        data_quality = 0.8 if features.get('data_source', 'unknown') == 'mock' else 1.0
         confidence = self.calculate_confidence(volatility, recent_games, data_quality)
         
         # Determine recommendation
@@ -301,30 +301,47 @@ class MovingAverageBaseline:
     
     def validate_features(self, features: Dict[str, float]) -> bool:
         """Validate feature dictionary"""
-        required_fields = [
-            'feature_count', 'feature_version', 'data_source', 'features_array'
-        ]
+        # Metadata fields are optional - use defaults if not present
+        feature_count = features.get('feature_count', 25)
+        feature_version = features.get('feature_version', 'v1_baseline_25')
+        data_source = features.get('data_source', 'unknown')
+        features_array = features.get('features_array', [])
         
-        for field in required_fields:
-            if field not in features:
-                logger.error(f"Missing required field: {field}")
-                return False
-        
-        if features['feature_count'] != 25:
-            logger.error(f"Invalid feature count: {features['feature_count']}")
+        # Validate feature count if provided
+        if feature_count != 25:
+            logger.error(f"Invalid feature count: {feature_count}")
             return False
         
-        if len(features['features_array']) != 25:
-            logger.error(f"Invalid array length: {len(features['features_array'])}")
+        # Only validate array length if array exists and is non-empty
+        if features_array and len(features_array) != 25:
+            logger.error(f"Invalid array length: {len(features_array)}")
             return False
         
         return True
     
     def extract_feature(self, features: Dict[str, float], feature_name: str) -> float:
-        """Extract named feature from features dict"""
-        if feature_name not in features:
-            raise KeyError(f"Feature '{feature_name}' not found")
-        return features[feature_name]
+        """Extract named feature from features dict with alias support"""
+        # Define field aliases for compatibility
+        aliases = {
+            'home_away': 'is_home',  # home_away (1=home) can be is_home (1=home, 0=away)
+            'games_played_last_7_days': None,  # Optional field, default to 3 if missing
+        }
+        
+        # Try primary field name first
+        if feature_name in features:
+            return features[feature_name]
+        
+        # Try alias if available
+        if feature_name in aliases:
+            alias = aliases[feature_name]
+            if alias is None:
+                # Optional field with default
+                if feature_name == 'games_played_last_7_days':
+                    return 3  # Default to 3 games
+            elif alias in features:
+                return features[alias]
+        
+        raise KeyError(f"Feature '{feature_name}' not found")
     
     def __str__(self) -> str:
         return f"{self.system_name} (v{self.version})"

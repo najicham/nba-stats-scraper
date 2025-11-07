@@ -469,7 +469,7 @@ class SimilarityBalancedV1:
         """
         confidence = 50.0  # Base confidence
         
-        # Sample size bonus (±20 points)
+        # Sample size bonus (±20 points with stronger penalties for low counts)
         count = len(similar_games)
         if count >= 15:
             confidence += 20
@@ -477,8 +477,10 @@ class SimilarityBalancedV1:
             confidence += 15
         elif count >= 7:
             confidence += 10
+        elif count >= 5:
+            confidence -= 15  # Minimum required, apply strong penalty for low count
         else:
-            confidence += 5
+            confidence -= 20  # Below minimum, shouldn't happen
         
         # Similarity quality bonus (±20 points)
         avg_similarity = np.mean([g['similarity_score'] for g in similar_games])
@@ -491,15 +493,17 @@ class SimilarityBalancedV1:
         else:
             confidence += 5
         
-        # Outcome consistency bonus (±10 points)
+        # Outcome consistency bonus (±15 points with stronger penalties)
         points = [g.get('points', 0) for g in similar_games]
         std_dev = np.std(points)
         if std_dev < 4:
-            confidence += 10
+            confidence += 15  # Very consistent
         elif std_dev < 6:
-            confidence += 7
+            confidence += 8   # Moderately consistent
+        elif std_dev < 8:
+            confidence += 3   # Some variance
         else:
-            confidence += 5
+            confidence -= 5   # High variance - penalty!
         
         return max(0, min(100, confidence))
     

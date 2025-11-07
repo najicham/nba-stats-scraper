@@ -1,4 +1,4 @@
-# Path: tests/unit/predictions/test_mock_data_generator.py
+# tests/predictions/test_mock_data_generator.py
 """
 Unit Tests for Mock Data Generator
 
@@ -12,9 +12,14 @@ Tests verify:
     - Batch generation
 """
 
+import sys
+import os
+# Add project root to path
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
+
 import pytest
 from datetime import date
-from predictions.shared.mock_data_generator import MockDataGenerator, generate_mock_features
+from predictions.shared.mock_data_generator import MockDataGenerator, get_mock_features
 
 
 class TestMockDataGenerator:
@@ -350,7 +355,7 @@ class TestMockDataGenerator:
     
     def test_convenience_function(self):
         """Test the convenience function works correctly"""
-        features = generate_mock_features('lebron-james', date(2025, 1, 15))
+        features = get_mock_features('lebron-james', date(2025, 1, 15))
         
         assert features['feature_count'] == 25
         assert features['data_source'] == 'mock'

@@ -1,4 +1,4 @@
-# tests/unit/predictions/test_zone_matchup.py
+# tests/predictions/test_zone_matchup.py
 
 """
 Unit Tests for Zone Matchup V1 Prediction System
@@ -21,7 +21,7 @@ import sys
 sys.path.insert(0, '/home/claude')
 
 # Import Zone Matchup system
-from zone_matchup_v1 import ZoneMatchupV1
+from predictions.worker.prediction_systems.zone_matchup_v1 import ZoneMatchupV1
 
 
 @pytest.fixture

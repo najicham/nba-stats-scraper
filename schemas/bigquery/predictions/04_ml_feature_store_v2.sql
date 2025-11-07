@@ -1,132 +1,169 @@
 -- ============================================================================
--- Table: ml_feature_store_v2
--- File: 04_ml_feature_store_v2.sql
--- Purpose: Flexible array-based feature storage (25→47→more features)
+-- Table: ml_feature_store_v2 (UPDATED with Dependency Tracking)
+-- File: schemas/bigquery/predictions/04_ml_feature_store_v2.sql
+-- Purpose: Flexible array-based feature storage with Phase 4 source tracking
+-- Version: 2.0 (Added v4.0 dependency tracking)
+-- Updated: November 2025
 -- ============================================================================
 
 CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.ml_feature_store_v2` (
-  -- Identifiers (4 fields)
+  -- ========================================================================
+  -- IDENTIFIERS (4 fields)
+  -- ========================================================================
   player_lookup STRING NOT NULL,
   universal_player_id STRING,
   game_date DATE NOT NULL,                          -- Partition key
   game_id STRING NOT NULL,
   
+  -- ========================================================================
   -- FLEXIBLE FEATURES (Array-Based Design)
+  -- ========================================================================
   features ARRAY<FLOAT64> NOT NULL,                 -- Array of feature values (25, 47, or any length)
   feature_names ARRAY<STRING> NOT NULL,             -- Array of feature names for interpretability
   feature_count INT64 NOT NULL,                     -- Explicit count (25 initially)
   feature_version STRING NOT NULL,                  -- Version identifier: "v1_baseline_25", "v2_enhanced_47"
   
-  -- Feature Metadata (2 fields)
+  -- ========================================================================
+  -- FEATURE METADATA (2 fields)
+  -- ========================================================================
   feature_generation_time_ms INT64,                 -- How long to generate features
   feature_quality_score NUMERIC(5,2),               -- 0-100 quality score
   
-  -- Player Context (3 fields)
+  -- ========================================================================
+  -- PLAYER CONTEXT (3 fields)
+  -- ========================================================================
   opponent_team_abbr STRING,
   is_home BOOLEAN,
   days_rest INT64,
   
-  -- Data Source (1 field)
-  data_source STRING NOT NULL,                      -- 'phase4' or 'mock'
+  -- ========================================================================
+  -- DATA SOURCE (1 field)
+  -- ========================================================================
+  data_source STRING NOT NULL,                      -- 'phase4', 'phase3', 'mixed', 'early_season'
   
-  -- Processing Metadata (2 fields)
+  -- ========================================================================
+  -- SOURCE TRACKING: Phase 4 Dependencies (12 fields)
+  -- v4.0 Dependency Tracking - 3 fields per source
+  -- ========================================================================
+  
+  -- Source 1: player_daily_cache (Features 0-4, 18-20, 22-23)
+  source_daily_cache_last_updated TIMESTAMP,        -- When daily cache was last updated
+  source_daily_cache_rows_found INT64,              -- Number of rows found in cache
+  source_daily_cache_completeness_pct NUMERIC(5,2), -- Percentage of expected data found
+  
+  -- Source 2: player_composite_factors (Features 5-8)
+  source_composite_last_updated TIMESTAMP,          -- When composite factors were last updated
+  source_composite_rows_found INT64,                -- Number of rows found
+  source_composite_completeness_pct NUMERIC(5,2),   -- Percentage of expected data found
+  
+  -- Source 3: player_shot_zone_analysis (Features 18-20)
+  source_shot_zones_last_updated TIMESTAMP,         -- When shot zone analysis was last updated
+  source_shot_zones_rows_found INT64,               -- Number of rows found
+  source_shot_zones_completeness_pct NUMERIC(5,2),  -- Percentage of expected data found
+  
+  -- Source 4: team_defense_zone_analysis (Features 13-14)
+  source_team_defense_last_updated TIMESTAMP,       -- When team defense was last updated
+  source_team_defense_rows_found INT64,             -- Number of rows found
+  source_team_defense_completeness_pct NUMERIC(5,2),-- Percentage of expected data found
+  
+  -- ========================================================================
+  -- EARLY SEASON HANDLING (2 fields)
+  -- ========================================================================
+  early_season_flag BOOLEAN,                        -- TRUE if insufficient historical data
+  insufficient_data_reason STRING,                  -- Why data was insufficient (if early_season_flag = TRUE)
+  
+  -- ========================================================================
+  -- PROCESSING METADATA (2 fields)
+  -- ========================================================================
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP() NOT NULL,
   updated_at TIMESTAMP
 )
 PARTITION BY game_date
 CLUSTER BY player_lookup, feature_version, game_date
 OPTIONS(
-  description="ML feature store with flexible array-based features. Supports evolving feature sets from 25 to 47+ features.",
+  description="ML feature store with flexible array-based features (v2.0). Supports evolving feature sets from 25 to 47+ features. Includes v4.0 dependency tracking for Phase 4 sources.",
   partition_expiration_days=365
 );
 
 -- ============================================================================
--- Backward Compatibility View
+-- INDEXES & VIEWS
 -- ============================================================================
 
-CREATE OR REPLACE VIEW `nba-props-platform.nba_predictions.ml_feature_store` AS
-SELECT 
-  player_lookup,
-  universal_player_id,
-  game_date,
-  game_id,
-  features,
-  feature_names,
-  feature_count,
-  feature_version,
-  opponent_team_abbr,
-  is_home,
-  days_rest,
-  data_source,
-  created_at,
-  updated_at
+-- View: Recent features (last 30 days)
+CREATE OR REPLACE VIEW `nba-props-platform.nba_predictions.ml_feature_store_v2_recent` AS
+SELECT *
 FROM `nba-props-platform.nba_predictions.ml_feature_store_v2`
-WHERE feature_version = 'v1_baseline_25';  -- Default to current version
+WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY);
+
+-- View: High quality features only (quality score >= 85)
+CREATE OR REPLACE VIEW `nba-props-platform.nba_predictions.ml_feature_store_v2_high_quality` AS
+SELECT *
+FROM `nba-props-platform.nba_predictions.ml_feature_store_v2`
+WHERE feature_quality_score >= 85.0
+  AND early_season_flag IS NOT TRUE;
 
 -- ============================================================================
--- Usage Examples
+-- MONITORING QUERIES
 -- ============================================================================
 
--- Get features for a player on specific date
+-- Check source freshness
 -- SELECT 
---   player_lookup,
---   feature_version,
---   feature_count,
---   data_source,
---   -- Access specific features by index
---   features[OFFSET(0)] as points_avg_last_5,
---   features[OFFSET(5)] as fatigue_score,
---   features[OFFSET(13)] as opponent_def_rating
--- FROM `nba-props-platform.nba_predictions.ml_feature_store_v2`
--- WHERE game_date = '2025-01-15'
---   AND player_lookup = 'lebron-james'
---   AND feature_version = 'v1_baseline_25';
-
--- Get all features with names for a player
--- SELECT 
---   player_lookup,
 --   game_date,
---   feature_version,
---   ARRAY_TO_STRING(feature_names, ', ') as all_features,
---   ARRAY_LENGTH(features) as total_features
--- FROM `nba-props-platform.nba_predictions.ml_feature_store_v2`
--- WHERE game_date = CURRENT_DATE()
---   AND player_lookup = 'stephen-curry';
-
--- Check feature quality
--- SELECT 
---   player_lookup,
---   feature_count,
---   feature_quality_score,
---   feature_generation_time_ms,
---   data_source
--- FROM `nba-props-platform.nba_predictions.ml_feature_store_v2`
--- WHERE game_date = CURRENT_DATE()
---   AND feature_quality_score < 70  -- Flag low quality
--- ORDER BY feature_quality_score;
-
--- Compare feature versions
--- SELECT 
---   feature_version,
---   COUNT(*) as record_count,
---   AVG(feature_count) as avg_feature_count,
+--   COUNT(*) as total_players,
 --   AVG(feature_quality_score) as avg_quality,
---   COUNT(DISTINCT player_lookup) as unique_players
+--   TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), MAX(source_daily_cache_last_updated), HOUR) as cache_age_hours,
+--   TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), MAX(source_composite_last_updated), HOUR) as composite_age_hours
 -- FROM `nba-props-platform.nba_predictions.ml_feature_store_v2`
 -- WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
--- GROUP BY feature_version
--- ORDER BY feature_version;
+-- GROUP BY game_date
+-- ORDER BY game_date DESC;
 
--- Get today's features for all players
+-- Check data completeness by source
 -- SELECT 
---   player_lookup,
---   opponent_team_abbr,
---   is_home,
---   days_rest,
---   feature_count,
---   data_source,
---   features  -- Full array for ML model input
+--   game_date,
+--   AVG(source_daily_cache_completeness_pct) as cache_completeness,
+--   AVG(source_composite_completeness_pct) as composite_completeness,
+--   AVG(source_shot_zones_completeness_pct) as shot_zones_completeness,
+--   AVG(source_team_defense_completeness_pct) as team_defense_completeness,
+--   MIN(LEAST(
+--     source_daily_cache_completeness_pct,
+--     source_composite_completeness_pct,
+--     source_shot_zones_completeness_pct,
+--     source_team_defense_completeness_pct
+--   )) as worst_source_completeness
 -- FROM `nba-props-platform.nba_predictions.ml_feature_store_v2`
--- WHERE game_date = CURRENT_DATE()
---   AND feature_version = 'v1_baseline_25'
--- ORDER BY player_lookup;
+-- WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+-- GROUP BY game_date
+-- HAVING MIN(LEAST(
+--     source_daily_cache_completeness_pct,
+--     source_composite_completeness_pct,
+--     source_shot_zones_completeness_pct,
+--     source_team_defense_completeness_pct
+--   )) < 85
+-- ORDER BY game_date DESC;
+
+-- Check early season records
+-- SELECT 
+--   game_date,
+--   COUNT(*) as total_players,
+--   SUM(CASE WHEN early_season_flag = TRUE THEN 1 ELSE 0 END) as early_season_players,
+--   ROUND(SUM(CASE WHEN early_season_flag = TRUE THEN 1 ELSE 0 END) / COUNT(*) * 100, 1) as early_season_pct
+-- FROM `nba-props-platform.nba_predictions.ml_feature_store_v2`
+-- WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
+-- GROUP BY game_date
+-- ORDER BY game_date DESC;
+
+-- ============================================================================
+-- FIELD SUMMARY
+-- ============================================================================
+-- Total fields: 35
+--   Identifiers: 4
+--   Features (array-based): 4
+--   Feature metadata: 2
+--   Player context: 3
+--   Data source: 1
+--   Source tracking (Phase 4): 12 (3 fields × 4 sources)
+--   Early season: 2
+--   Processing metadata: 2
+--   Reserved for future: 5 (kept for schema evolution)
+-- ============================================================================

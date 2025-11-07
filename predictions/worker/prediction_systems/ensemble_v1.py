@@ -73,7 +73,7 @@ class EnsembleV1:
         
         # Ensemble parameters
         self.high_agreement_threshold = 2.0  # Within 2 points
-        self.good_agreement_threshold = 4.0  # Within 4 points
+        self.good_agreement_threshold = 3.0  # Within 3 points (tighter threshold)
         self.moderate_agreement_threshold = 6.0  # Within 6 points
         
         # Confidence adjustments
@@ -291,14 +291,19 @@ class EnsembleV1:
         # Start with average confidence
         confidence = avg_confidence
         
-        # Agreement bonus based on variance
+        # Agreement bonus/penalty based on variance
         if variance < self.high_agreement_threshold:
             # High agreement: all within 2 points
             confidence += self.high_agreement_bonus
         elif variance < self.good_agreement_threshold:
             # Good agreement: all within 4 points
             confidence += self.good_agreement_bonus
-        # No bonus for moderate/low agreement
+        elif variance < self.moderate_agreement_threshold:
+            # Moderate disagreement: apply small penalty
+            confidence -= 5.0
+        else:
+            # Low agreement: apply larger penalty
+            confidence -= 10.0
         
         # Bonus if all 4 systems predicted
         if len(predictions) == 4:

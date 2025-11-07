@@ -3,7 +3,7 @@
 **Dataset:** `nba_precompute`  
 **Purpose:** Pre-computed aggregations and composite factors for prediction optimization  
 **Retention:** 90 days for most tables, 365 days for analysis tables  
-**Update Schedule:** Nightly (11 PM - 6 AM) + real-time when context changes
+**Update Schedule:** Nightly (11 PM - 12:15 AM) + real-time when context changes
 
 ## Overview
 
@@ -13,9 +13,35 @@ Phase 4 precompute tables contain pre-calculated data that speeds up predictions
 - **Composite Factors:** Pre-calculated adjustment scores (fatigue, shot zone, referee, etc.)
 - **Player Cache:** Static daily data that won't change when betting lines move
 - **Shot Zone Analysis:** Player tendencies and opponent defensive performance by court zone
+- **ML Feature Generation:** 25-feature vectors for prediction systems
 - **Performance Optimization:** Reduces prediction time from 3-5 seconds to <1 second
 
 ## Tables
+
+### Tables in This Dataset (`nba_precompute`)
+
+1. **player_shot_zone_analysis** - Player offensive shot distribution by zone
+2. **team_defense_zone_analysis** - Team defensive performance by zone
+3. **player_composite_factors** - Pre-calculated adjustment scores ⭐ CRITICAL
+4. **player_daily_cache** - Static daily data for performance
+5. **similarity_match_cache** - Pre-calculated similarity matches (OPTIONAL)
+
+### Cross-Dataset Table (Written by Phase 4, Stored in Predictions Dataset)
+
+6. **ml_feature_store_v2** ⚠️ SPECIAL CASE
+   - **Physical Location:** `nba_predictions.ml_feature_store_v2`
+   - **Schema Location:** `schemas/bigquery/predictions/04_ml_feature_store_v2.sql`
+   - **Written By:** Phase 4 Precompute Processor (5th processor, runs 12:00 AM)
+   - **Read By:** Phase 5 Prediction Systems (all 5 systems)
+   - **Purpose:** Caches 25-feature vectors generated nightly
+   - **Why Different Dataset?** Tightly coupled with Phase 5 prediction tables
+
+> **Note:** ml_feature_store_v2 is managed by Phase 4 processors but stored in the 
+> predictions dataset for Phase 5 consumption. See the Phase 5 README for schema details.
+
+---
+
+## Table Details
 
 ### 1. player_shot_zone_analysis
 **Purpose:** Player's offensive shot distribution and efficiency by court zone  
@@ -179,6 +205,67 @@ WHERE cache_date = CURRENT_DATE();
 
 ---
 
+### 6. ml_feature_store_v2 ⚠️ CROSS-DATASET TABLE
+
+**Physical Location:** `nba_predictions.ml_feature_store_v2`  
+**Schema File:** `schemas/bigquery/predictions/04_ml_feature_store_v2.sql`  
+**Written By:** Phase 4 Precompute Processor (5th processor)  
+**Read By:** Phase 5 Prediction Systems
+
+**Purpose:** Caches 25-feature vectors for all prediction systems to use
+
+**Processing Schedule:**
+- **12:00 AM (Nightly):** Phase 4 processor generates features
+- **6:00 AM (Daily):** Phase 5 systems read cached features
+- **9 AM - 7 PM (Real-time):** Phase 5 re-reads same cached features when lines change
+
+**Key Concept:** Features are computed ONCE per night and reused ~2,250 times:
+- 450 players × 5 prediction systems = 2,250 predictions
+- All using the same cached 25 features per player
+
+**Key Fields:**
+- `features` - ARRAY<FLOAT64> with 25 elements (can expand to 47+)
+- `feature_names` - ARRAY<STRING> describing each feature
+- `feature_version` - 'v1_baseline_25' (version control)
+- `feature_quality_score` - 0-100 quality metric
+- `data_source` - 'phase4' (confirms Phase 4 generated it)
+
+**Why in Different Dataset?**
+- Stored in `nba_predictions` because it's tightly coupled with prediction tables
+- Works with `feature_versions` table (also in predictions dataset)
+- Exclusively used by prediction systems (not general precompute)
+
+**Sample Query:**
+```sql
+-- Get cached features for today's players
+SELECT 
+  player_lookup,
+  game_date,
+  features,  -- Array of 25 floats
+  feature_version,
+  feature_quality_score,
+  data_source
+FROM `nba-props-platform.nba_predictions.ml_feature_store_v2`
+WHERE game_date = CURRENT_DATE()
+  AND feature_version = 'v1_baseline_25'
+ORDER BY player_lookup;
+```
+
+**Data Flow:**
+```
+Phase 3 Analytics + Phase 4 Precompute (Tables 1-4)
+         ↓
+   [12:00 AM - Feature Generation]
+         ↓
+ml_feature_store_v2 (450 players × 25 features)
+         ↓
+   [6:00 AM - Phase 5 Reads]
+         ↓
+All 5 Prediction Systems (same cached features)
+```
+
+---
+
 ## Helper Views
 
 ### todays_composite_factors
@@ -209,8 +296,13 @@ bq mk --dataset \
 # Deploy tables
 bq query --use_legacy_sql=false < precompute_tables.sql
 
+# Deploy ml_feature_store_v2 (different dataset)
+cd ../predictions/
+bq query --use_legacy_sql=false < 04_ml_feature_store_v2.sql
+
 # Verify
 bq ls nba_precompute
+bq ls nba_predictions | grep ml_feature_store_v2
 ```
 
 ### Updating Schemas
@@ -219,6 +311,11 @@ bq ls nba_precompute
 # If you modify a table schema, drop and recreate
 bq rm -t nba_precompute.player_composite_factors
 bq query --use_legacy_sql=false < precompute_tables.sql
+
+# For ml_feature_store_v2
+bq rm -t nba_predictions.ml_feature_store_v2
+cd schemas/bigquery/predictions/
+bq query --use_legacy_sql=false < 04_ml_feature_store_v2.sql
 ```
 
 ---
@@ -228,27 +325,35 @@ bq query --use_legacy_sql=false < precompute_tables.sql
 Processors that populate these tables are located in:
 ```
 data_processors/precompute/
-├── shot_zone_analyzer.py
-├── defense_zone_analyzer.py
-├── composite_factors_calculator.py
-├── daily_cache_builder.py
-└── similarity_cache_builder.py (optional)
+├── team_defense/
+│   └── team_defense_zone_analysis_processor.py
+├── player_shot_zone/
+│   └── player_shot_zone_analysis_processor.py
+├── player_composite_factors/
+│   └── player_composite_factors_processor.py
+├── player_daily_cache/
+│   └── player_daily_cache_processor.py
+├── ml_feature_store/
+│   └── ml_feature_store_processor.py  ✨ NEW (5th processor)
+└── similarity_cache/
+    └── similarity_cache_builder.py (optional)
 ```
 
 ### Processor Schedule
 
-**Nightly (11 PM - 2 AM):**
-1. Process completed games from Phase 3
-2. Update `player_shot_zone_analysis` 
-3. Update `team_defense_zone_analysis`
+**Nightly (11:00 PM - 12:15 AM):**
+1. `team_defense_zone_analysis` (11:00 PM, ~5 min)
+2. `player_shot_zone_analysis` (11:15 PM, ~8 min)
+3. `player_composite_factors` (11:30 PM, ~10 min)
+4. `player_daily_cache` (11:45 PM, ~5 min)
+5. `ml_feature_store_v2` (12:00 AM, ~10 min) ✨ NEW
 
-**Morning (6 AM - 7 AM):**
-4. Calculate `player_composite_factors` for today's games
-5. Build `player_daily_cache` for today's games
-6. (Optional) Build `similarity_match_cache`
+**Morning (6:00 AM - 7:00 AM):**
+- Phase 5 predictions read from cached tables (no Phase 4 work)
 
 **Real-Time (9 AM - Game Time):**
-7. Update `player_composite_factors` when context changes (injury reports, lineup changes)
+- Update `player_composite_factors` when context changes (injury reports, lineup changes)
+- `ml_feature_store_v2` NOT updated (features cached from midnight)
 
 ---
 
@@ -257,15 +362,21 @@ data_processors/precompute/
 ```
 Phase 3 Analytics (Raw Performance)
          ↓
-   [Nightly Processing]
+   [Nightly Processing 11 PM]
          ↓
 player_shot_zone_analysis  +  team_defense_zone_analysis
          ↓
-   [Morning Processing]
+   [11:30 PM - 12 AM]
          ↓
 player_composite_factors  +  player_daily_cache
          ↓
-   [Used by Phase 5 Predictions]
+   [12:00 AM - 12:15 AM]
+         ↓
+ml_feature_store_v2 (stored in nba_predictions dataset)
+         ↓
+   [6 AM - Phase 5 Predictions]
+         ↓
+All 5 prediction systems read cached features
 ```
 
 ---
@@ -280,6 +391,9 @@ CALL regenerate_shot_zone_analysis('2024-10-01', '2024-10-31');
 
 -- Regenerate composite factors
 CALL regenerate_composite_factors('2024-10-15');
+
+-- Regenerate ml_feature_store_v2 for a specific date
+CALL regenerate_ml_features('2024-10-15');
 ```
 
 See `data_processors/precompute/regeneration/` for scripts.
@@ -291,7 +405,7 @@ See `data_processors/precompute/regeneration/` for scripts.
 ### Key Metrics to Track
 
 ```sql
--- Check data freshness
+-- Check data freshness (all Phase 4 tables)
 SELECT 
   'player_shot_zone_analysis' as table_name,
   MAX(analysis_date) as latest_date,
@@ -306,6 +420,15 @@ SELECT
   MAX(game_date) as latest_date,
   COUNT(*) as total_rows
 FROM `nba-props-platform.nba_precompute.player_composite_factors`
+WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+
+UNION ALL
+
+SELECT 
+  'ml_feature_store_v2' as table_name,
+  MAX(game_date) as latest_date,
+  COUNT(*) as total_rows
+FROM `nba-props-platform.nba_predictions.ml_feature_store_v2`
 WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY);
 ```
 
@@ -315,6 +438,7 @@ WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY);
 - ⚠️ **Data >24 hours old** - Processing delay
 - ⚠️ **High % of NULL values** - Data quality issue
 - ⚠️ **Extreme composite scores** - Calculation error
+- ⚠️ **ml_feature_store_v2 missing** - Feature generation failed (blocks Phase 5)
 
 ---
 
@@ -333,6 +457,20 @@ WHERE upg.game_date = CURRENT_DATE()
 ```
 
 **Solution:** Run `composite_factors_calculator.py` manually
+
+### Issue: Missing ml_feature_store_v2 for today
+```sql
+-- Check if features generated
+SELECT 
+  COUNT(DISTINCT player_lookup) as players_with_features
+FROM `nba-props-platform.nba_predictions.ml_feature_store_v2`
+WHERE game_date = CURRENT_DATE();
+-- Expect: ~450 players
+```
+
+**Solution:** Run `ml_feature_store_processor.py` manually
+
+**Impact:** Phase 5 CANNOT run without features - this is CRITICAL
 
 ### Issue: Stale daily cache
 ```sql
@@ -359,15 +497,18 @@ Indicates small sample sizes. Check `games_in_sample_10` field.
 2. **Clustering:** Queries filtering by player_lookup are optimized
 3. **Cache Usage:** Use `player_daily_cache` for line changes instead of recalculating
 4. **JSON Extraction:** Index frequently accessed JSON fields if performance issues
+5. **Cross-Dataset Queries:** When joining ml_feature_store_v2 with precompute tables, be explicit about dataset
 
 ---
 
 ## Related Documentation
 
+- **Phase 5 Predictions README:** Consumer of Phase 4 data (especially ml_feature_store_v2)
 - **Document 3:** Composite Factor Calculations - Detailed calculation formulas
 - **Document 2:** Similarity Matching Engine - How similarity candidates are used
 - **Document 5:** Phase 4 Precompute Schema - Complete table definitions
 - **Phase 3 Analytics README:** Source data for precompute tables
+- **Feature Store Architecture Decision:** Why ml_feature_store_v2 is in predictions dataset
 
 ---
 
@@ -376,6 +517,7 @@ Indicates small sample sizes. Check `games_in_sample_10` field.
 | Date | Version | Changes |
 |------|---------|---------|
 | 2025-01-19 | 1.0 | Initial Phase 4 precompute documentation |
+| 2025-11-05 | 1.1 | Added ml_feature_store_v2 cross-reference |
 
 ---
 

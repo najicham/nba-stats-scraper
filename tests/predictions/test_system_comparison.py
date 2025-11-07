@@ -1,4 +1,4 @@
-# tests/unit/predictions/test_system_comparison.py
+# tests/predictions/test_system_comparison.py
 
 """
 System Comparison Tests
@@ -15,9 +15,9 @@ from datetime import date
 import sys
 sys.path.insert(0, '/home/claude')
 
-from moving_average_baseline import MovingAverageBaseline
-from zone_matchup_v1 import ZoneMatchupV1
-
+from predictions.worker.prediction_systems.moving_average_baseline import MovingAverageBaseline
+from predictions.worker.prediction_systems.zone_matchup_v1 import ZoneMatchupV1
+ 
 
 @pytest.fixture
 def moving_average():

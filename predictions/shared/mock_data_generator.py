@@ -33,11 +33,13 @@ class MockDataGenerator:
         Args:
             seed: Random seed for reproducibility (default: None)
         """
+        self.seed = seed
         if seed is not None:
             random.seed(seed)
             np.random.seed(seed)
-        
-        self.seed = seed
+            # Store random state for reproducibility
+            self._random_state = random.getstate()
+            self._np_random_state = np.random.get_state()
     
     # ========================================================================
     # CURRENT GAME FEATURES (25 features for today's prediction)
@@ -47,8 +49,8 @@ class MockDataGenerator:
         self,
         player_lookup: str,
         game_date: date,
-        tier: str = 'starter',
-        position: str = 'SF'
+        tier: str = None,
+        position: str = None
     ) -> Dict:
         """
         Generate all 25 features for a player's upcoming game
@@ -62,6 +64,18 @@ class MockDataGenerator:
         Returns:
             dict: All 25 features + metadata
         """
+        # For reproducibility: create deterministic seed from player + date + base seed
+        if self.seed is not None:
+            player_seed = hash((player_lookup, game_date, self.seed)) % (2**31)
+            random.seed(player_seed)
+            np.random.seed(player_seed)
+        
+        # Infer tier and position from player name if not provided
+        if tier is None:
+            tier = self._infer_tier(player_lookup)
+        if position is None:
+            position = self._infer_position(player_lookup)
+        
         # Base scoring by tier
         base_ppg = self._get_base_ppg(tier)
         
@@ -78,7 +92,7 @@ class MockDataGenerator:
         zones = self._generate_shot_zones(position)
         
         # Generate team context (features 22-24)
-        team = self._generate_team_context()
+        team = self._generate_team_context(tier)
         
         # Combine all features
         features_dict = {
@@ -95,7 +109,7 @@ class MockDataGenerator:
             features_dict['points_avg_last_10'],
             features_dict['points_avg_season'],
             features_dict['points_std_last_10'],
-            features_dict['minutes_avg_last_10'],
+            features_dict['games_played_last_7_days'],  # Index 4 - was minutes
             features_dict['fatigue_score'],
             features_dict['shot_zone_mismatch_score'],
             features_dict['pace_score'],
@@ -117,17 +131,76 @@ class MockDataGenerator:
             features_dict['team_off_rating_last_10'],
             features_dict['usage_rate_last_10']
         ]
-        
+        # Feature names in order matching features_array
+        feature_names = [
+            'points_avg_last_5', 'points_avg_last_10', 'points_avg_season',
+            'points_std_last_10', 'games_played_last_7_days', 'fatigue_score',
+            'shot_zone_mismatch_score', 'pace_score', 'usage_spike_score',
+            'referee_favorability_score', 'look_ahead_pressure_score',
+            'matchup_history_score', 'momentum_score', 'opponent_def_rating_last_15',
+            'opponent_pace_last_15', 'is_home', 'days_rest', 'back_to_back',
+            'paint_rate_last_10', 'mid_range_rate_last_10', 'three_pt_rate_last_10',
+            'assisted_rate_last_10', 'team_pace_last_10', 'team_off_rating_last_10',
+            'usage_rate_last_10'
+        ]
+
         return {
             'player_lookup': player_lookup,
             'game_date': game_date,
+            'player_tier': tier,
+            'player_position': position,
             'feature_count': 25,
             'feature_version': 'v1_baseline_25',
             'data_source': 'mock',
             'features_array': features_array,
+            'features': features_array,  # Alias for test compatibility
+            'feature_names': feature_names,  # Feature names list
             **features_dict,
             'feature_quality_score': 85.0  # Mock data is good quality
         }
+    
+    
+    def _infer_tier(self, player_lookup: str) -> str:
+        """Infer player tier from name"""
+        player_lower = player_lookup.lower()
+        
+        # Superstars
+        if any(name in player_lower for name in ['lebron', 'curry', 'durant', 'jokic', 'giannis', 'luka']):
+            return 'superstar'
+        
+        # Stars
+        if any(name in player_lower for name in ['jordan', 'embiid', 'tatum', 'booker', 'mitchell']):
+            return 'star'
+        
+        # Bench
+        if 'unknown' in player_lower or 'bench' in player_lower:
+            return 'bench'
+        
+        # Default to starter
+        return 'starter'
+    
+    def _infer_position(self, player_lookup: str) -> str:
+        """Infer position from player name"""
+        player_lower = player_lookup.lower()
+        
+        # Centers
+        if any(name in player_lower for name in ['embiid', 'jokic', 'towns', 'ayton', 'gobert']):
+            return 'C'
+        
+        # Point Guards
+        if any(name in player_lower for name in ['curry', 'luka', 'young', 'morant', 'paul']):
+            return 'PG'
+        
+        # Power Forwards
+        if any(name in player_lower for name in ['giannis', 'davis', 'porzingis']):
+            return 'PF'
+        
+        # Shooting Guards  
+        if any(name in player_lower for name in ['booker', 'mitchell', 'lavine', 'jordan']):
+            return 'SG'
+        
+        # Default to SF
+        return 'SF'
     
     def _get_base_ppg(self, tier: str) -> float:
         """Get base PPG by player tier"""
@@ -150,12 +223,21 @@ class MockDataGenerator:
         last_10 = np.clip(base_ppg + random.uniform(-2, 2), 0, 60)
         season = base_ppg
         
+        # Minutes by tier
+        if tier in ['superstar', 'star']:
+            minutes = round(random.uniform(30, 38), 1)
+        elif tier == 'starter':
+            minutes = round(random.uniform(25, 33), 1)
+        else:
+            minutes = round(random.uniform(15, 28), 1)
+        
         return {
             'points_avg_last_5': round(last_5, 1),
             'points_avg_last_10': round(last_10, 1),
             'points_avg_season': round(season, 1),
             'points_std_last_10': round(variance, 1),
-            'minutes_avg_last_10': round(random.uniform(20, 38), 1)
+            'minutes_avg_last_10': minutes,
+            'games_played_last_7_days': random.randint(2, 3)  # Missing field!
         }
     
     def _generate_composite_factors(self) -> Dict:
@@ -207,19 +289,46 @@ class MockDataGenerator:
         mid /= total
         three /= total
         
+        # Assisted rate by position (centers catch and finish more)
+        if position == 'C':
+            assisted = random.uniform(60, 80)
+        elif position == 'PF':
+            assisted = random.uniform(55, 75)
+        elif position in ['SF', 'SG']:
+            assisted = random.uniform(50, 70)
+        else:  # PG
+            assisted = random.uniform(40, 60)
+        
         return {
             'paint_rate_last_10': round(paint * 100, 1),
             'mid_range_rate_last_10': round(mid * 100, 1),
             'three_pt_rate_last_10': round(three * 100, 1),
-            'assisted_rate_last_10': round(random.uniform(40, 80), 1)
+            'assisted_rate_last_10': round(assisted, 1),
+            # Aliases for zone matchup (fractions not percentages)
+            'pct_paint': round(paint, 3),
+            'pct_mid_range': round(mid, 3),
+            'pct_three': round(three, 3),
+            'pct_free_throw': round((1.0 - paint - mid - three), 3)  # Remaining shots
         }
     
-    def _generate_team_context(self) -> Dict:
+    def _generate_team_context(self, tier: str) -> Dict:
         """Generate features 22-24: Team context"""
+        # Usage rate by tier
+        if tier == 'superstar':
+            usage = random.uniform(28, 35)
+        elif tier == 'star':
+            usage = random.uniform(24, 30)
+        elif tier == 'starter':
+            usage = random.uniform(18, 25)
+        elif tier == 'rotation':
+            usage = random.uniform(12, 20)
+        else:  # bench
+            usage = random.uniform(8, 15)
+        
         return {
             'team_pace_last_10': round(random.uniform(95, 105), 1),
             'team_off_rating_last_10': round(random.uniform(105, 120), 1),
-            'usage_rate_last_10': round(random.uniform(18, 32), 1)
+            'usage_rate_last_10': round(usage, 1)
         }
     
     # ========================================================================
@@ -276,15 +385,18 @@ class MockDataGenerator:
         Games are more frequent during season (Oct-Apr), sparse in summer
         """
         dates = []
+        attempts = 0
+        max_attempts = num_games * 3  # Allow retries for offseason dates
         
-        for _ in range(num_games):
+        while len(dates) < num_games and attempts < max_attempts:
+            attempts += 1
+            
             # Random date within lookback period
             days_ago = random.randint(1, lookback_days)
             game_date = current_date - timedelta(days=days_ago)
             
             # Skip if in offseason (May-September)
             if game_date.month in [5, 6, 7, 8, 9]:
-                # Retry
                 continue
             
             dates.append(game_date)
@@ -426,40 +538,55 @@ class MockDataGenerator:
     
     def generate_batch(
         self,
-        num_players: int = 10,
+        players = 10,
         game_date: Optional[date] = None
-    ) -> List[Dict]:
+    ) -> Dict:
         """
         Generate features for multiple players
         
         Args:
-            num_players: Number of players to generate
+            players: Either list of player names or integer count (default: 10)
             game_date: Game date (default: today)
         
         Returns:
-            list: Features for each player
+            dict: Dictionary mapping player_lookup to features (if list provided)
+                  OR list of features (if integer provided)
         """
         if game_date is None:
             game_date = date.today()
         
-        tiers = ['superstar', 'star', 'starter', 'rotation', 'bench']
-        positions = ['PG', 'SG', 'SF', 'PF', 'C']
-        
-        batch = []
-        for i in range(num_players):
-            tier = random.choice(tiers)
-            position = random.choice(positions)
-            player_lookup = f"player-{i}"
+        # Handle both list of players and integer count
+        if isinstance(players, list):
+            # Generate for specific players
+            batch = {}
+            for player_lookup in players:
+                features = self.generate_all_features(
+                    player_lookup,
+                    game_date
+                )
+                batch[player_lookup] = features
+            return batch
+        else:
+            # Generate for N random players
+            num_players = players
+            tiers = ['superstar', 'star', 'starter', 'rotation', 'bench']
+            positions = ['PG', 'SG', 'SF', 'PF', 'C']
             
-            features = self.generate_all_features(
-                player_lookup,
-                game_date,
-                tier,
-                position
-            )
-            batch.append(features)
-        
-        return batch
+            batch = []
+            for i in range(num_players):
+                tier = random.choice(tiers)
+                position = random.choice(positions)
+                player_lookup = f"player-{i}"
+                
+                features = self.generate_all_features(
+                    player_lookup,
+                    game_date,
+                    tier,
+                    position
+                )
+                batch.append(features)
+            
+            return batch
 
 
 # ============================================================================

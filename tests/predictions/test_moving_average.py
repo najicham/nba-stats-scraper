@@ -1,4 +1,4 @@
-# tests/unit/predictions/test_moving_average.py
+# tests/predictions/test_moving_average.py
 
 """
 Unit Tests for Moving Average Baseline Prediction System

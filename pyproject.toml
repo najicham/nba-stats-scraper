@@ -1,0 +1,12 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nba-stats-scraper"
+version = "0.1.0"
+description = "NBA player props prediction platform"
+requires-python = ">=3.12"
+
+[tool.setuptools]
+packages = ["predictions", "predictions.shared", "predictions.worker", "predictions.worker.prediction_systems"]

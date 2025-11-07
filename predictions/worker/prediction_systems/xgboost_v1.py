@@ -389,7 +389,11 @@ class XGBoostV1:
         }
         
         if hasattr(self.model, 'get_model_metadata'):
-            info.update(self.model.get_model_metadata())
+            metadata = self.model.get_model_metadata()
+            # Add metadata but don't overwrite model_type
+            for key, value in metadata.items():
+                if key not in ['model_type', 'system_id', 'model_version']:
+                    info[key] = value
         
         return info
 

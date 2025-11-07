@@ -1,4 +1,4 @@
-# Path: tests/unit/predictions/__init__.py
+# Path: tests/predictions/__init__.py
 """
 Unit tests for Phase 5 predictions
 

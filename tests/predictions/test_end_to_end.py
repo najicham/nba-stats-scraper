@@ -1,4 +1,4 @@
-# tests/unit/predictions/test_end_to_end.py
+# tests/predictions/test_end_to_end.py
 
 """
 End-to-End Integration Test

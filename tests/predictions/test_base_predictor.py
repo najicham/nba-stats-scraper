@@ -1,4 +1,4 @@
-# tests/unit/predictions/test_base_predictor.py
+# tests/predictions/test_base_predictor.py
 
 """
 Unit Tests for Base Predictor Abstract Class
