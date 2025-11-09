@@ -8,13 +8,14 @@ Extracts raw data from:
 - Phase 3 (fallback): player_game_summary, upcoming_player_game_context,
                       team_offense_game_summary, team_defense_game_summary
 
-Version: 1.1 (Fixed field name consistency: games_in_last_7_days)
+Version: 1.2 (Added type hints and enhanced debug logging)
 """
 
 import logging
 from datetime import date
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 from google.cloud import bigquery
+import pandas as pd
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +23,7 @@ logger = logging.getLogger(__name__)
 class FeatureExtractor:
     """Extract features from Phase 3/4 BigQuery tables."""
     
-    def __init__(self, bq_client: bigquery.Client, project_id: str):
+    def __init__(self, bq_client: bigquery.Client, project_id: str) -> None:
         """
         Initialize feature extractor.
         
@@ -30,14 +31,14 @@ class FeatureExtractor:
             bq_client: BigQuery client instance
             project_id: GCP project ID
         """
-        self.bq_client = bq_client
-        self.project_id = project_id
+        self.bq_client: bigquery.Client = bq_client
+        self.project_id: str = project_id
     
     # ========================================================================
     # PLAYER LIST
     # ========================================================================
     
-    def get_players_with_games(self, game_date: date) -> List[Dict]:
+    def get_players_with_games(self, game_date: date) -> List[Dict[str, Any]]:
         """
         Get list of all players with games on game_date.
         
@@ -61,19 +62,21 @@ class FeatureExtractor:
         ORDER BY player_lookup
         """
         
-        result = self.bq_client.query(query).to_dataframe()
+        logger.debug(f"Querying players with games on {game_date}")
+        result: pd.DataFrame = self.bq_client.query(query).to_dataframe()
         
         if result.empty:
             logger.warning(f"No players found with games on {game_date}")
             return []
         
+        logger.debug(f"Found {len(result)} players with games on {game_date}")
         return result.to_dict('records')
     
     # ========================================================================
     # PHASE 4 EXTRACTION (PREFERRED)
     # ========================================================================
     
-    def extract_phase4_data(self, player_lookup: str, game_date: date) -> Dict:
+    def extract_phase4_data(self, player_lookup: str, game_date: date) -> Dict[str, Any]:
         """
         Extract all Phase 4 data for a player.
         
@@ -90,29 +93,37 @@ class FeatureExtractor:
         Returns:
             Dict with all Phase 4 fields (may have None values)
         """
-        phase4_data = {}
+        logger.debug(f"Extracting Phase 4 data for {player_lookup} on {game_date}")
+        phase4_data: Dict[str, Any] = {}
         
         # 1. Player daily cache
         cache_data = self._query_player_daily_cache(player_lookup, game_date)
         phase4_data.update(cache_data)
+        logger.debug(f"Daily cache returned {len(cache_data)} fields for {player_lookup}")
         
         # 2. Composite factors
         composite_data = self._query_composite_factors(player_lookup, game_date)
         phase4_data.update(composite_data)
+        logger.debug(f"Composite factors returned {len(composite_data)} fields for {player_lookup}")
         
         # 3. Shot zone analysis
         shot_zone_data = self._query_shot_zone_analysis(player_lookup, game_date)
         phase4_data.update(shot_zone_data)
+        logger.debug(f"Shot zones returned {len(shot_zone_data)} fields for {player_lookup}")
         
         # 4. Team defense (requires opponent)
-        opponent = phase4_data.get('opponent_team_abbr')
+        opponent: Optional[str] = phase4_data.get('opponent_team_abbr')
         if opponent:
             team_defense_data = self._query_team_defense(opponent, game_date)
             phase4_data.update(team_defense_data)
+            logger.debug(f"Team defense returned {len(team_defense_data)} fields for {opponent}")
+        else:
+            logger.debug(f"No opponent found for {player_lookup}, skipping team defense query")
         
+        logger.debug(f"Phase 4 extraction complete: {len(phase4_data)} total fields for {player_lookup}")
         return phase4_data
     
-    def _query_player_daily_cache(self, player_lookup: str, game_date: date) -> Dict:
+    def _query_player_daily_cache(self, player_lookup: str, game_date: date) -> Dict[str, Any]:
         """Query player_daily_cache table."""
         query = f"""
         SELECT
@@ -121,7 +132,7 @@ class FeatureExtractor:
             points_avg_last_10,
             points_avg_season,
             points_std_last_10,
-            games_in_last_7_days,  -- FIXED: Consistent with processor
+            games_in_last_7_days,
             
             -- Features 18-20: Shot Zones (partial)
             paint_rate_last_10,
@@ -140,15 +151,17 @@ class FeatureExtractor:
           AND cache_date = '{game_date}'
         """
         
-        result = self.bq_client.query(query).to_dataframe()
+        result: pd.DataFrame = self.bq_client.query(query).to_dataframe()
         
         if result.empty:
             logger.debug(f"No player_daily_cache data for {player_lookup} on {game_date}")
             return {}
         
-        return result.iloc[0].to_dict()
+        data: Dict[str, Any] = result.iloc[0].to_dict()
+        logger.debug(f"player_daily_cache: {len(data)} fields retrieved for {player_lookup}")
+        return data
     
-    def _query_composite_factors(self, player_lookup: str, game_date: date) -> Dict:
+    def _query_composite_factors(self, player_lookup: str, game_date: date) -> Dict[str, Any]:
         """Query player_composite_factors table."""
         query = f"""
         SELECT
@@ -165,15 +178,17 @@ class FeatureExtractor:
           AND game_date = '{game_date}'
         """
         
-        result = self.bq_client.query(query).to_dataframe()
+        result: pd.DataFrame = self.bq_client.query(query).to_dataframe()
         
         if result.empty:
             logger.debug(f"No composite_factors data for {player_lookup} on {game_date}")
             return {}
         
-        return result.iloc[0].to_dict()
+        data: Dict[str, Any] = result.iloc[0].to_dict()
+        logger.debug(f"composite_factors: {len(data)} fields retrieved for {player_lookup}")
+        return data
     
-    def _query_shot_zone_analysis(self, player_lookup: str, game_date: date) -> Dict:
+    def _query_shot_zone_analysis(self, player_lookup: str, game_date: date) -> Dict[str, Any]:
         """Query player_shot_zone_analysis table."""
         query = f"""
         SELECT
@@ -186,15 +201,17 @@ class FeatureExtractor:
           AND analysis_date = '{game_date}'
         """
         
-        result = self.bq_client.query(query).to_dataframe()
+        result: pd.DataFrame = self.bq_client.query(query).to_dataframe()
         
         if result.empty:
             logger.debug(f"No shot_zone_analysis data for {player_lookup} on {game_date}")
             return {}
         
-        return result.iloc[0].to_dict()
+        data: Dict[str, Any] = result.iloc[0].to_dict()
+        logger.debug(f"shot_zone_analysis: {len(data)} fields retrieved for {player_lookup}")
+        return data
     
-    def _query_team_defense(self, team_abbr: str, game_date: date) -> Dict:
+    def _query_team_defense(self, team_abbr: str, game_date: date) -> Dict[str, Any]:
         """Query team_defense_zone_analysis table."""
         query = f"""
         SELECT
@@ -206,19 +223,21 @@ class FeatureExtractor:
           AND analysis_date = '{game_date}'
         """
         
-        result = self.bq_client.query(query).to_dataframe()
+        result: pd.DataFrame = self.bq_client.query(query).to_dataframe()
         
         if result.empty:
             logger.debug(f"No team_defense data for {team_abbr} on {game_date}")
             return {}
         
-        return result.iloc[0].to_dict()
+        data: Dict[str, Any] = result.iloc[0].to_dict()
+        logger.debug(f"team_defense: {len(data)} fields retrieved for {team_abbr}")
+        return data
     
     # ========================================================================
     # PHASE 3 EXTRACTION (FALLBACK)
     # ========================================================================
     
-    def extract_phase3_data(self, player_lookup: str, game_date: date) -> Dict:
+    def extract_phase3_data(self, player_lookup: str, game_date: date) -> Dict[str, Any]:
         """
         Extract Phase 3 data for a player.
         
@@ -231,15 +250,18 @@ class FeatureExtractor:
         Returns:
             Dict with Phase 3 fields
         """
-        phase3_data = {}
+        logger.debug(f"Extracting Phase 3 data for {player_lookup} on {game_date}")
+        phase3_data: Dict[str, Any] = {}
         
         # 1. Upcoming player context (critical for calculated features)
         context_data = self._query_player_context(player_lookup, game_date)
         phase3_data.update(context_data)
+        logger.debug(f"Player context returned {len(context_data)} fields for {player_lookup}")
         
         # 2. Last 10 games (for aggregations and trend)
         last_10_games = self._query_last_n_games(player_lookup, game_date, 10)
         phase3_data['last_10_games'] = last_10_games
+        logger.debug(f"Found {len(last_10_games)} historical games for {player_lookup}")
         
         # Calculate aggregations from games
         if last_10_games:
@@ -248,21 +270,28 @@ class FeatureExtractor:
             if len(last_10_games) >= 5:
                 last_5 = last_10_games[:5]
                 phase3_data['points_avg_last_5'] = sum(g['points'] for g in last_5) / 5
+            
+            logger.debug(f"Calculated aggregations from {len(last_10_games)} games for {player_lookup}")
         
         # 3. Season stats
         season_stats = self._query_season_stats(player_lookup, game_date)
         phase3_data.update(season_stats)
+        logger.debug(f"Season stats returned {len(season_stats)} fields for {player_lookup}")
         
         # 4. Team season games (for win_pct calculation)
-        team_abbr = context_data.get('team_abbr')
+        team_abbr: Optional[str] = context_data.get('team_abbr')
         if team_abbr:
             season_year = game_date.year if game_date.month >= 10 else game_date.year - 1
             team_games = self._query_team_season_games(team_abbr, season_year, game_date)
             phase3_data['team_season_games'] = team_games
+            logger.debug(f"Found {len(team_games)} team games for {team_abbr}")
+        else:
+            logger.debug(f"No team_abbr found for {player_lookup}, skipping team games query")
         
+        logger.debug(f"Phase 3 extraction complete: {len(phase3_data)} total fields for {player_lookup}")
         return phase3_data
     
-    def _query_player_context(self, player_lookup: str, game_date: date) -> Dict:
+    def _query_player_context(self, player_lookup: str, game_date: date) -> Dict[str, Any]:
         """Query upcoming_player_game_context."""
         query = f"""
         SELECT
@@ -286,15 +315,17 @@ class FeatureExtractor:
           AND game_date = '{game_date}'
         """
         
-        result = self.bq_client.query(query).to_dataframe()
+        result: pd.DataFrame = self.bq_client.query(query).to_dataframe()
         
         if result.empty:
             logger.warning(f"No upcoming_player_game_context for {player_lookup} on {game_date}")
             return {}
         
-        return result.iloc[0].to_dict()
+        data: Dict[str, Any] = result.iloc[0].to_dict()
+        logger.debug(f"player_context: {len(data)} fields retrieved for {player_lookup}")
+        return data
     
-    def _query_last_n_games(self, player_lookup: str, game_date: date, n: int) -> List[Dict]:
+    def _query_last_n_games(self, player_lookup: str, game_date: date, n: int) -> List[Dict[str, Any]]:
         """Query last N games for a player."""
         query = f"""
         SELECT
@@ -313,15 +344,17 @@ class FeatureExtractor:
         LIMIT {n}
         """
         
-        result = self.bq_client.query(query).to_dataframe()
+        result: pd.DataFrame = self.bq_client.query(query).to_dataframe()
         
         if result.empty:
             logger.debug(f"No historical games for {player_lookup} before {game_date}")
             return []
         
-        return result.to_dict('records')
+        games: List[Dict[str, Any]] = result.to_dict('records')
+        logger.debug(f"Retrieved {len(games)} games for {player_lookup}")
+        return games
     
-    def _query_season_stats(self, player_lookup: str, game_date: date) -> Dict:
+    def _query_season_stats(self, player_lookup: str, game_date: date) -> Dict[str, Any]:
         """Query season-level stats."""
         season_year = game_date.year if game_date.month >= 10 else game_date.year - 1
         
@@ -336,14 +369,18 @@ class FeatureExtractor:
           AND game_date < '{game_date}'
         """
         
-        result = self.bq_client.query(query).to_dataframe()
+        result: pd.DataFrame = self.bq_client.query(query).to_dataframe()
         
         if result.empty:
+            logger.debug(f"No season stats for {player_lookup} in {season_year}")
             return {}
         
-        return result.iloc[0].to_dict()
+        data: Dict[str, Any] = result.iloc[0].to_dict()
+        logger.debug(f"season_stats: {data.get('games_played_season', 0)} games for {player_lookup}")
+        return data
     
-    def _query_team_season_games(self, team_abbr: str, season_year: int, game_date: date) -> List[Dict]:
+    def _query_team_season_games(self, team_abbr: str, season_year: int, 
+                                 game_date: date) -> List[Dict[str, Any]]:
         """Query team's season games for win percentage."""
         query = f"""
         SELECT
@@ -356,9 +393,12 @@ class FeatureExtractor:
         ORDER BY game_date
         """
         
-        result = self.bq_client.query(query).to_dataframe()
+        result: pd.DataFrame = self.bq_client.query(query).to_dataframe()
         
         if result.empty:
+            logger.debug(f"No team games for {team_abbr} in {season_year}")
             return []
         
-        return result.to_dict('records')
+        games: List[Dict[str, Any]] = result.to_dict('records')
+        logger.debug(f"Retrieved {len(games)} team games for {team_abbr}")
+        return games

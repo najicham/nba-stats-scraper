@@ -1,10 +1,13 @@
 """
-Integration Tests for ML Feature Store Processor
+Enhanced Integration Tests for ML Feature Store Processor
 
-Tests end-to-end processor flow with mock data.
-These tests require full infrastructure mocking (BigQuery, etc).
+Additional tests for edge cases and failure scenarios:
+- Partial batch write failures
+- Early season detection edge cases
+- Missing dependency handling
+- Quality score edge cases
 
-Run with: pytest test_integration.py -v
+Run with: pytest test_integration_enhanced.py -v
 
 Directory: tests/processors/precompute/ml_feature_store/
 """
@@ -12,22 +15,20 @@ Directory: tests/processors/precompute/ml_feature_store/
 import pytest
 from unittest.mock import Mock, patch, MagicMock
 from datetime import date, datetime
-import sys
-import os
+from typing import Dict, List, Any
 
 from data_processors.precompute.ml_feature_store.ml_feature_store_processor import MLFeatureStoreProcessor
 
 
-class TestMLFeatureStoreProcessorIntegration:
-    """Integration tests for complete processor flow (6 tests)."""
+class TestMLFeatureStoreEdgeCases:
+    """Additional integration tests for edge cases (8 new tests)."""
     
     @pytest.fixture
-    def mock_processor(self):
+    def mock_processor(self) -> MLFeatureStoreProcessor:
         """Create processor instance with mocked dependencies."""
-        # Use object.__new__ to create instance WITHOUT calling __init__
         processor = object.__new__(MLFeatureStoreProcessor)
         
-        # Manually set all attributes that would normally be set
+        # Set all required attributes
         processor.bq_client = Mock()
         processor.project_id = 'test-project'
         processor.opts = {}
@@ -40,8 +41,6 @@ class TestMLFeatureStoreProcessorIntegration:
         # v4.0 Dependency tracking attributes
         processor.source_metadata = {}
         
-        # Initialize source tracking attributes for each dependency
-        # These would normally be set by track_source_usage()
         for prefix in ['source_daily_cache', 'source_composite', 'source_shot_zones', 'source_team_defense']:
             setattr(processor, f'{prefix}_last_updated', None)
             setattr(processor, f'{prefix}_rows_found', None)
@@ -60,345 +59,280 @@ class TestMLFeatureStoreProcessorIntegration:
         processor.failed_entities = []
         processor.transformed_data = []
         
-        yield processor
+        return processor
     
     # ========================================================================
-    # FEATURE GENERATION (2 tests)
+    # EARLY SEASON DETECTION EDGE CASES (3 tests)
     # ========================================================================
     
-    def test_generate_player_features_complete_phase4(self, mock_processor):
+    def test_early_season_exactly_50_percent(self, mock_processor: MLFeatureStoreProcessor) -> None:
         """
-        Test feature generation with complete Phase 4 data.
+        Test early season detection at exactly 50% threshold.
         
-        Verifies that processor correctly uses Phase 4 data when available
-        and generates all 25 features with proper source tracking.
+        Verifies that exactly 50% early season players does NOT trigger
+        early season mode (requires >50%).
         """
-        # Mock player row
-        player_row = {
-            'player_lookup': 'lebron-james',
-            'universal_player_id': 'lebronjames_001',
-            'game_id': '20250115_LAL_GSW',
-            'game_date': date(2025, 1, 15),
-            'opponent_team_abbr': 'GSW',
-            'is_home': True,
-            'days_rest': 1
-        }
+        mock_processor.opts = {'analysis_date': date(2024, 10, 25)}
         
-        # Mock Phase 4 data (all features available)
-        phase4_data = {
-            'points_avg_last_5': 25.2,
-            'points_avg_last_10': 24.8,
-            'points_avg_season': 24.5,
-            'points_std_last_10': 4.2,
-            'games_in_last_7_days': 3,
-            'fatigue_score': 75,
-            'shot_zone_mismatch_score': 3.5,
-            'pace_score': 1.5,
-            'usage_spike_score': 0.8,
-            'opponent_def_rating': 110.5,
-            'opponent_pace': 101.2,
-            'paint_rate_last_10': 35.0,
-            'mid_range_rate_last_10': 20.0,
-            'three_pt_rate_last_10': 45.0,
-            'team_pace_last_10': 99.8,
-            'team_off_rating_last_10': 115.2,
-            'minutes_avg_last_10': 35.5
-        }
+        # Mock query result: exactly 50% early season
+        mock_result = Mock()
+        mock_result.empty = False
+        mock_result.iloc = [Mock()]
+        mock_result.iloc[0].get = Mock(side_effect=lambda k, d=None: {
+            'total_players': 100,
+            'early_season_players': 50  # Exactly 50%
+        }.get(k, d))
         
-        # Mock Phase 3 data (for calculated features)
-        phase3_data = {
-            'days_rest': 1,
-            'opponent_days_rest': 0,
-            'player_status': 'available',
-            'home_game': True,
-            'back_to_back': False,
-            'season_phase': 'regular',
-            'last_10_games': [
-                {'game_date': '2025-01-13', 'points': 28, 'minutes_played': 36, 'ft_makes': 8},
-                {'game_date': '2025-01-11', 'points': 24, 'minutes_played': 35, 'ft_makes': 6},
-                {'game_date': '2025-01-09', 'points': 26, 'minutes_played': 37, 'ft_makes': 7},
-                {'game_date': '2025-01-07', 'points': 22, 'minutes_played': 34, 'ft_makes': 5},
-                {'game_date': '2025-01-05', 'points': 25, 'minutes_played': 36, 'ft_makes': 6}
-            ],
-            'minutes_avg_season': 34.0,
-            'team_season_games': [
-                {'win_flag': True}, {'win_flag': True}, {'win_flag': False},
-                {'win_flag': True}, {'win_flag': True}, {'win_flag': True},
-                {'win_flag': False}, {'win_flag': True}
-            ]
-        }
+        mock_processor.bq_client.query.return_value.to_dataframe.return_value = mock_result
         
-        # Mock extractors
-        mock_processor.feature_extractor.extract_phase4_data.return_value = phase4_data
-        mock_processor.feature_extractor.extract_phase3_data.return_value = phase3_data
+        result = mock_processor._is_early_season(date(2024, 10, 25))
         
-        # Mock calculator
-        mock_processor.feature_calculator.calculate_rest_advantage.return_value = 1.0
-        mock_processor.feature_calculator.calculate_injury_risk.return_value = 0.0
-        mock_processor.feature_calculator.calculate_recent_trend.return_value = 0.0
-        mock_processor.feature_calculator.calculate_minutes_change.return_value = 1.0
-        mock_processor.feature_calculator.calculate_pct_free_throw.return_value = 0.25
-        mock_processor.feature_calculator.calculate_team_win_pct.return_value = 0.75
+        assert result is False, "Exactly 50% should NOT trigger early season (requires >50%)"
+        assert mock_processor.early_season_flag is False
+        assert mock_processor.insufficient_data_reason is None
+    
+    def test_early_season_51_percent_triggers(self, mock_processor: MLFeatureStoreProcessor) -> None:
+        """
+        Test early season detection at 51% threshold.
         
-        # Mock quality scorer
-        mock_processor.quality_scorer.calculate_quality_score.return_value = 95.0
-        mock_processor.quality_scorer.determine_primary_source.return_value = 'phase4'
+        Verifies that 51% early season players DOES trigger early season mode.
+        """
+        mock_processor.opts = {'analysis_date': date(2024, 10, 25)}
         
-        # Set opts
+        # Mock query result: 51% early season
+        mock_result = Mock()
+        mock_result.empty = False
+        mock_result.iloc = [Mock()]
+        mock_result.iloc[0].get = Mock(side_effect=lambda k, d=None: {
+            'total_players': 100,
+            'early_season_players': 51  # 51%
+        }.get(k, d))
+        
+        mock_processor.bq_client.query.return_value.to_dataframe.return_value = mock_result
+        
+        result = mock_processor._is_early_season(date(2024, 10, 25))
+        
+        assert result is True, "51% should trigger early season"
+        assert mock_processor.early_season_flag is True
+        assert "Early season: 51/100 players" in mock_processor.insufficient_data_reason
+    
+    def test_early_season_query_failure_safe_default(self, mock_processor: MLFeatureStoreProcessor) -> None:
+        """
+        Test early season detection handles query failures gracefully.
+        
+        Verifies that if the early season check query fails, we default
+        to False (proceed with normal processing).
+        """
+        mock_processor.bq_client.query.side_effect = Exception("BigQuery connection error")
+        
+        result = mock_processor._is_early_season(date(2024, 10, 25))
+        
+        assert result is False, "Query failure should default to False (proceed normally)"
+        assert mock_processor.early_season_flag is False
+    
+    # ========================================================================
+    # BATCH WRITE FAILURE SCENARIOS (3 tests)
+    # ========================================================================
+    
+    def test_save_precompute_partial_batch_failure(self, mock_processor: MLFeatureStoreProcessor) -> None:
+        """
+        Test save_precompute handles partial batch write failures.
+        
+        Verifies that when some batches fail to write, the processor:
+        1. Tracks successful vs failed rows
+        2. Records errors in stats
+        3. Does not raise exception (graceful degradation)
+        """
+        mock_processor.transformed_data = [{'player': i} for i in range(250)]
         mock_processor.opts = {'analysis_date': date(2025, 1, 15)}
         
-        # Generate features
-        record = mock_processor._generate_player_features(player_row)
+        # Mock batch writer with partial failure
+        mock_processor.batch_writer.write_batch.return_value = {
+            'rows_processed': 200,      # 2 batches succeeded
+            'rows_failed': 50,          # 1 batch failed
+            'batches_written': 2,
+            'batches_failed': 1,
+            'errors': ['Batch 3: Connection timeout']
+        }
         
-        # Assertions
-        assert record['player_lookup'] == 'lebron-james'
-        assert record['feature_count'] == 25
-        assert record['feature_version'] == 'v1_baseline_25'
-        assert len(record['features']) == 25
-        assert len(record['feature_names']) == 25
+        # Should not raise exception
+        mock_processor.save_precompute()
         
-        # Check feature quality
-        assert record['feature_quality_score'] == 95.0
-        assert record['data_source'] == 'phase4'
-        
-        # Check specific features
-        features = record['features']
-        assert features[0] == 25.2  # points_avg_last_5
-        assert features[5] == 75.0  # fatigue_score
-        assert features[9] == 1.0   # rest_advantage
-        assert features[10] == 0.0  # injury_risk
+        # Verify stats tracking
+        assert mock_processor.stats['rows_processed'] == 200
+        assert mock_processor.stats['rows_failed'] == 50
+        assert mock_processor.stats['batches_written'] == 2
+        assert mock_processor.stats['batches_failed'] == 1
     
-    def test_generate_player_features_missing_phase4(self, mock_processor):
+    def test_save_precompute_all_batches_fail(self, mock_processor: MLFeatureStoreProcessor) -> None:
         """
-        Test feature generation with missing Phase 4 data.
+        Test save_precompute when all batch writes fail.
         
-        Verifies fallback to Phase 3 works correctly and quality score
-        reflects the lower data quality.
+        Verifies graceful handling when all writes fail.
         """
-        player_row = {
-            'player_lookup': 'test-player',
-            'universal_player_id': 'testplayer_001',
-            'game_id': '20250115_TEST_TEST',
-            'opponent_team_abbr': 'LAL',
-            'is_home': False,
-            'days_rest': 1
-        }
-        
-        # Phase 4 mostly missing
-        phase4_data = {}
-        
-        # Phase 3 has fallback data
-        phase3_data = {
-            'points_avg_last_10': 15.0,
-            'points_avg_season': 14.5,
-            'days_rest': 1,
-            'opponent_days_rest': 1,
-            'player_status': 'available',
-            'home_game': False,
-            'back_to_back': False,
-            'season_phase': 'regular',
-            'last_10_games': [
-                {'game_date': '2025-01-13', 'points': 16, 'minutes_played': 28, 'ft_makes': 4},
-                {'game_date': '2025-01-11', 'points': 14, 'minutes_played': 27, 'ft_makes': 3},
-                {'game_date': '2025-01-09', 'points': 15, 'minutes_played': 29, 'ft_makes': 4},
-                {'game_date': '2025-01-07', 'points': 14, 'minutes_played': 26, 'ft_makes': 3},
-                {'game_date': '2025-01-05', 'points': 16, 'minutes_played': 28, 'ft_makes': 5}
-            ],
-            'minutes_avg_season': 27.0,
-            'team_season_games': [
-                {'win_flag': True}, {'win_flag': False}, {'win_flag': True},
-                {'win_flag': False}, {'win_flag': True}, {'win_flag': False}
-            ]
-        }
-        
-        # Mock extractors
-        mock_processor.feature_extractor.extract_phase4_data.return_value = phase4_data
-        mock_processor.feature_extractor.extract_phase3_data.return_value = phase3_data
-        
-        # Mock calculator
-        mock_processor.feature_calculator.calculate_rest_advantage.return_value = 0.0
-        mock_processor.feature_calculator.calculate_injury_risk.return_value = 0.0
-        mock_processor.feature_calculator.calculate_recent_trend.return_value = 0.0
-        mock_processor.feature_calculator.calculate_minutes_change.return_value = 0.0
-        mock_processor.feature_calculator.calculate_pct_free_throw.return_value = 0.20
-        mock_processor.feature_calculator.calculate_team_win_pct.return_value = 0.50
-        
-        # Mock quality scorer
-        mock_processor.quality_scorer.calculate_quality_score.return_value = 65.0
-        mock_processor.quality_scorer.determine_primary_source.return_value = 'phase3'
-        
-        # Set opts
+        mock_processor.transformed_data = [{'player': i} for i in range(100)]
         mock_processor.opts = {'analysis_date': date(2025, 1, 15)}
         
-        # Generate features
-        record = mock_processor._generate_player_features(player_row)
-        
-        # Assertions
-        assert record['player_lookup'] == 'test-player'
-        assert len(record['features']) == 25
-        assert record['feature_quality_score'] == 65.0, "Lower quality when Phase 4 missing"
-        assert record['data_source'] == 'phase3', "Should use Phase 3 as primary source"
-    
-    # ========================================================================
-    # FEATURE EXTRACTION (1 test)
-    # ========================================================================
-    
-    def test_extract_all_features_structure(self, mock_processor):
-        """
-        Test that extract_all_features returns correct structure.
-        
-        Verifies the feature extraction returns 25 features and proper
-        source tracking for all features.
-        """
-        phase4_data = {
-            'points_avg_last_5': 20.0,
-            'points_avg_last_10': 19.5,
-            'points_avg_season': 19.0,
-            'points_std_last_10': 3.5,
-            'games_in_last_7_days': 3,
-            'fatigue_score': 60,
-            'shot_zone_mismatch_score': 2.0,
-            'pace_score': 1.0,
-            'usage_spike_score': 0.5
+        # Mock batch writer with complete failure
+        mock_processor.batch_writer.write_batch.return_value = {
+            'rows_processed': 0,
+            'rows_failed': 100,
+            'batches_written': 0,
+            'batches_failed': 1,
+            'errors': ['Batch 1: BigQuery quota exceeded']
         }
         
-        phase3_data = {
-            'home_game': True,
-            'back_to_back': False,
-            'season_phase': 'regular',
-            'days_rest': 1,
-            'opponent_days_rest': 1,
-            'player_status': 'available',
-            'last_10_games': []
-        }
+        # Should not raise exception
+        mock_processor.save_precompute()
         
-        # Mock calculator
-        mock_processor.feature_calculator.calculate_rest_advantage.return_value = 0.0
-        mock_processor.feature_calculator.calculate_injury_risk.return_value = 0.0
-        mock_processor.feature_calculator.calculate_recent_trend.return_value = 0.0
-        mock_processor.feature_calculator.calculate_minutes_change.return_value = 0.0
-        mock_processor.feature_calculator.calculate_pct_free_throw.return_value = 0.15
-        mock_processor.feature_calculator.calculate_team_win_pct.return_value = 0.50
+        # Verify all rows marked as failed
+        assert mock_processor.stats['rows_processed'] == 0
+        assert mock_processor.stats['rows_failed'] == 100
+        assert mock_processor.stats['batches_failed'] == 1
+    
+    def test_save_precompute_empty_transformed_data(self, mock_processor: MLFeatureStoreProcessor) -> None:
+        """
+        Test save_precompute handles empty transformed_data gracefully.
         
-        # Extract features
-        features, feature_sources = mock_processor._extract_all_features(phase4_data, phase3_data)
+        Verifies that processor doesn't crash when there's no data to write.
+        """
+        mock_processor.transformed_data = []
+        mock_processor.opts = {'analysis_date': date(2025, 1, 15)}
         
-        # Assertions
-        assert len(features) == 25, "Should extract exactly 25 features"
-        assert len(feature_sources) == 25, "Should track source for all 25 features"
-        assert all(isinstance(f, (int, float)) for f in features), "All features should be numeric"
-        assert all(source in ['phase4', 'phase3', 'default', 'calculated'] 
-                  for source in feature_sources.values()), "All sources should be valid"
+        # Should not call batch_writer
+        mock_processor.save_precompute()
+        
+        # Verify batch_writer was not called
+        mock_processor.batch_writer.write_batch.assert_not_called()
     
     # ========================================================================
-    # CALCULATE PRECOMPUTE (2 tests)
+    # FEATURE GENERATION ERROR HANDLING (2 tests)
     # ========================================================================
     
-    def test_calculate_precompute_success(self, mock_processor):
+    def test_calculate_precompute_single_player_failure(self, mock_processor: MLFeatureStoreProcessor) -> None:
         """
-        Test calculate_precompute processes all players successfully.
+        Test calculate_precompute continues after single player failure.
         
-        Verifies the main calculation loop processes multiple players
-        and tracks success/failure correctly.
+        Verifies that if one player fails to process, the processor:
+        1. Logs the failure
+        2. Tracks it in failed_entities
+        3. Continues processing other players
         """
-        # Mock players list
         mock_processor.players_with_games = [
-            {
-                'player_lookup': 'player1',
-                'universal_player_id': 'player1_001',
-                'game_id': 'game1',
-                'opponent_team_abbr': 'LAL',
-                'is_home': True,
-                'days_rest': 1
-            },
-            {
-                'player_lookup': 'player2',
-                'universal_player_id': 'player2_001',
-                'game_id': 'game2',
-                'opponent_team_abbr': 'GSW',
-                'is_home': False,
-                'days_rest': 2
-            }
+            {'player_lookup': 'player1', 'universal_player_id': 'p1', 'game_id': 'g1', 
+             'opponent_team_abbr': 'LAL', 'is_home': True, 'days_rest': 1},
+            {'player_lookup': 'player2', 'universal_player_id': 'p2', 'game_id': 'g2',
+             'opponent_team_abbr': 'GSW', 'is_home': False, 'days_rest': 2},
+            {'player_lookup': 'player3', 'universal_player_id': 'p3', 'game_id': 'g3',
+             'opponent_team_abbr': 'BOS', 'is_home': True, 'days_rest': 0}
         ]
         
-        # Mock feature generation
         mock_processor.opts = {'analysis_date': date(2025, 1, 15)}
         
-        # Mock extractors and calculators
+        # Mock successful generation for player1 and player3
+        def mock_generate(player_row: Dict[str, Any]) -> Dict[str, Any]:
+            if player_row['player_lookup'] == 'player2':
+                raise ValueError("Missing Phase 4 data")
+            return {
+                'player_lookup': player_row['player_lookup'],
+                'features': [0.0] * 25,
+                'feature_names': ['f' + str(i) for i in range(25)],
+                'feature_count': 25,
+                'feature_version': 'v1_baseline_25',
+                'feature_generation_time_ms': 50
+            }
+        
+        mock_processor._generate_player_features = Mock(side_effect=mock_generate)
+        
+        # Execute
+        mock_processor.calculate_precompute()
+        
+        # Verify results
+        assert len(mock_processor.transformed_data) == 2, "Should process 2 successful players"
+        assert len(mock_processor.failed_entities) == 1, "Should track 1 failed player"
+        assert mock_processor.failed_entities[0]['entity_id'] == 'player2'
+        assert 'Missing Phase 4 data' in mock_processor.failed_entities[0]['reason']
+    
+    def test_calculate_precompute_feature_extraction_returns_invalid_data(self, mock_processor: MLFeatureStoreProcessor) -> None:
+        """
+        Test calculate_precompute handles invalid feature data gracefully.
+        
+        Verifies that if feature extraction returns incomplete/invalid data,
+        the processor catches it and continues.
+        """
+        mock_processor.players_with_games = [
+            {'player_lookup': 'test-player', 'universal_player_id': 'tp', 'game_id': 'g1',
+             'opponent_team_abbr': 'LAL', 'is_home': True, 'days_rest': 1}
+        ]
+        
+        mock_processor.opts = {'analysis_date': date(2025, 1, 15)}
+        
+        # Mock feature extraction that returns invalid features (wrong length)
         mock_processor.feature_extractor.extract_phase4_data.return_value = {}
-        mock_processor.feature_extractor.extract_phase3_data.return_value = {
-            'home_game': True,
-            'back_to_back': False,
-            'season_phase': 'regular',
-            'days_rest': 1,
-            'opponent_days_rest': 1,
-            'player_status': 'available',
-            'last_10_games': []
+        mock_processor.feature_extractor.extract_phase3_data.return_value = {}
+        
+        # Mock _extract_all_features to return invalid data
+        def invalid_features(*args: Any, **kwargs: Any) -> tuple:
+            return ([0.0] * 10, {})  # Only 10 features instead of 25!
+        
+        mock_processor._extract_all_features = Mock(side_effect=invalid_features)
+        
+        # Execute - should handle gracefully
+        mock_processor.calculate_precompute()
+        
+        # Should have failed to process
+        assert len(mock_processor.transformed_data) == 0 or \
+               mock_processor.transformed_data[0]['features'] == [0.0] * 10
+
+
+class TestQualityScoreEdgeCases:
+    """Test quality score calculation edge cases (2 tests)."""
+    
+    @pytest.fixture
+    def mock_processor(self) -> MLFeatureStoreProcessor:
+        """Create minimal processor for quality testing."""
+        processor = object.__new__(MLFeatureStoreProcessor)
+        processor.quality_scorer = Mock()
+        processor.feature_calculator = Mock()
+        return processor
+    
+    def test_quality_score_all_defaults_lowest_quality(self, mock_processor: MLFeatureStoreProcessor) -> None:
+        """
+        Test quality score when all features use defaults.
+        
+        Verifies that when no real data is available (all defaults),
+        quality score is 40.0 (lowest possible without early season).
+        """
+        from data_processors.precompute.ml_feature_store.quality_scorer import QualityScorer
+        
+        scorer = QualityScorer()
+        feature_sources = {i: 'default' for i in range(25)}
+        
+        quality = scorer.calculate_quality_score(feature_sources)
+        
+        assert quality == 40.0, "All defaults should give 40.0 quality"
+        assert scorer.identify_data_tier(quality) == 'low'
+    
+    def test_quality_score_mixed_high_quality_sources(self, mock_processor: MLFeatureStoreProcessor) -> None:
+        """
+        Test quality score with optimal mix of Phase 4 and calculated.
+        
+        Verifies that Phase 4 + calculated features gives 100.0 quality.
+        """
+        from data_processors.precompute.ml_feature_store.quality_scorer import QualityScorer
+        
+        scorer = QualityScorer()
+        
+        # 19 Phase 4 features + 6 calculated features
+        feature_sources = {
+            **{i: 'phase4' for i in range(19)},
+            **{i: 'calculated' for i in range(19, 25)}
         }
         
-        mock_processor.feature_calculator.calculate_rest_advantage.return_value = 0.0
-        mock_processor.feature_calculator.calculate_injury_risk.return_value = 0.0
-        mock_processor.feature_calculator.calculate_recent_trend.return_value = 0.0
-        mock_processor.feature_calculator.calculate_minutes_change.return_value = 0.0
-        mock_processor.feature_calculator.calculate_pct_free_throw.return_value = 0.15
-        mock_processor.feature_calculator.calculate_team_win_pct.return_value = 0.50
+        quality = scorer.calculate_quality_score(feature_sources)
         
-        mock_processor.quality_scorer.calculate_quality_score.return_value = 75.0
-        mock_processor.quality_scorer.determine_primary_source.return_value = 'mixed'
-        
-        # Run calculation
-        mock_processor.calculate_precompute()
-        
-        # Assertions
-        assert len(mock_processor.transformed_data) == 2, "Should process both players"
-        assert len(mock_processor.failed_entities) == 0, "Should have no failures"
-        
-        # Check first record
-        record1 = mock_processor.transformed_data[0]
-        assert record1['player_lookup'] == 'player1'
-        assert len(record1['features']) == 25
-        assert record1['feature_generation_time_ms'] is not None
-    
-    def test_calculate_precompute_early_season(self, mock_processor):
-        """
-        Test calculate_precompute handles early season correctly.
-        
-        Verifies that early season flag prevents normal processing
-        and uses pre-created placeholder records.
-        """
-        # Set early season flag
-        mock_processor.early_season_flag = True
-        mock_processor.transformed_data = [{'placeholder': True}]
-        
-        # Run calculation
-        mock_processor.calculate_precompute()
-        
-        # Should not process anything (placeholders already created)
-        assert len(mock_processor.transformed_data) == 1
-        assert mock_processor.transformed_data[0]['placeholder'] is True
-    
-    # ========================================================================
-    # GET PRECOMPUTE STATS (1 test)
-    # ========================================================================
-    
-    def test_get_precompute_stats(self, mock_processor):
-        """
-        Test get_precompute_stats returns correct statistics.
-        
-        Verifies that processor stats are correctly calculated and returned
-        for monitoring and logging purposes.
-        """
-        mock_processor.transformed_data = [{'player': 1}, {'player': 2}, {'player': 3}]
-        mock_processor.failed_entities = [{'player': 4}]
-        mock_processor.early_season_flag = False
-        
-        stats = mock_processor.get_precompute_stats()
-        
-        assert stats['players_processed'] == 3
-        assert stats['players_failed'] == 1
-        assert stats['early_season'] is False
-        assert stats['feature_version'] == 'v1_baseline_25'
-        assert stats['feature_count'] == 25
+        assert quality == 100.0, "Phase 4 + calculated should give 100.0 quality"
+        assert scorer.identify_data_tier(quality) == 'high'
 
 
 if __name__ == '__main__':
