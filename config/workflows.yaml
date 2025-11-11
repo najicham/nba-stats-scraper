@@ -1,0 +1,381 @@
+# config/workflows.yaml
+# Single source of truth for Phase 1 orchestration
+# 
+# Master Controller reads this file hourly and decides which workflows to run
+# based on game schedules, time windows, and execution history.
+
+version: "1.0"
+environment: "production"  # or "dev"
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# SCRAPER DEFINITIONS (Reusable)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+scrapers:
+  # ────────────────────────────────────────────────────────────
+  # Foundation Data
+  # ────────────────────────────────────────────────────────────
+  nbac_schedule_api:
+    name: "nbac_schedule_api"
+    description: "NBA.com schedule API (CRITICAL - foundation for all game-aware workflows)"
+    module: "scrapers.nbacom.nbac_schedule_api"
+    critical: true
+    processor_name: "p2_nbacom_schedule"
+    estimated_duration_seconds: 30
+    
+  nbac_player_list:
+    name: "nbac_player_list"
+    description: "Current NBA rosters"
+    module: "scrapers.nbacom.nbac_player_list"
+    critical: true
+    processor_name: "p2_nbacom_player_list"
+    estimated_duration_seconds: 30
+  
+  br_season_roster:
+    name: "br_season_roster"
+    description: "Basketball Reference season rosters (for gamebook name resolution)"
+    module: "scrapers.basketball_reference.br_season_roster"
+    critical: true
+    processor_name: "p2_br_season_roster"
+    estimated_duration_seconds: 120
+  
+  bdl_standings:
+    name: "bdl_standings"
+    description: "League standings"
+    module: "scrapers.balldontlie.bdl_standings"
+    critical: false
+    processor_name: "p2_bdl_standings"
+    estimated_duration_seconds: 50
+  
+  bdl_active_players:
+    name: "bdl_active_players"
+    description: "Active player validation"
+    module: "scrapers.balldontlie.bdl_active_players"
+    critical: false
+    processor_name: "p2_bdl_active_players"
+    estimated_duration_seconds: 30
+  
+  # ────────────────────────────────────────────────────────────
+  # Betting Lines (Revenue Critical)
+  # ────────────────────────────────────────────────────────────
+  oddsa_events:
+    name: "oddsa_events"
+    description: "Odds API event IDs (MUST complete before props/lines)"
+    module: "scrapers.odds_api.oddsa_events"
+    critical: true
+    dependency_for: ["oddsa_player_props", "oddsa_game_lines"]
+    processor_name: "p2_odds_events"
+    estimated_duration_seconds: 30
+  
+  oddsa_player_props:
+    name: "oddsa_player_props"
+    description: "Player prop betting lines"
+    module: "scrapers.odds_api.oddsa_player_props"
+    critical: true
+    depends_on: "oddsa_events"
+    processor_name: "p2_odds_player_props"
+    estimated_duration_seconds: 120
+  
+  oddsa_game_lines:
+    name: "oddsa_game_lines"
+    description: "Game spread/total lines"
+    module: "scrapers.odds_api.oddsa_game_lines"
+    critical: true
+    depends_on: "oddsa_events"
+    processor_name: "p2_odds_game_lines"
+    estimated_duration_seconds: 120
+  
+  # ────────────────────────────────────────────────────────────
+  # Box Scores
+  # ────────────────────────────────────────────────────────────
+  bdl_box_scores:
+    name: "bdl_box_scores"
+    description: "Ball Don't Lie box scores"
+    module: "scrapers.balldontlie.bdl_box_scores"
+    critical: true
+    processor_name: "p2_bdl_box_scores"
+    estimated_duration_seconds: 45
+  
+  nbac_team_boxscore:
+    name: "nbac_team_boxscore"
+    description: "NBA.com team box scores"
+    module: "scrapers.nbacom.nbac_team_boxscore"
+    critical: true
+    processor_name: "p2_nbacom_team_boxscore"
+    estimated_duration_seconds: 30
+  
+  nbac_player_boxscore:
+    name: "nbac_player_boxscore"
+    description: "NBA.com player box scores"
+    module: "scrapers.nbacom.nbac_player_boxscore"
+    critical: true
+    processor_name: "p2_nbacom_player_boxscore"
+    estimated_duration_seconds: 30
+  
+  # ────────────────────────────────────────────────────────────
+  # Enhanced Data
+  # ────────────────────────────────────────────────────────────
+  bigdataball_pbp:
+    name: "bigdataball_pbp"
+    description: "Big Ball Data play-by-play"
+    module: "scrapers.bigdataball.bigdataball_pbp"
+    critical: false
+    processor_name: "p2_bigdataball_pbp"
+    estimated_duration_seconds: 90
+  
+  nbac_play_by_play:
+    name: "nbac_play_by_play"
+    description: "NBA.com official play-by-play"
+    module: "scrapers.nbacom.nbac_play_by_play"
+    critical: false
+    processor_name: "p2_nbacom_play_by_play"
+    estimated_duration_seconds: 60
+  
+  nbac_gamebook_pdf:
+    name: "nbac_gamebook_pdf"
+    description: "Official gamebook PDF (DNP intelligence)"
+    module: "scrapers.nbacom.nbac_gamebook_pdf"
+    critical: false
+    processor_name: "p2_nbacom_gamebook_pdf"
+    estimated_duration_seconds: 45
+  
+  # ────────────────────────────────────────────────────────────
+  # Discovery Mode Scrapers
+  # ────────────────────────────────────────────────────────────
+  nbac_injury_report:
+    name: "nbac_injury_report"
+    description: "NBA.com injury report (sporadic release)"
+    module: "scrapers.nbacom.nbac_injury_report"
+    critical: false
+    processor_name: "p2_nbacom_injury_report"
+    estimated_duration_seconds: 25
+    treat_no_data_as_success: true
+  
+  nbac_referee_assignments:
+    name: "nbac_referee_assignments"
+    description: "Official referee assignments"
+    module: "scrapers.nbacom.nbac_referee_assignments"
+    critical: false
+    processor_name: "p2_nbacom_referee_assignments"
+    estimated_duration_seconds: 25
+    treat_no_data_as_success: true
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# WORKFLOWS
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+workflows:
+  # ────────────────────────────────────────────────────────────
+  # Morning Operations - Foundation Data
+  # ────────────────────────────────────────────────────────────
+  morning_operations:
+    enabled: true
+    priority: "HIGH"
+    decision_type: "self_aware"
+    description: "Daily foundation data collection - schedule, rosters, standings"
+    
+    schedule:
+      ideal_window:
+        start_hour: 6  # 6 AM ET
+        end_hour: 10   # 10 AM ET
+      run_once_daily: true
+    
+    execution_plan:
+      type: "parallel"  # All scrapers can run simultaneously
+      scrapers:
+        - nbac_schedule_api     # CRITICAL FIRST (but can be parallel)
+        - nbac_player_list
+        - br_season_roster
+        - bdl_standings
+        - bdl_active_players
+    
+    alerts:
+      failure: "CRITICAL"
+      timing_drift: "WARNING"  # If runs outside ideal window
+    
+    dependencies:
+      required_for: ["betting_lines", "post_game_collection"]
+  
+  # ────────────────────────────────────────────────────────────
+  # Betting Lines - Revenue Critical
+  # ────────────────────────────────────────────────────────────
+  betting_lines:
+    enabled: true
+    priority: "CRITICAL"
+    decision_type: "game_aware"
+    description: "Collect betting lines multiple times before games start"
+    
+    schedule:
+      game_aware: true
+      window_before_game_hours: 6  # Start 6 hours before first game
+      business_hours:
+        start: 8   # 8 AM ET
+        end: 20    # 8 PM ET
+      frequency_hours: 2  # Every 2 hours during window
+    
+    execution_plan:
+      # Step 1: Sequential (events must complete first)
+      step_1:
+        type: "sequential"
+        scrapers:
+          - oddsa_events
+      
+      # Step 2: Parallel (both depend on events)
+      step_2:
+        type: "parallel"
+        depends_on: "oddsa_events"
+        scrapers:
+          - oddsa_player_props
+          - oddsa_game_lines
+    
+    alerts:
+      failure: "CRITICAL"
+      quota_warning_pct: 80  # Alert if >80% of Odds API quota used
+    
+    dependencies:
+      requires: ["morning_operations"]  # Need schedule first
+
+  # ────────────────────────────────────────────────────────────
+  # Post-Game Collection - Multiple Windows
+  # ────────────────────────────────────────────────────────────
+  post_game_window_1:
+    enabled: true
+    priority: "HIGH"
+    decision_type: "game_aware_yesterday"
+    description: "First box score collection attempt - 10 PM ET (some games may still be in progress)"
+    
+    schedule:
+      game_aware: true
+      target_date: "yesterday"
+      fixed_time: "22:00"  # 10 PM ET
+      tolerance_minutes: 30  # Execute if within ±30 minutes
+    
+    execution_plan:
+      type: "parallel"
+      scrapers:
+        - bdl_box_scores
+        - nbac_team_boxscore
+        - nbac_player_boxscore
+    
+    alerts:
+      missing_games: "WARNING"  # Some games may still be in progress
+  
+  post_game_window_2:
+    enabled: true
+    priority: "HIGH"
+    decision_type: "game_aware_yesterday"
+    description: "Second box score collection - 1 AM ET (most games complete)"
+    
+    schedule:
+      game_aware: true
+      target_date: "yesterday"
+      fixed_time: "01:00"  # 1 AM ET
+      tolerance_minutes: 30
+    
+    execution_plan:
+      type: "parallel"
+      scrapers:
+        - bdl_box_scores
+        - nbac_team_boxscore
+        - nbac_player_boxscore
+    
+    alerts:
+      missing_games: "CRITICAL"  # Should have all games by now
+  
+  post_game_window_3:
+    enabled: true
+    priority: "HIGH"
+    decision_type: "game_aware_yesterday"
+    description: "Final box score collection + enhanced data - 4 AM ET (all games must be complete)"
+    
+    schedule:
+      game_aware: true
+      target_date: "yesterday"
+      fixed_time: "04:00"  # 4 AM ET
+      tolerance_minutes: 30
+    
+    execution_plan:
+      type: "parallel"
+      scrapers:
+        - bdl_box_scores           # Final retry
+        - bigdataball_pbp          # Enhanced data
+        - nbac_play_by_play
+        - nbac_gamebook_pdf
+    
+    alerts:
+      missing_games: "CRITICAL"  # All games MUST be collected
+
+  # ────────────────────────────────────────────────────────────
+  # Discovery Mode - Injury Report
+  # ────────────────────────────────────────────────────────────
+  injury_discovery:
+    enabled: true
+    priority: "MEDIUM"
+    decision_type: "discovery"
+    description: "Poll for injury report throughout the day until found (typically published 11 AM - 3 PM)"
+    
+    schedule:
+      discovery_mode: true
+      max_attempts_per_day: 12
+      retry_interval_hours: 2
+      requires_game_day: true
+      discovery_duration_weeks: 4  # Learn optimal timing over 4 weeks
+    
+    execution_plan:
+      type: "single"
+      scraper: nbac_injury_report
+    
+    alerts:
+      max_attempts_reached: "WARNING"
+      discovery_complete: "INFO"
+
+  # ────────────────────────────────────────────────────────────
+  # Discovery Mode - Referee Assignments
+  # ────────────────────────────────────────────────────────────
+  referee_discovery:
+    enabled: true
+    priority: "MEDIUM"
+    decision_type: "discovery"
+    description: "Poll for referee assignments (typically published morning of game day)"
+    
+    schedule:
+      discovery_mode: true
+      max_attempts_per_day: 6
+      retry_interval_hours: 1
+      requires_game_day: true
+      discovery_duration_weeks: 2  # Learn optimal timing over 2 weeks
+    
+    execution_plan:
+      type: "single"
+      scraper: nbac_referee_assignments
+    
+    alerts:
+      max_attempts_reached: "WARNING"
+      discovery_complete: "INFO"
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# GLOBAL SETTINGS
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+settings:
+  timezone: "America/New_York"
+  controller_interval_minutes: 60  # Evaluate all workflows hourly
+  schedule_refresh_interval_hours: 6
+  
+  daily_schedule_lock:
+    enabled: true
+    generation_time: "05:00"  # 5 AM ET daily
+  
+  cleanup_processor:
+    enabled: true
+    interval_minutes: 15
+    lookback_hours: 1
+    min_file_age_minutes: 30
+  
+  monitoring:
+    enable_bigquery_logging: true
+    enable_cloud_logging: true
+    log_retention_days: 90
+  
+  notifications:
+    email_enabled: true
+    slack_enabled: true
+    critical_channels: ["email", "slack"]
+    warning_channels: ["email"]

@@ -12,6 +12,7 @@ A base class 'ScraperBase' that handles:
  - Providing hooks for child classes to override
  - Enhanced Sentry integration for monitoring
  - Multi-channel notifications (Email + Slack) for critical errors
+ - Phase 1 orchestration logging to BigQuery
 """
 
 import sentry_sdk
@@ -141,7 +142,8 @@ class ScraperBase:
       5) Validate downloaded data
       6) Optionally extract opts from data & transform data
       7) Export results to GCS/File/etc.
-      8) Log final stats & run ID.
+      8) Log final stats & run ID
+      9) Log execution to Phase 1 orchestration (BigQuery)
 
     Child classes typically override:
       - set_url(), set_headers()
@@ -219,13 +221,13 @@ class ScraperBase:
         self.run_id = str(uuid.uuid4())[:8]
         self.stats["run_id"] = self.run_id
 
-##########################################################################
+    ##########################################################################
     # Main Entrypoint for the Lifecycle (Enhanced with Sentry + Notifications)
     ##########################################################################
     def run(self, opts=None):
         """
         Enhanced run method with comprehensive Sentry tracking, error handling,
-        and multi-channel notifications.
+        multi-channel notifications, and Phase 1 orchestration logging.
         """
         if opts is None:
             opts = {}
@@ -254,6 +256,9 @@ class ScraperBase:
                 self._reinit_except_run_id()
 
                 self.mark_time("total")
+                # Track start time for orchestration logging
+                self.stats["start_time"] = datetime.now(timezone.utc)
+                
                 self.step_info("start", "Scraper run starting", extra={"opts": opts})
 
                 self.set_opts(opts)
@@ -295,6 +300,9 @@ class ScraperBase:
                 transaction.set_tag("scraper.status", "success")
                 transaction.set_data("scraper.row_count", self.get_scraper_stats().get("rowCount", 0))
                 transaction.set_data("scraper.runtime_seconds", total_seconds)
+                
+                # ✅ NEW: Log execution to Phase 1 orchestration
+                self._log_execution_to_bigquery()
                 
                 if self.decode_download_data:
                     return self.get_return_value()
@@ -341,6 +349,12 @@ class ScraperBase:
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
 
+                # ✅ NEW: Log failed execution to Phase 1 orchestration
+                try:
+                    self._log_failed_execution_to_bigquery(e)
+                except Exception as log_ex:
+                    logger.warning(f"Failed to log failed execution: {log_ex}")
+
                 # If we want to save partial data or raw data on error
                 if self.save_data_on_error:
                     self._debug_save_data_on_error(e)
@@ -370,6 +384,241 @@ class ScraperBase:
         self.__init__()
         self.run_id = saved_run_id
         self.stats["run_id"] = saved_run_id
+
+    ##########################################################################
+    # Phase 1 Orchestration Logging (NEW)
+    ##########################################################################
+    
+    def _get_scraper_name(self) -> str:
+        """
+        Extract clean scraper name from class name for orchestration logging.
+        
+        Converts class names like:
+          - GetNBAComInjuryReport → nbac_injury_report
+          - GetOddsAPIEvents → oddsa_events
+          - GetBallDontLieBoxscores → bdl_boxscores
+        
+        Returns:
+            str: Snake-case scraper name with source prefix
+        """
+        import re
+        
+        class_name = self.__class__.__name__
+        
+        # Remove 'Get' prefix if present
+        if class_name.startswith('Get'):
+            class_name = class_name[3:]
+        
+        # Convert CamelCase to snake_case
+        name = re.sub('(.)([A-Z][a-z]+)', r'\1_\2', class_name)
+        name = re.sub('([a-z0-9])([A-Z])', r'\1_\2', name).lower()
+        
+        # Apply standard source prefixes
+        name = name.replace('nba_com_', 'nbac_')
+        name = name.replace('odds_api_', 'oddsa_')
+        name = name.replace('ball_dont_lie_', 'bdl_')
+        name = name.replace('big_data_ball_', 'bdb_')
+        name = name.replace('espn_', 'espn_')
+        
+        return name
+    
+    def _determine_execution_source(self) -> tuple[str, str, str]:
+        """
+        Determine execution source, environment, and triggered_by for logging.
+        
+        Source values:
+          - CONTROLLER: Called by master workflow controller
+          - MANUAL: Direct API call (testing)
+          - LOCAL: Running on dev laptop
+          - CLOUD_RUN: Direct endpoint call to Cloud Run service
+          - SCHEDULER: Triggered by Cloud Scheduler job
+          - RECOVERY: Republished by cleanup processor (self-healing)
+        
+        Returns:
+            tuple: (source, environment, triggered_by)
+        """
+        import getpass
+        
+        # Check explicit source in opts (workflow controller sets this)
+        if 'source' in self.opts:
+            source = self.opts['source']
+        # Check if running in Cloud Run
+        elif os.getenv('K_SERVICE'):
+            if self.opts.get('workflow') and self.opts['workflow'] != 'MANUAL':
+                source = 'CONTROLLER'  # Called by master controller
+            else:
+                source = 'CLOUD_RUN'  # Direct endpoint call
+        # Check if running locally
+        elif is_local():
+            source = 'LOCAL'
+        else:
+            source = 'MANUAL'
+        
+        # Determine environment (reuse existing ENV detection)
+        environment = 'local' if is_local() else self.opts.get('group', 'prod')
+        
+        # Determine triggered_by based on source
+        if source == 'CONTROLLER':
+            triggered_by = 'master-controller'
+        elif source == 'SCHEDULER':
+            triggered_by = 'cloud-scheduler'
+        elif source == 'RECOVERY':
+            triggered_by = 'cleanup-processor'
+        elif source == 'LOCAL':
+            try:
+                triggered_by = f"{getpass.getuser()}@local"
+            except:
+                triggered_by = 'unknown@local'
+        else:
+            triggered_by = os.getenv('K_SERVICE', 'manual')
+        
+        return source, environment, triggered_by
+    
+    def _determine_execution_status(self) -> tuple[str, int]:
+        """
+        Determine execution status using 3-status system for orchestration.
+        
+        Status values:
+          - 'success': Got data (record_count > 0)
+          - 'no_data': Tried but empty (record_count = 0)
+          - 'failed': Error occurred (handled in _log_failed_execution_to_bigquery)
+        
+        This enables discovery mode: controller stops trying after 'success',
+        keeps trying after 'no_data'.
+        
+        Returns:
+            tuple: (status, record_count)
+        """
+        # Count records in self.data
+        if isinstance(self.data, dict):
+            # Standard pattern: {'records': [...], 'metadata': {...}}
+            record_count = len(self.data.get('records', []))
+            # Check if scraper marked this as intentionally empty
+            is_empty = self.data.get('metadata', {}).get('is_empty_report', False)
+        elif isinstance(self.data, list):
+            # Simple list of records
+            record_count = len(self.data)
+            is_empty = False
+        else:
+            # Empty or unexpected format
+            record_count = 0
+            is_empty = False
+        
+        # Determine status based on record count
+        if record_count > 0:
+            status = 'success'
+        elif is_empty or record_count == 0:
+            status = 'no_data'
+        else:
+            # Fallback (shouldn't reach here)
+            status = 'success'
+        
+        return status, record_count
+    
+    def _log_execution_to_bigquery(self):
+        """
+        Log successful execution to nba_orchestration.scraper_execution_log.
+        
+        Uses 3-status system (success/no_data) based on record_count.
+        Never fails the scraper - logs errors but continues.
+        """
+        try:
+            from shared.utils.bigquery_utils import insert_bigquery_rows
+            
+            source, environment, triggered_by = self._determine_execution_source()
+            status, record_count = self._determine_execution_status()
+            
+            now = datetime.now(timezone.utc)
+            
+            record = {
+                'execution_id': self.run_id,
+                'scraper_name': self._get_scraper_name(),
+                'workflow': self.opts.get('workflow', 'MANUAL'),
+                'status': status,
+                'triggered_at': self.stats.get('start_time', now),
+                'completed_at': now,
+                'duration_seconds': self.stats.get('total_runtime', 0),
+                'source': source,
+                'environment': environment,
+                'triggered_by': triggered_by,
+                'gcs_path': self.opts.get('gcs_output_path'),
+                'data_summary': {
+                    'record_count': record_count,
+                    'scraper_stats': self.get_scraper_stats(),
+                    'is_empty_report': status == 'no_data'
+                },
+                'error_type': None,
+                'error_message': None,
+                'retry_count': self.download_retry_count,
+                'recovery': self.opts.get('recovery', False),
+                'run_id': self.run_id,
+                'opts': {k: v for k, v in self.opts.items() 
+                        if k not in ['password', 'api_key', 'token', 'proxyUrl']},
+                'created_at': now
+            }
+            
+            insert_bigquery_rows('nba_orchestration', 'scraper_execution_log', [record])
+            logger.info(f"✅ Orchestration logged: {status} ({record_count} records) from {source}")
+            
+        except Exception as e:
+            # Don't fail the scraper if logging fails
+            logger.error(f"Failed to log execution to orchestration: {e}")
+            # Still capture in Sentry for alerting
+            try:
+                sentry_sdk.capture_exception(e)
+            except:
+                pass
+    
+    def _log_failed_execution_to_bigquery(self, error: Exception):
+        """
+        Log failed execution to nba_orchestration.scraper_execution_log.
+        
+        Status is always 'failed' with error details captured.
+        Never fails the scraper - logs errors but continues.
+        
+        Args:
+            error: The exception that caused the failure
+        """
+        try:
+            from shared.utils.bigquery_utils import insert_bigquery_rows
+            
+            source, environment, triggered_by = self._determine_execution_source()
+            now = datetime.now(timezone.utc)
+            
+            record = {
+                'execution_id': self.run_id,
+                'scraper_name': self._get_scraper_name(),
+                'workflow': self.opts.get('workflow', 'MANUAL'),
+                'status': 'failed',
+                'triggered_at': self.stats.get('start_time', now),
+                'completed_at': None,
+                'duration_seconds': None,
+                'source': source,
+                'environment': environment,
+                'triggered_by': triggered_by,
+                'gcs_path': None,
+                'data_summary': None,
+                'error_type': error.__class__.__name__,
+                'error_message': str(error)[:1000],  # Truncate very long errors
+                'retry_count': self.download_retry_count,
+                'recovery': self.opts.get('recovery', False),
+                'run_id': self.run_id,
+                'opts': {k: v for k, v in self.opts.items() 
+                        if k not in ['password', 'api_key', 'token', 'proxyUrl']},
+                'created_at': now
+            }
+            
+            insert_bigquery_rows('nba_orchestration', 'scraper_execution_log', [record])
+            logger.info(f"✅ Orchestration logged failure from {source}: {error.__class__.__name__}")
+            
+        except Exception as e:
+            # Don't fail the scraper if logging fails
+            logger.error(f"Failed to log failed execution to orchestration: {e}")
+            # Still capture in Sentry
+            try:
+                sentry_sdk.capture_exception(e)
+            except:
+                pass
 
     ##########################################################################
     # Enhanced Error Handling
@@ -1212,7 +1461,11 @@ class ScraperBase:
                     self.step_info("export", f"Exporting with {exporter_type}",
                                 extra={"export_mode": str(export_mode), "config": config})
                     exporter = exporter_cls()
-                    exporter.run(data_to_export, config, self.opts)
+                    exporter_result = exporter.run(data_to_export, config, self.opts)
+                    
+                    # ✅ NEW: Capture GCS output path if exporter returned it
+                    if isinstance(exporter_result, dict) and 'gcs_path' in exporter_result:
+                        self.opts['gcs_output_path'] = exporter_result['gcs_path']
 
                     # Mark that at least one exporter was triggered
                     ran_exporter = True

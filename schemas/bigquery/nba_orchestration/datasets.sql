@@ -1,0 +1,83 @@
+-- ============================================================================
+-- NBA Props Platform - Phase 1 Orchestration: nba_orchestration Dataset
+-- ============================================================================
+-- File: schemas/bigquery/nba_orchestration/datasets.sql
+-- Purpose: Define the nba_orchestration dataset for Phase 1 orchestration infrastructure
+-- Created: November 10, 2025
+-- Version: 1.0
+-- Status: Production-Ready
+--
+-- Dataset Overview:
+--   Comprehensive orchestration infrastructure for Phase 1 scraper workflows,
+--   including execution tracking, discovery mode support, expected vs actual
+--   monitoring, and self-healing capabilities.
+--
+-- Tables in this dataset:
+--   1. scraper_execution_log     - Every scraper run (3-status tracking)
+--   2. workflow_decisions         - Controller evaluation decisions  
+--   3. daily_expected_schedule    - Expected runs for monitoring
+--   4. cleanup_operations         - Self-healing Pub/Sub recovery
+--
+-- Key Features:
+--   - 3-status tracking (success/no_data/failed) for discovery mode
+--   - Source tracking (CONTROLLER/MANUAL/LOCAL/CLOUD_RUN/SCHEDULER/RECOVERY)
+--   - Partitioned by time for efficient queries
+--   - Clustered for optimal performance
+--
+-- Used By:
+--   - Master Workflow Controller (decision logging)
+--   - Scraper Base Class (execution logging)
+--   - Cleanup Processor (self-healing)
+--   - Daily Schedule Locker (monitoring)
+--
+-- Monitoring Integration:
+--   - Grafana dashboards (expected vs actual)
+--   - Alerting on critical failures
+--   - Discovery mode progress tracking
+--   - Cost analysis by source/environment
+-- ============================================================================
+
+-- Create the nba_orchestration dataset
+CREATE SCHEMA IF NOT EXISTS `nba-props-platform.nba_orchestration`
+OPTIONS (
+  location = 'US',
+  description = 'Phase 1 scraper orchestration infrastructure. Tracks workflow decisions, scraper executions, expected schedules, and cleanup operations. Supports 3-status discovery mode (success/no_data/failed) and comprehensive source tracking. Enables automated workflow management and self-healing.'
+);
+
+-- ============================================================================
+-- Dataset Access Patterns
+-- ============================================================================
+-- 
+-- Common Queries:
+--   1. Check if scraper found data today (discovery mode)
+--   2. Count attempts for discovery workflows
+--   3. Expected vs actual workflow execution comparison
+--   4. Success rate analysis by scraper
+--   5. Source breakdown (where executions originate)
+--   6. Cleanup operation monitoring
+--
+-- Performance Optimization:
+--   - Always filter on partition keys (triggered_at, decision_time, date, cleanup_time)
+--   - Use clustering fields in WHERE clauses
+--   - Leverage views for common aggregations
+--
+-- ============================================================================
+
+-- ============================================================================
+-- Deployment Notes
+-- ============================================================================
+-- 
+-- Prerequisites:
+--   - GCP project: nba-props-platform
+--   - Region: US
+--   - IAM permissions for dataset creation
+--
+-- Deployment Command:
+--   bq mk --dataset --location=US \
+--     --description="Phase 1 scraper orchestration infrastructure" \
+--     nba-props-platform:nba_orchestration
+--
+-- Verification:
+--   bq ls nba-props-platform:nba_orchestration
+--
+-- ============================================================================
