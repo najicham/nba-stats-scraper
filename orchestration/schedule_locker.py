@@ -96,7 +96,7 @@ class DailyScheduleLocker:
             logger.warning("⚠️  No expected runs generated")
         
         summary = {
-            'date': date_str,
+            'date': date_str.isoformat(),
             'games_scheduled': len(games_today),
             'workflows_evaluated': len(enabled_workflows),
             'expected_runs': len(schedule_records),
@@ -131,13 +131,13 @@ class DailyScheduleLocker:
             start_hour = schedule['ideal_window']['start_hour']
             
             expected.append({
-                'date': date.date(),
+                'date': date.date().isoformat(),
                 'locked_at': datetime.utcnow(),
                 'workflow_name': workflow_name,
                 'expected_run_time': datetime.combine(
                     date.date(),
                     time(start_hour + 1, 0)  # Target middle of window
-                ).replace(tzinfo=self.ET),
+                ).replace(tzinfo=self.ET).isoformat(),
                 'reason': 'Daily foundation data',
                 'scrapers': self._extract_scrapers(config['execution_plan']),
                 'games_today': len(games_today),
@@ -157,7 +157,8 @@ class DailyScheduleLocker:
             
             # Start window hours before first game
             window_hours = schedule.get('window_before_game_hours', 6)
-            start_time = first_game.commence_time - timedelta(hours=window_hours)
+            commence_dt = datetime.fromisoformat(first_game.commence_time.replace('Z', '+00:00'))
+            start_time = commence_dt - timedelta(hours=window_hours)
             
             # Generate runs every frequency_hours
             frequency_hours = schedule.get('frequency_hours', 2)
@@ -165,14 +166,14 @@ class DailyScheduleLocker:
             business_end = schedule.get('business_hours', {}).get('end', 20)
             
             current_time = start_time
-            while current_time < first_game.commence_time:
+            while current_time < commence_dt:  # We already parsed commence_dt earlier
                 # Only business hours
                 if business_start <= current_time.hour < business_end:
                     expected.append({
-                        'date': date.date(),
+                        'date': date.date().isoformat(),
                         'locked_at': datetime.utcnow(),
                         'workflow_name': workflow_name,
-                        'expected_run_time': current_time,
+                        'expected_run_time': current_time.isoformat(),
                         'reason': f'Pre-game betting lines ({len(games_today)} games)',
                         'scrapers': self._extract_scrapers(config['execution_plan']),
                         'games_today': len(games_today),
@@ -199,13 +200,13 @@ class DailyScheduleLocker:
                 hour, minute = map(int, fixed_time_str.split(':'))
                 
                 expected.append({
-                    'date': date.date(),
+                    'date': date.date().isoformat(),
                     'locked_at': datetime.utcnow(),
                     'workflow_name': workflow_name,
                     'expected_run_time': datetime.combine(
                         date.date(),
                         time(hour, minute)
-                    ).replace(tzinfo=self.ET),
+                    ).replace(tzinfo=self.ET).isoformat(),
                     'reason': f'Post-game collection ({len(games_yesterday)} games yesterday)',
                     'scrapers': self._extract_scrapers(config['execution_plan']),
                     'games_today': len(games_yesterday),  # Games from yesterday
@@ -230,13 +231,13 @@ class DailyScheduleLocker:
                     break
                 
                 expected.append({
-                    'date': date.date(),
+                    'date': date.date().isoformat(),
                     'locked_at': datetime.utcnow(),
                     'workflow_name': workflow_name,
                     'expected_run_time': datetime.combine(
                         date.date(),
                         time(hour, 0)
-                    ).replace(tzinfo=self.ET),
+                    ).replace(tzinfo=self.ET).isoformat(),
                     'reason': f'Discovery attempt {attempt + 1}/{max_attempts}',
                     'scrapers': [config['execution_plan']['scraper']],
                     'games_today': len(games_today) if games_today else 0,
@@ -270,7 +271,7 @@ class DailyScheduleLocker:
     def _write_schedule(self, records: List[Dict]) -> None:
         """Write schedule records to BigQuery."""
         try:
-            insert_bigquery_rows('nba_orchestration', 'daily_expected_schedule', records)
+            insert_bigquery_rows('nba_orchestration.daily_expected_schedule', records)
         except Exception as e:
             logger.error(f"Failed to write schedule to BigQuery: {e}")
             raise

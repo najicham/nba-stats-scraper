@@ -18,6 +18,7 @@ from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, asdict
 from enum import Enum
 import pytz
+import json
 
 from orchestration.config_loader import WorkflowConfig
 from shared.utils.schedule import NBAScheduleService, GameType
@@ -348,7 +349,8 @@ class MasterWorkflowController:
         
         # Check 2: Within window before first game?
         first_game = min(games_today, key=lambda g: g.commence_time)
-        hours_until_game = (first_game.commence_time - current_time).total_seconds() / 3600
+        commence_dt = datetime.fromisoformat(first_game.commence_time.replace("Z", "+00:00"))
+        hours_until_game = (commence_dt - current_time).total_seconds() / 3600
         window_hours = schedule.get('window_before_game_hours', 6)
         
         if hours_until_game > window_hours:
@@ -359,10 +361,10 @@ class MasterWorkflowController:
                 priority=config['priority'],
                 context={
                     'games_today': len(games_today),
-                    'first_game_time': first_game.commence_time.isoformat(),
+                    'first_game_time': first_game.commence_time,
                     'hours_until_game': round(hours_until_game, 1)
                 },
-                next_check_time=first_game.commence_time - timedelta(hours=window_hours)
+                next_check_time=commence_dt - timedelta(hours=window_hours)
             )
         
         # Check 3: Business hours?
@@ -419,7 +421,7 @@ class MasterWorkflowController:
             scrapers=scrapers,
             context={
                 'games_today': len(games_today),
-                'first_game_time': first_game.commence_time.isoformat(),
+                'first_game_time': first_game.commence_time,
                 'hours_until_game': round(hours_until_game, 1)
             }
         )
@@ -692,25 +694,25 @@ class MasterWorkflowController:
         for decision in decisions:
             record = {
                 'decision_id': str(uuid.uuid4()),
-                'decision_time': datetime.utcnow(),
+                'decision_time': datetime.utcnow().isoformat(),
                 'workflow_name': decision.workflow_name,
                 'action': decision.action.value,
                 'reason': decision.reason,
-                'context': decision.context,
-                'scrapers_triggered': decision.scrapers,
-                'target_games': decision.target_games,
-                'next_check_time': decision.next_check_time,
+                'context': json.dumps(decision.context) if decision.context else None,  # Must be JSON string for streaming insert
+                'scrapers_triggered': decision.scrapers if decision.scrapers else [],
+                'target_games': decision.target_games if decision.target_games else [],
+                'next_check_time': decision.next_check_time.isoformat() if decision.next_check_time else None,
                 'priority': decision.priority,
                 'alert_level': decision.alert_level.value,
                 'controller_version': self.VERSION,
                 'environment': self.config.get_settings().get('environment', 'unknown'),
-                'insert_time': datetime.utcnow()
+                'triggered_by': 'master_controller'
             }
             
             records.append(record)
         
         try:
-            insert_bigquery_rows('nba_orchestration', 'workflow_decisions', records)
+            insert_bigquery_rows('nba_orchestration.workflow_decisions', records)
             logger.info(f"✅ Logged {len(records)} workflow decisions to BigQuery")
         except Exception as e:
             logger.error(f"Failed to log decisions to BigQuery: {e}")

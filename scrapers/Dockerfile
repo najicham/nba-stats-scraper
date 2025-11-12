@@ -1,5 +1,5 @@
-# scrapers/Dockerfile - Clean Production Version
-# NBA Analytics Scrapers Service
+# scrapers/Dockerfile - Orchestration-Enabled Version
+# NBA Analytics Scrapers + Orchestration Service
 FROM python:3.11-slim
 
 # Set working directory
@@ -23,8 +23,14 @@ RUN pip install --no-cache-dir -r scrapers/requirements.txt
 # Copy shared utilities (needed for imports)
 COPY shared/ ./shared/
 
-# Copy scrapers module (preserves clean import structure)
+# Copy scrapers module
 COPY scrapers/ ./scrapers/
+
+# Copy orchestration module (CRITICAL for orchestration endpoints)
+COPY orchestration/ ./orchestration/
+
+# Copy config files (workflows.yaml, etc.)
+COPY config/ ./config/
 
 # Set Python path for proper imports
 ENV PYTHONPATH=/app

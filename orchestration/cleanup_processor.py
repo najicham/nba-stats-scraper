@@ -310,7 +310,7 @@ class CleanupProcessor:
         }
         
         try:
-            insert_bigquery_rows('nba_orchestration', 'cleanup_operations', [record])
+            insert_bigquery_rows('nba_orchestration.cleanup_operations', [record])
             logger.info(f"✅ Logged cleanup operation to BigQuery")
         except Exception as e:
             logger.error(f"Failed to log cleanup operation: {e}")

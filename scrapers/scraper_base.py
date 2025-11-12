@@ -530,34 +530,41 @@ class ScraperBase:
             
             now = datetime.now(timezone.utc)
             
+            # Get start_time, ensure it's a datetime, then convert to ISO
+            start_time = self.stats.get('start_time', now)
+            if isinstance(start_time, datetime):
+                triggered_at_iso = start_time.isoformat()
+            else:
+                triggered_at_iso = now.isoformat()
+            
             record = {
                 'execution_id': self.run_id,
                 'scraper_name': self._get_scraper_name(),
                 'workflow': self.opts.get('workflow', 'MANUAL'),
                 'status': status,
-                'triggered_at': self.stats.get('start_time', now),
-                'completed_at': now,
+                'triggered_at': triggered_at_iso,  # ✅ FIXED: ISO string
+                'completed_at': now.isoformat(),   # ✅ FIXED: ISO string
                 'duration_seconds': self.stats.get('total_runtime', 0),
                 'source': source,
                 'environment': environment,
                 'triggered_by': triggered_by,
                 'gcs_path': self.opts.get('gcs_output_path'),
-                'data_summary': {
+                'data_summary': json.dumps({
                     'record_count': record_count,
                     'scraper_stats': self.get_scraper_stats(),
                     'is_empty_report': status == 'no_data'
-                },
+                }),
                 'error_type': None,
                 'error_message': None,
                 'retry_count': self.download_retry_count,
                 'recovery': self.opts.get('recovery', False),
                 'run_id': self.run_id,
-                'opts': {k: v for k, v in self.opts.items() 
-                        if k not in ['password', 'api_key', 'token', 'proxyUrl']},
-                'created_at': now
+                'opts': json.dumps({k: v for k, v in self.opts.items() 
+                        if k not in ['password', 'api_key', 'token', 'proxyUrl']}),
+                'created_at': now.isoformat()      # ✅ FIXED: ISO string
             }
             
-            insert_bigquery_rows('nba_orchestration', 'scraper_execution_log', [record])
+            insert_bigquery_rows('nba_orchestration.scraper_execution_log', [record])
             logger.info(f"✅ Orchestration logged: {status} ({record_count} records) from {source}")
             
         except Exception as e:
@@ -568,7 +575,7 @@ class ScraperBase:
                 sentry_sdk.capture_exception(e)
             except:
                 pass
-    
+
     def _log_failed_execution_to_bigquery(self, error: Exception):
         """
         Log failed execution to nba_orchestration.scraper_execution_log.
@@ -585,12 +592,19 @@ class ScraperBase:
             source, environment, triggered_by = self._determine_execution_source()
             now = datetime.now(timezone.utc)
             
+            # Get start_time, ensure it's a datetime, then convert to ISO
+            start_time = self.stats.get('start_time', now)
+            if isinstance(start_time, datetime):
+                triggered_at_iso = start_time.isoformat()
+            else:
+                triggered_at_iso = now.isoformat()
+            
             record = {
                 'execution_id': self.run_id,
                 'scraper_name': self._get_scraper_name(),
                 'workflow': self.opts.get('workflow', 'MANUAL'),
                 'status': 'failed',
-                'triggered_at': self.stats.get('start_time', now),
+                'triggered_at': triggered_at_iso,  # ✅ FIXED: ISO string
                 'completed_at': None,
                 'duration_seconds': None,
                 'source': source,
@@ -605,10 +619,10 @@ class ScraperBase:
                 'run_id': self.run_id,
                 'opts': {k: v for k, v in self.opts.items() 
                         if k not in ['password', 'api_key', 'token', 'proxyUrl']},
-                'created_at': now
+                'created_at': now.isoformat()      # ✅ FIXED: ISO string
             }
             
-            insert_bigquery_rows('nba_orchestration', 'scraper_execution_log', [record])
+            insert_bigquery_rows('nba_orchestration.scraper_execution_log', [record])
             logger.info(f"✅ Orchestration logged failure from {source}: {error.__class__.__name__}")
             
         except Exception as e:
