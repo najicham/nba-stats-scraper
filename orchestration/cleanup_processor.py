@@ -300,7 +300,7 @@ class CleanupProcessor:
         
         record = {
             'cleanup_id': cleanup_id,
-            'cleanup_time': datetime.utcnow(),
+            'cleanup_time': datetime.utcnow().isoformat(),
             'files_checked': files_checked,
             'missing_files_found': len(missing_files),
             'republished_count': republished_count,

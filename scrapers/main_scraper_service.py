@@ -2,7 +2,7 @@
 main_scraper_service.py
 
 Single Cloud Run service that routes to all scrapers AND orchestration endpoints.
-Version 2.2.3 - Added support for multi-step execution plans (step_1, step_2, etc.)
+Version 2.3.0 - Added Phase 1 Workflow Executor support (HTTP-based scraper calls)
 
 Path: scrapers/main_scraper_service.py
 """
@@ -127,8 +127,8 @@ def create_app():
             health_status = {
                 "status": "healthy",
                 "service": "nba-scrapers",
-                "version": "2.2.3",
-                "deployment": "orchestration-enabled",
+                "version": "2.3.0",
+                "deployment": "orchestration-phase1-enabled",
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "components": {
                     "scrapers": {
@@ -259,9 +259,10 @@ def create_app():
     def evaluate_workflows():
         """
         Master controller endpoint - evaluates all workflows and logs decisions.
-        Called hourly by Cloud Scheduler.
+        Called hourly by Cloud Scheduler at :00 (e.g., 6:00, 7:00, 8:00).
         
         Returns decisions but does NOT execute workflows.
+        Execution happens via /execute-workflows (called 5 min later).
         """
         try:
             app.logger.info("🎯 Master Controller: Evaluating all workflows")
@@ -303,15 +304,60 @@ def create_app():
                 "error_type": type(e).__name__
             }), 500
     
+    @app.route('/execute-workflows', methods=['POST'])
+    def execute_workflows():
+        """
+        🆕 PHASE 1: Execute pending workflows (reads RUN decisions from BigQuery).
+        
+        Called by Cloud Scheduler at :05 (5 minutes after /evaluate).
+        
+        This is the NEW Phase 1 endpoint that:
+        1. Reads RUN decisions from workflow_decisions table
+        2. Resolves parameters for each scraper
+        3. Calls scrapers via HTTP (POST /scrape)
+        4. Tracks execution in workflow_executions table
+        
+        Optional JSON body:
+        {
+            "max_age_minutes": 60  # Only execute decisions from last N minutes
+        }
+        
+        Returns:
+            Dict with execution summary
+        """
+        try:
+            app.logger.info("🚀 Workflow Executor: Processing pending workflows")
+            
+            executor = get_executor()
+            result = executor.execute_pending_workflows()
+            
+            return jsonify({
+                "status": "success",
+                "execution_result": result
+            }), 200
+            
+        except Exception as e:
+            app.logger.error(f"Workflow execution failed: {e}", exc_info=True)
+            return jsonify({
+                "status": "error",
+                "message": str(e),
+                "error_type": type(e).__name__
+            }), 500
+    
     @app.route('/execute-workflow', methods=['POST'])
     def execute_workflow():
         """
-        Execute a specific workflow by name.
+        Execute a specific workflow by name (manual trigger).
+        
+        ⚠️  UPDATED FOR PHASE 1: Now uses HTTP-based executor instead of direct Python calls.
         
         Expected JSON body:
         {
             "workflow_name": "morning_operations"
         }
+        
+        Returns:
+            Dict with execution result
         """
         try:
             data = request.get_json() or {}
@@ -343,15 +389,19 @@ def create_app():
                     "execution_plan": execution_plan
                 }), 400
             
-            app.logger.info(f"🚀 Executing workflow: {workflow_name} with {len(scrapers)} scrapers")
+            app.logger.info(f"🎯 Manual workflow execution: {workflow_name} with {len(scrapers)} scrapers")
             
+            # Use new HTTP-based executor
             executor = get_executor()
-            result = executor.execute(workflow_name, scrapers)
+            result = executor.execute_workflow(
+                workflow_name=workflow_name,
+                scrapers=scrapers
+            )
             
             return jsonify({
                 "status": "success",
                 "workflow": workflow_name,
-                "execution": result
+                "execution": result.to_dict()
             }), 200
             
         except Exception as e:
@@ -426,8 +476,9 @@ def create_app():
     @app.route('/trigger-workflow', methods=['POST'])
     def trigger_workflow():
         """
-        Manual workflow trigger for testing.
-        Bypasses all conditions and executes immediately.
+        Manual workflow trigger for testing (bypasses all conditions).
+        
+        ⚠️  DEPRECATED: Use /execute-workflow instead (same functionality).
         
         Expected JSON body:
         {
@@ -467,13 +518,16 @@ def create_app():
             app.logger.info(f"🎯 Manual trigger: {workflow_name} with {len(scrapers)} scrapers")
             
             executor = get_executor()
-            result = executor.execute(workflow_name, scrapers)
+            result = executor.execute_workflow(
+                workflow_name=workflow_name,
+                scrapers=scrapers
+            )
             
             return jsonify({
                 "status": "success",
                 "message": f"Manually triggered {workflow_name}",
                 "workflow": workflow_name,
-                "execution": result
+                "execution": result.to_dict()
             }), 200
             
         except Exception as e:
@@ -490,7 +544,7 @@ def create_app():
 if __name__ == "__main__":
     import argparse
     
-    parser = argparse.ArgumentParser(description="NBA Scrapers Service with Orchestration")
+    parser = argparse.ArgumentParser(description="NBA Scrapers Service with Phase 1 Orchestration")
     parser.add_argument("--port", type=int, default=int(os.getenv("PORT", 8080)))
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--host", default="0.0.0.0")

@@ -96,7 +96,7 @@ class DailyScheduleLocker:
             logger.warning("⚠️  No expected runs generated")
         
         summary = {
-            'date': date_str.isoformat(),
+            'date': date_str,
             'games_scheduled': len(games_today),
             'workflows_evaluated': len(enabled_workflows),
             'expected_runs': len(schedule_records),
@@ -132,7 +132,7 @@ class DailyScheduleLocker:
             
             expected.append({
                 'date': date.date().isoformat(),
-                'locked_at': datetime.utcnow(),
+                'locked_at': datetime.utcnow().isoformat(),
                 'workflow_name': workflow_name,
                 'expected_run_time': datetime.combine(
                     date.date(),
@@ -171,7 +171,7 @@ class DailyScheduleLocker:
                 if business_start <= current_time.hour < business_end:
                     expected.append({
                         'date': date.date().isoformat(),
-                        'locked_at': datetime.utcnow(),
+                        'locked_at': datetime.utcnow().isoformat(),
                         'workflow_name': workflow_name,
                         'expected_run_time': current_time.isoformat(),
                         'reason': f'Pre-game betting lines ({len(games_today)} games)',
@@ -201,7 +201,7 @@ class DailyScheduleLocker:
                 
                 expected.append({
                     'date': date.date().isoformat(),
-                    'locked_at': datetime.utcnow(),
+                    'locked_at': datetime.utcnow().isoformat(),
                     'workflow_name': workflow_name,
                     'expected_run_time': datetime.combine(
                         date.date(),
@@ -232,7 +232,7 @@ class DailyScheduleLocker:
                 
                 expected.append({
                     'date': date.date().isoformat(),
-                    'locked_at': datetime.utcnow(),
+                    'locked_at': datetime.utcnow().isoformat(),
                     'workflow_name': workflow_name,
                     'expected_run_time': datetime.combine(
                         date.date(),

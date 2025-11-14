@@ -22,9 +22,9 @@ echo "🚀 Deploying NBA Raw Processors Service with Email Alerting"
 echo "==========================================================="
 echo "⏰ Start time: $DEPLOY_START_DISPLAY"
 
-# Check if data_processors/raw/Dockerfile exists
-if [ ! -f "data_processors/raw/Dockerfile" ]; then
-    echo "❌ data_processors/raw/Dockerfile not found!"
+# Check if docker/raw-processor.Dockerfile exists
+if [ ! -f "docker/raw-processor.Dockerfile" ]; then
+    echo "❌ docker/raw-processor.Dockerfile not found!"
     exit 1
 fi
 
@@ -47,8 +47,8 @@ fi
 
 # Phase 1: Setup
 SETUP_START=$(date +%s)
-echo "📋 Phase 1: Copying data_processors/raw/Dockerfile to root..."
-cp data_processors/raw/Dockerfile ./Dockerfile
+echo "📋 Phase 1: Copying docker/raw-processor.Dockerfile to root..."
+cp docker/raw-processor.Dockerfile ./Dockerfile
 SETUP_END=$(date +%s)
 SETUP_DURATION=$((SETUP_END - SETUP_START))
 echo "⏱️  Setup completed in ${SETUP_DURATION}s"

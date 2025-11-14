@@ -39,3 +39,5 @@ google-auth-oauthlib>=1.2.2
 
 fuzzywuzzy>=0.18.0
 python-Levenshtein>=0.21.0
+pyyaml>=6.0
+google-cloud-pubsub>=2.13.0

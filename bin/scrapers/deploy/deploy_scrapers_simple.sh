@@ -1,30 +1,16 @@
 #!/bin/bash
-# deploy_scrapers_simple.sh - TEMPORARY deployment workaround
+# deploy_scrapers_simple.sh - Deploy NBA Scrapers with Phase 1 Orchestration support
 #
-# ⚠️  THIS IS A TEMPORARY WORKAROUND ⚠️
-# 
-# WHY THIS EXISTS:
-# Cloud Build isn't properly using the `-f scrapers/Dockerfile` flag from cloudbuild.yaml,
-# causing the "ModuleNotFoundError: No module named 'dotenv'" issue. This script bypasses
-# the Cloud Build registry caching problem by using source deployment.
+# Version: 2.0 - Added SERVICE_URL for Phase 1 Orchestration
 #
 # WHAT THIS DOES:
-# 1. Copies scrapers/Dockerfile to root temporarily
-# 2. Deploys using `gcloud run deploy --source=.` 
-# 3. Cleans up temporary Dockerfile
+# 1. Deploys nba-scrapers Cloud Run service
+# 2. Configures email alerts (if credentials available)
+# 3. Sets up API key secrets
+# 4. Tests health endpoint
+# 5. Configures SERVICE_URL for Phase 1 orchestration (HTTP scraper calls)
 #
-# FUTURE PLAN:
-# Fix the root cause in cloudbuild.yaml so normal CI/CD works:
-# 1. Debug why `gcloud builds submit --config cloudbuild.yaml` isn't working
-# 2. Ensure Cloud Build properly uses `-f scrapers/Dockerfile` 
-# 3. Test: `gcloud builds submit && gcloud run deploy --image gcr.io/PROJECT/SERVICE`
-# 4. Remove this script once proper Cloud Build deployment works
-#
-# SCHEDULED SCRAPING:
-# This script is ONLY for deploying code changes. For daily scraper execution,
-# use Cloud Scheduler → Cloud Run (NOT Cloud Build). See setup_nba_scheduler.sh
-#
-# USAGE: ./deploy_scrapers_simple.sh
+# USAGE: ./bin/scrapers/deploy/deploy_scrapers_simple.sh
 
 SERVICE_NAME="nba-scrapers"
 REGION="us-west2"
@@ -73,9 +59,9 @@ else
     EMAIL_STATUS="DISABLED"
 fi
 
-# Check if scrapers/Dockerfile exists
-if [ ! -f "scrapers/Dockerfile" ]; then
-    echo "❌ scrapers/Dockerfile not found!"
+# Check if docker/scrapers.Dockerfile exists
+if [ ! -f "docker/scrapers.Dockerfile" ]; then
+    echo "❌ docker/scrapers.Dockerfile not found!"
     exit 1
 fi
 
@@ -87,8 +73,8 @@ fi
 
 # Phase 1: Setup
 SETUP_START=$(date +%s)
-echo "📋 Phase 1: Copying scrapers/Dockerfile to root..."
-cp scrapers/Dockerfile ./Dockerfile
+echo "📋 Phase 1: Copying docker/scrapers.Dockerfile to root..."
+cp docker/scrapers.Dockerfile ./Dockerfile
 SETUP_END=$(date +%s)
 SETUP_DURATION=$((SETUP_END - SETUP_START))
 echo "⏱️  Setup completed in ${SETUP_DURATION}s"
@@ -104,6 +90,7 @@ gcloud run deploy $SERVICE_NAME \
     --port=8080 \
     --memory=1Gi \
     --cpu=1 \
+    --clear-base-image \
     --set-secrets="ODDS_API_KEY=ODDS_API_KEY:latest,BDL_API_KEY=BDL_API_KEY:latest" \
     --set-env-vars="$ENV_VARS"
 
@@ -179,8 +166,25 @@ if [ $DEPLOY_STATUS -eq 0 ]; then
         echo "📊 Available scrapers: $HEALTH_RESULT"
         echo "⏱️  Health test completed in ${TEST_DURATION}s"
         
-        # Update total with test time
-        FINAL_TOTAL=$((TEST_END - DEPLOY_START_TIME))
+        # Phase 5: Configure SERVICE_URL for Phase 1 Orchestration
+        ORCHESTRATION_START=$(date +%s)
+        echo ""
+        echo "📋 Phase 5: Configuring Phase 1 Orchestration..."
+        echo "   Setting SERVICE_URL environment variable..."
+        
+        gcloud run services update $SERVICE_NAME \
+            --region=$REGION \
+            --set-env-vars="SERVICE_URL=$SERVICE_URL" \
+            --quiet
+        
+        ORCHESTRATION_END=$(date +%s)
+        ORCHESTRATION_DURATION=$((ORCHESTRATION_END - ORCHESTRATION_START))
+        echo "⏱️  Orchestration configuration completed in ${ORCHESTRATION_DURATION}s"
+        echo "✅ Phase 1 orchestration ready!"
+        echo "   Workflow executor can now call scrapers via HTTP"
+        
+        # Update total with test + orchestration time
+        FINAL_TOTAL=$((ORCHESTRATION_END - DEPLOY_START_TIME))
         if [ $FINAL_TOTAL -lt 60 ]; then
             FINAL_DURATION_DISPLAY="${FINAL_TOTAL}s"
         elif [ $FINAL_TOTAL -lt 3600 ]; then
@@ -194,7 +198,29 @@ if [ $DEPLOY_STATUS -eq 0 ]; then
             FINAL_DURATION_DISPLAY="${HOURS}h ${MINUTES}m ${SECONDS}s"
         fi
         
-        echo "🎯 TOTAL TIME (including test): $FINAL_DURATION_DISPLAY"
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "🎯 TOTAL TIME (all phases): $FINAL_DURATION_DISPLAY"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+        echo "📋 Final Phase Breakdown:"
+        echo "  1. Setup:         ${SETUP_DURATION}s"
+        echo "  2. Deployment:    ${DEPLOY_PHASE_DURATION}s"
+        echo "  3. Cleanup:       ${CLEANUP_DURATION}s"
+        echo "  4. Health Test:   ${TEST_DURATION}s"
+        echo "  5. Orchestration: ${ORCHESTRATION_DURATION}s"
+        echo "  ────────────────────────────"
+        echo "     TOTAL:         ${FINAL_TOTAL}s"
+        echo ""
+        echo "🎉 Service ready for production!"
+        echo "   • Scrapers: ✅ Deployed"
+        echo "   • Health: ✅ Verified"  
+        echo "   • Orchestration: ✅ Configured"
+        echo ""
+        echo "Next steps:"
+        echo "  • Test: ./bin/orchestration/quick_health_check.sh"
+        echo "  • Monitor: gcloud run services logs read $SERVICE_NAME --region=$REGION"
+        echo ""
     fi
 else
     echo ""

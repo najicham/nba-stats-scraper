@@ -50,8 +50,8 @@ else
 fi
 
 # Check if analytics processors Dockerfile exists
-if [ ! -f "data_processors/analytics/Dockerfile" ]; then
-    echo "❌ data_processors/analytics/Dockerfile not found!"
+if [ ! -f "docker/analytics-processor.Dockerfile" ]; then
+    echo "❌ docker/analytics-processor.Dockerfile not found!"
     exit 1
 fi
 
@@ -63,8 +63,8 @@ fi
 
 # Phase 1: Setup (matching your timing pattern)
 SETUP_START=$(date +%s)
-echo "📋 Phase 1: Copying data_processors/analytics/Dockerfile to root..."
-cp data_processors/analytics/Dockerfile ./Dockerfile
+echo "📋 Phase 1: Copying docker/analytics-processor.Dockerfile to root..."
+cp docker/analytics-processor.Dockerfile ./Dockerfile
 SETUP_END=$(date +%s)
 SETUP_DURATION=$((SETUP_END - SETUP_START))
 echo "⏱️  Setup completed in ${SETUP_DURATION}s"

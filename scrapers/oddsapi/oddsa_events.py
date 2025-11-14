@@ -366,10 +366,24 @@ class GetOddsApiEvents(ScraperBase, ScraperFlaskMixin):
     # Stats line                                                         #
     # ------------------------------------------------------------------ #
     def get_scraper_stats(self) -> dict:
+        """
+        Return stats including event_ids for workflow orchestration.
+
+        Event IDs are needed by downstream scrapers (oddsa_player_props, oddsa_game_lines)
+        so we include them in the stats that get returned via HTTP response.
+        """
+        # Extract event IDs from events list (with safe handling)
+        event_ids = []
+        if hasattr(self, 'data') and isinstance(self.data, dict):
+            events = self.data.get("events", [])
+            if isinstance(events, list):
+                event_ids = [event.get("id") for event in events if isinstance(event, dict) and event.get("id")]
+
         return {
-            "rowCount": self.data.get("rowCount", 0),
+            "rowCount": self.data.get("rowCount", 0) if hasattr(self, 'data') and isinstance(self.data, dict) else 0,
             "sport": self.opts.get("sport"),
             "game_date": self.opts.get("game_date"),
+            "event_ids": event_ids,  # Include for workflow orchestration
         }
 
 

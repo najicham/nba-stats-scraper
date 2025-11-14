@@ -1,7 +1,15 @@
+# Force rebuild - $(date)
 """
 Main processor service for Cloud Run
 Handles Pub/Sub messages when scrapers complete
 Enhanced with notifications for orchestration issues
+
+File Path: data_processors/raw/main_processor_service.py
+
+UPDATED: 2025-11-13
+- Added support for both GCS Object Finalize and Scraper Completion message formats
+- Added normalize_message_format() function to convert between formats
+- Enhanced logging for scraper-triggered processing
 """
 
 import os
@@ -17,6 +25,13 @@ from shared.utils.notification_system import (
     notify_error,
     notify_warning,
     notify_info
+)
+
+# Import enhanced error notifications
+from shared.utils.enhanced_error_notifications import (
+    extract_error_context_from_exception,
+    send_enhanced_error_notification,
+    ErrorContext
 )
 
 # Import processors
@@ -94,15 +109,134 @@ def health_check():
     }), 200
 
 
+def normalize_message_format(message: dict) -> dict:
+    """
+    Normalize Pub/Sub message format to be compatible with processor routing.
+    
+    Handles two message formats:
+    1. GCS Object Finalize (legacy): {"bucket": "...", "name": "..."}
+    2. Scraper Completion (new): {"scraper_name": "...", "gcs_path": "gs://...", ...}
+    
+    Also handles special cases:
+    - Failed scraper events (no gcs_path)
+    - No data events (no gcs_path)
+    
+    Args:
+        message: Raw Pub/Sub message data
+        
+    Returns:
+        Normalized message with 'bucket' and 'name' fields, or
+        a skip_processing dict for events without files
+        
+    Raises:
+        ValueError: If message format is unrecognized or missing required fields
+    """
+    import logging
+    
+    logger = logging.getLogger(__name__)
+    
+    # Case 1: GCS Object Finalize format (legacy)
+    if 'bucket' in message and 'name' in message:
+        logger.info(f"Processing GCS Object Finalize message: gs://{message['bucket']}/{message['name']}")
+        return message
+    
+    # Case 2: Scraper Completion format (new)
+    if 'scraper_name' in message:
+        scraper_name = message.get('scraper_name')
+        logger.info(f"Processing Scraper Completion message from: {scraper_name}")
+        
+        # Get gcs_path (may be None for failed/no-data events)
+        gcs_path = message.get('gcs_path')
+        status = message.get('status', 'unknown')
+        
+        # ⭐ NEW: Handle failed or no-data events (no file to process)
+        if gcs_path is None or gcs_path == '':
+            logger.warning(
+                f"Scraper {scraper_name} published event with status={status} "
+                f"but no gcs_path. This is expected for failed or no-data events. Skipping file processing."
+            )
+            # Return a special marker so the caller can handle it appropriately
+            return {
+                'skip_processing': True,
+                'reason': f'No file to process (status={status})',
+                'scraper_name': scraper_name,
+                'execution_id': message.get('execution_id'),
+                'status': status,
+                '_original_message': message
+            }
+        
+        # ⭐ NEW: Added null check before accessing
+        if not gcs_path.startswith('gs://'):
+            raise ValueError(
+                f"Invalid gcs_path format: {gcs_path}. "
+                f"Expected gs://bucket/path format from scraper {scraper_name}"
+            )
+        
+        # Parse GCS path into bucket and name
+        # Format: gs://bucket-name/path/to/file.json
+        path_without_protocol = gcs_path[5:]  # Remove 'gs://'
+        parts = path_without_protocol.split('/', 1)
+        
+        if len(parts) != 2:
+            raise ValueError(
+                f"Invalid gcs_path structure: {gcs_path}. "
+                f"Expected gs://bucket/path format from scraper {scraper_name}"
+            )
+        
+        bucket = parts[0]
+        name = parts[1]
+        
+        # Create normalized message preserving scraper metadata
+        normalized = {
+            'bucket': bucket,
+            'name': name,
+            '_original_format': 'scraper_completion',
+            '_scraper_name': scraper_name,
+            '_execution_id': message.get('execution_id'),
+            '_status': status,
+            '_record_count': message.get('record_count'),
+            '_duration_seconds': message.get('duration_seconds'),
+            '_workflow': message.get('workflow'),
+            '_timestamp': message.get('timestamp')
+        }
+        
+        logger.info(
+            f"Normalized scraper message: bucket={bucket}, name={name}, "
+            f"scraper={scraper_name}, status={status}"
+        )
+        
+        return normalized
+    
+    # Case 3: Unrecognized format
+    available_fields = list(message.keys())
+    raise ValueError(
+        f"Unrecognized message format. "
+        f"Expected 'name' (GCS) or 'gcs_path' (Scraper) field. "
+        f"Got fields: {available_fields}"
+    )
+
+
 @app.route('/process', methods=['POST'])
 def process_pubsub():
     """
     Handle Pub/Sub messages for file processing.
-    Expected message format:
+    
+    Supports two message formats:
+    
+    1. GCS Object Finalize (original):
     {
         "bucket": "nba-scraped-data",
         "name": "basketball_reference/season_rosters/2023-24/LAL.json",
         "timeCreated": "2024-01-15T10:30:00Z"
+    }
+    
+    2. Scraper Completion (new):
+    {
+        "scraper_name": "bdl_boxscores",
+        "gcs_path": "gs://nba-scraped-data/ball-dont-lie/boxscores/2024-01-15/timestamp.json",
+        "execution_id": "abc-123",
+        "status": "success",
+        "record_count": 150
     }
     """
     envelope = request.get_json()
@@ -164,11 +298,55 @@ def process_pubsub():
                 logger.warning(f"Failed to send notification: {notify_ex}")
             return jsonify({"error": "No data in Pub/Sub message"}), 400
         
-        # Extract file info
-        bucket = message.get('bucket', 'nba-scraped-data')
-        file_path = message['name']
+        # ✅ NEW: Normalize message format (handles both GCS and Scraper formats)
+        try:
+            normalized_message = normalize_message_format(message)
+
+            if normalized_message.get('skip_processing'):
+                reason = normalized_message.get('reason')
+                scraper = normalized_message.get('scraper_name')
+                status = normalized_message.get('status')
+                
+                logger.info(
+                    f"Skipping processing for {scraper} (status={status}): {reason}"
+                )
+                
+                # Return 204 No Content - successful but no processing needed
+                # This tells Pub/Sub to ACK the message without retrying
+                return '', 204
+        except ValueError as e:
+            logger.error(f"Invalid message format: {e}", exc_info=True)
+            try:
+                notify_error(
+                    title="Processor Service: Invalid Message Format",
+                    message=f"Message format not recognized: {str(e)}",
+                    details={
+                        'service': 'processor-orchestration',
+                        'error': str(e),
+                        'message_fields': list(message.keys()),
+                        'message_sample': str(message)[:500]
+                    },
+                    processor_name="Processor Orchestration"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            return jsonify({"error": f"Invalid message format: {str(e)}"}), 400
         
-        logger.info(f"Processing file: gs://{bucket}/{file_path}")
+        # Extract file info from normalized message
+        bucket = normalized_message.get('bucket', 'nba-scraped-data')
+        file_path = normalized_message['name']
+        
+        # ✅ NEW: Enhanced logging with scraper context
+        if normalized_message.get('_original_format') == 'scraper_completion':
+            logger.info(
+                f"📥 Processing scraper output: gs://{bucket}/{file_path} "
+                f"(scraper={normalized_message.get('_scraper_name')}, "
+                f"status={normalized_message.get('_status')}, "
+                f"records={normalized_message.get('_record_count')}, "
+                f"execution_id={normalized_message.get('_execution_id')})"
+            )
+        else:
+            logger.info(f"📥 Processing file: gs://{bucket}/{file_path}")
         
         # Determine processor based on file path
         processor_class = None
@@ -230,7 +408,7 @@ def process_pubsub():
         
         if success:
             stats = processor.get_processor_stats()
-            logger.info(f"Successfully processed {file_path}: {stats}")
+            logger.info(f"✅ Successfully processed {file_path}: {stats}")
             return jsonify({
                 "status": "success",
                 "file": file_path,
@@ -239,7 +417,7 @@ def process_pubsub():
         else:
             # Note: ProcessorBase already sent detailed error notification
             # This is just for orchestration logging
-            logger.error(f"Failed to process {file_path}")
+            logger.error(f"❌ Failed to process {file_path}")
             return jsonify({
                 "status": "error",
                 "file": file_path
@@ -249,56 +427,73 @@ def process_pubsub():
         # Missing required field in message
         logger.error(f"Missing required field in message: {e}", exc_info=True)
         try:
-            notify_error(
-                title="Processor Service: Message Format Error",
-                message=f"Missing required field in message: {str(e)}",
-                details={
-                    'service': 'processor-orchestration',
-                    'error': str(e),
-                    'message_data': str(message) if 'message' in locals() else 'unavailable'
-                },
-                processor_name="Processor Orchestration"
+            # Extract scraper/workflow info from message if available
+            message_data = message if 'message' in locals() else {}
+            scraper_name = message_data.get('scraper_name') if isinstance(message_data, dict) else None
+            workflow = message_data.get('workflow') if isinstance(message_data, dict) else None
+            execution_id = message_data.get('execution_id') if isinstance(message_data, dict) else None
+
+            # Create error context
+            error_context = extract_error_context_from_exception(
+                exc=e,
+                scraper_name=scraper_name,
+                processor_name="Processor Orchestration",
+                message_data=message_data,
+                workflow=workflow,
+                execution_id=execution_id
             )
+
+            # Send enhanced notification
+            send_enhanced_error_notification(error_context)
+
         except Exception as notify_ex:
-            logger.warning(f"Failed to send notification: {notify_ex}")
+            logger.warning(f"Failed to send enhanced notification: {notify_ex}")
         return jsonify({"error": f"Missing required field: {str(e)}"}), 400
         
     except json.JSONDecodeError as e:
         # Invalid JSON in message data
         logger.error(f"Invalid JSON in message data: {e}", exc_info=True)
         try:
-            notify_error(
-                title="Processor Service: Invalid JSON",
-                message=f"Could not decode JSON from Pub/Sub message: {str(e)}",
-                details={
-                    'service': 'processor-orchestration',
-                    'error': str(e),
-                    'raw_data': data[:200] if 'data' in locals() else 'unavailable'
-                },
-                processor_name="Processor Orchestration"
+            # Create error context
+            error_context = extract_error_context_from_exception(
+                exc=e,
+                processor_name="Processor Orchestration",
+                message_data={'raw_data': data[:200] if 'data' in locals() else 'unavailable'}
             )
+
+            # Send enhanced notification
+            send_enhanced_error_notification(error_context)
+
         except Exception as notify_ex:
-            logger.warning(f"Failed to send notification: {notify_ex}")
+            logger.warning(f"Failed to send enhanced notification: {notify_ex}")
         return jsonify({"error": f"Invalid JSON: {str(e)}"}), 400
         
     except Exception as e:
         # Unexpected orchestration error
         logger.error(f"Error processing message: {e}", exc_info=True)
         try:
-            notify_error(
-                title="Processor Service: Orchestration Error",
-                message=f"Unexpected error in processor orchestration: {str(e)}",
-                details={
-                    'service': 'processor-orchestration',
-                    'error_type': type(e).__name__,
-                    'error': str(e),
-                    'file_path': file_path if 'file_path' in locals() else 'unknown',
-                    'processor': processor_class.__name__ if 'processor_class' in locals() else 'not_determined'
-                },
-                processor_name="Processor Orchestration"
+            # Extract context from local variables
+            message_data = message if 'message' in locals() else {}
+            scraper_name = message_data.get('scraper_name') if isinstance(message_data, dict) else None
+            workflow = message_data.get('workflow') if isinstance(message_data, dict) else None
+            execution_id = message_data.get('execution_id') if isinstance(message_data, dict) else None
+            processor_name = processor_class.__name__ if 'processor_class' in locals() else "Processor Orchestration"
+
+            # Create error context
+            error_context = extract_error_context_from_exception(
+                exc=e,
+                scraper_name=scraper_name,
+                processor_name=processor_name,
+                message_data=message_data,
+                workflow=workflow,
+                execution_id=execution_id
             )
+
+            # Send enhanced notification
+            send_enhanced_error_notification(error_context)
+
         except Exception as notify_ex:
-            logger.warning(f"Failed to send notification: {notify_ex}")
+            logger.warning(f"Failed to send enhanced notification: {notify_ex}")
         return jsonify({"error": str(e)}), 500
 
 

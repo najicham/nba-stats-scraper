@@ -1,0 +1,144 @@
+# config/scraper_parameters.yaml
+# 
+# Scraper Parameter Configuration
+# 
+# Defines parameter requirements for each scraper.
+# 
+# Strategies:
+#   1. Simple scrapers: Use YAML mappings (90% of cases)
+#   2. Complex scrapers: Use Python resolvers in parameter_resolver.py
+# 
+# Parameter Sources:
+#   - context.execution_date  → Current date (YYYY-MM-DD)
+#   - context.season          → Current NBA season in NBA format (e.g., "2024-25")
+#   - context.season_year     → 4-digit ending year of season (e.g., "2025")
+#   - context.games_today     → List of game objects for today
+#   - "literal_value"         → Static string value
+
+version: "1.0"
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# SIMPLE SCRAPERS
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 
+# Format:
+#   scraper_name:
+#     param_name: context.field_name  # or "literal_value"
+
+simple_scrapers:
+  # ────────────────────────────────────────────────────────────
+  # Foundation Data
+  # ────────────────────────────────────────────────────────────
+  
+  # nbac_schedule_api needs 4-digit year, not NBA format (gets "2025" not "2025-26")
+  # This will be converted in parameter resolver
+  nbac_schedule_api:
+    season: context.season_year
+
+  nbac_player_list: {}  # No parameters needed - auto-fetches current season
+
+  # br_season_roster moved to complex_scrapers (needs teamAbbr + year per team)
+
+  bdl_standings:
+    season: context.season_year  # Ball Don't Lie API uses 4-digit year
+
+  bdl_active_players: {}  # No parameters needed - auto-fetches active players
+  
+  # ────────────────────────────────────────────────────────────
+  # Betting Lines (Revenue Critical)
+  # ────────────────────────────────────────────────────────────
+  
+  oddsa_events:
+    sport: "basketball_nba"
+    game_date: context.execution_date
+  
+  oddsa_player_props:
+    sport: "basketball_nba"
+    game_date: context.execution_date
+  
+  oddsa_game_lines:
+    sport: "basketball_nba"
+    game_date: context.execution_date
+  
+  # ────────────────────────────────────────────────────────────
+  # Box Scores
+  # ────────────────────────────────────────────────────────────
+  
+  bdl_box_scores:
+    date: context.execution_date  # Only needs date, not season
+  
+  # Note: nbac_team_boxscore, nbac_player_boxscore are complex (game-specific)
+  
+  # ────────────────────────────────────────────────────────────
+  # Discovery Mode Scrapers
+  # ────────────────────────────────────────────────────────────
+  
+  nbac_injury_report:
+    # FIXME: Scraper needs gamedate + hour + period, but no clear default
+    # For now, skip in workflows until we add time-based resolver
+    gamedate: context.execution_date
+
+  nbac_referee_assignments:
+    date: context.execution_date  # Required parameter
+  
+  # ────────────────────────────────────────────────────────────
+  # Enhanced Data
+  # ────────────────────────────────────────────────────────────
+  
+  # nbac_gamebook_pdf moved to complex_scrapers (needs game_code generation)
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# COMPLEX SCRAPERS
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 
+# These scrapers need custom Python resolution logic.
+# Resolvers implemented in parameter_resolver.py
+
+complex_scrapers:
+  - nbac_play_by_play        # Needs game_id + gamedate (iterate over games)
+  - nbac_player_boxscore     # Needs game_id + gamedate (iterate over games)
+  - nbac_team_boxscore       # Needs game_id + game_date (iterate over games)
+  - bigdataball_pbp          # Needs game_id (iterate over games)
+  - br_season_roster         # Needs teamAbbr + year (iterate over teams)
+  - nbac_gamebook_pdf        # Needs game_code (YYYYMMDD/AWYHOM format)
+  - oddsa_player_props       # Needs event_id from oddsa_events
+  - oddsa_game_lines         # Needs event_id from oddsa_events
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# NOTES
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 
+# Adding New Scrapers:
+# 
+# 1. If scraper needs simple params (date, season):
+#    → Add to simple_scrapers with context mappings
+# 
+# 2. If scraper needs complex logic (game lists, iterations):
+#    → Add to complex_scrapers list
+#    → Implement resolver in parameter_resolver.py
+# 
+# 3. If scraper needs no parameters:
+#    → Add to simple_scrapers with empty dict: {}
+# 
+# Parameter Resolution Flow:
+# 
+# 1. ParameterResolver.resolve_parameters() called
+# 2. Check if scraper in complex_resolvers → use Python function
+# 3. Otherwise use YAML config → map context fields
+# 4. If not in config → use default (date + season)
+# 
+# Context Fields Available:
+#
+# - workflow_name: Name of workflow being executed
+# - execution_date: Current date (YYYY-MM-DD)
+# - season: Current NBA season in NBA format (e.g., "2024-25")
+# - season_year: 4-digit ending year of season (e.g., "2025")
+# - games_today: List of game objects for today
+# - games_count: Number of games today
+# - target_games: Optional list of game IDs (for post-game workflows)
+# 
+# Date Format Notes:
+# 
+# - execution_date: YYYY-MM-DD (e.g., "2025-01-15")
+# - Some scrapers need YYYYMMDD format → handled in resolver
+# - Season format: YYYY-YY (e.g., "2024-25")
