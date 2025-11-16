@@ -157,7 +157,76 @@ workflows:
 
 ## 🛠️ Scripts in This Directory
 
-### deploy.sh
+### Monitoring & Health Checks
+
+#### quick_health_check.sh ⭐ START HERE
+**Purpose:** Fast health check (30 seconds) - daily status at a glance
+
+```bash
+./bin/orchestration/quick_health_check.sh
+```
+
+**Output:** Single-row summary with:
+- Scheduled workflows, decisions made (RUN/SKIP/ABORT)
+- Execution success rate, scraper success rate
+- Health status: ✅ HEALTHY, ⚠️ DEGRADED, ❌ UNHEALTHY, or ℹ️ NO GAMES TODAY
+
+**When to run:** Daily after games to verify orchestration performed correctly
+
+---
+
+#### check_system_status.sh
+**Purpose:** Detailed system health check with multiple components
+
+```bash
+./bin/orchestration/check_system_status.sh
+```
+
+**Checks:**
+1. Processor deployment status
+2. Pub/Sub queue backlog
+3. Recent scraper activity (last hour)
+4. Scraper failures with sample errors
+5. Pub/Sub publishing events
+6. Processor activity
+7. Processor errors
+8. Dead letter queue status
+
+**When to run:** When investigating issues or getting detailed system health
+
+---
+
+#### verify_phase1_complete.sh
+**Purpose:** Comprehensive Phase 1 orchestration verification
+
+```bash
+./bin/orchestration/verify_phase1_complete.sh
+```
+
+**Verifies:**
+- All expected workflows executed
+- Scrapers ran successfully
+- No missing executions
+- Data quality checks
+
+**When to run:** End of day to confirm everything completed
+
+---
+
+#### Other Monitoring Scripts
+
+- **check_missing_executions.sh** - Find workflows that were scheduled but didn't execute
+- **view_today_timeline.sh** - Visual timeline of today's orchestration events
+- **investigate_scraper_failures.sh** - Deep dive into scraper failures with error analysis
+- **verify_pubsub_integration.sh** - Verify Pub/Sub setup and message flow
+- **test_orchestration_endpoints.sh** - Test all orchestration HTTP endpoints
+- **check_workflow_results.sql** - SQL query for workflow execution results
+
+---
+
+### Deployment & Testing
+
+#### deploy.sh
 **Purpose:** Deploy orchestration to Cloud Run + create/update scheduler jobs
 
 ```bash
@@ -175,7 +244,7 @@ workflows:
 
 ---
 
-### test.sh
+#### test.sh
 **Purpose:** Test orchestration endpoints
 
 ```bash

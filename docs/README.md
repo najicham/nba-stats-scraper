@@ -1,178 +1,409 @@
 # NBA Props Platform Documentation
 
-**Quick Links:**
-- 📖 **[Wiki](https://your-wiki-url)** - Operational guides, troubleshooting, daily procedures
-- 💻 **[GitHub](.)** - Technical docs, architecture, development guides
+**Project:** NBA player props prediction system - 6-phase event-driven data pipeline
+**Goal:** 55%+ accuracy on over/under bets
+**Current Status:** Phase 1 orchestration deployed, Phase 2 processors operational (Nov 2025)
 
-## Documentation Structure
+---
 
-This repository contains **technical and development documentation**. For operational guides and how-tos, see the **[Wiki](https://your-wiki-url)**.
+## 🎯 For Humans (Quick Navigation)
 
-### 📁 What's Where
+**New to the system?** Start here:
+
+1. **📊 System Status** → [SYSTEM_STATUS.md](SYSTEM_STATUS.md) ⭐
+   - What's deployed in production today?
+   - Phase-by-phase readiness
+   - Next steps roadmap (3 min read)
+
+2. **🗺️ Navigation Guide** → [NAVIGATION_GUIDE.md](NAVIGATION_GUIDE.md) ⭐
+   - How to find information fast
+   - Common scenarios with navigation paths
+   - Quick decision tree (2 min read)
+
+3. **🏃 Quick Reference** → [Processor Cards](processor-cards/README.md)
+   - 13 processor reference cards
+   - Health check queries (copy-paste ready)
+   - Common issues and fixes (1-5 min per card)
+
+4. **🚨 Production Issues?** → [Cross-Phase Troubleshooting](operations/cross-phase-troubleshooting-matrix.md)
+   - Symptom-based troubleshooting
+   - Trace issues backward through pipeline
+   - Start here when things break
+
+**Daily Operations:** Run `./bin/orchestration/quick_health_check.sh`
+
+---
+
+## 🤖 For AI Assistants (Start Here!)
+
+**New to this project in a fresh conversation?**
+
+### Step 1: You Already Have Context
+Your `.claude/claude_project_instructions.md` has been loaded with:
+- Complete architecture overview (6-phase pipeline)
+- Technology stack and core principles
+- Documentation standards and organization
+- Key file locations and commands
+
+### Step 2: Route to Specific Documentation
+
+Use this decision tree to find the right docs for your task:
 
 ```
-docs/
-├── architecture/        → System design and architecture decisions
-├── development/         → Development workflows and guides
-├── operations/          → Links to wiki for operational guides
-├── reference/           → Historical implementation notes
-└── archive/             → Old/outdated documentation
+What are you working on?
+
+├─ Phase 1 Orchestration (Scheduler, Cloud Scheduler jobs, workflows)
+│  → docs/orchestration/README.md
+│  → Start with: 01-how-it-works.md, then 02-phase1-overview.md
+│
+├─ Phase 2-4 Processors (Data processing operations)
+│  → docs/processors/README.md
+│  → Start with: 01-phase2-operations-guide.md
+│
+├─ Phase 5 Predictions (ML prediction system, coordinator-worker)
+│  → docs/predictions/README.md
+│  → Start with: tutorials/01-getting-started.md ⭐⭐ READ THIS FIRST!
+│
+├─ Pub/Sub Infrastructure (Cross-phase messaging, event integration)
+│  → docs/infrastructure/README.md
+│  → Start with: 01-pubsub-integration-verification.md
+│
+├─ Monitoring & Observability (Grafana, health checks, alerts)
+│  → docs/monitoring/README.md
+│  → Start with: 02-grafana-daily-health-check.md (quick), then 01 (comprehensive)
+│
+├─ Data Flow & Mappings (How data transforms between phases)
+│  → docs/data-flow/README.md
+│  → Status: Placeholder awaiting data mapping documentation
+│
+├─ System Architecture & Design (Future plans, integration roadmap)
+│  → docs/architecture/README.md
+│  → Start with: 00-quick-reference.md, then 04-event-driven-pipeline-architecture.md
+│
+└─ Documentation Organization (Where to put new docs)
+   → docs/DOCS_DIRECTORY_STRUCTURE.md (which directory?)
+   → docs/DOCUMENTATION_GUIDE.md (how to organize files within directory?)
 ```
 
----
+### Step 3: Common Task Quick Links
 
-## 🏗️ Architecture (`architecture/`)
+| Task | Read This First |
+|------|----------------|
+| **Check system status** | `SYSTEM_STATUS.md` ⭐ |
+| **Navigate docs** | `NAVIGATION_GUIDE.md` ⭐ |
+| **Quick reference** | `processor-cards/README.md` |
+| **Troubleshoot production** | `operations/cross-phase-troubleshooting-matrix.md` |
+| Daily health check | `monitoring/02-grafana-daily-health-check.md` |
+| Troubleshoot Phase 1 | `orchestration/04-troubleshooting.md` |
+| Troubleshoot Phase 2-4 | `processors/01-phase2-operations-guide.md` (Troubleshooting section) |
+| **Learn about Phase 5** | `predictions/tutorials/01-getting-started.md` ⭐⭐ |
+| **Deploy Phase 5** | `predictions/operations/01-deployment-guide.md` |
+| Verify Pub/Sub working | `infrastructure/01-pubsub-integration-verification.md` |
+| Understand architecture | `architecture/00-quick-reference.md` → `architecture/04-event-driven-pipeline-architecture.md` |
+| Add new documentation | `DOCS_DIRECTORY_STRUCTURE.md` (where?) + `DOCUMENTATION_GUIDE.md` (how?) |
+| Run health check script | `bin/orchestration/quick_health_check.sh` |
+| Review BigQuery schemas | `orchestration/03-bigquery-schemas.md` |
 
-**Technical system design and decisions**
+### Step 4: Key Principles to Remember
 
-- **[system-architecture.md](architecture/system-architecture.md)** - Complete system architecture
-- **[service-architecture.md](architecture/service-architecture.md)** - Cloud Run services
-- **[infrastructure-decisions.md](architecture/infrastructure-decisions.md)** - Infrastructure choices
+**Documentation:**
+- All docs have metadata headers (File, Created, Last Updated, Purpose, Status)
+- Use chronological numbering (01-99) within directories
+- Always update directory README when adding docs
+- Archive old docs, don't delete
 
-**When to read:**
-- Understanding how the system works
-- Making architectural decisions
-- Onboarding engineers
+**Code Quality:**
+- Discovery queries before assumptions
+- Always filter BigQuery partitions explicitly
+- One small thing at a time with comprehensive testing
+- "Show must go on" - graceful degradation
 
----
-
-## 💻 Development (`development/`)
-
-**Development workflows and practices**
-
-- **[development-workflow.md](development/development-workflow.md)** - Development process
-- **[dev-cheatsheet.md](development/dev-cheatsheet.md)** - Quick command reference
-- **[docker-strategy.md](development/docker-strategy.md)** - Docker & containerization
-- **[cloud-run-deployment.md](development/cloud-run-deployment.md)** - Deployment procedures
-- **[scraper-testing-guide.md](development/scraper-testing-guide.md)** - Testing scrapers
-
-**When to read:**
-- Writing new scrapers/processors
-- Deploying changes
-- Setting up development environment
-
----
-
-## ⚙️ Operations (`operations/`)
-
-**For operational guides, see the [Wiki](https://your-wiki-url)**
-
-The wiki contains:
-- 📊 **Workflow Monitoring** - Daily monitoring and status checks
-- 🔧 **Troubleshooting** - Common issues and fixes
-- 🚨 **Alerts** - Understanding and managing alerts
-- 📋 **Runbooks** - Step-by-step operational procedures
-
-**Local operations docs:**
-- **[monitoring.md](operations/monitoring.md)** → See [Wiki: Monitoring Guide](https://your-wiki-url/monitoring)
-- **[troubleshooting.md](operations/troubleshooting.md)** → See [Wiki: Troubleshooting](https://your-wiki-url/troubleshooting)
-
-**When to read:**
-- Daily monitoring
-- Investigating issues
-- On-call procedures
+**Season Logic:**
+- Oct-Dec dates → current year is season start (2024-12-15 = 2024-25 season)
+- Jan-Sep dates → previous year is season start (2025-01-15 = 2024-25 season)
 
 ---
 
-## 📚 Reference (`reference/`)
+## 📁 Documentation Structure
 
-**Historical implementation notes and detailed specs**
+Our documentation is organized into **7 focused directories** (reorganized 2025-11-15):
 
-Organized by topic:
-- **[backfill/](reference/backfill/)** - Backfill strategies and implementations
-- **[scrapers/](reference/scrapers/)** - Scraper development history
-- **[processors/](reference/processors/)** - Processor implementations
-- **[workflows/](reference/workflows/)** - Workflow configurations
-- **[schedule/](reference/schedule/)** - Scheduling strategies
+### `architecture/` - Strategic Design & Planning
+**Focus:** System design, future vision, architectural decisions
+**Time Horizon:** Present → Future (6-12 months ahead)
+**Key Docs:**
+- `00-quick-reference.md` - At-a-glance system overview (START HERE - 2-3 min)
+- `04-event-driven-pipeline-architecture.md` - Comprehensive architecture (30-45 min)
+- `05-implementation-status-and-roadmap.md` - Current status: ~45% complete
 
-**When to read:**
-- Understanding why something was built a certain way
-- Looking up historical context
-- Learning from past implementations
+**When to read:** Understanding system design, planning new features, architectural decisions
 
 ---
 
-## 📦 Archive (`archive/`)
+### `orchestration/` - Phase 1 Scheduler & Workflows
+**Focus:** Phase 1 orchestration system - time-based scheduling
+**Scope:** Cloud Scheduler jobs, workflow config, decision engine
+**Key Docs:**
+- `01-how-it-works.md` - Simple explanation (START HERE - 5-10 min)
+- `02-phase1-overview.md` - Architecture and components
+- `03-bigquery-schemas.md` - Orchestration table schemas
+- `04-troubleshooting.md` - Common issues and fixes
 
-**Old and outdated documentation**
+**When to read:** Operating Phase 1 scheduler, troubleshooting workflows, understanding daily execution
 
-Kept for historical reference but no longer actively maintained.
-
----
-
-## Quick Start Guides
-
-### For New Developers
-1. Read [architecture/system-architecture.md](architecture/system-architecture.md)
-2. Read [development/development-workflow.md](development/development-workflow.md)
-3. Set up your environment using [development/dev-cheatsheet.md](development/dev-cheatsheet.md)
-4. Review [Wiki: Monitoring Guide](https://your-wiki-url/monitoring) for daily operations
-
-### For Operators/On-Call
-1. Go to [Wiki](https://your-wiki-url) - this is your main resource
-2. Bookmark [Wiki: Troubleshooting](https://your-wiki-url/troubleshooting)
-3. Set up monitoring tools: [Wiki: Monitoring Setup](https://your-wiki-url/monitoring)
-4. Review [Wiki: Runbooks](https://your-wiki-url/runbooks)
-
-### For Product/Business
-1. Read [architecture/system-architecture.md](architecture/system-architecture.md) - high-level overview
-2. See [Wiki: System Overview](https://your-wiki-url/overview) for non-technical explanation
-3. Review [Wiki: Data Flow](https://your-wiki-url/data-flow) to understand the pipeline
+**Key Distinction:** Orchestration = time-based (Cloud Scheduler), not event-based (Pub/Sub)
 
 ---
 
-## 🔄 Documentation Maintenance
+### `infrastructure/` - Cross-Phase Shared Services
+**Focus:** Infrastructure connecting multiple phases (the "plumbing")
+**Scope:** Pub/Sub topics, message schemas, shared services
+**Key Docs:**
+- `01-pubsub-integration-verification.md` - How to verify Pub/Sub working
+- `02-pubsub-schema-management.md` - Message schemas and error prevention
+
+**When to read:** Setting up Pub/Sub, troubleshooting integration, understanding event flow
+
+**Key Distinction:** Infrastructure = shared plumbing used by multiple phases
+
+---
+
+### `processors/` - Data Processor Operations (Phase 2-4)
+**Focus:** Operating and troubleshooting data processors
+**Scope:** Phase 2-4 processor operations (Phase 2 deployed, Phase 3-4 documented)
+**Key Docs:**
+
+**Phase 2 (Deployed):**
+- `01-phase2-operations-guide.md` - Phase 2 raw processors (GCS JSON → BigQuery raw tables)
+
+**Phase 3 (Documentation Complete):**
+- `02-phase3-operations-guide.md` - Analytics processors (raw → analytics tables)
+- `03-phase3-scheduling-strategy.md` - Cloud Scheduler + Pub/Sub configuration
+- `04-phase3-troubleshooting.md` - Failure scenarios and recovery
+
+**Phase 4 (Documentation Complete):**
+- `05-phase4-operations-guide.md` - Precompute processors (analytics → precompute)
+- `06-phase4-scheduling-strategy.md` - Complex dependency management
+- `07-phase4-troubleshooting.md` - Failure scenarios and recovery
+- `08-phase4-ml-feature-store-deepdive.md` - Most complex processor deep-dive
+
+**Note:** Phase 5 has moved to dedicated `predictions/` directory (see below)
+
+**When to read:** Operating processors, troubleshooting data processing, debugging transformations
+
+**Key Distinction:** Processors = data transformation operations, not infrastructure
+
+---
+
+### `predictions/` - Phase 5 Prediction System ⭐ NEW
+**Focus:** ML prediction system - coordinator-worker pattern with 5 prediction models
+**Scope:** Phase 5 only (distinct architecture deserves dedicated directory)
+**Key Docs:**
+- **🌟 `tutorials/01-getting-started.md`** - Complete onboarding guide (START HERE - 30 min)
+- `operations/01-deployment-guide.md` - Complete deployment guide (ML models, cost, monitoring)
+- `operations/02-scheduling-strategy.md` - Coordinator scheduling and auto-scaling
+- `operations/03-troubleshooting.md` - Failure scenarios and recovery procedures
+- `operations/04-worker-deepdive.md` - Worker internals, concurrency, performance
+- `data-sources/01-data-categorization.md` - How Phase 5 uses data
+- `architecture/01-parallelization-strategy.md` - When and how to parallelize
+
+**When to read:** Learning Phase 5, deploying predictions, understanding ML models, optimizing performance
+
+**Key Distinction:** Phase 5 = coordinator-worker + ML systems (different from processor pattern)
+
+**Documentation Status:** ✅ 100% Complete (7 docs, 247KB)
+
+---
+
+### `monitoring/` - Observability & Health Checks
+**Focus:** Monitoring, alerting, and health checks across all phases
+**Scope:** Grafana dashboards, daily health checks, observability
+**Key Docs:**
+- `02-grafana-daily-health-check.md` - Quick 6-panel dashboard (START HERE - 2-3 min)
+- `01-grafana-monitoring-guide.md` - Comprehensive monitoring queries and insights
+
+**When to read:** Daily monitoring, investigating alerts, performance analysis
+
+**Key Distinction:** Monitoring = observing the system; Troubleshooting = fixing it (goes in phase dirs)
+
+---
+
+### `data-flow/` - Data Lineage & Mappings
+**Focus:** How data transforms between phases
+**Scope:** Field mappings, transformation logic, end-to-end lineage
+**Status:** 📋 Placeholder directory awaiting data mapping documentation
+
+**Future Docs:**
+- `01-phase1-to-phase2-mapping.md` - Scraper JSON → Raw tables
+- `02-phase2-to-phase3-mapping.md` - Raw → Analytics tables
+- `03-phase3-to-phase4-mapping.md` - Analytics → Precompute
+- `04-phase4-to-phase5-mapping.md` - Precompute → Predictions
+- `05-phase5-to-phase6-mapping.md` - Predictions → Web app API
+- `99-end-to-end-example.md` - Complete trace through all 6 phases
+
+**When to read:** Debugging missing data, understanding transformations, tracing field lineage
+
+**Key Distinction:** Data flow = what data, how it transforms; Operations = how to run it
+
+---
+
+## 📖 For Human Engineers
+
+### New Developer Onboarding
+
+**Day 1: Understand the System**
+1. **Quick Overview** (10 min): `architecture/00-quick-reference.md`
+2. **Comprehensive Architecture** (45 min): `architecture/04-event-driven-pipeline-architecture.md`
+3. **Current Status** (15 min): `architecture/05-implementation-status-and-roadmap.md`
+
+**Day 2: Learn Operations**
+1. **Phase 1 Overview** (10 min): `orchestration/01-how-it-works.md`
+2. **Daily Health Check** (5 min): `monitoring/02-grafana-daily-health-check.md`
+3. **Run Scripts**: `./bin/orchestration/quick_health_check.sh`
+
+**Week 1: Deep Dive**
+- Read all docs in `orchestration/` (Phase 1 details)
+- Read all docs in `processors/` (Phase 2 operations)
+- Review `monitoring/01-grafana-monitoring-guide.md` (comprehensive monitoring)
+
+---
+
+### Operations Engineer / SRE
+
+**Daily Routine:**
+1. **Health Check** (2-3 min): Run `./bin/orchestration/quick_health_check.sh`
+2. **Grafana Dashboard** (30 sec): Check 6-panel health dashboard
+3. **Review Docs**: `monitoring/02-grafana-daily-health-check.md`
+
+**Troubleshooting:**
+- **Phase 1 Issues**: `orchestration/04-troubleshooting.md`
+- **Phase 2 Issues**: `processors/01-phase2-operations-guide.md` (Troubleshooting section)
+- **Pub/Sub Issues**: `infrastructure/01-pubsub-integration-verification.md`
+
+**Key Metrics:**
+- Workflow execution rate: >95% expected
+- Scraper success rate: 97-99% typical
+- Phase 2 delivery: 100% expected
+- "no_data" status = normal (successful run, no new data)
+
+---
+
+### Product / Leadership
+
+**System Understanding:**
+1. **Quick Overview** (3 min): `architecture/00-quick-reference.md`
+2. **Current Status** (15 min): `architecture/05-implementation-status-and-roadmap.md`
+3. **System Health**: Ask engineer to run daily health check
+
+**Key Takeaways:**
+- 6-phase pipeline: Scrapers → Raw → Analytics → Precompute → Predictions → Web App
+- Phases 1-2 deployed and operational (Nov 2025)
+- Event-driven architecture via Pub/Sub
+- ~45% complete (Phases 1, 2, 5 done; Phases 3, 4, 6 planned)
+
+---
+
+## 🛠️ Documentation Maintenance
 
 ### Where to Add New Documentation
 
-**Add to GitHub (`docs/`):**
-- Architecture decisions and changes
-- Development workflow changes
-- New service documentation
-- Technical specifications
-- API schemas
+**Determine directory:** Use `DOCS_DIRECTORY_STRUCTURE.md` decision tree
 
-**Add to Wiki:**
-- Operational procedures
-- Troubleshooting guides
-- Monitoring dashboards
-- Alert runbooks
-- How-to guides
+**Common scenarios:**
+- **Phase 1 scheduler changes** → `orchestration/`
+- **Phase 2+ processor operations** → `processors/`
+- **Pub/Sub infrastructure** → `infrastructure/`
+- **Monitoring/Grafana** → `monitoring/`
+- **Data mappings** → `data-flow/`
+- **Architecture/design** → `architecture/`
 
-### Keeping Docs Current
+**File organization within directory:** Use `DOCUMENTATION_GUIDE.md`
+- Chronological numbering (01-99)
+- Update directory README with reading order
+- Use standard metadata header
 
-**GitHub Docs:**
-- Update when code architecture changes
-- Review quarterly
-- Keep focused on "how it works"
+### Documentation Standards
 
-**Wiki:**
-- Update when operations change
-- Review monthly
-- Keep focused on "how to use it"
+**All documentation files must include:**
+```markdown
+# Document Title
 
----
-
-## 🛠️ Reorganization
-
-This documentation was recently reorganized (2025-10-14) to separate:
-- **Technical docs** (in GitHub) - for developers
-- **Operational docs** (in Wiki) - for operators/users
-
-To run the reorganization script:
-```bash
-./docs/reorganize_docs.sh
+**File:** `docs/category/NN-document-name.md`
+**Created:** YYYY-MM-DD HH:MM PST
+**Last Updated:** YYYY-MM-DD HH:MM PST
+**Purpose:** Brief description
+**Status:** Current|Draft|Superseded|Archive
 ```
 
----
-
-## 📞 Need Help?
-
-- **Development questions:** Check `development/` docs
-- **Architecture questions:** Check `architecture/` docs
-- **Operational issues:** Check [Wiki](https://your-wiki-url)
-- **Can't find it:** Search both GitHub docs and Wiki
+**Key principles:**
+- Use Pacific Time with explicit timezone (PST/PDT)
+- Chronological numbering (creation order, not pedagogical)
+- README provides reading order
+- Archive old docs to `archive/YYYY-MM-DD/`
 
 ---
 
-**Last Updated:** 2025-10-14
+## 🔄 Recent Changes
+
+**2025-11-15: Major Documentation Reorganization**
+- Split mixed `orchestration/` directory into 5 focused directories
+- Created `infrastructure/`, `processors/`, `monitoring/`, `data-flow/`
+- Updated all cross-references
+- Created comprehensive directory READMEs
+- See: `MIGRATION-2025-11-15-docs-reorganization.md` for full details
+
+**2025-11-15: Documentation Guides Created**
+- `DOCS_DIRECTORY_STRUCTURE.md` - Where to put documentation
+- `DOCUMENTATION_GUIDE.md` - How to organize files within directories
+- Updated `.claude/claude_project_instructions.md` with new structure
+
+---
+
+## 📞 Quick Help
+
+**"I need to..."**
+
+| Need | Go To |
+|------|-------|
+| Understand the system | `architecture/00-quick-reference.md` |
+| Check system health | `monitoring/02-grafana-daily-health-check.md` OR run `./bin/orchestration/quick_health_check.sh` |
+| Troubleshoot Phase 1 | `orchestration/04-troubleshooting.md` |
+| Troubleshoot Phase 2 | `processors/01-phase2-operations-guide.md` |
+| Verify Pub/Sub working | `infrastructure/01-pubsub-integration-verification.md` |
+| Add new documentation | `DOCS_DIRECTORY_STRUCTURE.md` + `DOCUMENTATION_GUIDE.md` |
+| See what's deployed | `architecture/05-implementation-status-and-roadmap.md` |
+| Understand workflows | `orchestration/01-how-it-works.md` |
+| Learn Grafana monitoring | `monitoring/01-grafana-monitoring-guide.md` |
+
+---
+
+## 🎯 Project Quick Facts
+
+**Pipeline Phases:**
+1. **Data Collection** (Phase 1) - Scrapers → GCS JSON ✅ Deployed
+2. **Raw Processing** (Phase 2) - JSON → BigQuery raw tables ✅ Deployed
+3. **Analytics** (Phase 3) - Player/team summaries 🚧 Planned
+4. **Precompute** (Phase 4) - Performance aggregates 🚧 Planned
+5. **Predictions** (Phase 5) - ML models ✅ Complete (not deployed in pipeline)
+6. **Publishing** (Phase 6) - Firestore/JSON for web app 🚧 Planned
+
+**Technology Stack:**
+- **Cloud:** BigQuery, Cloud Storage, Cloud Run, Pub/Sub, Cloud Scheduler
+- **Languages:** Python (pandas, XGBoost, pytest)
+- **Data Sources:** Odds API, NBA.com, Ball Don't Lie, BigDataBall, ESPN
+
+**Key Metrics:**
+- 30+ scrapers operational
+- 21 Phase 2 processors deployed
+- 97-99% success rate typical
+- 100% Pub/Sub delivery rate
+
+---
+
+**Last Updated:** 2025-11-15
+**Maintained By:** Project documentation standards
+**Next Review:** After Phase 3 deployment
+
+---
+
+*This README serves as the master documentation index. Each directory has its own README with detailed guidance. See `DOCS_DIRECTORY_STRUCTURE.md` for the complete organization guide.*

@@ -134,8 +134,8 @@ class GetNbaComInjuryReport(ScraperBase, ScraperFlaskMixin):
                 raise DownloadDataException("hour must be between 1 and 12")
         except ValueError:
             raise DownloadDataException("hour must be a valid number")
-        
-        if self.opts["period"].upper() not in {"AM", "PM"}:
+
+        if str(self.opts["period"]).upper() not in {"AM", "PM"}:
             raise DownloadDataException("period must be AM or PM")
 
     def set_url(self) -> None:
@@ -144,9 +144,9 @@ class GetNbaComInjuryReport(ScraperBase, ScraperFlaskMixin):
             formatted_date = f"{gd[0:4]}-{gd[4:6]}-{gd[6:8]}"
         else:
             formatted_date = gd
-        
-        hour = self.opts["hour"].zfill(2)
-        period = self.opts["period"].upper()
+
+        hour = str(self.opts["hour"]).zfill(2)
+        period = str(self.opts["period"]).upper()
         self.url = (
             f"https://ak-static.cms.nba.com/referee/injury/"
             f"Injury-Report_{formatted_date}_{hour}{period}.pdf"

@@ -1,18 +1,26 @@
 # Grafana Monitoring Guide - NBA Orchestration System
 
-**Created:** 2025-11-14
-**Purpose:** BigQuery queries and dashboard insights for Grafana monitoring
+**File:** `docs/monitoring/01-grafana-monitoring-guide.md`
+**Created:** 2025-11-14 16:26 PST
+**Last Updated:** 2025-11-15 (moved from orchestration/ to monitoring/)
+**Purpose:** Comprehensive BigQuery queries and dashboard insights for Grafana monitoring
+**Status:** Current
 
 ---
 
 ## Overview
 
-This guide provides BigQuery queries for monitoring the NBA orchestration system through Grafana. The orchestration system logs all execution data to BigQuery tables, which Grafana can query directly.
+This guide provides comprehensive BigQuery queries for monitoring the NBA orchestration system through Grafana. The orchestration system logs all execution data to BigQuery tables, which Grafana can query directly.
+
+**For quick daily monitoring, see:** `grafana-daily-health-check-guide.md` (simplified 6-panel dashboard)
 
 ### Key Tables
 
 1. **`nba_orchestration.workflow_executions`** - High-level workflow execution tracking
 2. **`nba_orchestration.scraper_execution_log`** - Detailed scraper execution logs
+3. **`nba_orchestration.workflow_decisions`** - Master controller RUN/SKIP/ABORT decisions
+4. **`nba_orchestration.daily_expected_schedule`** - Expected workflows for the day
+5. **`nba_orchestration.cleanup_operations`** - Missing file recovery tracking
 
 ---
 
@@ -39,6 +47,8 @@ Key fields:
 - `scraper_name` (STRING) - Name of scraper
 - `workflow` (STRING) - Parent workflow name
 - `status` (STRING) - "success", "no_data", or "failed"
+  - **IMPORTANT:** "no_data" = successful execution with no new data (NOT a failure!)
+  - Only "failed" represents actual failures
 - `triggered_at` (TIMESTAMP) - Execution start time
 - `completed_at` (TIMESTAMP) - Execution end time
 - `duration_seconds` (FLOAT) - Execution duration
@@ -51,28 +61,241 @@ Key fields:
 - `gcs_path` (STRING) - Output file path in GCS
 - `retry_count` (INTEGER) - Number of retries attempted
 
+### workflow_decisions
+
+Key fields:
+- `decision_id` (STRING) - Unique decision UUID
+- `decision_time` (TIMESTAMP) - When decision was made
+- `workflow_name` (STRING) - Name of workflow evaluated
+- `action` (STRING) - "RUN", "SKIP", or "ABORT"
+- `reason` (STRING) - Why this action was chosen
+- `context` (JSON) - Decision context (schedule, conditions, etc.)
+- `controller_version` (STRING) - Version of master controller
+
+**Purpose:** Track what the master controller decided to do. Compare with workflow_executions to find missing executions.
+
+### daily_expected_schedule
+
+Key fields:
+- `date` (DATE) - The date for this schedule
+- `workflow_name` (STRING) - Workflow expected to run
+- `expected_run_time` (TIMESTAMP) - When it should run
+- `reason` (STRING) - Why it's scheduled
+- `game_context` (JSON) - Related game information
+- `generated_at` (TIMESTAMP) - When schedule was generated
+
+**Purpose:** Pre-computed expected schedule for monitoring. Compare against actual executions to detect issues.
+
+### cleanup_operations
+
+Key fields:
+- `cleanup_id` (STRING) - Unique cleanup operation UUID
+- `cleanup_time` (TIMESTAMP) - When cleanup ran
+- `missing_files_found` (INTEGER) - Number of missing files detected
+- `files_recovered` (INTEGER) - Number successfully recovered
+- `recovery_method` (STRING) - How files were recovered
+- `errors` (JSON) - Any errors encountered
+
+**Purpose:** Track automatic recovery of missing data files. Non-zero missing files may indicate scraper issues.
+
+---
+
+## Understanding Success vs Failure
+
+**CRITICAL:** The `status` field in `scraper_execution_log` has three values:
+
+1. **"success"** = Scraper ran successfully AND found new data
+2. **"no_data"** = Scraper ran successfully BUT found no new data (e.g., hourly check, no games today)
+3. **"failed"** = Scraper encountered an error and did not complete
+
+### What Counts as Success?
+
+**Both "success" and "no_data" are successful executions!**
+
+On a typical day with 19 games:
+- ~500 total scraper executions
+- ~50-100 "success" (found new data)
+- ~400-450 "no_data" (ran correctly, no new data)
+- ~5-10 "failed" (actual errors)
+
+**When calculating success rates:**
+```sql
+-- CORRECT: Count both success and no_data as successful
+COUNTIF(status IN ('success', 'no_data')) / COUNT(*) * 100
+
+-- WRONG: Only count 'success'
+COUNTIF(status = 'success') / COUNT(*) * 100  -- This would show 10-20%!
+```
+
+**Why so many "no_data" results?**
+- Workflows run hourly to check for new data
+- If no games in progress, scrapers return "no_data"
+- This is expected and healthy behavior
+- Only investigate "no_data" if it persists when games ARE happening
+
 ---
 
 ## Key Metrics to Monitor
 
-### 1. Workflow Success Rate
+### 1. Overall System Health
+Combined view of all health indicators (NEW - see Panel 0)
+
+### 2. Workflow Success Rate
 Track overall health of orchestration system
 
-### 2. Scraper Failure Rate
-Identify problematic scrapers
+### 3. Scraper Success Rate (including no_data)
+Identify problematic scrapers - remember "no_data" = success!
 
-### 3. Execution Duration
+### 4. Missing Executions
+Detect when RUN decisions don't result in executions
+
+### 5. Execution Duration
 Detect performance degradation
 
-### 4. Data Completeness
-Monitor "no_data" status for scrapers
-
-### 5. Error Patterns
+### 6. Error Patterns
 Group errors by type for troubleshooting
 
 ---
 
 ## Grafana Dashboard Queries
+
+### Panel 0: Daily Health Check (⭐ MOST IMPORTANT)
+
+**Metric:** Complete system health in one view
+
+```sql
+-- This is the same query as ./bin/orchestration/quick_health_check.sh
+WITH
+schedule_check AS (
+  SELECT COUNT(*) as scheduled_workflows
+  FROM `nba-props-platform.nba_orchestration.daily_expected_schedule`
+  WHERE date = CURRENT_DATE('America/New_York')
+),
+decisions_check AS (
+  SELECT
+    COUNT(*) as total_decisions,
+    COUNTIF(action = 'RUN') as run_decisions,
+    COUNTIF(action = 'SKIP') as skip_decisions,
+    COUNTIF(action = 'ABORT') as abort_decisions,
+    MAX(decision_time) as last_decision
+  FROM `nba-props-platform.nba_orchestration.workflow_decisions`
+  WHERE DATE(decision_time, 'America/New_York') = CURRENT_DATE('America/New_York')
+),
+executions_check AS (
+  SELECT
+    COUNT(*) as total_executions,
+    COUNTIF(status = 'completed') as completed,
+    COUNTIF(status = 'failed') as failed,
+    SUM(scrapers_succeeded) as scrapers_succeeded,
+    SUM(scrapers_failed) as scrapers_failed,
+    MAX(execution_time) as last_execution
+  FROM `nba-props-platform.nba_orchestration.workflow_executions`
+  WHERE DATE(execution_time, 'America/New_York') = CURRENT_DATE('America/New_York')
+),
+cleanup_check AS (
+  SELECT
+    COUNT(*) as cleanup_runs,
+    SUM(missing_files_found) as total_missing,
+    MAX(cleanup_time) as last_cleanup
+  FROM `nba-props-platform.nba_orchestration.cleanup_operations`
+  WHERE DATE(cleanup_time, 'America/New_York') = CURRENT_DATE('America/New_York')
+),
+missing_executions AS (
+  SELECT COUNT(*) as missing_count
+  FROM `nba-props-platform.nba_orchestration.workflow_decisions` d
+  LEFT JOIN `nba-props-platform.nba_orchestration.workflow_executions` e
+    ON d.decision_id = e.decision_id
+  WHERE DATE(d.decision_time, 'America/New_York') = CURRENT_DATE('America/New_York')
+    AND d.action = 'RUN'
+    AND e.execution_id IS NULL
+)
+
+SELECT
+  -- Schedule
+  s.scheduled_workflows,
+
+  -- Decisions
+  d.total_decisions,
+  d.run_decisions,
+  d.skip_decisions,
+  d.abort_decisions,
+  FORMAT_TIMESTAMP('%H:%M %Z', d.last_decision, 'America/New_York') as last_decision_et,
+
+  -- Executions
+  e.total_executions,
+  e.completed as executions_completed,
+  e.failed as executions_failed,
+  ROUND(e.completed * 100.0 / NULLIF(e.total_executions, 0), 1) as execution_success_pct,
+  e.scrapers_succeeded,
+  e.scrapers_failed,
+  ROUND(e.scrapers_succeeded * 100.0 / NULLIF(e.scrapers_succeeded + e.scrapers_failed, 0), 1) as scraper_success_pct,
+  FORMAT_TIMESTAMP('%H:%M %Z', e.last_execution, 'America/New_York') as last_execution_et,
+
+  -- Cleanup
+  c.cleanup_runs,
+  c.total_missing as missing_files_recovered,
+  FORMAT_TIMESTAMP('%H:%M %Z', c.last_cleanup, 'America/New_York') as last_cleanup_et,
+
+  -- Missing executions
+  m.missing_count as run_decisions_not_executed,
+
+  -- Health indicator
+  CASE
+    WHEN s.scheduled_workflows > 0
+     AND e.total_executions > 0
+     AND m.missing_count = 0
+     AND (e.completed * 100.0 / NULLIF(e.total_executions, 0)) >= 80
+    THEN '✅ HEALTHY'
+    WHEN s.scheduled_workflows > 0
+     AND e.total_executions > 0
+     AND (e.completed * 100.0 / NULLIF(e.total_executions, 0)) >= 50
+    THEN '⚠️ DEGRADED'
+    WHEN s.scheduled_workflows = 0 AND d.total_decisions = 0
+    THEN 'ℹ️ NO GAMES TODAY'
+    ELSE '❌ UNHEALTHY'
+  END as health_status
+
+FROM schedule_check s
+CROSS JOIN decisions_check d
+CROSS JOIN executions_check e
+CROSS JOIN cleanup_check c
+CROSS JOIN missing_executions m
+```
+
+**Visualization:** Table (single row with all metrics)
+
+**Use:** Start your daily check here! This one panel shows everything you need.
+
+---
+
+### Panel 0b: Missing Executions Detector
+
+**Metric:** Find RUN decisions that didn't execute
+
+```sql
+SELECT
+  FORMAT_TIMESTAMP('%H:%M %Z', d.decision_time, 'America/New_York') as decision_time_et,
+  d.workflow_name,
+  d.action,
+  d.reason,
+  CASE
+    WHEN e.execution_id IS NULL THEN '❌ MISSING'
+    ELSE '✅ EXECUTED'
+  END as execution_status
+FROM `nba-props-platform.nba_orchestration.workflow_decisions` d
+LEFT JOIN `nba-props-platform.nba_orchestration.workflow_executions` e
+  ON d.decision_id = e.decision_id
+WHERE DATE(d.decision_time, 'America/New_York') = CURRENT_DATE('America/New_York')
+  AND d.action = 'RUN'
+  AND e.execution_id IS NULL
+ORDER BY d.decision_time DESC
+```
+
+**Visualization:** Table
+
+**Use:** Should be empty! If rows appear, workflow executor has issues.
+
+---
 
 ### Panel 1: Workflow Success Rate (Last 24 Hours)
 
@@ -110,23 +333,29 @@ ORDER BY time DESC
 
 ### Panel 3: Scraper Success Rate by Name (Last 24 Hours)
 
-**Metric:** Success rate per scraper
+**Metric:** Success rate per scraper (CORRECTED - counts "no_data" as success)
 
 ```sql
 SELECT
   scraper_name,
-  COUNTIF(status = 'success') as successes,
+  COUNTIF(status = 'success') as found_data,
+  COUNTIF(status = 'no_data') as no_new_data,
   COUNTIF(status = 'failed') as failures,
-  COUNTIF(status = 'no_data') as no_data,
-  COUNT(*) as total,
-  ROUND(COUNTIF(status = 'success') / COUNT(*) * 100, 1) as success_rate
+  COUNT(*) as total_runs,
+  -- CORRECT: Both 'success' and 'no_data' are successful
+  ROUND(COUNTIF(status IN ('success', 'no_data')) / COUNT(*) * 100, 1) as success_rate
 FROM `nba-props-platform.nba_orchestration.scraper_execution_log`
 WHERE triggered_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)
 GROUP BY scraper_name
-ORDER BY success_rate ASC, total DESC
+ORDER BY success_rate ASC, total_runs DESC
 ```
 
 **Visualization:** Table with conditional formatting on success_rate
+- Green: >98%
+- Yellow: 95-98%
+- Red: <95%
+
+**Note:** Success rate should be 97-100% for most scrapers. "no_data" is NOT a failure!
 
 ---
 
@@ -580,24 +809,71 @@ WHERE workflow_name = '$workflow_name'
 
 ## Expected Patterns
 
-### Normal Behavior
+### Normal Behavior (Based on Nov 14, 2025 - 19 Game Day)
 
-- **morning_operations workflow:** Runs daily around 8-10 AM ET
-  - Triggers: ~34 scrapers (30 for br_season_roster + 4 foundation scrapers)
-  - Expected failures: 0
+**Overall Daily Metrics:**
+- **Scheduled workflows:** ~19 (one per game)
+- **Total decisions:** 100-120 (hourly evaluations)
+- **RUN decisions:** 35-45 (workflows that should execute)
+- **SKIP decisions:** 60-80 (scheduled but conditions not met)
+- **ABORT decisions:** 0-2 (rare)
+- **Total executions:** 35-45 (matching RUN decisions)
+- **Execution success rate:** 80-90% (some failures are normal)
+- **Scraper success rate:** 97-99% (including "no_data")
+- **Total scraper runs:** 500+ (many hourly checks)
+- **"no_data" runs:** 400-450 (hourly checks with no new data - NORMAL!)
+- **Actual failures:** 5-15 (transient API issues)
+
+**Workflow Patterns:**
+
+- **morning_operations:** Runs HOURLY (not just once!)
+  - Schedule: 6 AM - 7 PM+ ET, every hour
+  - Triggers: ~34 scrapers per run (30 for br_season_roster + 4 foundation)
+  - Expected failures: 0-1 per run
   - Duration: 3-4 minutes
 
-- **Game day workflows:** Run multiple times on game days
-  - Higher scraper volume
-  - More "no_data" results off-season
+- **betting_lines:** Runs multiple times throughout game day
+  - Triggers: Odds API scrapers (events, props, game lines)
+  - Expected: 15-20 executions per day
+  - "no_data" is common when odds haven't changed
+
+- **injury_discovery:** Runs every 3 hours
+  - Triggers: nbac_injury_report
+  - Expected: 5-6 executions per day
+  - "no_data" common during off-days
+
+- **schedule_dependency:** Runs hourly
+  - Triggers: nbac_schedule_api
+  - Monitors for schedule changes
+
+**Why so many "no_data" results?**
+- Workflows check hourly for new data
+- If nothing changed since last check → "no_data"
+- 400-450 "no_data" on 500 total runs = 80-90% (EXPECTED!)
+- Only investigate if "no_data" persists when games ARE happening
 
 ### Warning Signs
 
-- Sudden increase in failure rate (>5%)
-- Scrapers consistently returning "no_data" when games are scheduled
+**🔴 Critical Issues:**
+- Health status = UNHEALTHY
+- Execution success < 70%
+- Scraper success < 95% (remember: count "no_data" as success!)
+- Missing executions > 0 (RUN decisions not executed)
+- Same scraper failing repeatedly (5+ times)
+
+**⚠️ Warning Signs:**
+- Health status = DEGRADED
+- Execution success 70-80%
+- Scraper success 95-97%
 - Duration increases >50% from baseline
-- No executions during expected windows
-- All executions from single team failing (PHX, BKN, CHA - check team mapping)
+- No executions during expected windows (6 AM - 11 PM ET on game days)
+
+**ℹ️ Normal Variations:**
+- Off-season: Fewer executions, more "no_data"
+- All-Star break: Minimal activity, "NO GAMES TODAY" status
+- Playoffs: Different patterns, more frequent data updates
+- Individual team failures (PHX, BKN, CHA): Check team mapping
+- Single API timeout: Retry usually succeeds
 
 ---
 
@@ -620,16 +896,39 @@ These can be viewed in GCP Monitoring but may not be directly queryable in Grafa
 
 **Last Updated:** 2025-11-14
 **Orchestration Version:** Phase 1 (HTTP-based)
-**Related Docs:**
-- `docs/orchestration/handoff_2025-11-14.md` - Current fixes
-- `docs/orchestration/phase1_monitoring_operations_guide.md` - Operations guide
-- `DEPLOYMENT_PLAN.md` - Deployment procedures
 
-**BigQuery Dataset:** nba-props-platform.nba_orchestration
+**Related Docs:**
+
+**For daily monitoring:**
+- `grafana-daily-health-check-guide.md` - Quick 6-panel dashboard (START HERE!)
+- `bin/orchestration/quick_health_check.sh` - Terminal equivalent
+
+**For investigation:**
+- `bin/orchestration/check_system_status.sh` - Detailed system health
+- `bin/orchestration/investigate_scraper_failures.sh` - Failure analysis
+- `bin/orchestration/verify_phase1_complete.sh` - Comprehensive verification
+
+**For understanding:**
+- `.claude/claude_project_instructions.md` - Phase 1 Orchestration overview
+- `bin/orchestration/README.md` - Workflow schedule system
+
+**BigQuery Dataset:** `nba-props-platform.nba_orchestration`
+
 **Tables:**
-- workflow_executions
-- scraper_execution_log
+- `workflow_executions` - Workflow execution tracking
+- `scraper_execution_log` - Scraper execution details
+- `workflow_decisions` - Master controller decisions (RUN/SKIP/ABORT)
+- `daily_expected_schedule` - Expected workflows for monitoring
+- `cleanup_operations` - Missing file recovery tracking
+
+**Key Shell Scripts:**
+- `./bin/orchestration/quick_health_check.sh` - 30-second health check
+- `./bin/orchestration/check_system_status.sh` - Detailed diagnostics
+- `./bin/orchestration/investigate_scraper_failures.sh` - Error analysis
 
 ---
 
-**End of Grafana Monitoring Guide**
+**End of Grafana Monitoring Guide - Comprehensive Version**
+
+**See also:** `grafana-daily-health-check-guide.md` for simplified daily monitoring
+

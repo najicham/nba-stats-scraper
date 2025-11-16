@@ -1,10 +1,10 @@
 # NBA Props Orchestration - How It All Works
 
-`docs/orchestration/HOW_IT_WORKS.md`
-
-**Version:** 1.0  
-**Date:** November 11, 2025  
+**File:** `docs/orchestration/01-how-it-works.md`
+**Created:** 2025-11-11 20:02 PST
+**Last Updated:** 2025-11-15 10:52 PST (reorganization)
 **Purpose:** Simple explanation of orchestration deployment and operation
+**Status:** Current
 
 ---
 

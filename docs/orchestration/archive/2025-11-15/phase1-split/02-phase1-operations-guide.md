@@ -1,12 +1,11 @@
-Phase 1 Orchestration & Scheduling Guide - Current State
+# Phase 1 Operations Guide
 
-File Path: docs/orchestration/phase1_orchestration_current_state.md
-
-Version: 2.0
-Last Updated: November 12, 2025
-Status: Production Deployed
-Purpose: Technical specifications for the NBA data orchestration system
-Audience: Engineers operating and extending Phase 1 orchestration infrastructure
+**File:** `docs/orchestration/02-phase1-operations-guide.md`
+**Created:** 2025-11-13 10:06 PST
+**Last Updated:** 2025-11-15 10:52 PST (reorganization)
+**Purpose:** Technical specifications and operational guide for Phase 1 orchestration and scheduling
+**Status:** Production Deployed
+**Audience:** Engineers operating and extending Phase 1 orchestration infrastructure
 
 📋 Table of Contents
 

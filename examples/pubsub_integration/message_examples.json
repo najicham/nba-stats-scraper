@@ -1,0 +1,147 @@
+{
+  "examples": [
+    {
+      "description": "Phase 2 raw data loaded event (successful boxscore processing) - CURRENT FORMAT",
+      "message": {
+        "event_type": "raw_data_loaded",
+        "source_table": "nbac_gamebook_player_stats",
+        "target_table": "nba_raw.nbac_gamebook_player_stats",
+        "processor_name": "NbacGamebookProcessor",
+        "execution_id": "proc_xyz789",
+        "correlation_id": "morning_ops_abc123",
+        "game_date": "2025-11-15",
+        "game_ids": ["0022500225", "0022500226"],
+        "record_count": 450,
+        "status": "success",
+        "timestamp": "2025-11-15T02:30:00Z",
+        "source_scraper_execution_id": "scraper_abc123",
+        "metadata": {
+          "duration_seconds": 3.5,
+          "rows_inserted": 400,
+          "rows_updated": 50
+        }
+      }
+    },
+    {
+      "description": "Phase 2 injury report update (Sprint 8: entity-level granularity)",
+      "message": {
+        "event_type": "raw_data_loaded",
+        "source_table": "nbac_injury_report",
+        "target_table": "nba_raw.nbac_injury_report",
+        "processor_name": "NbacInjuryReportProcessor",
+        "execution_id": "proc_def456",
+        "correlation_id": "injury_update_def456",
+        "game_date": "2025-11-15",
+        "game_ids": ["0022500225"],
+        "affected_entities": {
+          "players": ["1630567"],
+          "teams": ["LAL"],
+          "games": ["0022500225"]
+        },
+        "change_type": "incremental",
+        "record_count": 1,
+        "status": "success",
+        "timestamp": "2025-11-15T14:30:00Z",
+        "source_scraper_execution_id": "scraper_def456",
+        "metadata": {
+          "duration_seconds": 0.8,
+          "rows_inserted": 0,
+          "rows_updated": 1
+        }
+      }
+    },
+    {
+      "description": "Phase 2 injury update (FUTURE: with change metadata for smart routing)",
+      "message": {
+        "event_type": "raw_data_loaded",
+        "source_table": "nbac_injury_report",
+        "affected_entities": {
+          "players": ["1630567"]
+        },
+        "change_type": "incremental",
+        "metadata": {
+          "changed_fields": ["injury_status"],
+          "unchanged_fields": ["points", "rebounds", "assists"],
+          "trigger_reason": "injury_update",
+          "change_scope": {
+            "total_records": 1,
+            "changed_records": 1,
+            "updated_records": 1
+          }
+        }
+      }
+    },
+    {
+      "description": "Phase 2 pointspread change (FUTURE: with change metadata showing odds-only change)",
+      "message": {
+        "event_type": "raw_data_loaded",
+        "source_table": "odds_api_game_lines",
+        "game_date": "2025-11-15",
+        "affected_entities": {
+          "games": ["0022500225"],
+          "teams": ["LAL", "BOS"]
+        },
+        "change_type": "incremental",
+        "metadata": {
+          "changed_fields": ["spread", "spread_odds"],
+          "unchanged_fields": ["moneyline", "total", "player_props"],
+          "trigger_reason": "line_movement",
+          "significant_change": true,
+          "change_details": {
+            "spread": {"old": -5.5, "new": -6.5}
+          }
+        }
+      }
+    },
+    {
+      "description": "Phase 3 analytics complete event",
+      "message": {
+        "event_type": "analytics_complete",
+        "processor_name": "PlayerGameSummaryProcessor",
+        "target_table": "nba_analytics.player_game_summary",
+        "execution_id": "analytics_ghi789",
+        "correlation_id": "morning_ops_abc123",
+        "game_date": "2025-11-15",
+        "affected_entities": {
+          "players": ["1630567", "203999"],
+          "teams": ["LAL", "BOS"],
+          "games": ["0022500225"]
+        },
+        "record_count": 25,
+        "status": "success",
+        "timestamp": "2025-11-15T02:35:00Z",
+        "dependencies_met": true,
+        "metadata": {
+          "duration_seconds": 12.3,
+          "rows_upserted": 25,
+          "dependencies_checked": [
+            "nba_raw.nbac_gamebook_player_stats",
+            "nba_raw.bdl_player_boxscores"
+          ]
+        }
+      }
+    },
+    {
+      "description": "Phase 2 event with failed status (scraper failed)",
+      "message": {
+        "event_type": "raw_data_loaded",
+        "source_table": "odds_api_game_lines",
+        "target_table": "nba_raw.odds_api_game_lines",
+        "processor_name": "OddsApiGameLinesProcessor",
+        "execution_id": "proc_jkl012",
+        "correlation_id": "morning_ops_jkl012",
+        "game_date": "2025-11-15",
+        "game_ids": [],
+        "record_count": 0,
+        "status": "failed",
+        "timestamp": "2025-11-15T02:15:00Z",
+        "source_scraper_execution_id": "scraper_jkl012",
+        "metadata": {
+          "duration_seconds": 5.2,
+          "error_type": "APIError",
+          "error_message": "API rate limit exceeded"
+        }
+      }
+    }
+  ]
+}
