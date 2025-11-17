@@ -1,8 +1,9 @@
 # Phase 5 Predictions Documentation
 
-**Last Updated:** 2025-11-15
+**Last Updated:** 2025-11-16
 **Purpose:** Complete documentation for Phase 5 prediction generation system
 **Audience:** Engineers deploying, operating, and understanding the prediction pipeline
+**Documentation Coverage:** 20 comprehensive guides across 7 categories
 
 ---
 
@@ -10,7 +11,7 @@
 
 **New to Phase 5? Read these in order:**
 
-### Getting Started
+### 🎯 Getting Started (Essential First Read)
 
 **0. `tutorials/01-getting-started.md`** ⭐⭐ START HERE FIRST!
 - **Purpose:** Complete onboarding guide answering all common questions
@@ -18,50 +19,146 @@
 - **When to read:** FIRST - before anything else if you're new to Phase 5
 - **Status:** ✅ Current
 
-### Operations Guides (Deploy & Run)
+---
 
-**1. `operations/01-deployment-guide.md`**
+### 📚 Understanding Prediction Systems (Learn the Concepts)
+
+**1. `tutorials/02-understanding-prediction-systems.md`** 📖 Educational
+- **Purpose:** Understand different types of prediction systems and when to use each
+- **Contains:** Statistical aggregation, mathematical models, case-based reasoning, system comparisons
+- **When to read:** After getting started, to understand how predictions work conceptually
+- **Status:** ✅ Current
+
+**2. `tutorials/03-worked-prediction-examples.md`** 🏀 Practical
+- **Purpose:** Step-by-step prediction examples showing all 5 systems in action
+- **Contains:** LeBron James example, system-specific walkthroughs, edge cases, debugging guide
+- **When to read:** When implementing or debugging prediction systems
+- **Status:** ✅ Current
+
+---
+
+### 🚀 Deployment & Operations (Deploy & Run)
+
+**3. `operations/01-deployment-guide.md`** 🎯 Critical
 - **Purpose:** Deploy coordinator and worker services to production
-- **Contains:** Cloud Run config, Pub/Sub setup, ML model deployment
-- **When to read:** After reading getting started, before deploying Phase 5 for the first time
-- **Status:** ✅ Current (Note: Will be enhanced with additional deployment details)
+- **Contains:** Cloud Run config, Pub/Sub setup, ML model deployment, complete deployment checklist
+- **When to read:** Before deploying Phase 5 for the first time
+- **Status:** ✅ Current
 
-**2. `operations/02-scheduling-strategy.md`**
+**4. `operations/02-scheduling-strategy.md`** ⏰ Essential
 - **Purpose:** Cloud Scheduler configuration and dependency management
 - **Contains:** 6:15 AM trigger, Phase 4 validation, auto-scaling, retry strategy
-- **When to read:** After deployment, configuring scheduling
+- **When to read:** After deployment, when configuring scheduling
 - **Status:** ✅ Current
 
-**3. `operations/03-troubleshooting.md`**
-- **Purpose:** Failure scenarios and recovery procedures
-- **Contains:** 6 failure scenarios, P0/P1/P2 incident playbooks, health checks
-- **When to read:** When things break, or preparing for on-call
+**5. `operations/05-daily-operations-checklist.md`** 📋 Daily
+- **Purpose:** Daily operational checklist and morning routine (2 minutes)
+- **Contains:** Performance checks, health monitoring, success thresholds
+- **When to read:** Every morning during NBA season
 - **Status:** ✅ Current
 
-**4. `operations/04-worker-deepdive.md`** 🎯 Advanced
-- **Purpose:** Worker internals - model loading, concurrency, performance
+**6. `operations/06-performance-monitoring.md`** 📊 Ongoing
+- **Purpose:** Complete monitoring guide with CLI tools, SQL queries, and dashboards
+- **Contains:** Monitoring metrics, CLI tool implementation, alerting configuration
+- **When to read:** Setting up monitoring infrastructure
+- **Status:** ✅ Current
+
+**7. `operations/07-weekly-maintenance.md`** 📅 Weekly
+- **Purpose:** Weekly operational maintenance and performance review
+- **Contains:** Week-over-week comparison, system health checks, cost analysis
+- **When to read:** Every Monday morning for weekly review
+- **Status:** ✅ Current
+
+**8. `operations/08-monthly-maintenance.md`** 🗓️ Monthly
+- **Purpose:** Monthly model retraining and performance validation
+- **Contains:** Model retraining procedures, A/B testing, model promotion criteria
+- **When to read:** First Sunday of each month for model updates
+- **Status:** ✅ Current
+
+**9. `operations/03-troubleshooting.md`** 🔧 As Needed
+- **Purpose:** Common issues and basic troubleshooting procedures
+- **Contains:** Failure scenarios, recovery procedures, health checks
+- **When to read:** When encountering issues or preparing for on-call
+- **Status:** ✅ Current
+
+**10. `operations/09-emergency-procedures.md`** 🚨 Critical Incidents
+- **Purpose:** Emergency response procedures and advanced troubleshooting
+- **Contains:** P0/P1/P2 incidents, performance issues, system failures, data issues
+- **When to read:** During critical incidents or to prepare emergency response plans
+- **Status:** ✅ Current
+
+**11. `operations/04-worker-deepdive.md`** 🎯 Advanced
+- **Purpose:** Worker internals - model loading, concurrency, performance optimization
 - **Contains:** 5 system interfaces, cold start optimization, graceful degradation
 - **When to read:** Optimizing performance or debugging worker issues
 - **Status:** ✅ Current
 
 ---
 
-### Data Sources (Understand the Data)
+### 🤖 ML Training & Model Management
 
-**5. `data-sources/01-data-categorization.md`** 📊 Important
-- **Purpose:** How Phase 5 categorizes and uses data
+**12. `ml-training/01-initial-model-training.md`** 🧠 ML Setup
+- **Purpose:** How to train XGBoost models from scratch
+- **Contains:** Feature engineering, training procedures, validation, model deployment
+- **When to read:** Before training your first XGBoost model
+- **Status:** ✅ Current
+
+**13. `ml-training/02-continuous-retraining.md`** 🔄 ML Lifecycle
+- **Purpose:** Ongoing model improvement, drift detection, and retraining triggers
+- **Contains:** Drift detection, performance-based triggers, A/B testing, rollback procedures
+- **When to read:** After initial training, for ongoing model management
+- **Status:** ✅ Current
+
+---
+
+### 🧮 Algorithms & Mathematical Specifications
+
+**14. `algorithms/01-composite-factor-calculations.md`** ➗ Math Specs
+- **Purpose:** Mathematical specifications for all 5 prediction systems
+- **Contains:** Formulas for composite factors, zone matchup calculations, similarity scoring
+- **When to read:** Implementing or debugging prediction algorithms
+- **Status:** ✅ Current
+
+**15. `algorithms/02-confidence-scoring-framework.md`** 🎯 Confidence Logic
+- **Purpose:** How confidence scores are calculated and calibrated
+- **Contains:** 6-factor confidence system, thresholds, calibration procedures
+- **When to read:** Understanding or adjusting confidence scoring
+- **Status:** ✅ Current
+
+---
+
+### 🏗️ Architecture & Design Decisions
+
+**16. `architecture/01-parallelization-strategy.md`** 🏗️ Strategic
+- **Purpose:** When and how to parallelize prediction processing
+- **Contains:** Decision framework, 3 patterns, cost analysis, migration path
+- **When to read:** Planning infrastructure or optimizing throughput
+- **Status:** ✅ Current
+
+**17. `design/01-architectural-decisions.md`** 💡 Design Rationale
+- **Purpose:** Why we chose specific architectural patterns and approaches
+- **Contains:** Coordinator-worker rationale, 5-system design, confidence threshold decisions
+- **When to read:** Understanding design context for future changes
+- **Status:** ✅ Current
+
+---
+
+### 📊 Data Sources & Pipeline
+
+**18. `data-sources/01-data-categorization.md`** 📊 Data Flow
+- **Purpose:** How Phase 5 categorizes and uses data from upstream phases
 - **Contains:** 4 data categories (Pre-Game, Real-Time, Game Results, ML Predictions)
 - **When to read:** Understanding what data feeds predictions
 - **Status:** ✅ Current
 
 ---
 
-### Architecture (Understand the Design)
+### 📝 Quick Reference Guides
 
-**6. `architecture/01-parallelization-strategy.md`** 🏗️ Strategic
-- **Purpose:** When and how to parallelize prediction processing
-- **Contains:** Decision framework, 3 patterns, cost analysis, migration path
-- **When to read:** Planning infrastructure or optimizing throughput
+**19. `tutorials/04-operations-command-reference.md`** 💻 Command Lookup
+- **Purpose:** Quick reference for common operational commands
+- **Contains:** Cloud Run, Pub/Sub, BigQuery, Scheduler, GCS commands
+- **When to read:** Daily operations for command lookup
 - **Status:** ✅ Current
 
 ---
@@ -70,57 +167,94 @@
 
 ```
 docs/predictions/
-├── README.md                          # This file - reading guide
+├── README.md                                    # This file - reading guide
 │
-├── operations/                        # HOW to deploy and run Phase 5
-│   ├── 01-deployment-guide.md        # Cloud Run, Pub/Sub, ML models
-│   ├── 02-scheduling-strategy.md     # Cloud Scheduler, dependencies, retries
-│   ├── 03-troubleshooting.md         # Failure recovery, incident response
-│   └── 04-worker-deepdive.md         # Worker internals, performance
+├── tutorials/                                   # LEARN the prediction systems (4 docs)
+│   ├── 01-getting-started.md                   # ⭐⭐ Complete onboarding guide
+│   ├── 02-understanding-prediction-systems.md  # System types and concepts
+│   ├── 03-worked-prediction-examples.md        # Step-by-step examples
+│   └── 04-operations-command-reference.md      # Quick command lookup
 │
-├── data-sources/                      # WHAT data flows where
-│   └── 01-data-categorization.md     # 4 data categories, pipeline timing
+├── operations/                                  # HOW to deploy and run (9 docs)
+│   ├── 01-deployment-guide.md                  # Cloud Run, Pub/Sub, ML models
+│   ├── 02-scheduling-strategy.md               # Cloud Scheduler, dependencies
+│   ├── 03-troubleshooting.md                   # Basic troubleshooting
+│   ├── 04-worker-deepdive.md                   # Worker internals
+│   ├── 05-daily-operations-checklist.md        # Daily routine (2 min)
+│   ├── 06-performance-monitoring.md            # Monitoring & metrics
+│   ├── 07-weekly-maintenance.md                # Weekly review
+│   ├── 08-monthly-maintenance.md               # Model retraining
+│   └── 09-emergency-procedures.md              # Critical incidents
 │
-├── architecture/                      # WHY we built it this way
-│   └── 01-parallelization-strategy.md # Parallel processing decisions
+├── ml-training/                                 # MACHINE LEARNING lifecycle (2 docs)
+│   ├── 01-initial-model-training.md            # XGBoost training procedures
+│   └── 02-continuous-retraining.md             # Drift detection, A/B testing
 │
-├── tutorials/                         # LEARN the prediction systems
-│   ├── 01-getting-started.md         # Complete onboarding guide ⭐⭐
-│   ├── (future) 02-prediction-systems.md
-│   └── (future) 03-algorithm-specs.md
+├── algorithms/                                  # MATHEMATICAL specifications (2 docs)
+│   ├── 01-composite-factor-calculations.md     # Formula specs for all 5 systems
+│   └── 02-confidence-scoring-framework.md      # Confidence calculation logic
 │
-└── archive/                           # Historical documentation
+├── architecture/                                # WHY we built it this way (1 doc)
+│   └── 01-parallelization-strategy.md          # Parallel processing decisions
+│
+├── design/                                      # DESIGN rationale (1 doc)
+│   └── 01-architectural-decisions.md           # Why coordinator-worker, why 5 systems
+│
+├── data-sources/                                # WHAT data flows where (1 doc)
+│   └── 01-data-categorization.md               # Data pipeline timing & categories
+│
+└── archive/                                     # Historical documentation
     └── (archived materials)
 ```
 
+**Total Documentation:** 20 comprehensive markdown files (~250KB)
+
 ---
 
-## 🎯 Quick Start
+## 🎯 Quick Start Paths
 
 ### I'm completely new to Phase 5
 1. **READ THIS FIRST:** `tutorials/01-getting-started.md` ⭐⭐
-2. Then proceed with relevant guides below
+2. **Learn concepts:** `tutorials/02-understanding-prediction-systems.md`
+3. **See examples:** `tutorials/03-worked-prediction-examples.md`
+4. Then proceed with deployment guides
 
 ### I want to deploy Phase 5 for the first time
 1. Read `tutorials/01-getting-started.md` (answers key questions)
-2. Read `operations/01-deployment-guide.md` (deployment steps)
-3. Follow deployment checklist
+2. Review `algorithms/01-composite-factor-calculations.md` (understand the math)
+3. Read `operations/01-deployment-guide.md` (deployment steps)
 4. Configure scheduler using `operations/02-scheduling-strategy.md`
+5. Set up monitoring with `operations/06-performance-monitoring.md`
 
-### I need to troubleshoot a failure
-1. Check `operations/03-troubleshooting.md` for failure scenario
-2. Follow recovery procedure
-3. Use health check queries
+### I need to operate Phase 5 daily
+1. **Every morning:** `operations/05-daily-operations-checklist.md` (2 minutes)
+2. **Every Monday:** `operations/07-weekly-maintenance.md` (15 minutes)
+3. **First Sunday:** `operations/08-monthly-maintenance.md` (30 minutes)
+4. **Quick commands:** `tutorials/04-operations-command-reference.md`
+
+### I need to troubleshoot issues
+1. Start with `operations/03-troubleshooting.md` (common issues)
+2. For emergencies: `operations/09-emergency-procedures.md` (P0/P1/P2 incidents)
+3. Check monitoring: `operations/06-performance-monitoring.md`
+4. Review worker internals: `operations/04-worker-deepdive.md`
+
+### I want to train ML models
+1. Read `ml-training/01-initial-model-training.md` (first-time setup)
+2. Follow `ml-training/02-continuous-retraining.md` (ongoing improvement)
+3. Understand `algorithms/02-confidence-scoring-framework.md` (confidence logic)
+4. Monthly retraining: `operations/08-monthly-maintenance.md`
 
 ### I want to understand the data pipeline
-1. Read `data-sources/01-data-categorization.md` for data categories
-2. Review `operations/01-deployment-guide.md` for data flow
+1. Read `data-sources/01-data-categorization.md` (data categories)
+2. Review `operations/01-deployment-guide.md` (data flow)
 3. Check Phase 4→5 mapping in `docs/data-flow/13-phase4-to-phase5-feature-consumption.md`
+4. Study `algorithms/01-composite-factor-calculations.md` (how data is used)
 
 ### I want to optimize performance
-1. Read `operations/04-worker-deepdive.md` for concurrency patterns
-2. Review `architecture/01-parallelization-strategy.md` for scaling options
-3. Check cost analysis in deployment guide
+1. Read `operations/04-worker-deepdive.md` (concurrency patterns)
+2. Review `architecture/01-parallelization-strategy.md` (scaling options)
+3. Check `design/01-architectural-decisions.md` (design rationale)
+4. Monitor with `operations/06-performance-monitoring.md`
 
 ---
 
@@ -132,11 +266,13 @@ docs/predictions/
 - **Communication:** Pub/Sub fan-out (450 messages → 20 workers)
 
 ### 5 Prediction Systems
-1. **Moving Average Baseline:** Simple recent average
-2. **Zone Matchup V1:** Shot zones vs opponent defense
-3. **Similarity Balanced V1:** Pattern matching historical games
-4. **XGBoost V1:** ML model predictions
-5. **Meta Ensemble V1:** Weighted combination of all 4
+1. **Moving Average Baseline:** Simple recent average with adjustments
+2. **Zone Matchup V1:** Shot zones vs opponent defense analysis
+3. **Similarity Balanced V1:** Pattern matching similar historical games
+4. **XGBoost V1:** Machine learning model predictions
+5. **Meta Ensemble V1:** Weighted combination of all 4 systems
+
+See `tutorials/02-understanding-prediction-systems.md` for detailed explanations.
 
 ### Data Pipeline Timing
 - **11 PM - 6 AM:** Overnight processing (Phase 4 features)
@@ -148,6 +284,21 @@ docs/predictions/
 1. **Phase 4:** ml_feature_store_v2 (MUST be ready by 6 AM)
 2. **Phase 3:** upcoming_player_game_context (player schedule)
 3. **Phase 2:** odds_player_props (betting lines)
+
+---
+
+## 📊 Documentation Coverage
+
+| Category | Files | Status | Purpose |
+|----------|-------|--------|---------|
+| **Tutorials** | 4 docs | ✅ Complete | Learning and onboarding |
+| **Operations** | 9 docs | ✅ Complete | Deployment, monitoring, maintenance |
+| **ML Training** | 2 docs | ✅ Complete | Model training and retraining |
+| **Algorithms** | 2 docs | ✅ Complete | Mathematical specifications |
+| **Architecture** | 1 doc | ✅ Complete | Scaling and design patterns |
+| **Design** | 1 doc | ✅ Complete | Design rationale and decisions |
+| **Data Sources** | 1 doc | ✅ Complete | Data pipeline and categorization |
+| **TOTAL** | **20 docs** | **✅ Comprehensive** | **~250KB documentation** |
 
 ---
 
@@ -167,9 +318,14 @@ docs/predictions/
 | Worker | Cloud Run Service | 0-20 | 5 | 2Gi | 2 |
 
 ### Pub/Sub Topics
-- `prediction-request` - Work queue (coordinator → workers)
+- `phase5-player-prediction-tasks` - Work queue (coordinator → workers)
 - `prediction-ready` - Completion events (workers → Phase 6)
 - `prediction-worker-dlq` - Failed messages
+
+### Performance Thresholds
+- **O/U Accuracy:** >55% = Good, >60% = Excellent
+- **MAE:** <4.5 = Good, <4.0 = Excellent
+- **Confidence Calibration:** High conf should be 8-10% better than low
 
 ---
 
@@ -198,14 +354,19 @@ docs/predictions/
 When adding new Phase 5 documentation:
 
 1. **Determine category:**
-   - Operations guide → `operations/`
-   - Data mapping → `data-sources/`
-   - Strategic design → `architecture/`
+   - Daily operations → `operations/`
+   - ML training → `ml-training/`
+   - Math/algorithms → `algorithms/`
+   - Data pipeline → `data-sources/`
+   - Strategic design → `architecture/` or `design/`
    - Learning/tutorial → `tutorials/`
 
 2. **Find next number:**
    ```bash
-   ls operations/*.md | tail -1  # Currently at 04, next is 05
+   ls operations/*.md | tail -1  # Currently at 09, next is 10
+   ls ml-training/*.md | tail -1  # Currently at 02, next is 03
+   ls algorithms/*.md | tail -1   # Currently at 02, next is 03
+   ls tutorials/*.md | tail -1    # Currently at 04, next is 05
    ```
 
 3. **Use standard header:**
@@ -220,71 +381,84 @@ When adding new Phase 5 documentation:
 
 4. **Update this README** with the new doc in reading order
 
+5. **Add cross-references** to related documents
+
 ---
 
-## 🚀 Status
+## 🚀 Implementation Status
 
-### Current Implementation
-
-**Phase 5 Status:** 🚧 Documentation complete, code implementation in progress
+### Phase 5 Components
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| Coordinator | 🟡 Code exists | Needs Pub/Sub integration |
-| Worker | 🟡 Code exists | Needs Cloud Run deployment |
+| **Documentation** | ✅ Complete | 20 comprehensive guides |
+| Coordinator | 🟡 Code exists | Needs production deployment |
+| Worker | 🟡 Code exists | Needs production deployment |
 | Pub/Sub Topics | ❌ Not created | Infrastructure setup needed |
 | Cloud Scheduler | ❌ Not configured | Trigger setup needed |
 | Monitoring | ❌ Not deployed | Grafana dashboards pending |
+| XGBoost Models | ⚠️ Mock only | Need real model training |
 
-### Documentation Coverage
+### Next Steps
 
-| Category | Docs | Status |
-|----------|------|--------|
-| Tutorials | 1 doc | ✅ Complete (getting started) |
-| Operations | 4 docs | ✅ Complete |
-| Data Sources | 1 doc | ✅ Complete |
-| Architecture | 1 doc | ✅ Complete |
+1. **Train XGBoost models** using `ml-training/01-initial-model-training.md`
+2. **Deploy services** following `operations/01-deployment-guide.md`
+3. **Set up monitoring** using `operations/06-performance-monitoring.md`
+4. **Configure scheduler** per `operations/02-scheduling-strategy.md`
+5. **Test with real data** and validate predictions
+6. **Establish daily operations** with `operations/05-daily-operations-checklist.md`
 
 ---
 
-## 🎓 Learning Path
+## 🎓 Learning Paths
 
 ### For Operators
-1. Start with `operations/01-deployment-guide.md`
-2. Learn `operations/03-troubleshooting.md`
-3. Understand daily health checks
-4. Practice manual operations
+1. `tutorials/01-getting-started.md` - Understand Phase 5
+2. `operations/01-deployment-guide.md` - Deploy services
+3. `operations/05-daily-operations-checklist.md` - Daily routine
+4. `operations/06-performance-monitoring.md` - Monitor health
+5. `operations/03-troubleshooting.md` - Handle issues
+6. `tutorials/04-operations-command-reference.md` - Quick commands
+
+### For ML Engineers
+1. `tutorials/02-understanding-prediction-systems.md` - System types
+2. `algorithms/01-composite-factor-calculations.md` - Math specs
+3. `ml-training/01-initial-model-training.md` - Train models
+4. `ml-training/02-continuous-retraining.md` - Ongoing improvement
+5. `algorithms/02-confidence-scoring-framework.md` - Confidence logic
+6. `tutorials/03-worked-prediction-examples.md` - Real examples
 
 ### For Developers
-1. Read `data-sources/01-data-categorization.md`
-2. Study `operations/04-worker-deepdive.md`
-3. Review `architecture/01-parallelization-strategy.md`
-4. Examine source code in `predictions/`
+1. `data-sources/01-data-categorization.md` - Data pipeline
+2. `operations/04-worker-deepdive.md` - Worker internals
+3. `algorithms/01-composite-factor-calculations.md` - Algorithm specs
+4. `tutorials/03-worked-prediction-examples.md` - Examples
+5. Review source code in `predictions/`
 
 ### For Architects
-1. Review `architecture/01-parallelization-strategy.md`
-2. Study event-driven pipeline in `docs/architecture/`
-3. Understand cost trade-offs
-4. Plan future enhancements
-
----
-
-**Directory Status:** Active
-**Documentation Status:** Comprehensive (7 docs, ~200KB)
-**Next Steps:** Deploy to production, validate with real data
+1. `design/01-architectural-decisions.md` - Design rationale
+2. `architecture/01-parallelization-strategy.md` - Scaling patterns
+3. Study event-driven pipeline in `docs/architecture/`
+4. Understand cost trade-offs
+5. Plan future enhancements
 
 ---
 
 ## 💡 Quick Tips
 
-- **Coordinator not starting?** Check Phase 4 dependency validation
-- **Workers not scaling?** Verify Pub/Sub push subscription configured
-- **Predictions incomplete?** Check worker DLQ for failed messages
-- **Slow performance?** Review worker-deepdive for optimization strategies
-- **Cost too high?** Check parallelization-strategy for cost analysis
+- **Coordinator not starting?** Check Phase 4 dependency validation in `operations/01-deployment-guide.md`
+- **Workers not scaling?** Verify Pub/Sub push subscription configured in `operations/02-scheduling-strategy.md`
+- **Predictions incomplete?** Check worker DLQ for failed messages per `operations/03-troubleshooting.md`
+- **Slow performance?** Review `operations/04-worker-deepdive.md` for optimization strategies
+- **Cost too high?** Check `architecture/01-parallelization-strategy.md` for cost analysis
+- **Low accuracy?** See `operations/09-emergency-procedures.md` for performance issues
+- **Need commands?** Use `tutorials/04-operations-command-reference.md` for quick lookup
 
 ---
 
-**Maintained by:** Platform team
-**Last Review:** 2025-11-15
+**Maintained by:** Platform Team
+**Last Review:** 2025-11-16
 **Next Review:** After Phase 5 production deployment
+
+**Documentation Version:** 2.0 (Comprehensive - 20 guides)
+**Coverage:** Tutorials (4) | Operations (9) | ML Training (2) | Algorithms (2) | Architecture (1) | Design (1) | Data Sources (1)
