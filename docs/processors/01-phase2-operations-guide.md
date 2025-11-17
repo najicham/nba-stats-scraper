@@ -86,7 +86,7 @@ Phase 3 Analytics (⚠️ MANUAL TRIGGER ONLY)
 **Sprint 1:** Phase 2→3 Pub/Sub Connection (~2 hours effort)
 - Create `RawDataPubSubPublisher` class
 - Add publishing to Phase 2 processor base class
-- Create Pub/Sub topic: `nba-raw-data-complete`
+- Create Pub/Sub topic: `nba-phase2-raw-complete`
 - Create subscription pointing to analytics service
 - Test end-to-end flow
 
@@ -105,13 +105,13 @@ Phase 3 Analytics (⚠️ MANUAL TRIGGER ONLY)
 │ Phase 1: Scrapers (Cloud Run)                    ✅ WORKING  │
 │ • 26+ scrapers operational                                    │
 │ • Writes JSON to GCS                                          │
-│ • Publishes to nba-scraper-complete topic                    │
+│ • Publishes to nba-phase1-scrapers-complete topic                    │
 └──────────────────────────────────────────────────────────────┘
                            ↓ Pub/Sub event
 ┌──────────────────────────────────────────────────────────────┐
-│ Pub/Sub: nba-scraper-complete                    ✅ WORKING  │
+│ Pub/Sub: nba-phase1-scrapers-complete                    ✅ WORKING  │
 │ • Message retention: 1 day                                    │
-│ • DLQ: nba-scraper-complete-dlq (7 days)                     │
+│ • DLQ: nba-phase1-scrapers-complete-dlq (7 days)                     │
 └──────────────────────────────────────────────────────────────┘
                            ↓ Push subscription
 ┌──────────────────────────────────────────────────────────────┐
@@ -131,7 +131,7 @@ Phase 3 Analytics (⚠️ MANUAL TRIGGER ONLY)
 
 ### Pub/Sub Configuration
 
-**Topic:** `nba-scraper-complete`
+**Topic:** `nba-phase1-scrapers-complete`
 - **Purpose:** Phase 1 scrapers publish completion events
 - **Retention:** 1 day
 - **Status:** ✅ Configured
@@ -141,7 +141,7 @@ Phase 3 Analytics (⚠️ MANUAL TRIGGER ONLY)
 - **Endpoint:** `https://nba-processors-XXX.run.app/process`
 - **ACK Deadline:** 600s (10 minutes)
 - **Max Delivery Attempts:** 5
-- **DLQ:** `nba-scraper-complete-dlq`
+- **DLQ:** `nba-phase1-scrapers-complete-dlq`
 - **Status:** ✅ Configured
 
 **IAM:**
@@ -314,13 +314,13 @@ gcloud pubsub subscriptions describe nba-processors-sub \
 **Check Dead Letter Queue:**
 ```bash
 # Check DLQ message count
-gcloud pubsub subscriptions describe nba-scraper-complete-dlq-sub \
+gcloud pubsub subscriptions describe nba-phase1-scrapers-complete-dlq-sub \
   --format="value(numUndeliveredMessages)"
 
 # Expected: 0 (no failures)
 
 # Pull DLQ messages if any
-gcloud pubsub subscriptions pull nba-scraper-complete-dlq-sub \
+gcloud pubsub subscriptions pull nba-phase1-scrapers-complete-dlq-sub \
   --limit=10 \
   --format=json > dlq_messages.json
 ```
@@ -415,7 +415,7 @@ gcloud logging read "resource.type=cloud_run_revision \
 **Method 1: Via Pub/Sub (Recommended)**
 ```bash
 # Publish message to topic
-gcloud pubsub topics publish nba-scraper-complete \
+gcloud pubsub topics publish nba-phase1-scrapers-complete \
   --message='{
     "scraper_name": "bdl_boxscores",
     "gcs_path": "gs://nba-scraped-data/ball-dont-lie/boxscores/2025-11-13/file.json",
@@ -503,10 +503,10 @@ bq query "SELECT COUNT(*) FROM nba_raw.bdl_player_boxscores
 **Diagnosis:**
 ```bash
 # Check DLQ
-gcloud pubsub subscriptions describe nba-scraper-complete-dlq-sub
+gcloud pubsub subscriptions describe nba-phase1-scrapers-complete-dlq-sub
 
 # Pull failed messages
-gcloud pubsub subscriptions pull nba-scraper-complete-dlq-sub \
+gcloud pubsub subscriptions pull nba-phase1-scrapers-complete-dlq-sub \
   --limit=5 \
   --format=json > failed_messages.json
 
@@ -520,7 +520,7 @@ cat failed_messages.json | jq '.[] | .message.data' | base64 -d
 3. Replay DLQ messages after fix:
    ```bash
    # Republish to main topic
-   gcloud pubsub topics publish nba-scraper-complete \
+   gcloud pubsub topics publish nba-phase1-scrapers-complete \
      --message="<message_data_from_dlq>"
    ```
 
@@ -634,7 +634,7 @@ LIMIT 20;
 **Tasks:**
 1. Create `RawDataPubSubPublisher` class in `data_processors/raw/utils/`
 2. Add publishing to Phase 2 processor base class
-3. Create Pub/Sub topic: `nba-raw-data-complete`
+3. Create Pub/Sub topic: `nba-phase2-raw-complete`
 4. Create subscription: `nba-analytics-sub` → analytics service
 5. Test with one processor (e.g., NbacGamebookProcessor)
 6. Verify Phase 3 analytics processors trigger automatically
@@ -750,7 +750,7 @@ gcloud logging read "resource.type=cloud_run_revision \
 
 - **Scraper Service:** `nba-scrapers` (revision 00073, Nov 13 2025)
 - **Processor Service:** `nba-processors` (deployed Nov 13 2025)
-- **Pub/Sub Topic:** `nba-scraper-complete`
+- **Pub/Sub Topic:** `nba-phase1-scrapers-complete`
 - **Pub/Sub Subscription:** `nba-processors-sub`
 - **BigQuery Dataset:** `nba_raw` (21 tables)
 

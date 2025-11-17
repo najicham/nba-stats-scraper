@@ -97,7 +97,7 @@ Transform raw Phase 2 data into analytics-ready tables combining:
 │  │ (3-5s)           │  │ (3-5s)           │  │ (3-5s)        ││
 │  └──────────────────┘  └──────────────────┘  └───────────────┘│
 │                                                                   │
-│  Listen: nba-raw-data-complete (event-driven)                   │
+│  Listen: nba-phase2-raw-complete (event-driven)                   │
 │  Fallback: phase3-start (time-based 2:30 AM)                    │
 │  Publish: phase3-historical-complete                             │
 └─────────────────────────────────────────────────────────────────┘
@@ -166,7 +166,7 @@ Transform raw Phase 2 data into analytics-ready tables combining:
 
 | Attribute | Value |
 |-----------|-------|
-| **Trigger** | Pub/Sub: nba-raw-data-complete (event-driven) OR phase3-start (time-based 2:30 AM ET) |
+| **Trigger** | Pub/Sub: nba-phase2-raw-complete (event-driven) OR phase3-start (time-based 2:30 AM ET) |
 | **Duration** | 3-5 seconds (typical), 10 seconds (alert threshold) |
 | **Volume** | ~450 player-game records per day |
 | **Output Table** | nba_analytics.player_game_summary |
@@ -211,7 +211,7 @@ WHERE game_date = CURRENT_DATE() - 1;
 
 | Attribute | Value |
 |-----------|-------|
-| **Trigger** | Pub/Sub: nba-raw-data-complete (event-driven) OR phase3-start (time-based) |
+| **Trigger** | Pub/Sub: nba-phase2-raw-complete (event-driven) OR phase3-start (time-based) |
 | **Duration** | 3-5 seconds (typical), 10 seconds (alert threshold) |
 | **Volume** | ~20-30 team records per day (2 teams × 10-15 games) |
 | **Output Table** | nba_analytics.team_offense_game_summary |
@@ -247,7 +247,7 @@ WHERE game_date = CURRENT_DATE() - 1;
 
 | Attribute | Value |
 |-----------|-------|
-| **Trigger** | Pub/Sub: nba-raw-data-complete (event-driven) OR phase3-start (time-based) |
+| **Trigger** | Pub/Sub: nba-phase2-raw-complete (event-driven) OR phase3-start (time-based) |
 | **Duration** | 3-5 seconds (typical), 10 seconds (alert threshold) |
 | **Volume** | ~20-30 team records per day |
 | **Output Table** | nba_analytics.team_defense_game_summary |

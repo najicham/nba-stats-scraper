@@ -19,8 +19,8 @@
 - ✅ Pub/Sub topic naming aligned with architecture
 
 **What's Missing:**
-- ❌ Phase 2 publishing to `nba-raw-data-complete` (Gap #1 - CRITICAL)
-- ❌ Phase 3 publishing to `nba-analytics-complete` (Gap #2 - blocks Phase 4)
+- ❌ Phase 2 publishing to `nba-phase2-raw-complete` (Gap #1 - CRITICAL)
+- ❌ Phase 3 publishing to `nba-phase3-analytics-complete` (Gap #2 - blocks Phase 4)
 - ⚠️ Pub/Sub topics not yet created in GCP
 
 **Estimated Time to Deploy:** 4-6 hours (with Phase 2 publishing fix)
@@ -64,7 +64,7 @@
 
 **Recent Update (2025-11-15):**
 - ✅ Topic naming now consistent across all docs
-- ✅ `nba-raw-data-complete` is primary event-driven topic
+- ✅ `nba-phase2-raw-complete` is primary event-driven topic
 - ✅ `phase3-start` is time-based fallback only
 
 ### 3. BigQuery Schemas
@@ -109,7 +109,7 @@ class RawDataPubSubPublisher:
         self.publisher = pubsub_v1.PublisherClient()
         self.topic_path = self.publisher.topic_path(
             project_id,
-            'nba-raw-data-complete'
+            'nba-phase2-raw-complete'
         )
 
     def publish_raw_data_loaded(
@@ -186,7 +186,7 @@ class RawProcessorBase:
 **C) Create Topic** (~5 min)
 
 ```bash
-gcloud pubsub topics create nba-raw-data-complete \
+gcloud pubsub topics create nba-phase2-raw-complete \
     --project nba-props-platform
 ```
 
@@ -199,7 +199,7 @@ curl -X POST https://nba-processors-xxx.run.app/process \
   -d '{...scraper complete message...}'
 
 # 2. Verify message published
-gcloud pubsub subscriptions pull nba-raw-data-complete-test-sub \
+gcloud pubsub subscriptions pull nba-phase2-raw-complete-test-sub \
   --limit 1 --auto-ack
 
 # 3. Verify Phase 3 receives and processes
@@ -243,7 +243,7 @@ class AnalyticsPubSubPublisher:
             'timestamp': datetime.utcnow().isoformat(),
             'phase': 3
         }
-        # ... publish to nba-analytics-complete topic
+        # ... publish to nba-phase3-analytics-complete topic
 ```
 
 **Priority:** MEDIUM (can do after Phase 3 is stable)
@@ -258,8 +258,8 @@ class AnalyticsPubSubPublisher:
 
 ```bash
 # Topics
-nba-raw-data-complete (Phase 2 → Phase 3)
-nba-analytics-complete (Phase 3 → Phase 4)
+nba-phase2-raw-complete (Phase 2 → Phase 3)
+nba-phase3-analytics-complete (Phase 3 → Phase 4)
 phase3-start (time-based fallback)
 phase3-analytics-dlq (dead letter queue)
 
@@ -297,7 +297,7 @@ phase3-upcoming-context-evening (5:00 PM)
 
 3. **Create topic** (5 min)
    ```bash
-   gcloud pubsub topics create nba-raw-data-complete
+   gcloud pubsub topics create nba-phase2-raw-complete
    ```
 
 4. **Deploy Phase 2 processors** (30 min)
@@ -311,7 +311,7 @@ phase3-upcoming-context-evening (5:00 PM)
 
 **Success Criteria:**
 - ✅ Phase 2 processors still load data correctly
-- ✅ Messages appear in `nba-raw-data-complete` topic
+- ✅ Messages appear in `nba-phase2-raw-complete` topic
 - ✅ Message schema matches expected format
 
 ---
@@ -429,7 +429,7 @@ phase3-upcoming-context-evening (5:00 PM)
 - [ ] Schema validation added
 
 **Infrastructure:**
-- [ ] `nba-raw-data-complete` topic created
+- [ ] `nba-phase2-raw-complete` topic created
 - [ ] `nba-analytics` BigQuery dataset created
 - [ ] 5 analytics tables created with schemas
 - [ ] Pub/Sub subscriptions created

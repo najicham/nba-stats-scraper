@@ -38,6 +38,9 @@ from typing import Optional
 
 from google.cloud import pubsub_v1
 
+# NEW: Import centralized topic config
+from shared.config.pubsub_topics import TOPICS
+
 logger = logging.getLogger(__name__)
 
 
@@ -49,21 +52,41 @@ class ScraperPubSubPublisher:
     Phase 2 processors subscribe to these events and automatically process GCS files.
     """
     
-    def __init__(self, project_id: str = None, topic_name: str = 'nba-scraper-complete'):
+    def __init__(
+        self,
+        project_id: str = None,
+        dual_publish: bool = True  # NEW: Enable dual publishing during migration
+    ):
         """
         Initialize publisher.
-        
+
         Args:
             project_id: GCP project ID (defaults to GCP_PROJECT_ID env var)
-            topic_name: Pub/Sub topic name (default: 'nba-scraper-complete')
+            dual_publish: If True, publishes to both old and new topics (migration mode)
         """
         self.project_id = project_id or os.getenv('GCP_PROJECT_ID', 'nba-props-platform')
-        self.topic_name = topic_name
-        
+        self.dual_publish = dual_publish
+
+        # OLD topic (will deprecate after migration)
+        self.old_topic_name = 'nba-scraper-complete'
+
+        # NEW topic (from centralized config)
+        self.new_topic_name = TOPICS.PHASE1_SCRAPERS_COMPLETE
+
         try:
             self.publisher = pubsub_v1.PublisherClient()
-            self.topic_path = self.publisher.topic_path(self.project_id, self.topic_name)
-            logger.debug(f"Initialized Pub/Sub publisher: {self.topic_path}")
+
+            # Create topic paths for both
+            self.old_topic_path = self.publisher.topic_path(self.project_id, self.old_topic_name)
+            self.new_topic_path = self.publisher.topic_path(self.project_id, self.new_topic_name)
+
+            if self.dual_publish:
+                logger.info(
+                    f"Dual publishing mode: {self.old_topic_name} + {self.new_topic_name}"
+                )
+            else:
+                logger.info(f"Publishing to: {self.new_topic_name}")
+
         except Exception as e:
             logger.error(f"Failed to initialize Pub/Sub publisher: {e}")
             raise
@@ -146,26 +169,51 @@ class ScraperPubSubPublisher:
             message_data['metadata'] = metadata
         
         try:
-            # Publish with message attributes for subscription filtering
-            future = self.publisher.publish(
-                self.topic_path,
+            message_ids = []
+
+            # Publish to NEW topic (always)
+            future_new = self.publisher.publish(
+                self.new_topic_path,
                 data=json.dumps(message_data).encode('utf-8'),
-                # Message attributes for Pub/Sub filtering
                 scraper_name=scraper_name,
                 status=status,
                 execution_id=execution_id,
                 workflow=workflow or 'MANUAL'
             )
-            
-            # Wait for publish to complete (blocking, max 10 seconds)
-            message_id = future.result(timeout=10)
-            
+
+            message_id_new = future_new.result(timeout=10)
+            message_ids.append(message_id_new)
+
             logger.info(
-                f"✅ Published Pub/Sub event: {scraper_name} "
-                f"(status={status}, records={record_count}, message_id={message_id})"
+                f"✅ Published to {self.new_topic_name}: {scraper_name} "
+                f"(status={status}, records={record_count}, message_id={message_id_new})"
             )
-            
-            return message_id
+
+            # DUAL PUBLISH: Also publish to OLD topic during migration
+            if self.dual_publish:
+                try:
+                    future_old = self.publisher.publish(
+                        self.old_topic_path,
+                        data=json.dumps(message_data).encode('utf-8'),
+                        scraper_name=scraper_name,
+                        status=status,
+                        execution_id=execution_id,
+                        workflow=workflow or 'MANUAL'
+                    )
+
+                    message_id_old = future_old.result(timeout=10)
+                    message_ids.append(message_id_old)
+
+                    logger.debug(
+                        f"✅ Also published to {self.old_topic_name} (backward compatibility)"
+                    )
+                except Exception as dual_error:
+                    # Don't fail if old topic publish fails (migration period)
+                    logger.warning(
+                        f"Failed to publish to old topic {self.old_topic_name}: {dual_error}"
+                    )
+
+            return message_id_new  # Return new topic's message ID
             
         except Exception as e:
             # Log error but don't fail the scraper

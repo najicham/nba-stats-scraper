@@ -42,7 +42,7 @@ The event-driven pipeline architecture is **well-designed and documented**, but 
 
 ```
 Phase 1: Scrapers
-  ├─ ScraperBase publishes to "nba-scraper-complete" topic
+  ├─ ScraperBase publishes to "nba-phase1-scrapers-complete" topic
   ├─ Includes execution metadata (execution_id, status, gcs_path, etc.)
   ├─ 26+ scrapers all inherit and auto-publish
   └─ Logs to scraper_execution_log table
@@ -331,7 +331,7 @@ ORDER BY phase;
 **Tasks:**
 1. ✅ Create `RawDataPubSubPublisher` class (~1 hour)
 2. ✅ Add publishing to `RawProcessorBase.run()` (~30 min)
-3. ✅ Create Pub/Sub topic: `nba-raw-data-complete` (~15 min)
+3. ✅ Create Pub/Sub topic: `nba-phase2-raw-complete` (~15 min)
 4. ✅ Create subscription pointing to analytics service (~15 min)
 5. ✅ Test with single scraper → raw processor → analytics flow (~2 hours)
 6. ✅ Verify all 19 raw processors publish events (~1 hour)
@@ -379,7 +379,7 @@ ORDER BY phase;
 2. ✅ Add publishing to `AnalyticsBase.run()` (~30 min)
 3. ✅ Complete `main_precompute_service.py` Flask orchestration (~3 hours)
 4. ✅ Create `PRECOMPUTE_TRIGGERS` registry (~1 hour)
-5. ✅ Create Pub/Sub topic: `nba-analytics-complete` (~15 min)
+5. ✅ Create Pub/Sub topic: `nba-phase3-analytics-complete` (~15 min)
 6. ✅ Create subscription pointing to precompute service (~15 min)
 7. ✅ Test Phase 3 → Phase 4 flow (~2 hours)
 
@@ -450,7 +450,7 @@ ORDER BY phase;
 **Tasks:**
 1. ✅ Add Pub/Sub publishing to precompute processors (~1 hour)
 2. ✅ Update prediction coordinator to receive events (~4 hours)
-3. ✅ Create Pub/Sub topic: `nba-precompute-complete` (~15 min)
+3. ✅ Create Pub/Sub topic: `nba-phase4-precompute-complete` (~15 min)
 4. ✅ Test Phase 4 → Phase 5 flow (~3 hours)
 
 **Success Criteria:**
@@ -472,7 +472,7 @@ ORDER BY phase;
 2. ✅ Implement Firestore publishing (~4 hours)
 3. ✅ Implement GCS publishing (~3 hours)
 4. ✅ Add JSON transformation logic (~3 hours)
-5. ✅ Create Pub/Sub topic: `nba-predictions-complete` (~15 min)
+5. ✅ Create Pub/Sub topic: `nba-phase5-predictions-complete` (~15 min)
 6. ✅ Test Phase 5 → Phase 6 flow (~3 hours)
 
 **Success Criteria:**

@@ -144,12 +144,15 @@ class ProcessorBase:
             self.save_data()
             save_seconds = self.get_elapsed_seconds("save")
             self.stats["save_time"] = save_seconds
-            
+
+            # Publish Phase 2 completion event (triggers Phase 3)
+            self._publish_completion_event()
+
             # Complete
             total_seconds = self.get_elapsed_seconds("total")
             self.stats["total_runtime"] = total_seconds
             self.step_info("finish", f"Processor completed in {total_seconds:.1f}s")
-            
+
             self.post_process()
             return True
             
@@ -485,7 +488,59 @@ class ProcessorBase:
             error_msg = f"BigQuery batch load failed: {str(e)}"
             logger.error(error_msg)
             raise Exception(error_msg)
-    
+
+    def _publish_completion_event(self) -> None:
+        """
+        Publish Phase 2 completion event to trigger Phase 3 analytics.
+
+        This method is called after save_data() successfully completes.
+        Publishing is non-blocking - failures are logged but don't fail the processor.
+        """
+        try:
+            from shared.utils.pubsub_publishers import RawDataPubSubPublisher
+
+            # Extract game_date from opts (different processors may use different keys)
+            game_date = self.opts.get('date') or self.opts.get('game_date')
+            if not game_date:
+                logger.debug(
+                    f"No game_date in opts for {self.__class__.__name__}, skipping Phase 2 completion publish"
+                )
+                return
+
+            # Get correlation_id if available (traces back to scraper)
+            correlation_id = self.opts.get('correlation_id') or self.opts.get('execution_id')
+
+            # Initialize publisher
+            project_id = self.bq_client.project
+            publisher = RawDataPubSubPublisher(project_id=project_id)
+
+            # Publish completion event
+            message_id = publisher.publish_raw_data_loaded(
+                source_table=self.table_name,
+                game_date=str(game_date),
+                record_count=self.stats.get('rows_inserted', 0),
+                execution_id=self.run_id,
+                correlation_id=correlation_id,
+                success=True
+            )
+
+            if message_id:
+                logger.info(
+                    f"✅ Published Phase 2 completion event: {self.table_name} "
+                    f"for {game_date} (message_id={message_id})"
+                )
+            else:
+                logger.warning(
+                    f"⚠️ Phase 2 completion event publish returned None for {self.table_name}"
+                )
+
+        except Exception as e:
+            # Log but DON'T fail the processor - publishing is non-critical
+            logger.warning(
+                f"Failed to publish Phase 2 completion event for {self.table_name}: {e}",
+                exc_info=True
+            )
+
     def post_process(self) -> None:
         """Post-processing - matches scraper's post_export()."""
         summary = {

@@ -1,0 +1,35 @@
+# Ignore build and deployment scripts
+bin/
+docs/
+.git/
+.github/
+*.md
+
+# Ignore Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Ignore IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Ignore test files
+tests/
+*_test.py
+test_*.py
+
+# Ignore environment files
+.env
+.env.*
+venv/
+env/
+ENV/

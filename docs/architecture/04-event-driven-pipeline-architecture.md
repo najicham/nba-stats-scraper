@@ -115,35 +115,35 @@ Before diving into the architecture, let's outline the key concerns and requirem
 │  ├─ Collect data from external APIs                                     │
 │  ├─ Write raw JSON to Cloud Storage                                     │
 │  └─ Publish: "scraper_complete" event                                   │
-│      ↓ Pub/Sub: nba-scraper-complete                                    │
+│      ↓ Pub/Sub: nba-phase1-scrapers-complete                            │
 │                                                                          │
 │  Phase 2: Raw Processors (1:1 with Phase 1)                            │
 │  ├─ Download JSON from GCS                                              │
 │  ├─ Transform and validate                                              │
 │  ├─ Load to BigQuery raw tables (nba_raw.*)                            │
 │  └─ Publish: "raw_data_loaded" event                                    │
-│      ↓ Pub/Sub: nba-raw-data-complete                                   │
+│      ↓ Pub/Sub: nba-phase2-raw-complete                                 │
 │                                                                          │
 │  Phase 3: Analytics Processors (M:1 with Phase 2)                      │
 │  ├─ Check dependencies (are all required Phase 2 tables ready?)        │
 │  ├─ Query raw tables, calculate analytics                               │
 │  ├─ Load to BigQuery analytics tables (nba_analytics.*)                │
 │  └─ Publish: "analytics_complete" event                                 │
-│      ↓ Pub/Sub: nba-analytics-complete                                  │
+│      ↓ Pub/Sub: nba-phase3-analytics-complete                           │
 │                                                                          │
 │  Phase 4: Precompute Processors (M:1 with Phase 3)                     │
 │  ├─ Check dependencies (Phase 3 analytics ready?)                       │
 │  ├─ Calculate expensive aggregations                                    │
 │  ├─ Load to BigQuery precompute tables (nba_precompute.*)              │
 │  └─ Publish: "precompute_complete" event                                │
-│      ↓ Pub/Sub: nba-precompute-complete                                 │
+│      ↓ Pub/Sub: nba-phase4-precompute-complete                          │
 │                                                                          │
 │  Phase 5: Prediction Processors (M:1 with Phase 4)                     │
 │  ├─ Check dependencies (Phase 4 precompute ready?)                      │
 │  ├─ Run ML models, generate predictions                                 │
 │  ├─ Load to BigQuery predictions tables (nba_predictions.*)            │
 │  └─ Publish: "predictions_ready" event                                  │
-│      ↓ Pub/Sub: nba-predictions-complete                                │
+│      ↓ Pub/Sub: nba-phase5-predictions-complete                         │
 │                                                                          │
 │  Phase 6: Publishing Service (1:1 with Phase 5)                        │
 │  ├─ Fetch predictions from BigQuery                                     │
@@ -847,7 +847,7 @@ ORDER BY count DESC;
 
 -- Panel 3: DLQ Status
 -- (Queried via gcloud command)
-gcloud pubsub subscriptions describe nba-analytics-complete-dlq-sub \
+gcloud pubsub subscriptions describe nba-phase3-analytics-complete-dlq-sub \
   --format="value(numUndeliveredMessages)"
 ```
 
