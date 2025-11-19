@@ -12,7 +12,7 @@
 #
 # USAGE: ./bin/scrapers/deploy/deploy_scrapers_simple.sh
 
-SERVICE_NAME="nba-scrapers"
+SERVICE_NAME="nba-phase1-scrapers"
 REGION="us-west2"
 
 # Load environment variables from .env file

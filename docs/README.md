@@ -94,12 +94,20 @@ What are you working on?
 | **Quick reference** | `processor-cards/README.md` |
 | **Troubleshoot production** | `operations/cross-phase-troubleshooting-matrix.md` |
 | Daily health check | `monitoring/02-grafana-daily-health-check.md` |
+| Observability gaps | `monitoring/04-observability-gaps-and-improvement-plan.md` |
+| Observability quick ref | `monitoring/OBSERVABILITY_QUICK_REFERENCE.md` (one-page checklist) |
+| Data completeness validation | `monitoring/05-data-completeness-validation.md` (validation queries) |
+| **Alerting & on-call** | `monitoring/06-alerting-strategy-and-escalation.md` ⭐ (severity, escalation, runbooks) |
+| **Debug single entity** | `monitoring/07-single-entity-debugging.md` (trace player/team/game) |
 | Troubleshoot Phase 1 | `orchestration/04-troubleshooting.md` |
 | Troubleshoot Phase 2-4 | `processors/01-phase2-operations-guide.md` (Troubleshooting section) |
+| **Run backfills** | `operations/01-backfill-operations-guide.md` ⭐ (step-by-step guide) |
+| **Cross-date dependencies** | `architecture/08-cross-date-dependency-management.md` (backfill order) |
 | **Learn about Phase 5** | `predictions/tutorials/01-getting-started.md` ⭐⭐ |
 | **Deploy Phase 5** | `predictions/operations/01-deployment-guide.md` |
 | Verify Pub/Sub working | `infrastructure/01-pubsub-integration-verification.md` |
 | Understand architecture | `architecture/00-quick-reference.md` → `architecture/04-event-driven-pipeline-architecture.md` |
+| Change detection investigation | `architecture/07-change-detection-current-state-investigation.md` (entity vs date-level) |
 | Add new documentation | `DOCS_DIRECTORY_STRUCTURE.md` (where?) + `DOCUMENTATION_GUIDE.md` (how?) |
 | Run health check script | `bin/orchestration/quick_health_check.sh` |
 | Review BigQuery schemas | `orchestration/03-bigquery-schemas.md` |
@@ -200,18 +208,34 @@ Our documentation is organized into **7 focused directories** (reorganized 2025-
 **Scope:** Phase 5 only (distinct architecture deserves dedicated directory)
 **Key Docs:**
 - **🌟 `tutorials/01-getting-started.md`** - Complete onboarding guide (START HERE - 30 min)
+- `tutorials/02-understanding-prediction-systems.md` - System types and concepts (Educational)
+- `tutorials/03-worked-prediction-examples.md` - Step-by-step prediction examples
+- `tutorials/04-operations-command-reference.md` - Quick command reference
 - `operations/01-deployment-guide.md` - Complete deployment guide (ML models, cost, monitoring)
 - `operations/02-scheduling-strategy.md` - Coordinator scheduling and auto-scaling
 - `operations/03-troubleshooting.md` - Failure scenarios and recovery procedures
 - `operations/04-worker-deepdive.md` - Worker internals, concurrency, performance
-- `data-sources/01-data-categorization.md` - How Phase 5 uses data
+- `operations/05-daily-operations-checklist.md` - Daily operational checklist (2 min)
+- `operations/06-performance-monitoring.md` - Complete monitoring guide
+- `operations/07-weekly-maintenance.md` - Weekly maintenance procedures
+- `operations/08-monthly-maintenance.md` - Monthly model retraining
+- `operations/09-emergency-procedures.md` - Critical incident response
+- `ml-training/01-initial-model-training.md` - XGBoost training from scratch
+- `ml-training/02-continuous-retraining.md` - Model improvement and drift detection
+- `ml-training/03-feature-development-strategy.md` - Feature engineering philosophy and growth strategy
+- `algorithms/01-composite-factor-calculations.md` - Mathematical specifications
+- `algorithms/02-confidence-scoring-framework.md` - Confidence scoring logic
 - `architecture/01-parallelization-strategy.md` - When and how to parallelize
+- `design/01-architectural-decisions.md` - Design rationale and decisions
+- `data-sources/01-data-categorization.md` - How Phase 5 uses data
+- `data-sources/02-bigquery-schema-reference.md` - BigQuery schema reference (11 tables + 5 views)
+- `tutorials/05-testing-and-quality-assurance.md` - Testing & QA guide
 
 **When to read:** Learning Phase 5, deploying predictions, understanding ML models, optimizing performance
 
 **Key Distinction:** Phase 5 = coordinator-worker + ML systems (different from processor pattern)
 
-**Documentation Status:** ✅ 100% Complete (7 docs, 247KB)
+**Documentation Status:** ✅ 100% Complete (23 docs across 7 categories, ~305KB)
 
 ---
 
@@ -221,10 +245,23 @@ Our documentation is organized into **7 focused directories** (reorganized 2025-
 **Key Docs:**
 - `02-grafana-daily-health-check.md` - Quick 6-panel dashboard (START HERE - 2-3 min)
 - `01-grafana-monitoring-guide.md` - Comprehensive monitoring queries and insights
+- `04-observability-gaps-and-improvement-plan.md` - What visibility exists vs what's missing ⭐ NEW
 
-**When to read:** Daily monitoring, investigating alerts, performance analysis
+**When to read:** Daily monitoring, investigating alerts, performance analysis, planning observability improvements
 
 **Key Distinction:** Monitoring = observing the system; Troubleshooting = fixing it (goes in phase dirs)
+
+---
+
+### `operations/` - Operational Procedures
+**Focus:** Step-by-step operational guides for running backfills and maintenance
+**Scope:** Backfill procedures, data validation, recovery operations
+**Key Docs:**
+- `01-backfill-operations-guide.md` - Complete backfill procedures (scenarios, validation, recovery)
+
+**When to read:** Running backfills, gap filling, re-processing data, validating completeness
+
+**Key Distinction:** Operations = procedures for running tasks; Monitoring = observing health
 
 ---
 
@@ -279,6 +316,7 @@ Our documentation is organized into **7 focused directories** (reorganized 2025-
 - **Phase 1 Issues**: `orchestration/04-troubleshooting.md`
 - **Phase 2 Issues**: `processors/01-phase2-operations-guide.md` (Troubleshooting section)
 - **Pub/Sub Issues**: `infrastructure/01-pubsub-integration-verification.md`
+- **Observability Gaps**: `monitoring/04-observability-gaps-and-improvement-plan.md` (what's visible vs what's not)
 
 **Key Metrics:**
 - Workflow execution rate: >95% expected

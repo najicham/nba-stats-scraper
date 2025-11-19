@@ -141,8 +141,10 @@ def normalize_message_format(message: dict) -> dict:
         return message
     
     # Case 2: Scraper Completion format (new)
-    if 'scraper_name' in message:
-        scraper_name = message.get('scraper_name')
+    # Check for 'scraper_name' OR ('name' AND 'gcs_path' without 'bucket')
+    if 'scraper_name' in message or ('name' in message and 'gcs_path' in message and 'bucket' not in message):
+        # Prefer scraper_name, fallback to name
+        scraper_name = message.get('scraper_name') or message.get('name')
         logger.info(f"Processing Scraper Completion message from: {scraper_name}")
         
         # Get gcs_path (may be None for failed/no-data events)

@@ -2,7 +2,7 @@
 # File: bin/analytics/deploy/deploy_analytics_processors.sh
 # Deploy analytics processor service to Cloud Run (similar to regular processors)
 
-SERVICE_NAME="nba-analytics-processors"
+SERVICE_NAME="nba-phase3-analytics-processors"
 REGION="us-west2"
 
 # Load environment variables from .env file

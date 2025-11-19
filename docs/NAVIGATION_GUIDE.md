@@ -474,17 +474,33 @@ docs/
 │   └── 08-phase4-ml-feature-store-deepdive.md
 │
 ├── predictions/ 🤖 PHASE 5
-│   ├── tutorials/
-│   │   └── 01-getting-started.md ⭐⭐ PHASE 5 START HERE
-│   ├── operations/
+│   ├── tutorials/ (4 docs)
+│   │   ├── 01-getting-started.md ⭐⭐ PHASE 5 START HERE
+│   │   ├── 02-understanding-prediction-systems.md
+│   │   ├── 03-worked-prediction-examples.md
+│   │   └── 04-operations-command-reference.md
+│   ├── operations/ (9 docs)
 │   │   ├── 01-deployment-guide.md
 │   │   ├── 02-scheduling-strategy.md
 │   │   ├── 03-troubleshooting.md
-│   │   └── 04-worker-deepdive.md
-│   ├── data-sources/
-│   │   └── 01-data-categorization.md
-│   └── architecture/
-│       └── 01-parallelization-strategy.md
+│   │   ├── 04-worker-deepdive.md
+│   │   ├── 05-daily-operations-checklist.md
+│   │   ├── 06-performance-monitoring.md
+│   │   ├── 07-weekly-maintenance.md
+│   │   ├── 08-monthly-maintenance.md
+│   │   └── 09-emergency-procedures.md
+│   ├── ml-training/ (2 docs)
+│   │   ├── 01-initial-model-training.md
+│   │   └── 02-continuous-retraining.md
+│   ├── algorithms/ (2 docs)
+│   │   ├── 01-composite-factor-calculations.md
+│   │   └── 02-confidence-scoring-framework.md
+│   ├── architecture/ (1 doc)
+│   │   └── 01-parallelization-strategy.md
+│   ├── design/ (1 doc)
+│   │   └── 01-architectural-decisions.md
+│   └── data-sources/ (1 doc)
+│       └── 01-data-categorization.md
 │
 ├── monitoring/ 📊 DAILY OPS
 │   ├── 01-grafana-monitoring-guide.md

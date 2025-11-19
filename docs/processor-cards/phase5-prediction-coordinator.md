@@ -258,12 +258,32 @@ Prop Lines ─────────────┼─→ COORDINATOR ─┬�
 
 ## Quick Links
 
-- 📄 **Getting Started**: `docs/predictions/tutorials/01-getting-started.md` ⭐
+**📚 Complete Documentation (23 docs):** `docs/predictions/README.md`
+
+**🎯 Essential Reading:**
+- 📄 **Getting Started**: `docs/predictions/tutorials/01-getting-started.md` ⭐⭐ READ FIRST
+- 📄 **Understanding Systems**: `docs/predictions/tutorials/02-understanding-prediction-systems.md`
+- 📄 **Worked Examples**: `docs/predictions/tutorials/03-worked-prediction-examples.md`
+- 📄 **Command Reference**: `docs/predictions/tutorials/04-operations-command-reference.md`
+
+**🔧 Operations:**
 - 📄 **Deployment Guide**: `docs/predictions/operations/01-deployment-guide.md`
-- 📄 **Scheduling Strategy**: `docs/predictions/operations/02-scheduling-strategy.md`
-- 📄 **Troubleshooting**: `docs/predictions/operations/03-troubleshooting.md`
-- 📄 **Worker Deep Dive**: `docs/predictions/operations/04-worker-deepdive.md`
-- 🗂️ **Schema Definition**: `schemas/bigquery/predictions/` (future)
+- 📄 **Daily Operations**: `docs/predictions/operations/05-daily-operations-checklist.md` (2 min)
+- 📄 **Performance Monitoring**: `docs/predictions/operations/06-performance-monitoring.md`
+- 📄 **Emergency Procedures**: `docs/predictions/operations/09-emergency-procedures.md`
+
+**🤖 ML & Algorithms:**
+- 📄 **ML Training**: `docs/predictions/ml-training/01-initial-model-training.md`
+- 📄 **Feature Strategy**: `docs/predictions/ml-training/03-feature-development-strategy.md`
+- 📄 **Algorithm Specs**: `docs/predictions/algorithms/01-composite-factor-calculations.md`
+- 📄 **Confidence Scoring**: `docs/predictions/algorithms/02-confidence-scoring-framework.md`
+
+**🏗️ Architecture & Design:**
+- 📄 **Parallelization Strategy**: `docs/predictions/architecture/01-parallelization-strategy.md`
+- 📄 **Design Rationale**: `docs/predictions/design/01-architectural-decisions.md`
+
+**📊 Related:**
+- 🗂️ **Schema Definition**: `schemas/bigquery/predictions/`
 - 🧪 **Test Suite**: `tests/predictions/`
 - 📊 **Related Processors**:
   - ↑ Upstream: Phase 4 ML Feature Store V2

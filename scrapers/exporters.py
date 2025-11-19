@@ -67,6 +67,13 @@ class GCSExporter(BaseExporter):
 
         print(f"[GCS Exporter] Uploaded to gs://{bucket_name}/{gcs_path} (content-type: {content_type})")
 
+        # Return GCS path for Phase 2 processing
+        return {
+            'gcs_path': f"gs://{bucket_name}/{gcs_path}",
+            'bucket': bucket_name,
+            'path': gcs_path
+        }
+
     def _create_gcs_client(self):
         """
         Create GCS client with robust authentication handling.

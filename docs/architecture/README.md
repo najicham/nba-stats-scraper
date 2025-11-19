@@ -62,6 +62,23 @@
    - Field-level change metadata, multiple event types
    - **Read when considering optimizations beyond entity-level**
 
+### 7. **07-change-detection-current-state-investigation.md** 🔍 INVESTIGATION (20 minutes)
+   - **Created:** 2025-11-18
+   - **Investigation of actual current implementation**
+   - Queries to check Phase 2/3 behavior
+   - Test scenarios for single-entity changes
+   - Decision matrix based on findings
+   - **Companion to 06 - answers "what's really happening today?"**
+
+### 8. **08-cross-date-dependency-management.md** 🔄 DEPENDENCIES (30-40 minutes)
+   - **Created:** 2025-11-18
+   - **Cross-date dependencies for backfills and Phase 4**
+   - Game-based vs calendar-based lookback windows
+   - Early season handling (degraded quality scores)
+   - Backfill orchestration order (phase-by-phase, not date-by-date)
+   - Dependency check queries
+   - **Critical for backfill operations and Phase 4 processors**
+
 ---
 
 ## 🗂️ Document Organization
@@ -92,7 +109,9 @@ docs/architecture/
 ├── 04-event-driven-pipeline-architecture.md     (created fourth - COMPREHENSIVE)
 ├── 05-implementation-status-and-roadmap.md      (created fifth - CURRENT STATUS)
 ├── 06-change-detection-and-event-granularity.md (created sixth - FUTURE OPTIMIZATION)
-├── ... future docs use 07, 08, 09, etc.
+├── 07-change-detection-current-state-investigation.md (created seventh - INVESTIGATION)
+├── 08-cross-date-dependency-management.md (created eighth - DEPENDENCIES)
+├── ... future docs use 09, 10, 11, etc.
 │
 └── archive/
     ├── 2025-11-15/                              (reorganization artifacts - NEW)
@@ -143,8 +162,13 @@ ls docs/architecture/*.md | grep -oE '^[0-9]+' | sort -n | tail -1
 - **02-phase1-to-phase5-granular-updates.md** - Entity-level optimization
 - **03-pipeline-monitoring-and-error-handling.md** - Observability
 
+### Investigation & Analysis
+- **06-change-detection-and-event-granularity.md** - Design patterns (future)
+- **07-change-detection-current-state-investigation.md** - Current state (what's implemented)
+- **08-cross-date-dependency-management.md** - Cross-date dependencies for backfills
+
 ### Future Topics (Not Yet Created)
-Potential future docs (will use 07+):
+Potential future docs (will use 09+):
 - Phase 6 Publishing Architecture (detailed)
 - Correlation ID Implementation Guide (detailed)
 - Phase 3→4 Integration Plan (detailed)

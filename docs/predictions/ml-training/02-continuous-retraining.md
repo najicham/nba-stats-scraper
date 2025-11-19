@@ -914,6 +914,7 @@ Paint matchups became more important as league shifted to more interior scoring.
 **Phase 5 ML Documentation:**
 
 - **Initial Training:** `01-initial-model-training.md` - How to train your first model
+- **Feature Strategy:** `03-feature-development-strategy.md` - Why 25 features and how to grow systematically
 - **Confidence Scoring:** `../algorithms/02-confidence-scoring-framework.md` - Confidence calculation
 - **Composite Factors:** `../algorithms/01-composite-factor-calculations.md` - Feature engineering
 

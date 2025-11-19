@@ -3,7 +3,7 @@
 #
 # Updated to include email alerting environment variables
 
-SERVICE_NAME="nba-processors"
+SERVICE_NAME="nba-phase2-raw-processors"
 REGION="us-west2"
 
 # Load environment variables from .env file

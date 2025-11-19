@@ -1,6 +1,6 @@
 # Monitoring Documentation
 
-**Last Updated:** 2025-11-15
+**Last Updated:** 2025-11-18
 **Purpose:** Observability, monitoring, and health checks across all pipeline phases
 **Audience:** Engineers monitoring system health and investigating issues
 
@@ -21,6 +21,44 @@
    - **Comprehensive monitoring queries and dashboard insights**
    - **Why read this:** Deep dive into all available metrics and queries
    - **Status:** Current (reference guide)
+
+### 3. **03-grafana-phase2-phase3-pipeline-monitoring.md**
+   - **Phase 2-3 pipeline monitoring**
+   - **Why read this:** Monitor data flow between phases
+   - **Status:** Current
+
+### 4. **04-observability-gaps-and-improvement-plan.md** ⭐ NEW
+   - **Created:** 2025-11-18
+   - **Current observability capabilities, gaps, and improvement roadmap**
+   - **Why read this:** Understand what visibility exists today and what's missing
+   - **Status:** Current (living document for platform improvements)
+
+### 5. **OBSERVABILITY_QUICK_REFERENCE.md** 📋 QUICK LOOKUP
+   - **Created:** 2025-11-18
+   - **One-page checklist: What's logged vs what's missing**
+   - **Why read this:** Fast reference when debugging or planning improvements
+   - **Status:** Current (companion to doc #4)
+
+### 6. **05-data-completeness-validation.md** ⭐ VALIDATION QUERIES
+   - **Created:** 2025-11-18
+   - **Complete data validation procedures for daily ops and backfills**
+   - **Why read this:** Validate completeness, find gaps, reconcile row counts
+   - **Key Queries:** Daily completeness, backfill range validation, row count reconciliation, missing entities
+   - **Status:** Current (ready to use)
+
+### 7. **06-alerting-strategy-and-escalation.md** 🚨 ALERTING & ON-CALL (30-40 min)
+   - **Created:** 2025-11-18 15:30 PST
+   - **Alert severity matrix, escalation paths, and on-call runbooks**
+   - **Why read this:** Respond to incidents, configure alerts, prevent alert fatigue
+   - **Key Content:** Severity levels (Critical/High/Medium/Low), escalation tree, DLQ alerts, backfill monitoring, runbooks
+   - **Status:** Current (ready for on-call setup)
+
+### 8. **07-single-entity-debugging.md** 🔍 ENTITY DEBUGGING (20-25 min)
+   - **Created:** 2025-11-18 15:45 PST
+   - **Trace individual players, teams, or games through entire pipeline**
+   - **Why read this:** Debug "Why doesn't LeBron have data?", trace missing entities
+   - **Key Queries:** Player trace, team trace, game trace, historical data checks
+   - **Status:** Current (ready to use)
 
 ---
 
@@ -62,18 +100,48 @@
 - Discovery mode progress tracking
 - Processor delivery rates
 
+### Observability Improvements
+- Gap analysis: What's logged vs what's missing
+- Proposed improvements: processor_execution_log, dependency_check_log
+- Implementation roadmap with effort estimates
+- Quality metadata tracking strategy
+
+### Data Completeness Validation
+- Daily completeness checks (single date validation)
+- Backfill range completeness (date range validation)
+- Row count reconciliation (cross-phase verification)
+- Missing entity detection (find specific gaps)
+- Recovery procedures
+
+### Alerting & Escalation
+- Alert severity matrix (Critical, High, Medium, Low)
+- Escalation paths and on-call rotation
+- Phase-specific alerts (DLQ, backfill, processing)
+- On-call runbooks (decision trees)
+- Alert fatigue prevention strategies
+
+### Entity-Level Debugging
+- Player trace queries (follow individual player)
+- Team trace queries (follow team through pipeline)
+- Game trace queries (full game processing)
+- "Why didn't entity process?" diagnostic checklists
+- Historical data availability checks
+
 ### Health Checks
 - Quick daily health check script
 - System status verification
 - Missing execution detection
+- Data completeness validation
 
 ---
 
 ## 🔗 Related Documentation
 
-**Operational Guides (What to Do When Alerts Fire):**
+**Operational Guides (What to Do When Monitoring Shows Issues):**
 - **Phase 1 Troubleshooting:** `docs/orchestration/04-troubleshooting.md`
 - **Phase 2 Operations:** `docs/processors/01-phase2-operations-guide.md`
+- **Backfill Operations:** `docs/operations/01-backfill-operations-guide.md`
+- **Cross-Date Dependencies:** `docs/architecture/08-cross-date-dependency-management.md`
 
 **Infrastructure:**
 - **Pub/Sub Health:** `docs/infrastructure/` - Integration verification
@@ -128,8 +196,9 @@ archive/
 ---
 
 **Directory Status:** Active
-**File Organization:** Chronological numbering (01-99)
-**Next Available Number:** 03
+**File Organization:** Chronological numbering (01-99) + Quick reference cards
+**Next Available Number:** 05
+**Quick References:** OBSERVABILITY_QUICK_REFERENCE.md (one-page lookup)
 
 ---
 
@@ -144,6 +213,13 @@ archive/
 - All available BigQuery monitoring queries
 - Detailed metric explanations
 - Advanced troubleshooting insights
+
+**Observability Gaps & Improvements:** See `04-observability-gaps-and-improvement-plan.md`
+- What visibility exists today (Phase 1 excellent, Phase 2-5 gaps)
+- Missing capabilities: processor execution log, dependency checks
+- Prioritized improvement plan with effort estimates
+- Use this when planning monitoring enhancements
+- **Quick Reference:** `OBSERVABILITY_QUICK_REFERENCE.md` (one-page checklist)
 
 **Key Metrics:**
 - Workflow execution rate: >95% expected

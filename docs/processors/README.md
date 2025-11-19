@@ -74,16 +74,20 @@
 
 **Quick links:**
 - **Getting Started:** [`tutorials/01-getting-started.md`](../predictions/tutorials/01-getting-started.md) ⭐⭐ **READ THIS FIRST**
-- **Operations Guide:** [`operations/01-deployment-guide.md`](../predictions/operations/01-deployment-guide.md)
-- **Scheduling:** [`operations/02-scheduling-strategy.md`](../predictions/operations/02-scheduling-strategy.md)
-- **Troubleshooting:** [`operations/03-troubleshooting.md`](../predictions/operations/03-troubleshooting.md)
-- **Worker Deep-Dive:** [`operations/04-worker-deepdive.md`](../predictions/operations/04-worker-deepdive.md)
-- **Data Sources:** [`data-sources/01-data-categorization.md`](../predictions/data-sources/01-data-categorization.md)
-- **Architecture:** [`architecture/01-parallelization-strategy.md`](../predictions/architecture/01-parallelization-strategy.md)
+- **Understanding Systems:** [`tutorials/02-understanding-prediction-systems.md`](../predictions/tutorials/02-understanding-prediction-systems.md)
+- **Worked Examples:** [`tutorials/03-worked-prediction-examples.md`](../predictions/tutorials/03-worked-prediction-examples.md)
+- **Command Reference:** [`tutorials/04-operations-command-reference.md`](../predictions/tutorials/04-operations-command-reference.md)
+- **Deployment Guide:** [`operations/01-deployment-guide.md`](../predictions/operations/01-deployment-guide.md)
+- **Daily Operations:** [`operations/05-daily-operations-checklist.md`](../predictions/operations/05-daily-operations-checklist.md)
+- **Performance Monitoring:** [`operations/06-performance-monitoring.md`](../predictions/operations/06-performance-monitoring.md)
+- **Emergency Procedures:** [`operations/09-emergency-procedures.md`](../predictions/operations/09-emergency-procedures.md)
+- **ML Training:** [`ml-training/01-initial-model-training.md`](../predictions/ml-training/01-initial-model-training.md)
+- **Feature Strategy:** [`ml-training/03-feature-development-strategy.md`](../predictions/ml-training/03-feature-development-strategy.md)
+- **Algorithm Specs:** [`algorithms/01-composite-factor-calculations.md`](../predictions/algorithms/01-composite-factor-calculations.md)
 
 **Documentation stats:**
-- **Files:** 7 comprehensive docs (~200KB)
-- **Coverage:** Tutorials, operations, data sources, architecture
+- **Files:** 23 comprehensive docs across 7 categories (~305KB)
+- **Coverage:** Tutorials (5), Operations (9), ML Training (3), Algorithms (2), Architecture (1), Design (1), Data Sources (2)
 - **Status:** ✅ Complete and ready for deployment
 
 ---

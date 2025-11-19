@@ -21,8 +21,9 @@
 9. [Critical Dependencies](#dependencies)
 10. [Success Criteria](#success-criteria)
 11. [Complete Deployment Guide](#deployment-guide)
-12. [Monitoring & Alerting](#monitoring)
-13. [Related Documentation](#related-docs)
+12. [Automated Deployment Scripts](#automated-deployment) ⭐ **NEW**
+13. [Monitoring & Alerting](#monitoring)
+14. [Related Documentation](#related-docs)
 
 ---
 
@@ -1429,6 +1430,396 @@ gcloud scheduler jobs create http phase5-prediction-daily \
 
 # Verify scheduler job
 gcloud scheduler jobs describe phase5-prediction-daily --location us-central1
+```
+
+---
+
+### Automated Deployment Scripts {#automated-deployment}
+
+**Location:** `bin/predictions/deploy/`
+
+For faster deployments, use the automated deployment scripts instead of manual gcloud commands. These scripts handle the complete deployment workflow including Docker image building, pushing to Artifact Registry, Cloud Run deployment, and configuration.
+
+#### Available Scripts
+
+| Script | Purpose | Duration |
+|--------|---------|----------|
+| `deploy_prediction_worker.sh` | Deploy worker service | 8-10 min |
+| `deploy_prediction_coordinator.sh` | Deploy coordinator service | 8-10 min |
+| `test_prediction_worker.sh` | Test worker deployment | 2-3 min |
+| `test_prediction_coordinator.sh` | Test coordinator deployment | 2-3 min |
+
+---
+
+#### Worker Deployment
+
+**Script:** `bin/predictions/deploy/deploy_prediction_worker.sh`
+
+**Usage:**
+```bash
+./bin/predictions/deploy/deploy_prediction_worker.sh [environment]
+
+# Examples
+./bin/predictions/deploy/deploy_prediction_worker.sh dev      # Deploy to dev
+./bin/predictions/deploy/deploy_prediction_worker.sh staging  # Deploy to staging
+./bin/predictions/deploy/deploy_prediction_worker.sh prod     # Deploy to production
+```
+
+**What it does:**
+1. Validates prerequisites (gcloud, docker, authentication)
+2. Builds Docker image from `docker/predictions-worker.Dockerfile`
+3. Pushes image to Artifact Registry with timestamped tag
+4. Deploys to Cloud Run with environment-specific configuration
+5. Creates/updates Pub/Sub push subscription
+6. Verifies deployment health
+7. Shows deployment summary with next steps
+
+**Environment-Specific Configuration:**
+
+| Setting | Dev | Staging | Prod |
+|---------|-----|---------|------|
+| **Project ID** | nba-props-platform-dev | nba-props-platform-staging | nba-props-platform |
+| **Service Name** | prediction-worker-dev | prediction-worker-staging | prediction-worker |
+| **Min Instances** | 0 | 0 | 1 |
+| **Max Instances** | 5 | 10 | 20 |
+| **Concurrency** | 5 | 5 | 5 |
+| **Memory** | 2Gi | 2Gi | 2Gi |
+| **CPU** | 1 | 1 | 2 |
+| **Timeout** | 300s | 300s | 300s |
+
+**Environment Variables Set:**
+- `GCP_PROJECT_ID`: Project ID for the environment
+- `PREDICTIONS_TABLE`: `nba_predictions.player_prop_predictions`
+- `PUBSUB_READY_TOPIC`: `prediction-ready-{env}`
+
+**Service Account:** `prediction-worker@{PROJECT_ID}.iam.gserviceaccount.com`
+
+**Pub/Sub Configuration:**
+- **Topic:** `prediction-request-{env}`
+- **Subscription:** `prediction-request-{env}`
+- **Push Endpoint:** `{SERVICE_URL}/predict`
+- **Ack Deadline:** 300s
+
+**Example Output:**
+```
+[2025-11-15 10:30:00] Starting deployment for environment: prod
+[2025-11-15 10:30:01] Checking prerequisites...
+[2025-11-15 10:30:02] Prerequisites OK
+[2025-11-15 10:30:03] Building Docker image...
+[2025-11-15 10:35:10] Pushing Docker image to Artifact Registry...
+[2025-11-15 10:36:45] Image pushed: us-central1-docker.pkg.dev/nba-props-platform/nba-props/predictions-worker:prod-20251115-103003
+[2025-11-15 10:37:00] Deploying to Cloud Run...
+[2025-11-15 10:39:15] Cloud Run deployment complete
+[2025-11-15 10:39:20] Configuring Pub/Sub subscription...
+[2025-11-15 10:39:45] Pub/Sub configuration complete
+[2025-11-15 10:39:50] Verifying deployment...
+[2025-11-15 10:40:00] Deployment verified successfully
+============================================
+Deployment Summary
+============================================
+Environment:       prod
+Project ID:        nba-props-platform
+Region:            us-central1
+Service Name:      prediction-worker
+Min Instances:     1
+Max Instances:     20
+Concurrency:       5
+Memory:            2Gi
+CPU:               2
+Timeout:           300s
+Subscription:      prediction-request
+============================================
+Service URL: https://prediction-worker-xyz123.run.app
+Health Check: https://prediction-worker-xyz123.run.app/health
+
+Next steps:
+  1. Test with: ./bin/predictions/deploy/test_prediction_worker.sh prod
+  2. Monitor logs: gcloud run services logs read prediction-worker --project nba-props-platform --region us-central1
+  3. Check metrics: https://console.cloud.google.com/run/detail/us-central1/prediction-worker/metrics?project=nba-props-platform
+
+[2025-11-15 10:40:00] Deployment complete! 🚀
+```
+
+---
+
+#### Coordinator Deployment
+
+**Script:** `bin/predictions/deploy/deploy_prediction_coordinator.sh`
+
+**Usage:**
+```bash
+./bin/predictions/deploy/deploy_prediction_coordinator.sh [environment]
+
+# Examples
+./bin/predictions/deploy/deploy_prediction_coordinator.sh dev      # Deploy to dev
+./bin/predictions/deploy/deploy_prediction_coordinator.sh staging  # Deploy to staging
+./bin/predictions/deploy/deploy_prediction_coordinator.sh prod     # Deploy to production
+```
+
+**What it does:**
+1. Validates prerequisites (gcloud, docker, authentication, project access)
+2. Builds Docker image from `docker/predictions-coordinator.Dockerfile`
+3. Pushes image to Artifact Registry with timestamped tag
+4. Deploys to Cloud Run with environment-specific configuration
+5. Optionally sets up Cloud Scheduler for daily triggers (prod only)
+6. Verifies deployment health
+7. Shows deployment summary with example commands
+
+**Environment-Specific Configuration:**
+
+| Setting | Dev | Staging | Prod |
+|---------|-----|---------|------|
+| **Project ID** | nba-props-platform-dev | nba-props-platform-staging | nba-props-platform |
+| **Service Name** | prediction-coordinator-dev | prediction-coordinator-staging | prediction-coordinator |
+| **Min Instances** | 0 | 0 | 1 |
+| **Max Instances** | 1 ⚠️ | 1 ⚠️ | 1 ⚠️ |
+| **Concurrency** | 8 | 8 | 8 |
+| **Memory** | 1Gi | 1Gi | 2Gi |
+| **CPU** | 1 | 1 | 2 |
+| **Timeout** | 600s | 600s | 600s |
+
+⚠️ **Important:** MAX_INSTANCES=1 is required for threading lock compatibility. The coordinator uses in-memory state with threading locks which requires a single instance. Future: migrate to Firestore for multi-instance support.
+
+**Environment Variables Set:**
+- `GCP_PROJECT_ID`: Project ID for the environment
+- `PREDICTION_REQUEST_TOPIC`: `prediction-request-{env}`
+- `PREDICTION_READY_TOPIC`: `prediction-ready-{env}`
+- `BATCH_SUMMARY_TOPIC`: `prediction-batch-complete-{env}`
+
+**Service Account:** `prediction-coordinator@{PROJECT_ID}.iam.gserviceaccount.com`
+
+**Cloud Scheduler (Optional - Prod Only):**
+- **Job Name:** `prediction-coordinator-daily-prod`
+- **Schedule:** `0 6 * * *` (6:00 AM PT daily)
+- **Target:** `{SERVICE_URL}/start`
+- **Method:** POST
+- **Body:** `{}`
+
+**Example Output:**
+```
+[2025-11-15 10:45:00] Starting deployment for environment: prod
+[2025-11-15 10:45:01] Checking prerequisites...
+[2025-11-15 10:50:15] Deploying to Cloud Run...
+[2025-11-15 10:52:30] Cloud Run deployment complete
+[2025-11-15 10:52:35] Verifying deployment...
+[2025-11-15 10:52:45] Deployment verified successfully
+Set up Cloud Scheduler for daily 6 AM triggers? (y/N): y
+[2025-11-15 10:53:00] Creating new Cloud Scheduler job...
+[2025-11-15 10:53:15] Cloud Scheduler configured (runs daily at 6:00 AM PT)
+============================================
+Deployment Summary
+============================================
+Environment:       prod
+Project ID:        nba-props-platform
+Region:            us-central1
+Service Name:      prediction-coordinator
+Min Instances:     1
+Max Instances:     1
+Concurrency:       8
+Memory:            2Gi
+CPU:               2
+Timeout:           600s
+Topics:
+  - Request:       prediction-request
+  - Ready:         prediction-ready
+  - Summary:       prediction-batch-complete
+============================================
+Service URL: https://prediction-coordinator-xyz123.run.app
+Health Check: https://prediction-coordinator-xyz123.run.app/health
+
+Endpoints:
+  POST https://prediction-coordinator-xyz123.run.app/start    - Start prediction batch
+  GET  https://prediction-coordinator-xyz123.run.app/status   - Check batch status
+  POST https://prediction-coordinator-xyz123.run.app/complete - Worker completion event (internal)
+
+Test batch manually:
+  TOKEN=$(gcloud auth print-identity-token)
+  curl -X POST https://prediction-coordinator-xyz123.run.app/start \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"game_date": "2025-11-08"}'
+
+Monitor logs:
+  gcloud run services logs read prediction-coordinator \
+    --project nba-props-platform --region us-central1 --limit 100
+
+View metrics:
+  https://console.cloud.google.com/run/detail/us-central1/prediction-coordinator/metrics?project=nba-props-platform
+
+[2025-11-15 10:53:15] Deployment complete! 🚀
+```
+
+---
+
+#### Testing Deployments
+
+**Worker Testing:** `bin/predictions/deploy/test_prediction_worker.sh`
+
+**Usage:**
+```bash
+./bin/predictions/deploy/test_prediction_worker.sh [environment]
+
+# Examples
+./bin/predictions/deploy/test_prediction_worker.sh dev
+./bin/predictions/deploy/test_prediction_worker.sh prod
+```
+
+**What it tests:**
+1. **Health Check** - Calls `/health` endpoint
+2. **Prediction Request** - Publishes test message to Pub/Sub for LeBron James
+3. **BigQuery Verification** - Checks if predictions written to table
+4. **Cloud Run Logs** - Shows recent service logs
+5. **Service Metrics** - Displays service status and traffic
+
+**Expected Results:**
+- Health check returns 200 OK
+- Test message published successfully
+- Predictions appear in BigQuery within 10 seconds
+- No errors in Cloud Run logs
+- Service status shows "True"
+
+---
+
+**Coordinator Testing:** `bin/predictions/deploy/test_prediction_coordinator.sh`
+
+**Usage:**
+```bash
+./bin/predictions/deploy/test_prediction_coordinator.sh [environment]
+
+# Examples
+./bin/predictions/deploy/test_prediction_coordinator.sh dev
+./bin/predictions/deploy/test_prediction_coordinator.sh prod
+```
+
+**What it tests:**
+1. **Health Check** - Calls `/health` endpoint
+2. **Batch Start** - Starts prediction batch for today
+3. **Status Check** - Queries batch status endpoint
+4. **Progress Monitor** - Monitors batch progress for 30 seconds
+5. **BigQuery Verification** - Checks predictions by system
+6. **Cloud Run Logs** - Shows recent coordinator logs
+
+**Expected Results:**
+- Health check returns 200 OK
+- Batch starts with status 202 Accepted
+- Status endpoint shows progress (completed/expected counts)
+- Batch completes within 2-5 minutes
+- Predictions appear in BigQuery grouped by system
+- No errors in logs
+
+---
+
+#### Complete Deployment Workflow
+
+**First-Time Deployment:**
+
+```bash
+# 1. Deploy worker (8-10 min)
+./bin/predictions/deploy/deploy_prediction_worker.sh prod
+
+# 2. Test worker (2-3 min)
+./bin/predictions/deploy/test_prediction_worker.sh prod
+
+# 3. Deploy coordinator (8-10 min)
+./bin/predictions/deploy/deploy_prediction_coordinator.sh prod
+
+# 4. Test coordinator (2-3 min)
+./bin/predictions/deploy/test_prediction_coordinator.sh prod
+
+# Total time: ~20-25 minutes
+```
+
+**Update Existing Deployment:**
+
+```bash
+# Quick redeployment (no Docker rebuild needed if using :latest tag)
+./bin/predictions/deploy/deploy_prediction_worker.sh prod
+./bin/predictions/deploy/deploy_prediction_coordinator.sh prod
+
+# Total time: ~15-18 minutes
+```
+
+---
+
+#### Troubleshooting Deployment Scripts
+
+**Issue: "gcloud CLI not found"**
+```bash
+# Install Google Cloud SDK
+curl https://sdk.cloud.google.com | bash
+exec -l $SHELL
+gcloud init
+```
+
+**Issue: "docker not found"**
+```bash
+# Install Docker
+# macOS: brew install docker
+# Linux: sudo apt-get install docker.io
+# Windows: Download Docker Desktop
+```
+
+**Issue: "Not logged in to gcloud"**
+```bash
+gcloud auth login
+gcloud auth application-default login
+```
+
+**Issue: "Project not found"**
+```bash
+# Verify project ID
+gcloud projects list
+
+# Set correct project
+gcloud config set project nba-props-platform
+```
+
+**Issue: "Service account does not exist"**
+```bash
+# Create service accounts first
+gcloud iam service-accounts create prediction-worker \
+    --display-name "Prediction Worker Service Account" \
+    --project nba-props-platform
+
+gcloud iam service-accounts create prediction-coordinator \
+    --display-name "Prediction Coordinator Service Account" \
+    --project nba-props-platform
+```
+
+**Issue: "Docker build fails"**
+```bash
+# Check Dockerfile exists
+ls -la docker/predictions-worker.Dockerfile
+ls -la docker/predictions-coordinator.Dockerfile
+
+# Build manually to see detailed errors
+cd /path/to/nba-stats-scraper
+docker build -f docker/predictions-worker.Dockerfile -t test-worker .
+```
+
+**Issue: "Pub/Sub subscription creation fails"**
+```bash
+# Ensure topics exist first
+gcloud pubsub topics create prediction-request --project nba-props-platform
+gcloud pubsub topics create prediction-ready --project nba-props-platform
+
+# Verify IAM permissions
+gcloud projects get-iam-policy nba-props-platform \
+    --flatten="bindings[].members" \
+    --filter="bindings.members:serviceAccount:prediction-worker@nba-props-platform.iam.gserviceaccount.com"
+```
+
+**Issue: "Cloud Scheduler job creation fails"**
+```bash
+# Enable Cloud Scheduler API
+gcloud services enable cloudscheduler.googleapis.com --project nba-props-platform
+
+# Verify service account has invoker permission
+gcloud run services add-iam-policy-binding prediction-coordinator \
+    --region us-central1 \
+    --member=serviceAccount:prediction-coordinator@nba-props-platform.iam.gserviceaccount.com \
+    --role=roles/run.invoker \
+    --project nba-props-platform
 ```
 
 ---

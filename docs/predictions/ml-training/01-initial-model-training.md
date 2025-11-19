@@ -851,6 +851,7 @@ df = df.sample(frac=0.5, random_state=42)
 **Phase 5 ML Documentation:**
 
 - **Continuous Retraining:** `02-continuous-retraining.md` - When and how to retrain models
+- **Feature Strategy:** `03-feature-development-strategy.md` - Why 25 features and how to grow systematically
 - **Confidence Scoring:** `../algorithms/02-confidence-scoring-framework.md` - How confidence scores work
 - **Composite Factors:** `../algorithms/01-composite-factor-calculations.md` - Feature calculations
 

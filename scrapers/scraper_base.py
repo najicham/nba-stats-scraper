@@ -486,22 +486,50 @@ class ScraperBase:
     def _determine_execution_status(self) -> tuple[str, int]:
         """
         Determine execution status using 3-status system for orchestration.
-        
+
         Status values:
           - 'success': Got data (record_count > 0)
           - 'no_data': Tried but empty (record_count = 0)
           - 'failed': Error occurred (handled in _log_failed_execution_to_bigquery)
-        
+
         This enables discovery mode: controller stops trying after 'success',
         keeps trying after 'no_data'.
-        
+
         Returns:
             tuple: (status, record_count)
         """
         # Count records in self.data
         if isinstance(self.data, dict):
-            # Standard pattern: {'records': [...], 'metadata': {...}}
-            record_count = len(self.data.get('records', []))
+            # Try multiple common patterns for record storage
+            # Different scrapers use different keys
+            record_count = 0
+
+            # Pattern 1: Standard {'records': [...]}
+            if 'records' in self.data:
+                record_count = len(self.data.get('records', []))
+            # Pattern 2: Schedule scrapers use {'games': [...]}
+            elif 'games' in self.data:
+                record_count = len(self.data.get('games', []))
+            # Pattern 3: Some scrapers use {'players': [...]}
+            elif 'players' in self.data:
+                record_count = len(self.data.get('players', []))
+            # Pattern 4: Some scrapers store explicit count
+            elif 'game_count' in self.data:
+                record_count = self.data.get('game_count', 0)
+            elif 'record_count' in self.data:
+                record_count = self.data.get('record_count', 0)
+            elif 'playerCount' in self.data:
+                record_count = self.data.get('playerCount', 0)
+            elif 'records_found' in self.data:
+                record_count = self.data.get('records_found', 0)
+            # Pattern 5: Check other common list fields
+            else:
+                # Look for any list-type values as potential records
+                for key, value in self.data.items():
+                    if isinstance(value, list) and len(value) > 0:
+                        record_count = len(value)
+                        break
+
             # Check if scraper marked this as intentionally empty
             is_empty = self.data.get('metadata', {}).get('is_empty_report', False)
         elif isinstance(self.data, list):
@@ -512,7 +540,7 @@ class ScraperBase:
             # Empty or unexpected format
             record_count = 0
             is_empty = False
-        
+
         # Determine status based on record count
         if record_count > 0:
             status = 'success'
@@ -521,7 +549,7 @@ class ScraperBase:
         else:
             # Fallback (shouldn't reach here)
             status = 'success'
-        
+
         return status, record_count
     
     def _log_execution_to_bigquery(self):
