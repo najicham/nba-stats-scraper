@@ -173,7 +173,10 @@ class BdlBoxscoresProcessor(ProcessorBase):
         
         return True
     
-    def transform_data(self, raw_data: Dict, file_path: str) -> List[Dict]:
+    def transform_data(self) -> None:
+        """Transform raw data into transformed data."""
+        raw_data = self.raw_data
+        file_path = self.raw_data.get('metadata', {}).get('source_file', 'unknown')
         """Transform BDL box scores JSON to BigQuery rows."""
         rows = []
         skipped_games = []
@@ -517,7 +520,9 @@ class BdlBoxscoresProcessor(ProcessorBase):
                 
                 raise e
     
-    def load_data(self, rows: List[Dict], **kwargs) -> Dict:
+    def save_data(self) -> None:
+        """Save transformed data to BigQuery (overrides ProcessorBase.save_data())."""
+        rows = self.transformed_data
         """Load transformed data to BigQuery with streaming buffer protection."""
         if not rows:
             return {'rows_processed': 0, 'errors': []}

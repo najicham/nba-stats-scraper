@@ -241,7 +241,10 @@ class BdlInjuriesProcessor(ProcessorBase):
         
         return errors
 
-    def transform_data(self, raw_data: Dict, file_path: str) -> List[Dict]:
+    def transform_data(self) -> None:
+        """Transform raw data into transformed data."""
+        raw_data = self.raw_data
+        file_path = self.raw_data.get('metadata', {}).get('source_file', 'unknown')
         """Transform Ball Don't Lie injuries data to BigQuery rows."""
         validation_errors = self.validate_data(raw_data)
         if validation_errors:
@@ -412,7 +415,9 @@ class BdlInjuriesProcessor(ProcessorBase):
         
         return rows
 
-    def load_data(self, rows: List[Dict], **kwargs) -> Dict:
+    def save_data(self) -> None:
+        """Save transformed data to BigQuery (overrides ProcessorBase.save_data())."""
+        rows = self.transformed_data
         """Load data to BigQuery using APPEND_ALWAYS strategy."""
         if not rows:
             # Notify about empty data

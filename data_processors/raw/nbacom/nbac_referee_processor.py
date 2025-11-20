@@ -134,7 +134,10 @@ class NbacRefereeProcessor(ProcessorBase):
                     
         return output
     
-    def transform_data(self, raw_data: Dict, file_path: str) -> List[Dict]:
+    def transform_data(self) -> None:
+        """Transform raw data into transformed data."""
+        raw_data = self.raw_data
+        file_path = self.raw_data.get('metadata', {}).get('source_file', 'unknown')
         """Transform game referee assignments into normalized rows."""
         rows = []
         

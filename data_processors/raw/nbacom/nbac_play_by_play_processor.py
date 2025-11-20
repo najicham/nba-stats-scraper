@@ -238,7 +238,10 @@ class NbacPlayByPlayProcessor(ProcessorBase):
         
         return errors
     
-    def transform_data(self, raw_data: Dict, file_path: str) -> List[Dict]:
+    def transform_data(self) -> None:
+        """Transform raw data into transformed data."""
+        raw_data = self.raw_data
+        file_path = self.raw_data.get('metadata', {}).get('source_file', 'unknown')
         """Transform NBA.com play-by-play JSON to BigQuery rows."""
         rows = []
         
@@ -570,7 +573,9 @@ class NbacPlayByPlayProcessor(ProcessorBase):
             
             return {'errors': [str(e)], 'rows_processed': 0}
 
-    def load_data(self, rows: List[Dict], **kwargs) -> Dict:
+    def save_data(self) -> None:
+        """Save transformed data to BigQuery (overrides ProcessorBase.save_data())."""
+        rows = self.transformed_data
         """Load play-by-play data to BigQuery."""
         if not rows:
             return {'rows_processed': 0, 'errors': []}

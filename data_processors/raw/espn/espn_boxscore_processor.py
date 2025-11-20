@@ -212,7 +212,10 @@ class EspnBoxscoreProcessor(ProcessorBase):
         day = int(game_date[8:10])
         return month > 4 or (month == 4 and day > 15)
     
-    def transform_data(self, raw_data: Dict, file_path: str) -> List[Dict]:
+    def transform_data(self) -> None:
+        """Transform raw data into transformed data."""
+        raw_data = self.raw_data
+        file_path = self.raw_data.get('metadata', {}).get('source_file', 'unknown')
         """Transform ESPN boxscore data into BigQuery format."""
         validation_errors = self.validate_data(raw_data)
         if validation_errors:
@@ -400,7 +403,9 @@ class EspnBoxscoreProcessor(ProcessorBase):
             
             return []
     
-    def load_data(self, rows: List[Dict], **kwargs) -> Dict:
+    def save_data(self) -> None:
+        """Save transformed data to BigQuery (overrides ProcessorBase.save_data())."""
+        rows = self.transformed_data
         """Load data to BigQuery with MERGE_UPDATE strategy."""
         if not rows:
             return {'rows_processed': 0, 'errors': []}

@@ -159,7 +159,10 @@ class NbacInjuryReportProcessor(ProcessorBase):
         else:
             return 'other'
     
-    def transform_data(self, raw_data: Dict, file_path: str) -> List[Dict]:
+    def transform_data(self) -> None:
+        """Transform raw data into transformed data."""
+        raw_data = self.raw_data
+        file_path = self.raw_data.get('metadata', {}).get('source_file', 'unknown')
         """Transform injury report data to BigQuery rows."""
         rows = []
         
@@ -359,7 +362,9 @@ class NbacInjuryReportProcessor(ProcessorBase):
             current_year = datetime.now().year
             return f"{current_year-1}-{str(current_year)[2:]}"
     
-    def load_data(self, rows: List[Dict], **kwargs) -> Dict:
+    def save_data(self) -> None:
+        """Save transformed data to BigQuery (overrides ProcessorBase.save_data())."""
+        rows = self.transformed_data
         """Load data to BigQuery using APPEND_ALWAYS strategy."""
         if not rows:
             logger.warning("No rows to load")

@@ -247,9 +247,12 @@ class BdlActivePlayersProcessor(ProcessorBase):
                 'nba_com_team': nba_team
             }
     
-    def transform_data(self, raw_data: Dict, file_path: str) -> List[Dict]:
+    def transform_data(self) -> None:
+        """Transform raw data into transformed data."""
+        raw_data = self.raw_data
+        file_path = self.raw_data.get('metadata', {}).get('source_file', 'unknown')
         rows = []
-        
+
         for player_data in raw_data['data']:
             # Basic player info
             first_name = player_data.get('first_name', '').strip()
@@ -310,10 +313,22 @@ class BdlActivePlayersProcessor(ProcessorBase):
             }
             
             rows.append(row)
-        
-        return rows
+
+        self.transformed_data = rows
     
-    def load_data(self, rows: List[Dict], **kwargs) -> Dict:
+    def load_data(self) -> None:
+        """Load active players data from GCS."""
+        # Load raw JSON from GCS
+        raw_json = self.load_json_from_gcs()
+
+        # Parse and transform the JSON structure
+        gcs_path = f"gs://{self.opts.get('bucket')}/{self.opts.get('file_path')}"
+        self.raw_data = self.parse_json(json.dumps(raw_json), gcs_path)
+
+    def save_data(self) -> None:
+        """Save transformed data to BigQuery (overrides ProcessorBase.save_data())."""
+        rows = self.transformed_data
+
         if not rows:
             # Notify about empty data
             try:
@@ -327,8 +342,8 @@ class BdlActivePlayersProcessor(ProcessorBase):
                 )
             except Exception as e:
                 logging.warning(f"Failed to send notification: {e}")
-            
-            return {'rows_processed': 0, 'errors': []}
+
+            return
         
         table_id = f"{self.project_id}.{self.table_name}"
         errors = []

@@ -305,7 +305,10 @@ class BigDataBallPbpProcessor(ProcessorBase):
         
         return errors
     
-    def transform_data(self, raw_data: Dict, file_path: str) -> List[Dict]:
+    def transform_data(self) -> None:
+        """Transform raw data into transformed data."""
+        raw_data = self.raw_data
+        file_path = self.raw_data.get('metadata', {}).get('source_file', 'unknown')
         """Transform BigDataBall JSON to BigQuery rows"""
         game_info = raw_data['game_info']
         play_by_play = raw_data['playByPlay']
@@ -423,7 +426,9 @@ class BigDataBallPbpProcessor(ProcessorBase):
         
         return rows
     
-    def load_data(self, rows: List[Dict], **kwargs) -> Dict:
+    def save_data(self) -> None:
+        """Save transformed data to BigQuery (overrides ProcessorBase.save_data())."""
+        rows = self.transformed_data
         """Load data to BigQuery using streaming-compatible strategy"""
         if not rows:
             logging.warning("No rows to load")
