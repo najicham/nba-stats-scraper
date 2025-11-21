@@ -259,7 +259,7 @@ class OddsGameLinesProcessor(ProcessorBase):
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
                 
-                return rows
+                self.transformed_data = rows
             
             now = datetime.now(timezone.utc).isoformat()
             
@@ -332,7 +332,7 @@ class OddsGameLinesProcessor(ProcessorBase):
                     logger.warning(f"Failed to send notification: {notify_ex}")
                 
                 # Skip this file if we can't get a valid game_date
-                return rows
+                self.transformed_data = rows
             
             # Get team abbreviations
             home_team_abbr = self.get_team_abbreviation(home_team)
@@ -437,7 +437,7 @@ class OddsGameLinesProcessor(ProcessorBase):
             
             raise
         
-        return rows
+        self.transformed_data = rows
     
     def save_data(self) -> None:
         """Save transformed data to BigQuery (overrides ProcessorBase.save_data())."""

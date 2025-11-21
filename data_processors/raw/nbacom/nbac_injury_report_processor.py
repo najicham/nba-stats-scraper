@@ -321,8 +321,7 @@ class NbacInjuryReportProcessor(ProcessorBase):
                         logger.warning(f"Failed to send notification: {notify_ex}")
             
             logger.info(f"Transformed {len(rows)} injury records (failed: {self.records_failed})")
-            return rows
-            
+            self.transformed_data = rows
         except Exception as e:
             logger.error(f"Critical error in transform_data: {e}")
             

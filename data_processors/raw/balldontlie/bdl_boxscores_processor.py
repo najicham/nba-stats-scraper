@@ -339,8 +339,7 @@ class BdlBoxscoresProcessor(ProcessorBase):
             except Exception as e:
                 logger.warning(f"Failed to send notification: {e}")
         
-        return rows
-    
+        self.transformed_data = rows
     def create_player_row(self, **kwargs) -> Optional[Dict]:
         """Create a single player performance row."""
         try:

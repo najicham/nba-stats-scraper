@@ -320,7 +320,7 @@ class NbacScoreboardV2Processor(ProcessorBase):
                         logging.warning(f"Failed to send notification: {notify_ex}")
             
             logging.info(f"Transformed {len(rows)} scoreboard games (failed: {self.games_failed})")
-            return rows
+            self.transformed_data = rows
             
         except Exception as e:
             logging.error(f"Critical error in transform_data: {e}")

@@ -41,6 +41,9 @@ from google.cloud import bigquery
 
 from data_processors.analytics.analytics_base import AnalyticsProcessorBase
 
+# Pattern imports (Week 1 - Foundation Patterns)
+from shared.processors.patterns import SmartSkipMixin, EarlyExitMixin, CircuitBreakerMixin
+
 logger = logging.getLogger(__name__)
 
 
@@ -63,10 +66,15 @@ class ValidationError(Exception):
     pass
 
 
-class UpcomingTeamGameContextProcessor(AnalyticsProcessorBase):
+class UpcomingTeamGameContextProcessor(
+    SmartSkipMixin,
+    EarlyExitMixin,
+    CircuitBreakerMixin,
+    AnalyticsProcessorBase
+):
     """
     Calculate team-level game context with comprehensive quality tracking.
-    
+
     Features:
     - Dependency checking on Phase 2 sources
     - Source metadata tracking (last_updated, rows_found, completeness)
@@ -109,11 +117,63 @@ class UpcomingTeamGameContextProcessor(AnalyticsProcessorBase):
         # Early season tracking
         self.early_season_flag = False
         self.insufficient_data_reason = None
-    
+
+    # ============================================================
+    # Pattern #1: Smart Skip Configuration
+    # ============================================================
+    RELEVANT_SOURCES = {
+        # Schedule sources - RELEVANT (CRITICAL - game timing, matchups)
+        'nbacom_schedule': True,
+        'espn_scoreboard': True,
+
+        # Game odds sources - RELEVANT (spreads, totals, line movement)
+        'odds_api_game_lines': True,
+        'odds_api_spreads': True,
+        'odds_api_totals': True,
+
+        # Injury/roster sources - RELEVANT (player availability)
+        'nbac_injury_report': True,
+        'nbacom_roster': True,
+        'espn_team_rosters': True,
+
+        # Team boxscore sources - RELEVANT (recent performance, streaks)
+        'nbac_team_boxscore': True,
+        'bdl_team_boxscores': True,
+        'espn_team_stats': True,
+
+        # Player prop sources - NOT RELEVANT (not needed for team context)
+        'odds_api_player_points_props': False,
+        'bettingpros_player_points_props': False,
+        'odds_api_player_rebounds_props': False,
+        'odds_api_player_assists_props': False,
+
+        # Individual player boxscores - NOT RELEVANT (not needed for team context)
+        'nbac_gamebook_player_stats': False,
+        'bdl_player_boxscores': False,
+        'nbac_player_boxscores': False,
+
+        # Play-by-play sources - NOT RELEVANT (not needed for pre-game team context)
+        'bigdataball_play_by_play': False,
+        'nbac_play_by_play': False
+    }
+
+    # ============================================================
+    # Pattern #3: Early Exit Configuration
+    # ============================================================
+    ENABLE_NO_GAMES_CHECK = True       # Skip if no games scheduled
+    ENABLE_OFFSEASON_CHECK = True      # Skip in July-September
+    ENABLE_HISTORICAL_DATE_CHECK = False  # Don't skip - this is for UPCOMING games (future dates)
+
+    # ============================================================
+    # Pattern #5: Circuit Breaker Configuration
+    # ============================================================
+    CIRCUIT_BREAKER_THRESHOLD = 5  # Open after 5 consecutive failures
+    CIRCUIT_BREAKER_TIMEOUT = timedelta(minutes=30)  # Stay open 30 minutes
+
     # ========================================================================
     # DEPENDENCY CONFIGURATION
     # ========================================================================
-    
+
     def get_dependencies(self) -> dict:
         """
         Define Phase 2 source requirements following Dependency Tracking v4.0.

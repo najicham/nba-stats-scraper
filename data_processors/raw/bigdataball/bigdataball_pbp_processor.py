@@ -424,9 +424,7 @@ class BigDataBallPbpProcessor(ProcessorBase):
             
             rows.append(row)
         
-        return rows
-    
-    def save_data(self) -> None:
+        self.transformed_data = rowsdef save_data(self) -> None:
         """Save transformed data to BigQuery (overrides ProcessorBase.save_data())."""
         rows = self.transformed_data
         """Load data to BigQuery using streaming-compatible strategy"""

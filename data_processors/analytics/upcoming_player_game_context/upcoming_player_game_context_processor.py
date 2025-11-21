@@ -47,17 +47,25 @@ import numpy as np
 
 from data_processors.analytics.analytics_base import AnalyticsProcessorBase
 
+# Pattern imports (Week 1 - Foundation Patterns)
+from shared.processors.patterns import SmartSkipMixin, EarlyExitMixin, CircuitBreakerMixin
+
 logger = logging.getLogger(__name__)
 
 
-class UpcomingPlayerGameContextProcessor(AnalyticsProcessorBase):
+class UpcomingPlayerGameContextProcessor(
+    SmartSkipMixin,
+    EarlyExitMixin,
+    CircuitBreakerMixin,
+    AnalyticsProcessorBase
+):
     """
     Process upcoming player game context from Phase 2 raw data.
-    
+
     This processor creates pre-game context records for every player who has
     a points prop bet available. It combines historical performance, fatigue
     analysis, prop betting context, and game situation factors.
-    
+
     Phase 3 Analytics Processor - depends only on Phase 2 raw tables
     """
     
@@ -100,7 +108,59 @@ class UpcomingPlayerGameContextProcessor(AnalyticsProcessorBase):
         # Processing results
         self.transformed_data = []
         self.failed_entities = []
-    
+
+    # ============================================================
+    # Pattern #1: Smart Skip Configuration
+    # ============================================================
+    RELEVANT_SOURCES = {
+        # Player prop sources - RELEVANT (DRIVER - determines which players to process)
+        'odds_api_player_points_props': True,
+        'bettingpros_player_points_props': True,
+        'odds_api_player_rebounds_props': True,
+        'odds_api_player_assists_props': True,
+
+        # Player boxscore sources - RELEVANT (historical performance)
+        'nbac_gamebook_player_stats': True,
+        'bdl_player_boxscores': True,
+        'nbac_player_boxscores': True,
+
+        # Schedule sources - RELEVANT (game timing, rest days)
+        'nbacom_schedule': True,
+        'espn_scoreboard': True,
+
+        # Game odds sources - RELEVANT (spreads, totals)
+        'odds_api_game_lines': True,
+        'odds_api_spreads': True,
+        'odds_api_totals': True,
+
+        # Injury/roster sources - RELEVANT (player status)
+        'nbac_injury_report': True,
+        'nbacom_roster': True,
+        'espn_team_rosters': True,
+
+        # Team-level stats - NOT RELEVANT (not needed for individual player context)
+        'nbac_team_boxscore': False,
+        'bdl_team_boxscores': False,
+        'espn_team_stats': False,
+
+        # Play-by-play sources - NOT RELEVANT (not needed for pre-game context)
+        'bigdataball_play_by_play': False,
+        'nbac_play_by_play': False
+    }
+
+    # ============================================================
+    # Pattern #3: Early Exit Configuration
+    # ============================================================
+    ENABLE_NO_GAMES_CHECK = True       # Skip if no games scheduled
+    ENABLE_OFFSEASON_CHECK = True      # Skip in July-September
+    ENABLE_HISTORICAL_DATE_CHECK = False  # Don't skip - this is for UPCOMING games (future dates)
+
+    # ============================================================
+    # Pattern #5: Circuit Breaker Configuration
+    # ============================================================
+    CIRCUIT_BREAKER_THRESHOLD = 5  # Open after 5 consecutive failures
+    CIRCUIT_BREAKER_TIMEOUT = timedelta(minutes=30)  # Stay open 30 minutes
+
     def get_dependencies(self) -> dict:
         """
         Define Phase 2 raw table dependencies.

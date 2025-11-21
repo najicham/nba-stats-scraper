@@ -1048,8 +1048,7 @@ class NbacGamebookProcessor(ProcessorBase):
                 rows.append(row)
             
             logger.info(f"Processed {len(rows)} players from {file_path} (File #{self.files_processed})")
-            return rows
-            
+            self.transformed_data = rows
         except Exception as e:
             logger.error(f"Error transforming data from {file_path}: {e}")
             

@@ -26,11 +26,15 @@ Date: November 6, 2025
 
 import logging
 import json
-from datetime import datetime, date, timezone
+from datetime import datetime, date, timezone, timedelta
 from typing import Dict, List, Optional
 import pandas as pd
 
 from data_processors.precompute.precompute_base import PrecomputeProcessorBase
+
+# Pattern imports (Week 1 - Foundation Patterns)
+from shared.processors.patterns import SmartSkipMixin, EarlyExitMixin, CircuitBreakerMixin
+
 from .feature_extractor import FeatureExtractor
 from .feature_calculator import FeatureCalculator
 from .quality_scorer import QualityScorer
@@ -65,10 +69,15 @@ FEATURE_NAMES = [
 ]
 
 
-class MLFeatureStoreProcessor(PrecomputeProcessorBase):
+class MLFeatureStoreProcessor(
+    SmartSkipMixin,
+    EarlyExitMixin,
+    CircuitBreakerMixin,
+    PrecomputeProcessorBase
+):
     """
     Generate and cache 25 ML features for all active NBA players.
-    
+
     This is a Phase 4 processor that:
     1. Checks Phase 4 dependencies (hard requirements)
     2. Queries Phase 4 tables for player data (preferred)
@@ -76,7 +85,7 @@ class MLFeatureStoreProcessor(PrecomputeProcessorBase):
     4. Calculates 6 derived features
     5. Scores feature quality (0-100)
     6. Writes to nba_predictions.ml_feature_store_v2 in batches
-    
+
     Consumers: All 5 Phase 5 prediction systems
     """
     
@@ -108,11 +117,53 @@ class MLFeatureStoreProcessor(PrecomputeProcessorBase):
         self.early_season_flag = False
         self.insufficient_data_reason = None
         self.failed_entities = []
-    
+
+    # ============================================================
+    # Pattern #1: Smart Skip Configuration
+    # ============================================================
+    RELEVANT_SOURCES = {
+        # Phase 4 Precompute sources - RELEVANT (CRITICAL - depends on these)
+        'player_daily_cache': True,
+        'player_composite_factors': True,
+        'player_shot_zone_analysis': True,
+        'team_defense_zone_analysis': True,
+
+        # Phase 3 Analytics sources - RELEVANT (fallback sources)
+        'player_game_summary': True,
+        'team_offense_game_summary': True,
+        'team_defense_game_summary': True,
+        'upcoming_player_game_context': True,
+        'upcoming_team_game_context': True,
+
+        # Phase 2 Raw sources - NOT RELEVANT (reads from Phase 3/4, not Phase 2)
+        'nbac_gamebook_player_stats': False,
+        'bdl_player_boxscores': False,
+        'nbac_team_boxscore': False,
+        'odds_api_player_points_props': False,
+        'odds_api_game_lines': False,
+        'nbac_schedule': False,
+        'bigdataball_play_by_play': False,
+        'nbac_play_by_play': False,
+        'nbac_injury_report': False
+    }
+
+    # ============================================================
+    # Pattern #3: Early Exit Configuration
+    # ============================================================
+    ENABLE_NO_GAMES_CHECK = False      # Don't skip - generates features for next day
+    ENABLE_OFFSEASON_CHECK = True      # Skip in July-September
+    ENABLE_HISTORICAL_DATE_CHECK = False  # Don't skip - can generate for any future date
+
+    # ============================================================
+    # Pattern #5: Circuit Breaker Configuration
+    # ============================================================
+    CIRCUIT_BREAKER_THRESHOLD = 5  # Open after 5 consecutive failures
+    CIRCUIT_BREAKER_TIMEOUT = timedelta(minutes=30)  # Stay open 30 minutes
+
     # ========================================================================
     # DEPENDENCY CONFIGURATION (v4.0)
     # ========================================================================
-    
+
     def get_dependencies(self) -> dict:
         """
         Define upstream Phase 4 data dependencies.

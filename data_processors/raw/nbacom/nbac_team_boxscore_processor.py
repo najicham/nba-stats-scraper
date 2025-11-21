@@ -400,7 +400,7 @@ class NbacTeamBoxscoreProcessor(ProcessorBase):
             away_team, home_team = self.determine_home_away(raw_data.get('teams', []))
         except ValueError as e:
             logger.error(f"Cannot determine home/away for {file_path}: {e}")
-            return rows
+            self.transformed_data = rows
         
         # Generate standardized game_id: YYYYMMDD_AWAY_HOME
         away_abbr = self.normalize_team_abbr(away_team.get('teamAbbreviation', ''))
@@ -476,7 +476,7 @@ class NbacTeamBoxscoreProcessor(ProcessorBase):
             rows.append(row)
         
         logger.info(f"Transformed {len(rows)} team records for game {game_id}")
-        return rows
+        self.transformed_data = rows
     
     def save_data(self) -> None:
         """Save transformed data to BigQuery (overrides ProcessorBase.save_data())."""

@@ -213,8 +213,7 @@ class EspnScoreboardProcessor(ProcessorBase):
             except Exception as e:
                 logging.warning(f"Failed to send notification: {e}")
             
-            return rows
-        
+            self.transformed_data = rows
         season_year = self.parse_season_year(game_date)
         scrape_timestamp = raw_data.get('timestamp')
         games_in_file = len(raw_data.get('games', []))
@@ -365,9 +364,7 @@ class EspnScoreboardProcessor(ProcessorBase):
             except Exception as e:
                 logging.warning(f"Failed to send notification: {e}")
         
-        return rows
-    
-    def save_data(self) -> None:
+        self.transformed_data = rowsdef save_data(self) -> None:
         """Save transformed data to BigQuery (overrides ProcessorBase.save_data())."""
         rows = self.transformed_data
         """

@@ -19,19 +19,27 @@ Status: Production Ready
 
 import logging
 import pandas as pd
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional
 from data_processors.analytics.analytics_base import AnalyticsProcessorBase
 from shared.utils.notification_system import notify_error, notify_warning, notify_info
 from shared.utils.player_registry import RegistryReader, PlayerNotFoundError
 
+# Pattern imports (Week 1 - Foundation Patterns)
+from shared.processors.patterns import SmartSkipMixin, EarlyExitMixin, CircuitBreakerMixin
+
 logger = logging.getLogger(__name__)
 
 
-class PlayerGameSummaryProcessor(AnalyticsProcessorBase):
+class PlayerGameSummaryProcessor(
+    SmartSkipMixin,
+    EarlyExitMixin,
+    CircuitBreakerMixin,
+    AnalyticsProcessorBase
+):
     """
     Process player game summary analytics from 6 Phase 2 raw sources.
-    
+
     Dependencies (6 Phase 2 tables):
     1. nba_raw.nbac_gamebook_player_stats - PRIMARY stats (CRITICAL)
     2. nba_raw.bdl_player_boxscores - FALLBACK stats (CRITICAL)
@@ -39,9 +47,62 @@ class PlayerGameSummaryProcessor(AnalyticsProcessorBase):
     4. nba_raw.nbac_play_by_play - BACKUP shot zones (OPTIONAL)
     5. nba_raw.odds_api_player_points_props - PRIMARY prop lines (OPTIONAL)
     6. nba_raw.bettingpros_player_points_props - BACKUP prop lines (OPTIONAL)
-    
+
     Processing Strategy: MERGE_UPDATE (allows multi-pass enrichment)
+
+    Optimization Patterns (Week 1):
+    - Pattern #1 (Smart Skip): Only processes player stat sources
+    - Pattern #3 (Early Exit): Skips no-game days, offseason, historical dates
+    - Pattern #5 (Circuit Breaker): Prevents infinite retry loops
     """
+
+    # =========================================================================
+    # Pattern #1: Smart Skip Configuration
+    # =========================================================================
+    RELEVANT_SOURCES = {
+        # Player stats sources - RELEVANT
+        'nbac_gamebook_player_stats': True,
+        'bdl_player_boxscores': True,
+
+        # Shot zone sources - RELEVANT
+        'bigdataball_play_by_play': True,
+        'nbac_play_by_play': True,
+
+        # Prop betting sources - RELEVANT
+        'odds_api_player_points_props': True,
+        'bettingpros_player_points_props': True,
+
+        # Team-level sources - NOT RELEVANT
+        'nbac_gamebook_team_stats': False,
+        'bdl_team_boxscores': False,
+        'espn_team_stats': False,
+
+        # Odds/spreads sources - NOT RELEVANT (player stats don't need spreads)
+        'odds_api_spreads': False,
+        'odds_api_totals': False,
+        'odds_game_lines': False,
+
+        # Injury/roster sources - NOT RELEVANT (player stats use completed games)
+        'nbac_injury_report': False,
+        'nbacom_roster': False,
+
+        # Schedule sources - NOT RELEVANT
+        'nbacom_schedule': False,
+        'espn_scoreboard': False
+    }
+
+    # =========================================================================
+    # Pattern #3: Early Exit Configuration
+    # =========================================================================
+    ENABLE_NO_GAMES_CHECK = True       # Skip if no games scheduled
+    ENABLE_OFFSEASON_CHECK = True      # Skip in July-September
+    ENABLE_HISTORICAL_DATE_CHECK = True  # Skip dates >90 days old
+
+    # =========================================================================
+    # Pattern #5: Circuit Breaker Configuration
+    # =========================================================================
+    CIRCUIT_BREAKER_THRESHOLD = 5  # Open after 5 consecutive failures
+    CIRCUIT_BREAKER_TIMEOUT = timedelta(minutes=30)  # Stay open 30 minutes
     
     def __init__(self):
         super().__init__()

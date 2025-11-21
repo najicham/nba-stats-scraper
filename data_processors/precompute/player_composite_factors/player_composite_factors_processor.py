@@ -37,20 +37,28 @@ Updated: November 1, 2025
 
 import logging
 import json
-from datetime import datetime, date, timezone
+from datetime import datetime, date, timezone, timedelta
 from typing import Dict, List, Optional
 import pandas as pd
 
 from data_processors.precompute.precompute_base import PrecomputeProcessorBase
 
+# Pattern imports (Week 1 - Foundation Patterns)
+from shared.processors.patterns import SmartSkipMixin, EarlyExitMixin, CircuitBreakerMixin
+
 # Configure logging
 logger = logging.getLogger(__name__)
 
 
-class PlayerCompositeFactorsProcessor(PrecomputeProcessorBase):
+class PlayerCompositeFactorsProcessor(
+    SmartSkipMixin,
+    EarlyExitMixin,
+    CircuitBreakerMixin,
+    PrecomputeProcessorBase
+):
     """
     Calculate composite adjustment factors for player predictions.
-    
+
     Processes upcoming games to generate contextual adjustments that
     influence baseline predictions. Week 1-4 implementation includes
     4 active factors with 4 deferred factors set to neutral (0).
@@ -86,11 +94,51 @@ class PlayerCompositeFactorsProcessor(PrecomputeProcessorBase):
         
         # Failed entity tracking
         self.failed_entities = []
-    
+
+    # ============================================================
+    # Pattern #1: Smart Skip Configuration
+    # ============================================================
+    RELEVANT_SOURCES = {
+        # Phase 3 Analytics sources - RELEVANT (depends on these)
+        'upcoming_player_game_context': True,
+        'upcoming_team_game_context': True,
+        'player_game_summary': True,
+        'team_offense_game_summary': True,
+        'team_defense_game_summary': True,
+
+        # Phase 4 Precompute sources - RELEVANT (depends on these)
+        'player_shot_zone_analysis': True,
+        'team_defense_zone_analysis': True,
+
+        # Phase 2 Raw sources - NOT RELEVANT (Phase 4 reads from Phase 3, not Phase 2)
+        'nbac_gamebook_player_stats': False,
+        'bdl_player_boxscores': False,
+        'nbac_team_boxscore': False,
+        'odds_api_player_points_props': False,
+        'odds_api_game_lines': False,
+        'nbac_schedule': False,
+        'bigdataball_play_by_play': False,
+        'nbac_play_by_play': False,
+        'nbac_injury_report': False
+    }
+
+    # ============================================================
+    # Pattern #3: Early Exit Configuration
+    # ============================================================
+    ENABLE_NO_GAMES_CHECK = True       # Skip if no games scheduled
+    ENABLE_OFFSEASON_CHECK = True      # Skip in July-September
+    ENABLE_HISTORICAL_DATE_CHECK = False  # Don't skip - this is for UPCOMING games (future dates)
+
+    # ============================================================
+    # Pattern #5: Circuit Breaker Configuration
+    # ============================================================
+    CIRCUIT_BREAKER_THRESHOLD = 5  # Open after 5 consecutive failures
+    CIRCUIT_BREAKER_TIMEOUT = timedelta(minutes=30)  # Stay open 30 minutes
+
     # ========================================================================
     # DEPENDENCY CONFIGURATION
     # ========================================================================
-    
+
     def get_dependencies(self) -> dict:
         """
         Define upstream data dependencies.

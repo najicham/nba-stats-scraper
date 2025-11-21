@@ -32,7 +32,7 @@ Updated: January 2025
 
 import logging
 import pandas as pd
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional
 from data_processors.analytics.analytics_base import AnalyticsProcessorBase
 from shared.utils.notification_system import (
@@ -41,13 +41,21 @@ from shared.utils.notification_system import (
     notify_info
 )
 
+# Pattern imports (Week 1 - Foundation Patterns)
+from shared.processors.patterns import SmartSkipMixin, EarlyExitMixin, CircuitBreakerMixin
+
 logger = logging.getLogger(__name__)
 
 
-class TeamOffenseGameSummaryProcessor(AnalyticsProcessorBase):
+class TeamOffenseGameSummaryProcessor(
+    SmartSkipMixin,
+    EarlyExitMixin,
+    CircuitBreakerMixin,
+    AnalyticsProcessorBase
+):
     """
     Process team offensive game summary analytics from team box scores.
-    
+
     Aggregates team-level statistics with optional shot zone enhancement.
     Includes full dependency tracking and source metadata.
     """
@@ -73,7 +81,58 @@ class TeamOffenseGameSummaryProcessor(AnalyticsProcessorBase):
         self.shot_zones_available = False
         self.shot_zones_source = None
         self.shot_zone_data = {}  # Keyed by (game_id, team_abbr)
-    
+
+    # ============================================================
+    # Pattern #1: Smart Skip Configuration
+    # ============================================================
+    RELEVANT_SOURCES = {
+        # Team boxscore sources - RELEVANT (core offensive data)
+        'nbac_team_boxscore': True,
+        'bdl_team_boxscores': True,
+        'espn_team_stats': True,
+
+        # Player boxscore sources - RELEVANT (for aggregation)
+        'nbac_gamebook_player_stats': True,
+        'bdl_player_boxscores': True,
+        'nbac_player_boxscores': True,
+
+        # Play-by-play sources - RELEVANT (shot zones)
+        'bigdataball_play_by_play': True,
+        'nbac_play_by_play': True,
+
+        # Player prop sources - NOT RELEVANT
+        'odds_api_player_points_props': False,
+        'bettingpros_player_points_props': False,
+        'odds_api_player_rebounds_props': False,
+        'odds_api_player_assists_props': False,
+
+        # Game odds/spreads - NOT RELEVANT
+        'odds_api_spreads': False,
+        'odds_api_totals': False,
+        'odds_game_lines': False,
+
+        # Injury/roster sources - NOT RELEVANT
+        'nbac_injury_report': False,
+        'nbacom_roster': False,
+
+        # Schedule sources - NOT RELEVANT
+        'nbacom_schedule': False,
+        'espn_scoreboard': False
+    }
+
+    # ============================================================
+    # Pattern #3: Early Exit Configuration
+    # ============================================================
+    ENABLE_NO_GAMES_CHECK = True       # Skip if no games scheduled
+    ENABLE_OFFSEASON_CHECK = True      # Skip in July-September
+    ENABLE_HISTORICAL_DATE_CHECK = True  # Skip dates >90 days old
+
+    # ============================================================
+    # Pattern #5: Circuit Breaker Configuration
+    # ============================================================
+    CIRCUIT_BREAKER_THRESHOLD = 5  # Open after 5 consecutive failures
+    CIRCUIT_BREAKER_TIMEOUT = timedelta(minutes=30)  # Stay open 30 minutes
+
     # =========================================================================
     # Dependency System (Phase 3 - Date Range Pattern)
     # =========================================================================

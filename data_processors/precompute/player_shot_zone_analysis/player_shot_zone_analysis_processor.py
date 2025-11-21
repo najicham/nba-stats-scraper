@@ -31,6 +31,9 @@ from google.cloud import bigquery
 
 from data_processors.precompute.precompute_base import PrecomputeProcessorBase
 
+# Pattern imports (Week 1 - Foundation Patterns)
+from shared.processors.patterns import SmartSkipMixin, EarlyExitMixin, CircuitBreakerMixin
+
 # Custom exceptions for dependency handling
 class DependencyError(Exception):
     """Raised when critical dependencies are missing."""
@@ -43,17 +46,22 @@ class DataTooStaleError(Exception):
 logger = logging.getLogger(__name__)
 
 
-class PlayerShotZoneAnalysisProcessor(PrecomputeProcessorBase):
+class PlayerShotZoneAnalysisProcessor(
+    SmartSkipMixin,
+    EarlyExitMixin,
+    CircuitBreakerMixin,
+    PrecomputeProcessorBase
+):
     """
     Analyze player shot distribution and efficiency by court zone.
-    
+
     Calculates for each player:
     - Shot distribution rates (paint %, mid-range %, three-point %)
     - Efficiency by zone (FG% in each zone)
     - Volume by zone (attempts per game)
     - Shot creation (assisted vs unassisted rates)
     - Primary scoring zone identification
-    
+
     Uses last 10 games for primary analysis, last 20 games for trend comparison.
     """
     
@@ -79,9 +87,50 @@ class PlayerShotZoneAnalysisProcessor(PrecomputeProcessorBase):
         self.raw_data = None
         self.transformed_data = []
         self.failed_entities = []
-        
+
         logger.info(f"Initialized {self.__class__.__name__}")
-    
+
+    # ============================================================
+    # Pattern #1: Smart Skip Configuration
+    # ============================================================
+    RELEVANT_SOURCES = {
+        # Phase 3 Analytics sources - RELEVANT (depends on these)
+        'player_game_summary': True,
+        'team_offense_game_summary': True,
+        'team_defense_game_summary': True,
+
+        # Play-by-play sources - RELEVANT (for shot zone data)
+        'bigdataball_play_by_play': True,
+        'nbac_play_by_play': True,
+
+        # Phase 4 Precompute sources - NOT RELEVANT (this processor doesn't depend on other Phase 4 tables)
+        'player_composite_factors': False,
+        'team_defense_zone_analysis': False,
+        'player_daily_cache': False,
+
+        # Phase 2 Raw sources - NOT RELEVANT (Phase 4 reads from Phase 3, not Phase 2 directly)
+        'nbac_gamebook_player_stats': False,
+        'bdl_player_boxscores': False,
+        'nbac_team_boxscore': False,
+        'odds_api_player_points_props': False,
+        'odds_api_game_lines': False,
+        'nbac_schedule': False,
+        'nbac_injury_report': False
+    }
+
+    # ============================================================
+    # Pattern #3: Early Exit Configuration
+    # ============================================================
+    ENABLE_NO_GAMES_CHECK = False      # Don't skip - analyzes historical games
+    ENABLE_OFFSEASON_CHECK = True      # Skip in July-September
+    ENABLE_HISTORICAL_DATE_CHECK = False  # Don't skip - can analyze any past date
+
+    # ============================================================
+    # Pattern #5: Circuit Breaker Configuration
+    # ============================================================
+    CIRCUIT_BREAKER_THRESHOLD = 5  # Open after 5 consecutive failures
+    CIRCUIT_BREAKER_TIMEOUT = timedelta(minutes=30)  # Stay open 30 minutes
+
     def get_dependencies(self) -> dict:
         """
         Define source table requirements.

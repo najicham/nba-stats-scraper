@@ -367,9 +367,7 @@ class BettingPropsProcessor(ProcessorBase):
             
             raise
         
-        return rows
-    
-    def save_data(self) -> None:
+        self.transformed_data = rowsdef save_data(self) -> None:
         """Save transformed data to BigQuery (overrides ProcessorBase.save_data())."""
         rows = self.transformed_data
         """

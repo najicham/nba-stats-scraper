@@ -246,7 +246,7 @@ class OddsApiPropsProcessor(ProcessorBase):
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
                 
-                return rows
+                self.transformed_data = rows
             
             # Extract metadata from file path
             metadata = self.extract_metadata_from_path(file_path, is_historical)
@@ -417,7 +417,7 @@ class OddsApiPropsProcessor(ProcessorBase):
             
             raise
         
-        return rows
+        self.transformed_data = rows
     
     def save_data(self) -> None:
         """Save transformed data to BigQuery (overrides ProcessorBase.save_data())."""

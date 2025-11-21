@@ -196,7 +196,7 @@ class NbacRefereeProcessor(ProcessorBase):
                     
                     rows.append(row)
             
-            return rows
+            self.transformed_data = rows
             
         except Exception as e:
             logging.error(f"Error in transform_data: {e}")

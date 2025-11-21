@@ -381,8 +381,7 @@ class EspnBoxscoreProcessor(ProcessorBase):
                     logging.warning(f"Failed to send notification: {e}")
             
             logging.info(f"Transformed {len(rows)} player records from {file_path}")
-            return rows
-            
+            self.transformed_data = rows
         except Exception as e:
             logging.error(f"Error transforming data from {file_path}: {str(e)}")
             

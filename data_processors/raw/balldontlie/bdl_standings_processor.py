@@ -128,8 +128,7 @@ class BdlStandingsProcessor(ProcessorBase):
             except Exception as e:
                 logging.warning(f"Failed to send notification: {e}")
             
-            return rows
-        
+            self.transformed_data = rows
         try:
             date_recorded = datetime.strptime(date_str, '%Y-%m-%d').date()
         except ValueError:
@@ -151,8 +150,7 @@ class BdlStandingsProcessor(ProcessorBase):
             except Exception as e:
                 logging.warning(f"Failed to send notification: {e}")
             
-            return rows
-        
+            self.transformed_data = rows
         # Process each team's standing
         for standing in raw_data.get('standings', []):
             team_data = standing.get('team', {})
@@ -261,9 +259,7 @@ class BdlStandingsProcessor(ProcessorBase):
             except Exception as e:
                 logging.warning(f"Failed to send notification: {e}")
         
-        return rows
-    
-    def save_data(self) -> None:
+        self.transformed_data = rowsdef save_data(self) -> None:
         """Save transformed data to BigQuery (overrides ProcessorBase.save_data())."""
         rows = self.transformed_data
         """Load standings data using MERGE_UPDATE strategy."""

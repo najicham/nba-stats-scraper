@@ -1,0 +1,1000 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "Full entity-level monitoring dashboard - Requires Week 1 schema migration (entities_processed, entities_changed, waste_pct, skip_reason)",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": {
+        "type": "bigquery",
+        "uid": "${datasource}"
+      },
+      "description": "Average waste percentage across all processors in last 24 hours",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 20
+              },
+              {
+                "color": "red",
+                "value": 30
+              }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
+      },
+      "pluginVersion": "10.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "bigquery",
+            "uid": "${datasource}"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT ROUND(AVG(waste_pct), 1) as value FROM `${project_id}.nba_processing.analytics_processor_runs` WHERE run_date >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR) AND success = TRUE AND waste_pct IS NOT NULL",
+          "refId": "A"
+        }
+      ],
+      "title": "Avg Waste % (24h)",
+      "type": "gauge"
+    },
+    {
+      "datasource": {
+        "type": "bigquery",
+        "uid": "${datasource}"
+      },
+      "description": "Total wasted processing hours in last 7 days",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 2
+              }
+            ]
+          },
+          "unit": "h"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 6,
+        "y": 0
+      },
+      "id": 2,
+      "options": {
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
+      },
+      "pluginVersion": "10.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "bigquery",
+            "uid": "${datasource}"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT ROUND(SUM(duration_seconds * waste_pct / 100) / 3600, 2) as value FROM `${project_id}.nba_processing.analytics_processor_runs` WHERE run_date >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAY) AND success = TRUE AND waste_pct IS NOT NULL",
+          "refId": "A"
+        }
+      ],
+      "title": "Wasted Hours (7d)",
+      "type": "gauge"
+    },
+    {
+      "datasource": {
+        "type": "bigquery",
+        "uid": "${datasource}"
+      },
+      "description": "Percentage of successful processing runs (completed + skipped)",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 95
+              },
+              {
+                "color": "green",
+                "value": 98
+              }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 12,
+        "y": 0
+      },
+      "id": 3,
+      "options": {
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
+      },
+      "pluginVersion": "10.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "bigquery",
+            "uid": "${datasource}"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT ROUND(COUNTIF(success = TRUE) / COUNT(*) * 100, 1) as value FROM `${project_id}.nba_processing.analytics_processor_runs` WHERE run_date >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)",
+          "refId": "A"
+        }
+      ],
+      "title": "Success Rate (24h)",
+      "type": "gauge"
+    },
+    {
+      "datasource": {
+        "type": "bigquery",
+        "uid": "${datasource}"
+      },
+      "description": "Average processing duration for completed runs",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 30
+              },
+              {
+                "color": "red",
+                "value": 60
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 18,
+        "y": 0
+      },
+      "id": 4,
+      "options": {
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
+      },
+      "pluginVersion": "10.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "bigquery",
+            "uid": "${datasource}"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT ROUND(AVG(duration_seconds), 1) as value FROM `${project_id}.nba_processing.analytics_processor_runs` WHERE run_date >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR) AND success = TRUE",
+          "refId": "A"
+        }
+      ],
+      "title": "Avg Duration (24h)",
+      "type": "gauge"
+    },
+    {
+      "datasource": {
+        "type": "bigquery",
+        "uid": "${datasource}"
+      },
+      "description": "Waste percentage trend by processor over last 7 days",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "Waste %",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 20,
+            "gradientMode": "none",
+            "hideFrom": {
+              "tooltip": false,
+              "viz": false,
+              "legend": false
+            },
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 30
+              }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 6
+      },
+      "id": 5,
+      "options": {
+        "legend": {
+          "calcs": ["mean", "max"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "bigquery",
+            "uid": "${datasource}"
+          },
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT TIMESTAMP_TRUNC(run_date, HOUR) as time, processor_name as metric, AVG(waste_pct) as value FROM `${project_id}.nba_processing.analytics_processor_runs` WHERE run_date >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAY) AND success = TRUE AND waste_pct IS NOT NULL AND processor_name LIKE CONCAT('%', '${processor:raw}', '%') GROUP BY time, metric ORDER BY time",
+          "refId": "A"
+        }
+      ],
+      "title": "Waste % Over Time (7d)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "bigquery",
+        "uid": "${datasource}"
+      },
+      "description": "Breakdown of skip reasons for today's executions",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "hideFrom": {
+              "tooltip": false,
+              "viz": false,
+              "legend": false
+            }
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 12,
+        "y": 6
+      },
+      "id": 6,
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "values": ["value", "percent"]
+        },
+        "pieType": "pie",
+        "tooltip": {
+          "mode": "single"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "bigquery",
+            "uid": "${datasource}"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT COALESCE(skip_reason, 'Processed') as skip_reason, COUNT(*) as count FROM `${project_id}.nba_processing.analytics_processor_runs` WHERE DATE(run_date) = CURRENT_DATE() AND processor_name LIKE CONCAT('%', '${processor:raw}', '%') GROUP BY skip_reason ORDER BY count DESC",
+          "refId": "A"
+        }
+      ],
+      "title": "Skip Reasons (Today)",
+      "type": "piechart"
+    },
+    {
+      "datasource": {
+        "type": "bigquery",
+        "uid": "${datasource}"
+      },
+      "description": "Distribution of processing durations (7d)",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "Count",
+            "axisPlacement": "auto",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {
+              "tooltip": false,
+              "viz": false,
+              "legend": false
+            },
+            "lineWidth": 1,
+            "scaleDistribution": {
+              "type": "linear"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 18,
+        "y": 6
+      },
+      "id": 7,
+      "options": {
+        "barRadius": 0,
+        "barWidth": 0.97,
+        "groupWidth": 0.7,
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": false
+        },
+        "orientation": "auto",
+        "showValue": "auto",
+        "stacking": "none",
+        "tooltip": {
+          "mode": "single"
+        },
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 0
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "bigquery",
+            "uid": "${datasource}"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT CASE WHEN duration_seconds < 10 THEN '<10s' WHEN duration_seconds < 30 THEN '10-30s' WHEN duration_seconds < 60 THEN '30-60s' WHEN duration_seconds < 120 THEN '1-2m' ELSE '>2m' END as duration_bucket, COUNT(*) as count FROM `${project_id}.nba_processing.analytics_processor_runs` WHERE run_date >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAY) AND success = TRUE AND processor_name LIKE CONCAT('%', '${processor:raw}', '%') GROUP BY duration_bucket ORDER BY CASE duration_bucket WHEN '<10s' THEN 1 WHEN '10-30s' THEN 2 WHEN '30-60s' THEN 3 WHEN '1-2m' THEN 4 ELSE 5 END",
+          "refId": "A"
+        }
+      ],
+      "title": "Duration Distribution (7d)",
+      "type": "barchart"
+    },
+    {
+      "datasource": {
+        "type": "bigquery",
+        "uid": "${datasource}"
+      },
+      "description": "THE DECISION QUERY - Week 8 decision metrics with color-coded recommendations",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "left",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "avg_waste_pct"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 20
+                    },
+                    {
+                      "color": "red",
+                      "value": 30
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "unit",
+                "value": "percent"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "wasted_hours_per_week"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 1
+                    },
+                    {
+                      "color": "red",
+                      "value": 2
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "unit",
+                "value": "h"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "recommendation"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "options": {
+                      "pattern": "IMPLEMENT.*",
+                      "result": {
+                        "color": "red",
+                        "index": 0
+                      }
+                    },
+                    "type": "regex"
+                  },
+                  {
+                    "options": {
+                      "pattern": "MONITOR.*",
+                      "result": {
+                        "color": "yellow",
+                        "index": 1
+                      }
+                    },
+                    "type": "regex"
+                  },
+                  {
+                    "options": {
+                      "pattern": "SKIP.*",
+                      "result": {
+                        "color": "green",
+                        "index": 2
+                      }
+                    },
+                    "type": "regex"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 14
+      },
+      "id": 8,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": ["sum"],
+          "show": false
+        },
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "avg_waste_pct"
+          }
+        ]
+      },
+      "pluginVersion": "10.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "bigquery",
+            "uid": "${datasource}"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "WITH weekly_metrics AS ( SELECT processor_name, ROUND(AVG(waste_pct), 1) as avg_waste_pct, COUNT(*) as total_runs, SUM(duration_seconds * waste_pct / 100) / 3600 as wasted_hours_per_week FROM `${project_id}.nba_processing.analytics_processor_runs` WHERE run_date >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAY) AND success = TRUE AND waste_pct IS NOT NULL GROUP BY processor_name ), decision AS ( SELECT processor_name, avg_waste_pct, total_runs, ROUND(wasted_hours_per_week, 2) as wasted_hours_per_week, CASE WHEN avg_waste_pct > 30 AND wasted_hours_per_week > 2 AND total_runs > 10 THEN ROUND(3 / wasted_hours_per_week, 1) ELSE NULL END as weeks_to_roi, CASE WHEN avg_waste_pct > 30 AND wasted_hours_per_week > 2 AND total_runs > 10 AND (3 / wasted_hours_per_week) < 8 THEN '🔴 IMPLEMENT PHASE 3' WHEN avg_waste_pct > 20 OR wasted_hours_per_week > 1 THEN '🟡 MONITOR CLOSELY' ELSE '🟢 SKIP - Phase 1 Sufficient' END as recommendation FROM weekly_metrics ) SELECT processor_name, avg_waste_pct, wasted_hours_per_week, total_runs, weeks_to_roi, recommendation FROM decision WHERE processor_name LIKE CONCAT('%', '${processor:raw}', '%') ORDER BY avg_waste_pct DESC",
+          "refId": "A"
+        }
+      ],
+      "title": "THE DECISION QUERY ⭐ (Week 8 Decision Metrics)",
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {},
+            "indexByName": {
+              "processor_name": 0,
+              "avg_waste_pct": 1,
+              "wasted_hours_per_week": 2,
+              "total_runs": 3,
+              "weeks_to_roi": 4,
+              "recommendation": 5
+            },
+            "renameByName": {
+              "processor_name": "Processor",
+              "avg_waste_pct": "Avg Waste %",
+              "wasted_hours_per_week": "Wasted hrs/wk",
+              "total_runs": "Runs/wk",
+              "weeks_to_roi": "Weeks to ROI",
+              "recommendation": "Recommendation"
+            }
+          }
+        }
+      ],
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "bigquery",
+        "uid": "${datasource}"
+      },
+      "description": "Recent processing runs with full entity-level details",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "left",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "success"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background"
+                }
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "options": {
+                      "true": {
+                        "color": "green",
+                        "index": 0,
+                        "text": "Success"
+                      },
+                      "false": {
+                        "color": "red",
+                        "index": 1,
+                        "text": "Failed"
+                      }
+                    },
+                    "type": "value"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "waste_pct"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 20
+                    },
+                    {
+                      "color": "red",
+                      "value": 30
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "unit",
+                "value": "percent"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 24
+      },
+      "id": 9,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": ["sum"],
+          "show": false
+        },
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "run_date"
+          }
+        ]
+      },
+      "pluginVersion": "10.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "bigquery",
+            "uid": "${datasource}"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT run_date, processor_name, date_range_start, date_range_end, success, ROUND(duration_seconds, 1) as duration_seconds, records_processed, entities_processed, entities_changed, ROUND(waste_pct, 1) as waste_pct, skip_reason FROM `${project_id}.nba_processing.analytics_processor_runs` WHERE run_date >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR) AND processor_name LIKE CONCAT('%', '${processor:raw}', '%') ORDER BY run_date DESC LIMIT 100",
+          "refId": "A"
+        }
+      ],
+      "title": "Recent Executions (24h) - Full Details",
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {},
+            "indexByName": {
+              "run_date": 0,
+              "processor_name": 1,
+              "date_range_start": 2,
+              "date_range_end": 3,
+              "success": 4,
+              "duration_seconds": 5,
+              "records_processed": 6,
+              "entities_processed": 7,
+              "entities_changed": 8,
+              "waste_pct": 9,
+              "skip_reason": 10
+            },
+            "renameByName": {
+              "run_date": "Time",
+              "processor_name": "Processor",
+              "date_range_start": "Start Date",
+              "date_range_end": "End Date",
+              "success": "Status",
+              "duration_seconds": "Duration (s)",
+              "records_processed": "Records",
+              "entities_processed": "Entities",
+              "entities_changed": "Changed",
+              "waste_pct": "Waste %",
+              "skip_reason": "Skip Reason"
+            }
+          }
+        }
+      ],
+      "type": "table"
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["nba-props", "week1", "entity-level", "decision-query"],
+  "templating": {
+    "list": [
+      {
+        "current": {
+          "selected": false,
+          "text": "BigQuery-NBA-Props",
+          "value": "BigQuery-NBA-Props"
+        },
+        "hide": 0,
+        "includeAll": false,
+        "label": "Data Source",
+        "multi": false,
+        "name": "datasource",
+        "options": [],
+        "query": "bigquery",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "type": "datasource"
+      },
+      {
+        "current": {
+          "selected": false,
+          "text": "nba-props-platform",
+          "value": "nba-props-platform"
+        },
+        "hide": 0,
+        "label": "Project ID",
+        "name": "project_id",
+        "options": [
+          {
+            "selected": true,
+            "text": "nba-props-platform",
+            "value": "nba-props-platform"
+          }
+        ],
+        "query": "nba-props-platform",
+        "skipUrlSync": false,
+        "type": "textbox"
+      },
+      {
+        "current": {
+          "selected": false,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "bigquery",
+          "uid": "${datasource}"
+        },
+        "definition": "SELECT DISTINCT processor_name FROM `${project_id}.nba_processing.analytics_processor_runs` ORDER BY processor_name",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Processor",
+        "multi": false,
+        "name": "processor",
+        "options": [],
+        "query": "SELECT DISTINCT processor_name FROM `${project_id}.nba_processing.analytics_processor_runs` ORDER BY processor_name",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 0,
+        "type": "query"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "",
+  "title": "NBA Props: Week 1 Full Monitoring (Entity-Level)",
+  "uid": "nba-week1-full",
+  "version": 1,
+  "weekStart": ""
+}

@@ -40,6 +40,9 @@ from google.cloud import bigquery
 
 from data_processors.precompute.precompute_base import PrecomputeProcessorBase
 
+# Pattern imports (Week 1 - Foundation Patterns)
+from shared.processors.patterns import SmartSkipMixin, EarlyExitMixin, CircuitBreakerMixin
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -48,20 +51,25 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-class PlayerDailyCacheProcessor(PrecomputeProcessorBase):
+class PlayerDailyCacheProcessor(
+    SmartSkipMixin,
+    EarlyExitMixin,
+    CircuitBreakerMixin,
+    PrecomputeProcessorBase
+):
     """
     Cache static daily player data for fast Phase 5 real-time updates.
-    
+
     This processor aggregates player performance, team context, fatigue metrics,
     and shot zone tendencies into a single cache table. Phase 5 loads this cache
     once at 6 AM and reuses it for all real-time predictions during the day.
-    
+
     Dependencies:
         - nba_analytics.player_game_summary (CRITICAL)
         - nba_analytics.team_offense_game_summary (CRITICAL)
         - nba_analytics.upcoming_player_game_context (CRITICAL)
         - nba_precompute.player_shot_zone_analysis (CRITICAL)
-    
+
     Processing Strategy:
         - MERGE: Update existing rows or insert new ones
         - One row per player per cache_date
@@ -94,9 +102,50 @@ class PlayerDailyCacheProcessor(PrecomputeProcessorBase):
         
         # Cache version
         self.cache_version = "v1"
-        
+
         logger.info("PlayerDailyCacheProcessor initialized")
-    
+
+    # ============================================================
+    # Pattern #1: Smart Skip Configuration
+    # ============================================================
+    RELEVANT_SOURCES = {
+        # Phase 3 Analytics sources - RELEVANT (depends on these)
+        'player_game_summary': True,
+        'team_offense_game_summary': True,
+        'team_defense_game_summary': True,
+        'upcoming_player_game_context': True,
+        'upcoming_team_game_context': True,
+
+        # Phase 4 Precompute sources - RELEVANT (depends on these)
+        'player_shot_zone_analysis': True,
+        'player_composite_factors': True,
+        'team_defense_zone_analysis': True,
+
+        # Phase 2 Raw sources - NOT RELEVANT (Phase 4 reads from Phase 3, not Phase 2 directly)
+        'nbac_gamebook_player_stats': False,
+        'bdl_player_boxscores': False,
+        'nbac_team_boxscore': False,
+        'odds_api_player_points_props': False,
+        'odds_api_game_lines': False,
+        'nbac_schedule': False,
+        'bigdataball_play_by_play': False,
+        'nbac_play_by_play': False,
+        'nbac_injury_report': False
+    }
+
+    # ============================================================
+    # Pattern #3: Early Exit Configuration
+    # ============================================================
+    ENABLE_NO_GAMES_CHECK = False      # Don't skip - builds cache regardless of games
+    ENABLE_OFFSEASON_CHECK = True      # Skip in July-September
+    ENABLE_HISTORICAL_DATE_CHECK = False  # Don't skip - can build cache for any date
+
+    # ============================================================
+    # Pattern #5: Circuit Breaker Configuration
+    # ============================================================
+    CIRCUIT_BREAKER_THRESHOLD = 5  # Open after 5 consecutive failures
+    CIRCUIT_BREAKER_TIMEOUT = timedelta(minutes=30)  # Stay open 30 minutes
+
     def get_dependencies(self) -> dict:
         """
         Define upstream source requirements.

@@ -28,7 +28,10 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_processing.processor_runs` (
   -- Context
   opts JSON,                           -- Processing options
   file_path STRING,                    -- Source file processed
-  
+
+  -- Pattern support (Pattern #1: Smart Skip, Pattern #3: Early Exit)
+  skip_reason STRING,                  -- Why processing was skipped (e.g., 'no_games', 'irrelevant_source', 'offseason')
+
   processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
 )
 PARTITION BY DATE(started_at)

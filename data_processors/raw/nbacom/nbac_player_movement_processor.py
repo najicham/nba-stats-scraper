@@ -303,8 +303,7 @@ class NbacPlayerMovementProcessor(ProcessorBase):
             logger.info(f"Transformed {len(rows)} new records, skipped {skipped_count} existing, "
                        f"filtered {old_transactions} pre-2021 transactions")
             
-            return rows
-            
+            self.transformed_data = rows
         except Exception as e:
             logger.error(f"Critical error in transform_data: {e}")
             

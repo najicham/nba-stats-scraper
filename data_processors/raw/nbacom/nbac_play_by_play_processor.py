@@ -449,8 +449,7 @@ class NbacPlayByPlayProcessor(ProcessorBase):
             
             return []
         
-        return rows
-    
+        self.transformed_data = rows
     def process_file(self, file_path: str) -> Dict:
         """
         Main entry point for processing a single play-by-play file.

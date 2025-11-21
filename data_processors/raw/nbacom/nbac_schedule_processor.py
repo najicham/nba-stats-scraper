@@ -506,7 +506,7 @@ class NbacScheduleProcessor(ProcessorBase):
             if excluded_games > 0:
                 logging.info(f"Filtered out {excluded_games} preseason games, processing {business_relevant_games} business-relevant games")
             
-            return rows
+            self.transformed_data = rows
             
         except Exception as e:
             logging.error(f"Critical error in transform_data: {e}")
