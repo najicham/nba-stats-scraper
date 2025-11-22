@@ -57,12 +57,16 @@ CREATE TABLE IF NOT EXISTS `nba_raw.espn_boxscores` (
   -- Processing metadata
   source_file_path STRING NOT NULL,
   created_at TIMESTAMP NOT NULL,
+
+  -- Smart Idempotency (Pattern #14)
+  data_hash STRING,  -- SHA256 hash of meaningful fields: game_id, player_lookup, points, rebounds, assists, field_goals_made, field_goals_attempted
+
   processed_at TIMESTAMP NOT NULL
 )
 PARTITION BY game_date
 CLUSTER BY player_lookup, team_abbr, game_date
 OPTIONS (
-  description = "ESPN boxscore data used as backup validation source for prop betting analysis. Collected during Early Morning Final Check workflow (5 AM PT) as alternative to Ball Don't Lie and NBA.com sources.",
+  description = "ESPN boxscore data used as backup validation source for prop betting analysis. Collected during Early Morning Final Check workflow (5 AM PT) as alternative to Ball Don't Lie and NBA.com sources. Uses smart idempotency to skip redundant writes when stats unchanged.",
   require_partition_filter = true
 );
 

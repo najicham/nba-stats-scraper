@@ -81,12 +81,16 @@ CREATE TABLE IF NOT EXISTS `nba_raw.nbac_player_boxscores` (
   source_file_path STRING NOT NULL,
   scrape_timestamp TIMESTAMP,
   created_at TIMESTAMP NOT NULL,
+
+  -- Smart Idempotency (Pattern #14)
+  data_hash STRING,  -- SHA256 hash of meaningful fields: game_id, player_lookup, points, rebounds, assists, minutes, field_goals_made, field_goals_attempted
+
   processed_at TIMESTAMP NOT NULL
 )
 PARTITION BY game_date
 CLUSTER BY player_lookup, team_abbr, game_date
 OPTIONS (
-  description = "Official NBA.com enhanced player statistics for prop validation and cross-source analysis. Provides detailed player performance data as alternative to Ball Don't Lie box scores with official NBA.com player IDs and enhanced statistical categories.",
+  description = "Official NBA.com enhanced player statistics for prop validation and cross-source analysis. Provides detailed player performance data as alternative to Ball Don't Lie box scores with official NBA.com player IDs and enhanced statistical categories. Uses smart idempotency to skip redundant writes when stats unchanged.",
   require_partition_filter = true
 );
 

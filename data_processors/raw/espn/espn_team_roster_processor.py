@@ -13,6 +13,7 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from google.cloud import bigquery, storage
 from data_processors.raw.processor_base import ProcessorBase
+from data_processors.raw.smart_idempotency_mixin import SmartIdempotencyMixin
 from shared.utils.notification_system import (
     notify_error,
     notify_warning,
@@ -23,17 +24,31 @@ from shared.utils.player_registry import RegistryReader, PlayerNotFoundError
 logger = logging.getLogger(__name__)
 
 
-class EspnTeamRosterProcessor(ProcessorBase):
+class EspnTeamRosterProcessor(SmartIdempotencyMixin, ProcessorBase):
     """
     Process ESPN team roster API data with Player Registry integration.
-    
+
     OPTIMIZED v2: Multi-threaded + Batch DELETE (3x faster)
     - Load/Transform: Parallel (8 threads) - 30 teams in 3-5 seconds
-    - Delete: Batch (1 query) - 30 teams in 2-3 seconds  
+    - Delete: Batch (1 query) - 30 teams in 2-3 seconds
     - Insert: Batch load - 30 teams in 15-20 seconds
     - Expected total: ~25-30 seconds (vs 60 seconds before)
     """
-    
+
+    # Smart idempotency: Hash meaningful roster fields only
+    HASH_FIELDS = [
+        'roster_date',
+        'team_abbr',
+        'espn_player_id',
+        'player_full_name',
+        'jersey_number',
+        'position',
+        'height',
+        'weight',
+        'status',
+        'roster_status'
+    ]
+
     required_opts = ['bucket', 'file_path']
     
     def __init__(self):
@@ -221,6 +236,10 @@ class EspnTeamRosterProcessor(ProcessorBase):
             
             # Store transformed data
             self.transformed_data = rows
+
+            # Add smart idempotency hash to each row
+            self.add_data_hash()
+
             logger.debug(f"Transformed {len(rows)} players from {team_abbr} roster (skipped {self.players_skipped}, unresolved {self.players_unresolved})")
             
         except Exception as e:

@@ -47,12 +47,16 @@ CREATE TABLE IF NOT EXISTS `nba_raw.bettingpros_player_points_props` (
   -- Processing metadata (standard processor pattern)
   source_file_path STRING NOT NULL,  -- GCS path
   created_at TIMESTAMP NOT NULL,     -- When record first created
+
+  -- Smart Idempotency (Pattern #14)
+  data_hash STRING,                  -- SHA256 hash of meaningful fields: player_lookup, game_date, market_type, bookmaker, bet_side, points_line, is_best_line
+
   processed_at TIMESTAMP NOT NULL    -- When record last processed
 )
 PARTITION BY game_date
 CLUSTER BY player_lookup, bookmaker, has_team_issues, bet_side
 OPTIONS (
-  description = "BettingPros player prop betting lines for line shopping analysis and backup validation. Flattened structure with one record per player-sportsbook-bet_side combination. Comprehensive team validation framework tracks data quality issues.",
+  description = "BettingPros player prop betting lines for line shopping analysis and backup validation. Flattened structure with one record per player-sportsbook-bet_side combination. Comprehensive team validation framework tracks data quality issues. Uses smart idempotency to skip redundant writes when lines unchanged.",
   require_partition_filter = true
 );
 

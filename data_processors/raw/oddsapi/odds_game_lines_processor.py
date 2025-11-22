@@ -8,6 +8,7 @@ from typing import Dict, List, Optional
 from google.cloud import bigquery
 import pytz
 from data_processors.raw.processor_base import ProcessorBase
+from data_processors.raw.smart_idempotency_mixin import SmartIdempotencyMixin
 from shared.utils.notification_system import (
     notify_error,
     notify_warning,
@@ -17,15 +18,31 @@ from shared.utils.notification_system import (
 logger = logging.getLogger(__name__)
 
 
-class OddsGameLinesProcessor(ProcessorBase):
+class OddsGameLinesProcessor(SmartIdempotencyMixin, ProcessorBase):
     """
     Process Odds API game lines data.
-    
+
     Handles both:
     - Current/live data: odds-api/game-lines/2025-10-21/...
     - Historical data: odds-api/game-lines-history/2023-10-24/...
+
+    Processing Strategy: MERGE_UPDATE
+    Smart Idempotency: Enabled (Pattern #14)
+        Hash Fields: game_id, game_date, bookmaker_key, market_key, outcome_name, outcome_point, snapshot_timestamp
+        Expected Skip Rate: 50% when lines unchanged
     """
-    
+
+    # Smart Idempotency: Define meaningful fields for hash computation
+    HASH_FIELDS = [
+        'game_id',
+        'game_date',
+        'bookmaker_key',
+        'market_key',
+        'outcome_name',
+        'outcome_point',
+        'snapshot_timestamp'
+    ]
+
     def __init__(self):
         super().__init__()
         self.table_name = 'nba_raw.odds_api_game_lines'
@@ -436,9 +453,12 @@ class OddsGameLinesProcessor(ProcessorBase):
                 logger.warning(f"Failed to send notification: {notify_ex}")
             
             raise
-        
+
         self.transformed_data = rows
-    
+
+        # Smart Idempotency: Add data_hash to all records
+        self.add_data_hash()
+
     def save_data(self) -> None:
         """Save transformed data to BigQuery (overrides ProcessorBase.save_data())."""
         rows = self.transformed_data

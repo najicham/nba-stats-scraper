@@ -162,18 +162,28 @@ class TeamDefenseGameSummaryProcessor(
     def extract_raw_data(self) -> None:
         """
         Extract team defensive data from Phase 2 raw tables.
-        
+
         Multi-source strategy:
           1. Get opponent offense from nbac_team_boxscore (perspective flip)
           2. Try gamebook for defensive actions (PRIMARY)
           3. Fall back to BDL if gamebook incomplete (FALLBACK)
           4. Merge opponent offense + defensive actions
+
+        NEW in v3.0: Smart reprocessing - skip processing if Phase 2 source unchanged.
         """
         start_date = self.opts['start_date']
         end_date = self.opts['end_date']
-        
+
+        # SMART REPROCESSING: Check if we can skip processing
+        skip, reason = self.should_skip_processing(start_date)
+        if skip:
+            logger.info(f"✅ SMART REPROCESSING: Skipping processing - {reason}")
+            self.raw_data = []
+            return
+
+        logger.info(f"🔄 PROCESSING: {reason}")
         logger.info(f"Extracting team defensive data for {start_date} to {end_date}")
-        
+
         # Step 1: Get opponent offensive stats (perspective flip)
         opponent_offense_df = self._extract_opponent_offense(start_date, end_date)
         

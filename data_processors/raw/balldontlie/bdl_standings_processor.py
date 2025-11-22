@@ -9,13 +9,33 @@ from typing import Dict, List, Optional, Tuple
 from datetime import datetime, date
 from google.cloud import bigquery
 from data_processors.raw.processor_base import ProcessorBase
+from data_processors.raw.smart_idempotency_mixin import SmartIdempotencyMixin
 from shared.utils.notification_system import (
     notify_error,
     notify_warning,
     notify_info
 )
 
-class BdlStandingsProcessor(ProcessorBase):
+class BdlStandingsProcessor(SmartIdempotencyMixin, ProcessorBase):
+    """
+    Ball Don't Lie Standings Processor
+
+    Processing Strategy: APPEND_ALWAYS
+    Smart Idempotency: Enabled (Pattern #14)
+        Hash Fields: team_abbr, date_recorded, wins, losses, win_percentage, conference_rank
+        Expected Skip Rate: N/A (APPEND_ALWAYS always writes, hash for monitoring only)
+    """
+
+    # Smart Idempotency: Define meaningful fields for hash computation
+    HASH_FIELDS = [
+        'team_abbr',
+        'date_recorded',
+        'wins',
+        'losses',
+        'win_percentage',
+        'conference_rank'
+    ]
+
     def __init__(self):
         super().__init__()
         self.table_name = 'nba_raw.bdl_standings'
@@ -127,8 +147,11 @@ class BdlStandingsProcessor(ProcessorBase):
                 )
             except Exception as e:
                 logging.warning(f"Failed to send notification: {e}")
-            
+
             self.transformed_data = rows
+
+            # Smart Idempotency: Add data_hash to all records
+            self.add_data_hash()
         try:
             date_recorded = datetime.strptime(date_str, '%Y-%m-%d').date()
         except ValueError:
@@ -259,7 +282,9 @@ class BdlStandingsProcessor(ProcessorBase):
             except Exception as e:
                 logging.warning(f"Failed to send notification: {e}")
         
-        self.transformed_data = rowsdef save_data(self) -> None:
+        self.transformed_data = rows
+
+    def save_data(self) -> None:
         """Save transformed data to BigQuery (overrides ProcessorBase.save_data())."""
         rows = self.transformed_data
         """Load standings data using MERGE_UPDATE strategy."""

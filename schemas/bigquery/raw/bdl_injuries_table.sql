@@ -31,13 +31,17 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_raw.bdl_injuries` (
   -- Processing metadata
   scrape_timestamp     TIMESTAMP    OPTIONS(description="When scraper ran (for intraday tracking)"),
   source_file_path     STRING       NOT NULL OPTIONS(description="GCS path to source JSON file"),
+
+  -- Smart Idempotency (Pattern #14)
+  data_hash            STRING       OPTIONS(description="SHA256 hash of meaningful fields: player_lookup, team_abbr, injury_status_normalized, return_date, reason_category"),
+
   processed_at         TIMESTAMP    NOT NULL OPTIONS(description="When processed to BigQuery")
 )
 PARTITION BY scrape_date
 CLUSTER BY player_lookup, team_abbr, injury_status_normalized
 OPTIONS(
-  description="Ball Don't Lie injury reports - backup/validation source for NBA.com injury data. APPEND_ALWAYS strategy tracks intraday status changes.",
-  labels=[("source", "ball_dont_lie"), ("category", "injuries"), ("strategy", "append_always")]
+  description="Ball Don't Lie injury reports - backup/validation source for NBA.com injury data. APPEND_ALWAYS strategy tracks intraday status changes. Uses smart idempotency to skip redundant writes.",
+  labels=[("source", "ball_dont_lie"), ("category", "injuries"), ("strategy", "append_always"), ("pattern", "smart-idempotency")]
 );
 
 -- Create helpful views for common queries

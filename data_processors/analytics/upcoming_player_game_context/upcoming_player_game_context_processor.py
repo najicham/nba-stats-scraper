@@ -246,7 +246,7 @@ class UpcomingPlayerGameContextProcessor(
     def extract_raw_data(self) -> None:
         """
         Extract data from all Phase 2 raw sources.
-        
+
         Order of operations:
         1. Get players with props (DRIVER)
         2. Get schedule data
@@ -254,9 +254,20 @@ class UpcomingPlayerGameContextProcessor(
         4. Get prop lines (opening + current)
         5. Get game lines (spreads + totals)
         6. Get optional data (rosters, injuries, registry)
+
+        NEW in v3.0: Smart reprocessing - skip processing if Phase 2 source unchanged.
         """
         logger.info(f"Extracting raw data for {self.target_date}")
-        
+
+        # SMART REPROCESSING: Check if we can skip processing
+        skip, reason = self.should_skip_processing(self.target_date)
+        if skip:
+            logger.info(f"✅ SMART REPROCESSING: Skipping processing - {reason}")
+            self.players_to_process = []
+            return
+
+        logger.info(f"🔄 PROCESSING: {reason}")
+
         # Step 1: Get players with props (DRIVER)
         self._extract_players_with_props()
         

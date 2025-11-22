@@ -34,13 +34,17 @@ CREATE TABLE IF NOT EXISTS `nba_raw.nbac_injury_report` (
   scrape_time STRING,                  -- Time scraper ran
   run_id STRING,                       -- Scraper run identifier
   source_file_path STRING,
+
+  -- Smart Idempotency (Pattern #14)
+  data_hash STRING,                    -- SHA256 hash of meaningful fields: player_lookup, team, game_date, game_id, injury_status, reason, reason_category
+
   processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
 )
 PARTITION BY report_date
 CLUSTER BY player_lookup, game_id, injury_status
 OPTIONS(
-  description = "NBA injury reports with player availability status per game",
-  labels = [("source", "nba-com"), ("type", "injury-report"), ("update_frequency", "multiple-daily")]
+  description = "NBA injury reports with player availability status per game. Uses smart idempotency to skip redundant writes when injury status unchanged.",
+  labels = [("source", "nba-com"), ("type", "injury-report"), ("update_frequency", "multiple-daily"), ("pattern", "smart-idempotency")]
 );
 
 -- Create view for latest injury status per player

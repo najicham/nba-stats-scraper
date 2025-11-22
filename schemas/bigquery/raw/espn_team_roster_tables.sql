@@ -45,8 +45,12 @@ CREATE TABLE `nba-props-platform.nba_raw.espn_team_rosters` (
   
   -- Processing metadata
   created_at           TIMESTAMP    NOT NULL,   -- When record first created (UTC)
+
+  -- Smart Idempotency (Pattern #14)
+  data_hash            STRING,                  -- SHA256 hash of meaningful fields: roster_date, team_abbr, player_lookup, position, jersey_number
+
   processed_at         TIMESTAMP    NOT NULL,   -- When record last processed/updated (UTC)
-  
+
   -- Table constraints and optimizations
   PRIMARY KEY (roster_date, scrape_hour, team_abbr, espn_player_id) NOT ENFORCED
 )

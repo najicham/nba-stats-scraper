@@ -25,19 +25,20 @@ from google.cloud import bigquery
 
 # Import base class
 from data_processors.raw.processor_base import ProcessorBase
+from data_processors.raw.smart_idempotency_mixin import SmartIdempotencyMixin
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-class NbacTeamBoxscoreProcessor(ProcessorBase):
+class NbacTeamBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
     """
-    Process NBA.com team box score data.
-    
+    Process NBA.com team box score data with smart idempotency.
+
     Transforms team-level statistics from NBA.com API into clean BigQuery records.
     Each game produces exactly 2 records (one per team).
-    
+
     Input Format:
         {
             "gameId": "0022400561",
@@ -59,7 +60,33 @@ class NbacTeamBoxscoreProcessor(ProcessorBase):
     
     Output: nba_raw.nbac_team_boxscore (v2.0 with is_home and dual game IDs)
     """
-    
+
+    # Smart idempotency: Hash meaningful team boxscore fields only
+    HASH_FIELDS = [
+        'game_id',
+        'team_abbr',
+        'is_home',
+        'fg_made',
+        'fg_attempted',
+        'three_pt_made',
+        'three_pt_attempted',
+        'ft_made',
+        'ft_attempted',
+        'offensive_rebounds',
+        'defensive_rebounds',
+        'total_rebounds',
+        'assists',
+        'steals',
+        'blocks',
+        'turnovers',
+        'personal_fouls',
+        'points',
+        'plus_minus'
+    ]
+
+    # Primary keys for smart idempotency hash lookup
+    PRIMARY_KEYS = ['game_id', 'team_abbr']
+
     def __init__(self):
         super().__init__()
         self.table_name = 'nba_raw.nbac_team_boxscore'
@@ -371,7 +398,12 @@ class NbacTeamBoxscoreProcessor(ProcessorBase):
                     )
         
         return errors
-    
+
+    def load_data(self) -> None:
+        """Load team boxscore JSON data from GCS."""
+        self.raw_data = self.load_json_from_gcs()
+        logger.info(f"Loaded team boxscore data from GCS")
+
     def transform_data(self) -> None:
         """Transform raw data into transformed data."""
         raw_data = self.raw_data
@@ -474,52 +506,45 @@ class NbacTeamBoxscoreProcessor(ProcessorBase):
             }
             
             rows.append(row)
-        
+
         logger.info(f"Transformed {len(rows)} team records for game {game_id}")
         self.transformed_data = rows
+
+        # Add smart idempotency hash to each row
+        self.add_data_hash()
     
     def save_data(self) -> None:
         """Save transformed data to BigQuery (overrides ProcessorBase.save_data())."""
         rows = self.transformed_data
-        """
-        Load transformed data into BigQuery.
-        
-        Uses MERGE_UPDATE strategy: deletes existing records for the game,
-        then inserts new records.
-        
-        Args:
-            rows: List of records to insert
-            **kwargs: Additional options (dry_run supported)
-            
-        Returns:
-            Dict with 'rows_processed' and 'errors' keys
-        """
+
         if not rows:
-            logger.warning("No rows to load")
-            return {'rows_processed': 0, 'errors': []}
-        
-        # Support dry-run mode for testing
-        if kwargs.get('dry_run', False):
-            logger.info(f"[DRY RUN] Would load {len(rows)} rows to {self.table_name}")
-            logger.info(f"[DRY RUN] Sample record: {json.dumps(rows[0], indent=2)}")
-            return {'rows_processed': len(rows), 'errors': []}
-        
+            logger.warning("No rows to save")
+            return
+
+        # Smart idempotency check: Skip write if data unchanged
+        if self.should_skip_write():
+            logger.info("Skipping write - data unchanged (smart idempotency)")
+            return
+
         table_id = f"{self.project_id}.{self.table_name}"
         errors = []
-        
+
         try:
             # MERGE_UPDATE strategy: Delete existing records for this game
             # v2.0: Use standardized game_id for deletion
             game_id = rows[0].get('game_id')
-            if game_id:
+            game_date = rows[0].get('game_date')
+            if game_id and game_date:
                 delete_query = f"""
-                DELETE FROM `{table_id}` 
+                DELETE FROM `{table_id}`
                 WHERE game_id = @game_id
+                  AND game_date = @game_date
                 """
-                
+
                 job_config = bigquery.QueryJobConfig(
                     query_parameters=[
-                        bigquery.ScalarQueryParameter("game_id", "STRING", game_id)
+                        bigquery.ScalarQueryParameter("game_id", "STRING", game_id),
+                        bigquery.ScalarQueryParameter("game_date", "DATE", game_date)
                     ]
                 )
                 
@@ -542,11 +567,7 @@ class NbacTeamBoxscoreProcessor(ProcessorBase):
             error_msg = str(e)
             errors.append(error_msg)
             logger.error(f"Error loading data to BigQuery: {error_msg}")
-        
-        return {
-            'rows_processed': len(rows) if not errors else 0,
-            'errors': errors
-        }
+            raise
     
     def process_file(self, file_path: str, **kwargs) -> Dict:
         """

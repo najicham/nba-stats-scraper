@@ -31,6 +31,10 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_raw.br_rosters_current` (
   
   -- Metadata
   source_file_path STRING,             -- GCS path of source file
+
+  -- Smart Idempotency (Pattern #14)
+  data_hash STRING,                    -- SHA256 hash of meaningful fields: season_year, team_abbrev, player_lookup, jersey_number, position
+
   processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
 )
 PARTITION BY RANGE_BUCKET(season_year, GENERATE_ARRAY(2020, 2030, 1))

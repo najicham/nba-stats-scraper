@@ -35,6 +35,10 @@ CREATE TABLE IF NOT EXISTS `nba_raw.nbac_scoreboard_v2` (
   source_file_path STRING NOT NULL,
   scrape_timestamp TIMESTAMP,
   created_at TIMESTAMP NOT NULL,
+
+  -- Smart Idempotency (Pattern #14)
+  data_hash STRING,  -- SHA256 hash of meaningful fields: game_id, game_state, home_score, away_score, home_team_abbr, away_team_abbr
+
   processed_at TIMESTAMP NOT NULL
 )
 PARTITION BY game_date

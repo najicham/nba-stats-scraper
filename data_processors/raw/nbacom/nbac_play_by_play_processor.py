@@ -12,13 +12,35 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 from google.cloud import bigquery, storage
 from data_processors.raw.processor_base import ProcessorBase
+from data_processors.raw.smart_idempotency_mixin import SmartIdempotencyMixin
 from shared.utils.notification_system import (
     notify_error,
     notify_warning,
     notify_info
 )
 
-class NbacPlayByPlayProcessor(ProcessorBase):
+class NbacPlayByPlayProcessor(SmartIdempotencyMixin, ProcessorBase):
+    """
+    NBA.com Play-by-Play Processor
+
+    Processing Strategy: MERGE_UPDATE
+    Smart Idempotency: Enabled (Pattern #14)
+        Hash Fields: game_id, event_id, period, game_clock, event_type, event_description, score_home, score_away
+        Expected Skip Rate: 30% when games unchanged
+    """
+
+    # Smart Idempotency: Define meaningful fields for hash computation
+    HASH_FIELDS = [
+        'game_id',
+        'event_id',
+        'period',
+        'game_clock',
+        'event_type',
+        'event_description',
+        'score_home',
+        'score_away'
+    ]
+
     def __init__(self):
         super().__init__()
         self.table_name = 'nba_raw.nbac_play_by_play'
@@ -448,8 +470,11 @@ class NbacPlayByPlayProcessor(ProcessorBase):
                 logging.warning(f"Failed to send notification: {notify_ex}")
             
             return []
-        
+
         self.transformed_data = rows
+
+        # Smart Idempotency: Add data_hash to all records
+        self.add_data_hash()
     def process_file(self, file_path: str) -> Dict:
         """
         Main entry point for processing a single play-by-play file.

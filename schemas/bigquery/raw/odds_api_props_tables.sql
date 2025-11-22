@@ -36,13 +36,18 @@ CREATE TABLE IF NOT EXISTS `nba_raw.odds_api_player_points_props` (
   bookmaker_last_update TIMESTAMP,        -- From API response
   source_file_path STRING,                -- Full GCS path
   data_source STRING,                     -- 'current' | 'historical' | 'backfill' | 'manual' | NULL (legacy)
-  processing_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
+
+  -- Smart Idempotency (Pattern #14)
+  data_hash STRING,                       -- SHA256 hash of meaningful fields: player_lookup, game_date, game_id, bookmaker, points_line, snapshot_timestamp
+
+  -- Metadata (standardized field name)
+  processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP()  -- Changed from processing_timestamp for consistency
 )
 PARTITION BY game_date
 CLUSTER BY player_lookup, game_date, bookmaker
 OPTIONS(
-  description = "Player points prop odds from The Odds API with historical snapshots. data_source indicates collection method: 'current' (live scraper), 'historical' (backfill endpoint), 'backfill' (manual), 'manual' (corrections), or NULL (legacy).",
-  labels = [("source", "odds_api"), ("type", "props"), ("sport", "nba")]
+  description = "Player points prop odds from The Odds API with historical snapshots. data_source indicates collection method: 'current' (live scraper), 'historical' (backfill endpoint), 'backfill' (manual), 'manual' (corrections), or NULL (legacy). Uses smart idempotency to skip redundant writes when lines unchanged.",
+  labels = [("source", "odds_api"), ("type", "props"), ("sport", "nba"), ("pattern", "smart-idempotency")]
 );
 
 -- Helpful views for player props

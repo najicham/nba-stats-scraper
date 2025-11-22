@@ -128,7 +128,7 @@ SCRAPER_REGISTRY: Dict[str, Tuple[str, str]] = {
     ),
     
     # ========================================================================
-    # NBA.com Scrapers (12 total)
+    # NBA.com Scrapers (13 total)
     # ========================================================================
     "nbac_schedule_api": (
         "scrapers.nbacom.nbac_schedule_api", 
@@ -175,10 +175,14 @@ SCRAPER_REGISTRY: Dict[str, Tuple[str, str]] = {
         "GetNbaComGamebookPdf"
     ),
     "nbac_referee_assignments": (
-        "scrapers.nbacom.nbac_referee_assignments", 
+        "scrapers.nbacom.nbac_referee_assignments",
         "GetNbaComRefereeAssignments"
     ),
-    
+    "nbac_team_boxscore": (
+        "scrapers.nbacom.nbac_team_boxscore",
+        "GetNbaComTeamBoxscore"
+    ),
+
     # ========================================================================
     # ESPN Scrapers (3 total)
     # ========================================================================
@@ -359,6 +363,7 @@ SCRAPER_GROUPS = {
         "nbac_injury_report",
         "nbac_play_by_play",
         "nbac_player_boxscore",
+        "nbac_team_boxscore",
         "nbac_roster",
         "nbac_gamebook_pdf",
         "nbac_referee_assignments",

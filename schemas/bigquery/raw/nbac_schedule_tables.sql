@@ -70,12 +70,16 @@ CREATE TABLE IF NOT EXISTS `nba_raw.nbac_schedule` (
   source_file_path STRING NOT NULL,
   scrape_timestamp TIMESTAMP,
   created_at TIMESTAMP NOT NULL,
+
+  -- Smart Idempotency (Pattern #14)
+  data_hash STRING,  -- SHA256 hash of meaningful fields: game_id, game_date, game_time_utc, home_team_tricode, away_team_tricode, game_status
+
   processed_at TIMESTAMP NOT NULL
 )
 PARTITION BY game_date
 CLUSTER BY game_date, data_source, home_team_tricode, away_team_tricode, season_year
 OPTIONS (
-  description = "NBA.com official game schedule with team, venue, and broadcast information. Source of truth for game timing and team matchups.",
+  description = "NBA.com official game schedule with team, venue, and broadcast information. Source of truth for game timing and team matchups. Uses smart idempotency to skip redundant writes when schedule unchanged.",
   require_partition_filter = true
 );
 

@@ -14,6 +14,7 @@ from datetime import datetime, date
 from typing import Dict, List, Optional
 from google.cloud import bigquery
 from data_processors.raw.processor_base import ProcessorBase
+from data_processors.raw.smart_idempotency_mixin import SmartIdempotencyMixin
 from shared.utils.notification_system import (
     notify_error,
     notify_warning,
@@ -22,7 +23,26 @@ from shared.utils.notification_system import (
 # Import Schedule Service for All-Star game filtering
 from shared.utils.schedule import NBAScheduleService, GameType
 
-class EspnScoreboardProcessor(ProcessorBase):
+class EspnScoreboardProcessor(SmartIdempotencyMixin, ProcessorBase):
+    """
+    ESPN Scoreboard Processor
+
+    Processing Strategy: MERGE_UPDATE
+    Smart Idempotency: Enabled (Pattern #14)
+        Hash Fields: game_id, game_status, home_score, away_score, home_team_abbr, away_team_abbr
+        Expected Skip Rate: 30% when scores unchanged
+    """
+
+    # Smart Idempotency: Define meaningful fields for hash computation
+    HASH_FIELDS = [
+        'game_id',
+        'game_status',
+        'home_team_score',
+        'away_team_score',
+        'home_team_abbr',
+        'away_team_abbr'
+    ]
+
     def __init__(self):
         super().__init__()
         self.table_name = 'nba_raw.espn_scoreboard'
@@ -363,8 +383,13 @@ class EspnScoreboardProcessor(ProcessorBase):
                 )
             except Exception as e:
                 logging.warning(f"Failed to send notification: {e}")
-        
-        self.transformed_data = rowsdef save_data(self) -> None:
+
+        self.transformed_data = rows
+
+        # Smart Idempotency: Add data_hash to all records
+        self.add_data_hash()
+
+    def save_data(self) -> None:
         """Save transformed data to BigQuery (overrides ProcessorBase.save_data())."""
         rows = self.transformed_data
         """

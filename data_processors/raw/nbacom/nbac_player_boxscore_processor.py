@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional
 from google.cloud import bigquery
 from data_processors.raw.processor_base import ProcessorBase
+from data_processors.raw.smart_idempotency_mixin import SmartIdempotencyMixin
 from shared.utils.nba_team_mapper import NBATeamMapper
 from shared.utils.notification_system import (
     notify_error,
@@ -18,10 +19,10 @@ from shared.utils.notification_system import (
     notify_info
 )
 
-class NbacPlayerBoxscoreProcessor(ProcessorBase):
+class NbacPlayerBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
     """
     Processes NBA.com leaguegamelog API data into player boxscore format.
-    
+
     Input format (from stats.nba.com/stats/leaguegamelog):
       {
         "resultSets": [{
@@ -32,10 +33,27 @@ class NbacPlayerBoxscoreProcessor(ProcessorBase):
           ]
         }]
       }
-    
+
     Output: Player boxscore rows for BigQuery table nba_raw.nbac_player_boxscores
+
+    Processing Strategy: MERGE_UPDATE
+    Smart Idempotency: Enabled (Pattern #14)
+        Hash Fields: game_id, player_lookup, points, rebounds, assists, minutes, field_goals_made, field_goals_attempted
+        Expected Skip Rate: 30% when boxscores unchanged
     """
-    
+
+    # Smart Idempotency: Define meaningful fields for hash computation
+    HASH_FIELDS = [
+        'game_id',
+        'player_lookup',
+        'points',
+        'rebounds',
+        'assists',
+        'minutes',
+        'field_goals_made',
+        'field_goals_attempted'
+    ]
+
     def __init__(self):
         super().__init__()
         self.table_name = 'nbac_player_boxscores'
@@ -341,6 +359,10 @@ class NbacPlayerBoxscoreProcessor(ProcessorBase):
                     continue
             
             self.transformed_data = rows
+
+            # Smart Idempotency: Add data_hash to all records
+            self.add_data_hash()
+
             logging.info(f"Transformed {len(rows)} player records from {len(self.games_found)} games")
             
             # Warn if high failure rate

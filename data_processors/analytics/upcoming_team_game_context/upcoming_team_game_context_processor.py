@@ -239,7 +239,7 @@ class UpcomingTeamGameContextProcessor(
     def extract_raw_data(self) -> None:
         """
         Extract data from Phase 2 sources with full dependency checking.
-        
+
         Process:
         1. Check all dependencies (critical and optional)
         2. Handle missing/stale data appropriately
@@ -248,16 +248,27 @@ class UpcomingTeamGameContextProcessor(
         5. Extract injury reports (OPTIONAL)
         6. Load travel distances (static reference)
         7. Track source usage
-        
+
         Raises:
             DependencyError: If critical dependencies missing
             DataTooStaleError: If critical dependencies too old
+
+        NEW in v3.0: Smart reprocessing - skip processing if Phase 2 source unchanged.
         """
-        
+
         logger.info("=" * 80)
         logger.info("PHASE 3: UPCOMING TEAM GAME CONTEXT - EXTRACTION STARTED")
         logger.info("=" * 80)
-        
+
+        # SMART REPROCESSING: Check if we can skip processing
+        skip, reason = self.should_skip_processing(self.target_date)
+        if skip:
+            logger.info(f"✅ SMART REPROCESSING: Skipping processing - {reason}")
+            self.raw_data = []
+            return
+
+        logger.info(f"🔄 PROCESSING: {reason}")
+
         # ====================================================================
         # STEP 1: Check Dependencies
         # ====================================================================

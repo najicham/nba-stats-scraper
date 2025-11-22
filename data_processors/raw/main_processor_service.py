@@ -46,6 +46,7 @@ from data_processors.raw.balldontlie.bdl_active_players_processor import BdlActi
 from data_processors.raw.nbacom.nbac_player_movement_processor import NbacPlayerMovementProcessor
 from data_processors.raw.nbacom.nbac_scoreboard_v2_processor import NbacScoreboardV2Processor
 from data_processors.raw.nbacom.nbac_player_boxscore_processor import NbacPlayerBoxscoreProcessor
+from data_processors.raw.nbacom.nbac_team_boxscore_processor import NbacTeamBoxscoreProcessor
 from data_processors.raw.nbacom.nbac_play_by_play_processor import NbacPlayByPlayProcessor
 
 from data_processors.raw.espn.espn_boxscore_processor import EspnBoxscoreProcessor
@@ -83,6 +84,7 @@ PROCESSOR_REGISTRY = {
     'nba-com/player-movement': NbacPlayerMovementProcessor,
     'nba-com/scoreboard-v2': NbacScoreboardV2Processor,
     'nba-com/player-boxscores': NbacPlayerBoxscoreProcessor,
+    'nba-com/team-boxscore': NbacTeamBoxscoreProcessor,
     'nba-com/play-by-play': NbacPlayByPlayProcessor,
     'nba-com/referee-assignments': NbacRefereeProcessor,
     'nba-com/schedule': NbacScheduleProcessor,

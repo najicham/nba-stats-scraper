@@ -154,33 +154,37 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_analytics.upcoming_player_gam
   probable_teammates INT64,                         -- Probable players on team
   
   -- ============================================================================
-  -- SOURCE TRACKING (12 fields = 4 sources × 3 fields)
-  -- Per dependency tracking guide v4.0
+  -- SOURCE TRACKING (16 fields = 4 sources × 4 fields)
+  -- Per dependency tracking guide v4.0 + Smart Idempotency (Pattern #14)
   -- ============================================================================
-  
+
   -- SOURCE 1: Player Boxscores (PRIMARY - CRITICAL)
   -- nba_raw.bdl_player_boxscores (fallback: nbac_player_boxscores)
   source_boxscore_last_updated TIMESTAMP,           -- When boxscore table was last processed
   source_boxscore_rows_found INT64,                 -- How many player games found (last 30 days)
   source_boxscore_completeness_pct NUMERIC(5,2),    -- % of expected games found
-  
+  source_boxscore_hash STRING,                      -- Smart Idempotency: data_hash from bdl_player_boxscores
+
   -- SOURCE 2: Schedule (CRITICAL)
   -- nba_raw.nbac_schedule
   source_schedule_last_updated TIMESTAMP,           -- When schedule table was last processed
   source_schedule_rows_found INT64,                 -- How many game records found
   source_schedule_completeness_pct NUMERIC(5,2),    -- % of expected schedule data found
-  
+  source_schedule_hash STRING,                      -- Smart Idempotency: data_hash from nbac_schedule
+
   -- SOURCE 3: Player Props (DRIVER - CRITICAL)
   -- nba_raw.odds_api_player_points_props
   source_props_last_updated TIMESTAMP,              -- When props table was last processed
   source_props_rows_found INT64,                    -- How many prop records found
   source_props_completeness_pct NUMERIC(5,2),       -- % of expected props found
-  
+  source_props_hash STRING,                         -- Smart Idempotency: data_hash from odds_api_player_points_props
+
   -- SOURCE 4: Game Lines (CRITICAL)
   -- nba_raw.odds_api_game_lines
   source_game_lines_last_updated TIMESTAMP,         -- When game lines table was last processed
   source_game_lines_rows_found INT64,               -- How many line records found
   source_game_lines_completeness_pct NUMERIC(5,2),  -- % of expected lines found
+  source_game_lines_hash STRING,                    -- Smart Idempotency: data_hash from odds_api_game_lines
   
   -- ============================================================================
   -- DATA QUALITY TRACKING (3 fields)
@@ -199,7 +203,7 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_analytics.upcoming_player_gam
 PARTITION BY game_date
 CLUSTER BY player_lookup, universal_player_id, game_date
 OPTIONS(
-  description="Complete pre-game context for player predictions with universal player identification. Aggregated from Phase 2 raw tables: player boxscores, schedule, props, and game lines. Forward-looking schedule fields and opponent asymmetry fields are placeholders for future implementation."
+  description="Complete pre-game context for player predictions with universal player identification. Aggregated from Phase 2 raw tables: player boxscores, schedule, props, and game lines. Forward-looking schedule fields and opponent asymmetry fields are placeholders for future implementation. Smart idempotency tracks upstream Phase 2 data_hash values to skip reprocessing when source data unchanged."
 );
 
 -- ============================================================================
@@ -217,11 +221,11 @@ OPTIONS(
 -- Forward-looking schedule:  4 fields (deferred)
 -- Opponent asymmetry:        3 fields (deferred)
 -- Real-time updates:         4 fields
--- Source tracking:          12 fields (4 sources × 3 fields)
+-- Source tracking:          16 fields (4 sources × 4 fields - includes smart idempotency hashes)
 -- Data quality:              3 fields
 -- Update tracking:           3 fields
 -- -------------------------
--- TOTAL:                    84 fields
+-- TOTAL:                    88 fields
 
 -- ============================================================================
 -- CHANGE LOG

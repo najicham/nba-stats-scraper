@@ -11,13 +11,34 @@ from datetime import datetime
 from typing import Dict, List, Optional
 from google.cloud import bigquery
 from data_processors.raw.processor_base import ProcessorBase
+from data_processors.raw.smart_idempotency_mixin import SmartIdempotencyMixin
 from shared.utils.notification_system import (
     notify_error,
     notify_warning,
     notify_info
 )
 
-class NbacScoreboardV2Processor(ProcessorBase):
+class NbacScoreboardV2Processor(SmartIdempotencyMixin, ProcessorBase):
+    """
+    Process NBA.com Scoreboard V2 data with smart idempotency.
+    """
+
+    # Smart idempotency: Hash meaningful scoreboard fields only
+    HASH_FIELDS = [
+        'game_id',
+        'game_date',
+        'season_year',
+        'game_status_id',
+        'game_state',
+        'game_status_text',
+        'home_team_abbr',
+        'home_score',
+        'away_team_abbr',
+        'away_score',
+        'winning_team_abbr',
+        'winning_team_side'
+    ]
+
     def __init__(self):
         super().__init__()
         self.table_name = 'nba_raw.nbac_scoreboard_v2'
@@ -321,7 +342,10 @@ class NbacScoreboardV2Processor(ProcessorBase):
             
             logging.info(f"Transformed {len(rows)} scoreboard games (failed: {self.games_failed})")
             self.transformed_data = rows
-            
+
+            # Add smart idempotency hash to each row
+            self.add_data_hash()
+
         except Exception as e:
             logging.error(f"Critical error in transform_data: {e}")
             

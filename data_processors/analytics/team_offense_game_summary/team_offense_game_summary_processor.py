@@ -174,15 +174,26 @@ class TeamOffenseGameSummaryProcessor(
     def extract_raw_data(self) -> None:
         """
         Extract team offensive data from Phase 2 raw tables.
-        
+
         Primary source: nba_raw.nbac_team_boxscore (v2.0)
         Enhancement: nba_raw.nbac_play_by_play (for shot zones)
-        
+
         Note: Dependency checking happens in base class run() before this is called.
+
+        NEW in v3.0: Smart reprocessing - skip processing if Phase 2 source unchanged.
         """
         start_date = self.opts['start_date']
         end_date = self.opts['end_date']
-        
+
+        # SMART REPROCESSING: Check if we can skip processing
+        skip, reason = self.should_skip_processing(start_date)
+        if skip:
+            self.logger.info(f"✅ SMART REPROCESSING: Skipping processing - {reason}")
+            self.raw_data = []
+            return
+
+        self.logger.info(f"🔄 PROCESSING: {reason}")
+
         # Extract team box score data with opponent context
         query = f"""
         WITH team_boxscores AS (

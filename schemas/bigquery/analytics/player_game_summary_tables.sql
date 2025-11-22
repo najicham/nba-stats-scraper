@@ -112,8 +112,8 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_analytics.player_game_summary
   player_status STRING,                             -- 'active', 'inactive', 'dnp', etc.
   
   -- ============================================================================
-  -- PHASE 2 SOURCE TRACKING (18 fields = 6 sources × 3 fields each)
-  -- Per dependency tracking guide v4.0
+  -- PHASE 2 SOURCE TRACKING (24 fields = 6 sources × 4 fields each)
+  -- Per dependency tracking guide v4.0 + Smart Idempotency (Pattern #14)
   -- ============================================================================
   
   -- SOURCE 1: NBA.com Gamebook Player Stats (PRIMARY - Critical)
@@ -121,36 +121,42 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_analytics.player_game_summary
   source_nbac_last_updated TIMESTAMP,               -- When NBA.com gamebook was last processed
   source_nbac_rows_found INT64,                     -- How many NBA.com records found for this game
   source_nbac_completeness_pct NUMERIC(5,2),        -- % of expected active players found
-  
+  source_nbac_hash STRING,                          -- Smart Idempotency: data_hash from nbac_gamebook_player_stats
+
   -- SOURCE 2: Ball Don't Lie Player Boxscores (FALLBACK - Critical)
   -- nba_raw.bdl_player_boxscores
   source_bdl_last_updated TIMESTAMP,                -- When BDL table was last processed
   source_bdl_rows_found INT64,                      -- How many BDL records found for this game
   source_bdl_completeness_pct NUMERIC(5,2),         -- % of expected players found
-  
+  source_bdl_hash STRING,                           -- Smart Idempotency: data_hash from bdl_player_boxscores
+
   -- SOURCE 3: Big Ball Data Play-by-Play (OPTIONAL - Shot zones preferred)
   -- nba_raw.bigdataball_play_by_play
   source_bbd_last_updated TIMESTAMP,                -- When Big Ball Data was last processed
   source_bbd_rows_found INT64,                      -- How many shot events found for this player
   source_bbd_completeness_pct NUMERIC(5,2),         -- % of expected shot events found
-  
+  source_bbd_hash STRING,                           -- Smart Idempotency: data_hash from bigdataball_play_by_play
+
   -- SOURCE 4: NBA.com Play-by-Play (BACKUP - Shot zones unverified)
   -- nba_raw.nbac_play_by_play
   source_nbac_pbp_last_updated TIMESTAMP,           -- When NBA.com PBP was last processed
   source_nbac_pbp_rows_found INT64,                 -- How many PBP shot events found for this player
   source_nbac_pbp_completeness_pct NUMERIC(5,2),    -- % of expected shot events found
-  
+  source_nbac_pbp_hash STRING,                      -- Smart Idempotency: data_hash from nbac_play_by_play
+
   -- SOURCE 5: Odds API Player Props (OPTIONAL - Prop lines primary)
   -- nba_raw.odds_api_player_points_props
   source_odds_last_updated TIMESTAMP,               -- When Odds API was last processed
   source_odds_rows_found INT64,                     -- How many prop snapshots found for this player
   source_odds_completeness_pct NUMERIC(5,2),        -- % of expected bookmakers found
-  
+  source_odds_hash STRING,                          -- Smart Idempotency: data_hash from odds_api_player_points_props
+
   -- SOURCE 6: BettingPros Player Props (BACKUP - Prop lines backup)
   -- nba_raw.bettingpros_player_points_props
   source_bp_last_updated TIMESTAMP,                 -- When BettingPros was last processed
   source_bp_rows_found INT64,                       -- How many prop records found for this player
   source_bp_completeness_pct NUMERIC(5,2),          -- % of expected bookmakers found
+  source_bp_hash STRING,                            -- Smart Idempotency: data_hash from bettingpros_player_points_props
   
   -- ============================================================================
   -- DATA QUALITY FLAGS (4 fields)
@@ -169,7 +175,7 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_analytics.player_game_summary
 PARTITION BY game_date
 CLUSTER BY universal_player_id, player_lookup, team_abbr, game_date
 OPTIONS(
-  description="Player game performance with multi-source fallback logic: NBA.com/BDL for stats, Big Ball Data/NBA.com PBP/estimation for shot zones, Odds API/BettingPros for prop lines. Universal player ID enables stable cross-season identification. MERGE_UPDATE strategy allows multi-pass enrichment as data becomes available."
+  description="Player game performance with multi-source fallback logic: NBA.com/BDL for stats, Big Ball Data/NBA.com PBP/estimation for shot zones, Odds API/BettingPros for prop lines. Universal player ID enables stable cross-season identification. MERGE_UPDATE strategy allows multi-pass enrichment as data becomes available. Smart idempotency tracks upstream Phase 2 data_hash values to skip reprocessing when source data unchanged."
 );
 
 -- ============================================================================
@@ -182,11 +188,11 @@ OPTIONS(
 -- Advanced efficiency:        5 fields
 -- Prop betting:               7 fields
 -- Player availability:        2 fields
--- Source tracking:           18 fields (6 sources × 3 fields)
+-- Source tracking:           24 fields (6 sources × 4 fields - includes smart idempotency hashes)
 -- Data quality:               4 fields
 -- Processing metadata:        2 fields
 -- -------------------------
--- TOTAL:                     72 fields
+-- TOTAL:                     78 fields
 
 -- ============================================================================
 -- SOURCE TRACKING FIELD SEMANTICS

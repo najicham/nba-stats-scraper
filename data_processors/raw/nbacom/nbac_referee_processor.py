@@ -14,13 +14,31 @@ from typing import Dict, List, Optional
 from google.cloud import bigquery
 from google.cloud.exceptions import NotFound
 from data_processors.raw.processor_base import ProcessorBase
+from data_processors.raw.smart_idempotency_mixin import SmartIdempotencyMixin
 from shared.utils.notification_system import (
     notify_error,
     notify_warning,
     notify_info
 )
 
-class NbacRefereeProcessor(ProcessorBase):
+class NbacRefereeProcessor(SmartIdempotencyMixin, ProcessorBase):
+    """
+    NBA.com Referee Processor
+
+    Processing Strategy: MERGE_UPDATE
+    Smart Idempotency: Enabled (Pattern #14)
+        Hash Fields: game_id, official_code, official_name, assignment_type
+        Expected Skip Rate: 20% when referee assignments unchanged
+    """
+
+    # Smart Idempotency: Define meaningful fields for hash computation
+    HASH_FIELDS = [
+        'game_id',
+        'official_code',
+        'official_name',
+        'assignment_type'
+    ]
+
     def __init__(self):
         super().__init__()
         self.table_name = 'nba_raw.nbac_referee_game_assignments'
@@ -195,9 +213,12 @@ class NbacRefereeProcessor(ProcessorBase):
                     }
                     
                     rows.append(row)
-            
+
             self.transformed_data = rows
-            
+
+            # Smart Idempotency: Add data_hash to all records
+            self.add_data_hash()
+
         except Exception as e:
             logging.error(f"Error in transform_data: {e}")
             try:

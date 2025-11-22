@@ -4,6 +4,7 @@ from typing import Dict, List, Optional
 from datetime import datetime
 from google.cloud import bigquery
 from data_processors.raw.processor_base import ProcessorBase
+from data_processors.raw.smart_idempotency_mixin import SmartIdempotencyMixin
 from data_processors.raw.utils.name_utils import normalize_name
 from shared.utils.notification_system import (
     notify_error,
@@ -11,7 +12,25 @@ from shared.utils.notification_system import (
     notify_info
 )
 
-class BdlActivePlayersProcessor(ProcessorBase):
+class BdlActivePlayersProcessor(SmartIdempotencyMixin, ProcessorBase):
+    """
+    Ball Don't Lie Active Players Processor
+
+    Processing Strategy: MERGE_UPDATE
+    Smart Idempotency: Enabled (Pattern #14)
+        Hash Fields: player_lookup, team_abbr, position, jersey_number, is_active
+        Expected Skip Rate: 20% when rosters unchanged
+    """
+
+    # Smart Idempotency: Define meaningful fields for hash computation
+    HASH_FIELDS = [
+        'player_lookup',
+        'team_abbr',
+        'position',
+        'jersey_number',
+        'is_active'
+    ]
+
     def __init__(self):
         super().__init__()
         self.table_name = 'nba_raw.bdl_active_players_current'
@@ -315,7 +334,10 @@ class BdlActivePlayersProcessor(ProcessorBase):
             rows.append(row)
 
         self.transformed_data = rows
-    
+
+        # Smart Idempotency: Add data_hash to all records
+        self.add_data_hash()
+
     def load_data(self) -> None:
         """Load active players data from GCS."""
         # Load raw JSON from GCS

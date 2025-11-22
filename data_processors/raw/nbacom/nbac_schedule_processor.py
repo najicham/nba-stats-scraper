@@ -12,13 +12,33 @@ from datetime import datetime, date
 from typing import Dict, List, Optional
 from google.cloud import bigquery, storage
 from data_processors.raw.processor_base import ProcessorBase
+from data_processors.raw.smart_idempotency_mixin import SmartIdempotencyMixin
 from shared.utils.notification_system import (
     notify_error,
     notify_warning,
     notify_info
 )
 
-class NbacScheduleProcessor(ProcessorBase):
+class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
+    """
+    NBA.com Schedule Processor
+
+    Processing Strategy: MERGE_UPDATE
+    Smart Idempotency: Enabled (Pattern #14)
+        Hash Fields: game_id, game_date, game_time_utc, home_team_tricode, away_team_tricode, game_status
+        Expected Skip Rate: 20% when schedules unchanged
+    """
+
+    # Smart Idempotency: Define meaningful fields for hash computation
+    HASH_FIELDS = [
+        'game_id',
+        'game_date',
+        'game_time_utc',
+        'home_team_tricode',
+        'away_team_tricode',
+        'game_status'
+    ]
+
     def __init__(self):
         super().__init__()
         self.table_name = 'nba_raw.nbac_schedule'
@@ -505,9 +525,12 @@ class NbacScheduleProcessor(ProcessorBase):
             excluded_games = total_games - business_relevant_games
             if excluded_games > 0:
                 logging.info(f"Filtered out {excluded_games} preseason games, processing {business_relevant_games} business-relevant games")
-            
+
             self.transformed_data = rows
-            
+
+            # Smart Idempotency: Add data_hash to all records
+            self.add_data_hash()
+
         except Exception as e:
             logging.error(f"Critical error in transform_data: {e}")
             

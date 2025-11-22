@@ -40,12 +40,16 @@ CREATE TABLE IF NOT EXISTS `nba_raw.odds_api_game_lines` (
   source_file_path STRING NOT NULL,
   data_source STRING,  -- 'current' | 'historical' | 'backfill' | 'manual' | NULL (legacy)
   created_at TIMESTAMP NOT NULL,
+
+  -- Smart Idempotency (Pattern #14)
+  data_hash STRING,  -- SHA256 hash of meaningful fields: game_id, game_date, bookmaker_key, market_key, outcome_name, outcome_point, snapshot_timestamp
+
   processed_at TIMESTAMP NOT NULL
 )
 PARTITION BY game_date
 CLUSTER BY game_id, bookmaker_key, market_key, snapshot_timestamp
 OPTIONS (
-  description = "Historical snapshots of NBA game lines (spreads and totals) from various sportsbooks via Odds API. data_source indicates collection method: 'current' (live scraper), 'historical' (backfill endpoint), 'backfill' (manual), 'manual' (corrections), or NULL (legacy).",
+  description = "Historical snapshots of NBA game lines (spreads and totals) from various sportsbooks via Odds API. data_source indicates collection method: 'current' (live scraper), 'historical' (backfill endpoint), 'backfill' (manual), 'manual' (corrections), or NULL (legacy). Uses smart idempotency to skip redundant writes when lines unchanged.",
   require_partition_filter = true
 );
 

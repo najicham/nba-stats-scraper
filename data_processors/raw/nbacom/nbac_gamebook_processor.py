@@ -36,12 +36,14 @@ from shared.utils.notification_system import (
 try:
     # Module execution: python -m processors.nbacom.nbac_gamebook_processor
     from ..processor_base import ProcessorBase
+    from ..smart_idempotency_mixin import SmartIdempotencyMixin
 except ImportError:
     # Direct execution: python processors/nbacom/nbac_gamebook_processor.py
     import sys
     import os
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
     from data_processors.raw.processor_base import ProcessorBase
+    from data_processors.raw.smart_idempotency_mixin import SmartIdempotencyMixin
 
 # Simple team mapper import now that shared/utils/__init__.py is clean
 from shared.utils.nba_team_mapper import get_nba_tricode, get_nba_tricode_fuzzy
@@ -49,9 +51,28 @@ from shared.utils.nba_team_mapper import get_nba_tricode, get_nba_tricode_fuzzy
 logger = logging.getLogger(__name__)
 
 
-class NbacGamebookProcessor(ProcessorBase):
-    """Process NBA.com gamebook data with enhanced schema and comprehensive monitoring."""
-    
+class NbacGamebookProcessor(SmartIdempotencyMixin, ProcessorBase):
+    """
+    Process NBA.com gamebook data with enhanced schema and comprehensive monitoring.
+
+    Processing Strategy: MERGE_UPDATE
+    Smart Idempotency: Enabled (Pattern #14)
+        Hash Fields: game_id, player_lookup, minutes, field_goals_made, field_goals_attempted, points, rebounds, assists
+        Expected Skip Rate: 30% when gamebook unchanged
+    """
+
+    # Smart Idempotency: Define meaningful fields for hash computation
+    HASH_FIELDS = [
+        'game_id',
+        'player_lookup',
+        'minutes',
+        'field_goals_made',
+        'field_goals_attempted',
+        'points',
+        'total_rebounds',
+        'assists'
+    ]
+
     def __init__(self):
         super().__init__()
         self.table_name = 'nba_raw.nbac_gamebook_player_stats'
@@ -1049,6 +1070,9 @@ class NbacGamebookProcessor(ProcessorBase):
             
             logger.info(f"Processed {len(rows)} players from {file_path} (File #{self.files_processed})")
             self.transformed_data = rows
+
+            # Smart Idempotency: Add data_hash to all records
+            self.add_data_hash()
         except Exception as e:
             logger.error(f"Error transforming data from {file_path}: {e}")
             

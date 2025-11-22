@@ -50,12 +50,16 @@ CREATE TABLE IF NOT EXISTS `nba_raw.bdl_player_boxscores` (
   -- Processing metadata
   source_file_path STRING NOT NULL,
   created_at TIMESTAMP NOT NULL,
+
+  -- Smart Idempotency (Pattern #14)
+  data_hash STRING,  -- SHA256 hash of meaningful fields: game_id, player_lookup, points, rebounds, assists, field_goals_made, field_goals_attempted
+
   processed_at TIMESTAMP NOT NULL
 )
 PARTITION BY game_date
 CLUSTER BY player_lookup, team_abbr, game_date
 OPTIONS (
-  description = "Ball Don't Lie player box scores - individual player performance by game for prop validation and settlement",
+  description = "Ball Don't Lie player box scores - individual player performance by game for prop validation and settlement. Uses smart idempotency to skip redundant writes when stats unchanged.",
   require_partition_filter = true
 );
 

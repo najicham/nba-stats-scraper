@@ -42,6 +42,10 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_raw.bdl_active_players_curren
   -- Processing metadata
   last_seen_date DATE OPTIONS(description="Date this player data was collected from Ball Don't Lie"),
   source_file_path STRING OPTIONS(description="GCS path of source JSON file"),
+
+  -- Smart Idempotency (Pattern #14)
+  data_hash STRING OPTIONS(description="SHA256 hash of meaningful fields: player_lookup, team_abbr, position, jersey_number, is_active"),
+
   processed_at TIMESTAMP NOT NULL OPTIONS(description="When this record was processed into BigQuery")
 )
 CLUSTER BY team_abbr, has_validation_issues, validation_status

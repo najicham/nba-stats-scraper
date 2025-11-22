@@ -46,6 +46,10 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_raw.bdl_standings` (
   scrape_timestamp     TIMESTAMP,               -- When data was scraped
   source_file_path     STRING       NOT NULL,   -- GCS path
   created_at           TIMESTAMP    NOT NULL,   -- When record first created
+
+  -- Smart Idempotency (Pattern #14)
+  data_hash            STRING,                  -- SHA256 hash of meaningful fields: team_abbr, date_recorded, wins, losses, win_pct, conference_rank
+
   processed_at         TIMESTAMP    NOT NULL    -- When record last updated
 )
 PARTITION BY date_recorded

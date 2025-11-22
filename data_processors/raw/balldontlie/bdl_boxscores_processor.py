@@ -9,6 +9,7 @@ from typing import Dict, List, Optional
 from datetime import datetime, date, timezone
 from google.cloud import bigquery
 from data_processors.raw.processor_base import ProcessorBase
+from data_processors.raw.smart_idempotency_mixin import SmartIdempotencyMixin
 from shared.utils.notification_system import (
     notify_error,
     notify_warning,
@@ -17,7 +18,27 @@ from shared.utils.notification_system import (
 
 logger = logging.getLogger(__name__)
 
-class BdlBoxscoresProcessor(ProcessorBase):
+class BdlBoxscoresProcessor(SmartIdempotencyMixin, ProcessorBase):
+    """
+    Ball Don't Lie Boxscores Processor
+
+    Processing Strategy: MERGE_UPDATE
+    Smart Idempotency: Enabled (Pattern #14)
+        Hash Fields: game_id, player_lookup, points, rebounds, assists, field_goals_made, field_goals_attempted
+        Expected Skip Rate: 30% when boxscores unchanged
+    """
+
+    # Smart Idempotency: Define meaningful fields for hash computation
+    HASH_FIELDS = [
+        'game_id',
+        'player_lookup',
+        'points',
+        'rebounds',
+        'assists',
+        'field_goals_made',
+        'field_goals_attempted'
+    ]
+
     def __init__(self):
         super().__init__()
         self.table_name = 'nba_raw.bdl_player_boxscores'
@@ -338,8 +359,11 @@ class BdlBoxscoresProcessor(ProcessorBase):
                 )
             except Exception as e:
                 logger.warning(f"Failed to send notification: {e}")
-        
+
         self.transformed_data = rows
+
+        # Smart Idempotency: Add data_hash to all records
+        self.add_data_hash()
     def create_player_row(self, **kwargs) -> Optional[Dict]:
         """Create a single player performance row."""
         try:

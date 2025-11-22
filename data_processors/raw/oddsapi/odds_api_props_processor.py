@@ -7,6 +7,7 @@ from datetime import datetime, date
 from typing import Dict, List, Optional, Tuple
 from google.cloud import bigquery
 from data_processors.raw.processor_base import ProcessorBase
+from data_processors.raw.smart_idempotency_mixin import SmartIdempotencyMixin
 from data_processors.raw.utils.name_utils import normalize_name
 from shared.utils.notification_system import (
     notify_error,
@@ -19,15 +20,30 @@ from shared.utils.nba_team_mapper import NBATeamMapper
 
 logger = logging.getLogger(__name__)
 
-class OddsApiPropsProcessor(ProcessorBase):
+class OddsApiPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
     """
     Process Odds API player props data.
-    
+
     Handles both:
     - Current/live data: odds-api/player-props/2025-10-21/...
     - Historical data: odds-api/player-props-history/2023-10-24/...
+
+    Processing Strategy: APPEND_ALWAYS
+    Smart Idempotency: Enabled (Pattern #14)
+        Hash Fields: player_lookup, game_date, game_id, bookmaker, points_line, snapshot_timestamp
+        Expected Skip Rate: N/A (APPEND_ALWAYS always writes, hash for monitoring only)
     """
-    
+
+    # Smart Idempotency: Define meaningful fields for hash computation
+    HASH_FIELDS = [
+        'player_lookup',
+        'game_date',
+        'game_id',
+        'bookmaker',
+        'points_line',
+        'snapshot_timestamp'
+    ]
+
     def __init__(self):
         super().__init__()
         self.project_id = "nba-props-platform"
@@ -414,10 +430,13 @@ class OddsApiPropsProcessor(ProcessorBase):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             raise
-        
+
         self.transformed_data = rows
+
+        # Smart Idempotency: Add data_hash to all records
+        self.add_data_hash()
     
     def save_data(self) -> None:
         """Save transformed data to BigQuery (overrides ProcessorBase.save_data())."""

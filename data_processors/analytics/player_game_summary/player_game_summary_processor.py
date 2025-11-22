@@ -204,17 +204,28 @@ class PlayerGameSummaryProcessor(
     def extract_raw_data(self) -> None:
         """
         Extract data with automatic dependency checking and source tracking.
-        
+
         NEW in v2.0: Proper integration with base class check_dependencies().
         No more manual source tracking!
+
+        NEW in v3.0: Smart reprocessing - skip processing if Phase 2 source unchanged.
         """
         start_date = self.opts['start_date']
         end_date = self.opts['end_date']
-        
+
         # DEPENDENCY CHECKING: Already done in base class run() method!
         # Base class calls check_dependencies() and track_source_usage()
         # before calling this method, so all source_* attributes are populated.
-        
+
+        # SMART REPROCESSING: Check if we can skip processing
+        skip, reason = self.should_skip_processing(start_date)
+        if skip:
+            self.logger.info(f"✅ SMART REPROCESSING: Skipping processing - {reason}")
+            self.raw_data = []
+            return
+
+        self.logger.info(f"🔄 PROCESSING: {reason}")
+
         # Just extract the data
         query = f"""
         WITH nba_com_data AS (

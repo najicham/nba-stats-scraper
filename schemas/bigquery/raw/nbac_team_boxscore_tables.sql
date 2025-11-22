@@ -61,12 +61,16 @@ CREATE TABLE IF NOT EXISTS `nba_raw.nbac_team_boxscore` (
   -- Processing Metadata
   source_file_path     STRING,             -- GCS path of source JSON file
   created_at           TIMESTAMP,          -- When record was first created (UTC)
+
+  -- Smart Idempotency (Pattern #14)
+  data_hash            STRING,             -- SHA256 hash of meaningful fields: game_id, team_abbr, field_goals_made, field_goals_attempted, points, rebounds, assists
+
   processed_at         TIMESTAMP NOT NULL  -- When record was last processed (UTC)
 )
 PARTITION BY game_date
 CLUSTER BY game_id, team_abbr, season_year, is_home
 OPTIONS (
-  description = "NBA.com team box score statistics - complete team-level performance data per game. Each game produces exactly 2 rows (one per team). Updated via MERGE_UPDATE strategy. v2.0 includes home/away indicator and dual game ID system.",
+  description = "NBA.com team box score statistics - complete team-level performance data per game. Each game produces exactly 2 rows (one per team). Updated via MERGE_UPDATE strategy. v2.0 includes home/away indicator and dual game ID system. Uses smart idempotency to skip redundant writes when stats unchanged.",
   require_partition_filter = true
 );
 

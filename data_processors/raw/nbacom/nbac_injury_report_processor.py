@@ -13,6 +13,7 @@ from datetime import datetime, date
 from typing import Dict, List, Optional
 from google.cloud import bigquery
 from data_processors.raw.processor_base import ProcessorBase
+from data_processors.raw.smart_idempotency_mixin import SmartIdempotencyMixin
 from shared.utils.notification_system import (
     notify_error,
     notify_warning,
@@ -21,9 +22,27 @@ from shared.utils.notification_system import (
 
 logger = logging.getLogger(__name__)
 
-class NbacInjuryReportProcessor(ProcessorBase):
-    """Process NBA.com Injury Report data."""
-    
+class NbacInjuryReportProcessor(SmartIdempotencyMixin, ProcessorBase):
+    """
+    Process NBA.com Injury Report data.
+
+    Processing Strategy: APPEND_ALWAYS
+    Smart Idempotency: Enabled (Pattern #14)
+        Hash Fields: player_lookup, team, game_date, game_id, injury_status, reason, reason_category
+        Expected Skip Rate: N/A (APPEND_ALWAYS always writes, hash for monitoring only)
+    """
+
+    # Smart Idempotency: Define meaningful fields for hash computation
+    HASH_FIELDS = [
+        'player_lookup',
+        'team',
+        'game_date',
+        'game_id',
+        'injury_status',
+        'reason',
+        'reason_category'
+    ]
+
     def __init__(self):
         super().__init__()
         self.table_name = 'nba_raw.nbac_injury_report'
@@ -322,6 +341,10 @@ class NbacInjuryReportProcessor(ProcessorBase):
             
             logger.info(f"Transformed {len(rows)} injury records (failed: {self.records_failed})")
             self.transformed_data = rows
+
+            # Smart Idempotency: Add data_hash to all records
+            self.add_data_hash()
+
         except Exception as e:
             logger.error(f"Critical error in transform_data: {e}")
             

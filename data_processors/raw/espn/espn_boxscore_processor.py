@@ -11,6 +11,7 @@ from typing import Dict, List, Optional
 from google.cloud import bigquery
 
 from data_processors.raw.processor_base import ProcessorBase
+from data_processors.raw.smart_idempotency_mixin import SmartIdempotencyMixin
 from shared.utils.nba_team_mapper import NBATeamMapper
 from shared.utils.notification_system import (
     notify_error,
@@ -18,7 +19,27 @@ from shared.utils.notification_system import (
     notify_info
 )
 
-class EspnBoxscoreProcessor(ProcessorBase):
+class EspnBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
+    """
+    ESPN Boxscore Processor
+
+    Processing Strategy: MERGE_UPDATE
+    Smart Idempotency: Enabled (Pattern #14)
+        Hash Fields: game_id, player_lookup, points, rebounds, assists, field_goals_made, field_goals_attempted
+        Expected Skip Rate: 30% when boxscores unchanged
+    """
+
+    # Smart Idempotency: Define meaningful fields for hash computation
+    HASH_FIELDS = [
+        'game_id',
+        'player_lookup',
+        'points',
+        'rebounds',
+        'assists',
+        'field_goals_made',
+        'field_goals_attempted'
+    ]
+
     def __init__(self):
         super().__init__()
         self.table_name = 'nba_raw.espn_boxscores'
@@ -382,6 +403,9 @@ class EspnBoxscoreProcessor(ProcessorBase):
             
             logging.info(f"Transformed {len(rows)} player records from {file_path}")
             self.transformed_data = rows
+
+            # Smart Idempotency: Add data_hash to all records
+            self.add_data_hash()
         except Exception as e:
             logging.error(f"Error transforming data from {file_path}: {str(e)}")
             

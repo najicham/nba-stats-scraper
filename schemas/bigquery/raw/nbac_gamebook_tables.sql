@@ -51,8 +51,12 @@ CREATE TABLE `nba-props-platform.nba_raw.nbac_gamebook_player_stats` (
   -- Processing metadata and audit trail
   processed_by_run_id STRING,           -- Links to processing run
   source_file_path STRING,              -- GCS source file for debugging
+
+  -- Smart Idempotency (Pattern #14)
+  data_hash STRING,                     -- SHA256 hash of meaningful fields: game_id, player_lookup, minutes, field_goals_made, field_goals_attempted, points, rebounds, assists
+
   processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
-  
+
   -- Data quality indicators
   data_quality_flags ARRAY<STRING>,     -- ['team_mapped', 'suffix_handled'] etc.
   requires_manual_review BOOLEAN DEFAULT FALSE
@@ -60,8 +64,8 @@ CREATE TABLE `nba-props-platform.nba_raw.nbac_gamebook_player_stats` (
 PARTITION BY game_date
 CLUSTER BY season_year, team_abbr, player_status, name_resolution_status
 OPTIONS(
-  description = "NBA.com gamebook player statistics with enhanced name resolution tracking",
-  labels = [("source", "nba_com"), ("type", "player_stats"), ("domain", "basketball")]
+  description = "NBA.com gamebook player statistics with enhanced name resolution tracking. Uses smart idempotency to skip redundant writes when stats unchanged.",
+  labels = [("source", "nba_com"), ("type", "player_stats"), ("domain", "basketball"), ("pattern", "smart-idempotency")]
 );
 
 -- Views for data quality monitoring

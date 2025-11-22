@@ -29,12 +29,16 @@ CREATE TABLE IF NOT EXISTS `nba_raw.nbac_player_movement` (
   -- Processing metadata
   source_file_path STRING NOT NULL,
   scrape_timestamp TIMESTAMP NOT NULL,
+
+  -- Smart Idempotency (Pattern #14)
+  data_hash STRING,  -- SHA256 hash of meaningful fields: player_lookup, transaction_date, transaction_type, team_abbr, transaction_description
+
   created_at TIMESTAMP NOT NULL
 )
 PARTITION BY RANGE_BUCKET(season_year, GENERATE_ARRAY(2021, 2030, 1))
 CLUSTER BY player_lookup, team_abbr, transaction_type, transaction_date
 OPTIONS (
-  description = "NBA.com Player Movement: Complete transaction history (trades, signings, waivers, G-League moves) from 2021+. Critical for validating historical player-team assignments in prop betting analysis.",
+  description = "NBA.com Player Movement: Complete transaction history (trades, signings, waivers, G-League moves) from 2021+. Critical for validating historical player-team assignments in prop betting analysis. Uses smart idempotency to skip redundant writes when transactions unchanged.",
   require_partition_filter = false
 );
 

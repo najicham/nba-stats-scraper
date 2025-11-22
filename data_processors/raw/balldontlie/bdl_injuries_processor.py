@@ -16,6 +16,7 @@ from datetime import datetime, date
 from typing import Dict, List, Optional
 from google.cloud import bigquery
 from data_processors.raw.processor_base import ProcessorBase
+from data_processors.raw.smart_idempotency_mixin import SmartIdempotencyMixin
 from shared.utils.notification_system import (
     notify_error,
     notify_warning,
@@ -24,7 +25,25 @@ from shared.utils.notification_system import (
 
 logger = logging.getLogger(__name__)
 
-class BdlInjuriesProcessor(ProcessorBase):
+class BdlInjuriesProcessor(SmartIdempotencyMixin, ProcessorBase):
+    """
+    Ball Don't Lie Injuries Processor
+
+    Processing Strategy: APPEND_ALWAYS
+    Smart Idempotency: Enabled (Pattern #14)
+        Hash Fields: player_lookup, team_abbr, injury_status_normalized, return_date, reason_category
+        Expected Skip Rate: N/A (APPEND_ALWAYS always writes, hash for monitoring only)
+    """
+
+    # Smart Idempotency: Define meaningful fields for hash computation
+    HASH_FIELDS = [
+        'player_lookup',
+        'team_abbr',
+        'injury_status_normalized',
+        'return_date',
+        'reason_category'
+    ]
+
     def __init__(self):
         super().__init__()
         self.table_name = 'nba_raw.bdl_injuries'
@@ -412,8 +431,13 @@ class BdlInjuriesProcessor(ProcessorBase):
                 )
             except Exception as e:
                 logger.warning(f"Failed to send notification: {e}")
-        
-        self.transformed_data = rowsdef save_data(self) -> None:
+
+        self.transformed_data = rows
+
+        # Smart Idempotency: Add data_hash to all records
+        self.add_data_hash()
+
+    def save_data(self) -> None:
         """Save transformed data to BigQuery (overrides ProcessorBase.save_data())."""
         rows = self.transformed_data
         """Load data to BigQuery using APPEND_ALWAYS strategy."""

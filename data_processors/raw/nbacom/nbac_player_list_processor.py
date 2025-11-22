@@ -14,6 +14,7 @@ from typing import Dict, List, Optional
 from google.cloud import bigquery
 from google.cloud import storage
 from data_processors.raw.processor_base import ProcessorBase
+from data_processors.raw.smart_idempotency_mixin import SmartIdempotencyMixin
 from shared.utils.notification_system import (
     notify_error,
     notify_warning,
@@ -22,12 +23,28 @@ from shared.utils.notification_system import (
 
 logger = logging.getLogger(__name__)
 
-class NbacPlayerListProcessor(ProcessorBase):
-    """Process NBA.com Player List for current roster assignments."""
-    
+class NbacPlayerListProcessor(SmartIdempotencyMixin, ProcessorBase):
+    """
+    Process NBA.com Player List for current roster assignments.
+
+    Processing Strategy: MERGE_UPDATE
+    Smart Idempotency: Enabled (Pattern #14)
+        Hash Fields: player_lookup, team_abbr, position, jersey_number, is_active
+        Expected Skip Rate: 20% when rosters unchanged
+    """
+
+    # Smart Idempotency: Define meaningful fields for hash computation
+    HASH_FIELDS = [
+        'player_lookup',
+        'team_abbr',
+        'position',
+        'jersey_number',
+        'is_active'
+    ]
+
     # Configure for ProcessorBase
     required_opts = ['bucket']  # file_path OR date required
-    
+
     def __init__(self):
         super().__init__()
         self.table_name = 'nbac_player_list_current'
@@ -334,7 +351,10 @@ class NbacPlayerListProcessor(ProcessorBase):
             
             # Store transformed data
             self.transformed_data = rows
-            
+
+            # Smart Idempotency: Add data_hash to all records
+            self.add_data_hash()
+
             # Check for high duplicate rate
             total_players = len(player_result['rowSet'])
             if total_players > 0 and self.duplicate_count > 5:

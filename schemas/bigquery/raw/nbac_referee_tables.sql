@@ -28,6 +28,10 @@ CREATE TABLE IF NOT EXISTS `nba_raw.nbac_referee_game_assignments` (
   source_file_path STRING NOT NULL,
   scrape_timestamp TIMESTAMP,
   created_at TIMESTAMP NOT NULL,
+
+  -- Smart Idempotency (Pattern #14)
+  data_hash STRING,  -- SHA256 hash of meaningful fields: game_id, official_code, official_name, assignment_type
+
   processed_at TIMESTAMP NOT NULL
 )
 PARTITION BY game_date

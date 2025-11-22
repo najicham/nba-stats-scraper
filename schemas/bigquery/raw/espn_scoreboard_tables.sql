@@ -40,12 +40,16 @@ CREATE TABLE IF NOT EXISTS `nba_raw.espn_scoreboard` (
   processing_confidence FLOAT64 NOT NULL,
   data_quality_flags STRING NOT NULL,
   created_at TIMESTAMP NOT NULL,
+
+  -- Smart Idempotency (Pattern #14)
+  data_hash STRING,  -- SHA256 hash of meaningful fields: game_id, game_status, home_score, away_score, home_team_abbr, away_team_abbr
+
   processed_at TIMESTAMP NOT NULL
 )
 PARTITION BY game_date
 CLUSTER BY home_team_abbr, away_team_abbr, game_status
 OPTIONS (
-  description = "ESPN scoreboard data - backup validation source for final game scores. Part of Early Morning Final Check workflow.",
+  description = "ESPN scoreboard data - backup validation source for final game scores. Part of Early Morning Final Check workflow. Uses smart idempotency to skip redundant writes when scores unchanged.",
   require_partition_filter = true
 );
 

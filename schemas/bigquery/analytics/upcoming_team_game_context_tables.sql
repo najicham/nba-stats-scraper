@@ -92,27 +92,30 @@ CREATE TABLE IF NOT EXISTS `nba_analytics.upcoming_team_game_context` (
   
   
   -- =========================================================================
-  -- SOURCE TRACKING: nba_raw.nbac_schedule (3 fields) - CRITICAL
+  -- SOURCE TRACKING: nba_raw.nbac_schedule (4 fields) - CRITICAL
   -- =========================================================================
   source_nbac_schedule_last_updated TIMESTAMP,  -- When nbac_schedule table was last processed (NULL if table missing)
   source_nbac_schedule_rows_found INT64,  -- Number of schedule records found in query (NULL if table missing, 0 if no data)
   source_nbac_schedule_completeness_pct NUMERIC(5,2),  -- Percentage of expected schedule records found (0-100, NULL if table missing)
-  
-  
+  source_nbac_schedule_hash STRING,  -- Smart Idempotency: data_hash from nbac_schedule
+
+
   -- =========================================================================
-  -- SOURCE TRACKING: nba_raw.odds_api_game_lines (3 fields) - OPTIONAL
+  -- SOURCE TRACKING: nba_raw.odds_api_game_lines (4 fields) - OPTIONAL
   -- =========================================================================
   source_odds_lines_last_updated TIMESTAMP,  -- When odds_api_game_lines had latest snapshot (NULL if no betting data)
   source_odds_lines_rows_found INT64,  -- Number of betting line records found (NULL if no betting data, 0 if table empty)
   source_odds_lines_completeness_pct NUMERIC(5,2),  -- Percentage of expected betting lines found (0-100, NULL if no betting data)
-  
-  
+  source_odds_lines_hash STRING,  -- Smart Idempotency: data_hash from odds_api_game_lines
+
+
   -- =========================================================================
-  -- SOURCE TRACKING: nba_raw.nbac_injury_report (3 fields) - OPTIONAL
+  -- SOURCE TRACKING: nba_raw.nbac_injury_report (4 fields) - OPTIONAL
   -- =========================================================================
   source_injury_report_last_updated TIMESTAMP,  -- When injury report table was last processed (NULL if no injury data)
   source_injury_report_rows_found INT64,  -- Number of injury records found (NULL if no injury data, 0 if table empty)
   source_injury_report_completeness_pct NUMERIC(5,2),  -- Percentage of expected injury records found (0-100, NULL if no injury data)
+  source_injury_report_hash STRING,  -- Smart Idempotency: data_hash from nbac_injury_report
   
   
   -- =========================================================================
@@ -144,13 +147,13 @@ CLUSTER BY game_date, team_abbr, game_id;
 -- ─────────────────────────────────────
 -- Business Fields Subtotal:  27 fields
 --
--- Source Tracking (3 sources × 3 fields):  9 fields
+-- Source Tracking (3 sources × 4 fields - includes smart idempotency hashes): 12 fields
 -- Optional Early Season:                   2 fields
 -- Processing Metadata:                     2 fields
 -- ─────────────────────────────────────
--- Tracking Fields Subtotal:  13 fields
+-- Tracking Fields Subtotal:  16 fields
 --
--- TOTAL:                     40 fields
+-- TOTAL:                     43 fields
 -- ============================================================================
 
 -- ============================================================================

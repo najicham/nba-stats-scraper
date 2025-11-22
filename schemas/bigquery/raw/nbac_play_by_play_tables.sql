@@ -59,12 +59,16 @@ CREATE TABLE IF NOT EXISTS `nba_raw.nbac_play_by_play` (
   
   -- Processing Metadata (consistent with other processors)
   source_file_path     STRING NOT NULL,    -- GCS path
+
+  -- Smart Idempotency (Pattern #14)
+  data_hash            STRING,             -- SHA256 hash of meaningful fields: game_id, event_id, period, game_clock, event_type, event_description, score_home, score_away
+
   processed_at         TIMESTAMP NOT NULL  -- Processing timestamp
 )
 PARTITION BY game_date
 CLUSTER BY game_id, period, event_type
 OPTIONS (
-  description = "NBA.com play-by-play events - official source for detailed game analysis and BigDataBall validation",
+  description = "NBA.com play-by-play events - official source for detailed game analysis and BigDataBall validation. Uses smart idempotency to skip redundant writes when event data unchanged.",
   require_partition_filter = true
 );
 

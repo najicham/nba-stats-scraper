@@ -97,24 +97,27 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_analytics.team_defense_game_s
   processed_with_issues BOOLEAN,                    -- TRUE if defensive actions missing
   
   -- ============================================================================
-  -- DEPENDENCY TRACKING v4.0 - PHASE 2 SOURCES (9 fields = 3 sources × 3 fields)
-  -- Tracks which Phase 2 raw tables were used and their quality
+  -- DEPENDENCY TRACKING v4.0 - PHASE 2 SOURCES (12 fields = 3 sources × 4 fields)
+  -- Tracks which Phase 2 raw tables were used and their quality + Smart Idempotency (Pattern #14)
   -- ============================================================================
-  
+
   -- Source 1: nbac_team_boxscore (opponent's offensive stats) - CRITICAL
   source_team_boxscore_last_updated TIMESTAMP,      -- When team boxscore was processed
   source_team_boxscore_rows_found INT64,            -- How many team boxscore records found
   source_team_boxscore_completeness_pct NUMERIC(5,2), -- % of expected data found
-  
+  source_team_boxscore_hash STRING,                 -- Smart Idempotency: data_hash from nbac_team_boxscore
+
   -- Source 2: nbac_gamebook_player_stats (defensive actions) - PRIMARY
   source_gamebook_players_last_updated TIMESTAMP,   -- When gamebook was processed
   source_gamebook_players_rows_found INT64,         -- How many player records found
   source_gamebook_players_completeness_pct NUMERIC(5,2), -- % of expected players found
-  
+  source_gamebook_players_hash STRING,              -- Smart Idempotency: data_hash from nbac_gamebook_player_stats
+
   -- Source 3: bdl_player_boxscores (defensive actions fallback) - OPTIONAL
   source_bdl_players_last_updated TIMESTAMP,        -- When BDL data was processed
   source_bdl_players_rows_found INT64,              -- How many BDL player records used
   source_bdl_players_completeness_pct NUMERIC(5,2), -- % of expected players found
+  source_bdl_players_hash STRING,                   -- Smart Idempotency: data_hash from bdl_player_boxscores
   
   -- ============================================================================
   -- PROCESSING METADATA (2 fields)
@@ -125,7 +128,7 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_analytics.team_defense_game_s
 PARTITION BY game_date
 CLUSTER BY defending_team_abbr, game_date, data_quality_tier
 OPTIONS(
-  description="Team defensive performance aggregated from Phase 2 raw data (v2.0). Reads: nbac_team_boxscore (opponent offense), nbac_gamebook_player_stats (defensive actions), bdl_player_boxscores (fallback). Feeds into: Phase 4 precompute processors."
+  description="Team defensive performance aggregated from Phase 2 raw data (v2.0). Reads: nbac_team_boxscore (opponent offense), nbac_gamebook_player_stats (defensive actions), bdl_player_boxscores (fallback). Feeds into: Phase 4 precompute processors. Smart idempotency tracks upstream Phase 2 data_hash values to skip reprocessing when source data unchanged."
 );
 
 -- ============================================================================

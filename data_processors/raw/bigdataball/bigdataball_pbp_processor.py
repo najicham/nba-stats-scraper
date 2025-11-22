@@ -13,6 +13,7 @@ from typing import Dict, List, Optional
 from datetime import datetime
 from google.cloud import bigquery
 from data_processors.raw.processor_base import ProcessorBase
+from data_processors.raw.smart_idempotency_mixin import SmartIdempotencyMixin
 
 # Notification imports
 from shared.utils.notification_system import (
@@ -21,12 +22,34 @@ from shared.utils.notification_system import (
     notify_info
 )
 
-class BigDataBallPbpProcessor(ProcessorBase):
+class BigDataBallPbpProcessor(SmartIdempotencyMixin, ProcessorBase):
+    """
+    Process BigDataBall play-by-play data with smart idempotency.
+    """
+
+    # Smart idempotency: Hash meaningful play-by-play event fields only
+    HASH_FIELDS = [
+        'game_id',
+        'event_sequence',
+        'period',
+        'game_clock',
+        'event_type',
+        'event_subtype',
+        'score_home',
+        'score_away',
+        'player_1_name',
+        'player_2_name',
+        'player_3_name',
+        'shot_made',
+        'shot_type',
+        'points_scored'
+    ]
+
     def __init__(self):
         super().__init__()
         self.table_name = 'nba_raw.bigdataball_play_by_play'
         self.processing_strategy = 'MERGE_UPDATE'
-        
+
         # CRITICAL: These two lines are REQUIRED for all processors
         self.project_id = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
         self.bq_client = bigquery.Client(project=self.project_id)
@@ -423,8 +446,13 @@ class BigDataBallPbpProcessor(ProcessorBase):
             }
             
             rows.append(row)
-        
-        self.transformed_data = rowsdef save_data(self) -> None:
+
+        self.transformed_data = rows
+
+        # Add smart idempotency hash to each row
+        self.add_data_hash()
+
+    def save_data(self) -> None:
         """Save transformed data to BigQuery (overrides ProcessorBase.save_data())."""
         rows = self.transformed_data
         """Load data to BigQuery using streaming-compatible strategy"""

@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 from google.cloud import bigquery
 from data_processors.raw.processor_base import ProcessorBase
+from data_processors.raw.smart_idempotency_mixin import SmartIdempotencyMixin
 from shared.utils.notification_system import (
     notify_error,
     notify_warning,
@@ -18,7 +19,27 @@ from shared.utils.notification_system import (
 
 logger = logging.getLogger(__name__)
 
-class BettingPropsProcessor(ProcessorBase):
+class BettingPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
+    """
+    BettingPros Player Props Processor
+
+    Processing Strategy: CHECK_BEFORE_INSERT
+    Smart Idempotency: Enabled (Pattern #14)
+        Hash Fields: player_lookup, game_date, market_type, bookmaker, bet_side, points_line, is_best_line
+        Expected Skip Rate: N/A (CHECK_BEFORE_INSERT, hash for monitoring only)
+    """
+
+    # Smart Idempotency: Define meaningful fields for hash computation
+    HASH_FIELDS = [
+        'player_lookup',
+        'game_date',
+        'market_type',
+        'bookmaker',
+        'bet_side',
+        'points_line',
+        'is_best_line'
+    ]
+
     def __init__(self):
         super().__init__()
         self.table_name = 'nba_raw.bettingpros_player_points_props'
@@ -367,7 +388,12 @@ class BettingPropsProcessor(ProcessorBase):
             
             raise
         
-        self.transformed_data = rowsdef save_data(self) -> None:
+        self.transformed_data = rows
+
+        # Smart Idempotency: Add data_hash to all records
+        self.add_data_hash()
+
+    def save_data(self) -> None:
         """Save transformed data to BigQuery (overrides ProcessorBase.save_data())."""
         rows = self.transformed_data
         """

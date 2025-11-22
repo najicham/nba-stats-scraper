@@ -35,12 +35,16 @@ CREATE TABLE IF NOT EXISTS `nba_raw.nbac_player_list_current` (
   first_seen_date DATE,
   last_seen_date DATE,
   source_file_path STRING,
+
+  -- Smart Idempotency (Pattern #14)
+  data_hash STRING,  -- SHA256 hash of meaningful fields: player_lookup, team_abbr, position, jersey_number, is_active
+
   processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
 )
 PARTITION BY RANGE_BUCKET(season_year, GENERATE_ARRAY(2020, 2030, 1))
 CLUSTER BY team_abbr, is_active
 OPTIONS(
-  description = "Current NBA player roster assignments from NBA.com Player List API",
+  description = "Current NBA player roster assignments from NBA.com Player List API. Uses smart idempotency to skip redundant writes when roster unchanged.",
   labels = [("source", "nba-com"), ("type", "roster"), ("update_frequency", "daily")]
 );
 

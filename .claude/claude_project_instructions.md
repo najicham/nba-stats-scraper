@@ -209,11 +209,13 @@ python tools/validation/validate_phase3_analytics.py --date 2025-01-15
 **Status:** Current|Draft|Superseded|Archive
 ```
 
-**Timestamp Requirements:**
-- Use Pacific Time with explicit timezone (PST or PDT)
-- Format: `2025-11-15 14:30 PST` (date, time, timezone)
+**Timestamp Requirements (MANDATORY):**
+- **ALWAYS** use Pacific Time with explicit timezone (PST or PDT)
+- **ALWAYS** include time: `YYYY-MM-DD HH:MM AM/PM PST`
+- **Example:** `2025-11-21 09:30 AM PST` (NOT just `2025-11-21`)
 - Update "Last Updated" for significant content changes only
 - Both fields required: "Created" and "Last Updated"
+- **This applies to ALL documentation files - no exceptions**
 
 ### Documentation Organization
 
@@ -303,8 +305,10 @@ docs/
 
 ---
 
-*Last Updated: 2025-11-15*
+*Last Updated: 2025-11-21 09:45 AM PST*
 *Recent Changes:*
+- **2025-11-21**: Emphasized timestamp requirements (date + time + timezone mandatory)
+- **2025-11-15**: Reorganized documentation structure
 - Reorganized documentation into 6 focused directories (architecture, orchestration, infrastructure, processors, monitoring, data-flow)
 - Created `docs/DOCS_DIRECTORY_STRUCTURE.md` - guide for directory organization
 - Updated documentation references to reflect new structure

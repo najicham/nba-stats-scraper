@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from processor_base import ProcessorBase
 from utils.name_utils import normalize_name
+from data_processors.raw.smart_idempotency_mixin import SmartIdempotencyMixin
 
 # Notification imports
 from shared.utils.notification_system import (
@@ -29,12 +30,26 @@ from shared.utils.notification_system import (
 logger = logging.getLogger(__name__)
 
 
-class BasketballRefRosterProcessor(ProcessorBase):
+class BasketballRefRosterProcessor(SmartIdempotencyMixin, ProcessorBase):
     """
     Process Basketball Reference roster files.
-    Implements MERGE_UPDATE strategy with first_seen_date tracking.
+    Implements MERGE_UPDATE strategy with first_seen_date tracking and smart idempotency.
     """
-    
+
+    # Smart idempotency: Hash meaningful roster fields only
+    HASH_FIELDS = [
+        'season_year',
+        'team_abbrev',
+        'player_full_name',
+        'position',
+        'jersey_number',
+        'height',
+        'weight',
+        'birth_date',
+        'college',
+        'experience_years'
+    ]
+
     # Configuration
     required_opts = ["season_year", "team_abbrev", "file_path"]
     dataset_id = "nba_raw"
@@ -234,8 +249,12 @@ class BasketballRefRosterProcessor(ProcessorBase):
                 logger.info(f"New player on {team_abbrev}: {player.get('full_name')}")
             
             rows.append(row)
-        
+
         self.transformed_data = rows
+
+        # Add smart idempotency hash to each row
+        self.add_data_hash()
+
         self.stats["new_players"] = len(new_players)
         self.stats["total_players"] = len(rows)
         self.stats["skipped_players"] = skipped_count

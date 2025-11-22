@@ -82,21 +82,23 @@ CREATE TABLE IF NOT EXISTS `nba_analytics.team_offense_game_summary` (
   referee_crew_id      STRING,             -- Links to game_referees table (future)
   
   -- ============================================================================
-  -- SOURCE TRACKING (6 fields = 2 sources × 3 fields)
-  -- Per dependency tracking guide v4.0
+  -- SOURCE TRACKING (8 fields = 2 sources × 4 fields)
+  -- Per dependency tracking guide v4.0 + Smart Idempotency (Pattern #14)
   -- ============================================================================
-  
+
   -- SOURCE 1: NBA.com Team Boxscore (PRIMARY - CRITICAL)
   -- nba_raw.nbac_team_boxscore
   source_nbac_boxscore_last_updated     TIMESTAMP,      -- When boxscore table was last processed
   source_nbac_boxscore_rows_found       INT64,          -- How many team records found for this date range
   source_nbac_boxscore_completeness_pct NUMERIC(5,2),   -- % of expected teams found
-  
+  source_nbac_boxscore_hash             STRING,         -- Smart Idempotency: data_hash from nbac_team_boxscore
+
   -- SOURCE 2: NBA.com Play-by-Play (ENHANCEMENT - OPTIONAL)
   -- nba_raw.nbac_play_by_play (falls back to bigdataball_play_by_play)
   source_play_by_play_last_updated      TIMESTAMP,      -- When play-by-play table was last processed
   source_play_by_play_rows_found        INT64,          -- How many play-by-play events found
   source_play_by_play_completeness_pct  NUMERIC(5,2),   -- % of expected shot events found
+  source_play_by_play_hash              STRING,         -- Smart Idempotency: data_hash from nbac_play_by_play or bigdataball_play_by_play
   
   -- ============================================================================
   -- DATA QUALITY TRACKING (5 fields)
@@ -116,7 +118,7 @@ CREATE TABLE IF NOT EXISTS `nba_analytics.team_offense_game_summary` (
 PARTITION BY game_date
 CLUSTER BY team_abbr, game_date, home_game
 OPTIONS (
-  description = "Team offensive performance analytics with shot zone tracking and advanced metrics. Aggregated from NBA.com team boxscore and play-by-play data. Updated via MERGE_UPDATE strategy for shot zone backfilling.",
+  description = "Team offensive performance analytics with shot zone tracking and advanced metrics. Aggregated from NBA.com team boxscore and play-by-play data. Updated via MERGE_UPDATE strategy for shot zone backfilling. Smart idempotency tracks upstream Phase 2 data_hash values to skip reprocessing when source data unchanged.",
   require_partition_filter = true
 );
 
@@ -130,11 +132,11 @@ OPTIONS (
 -- Game context:             4 fields
 -- Situation context:        2 fields
 -- Referee:                  1 field
--- Source tracking:          6 fields (2 sources × 3 fields)
+-- Source tracking:          8 fields (2 sources × 4 fields - includes smart idempotency hashes)
 -- Data quality:             5 fields
 -- Processing metadata:      2 fields
 -- -------------------------
--- TOTAL:                   47 fields
+-- TOTAL:                   49 fields
 
 -- ============================================================================
 -- SOURCE TRACKING FIELD SEMANTICS
