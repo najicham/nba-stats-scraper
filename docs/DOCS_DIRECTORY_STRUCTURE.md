@@ -380,7 +380,23 @@ docs/
 ```
 I have documentation to add. What is it about?
 
-┌─ System Design & Future Plans
+┌─ Deployment Status or History
+│  └─ deployment/
+│     Examples: What's deployed, deployment changelog, deployment procedures
+│
+├─ Quick Reference or Lookup
+│  └─ reference/
+│     Examples: List of scrapers, processor reference, system component lists
+│
+├─ How-To Guide or Tutorial
+│  └─ guides/
+│     Examples: BigQuery best practices, Cloud Run args, schema migration
+│
+├─ Session Handoff or Progress Notes
+│  └─ handoff/
+│     Examples: Daily handoff docs, session summaries, WIP status
+│
+├─ System Design & Future Plans
 │  └─ architecture/
 │     Examples: ADRs, integration plans, roadmaps
 │
@@ -415,6 +431,13 @@ I have documentation to add. What is it about?
 
 | Your Doc Topic | Goes In | Filename Example |
 |---------------|---------|------------------|
+| **Current deployment status** | `deployment/` | `00-deployment-status.md` |
+| **Deployment history changelog** | `deployment/` | `01-deployment-history.md` |
+| **List of all scrapers** | `reference/` | `01-scrapers-reference.md` |
+| **Quick processor lookup** | `reference/` | `02-processors-reference.md` |
+| **BigQuery best practices** | `guides/` | `06-bigquery-best-practices.md` |
+| **How to pass Cloud Run args** | `guides/` | `03-cloud-run-jobs-arguments.md` |
+| **Session handoff notes** | `handoff/` | `HANDOFF-2025-11-22-topic.md` |
 | How Cloud Scheduler triggers workflows | `orchestration/` | `02-phase1-overview.md` |
 | Pub/Sub message format specification | `infrastructure/` | `02-pubsub-schema-management.md` |
 | How to run Phase 2-4 processors | `processors/` | `01-phase2-operations-guide.md` |
@@ -680,12 +703,42 @@ mv docs/{directory}/old-doc.md docs/{directory}/archive/2025-11-15/
 ```
 docs/
 │
+├── deployment/            # Status: What's deployed + deployment history
+│   ├── README.md         # Navigation guide
+│   ├── 00-deployment-status.md  ⭐ SINGLE SOURCE OF TRUTH
+│   ├── 01-deployment-history.md
+│   ├── guides/           # Permanent deployment guides
+│   └── archive/2025-11/  # Temporal deployment reports
+│
+├── reference/             # Quick Reference: Scannable lookups
+│   ├── README.md         # Index of references
+│   ├── 01-scrapers-reference.md
+│   ├── 02-processors-reference.md
+│   ├── 03-analytics-processors-reference.md
+│   ├── 04-player-registry-reference.md
+│   ├── 05-notification-system-reference.md
+│   └── 06-shared-utilities-reference.md
+│
+├── guides/                # How-To: Step-by-step task guides
+│   ├── 00-overview.md    # Index of all guides
+│   ├── 01-processor-development-guide.md
+│   ├── 02-quick-start-processor.md
+│   ├── 03-backfill-deployment-guide.md
+│   ├── 04-schema-change-process.md
+│   ├── 05-processor-documentation-guide.md
+│   ├── 06-bigquery-best-practices.md
+│   └── processor-patterns/
+│
+├── handoff/               # Temporal: Session handoffs & progress notes
+│   └── HANDOFF-YYYY-MM-DD-{topic}.md
+│
 ├── architecture/          # Strategic: Design & future vision
 │   ├── README.md         # Reading order, "start with 04"
 │   ├── 00-quick-reference.md
 │   ├── 01-phase1-to-phase5-integration-plan.md
 │   ├── 04-event-driven-pipeline-architecture.md  ⭐ START HERE
 │   ├── 05-implementation-status-and-roadmap.md
+│   ├── 11-phase3-phase4-implementation-plan.md
 │   └── archive/
 │
 ├── orchestration/         # Tactical: Phase 1 scheduler & workflows
@@ -702,12 +755,21 @@ docs/
 │   ├── 02-pubsub-schema-management.md
 │   └── archive/
 │
-├── processors/            # Tactical: Phase 2+ processor operations
+├── processors/            # Tactical: Phase 2-4 processor operations
 │   ├── README.md
 │   ├── 01-phase2-operations-guide.md
-│   ├── (future) 02-phase3-analytics-guide.md
-│   ├── (future) 03-phase4-precompute-guide.md
+│   ├── 02-phase3-operations-guide.md
+│   ├── 05-phase4-operations-guide.md
 │   └── archive/
+│
+├── predictions/           # Phase 5: ML prediction system
+│   ├── tutorials/        # Getting started guides
+│   ├── operations/       # Deployment, troubleshooting
+│   ├── ml-training/      # Model training guides
+│   ├── algorithms/       # Algorithm specifications
+│   ├── architecture/     # Parallelization strategy
+│   ├── design/           # Architectural decisions
+│   └── data-sources/     # Data categorization
 │
 ├── monitoring/            # Observability: Cross-phase monitoring
 │   ├── README.md
@@ -716,14 +778,15 @@ docs/
 │   └── archive/
 │
 ├── data-flow/            # Reference: Data lineage & mappings
-│   ├── README.md         # (to be created)
-│   ├── (future) 01-phase1-to-phase2-mapping.md
-│   ├── (future) 02-phase2-to-phase3-mapping.md
-│   └── 99-end-to-end-example.md
+│   ├── README.md
+│   ├── (various mapping docs)
+│   └── archive/
 │
 └── [Root Guides]
     ├── DOCUMENTATION_GUIDE.md           # File organization WITHIN directories
     ├── DOCS_DIRECTORY_STRUCTURE.md      # THIS FILE - directory organization
+    ├── SYSTEM_STATUS.md                  # System status overview
+    ├── NAVIGATION_GUIDE.md               # Documentation navigation
     └── README.md                         # Master index
 ```
 
@@ -751,6 +814,16 @@ docs/
 
 ## Version History
 
+### v3.0 (2025-11-22)
+- Added 4 new directories: `deployment/`, `reference/`, `guides/`, `handoff/`
+- `deployment/` - Deployment status, history, and deployment guides
+- `reference/` - Quick reference docs (scrapers, processors, utilities)
+- `guides/` - How-to guides (BigQuery, Cloud Run, schema changes)
+- `handoff/` - Session handoff documents and progress notes
+- Updated decision tree and examples with new directories
+- Updated directory structure at a glance
+- Reflects Nov 21-22 documentation organization work
+
 ### v2.0 (2025-11-15)
 - Major reorganization: Split orchestration into 5 focused directories
 - Added `infrastructure/`, `processors/`, `monitoring/`, `data-flow/`
@@ -765,8 +838,8 @@ docs/
 
 ---
 
-**Guide Status:** Active
-**Next Review:** After adding data-flow mappings
+**Guide Status:** ✅ Active (v3.0)
+**Next Review:** After major directory additions or reorganizations
 **Maintained By:** Documentation standards
 
 ---

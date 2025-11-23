@@ -29,6 +29,7 @@ import json
 from datetime import datetime, date, timezone, timedelta
 from typing import Dict, List, Optional
 import pandas as pd
+from google.cloud import bigquery
 
 from data_processors.precompute.precompute_base import PrecomputeProcessorBase
 
@@ -502,6 +503,145 @@ class MLFeatureStoreProcessor(
         except Exception as e:
             logger.warning(f"Failed to record reprocess attempt for {entity_id}: {e}")
 
+    def _query_upstream_completeness(self, all_players: List[str], analysis_date: date) -> Dict[str, Dict[str, bool]]:
+        """
+        Query upstream Phase 4 tables for is_production_ready status (CASCADE PATTERN).
+
+        Checks 4 upstream dependencies:
+        1. player_daily_cache.is_production_ready (per player)
+        2. player_composite_factors.is_production_ready (per player)
+        3. player_shot_zone_analysis.is_production_ready (per player)
+        4. team_defense_zone_analysis.is_production_ready (per opponent team)
+
+        Args:
+            all_players: List of player_lookup IDs
+            analysis_date: Date to check
+
+        Returns:
+            Dict mapping player_lookup to upstream status dict:
+            {
+                'player_lookup': {
+                    'player_daily_cache_ready': bool,
+                    'player_composite_factors_ready': bool,
+                    'player_shot_zone_ready': bool,
+                    'team_defense_zone_ready': bool,
+                    'all_upstreams_ready': bool
+                }
+            }
+        """
+        upstream_status = {}
+
+        try:
+            # Query 1: player_daily_cache
+            query = f"""
+            SELECT player_lookup, is_production_ready
+            FROM `{self.project_id}.nba_precompute.player_daily_cache`
+            WHERE cache_date = '{analysis_date}'
+              AND player_lookup IN UNNEST(@players)
+            """
+            daily_cache_df = self.bq_client.query(
+                query,
+                job_config=bigquery.QueryJobConfig(
+                    query_parameters=[bigquery.ArrayQueryParameter("players", "STRING", list(all_players))]
+                )
+            ).to_dataframe()
+
+            # Query 2: player_composite_factors
+            query = f"""
+            SELECT player_lookup, is_production_ready
+            FROM `{self.project_id}.nba_precompute.player_composite_factors`
+            WHERE game_date = '{analysis_date}'
+              AND player_lookup IN UNNEST(@players)
+            """
+            composite_df = self.bq_client.query(
+                query,
+                job_config=bigquery.QueryJobConfig(
+                    query_parameters=[bigquery.ArrayQueryParameter("players", "STRING", list(all_players))]
+                )
+            ).to_dataframe()
+
+            # Query 3: player_shot_zone_analysis
+            query = f"""
+            SELECT player_lookup, is_production_ready
+            FROM `{self.project_id}.nba_precompute.player_shot_zone_analysis`
+            WHERE analysis_date = '{analysis_date}'
+              AND player_lookup IN UNNEST(@players)
+            """
+            shot_zone_df = self.bq_client.query(
+                query,
+                job_config=bigquery.QueryJobConfig(
+                    query_parameters=[bigquery.ArrayQueryParameter("players", "STRING", list(all_players))]
+                )
+            ).to_dataframe()
+
+            # Query 4: team_defense_zone_analysis (by opponent)
+            # Get opponent teams for each player from feature_extractor
+            players_with_games = self.feature_extractor.get_players_with_games(analysis_date)
+            opponent_map = {p['player_lookup']: p.get('opponent_team_abbr') for p in players_with_games}
+            unique_opponents = list(set(opponent_map.values()))
+
+            query = f"""
+            SELECT team_abbr, is_production_ready
+            FROM `{self.project_id}.nba_precompute.team_defense_zone_analysis`
+            WHERE analysis_date = '{analysis_date}'
+              AND team_abbr IN UNNEST(@teams)
+            """
+            team_defense_df = self.bq_client.query(
+                query,
+                job_config=bigquery.QueryJobConfig(
+                    query_parameters=[bigquery.ArrayQueryParameter("teams", "STRING", unique_opponents)]
+                )
+            ).to_dataframe()
+
+            # Build status dict for each player
+            for player in all_players:
+                # Check each upstream
+                daily_cache_ready = False
+                if player in daily_cache_df['player_lookup'].values:
+                    daily_cache_ready = bool(daily_cache_df[daily_cache_df['player_lookup'] == player]['is_production_ready'].iloc[0])
+
+                composite_ready = False
+                if player in composite_df['player_lookup'].values:
+                    composite_ready = bool(composite_df[composite_df['player_lookup'] == player]['is_production_ready'].iloc[0])
+
+                shot_zone_ready = False
+                if player in shot_zone_df['player_lookup'].values:
+                    shot_zone_ready = bool(shot_zone_df[shot_zone_df['player_lookup'] == player]['is_production_ready'].iloc[0])
+
+                team_defense_ready = False
+                opponent_team = opponent_map.get(player)
+                if opponent_team and opponent_team in team_defense_df['team_abbr'].values:
+                    team_defense_ready = bool(team_defense_df[team_defense_df['team_abbr'] == opponent_team]['is_production_ready'].iloc[0])
+
+                upstream_status[player] = {
+                    'player_daily_cache_ready': daily_cache_ready,
+                    'player_composite_factors_ready': composite_ready,
+                    'player_shot_zone_ready': shot_zone_ready,
+                    'team_defense_zone_ready': team_defense_ready,
+                    'all_upstreams_ready': (daily_cache_ready and composite_ready and
+                                           shot_zone_ready and team_defense_ready)
+                }
+
+            logger.info(
+                f"Upstream completeness check: "
+                f"{sum(1 for s in upstream_status.values() if s['all_upstreams_ready'])}/{len(upstream_status)} "
+                f"players have all upstreams ready"
+            )
+
+        except Exception as e:
+            logger.error(f"Error querying upstream completeness: {e}")
+            # Return empty dict on error - will be treated as not ready
+            for player in all_players:
+                upstream_status[player] = {
+                    'player_daily_cache_ready': False,
+                    'player_composite_factors_ready': False,
+                    'player_shot_zone_ready': False,
+                    'team_defense_zone_ready': False,
+                    'all_upstreams_ready': False
+                }
+
+        return upstream_status
+
     # ========================================================================
     # CALCULATION - MAIN FLOW
     # ========================================================================
@@ -562,6 +702,9 @@ class MLFeatureStoreProcessor(
             f"Completeness check complete. Bootstrap mode: {is_bootstrap}, "
             f"Season boundary: {is_season_boundary}"
         )
+
+        # Check upstream completeness (CASCADE PATTERN - Week 5)
+        upstream_completeness = self._query_upstream_completeness(list(all_players), analysis_date)
         # ============================================================
 
         logger.info(f"Calculating features for {len(self.players_with_games)} players")
@@ -605,21 +748,54 @@ class MLFeatureStoreProcessor(
                     self._increment_reprocess_count(
                         player_lookup, analysis_date,
                         completeness['completeness_pct'],
-                        'incomplete_upstream_data'
+                        'incomplete_own_data'
                     )
 
                     self.failed_entities.append({
                         'entity_id': player_lookup,
                         'entity_type': 'player',
-                        'reason': f"Completeness {completeness['completeness_pct']:.1f}%",
+                        'reason': f"Incomplete own data: {completeness['completeness_pct']:.1f}%",
                         'category': 'INCOMPLETE_DATA_SKIPPED'
+                    })
+                    continue
+
+                # Check upstream completeness (CASCADE PATTERN)
+                upstream_status = upstream_completeness.get(player_lookup, {
+                    'player_daily_cache_ready': False,
+                    'player_composite_factors_ready': False,
+                    'player_shot_zone_ready': False,
+                    'team_defense_zone_ready': False,
+                    'all_upstreams_ready': False
+                })
+
+                if not upstream_status['all_upstreams_ready'] and not is_bootstrap:
+                    logger.warning(
+                        f"{player_lookup}: Upstream not ready "
+                        f"(daily_cache={upstream_status['player_daily_cache_ready']}, "
+                        f"composite={upstream_status['player_composite_factors_ready']}, "
+                        f"shot_zone={upstream_status['player_shot_zone_ready']}, "
+                        f"team_defense={upstream_status['team_defense_zone_ready']}) - skipping"
+                    )
+
+                    # Track reprocessing attempt
+                    self._increment_reprocess_count(
+                        player_lookup, analysis_date,
+                        completeness['completeness_pct'],
+                        'incomplete_upstream_dependencies'
+                    )
+
+                    self.failed_entities.append({
+                        'entity_id': player_lookup,
+                        'entity_type': 'player',
+                        'reason': f"Upstream Phase 4 dependencies not ready",
+                        'category': 'UPSTREAM_INCOMPLETE'
                     })
                     continue
                 # ============================================================
 
                 # Generate features for this player
                 start_time = datetime.now()
-                record = self._generate_player_features(player_row, completeness, circuit_breaker_status, is_bootstrap, is_season_boundary)
+                record = self._generate_player_features(player_row, completeness, upstream_status, circuit_breaker_status, is_bootstrap, is_season_boundary)
                 generation_time_ms = (datetime.now() - start_time).total_seconds() * 1000
 
                 record['feature_generation_time_ms'] = int(generation_time_ms)
@@ -646,13 +822,14 @@ class MLFeatureStoreProcessor(
         
         logger.info(f"Feature generation complete: {success_count} success, {fail_count} failed ({success_rate:.1f}% success rate)")
     
-    def _generate_player_features(self, player_row: Dict, completeness: Dict, circuit_breaker_status: Dict, is_bootstrap: bool, is_season_boundary: bool) -> Dict:
+    def _generate_player_features(self, player_row: Dict, completeness: Dict, upstream_status: Dict, circuit_breaker_status: Dict, is_bootstrap: bool, is_season_boundary: bool) -> Dict:
         """
         Generate complete feature vector for one player.
 
         Args:
             player_row: Dict with player_lookup, game_date, game_id, etc.
-            completeness: Completeness check results for this player
+            completeness: Completeness check results for this player (own data)
+            upstream_status: Upstream completeness status (CASCADE PATTERN)
             circuit_breaker_status: Circuit breaker status for this player
             is_bootstrap: Whether in bootstrap mode
             is_season_boundary: Whether at season boundary
@@ -710,9 +887,17 @@ class MLFeatureStoreProcessor(
             'completeness_percentage': completeness['completeness_pct'],
             'missing_games_count': completeness['missing_count'],
 
-            # Production Readiness
-            'is_production_ready': completeness['is_production_ready'],
-            'data_quality_issues': [],  # Populate if specific issues found
+            # Production Readiness (CASCADE PATTERN: own complete AND all Phase 4 upstreams complete)
+            'is_production_ready': (
+                completeness['is_production_ready'] and
+                upstream_status['all_upstreams_ready']
+            ),
+            'data_quality_issues': [issue for issue in [
+                "upstream_player_daily_cache_incomplete" if not upstream_status['player_daily_cache_ready'] else None,
+                "upstream_player_composite_factors_incomplete" if not upstream_status['player_composite_factors_ready'] else None,
+                "upstream_player_shot_zone_incomplete" if not upstream_status['player_shot_zone_ready'] else None,
+                "upstream_team_defense_zone_incomplete" if not upstream_status['team_defense_zone_ready'] else None,
+            ] if issue is not None],
 
             # Circuit Breaker
             'last_reprocess_attempt_at': None,  # Would need separate query

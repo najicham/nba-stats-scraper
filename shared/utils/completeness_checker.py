@@ -224,20 +224,188 @@ class CompletenessChecker:
         """
         Query expected games for players from schedule.
 
-        Note: Players can play for multiple teams during a season.
-        Need to map player_lookup to teams they played for.
+        Approach:
+        1. Find each player's current/most recent team from player_game_summary
+        2. Query that team's schedule for the lookback window
+        3. Use the team's game count as the player's expected count
+
+        Assumptions:
+        - Active players play in most of their team's games
+        - Most recent team = current team (handles trades)
+        - Conservative estimate (may over-expect for injured players)
+
+        Note: This won't perfectly handle injuries/DNPs, but will effectively
+        detect missing data for the majority case (active, healthy players).
         """
-        # TODO: Implement player schedule checking
-        # This requires:
-        # 1. Querying player_game_summary to find which teams player played for
-        # 2. Then querying schedule for those teams
-        # 3. Handling mid-season trades (player might not have played all team games)
-        #
-        # For now, raise NotImplementedError
-        raise NotImplementedError(
-            "Player schedule checking requires team lookup logic. "
-            "Will implement when needed for Phase 3 processors."
+        from google.cloud import bigquery
+
+        if window_type == 'games':
+            # Get last N games from each player's current team
+            query = f"""
+            WITH player_current_team AS (
+                -- Find each player's most recent team
+                SELECT
+                    player_lookup,
+                    team_abbr,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY player_lookup
+                        ORDER BY game_date DESC
+                    ) as recency
+                FROM `{self.project_id}.nba_analytics.player_game_summary`
+                WHERE player_lookup IN UNNEST(@players)
+                    AND game_date < @analysis_date
+            ),
+            active_players AS (
+                -- Get only the most recent team per player
+                SELECT player_lookup, team_abbr
+                FROM player_current_team
+                WHERE recency = 1
+            ),
+            team_games_ranked AS (
+                -- Get and rank all games for teams our players are on
+                SELECT
+                    team_abbr,
+                    game_date,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY team_abbr
+                        ORDER BY game_date DESC
+                    ) as game_num
+                FROM (
+                    -- Home games
+                    SELECT DISTINCT
+                        home_team_tricode as team_abbr,
+                        game_date
+                    FROM `{self.project_id}.nba_raw.nbac_schedule`
+                    WHERE game_date < @analysis_date
+                        AND game_status = 3  -- Final games only
+                        AND home_team_tricode IN (
+                            SELECT DISTINCT team_abbr FROM active_players
+                        )
+
+                    UNION ALL
+
+                    -- Away games
+                    SELECT DISTINCT
+                        away_team_tricode as team_abbr,
+                        game_date
+                    FROM `{self.project_id}.nba_raw.nbac_schedule`
+                    WHERE game_date < @analysis_date
+                        AND game_status = 3  -- Final games only
+                        AND away_team_tricode IN (
+                            SELECT DISTINCT team_abbr FROM active_players
+                        )
+                )
+            ),
+            team_expected_counts AS (
+                -- Count games within the window for each team
+                SELECT
+                    team_abbr,
+                    COUNT(*) as expected_count
+                FROM team_games_ranked
+                WHERE game_num <= @lookback_window
+                GROUP BY team_abbr
+            )
+            -- Join back to players
+            SELECT
+                p.player_lookup as entity_id,
+                COALESCE(t.expected_count, 0) as count
+            FROM active_players p
+            LEFT JOIN team_expected_counts t ON p.team_abbr = t.team_abbr
+            """
+
+        else:  # window_type == 'days'
+            # Get games in last N days from each player's current team
+            query = f"""
+            WITH player_current_team AS (
+                -- Find each player's most recent team
+                SELECT
+                    player_lookup,
+                    team_abbr,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY player_lookup
+                        ORDER BY game_date DESC
+                    ) as recency
+                FROM `{self.project_id}.nba_analytics.player_game_summary`
+                WHERE player_lookup IN UNNEST(@players)
+                    AND game_date < @analysis_date
+            ),
+            active_players AS (
+                -- Get only the most recent team per player
+                SELECT player_lookup, team_abbr
+                FROM player_current_team
+                WHERE recency = 1
+            ),
+            team_scheduled_games AS (
+                -- Get games in the date window for teams our players are on
+                SELECT DISTINCT
+                    team_abbr,
+                    game_date
+                FROM (
+                    -- Home games
+                    SELECT
+                        home_team_tricode as team_abbr,
+                        game_date
+                    FROM `{self.project_id}.nba_raw.nbac_schedule`
+                    WHERE game_date < @analysis_date
+                        AND game_date >= DATE_SUB(@analysis_date, INTERVAL @lookback_window DAY)
+                        AND game_status = 3  -- Final games only
+                        AND home_team_tricode IN (
+                            SELECT DISTINCT team_abbr FROM active_players
+                        )
+
+                    UNION ALL
+
+                    -- Away games
+                    SELECT
+                        away_team_tricode as team_abbr,
+                        game_date
+                    FROM `{self.project_id}.nba_raw.nbac_schedule`
+                    WHERE game_date < @analysis_date
+                        AND game_date >= DATE_SUB(@analysis_date, INTERVAL @lookback_window DAY)
+                        AND game_status = 3  -- Final games only
+                        AND away_team_tricode IN (
+                            SELECT DISTINCT team_abbr FROM active_players
+                        )
+                )
+            ),
+            team_expected_counts AS (
+                -- Count games in the window for each team
+                SELECT
+                    team_abbr,
+                    COUNT(*) as expected_count
+                FROM team_scheduled_games
+                GROUP BY team_abbr
+            )
+            -- Join back to players
+            SELECT
+                p.player_lookup as entity_id,
+                COALESCE(t.expected_count, 0) as count
+            FROM active_players p
+            LEFT JOIN team_expected_counts t ON p.team_abbr = t.team_abbr
+            """
+
+        # Execute query with parameters
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ArrayQueryParameter("players", "STRING", player_lookups),
+                bigquery.ScalarQueryParameter("analysis_date", "DATE", analysis_date),
+                bigquery.ScalarQueryParameter("lookback_window", "INT64", lookback_window)
+            ]
         )
+
+        logger.debug(f"Expected games query (player-based):\n{query}")
+        df = self.bq_client.query(query, job_config=job_config).to_dataframe()
+
+        # Log summary for debugging
+        if not df.empty:
+            logger.info(
+                f"Player schedule check: {len(df)} players with teams, "
+                f"avg expected: {df['count'].mean():.1f} games"
+            )
+        else:
+            logger.warning(f"No team found for any of {len(player_lookups)} players")
+
+        return df
 
     def _query_actual_games(
         self,

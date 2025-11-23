@@ -1,5 +1,7 @@
 # Completeness Checking - Quick Start Guide
 
+**Created:** 2025-11-22 22:59:00 PST
+**Last Updated:** 2025-11-23 10:10:00 PST
 **For:** Operations Team
 **Purpose:** Get started monitoring and managing completeness checking
 **Time to Read:** 5 minutes
