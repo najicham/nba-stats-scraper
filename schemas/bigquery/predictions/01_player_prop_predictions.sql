@@ -47,7 +47,24 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.player_prop_predi
   -- Key Factors & Warnings (2 fields stored as JSON)
   key_factors JSON,                                 -- Important factors: {"extreme_fatigue": true, "paint_mismatch": +6.2}
   warnings JSON,                                    -- Warnings: ["low_sample_size", "high_variance"]
-  
+
+  -- Completeness Checking Metadata (14 fields) - Added Phase 5
+  -- Tracks feature data quality from ml_feature_store_v2
+  expected_games_count INT64,                       -- Games expected in feature window
+  actual_games_count INT64,                         -- Games actually present
+  completeness_percentage FLOAT64,                  -- Percentage of expected data present (0-100)
+  missing_games_count INT64,                        -- Count of missing games
+  is_production_ready BOOLEAN,                      -- TRUE if completeness >= 90% and upstream ready
+  data_quality_issues ARRAY<STRING>,                -- List of quality issues detected
+  last_reprocess_attempt_at TIMESTAMP,              -- Last time reprocessing was attempted
+  reprocess_attempt_count INT64,                    -- Number of reprocessing attempts
+  circuit_breaker_active BOOLEAN,                   -- TRUE if entity blocked from reprocessing
+  circuit_breaker_until TIMESTAMP,                  -- When circuit breaker cooldown expires
+  manual_override_required BOOLEAN,                 -- TRUE if manual intervention needed
+  season_boundary_detected BOOLEAN,                 -- TRUE if processing near season start/end
+  backfill_bootstrap_mode BOOLEAN,                  -- TRUE if processed in bootstrap mode
+  processing_decision_reason STRING,                -- Why this decision was made
+
   -- Status (2 fields)
   is_active BOOLEAN NOT NULL DEFAULT TRUE,          -- FALSE when superseded by newer version
   superseded_by STRING,                             -- prediction_id that replaced this one

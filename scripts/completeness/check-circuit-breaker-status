@@ -1,0 +1,119 @@
+#!/bin/bash
+#
+# Check Circuit Breaker Status
+#
+# Usage:
+#   ./scripts/check-circuit-breaker-status [--processor PROCESSOR_NAME] [--entity ENTITY_ID] [--active-only]
+#
+# Examples:
+#   ./scripts/check-circuit-breaker-status
+#   ./scripts/check-circuit-breaker-status --processor player_daily_cache
+#   ./scripts/check-circuit-breaker-status --entity lebron_james
+#   ./scripts/check-circuit-breaker-status --active-only
+#
+
+set -e
+
+# Parse arguments
+PROCESSOR=""
+ENTITY=""
+ACTIVE_ONLY=false
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --processor)
+      PROCESSOR="$2"
+      shift 2
+      ;;
+    --entity)
+      ENTITY="$2"
+      shift 2
+      ;;
+    --active-only)
+      ACTIVE_ONLY=true
+      shift
+      ;;
+    *)
+      echo "Unknown option: $1"
+      echo "Usage: $0 [--processor PROCESSOR_NAME] [--entity ENTITY_ID] [--active-only]"
+      exit 1
+      ;;
+  esac
+done
+
+# Build WHERE clause
+WHERE_CLAUSE=""
+if [ "$ACTIVE_ONLY" = true ]; then
+  WHERE_CLAUSE="WHERE circuit_breaker_tripped = TRUE AND circuit_breaker_until > CURRENT_TIMESTAMP()"
+fi
+
+if [ -n "$PROCESSOR" ]; then
+  if [ -n "$WHERE_CLAUSE" ]; then
+    WHERE_CLAUSE="$WHERE_CLAUSE AND processor_name = '$PROCESSOR'"
+  else
+    WHERE_CLAUSE="WHERE processor_name = '$PROCESSOR'"
+  fi
+fi
+
+if [ -n "$ENTITY" ]; then
+  if [ -n "$WHERE_CLAUSE" ]; then
+    WHERE_CLAUSE="$WHERE_CLAUSE AND entity_id = '$ENTITY'"
+  else
+    WHERE_CLAUSE="WHERE entity_id = '$ENTITY'"
+  fi
+fi
+
+# Build query
+QUERY="
+SELECT
+  processor_name,
+  entity_id,
+  analysis_date,
+  attempt_number,
+  attempted_at,
+  completeness_pct,
+  skip_reason,
+  circuit_breaker_tripped,
+  circuit_breaker_until,
+  TIMESTAMP_DIFF(circuit_breaker_until, CURRENT_TIMESTAMP(), DAY) as days_remaining,
+  manual_override_applied,
+  notes
+FROM \`nba-props-platform.nba_orchestration.reprocess_attempts\`
+$WHERE_CLAUSE
+ORDER BY attempted_at DESC
+LIMIT 50
+"
+
+echo "=== Circuit Breaker Status ==="
+echo ""
+if [ -n "$PROCESSOR" ]; then
+  echo "Processor: $PROCESSOR"
+fi
+if [ -n "$ENTITY" ]; then
+  echo "Entity: $ENTITY"
+fi
+if [ "$ACTIVE_ONLY" = true ]; then
+  echo "Filter: Active circuit breakers only"
+fi
+echo ""
+
+bq query --use_legacy_sql=false --format=pretty "$QUERY"
+
+# Summary
+echo ""
+echo "=== Summary ==="
+SUMMARY_QUERY="
+SELECT
+  processor_name,
+  COUNT(*) as total_attempts,
+  COUNT(DISTINCT entity_id) as unique_entities,
+  SUM(CASE WHEN circuit_breaker_tripped THEN 1 ELSE 0 END) as circuit_breaker_count,
+  SUM(CASE WHEN circuit_breaker_tripped AND circuit_breaker_until > CURRENT_TIMESTAMP() THEN 1 ELSE 0 END) as active_circuit_breakers,
+  SUM(CASE WHEN manual_override_applied THEN 1 ELSE 0 END) as manual_override_count
+FROM \`nba-props-platform.nba_orchestration.reprocess_attempts\`
+$WHERE_CLAUSE
+GROUP BY processor_name
+ORDER BY active_circuit_breakers DESC, circuit_breaker_count DESC
+"
+
+bq query --use_legacy_sql=false --format=pretty "$SUMMARY_QUERY"

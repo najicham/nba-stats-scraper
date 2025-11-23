@@ -1,8 +1,8 @@
 # Documentation Directory Structure
 
-**Version:** 2.0
+**Version:** 3.0
 **Created:** 2025-11-15
-**Last Updated:** 2025-11-15
+**Last Updated:** 2025-11-22 10:45:00 PST
 **Purpose:** Define top-level documentation directory organization
 **Audience:** Engineers and AI assistants organizing documentation
 
@@ -12,11 +12,15 @@
 
 ```
 docs/
+├── deployment/            # Deployment status, history, guides ⭐ NEW
+├── reference/             # Quick reference docs (scrapers, processors) ⭐ NEW
+├── guides/                # How-to guides (BigQuery, Cloud Run, etc.) ⭐ NEW
+├── handoff/               # Session handoff documents ⭐ NEW
 ├── architecture/          # Design, planning, future vision
 ├── orchestration/         # Phase 1: Scheduler & daily workflows
 ├── infrastructure/        # Cross-phase: Pub/Sub, shared services
 ├── processors/            # Phase 2-4: Data processor operations
-├── predictions/           # Phase 5: ML prediction system ⭐ NEW
+├── predictions/           # Phase 5: ML prediction system
 ├── monitoring/            # Cross-phase: Grafana, observability
 ├── data-flow/            # Phase-to-phase data mappings
 ├── DOCUMENTATION_GUIDE.md      # How to organize files WITHIN directories
@@ -38,6 +42,126 @@ docs/
 ---
 
 ## Directory Purposes
+
+### `deployment/` - Deployment Status & History ⭐ NEW
+
+**Focus:** Current deployment status, deployment history, and deployment guides
+
+**Time Horizon:** Living document (status) + Historical record (archive)
+
+**Audience:**
+- Engineers checking what's deployed
+- Operations team during deployments
+- Anyone asking "what's the current state?"
+
+**Contains:**
+- `00-deployment-status.md` - **Single source of truth** for current deployment state
+- `01-deployment-history.md` - Append-only deployment changelog
+- `02-rollback-procedures.md` - Rollback guide (when created)
+- `guides/` - Permanent deployment guides (monitoring, procedures)
+- `archive/2025-11/` - Temporal deployment reports by month
+
+**Does NOT contain:**
+- Architecture/design docs (goes in `architecture/`)
+- Operations guides for running systems (goes in phase dirs)
+- Monitoring procedures (goes in `monitoring/`)
+
+**Status:** ✅ Organized (2025-11-22)
+
+**Key Distinction:** Deployment = what's deployed + when + how; Operations = how to run it daily
+
+---
+
+### `reference/` - Quick Reference Documentation ⭐ NEW
+
+**Focus:** Scannable quick reference docs for system components
+
+**Format:** Condensed, table-based, 1-2 page quick lookups
+
+**Audience:**
+- Engineers needing quick facts
+- Anyone looking for "what scrapers exist?"
+- Quick lookup during development
+
+**Contains:**
+- `01-scrapers-reference.md` - All 25 scrapers by data source
+- `02-processors-reference.md` - Phase 2 raw processors
+- `03-analytics-processors-reference.md` - Phase 3 analytics
+- `04-player-registry-reference.md` - Player ID system
+- `05-notification-system-reference.md` - Pub/Sub notifications
+- `06-shared-utilities-reference.md` - Common utilities
+- `README.md` - Index of all references
+
+**Does NOT contain:**
+- Operations guides (goes in phase dirs)
+- Detailed how-tos (goes in `guides/`)
+- Architecture decisions (goes in `architecture/`)
+
+**Status:** ✅ Created (2025-11-21)
+
+**Key Distinction:** Reference = quick facts; Guides = how to do something
+
+---
+
+### `guides/` - How-To Guides ⭐ NEW
+
+**Focus:** Step-by-step instructions for common tasks
+
+**Format:** Task-oriented, actionable guides
+
+**Audience:**
+- Engineers learning the system
+- Anyone doing a specific task
+- New team members onboarding
+
+**Contains:**
+- `00-overview.md` - Index of all guides
+- `01-processor-development-guide.md` - Building processors
+- `02-quick-start-processor.md` - Processor quickstart
+- `03-backfill-deployment-guide.md` - Deploying backfills
+- `04-schema-change-process.md` - Schema migrations
+- `05-processor-documentation-guide.md` - Writing processor docs
+- `06-bigquery-best-practices.md` - BigQuery patterns
+- `processor-patterns/` - Specific patterns (dependency tracking, etc.)
+
+**Does NOT contain:**
+- Reference lookups (goes in `reference/`)
+- Deployment status (goes in `deployment/`)
+- Phase-specific operations (goes in phase dirs)
+
+**Status:** ✅ Created (2025-11-21)
+
+**Key Distinction:** Guides = how to do X; Reference = quick facts about X
+
+---
+
+### `handoff/` - Session Handoff Documents ⭐ NEW
+
+**Focus:** Session-to-session handoff notes and progress updates
+
+**Format:** Temporal, dated handoff documents
+
+**Audience:**
+- AI assistants resuming work
+- Engineers reviewing recent progress
+- Historical record of development sessions
+
+**Contains:**
+- `HANDOFF-YYYY-MM-DD-{topic}.md` - Daily handoff documents
+- Session summaries and progress updates
+- Work-in-progress status
+- Next steps for following sessions
+
+**Does NOT contain:**
+- Permanent documentation (goes in appropriate phase dirs)
+- Deployment records (goes in `deployment/archive/`)
+- Guides or references (goes in `guides/` or `reference/`)
+
+**Status:** ✅ Organized (2025-11-22)
+
+**Key Distinction:** Handoff = temporal progress notes; Other docs = permanent knowledge
+
+---
 
 ### `architecture/` - Strategic Design & Planning
 

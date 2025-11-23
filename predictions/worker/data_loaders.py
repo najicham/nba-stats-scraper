@@ -80,7 +80,17 @@ class PredictionDataLoader:
             features,
             feature_names,
             feature_quality_score,
-            data_source
+            data_source,
+
+            -- Completeness metadata (Phase 5)
+            expected_games_count,
+            actual_games_count,
+            completeness_percentage,
+            missing_games_count,
+            is_production_ready,
+            data_quality_issues,
+            backfill_bootstrap_mode,
+            processing_decision_reason
         FROM `{project}.nba_predictions.ml_feature_store_v2`
         WHERE player_lookup = @player_lookup
           AND game_date = @game_date
@@ -114,15 +124,31 @@ class PredictionDataLoader:
             
             # Build feature dict
             features = dict(zip(feature_names, feature_array))
-            
+
             # Add metadata
             features['feature_count'] = len(feature_array)
             features['feature_version'] = feature_version
             features['data_source'] = row.data_source
             features['feature_quality_score'] = float(row.feature_quality_score)
             features['features_array'] = feature_array  # Keep array for systems that need it
-            
-            logger.debug(f"Loaded {len(feature_names)} features for {player_lookup}")
+
+            # Add completeness metadata (Phase 5)
+            features['completeness'] = {
+                'expected_games_count': row.expected_games_count,
+                'actual_games_count': row.actual_games_count,
+                'completeness_percentage': float(row.completeness_percentage) if row.completeness_percentage else 0.0,
+                'missing_games_count': row.missing_games_count,
+                'is_production_ready': row.is_production_ready or False,
+                'data_quality_issues': row.data_quality_issues or [],
+                'backfill_bootstrap_mode': row.backfill_bootstrap_mode or False,
+                'processing_decision_reason': row.processing_decision_reason
+            }
+
+            logger.debug(
+                f"Loaded {len(feature_names)} features for {player_lookup} "
+                f"(completeness: {features['completeness']['completeness_percentage']:.1f}%, "
+                f"production_ready: {features['completeness']['is_production_ready']})"
+            )
             return features
             
         except Exception as e:

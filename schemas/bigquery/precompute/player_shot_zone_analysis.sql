@@ -7,12 +7,16 @@
 -- Entities: ~450 active NBA players
 -- Duration: ~5-8 minutes
 -- 
--- Version: 2.0 (Added v4.0 dependency tracking)
+-- Version: 3.0 (Added completeness checking)
+-- Changes from V2:
+--   - Added completeness checking fields (14 fields - Week 2)
+--   - Circuit breaker tracking (4 fields)
+--   - Bootstrap mode handling (4 fields)
 -- Changes from V1:
 --   - Added source tracking fields for player_game_summary (3 fields)
 --   - Added early season handling fields (2 fields)
 --   - Added universal_player_id for stable identification
---   - Total tracking fields: 7 (3 source + 2 optional + 2 metadata)
+--   - Total fields: 31 → 45 (added 14 completeness fields)
 --
 -- Dependencies:
 --   - nba_analytics.player_game_summary (Phase 3)
@@ -83,13 +87,54 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_precompute.player_shot_zone_a
   source_player_game_last_updated TIMESTAMP,        -- When source was last processed
   source_player_game_rows_found INT64,              -- How many game records found
   source_player_game_completeness_pct NUMERIC(5,2), -- % of expected games found
-  
+
+  source_player_game_hash STRING,                   -- Hash from player_game_summary.data_hash
+                                                     -- Used for smart reprocessing (Pattern #3)
+                                                     -- NULL = source has no hash or doesn't exist
+                                                     -- Example: 'b1c2d3e4f5a6...'
+
+  -- ============================================================================
+  -- SMART IDEMPOTENCY (Pattern #1) - 1 field
+  -- ============================================================================
+  data_hash STRING,                                 -- SHA256 hash of meaningful output fields
+                                                     -- Computed from: all shot zone metrics
+                                                     -- Excludes: processed_at, created_at, source tracking
+                                                     -- Used to detect if calculated values changed
+                                                     -- NULL = pattern not yet implemented
+                                                     -- Example: '2b3c4d5e6f7a...'
+
   -- ============================================================================
   -- v4.0 EARLY SEASON HANDLING (2 fields)
   -- ============================================================================
   early_season_flag BOOLEAN,                        -- TRUE when <10 games available
   insufficient_data_reason STRING,                  -- Why data was insufficient
-  
+
+  -- ============================================================================
+  -- HISTORICAL COMPLETENESS CHECKING (14 fields)
+  -- Week 2 - Phase 4 Completeness Checking
+  -- ============================================================================
+  -- Completeness Metrics (4 fields)
+  expected_games_count INT64,                       -- Games expected from schedule
+  actual_games_count INT64,                         -- Games actually found in upstream table
+  completeness_percentage FLOAT64,                  -- Completeness percentage 0-100%
+  missing_games_count INT64,                        -- Number of games missing from upstream
+
+  -- Production Readiness (2 fields)
+  is_production_ready BOOLEAN,                      -- TRUE if completeness >= 90%
+  data_quality_issues ARRAY<STRING>,                -- Specific quality issues found
+
+  -- Circuit Breaker (4 fields)
+  last_reprocess_attempt_at TIMESTAMP,              -- When reprocessing was last attempted
+  reprocess_attempt_count INT64,                    -- Number of reprocess attempts
+  circuit_breaker_active BOOLEAN,                   -- TRUE if max reprocess attempts reached
+  circuit_breaker_until TIMESTAMP,                  -- When circuit breaker expires (7 days from last attempt)
+
+  -- Bootstrap/Override (4 fields)
+  manual_override_required BOOLEAN,                 -- TRUE if manual intervention needed
+  season_boundary_detected BOOLEAN,                 -- TRUE if date near season start/end
+  backfill_bootstrap_mode BOOLEAN,                  -- TRUE if first 30 days of season/backfill
+  processing_decision_reason STRING,                -- Why record was processed or skipped
+
   -- ============================================================================
   -- PROCESSING METADATA (2 fields)
   -- ============================================================================
@@ -146,6 +191,10 @@ OPTIONS(
 -- source_player_game_last_updated: "2025-10-30T10:00:00Z"
 -- source_player_game_rows_found: 10
 -- source_player_game_completeness_pct: 100.00
+-- source_player_game_hash: "b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6"
+--
+-- Smart Patterns:
+-- data_hash: "2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e"
 --
 -- Early Season:
 -- early_season_flag: FALSE
@@ -282,4 +331,54 @@ ORDER BY rate_error DESC;
 -- [ ] Backfill last 30 days (after processor ready)
 -- [ ] Enable monitoring queries
 -- [ ] Document alert thresholds
+-- ============================================================================
+
+-- ============================================================================
+-- ALTER TABLE (For Adding Completeness Checking - Week 2)
+-- ============================================================================
+-- Run this to add completeness checking columns to existing table:
+
+ALTER TABLE `nba-props-platform.nba_precompute.player_shot_zone_analysis`
+
+-- Historical completeness checking (14 fields)
+ADD COLUMN IF NOT EXISTS expected_games_count INT64
+  OPTIONS (description='Games expected from schedule'),
+ADD COLUMN IF NOT EXISTS actual_games_count INT64
+  OPTIONS (description='Games actually found in upstream table'),
+ADD COLUMN IF NOT EXISTS completeness_percentage FLOAT64
+  OPTIONS (description='Completeness percentage 0-100%'),
+ADD COLUMN IF NOT EXISTS missing_games_count INT64
+  OPTIONS (description='Number of games missing from upstream'),
+
+ADD COLUMN IF NOT EXISTS is_production_ready BOOLEAN
+  OPTIONS (description='TRUE if completeness >= 90%'),
+ADD COLUMN IF NOT EXISTS data_quality_issues ARRAY<STRING>
+  OPTIONS (description='Specific quality issues found'),
+
+ADD COLUMN IF NOT EXISTS last_reprocess_attempt_at TIMESTAMP
+  OPTIONS (description='When reprocessing was last attempted'),
+ADD COLUMN IF NOT EXISTS reprocess_attempt_count INT64
+  OPTIONS (description='Number of reprocess attempts'),
+ADD COLUMN IF NOT EXISTS circuit_breaker_active BOOLEAN
+  OPTIONS (description='TRUE if max reprocess attempts reached'),
+ADD COLUMN IF NOT EXISTS circuit_breaker_until TIMESTAMP
+  OPTIONS (description='When circuit breaker expires (7 days from last attempt)'),
+
+ADD COLUMN IF NOT EXISTS manual_override_required BOOLEAN
+  OPTIONS (description='TRUE if manual intervention needed'),
+ADD COLUMN IF NOT EXISTS season_boundary_detected BOOLEAN
+  OPTIONS (description='TRUE if date near season start/end'),
+ADD COLUMN IF NOT EXISTS backfill_bootstrap_mode BOOLEAN
+  OPTIONS (description='TRUE if first 30 days of season/backfill'),
+ADD COLUMN IF NOT EXISTS processing_decision_reason STRING
+  OPTIONS (description='Why record was processed or skipped');
+
+-- ============================================================================
+-- Verify deployment:
+-- ============================================================================
+-- SELECT column_name, data_type, description
+-- FROM `nba-props-platform.nba_precompute.INFORMATION_SCHEMA.COLUMN_FIELD_PATHS`
+-- WHERE table_name = 'player_shot_zone_analysis'
+--   AND column_name IN ('completeness_percentage', 'is_production_ready', 'backfill_bootstrap_mode')
+-- ORDER BY column_name;
 -- ============================================================================

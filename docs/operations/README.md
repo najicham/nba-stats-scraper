@@ -1,7 +1,7 @@
 # Operations Documentation
 
 **Created:** 2025-11-18 15:00 PST
-**Last Updated:** 2025-11-18 15:00 PST
+**Last Updated:** 2025-11-21 18:36 PST
 **Purpose:** Step-by-step operational procedures for backfills, maintenance, and data management
 **Audience:** Engineers running backfills, on-call engineers, operators
 **Focus:** How to execute operational tasks (backfills, validation, recovery)
@@ -80,6 +80,31 @@
 - When processing failures occur
 - When backfills trigger Phase 2 failures
 - During incident response
+
+---
+
+### **03-cloud-run-jobs-arguments.md** 🔧 CLOUD RUN ARGS (10 min read)
+**Created:** 2025-11-21 18:35 PST
+**Purpose:** Passing arguments to Cloud Run jobs without parsing errors
+
+**What's Inside:**
+- ✅ Custom delimiter syntax (`^|^`) for comma-separated values
+- ✅ Working patterns for different argument types
+- ✅ Real NBA platform examples (seasons, date ranges)
+- ✅ Common failures and solutions
+- ✅ Debugging tips and validation methods
+
+**Key Pattern:**
+```bash
+# Comma-separated values (the critical pattern)
+--args="^|^--seasons=2021,2022,2023|--limit=100"
+```
+
+**Read This:**
+- Before running any Cloud Run job with arguments
+- When getting "unrecognized arguments" errors
+- When passing comma-separated seasons/dates
+- When debugging job execution failures
 
 ---
 

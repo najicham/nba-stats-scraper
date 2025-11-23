@@ -123,8 +123,40 @@ CREATE TABLE IF NOT EXISTS `nba_analytics.upcoming_team_game_context` (
   -- =========================================================================
   early_season_flag BOOLEAN,  -- TRUE if processed during early season with insufficient data
   insufficient_data_reason STRING,  -- Explanation of why data was insufficient (only populated when early_season_flag=TRUE)
-  
-  
+
+  -- =========================================================================
+  -- COMPLETENESS CHECKING METADATA (19 fields) - Added Week 7
+  -- =========================================================================
+
+  -- Completeness Metrics (4 fields)
+  expected_games_count INT64,                       -- Games expected from schedule
+  actual_games_count INT64,                         -- Games actually found in upstream table
+  completeness_percentage FLOAT64,                  -- Completeness percentage 0-100%
+  missing_games_count INT64,                        -- Number of games missing from upstream
+
+  -- Production Readiness (2 fields)
+  is_production_ready BOOLEAN,                      -- TRUE if all windows >= 90% complete
+  data_quality_issues ARRAY<STRING>,                -- Specific quality issues found
+
+  -- Circuit Breaker (4 fields)
+  last_reprocess_attempt_at TIMESTAMP,              -- When reprocessing was last attempted
+  reprocess_attempt_count INT64,                    -- Number of reprocess attempts
+  circuit_breaker_active BOOLEAN,                   -- TRUE if max reprocess attempts reached
+  circuit_breaker_until TIMESTAMP,                  -- When circuit breaker expires (7 days from last attempt)
+
+  -- Bootstrap/Override (4 fields)
+  manual_override_required BOOLEAN,                 -- TRUE if manual intervention needed
+  season_boundary_detected BOOLEAN,                 -- TRUE if date near season start/end
+  backfill_bootstrap_mode BOOLEAN,                  -- TRUE if first 30 days of season/backfill
+  processing_decision_reason STRING,                -- Why record was processed or skipped
+
+  -- Multi-Window Completeness (5 fields - 2 windows × 2 + 1 all_windows)
+  l7d_completeness_pct FLOAT64,                     -- L7 days completeness percentage
+  l7d_is_complete BOOLEAN,                          -- TRUE if L7d >= 90% complete
+  l14d_completeness_pct FLOAT64,                    -- L14 days completeness percentage
+  l14d_is_complete BOOLEAN,                         -- TRUE if L14d >= 90% complete
+  all_windows_complete BOOLEAN,                     -- TRUE if ALL windows >= 90% complete
+
   -- =========================================================================
   -- PROCESSING METADATA (2 fields)
   -- =========================================================================
@@ -149,11 +181,12 @@ CLUSTER BY game_date, team_abbr, game_id;
 --
 -- Source Tracking (3 sources × 4 fields - includes smart idempotency hashes): 12 fields
 -- Optional Early Season:                   2 fields
+-- Completeness Checking:                  19 fields (14 standard + 5 multi-window)
 -- Processing Metadata:                     2 fields
 -- ─────────────────────────────────────
--- Tracking Fields Subtotal:  16 fields
+-- Tracking Fields Subtotal:  35 fields
 --
--- TOTAL:                     43 fields
+-- TOTAL:                     62 fields (updated Week 7)
 -- ============================================================================
 
 -- ============================================================================
@@ -316,6 +349,54 @@ CLUSTER BY game_date, team_abbr, game_id;
 --       for consistency. All defaults should be handled in processor code.
 --
 -- For new table (this script): Just run CREATE TABLE
+
+-- ============================================================================
+-- DEPLOYMENT: Add completeness checking columns (Week 7)
+-- ============================================================================
+
+ALTER TABLE `nba-props-platform.nba_analytics.upcoming_team_game_context`
+ADD COLUMN IF NOT EXISTS expected_games_count INT64
+  OPTIONS (description='Games expected from schedule'),
+ADD COLUMN IF NOT EXISTS actual_games_count INT64
+  OPTIONS (description='Games actually found in upstream table'),
+ADD COLUMN IF NOT EXISTS completeness_percentage FLOAT64
+  OPTIONS (description='Completeness percentage 0-100%'),
+ADD COLUMN IF NOT EXISTS missing_games_count INT64
+  OPTIONS (description='Number of games missing from upstream'),
+
+ADD COLUMN IF NOT EXISTS is_production_ready BOOLEAN
+  OPTIONS (description='TRUE if all windows >= 90% complete'),
+ADD COLUMN IF NOT EXISTS data_quality_issues ARRAY<STRING>
+  OPTIONS (description='Specific quality issues found'),
+
+ADD COLUMN IF NOT EXISTS last_reprocess_attempt_at TIMESTAMP
+  OPTIONS (description='When reprocessing was last attempted'),
+ADD COLUMN IF NOT EXISTS reprocess_attempt_count INT64
+  OPTIONS (description='Number of reprocess attempts'),
+ADD COLUMN IF NOT EXISTS circuit_breaker_active BOOLEAN
+  OPTIONS (description='TRUE if max reprocess attempts reached'),
+ADD COLUMN IF NOT EXISTS circuit_breaker_until TIMESTAMP
+  OPTIONS (description='When circuit breaker expires (7 days from last attempt)'),
+
+ADD COLUMN IF NOT EXISTS manual_override_required BOOLEAN
+  OPTIONS (description='TRUE if manual intervention needed'),
+ADD COLUMN IF NOT EXISTS season_boundary_detected BOOLEAN
+  OPTIONS (description='TRUE if date near season start/end'),
+ADD COLUMN IF NOT EXISTS backfill_bootstrap_mode BOOLEAN
+  OPTIONS (description='TRUE if first 30 days of season/backfill'),
+ADD COLUMN IF NOT EXISTS processing_decision_reason STRING
+  OPTIONS (description='Why record was processed or skipped'),
+
+ADD COLUMN IF NOT EXISTS l7d_completeness_pct FLOAT64
+  OPTIONS (description='L7 days completeness percentage'),
+ADD COLUMN IF NOT EXISTS l7d_is_complete BOOLEAN
+  OPTIONS (description='TRUE if L7d >= 90% complete'),
+ADD COLUMN IF NOT EXISTS l14d_completeness_pct FLOAT64
+  OPTIONS (description='L14 days completeness percentage'),
+ADD COLUMN IF NOT EXISTS l14d_is_complete BOOLEAN
+  OPTIONS (description='TRUE if L14d >= 90% complete'),
+ADD COLUMN IF NOT EXISTS all_windows_complete BOOLEAN
+  OPTIONS (description='TRUE if ALL windows >= 90% complete');
 
 -- ============================================================================
 -- END OF SCHEMA

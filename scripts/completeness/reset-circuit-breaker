@@ -1,0 +1,245 @@
+#!/bin/bash
+#
+# Reset Circuit Breaker (Nuclear Option - DESTRUCTIVE)
+#
+# This script completely deletes circuit breaker attempts for an entity,
+# resetting the circuit breaker counter to 0 and allowing fresh processing.
+#
+# ⚠️  WARNING: This is destructive and removes historical tracking data.
+# Only use when:
+#   - Circuit breaker logic had bugs (now fixed)
+#   - Need to completely reset attempt counter
+#   - Approved by team lead
+#
+# Usage:
+#   ./scripts/reset-circuit-breaker --processor PROCESSOR_NAME --entity ENTITY_ID --date ANALYSIS_DATE --reason "REASON" [--dry-run]
+#
+# Example:
+#   ./scripts/reset-circuit-breaker \
+#     --processor player_daily_cache \
+#     --entity lebron_james \
+#     --date 2024-12-15 \
+#     --reason "Circuit breaker bug fixed, reset required. Approved by Team Lead"
+#
+
+set -e
+
+# Parse arguments
+PROCESSOR=""
+ENTITY=""
+DATE=""
+REASON=""
+DRY_RUN=false
+CONFIRMED=false
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --processor)
+      PROCESSOR="$2"
+      shift 2
+      ;;
+    --entity)
+      ENTITY="$2"
+      shift 2
+      ;;
+    --date)
+      DATE="$2"
+      shift 2
+      ;;
+    --reason)
+      REASON="$2"
+      shift 2
+      ;;
+    --dry-run)
+      DRY_RUN=true
+      shift
+      ;;
+    --i-understand-this-is-destructive)
+      CONFIRMED=true
+      shift
+      ;;
+    *)
+      echo "Unknown option: $1"
+      echo "Usage: $0 --processor PROCESSOR_NAME --entity ENTITY_ID --date ANALYSIS_DATE --reason REASON [--dry-run] [--i-understand-this-is-destructive]"
+      exit 1
+      ;;
+  esac
+done
+
+# Validate required arguments
+if [ -z "$PROCESSOR" ] || [ -z "$ENTITY" ] || [ -z "$DATE" ] || [ -z "$REASON" ]; then
+  echo "Error: Missing required arguments"
+  echo ""
+  echo "Usage: $0 --processor PROCESSOR_NAME --entity ENTITY_ID --date ANALYSIS_DATE --reason REASON [--dry-run]"
+  echo ""
+  echo "Required:"
+  echo "  --processor    Processor name (e.g., player_daily_cache)"
+  echo "  --entity       Entity ID (e.g., lebron_james)"
+  echo "  --date         Analysis date (YYYY-MM-DD)"
+  echo "  --reason       Detailed reason for reset (include approval)"
+  echo ""
+  echo "Optional:"
+  echo "  --dry-run      Show what would be deleted without making changes"
+  echo "  --i-understand-this-is-destructive    Skip confirmation prompt (for automation)"
+  exit 1
+fi
+
+# Get current user
+USER=$(whoami)
+TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
+
+# Step 1: Show what will be deleted
+echo "=== Step 1: Records to be DELETED ==="
+CHECK_QUERY="
+SELECT
+  processor_name,
+  entity_id,
+  analysis_date,
+  attempt_number,
+  attempted_at,
+  completeness_pct,
+  skip_reason,
+  circuit_breaker_tripped,
+  circuit_breaker_until,
+  manual_override_applied,
+  notes
+FROM \`nba-props-platform.nba_orchestration.reprocess_attempts\`
+WHERE processor_name = '$PROCESSOR'
+  AND entity_id = '$ENTITY'
+  AND analysis_date = '$DATE'
+ORDER BY attempted_at DESC
+"
+
+echo "Records for: $PROCESSOR / $ENTITY / $DATE"
+echo ""
+bq query --use_legacy_sql=false --format=pretty "$CHECK_QUERY"
+
+# Get count
+COUNT_QUERY="
+SELECT COUNT(*) as total_records
+FROM \`nba-props-platform.nba_orchestration.reprocess_attempts\`
+WHERE processor_name = '$PROCESSOR'
+  AND entity_id = '$ENTITY'
+  AND analysis_date = '$DATE'
+"
+
+TOTAL_COUNT=$(bq query --use_legacy_sql=false --format=csv "$COUNT_QUERY" | tail -n 1)
+echo ""
+echo "Total records to DELETE: $TOTAL_COUNT"
+
+if [ "$TOTAL_COUNT" = "0" ]; then
+  echo "No records found. Nothing to delete."
+  exit 0
+fi
+
+# Step 2: Multiple confirmations required
+if [ "$DRY_RUN" = false ] && [ "$CONFIRMED" = false ]; then
+  echo ""
+  echo "=== ⚠️  DESTRUCTIVE OPERATION - MULTIPLE CONFIRMATIONS REQUIRED ⚠️  ==="
+  echo ""
+  echo "This will PERMANENTLY DELETE all circuit breaker attempts for:"
+  echo "  Processor: $PROCESSOR"
+  echo "  Entity: $ENTITY"
+  echo "  Date: $DATE"
+  echo "  Records: $TOTAL_COUNT"
+  echo ""
+  echo "Reason: $REASON"
+  echo "User: $USER"
+  echo ""
+  echo "This action:"
+  echo "  ✓ Resets attempt counter to 0"
+  echo "  ✓ Removes circuit breaker tracking"
+  echo "  ✗ CANNOT BE UNDONE"
+  echo "  ✗ Removes historical tracking data"
+  echo ""
+
+  read -p "Type the entity ID '$ENTITY' to confirm: " CONFIRM_ENTITY
+  if [ "$CONFIRM_ENTITY" != "$ENTITY" ]; then
+    echo "Entity mismatch. Reset cancelled."
+    exit 1
+  fi
+
+  read -p "Type 'DELETE' to confirm destructive operation: " CONFIRM_DELETE
+  if [ "$CONFIRM_DELETE" != "DELETE" ]; then
+    echo "Confirmation failed. Reset cancelled."
+    exit 1
+  fi
+
+  read -p "Final confirmation - type 'yes' to proceed: " CONFIRM_FINAL
+  if [ "$CONFIRM_FINAL" != "yes" ]; then
+    echo "Reset cancelled."
+    exit 0
+  fi
+fi
+
+# Step 3: Log the deletion (before deleting)
+echo ""
+echo "=== Step 3: Logging Reset Action ==="
+
+LOG_QUERY="
+INSERT INTO \`nba-props-platform.nba_orchestration.reprocess_attempts\`
+(processor_name, entity_id, analysis_date, attempt_number, attempted_at, completeness_pct, skip_reason, circuit_breaker_tripped, circuit_breaker_until, manual_override_applied, notes)
+VALUES
+('$PROCESSOR', '$ENTITY', '$DATE', 0, CURRENT_TIMESTAMP(), 0.0, 'RESET', FALSE, NULL, TRUE,
+ 'RESET: All previous attempts deleted by $USER on $TIMESTAMP. Reason: $REASON. Previous attempts: $TOTAL_COUNT')
+"
+
+if [ "$DRY_RUN" = true ]; then
+  echo "[DRY RUN] Would log reset action"
+else
+  bq query --use_legacy_sql=false "$LOG_QUERY"
+  echo "✓ Reset action logged"
+fi
+
+# Step 4: Delete records
+echo ""
+echo "=== Step 4: Deleting Circuit Breaker Records ==="
+
+DELETE_QUERY="
+DELETE FROM \`nba-props-platform.nba_orchestration.reprocess_attempts\`
+WHERE processor_name = '$PROCESSOR'
+  AND entity_id = '$ENTITY'
+  AND analysis_date = '$DATE'
+  AND notes NOT LIKE 'RESET:%'
+"
+
+if [ "$DRY_RUN" = true ]; then
+  echo "[DRY RUN] Would execute:"
+  echo "$DELETE_QUERY"
+  echo ""
+  echo "[DRY RUN] No changes made."
+else
+  bq query --use_legacy_sql=false "$DELETE_QUERY"
+  echo "✓ Circuit breaker records deleted"
+fi
+
+# Step 5: Verify
+echo ""
+echo "=== Step 5: Verification ==="
+VERIFY_QUERY="
+SELECT
+  processor_name,
+  entity_id,
+  analysis_date,
+  attempt_number,
+  circuit_breaker_tripped,
+  notes
+FROM \`nba-props-platform.nba_orchestration.reprocess_attempts\`
+WHERE processor_name = '$PROCESSOR'
+  AND entity_id = '$ENTITY'
+  AND analysis_date = '$DATE'
+ORDER BY attempted_at DESC
+"
+
+bq query --use_legacy_sql=false --format=pretty "$VERIFY_QUERY"
+
+if [ "$DRY_RUN" = false ]; then
+  echo ""
+  echo "✓ Circuit breaker reset complete"
+  echo ""
+  echo "Entity can now be processed fresh (attempt counter = 0)"
+  echo "Previous attempts: $TOTAL_COUNT (deleted)"
+  echo "Reset logged in reprocess_attempts table"
+  echo ""
+  echo "IMPORTANT: You must manually trigger the processor for date: $DATE"
+fi

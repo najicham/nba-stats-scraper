@@ -1,8 +1,8 @@
 # 00: Processor Development Guides - Overview
 
 **Created**: 2025-11-21 15:05 PST
-**Last Updated**: 2025-11-21 15:05 PST
-**Version**: 1.0
+**Last Updated**: 2025-11-21 18:31 PST
+**Version**: 1.2
 
 ---
 
@@ -33,6 +33,10 @@ This directory contains comprehensive documentation for developing NBA stats pro
 |-------|-------------|----------|------|
 | **[01-processor-development-guide.md](./01-processor-development-guide.md)** | Comprehensive processor development guide (v4.0) | All developers | 30-45 min |
 | **[02-quick-start-processor.md](./02-quick-start-processor.md)** | 5-minute quickstart with minimal examples | New developers | 5 min |
+| **[03-backfill-deployment-guide.md](./03-backfill-deployment-guide.md)** | Guide for deploying backfill jobs to production | Operations, Developers | 20 min |
+| **[04-schema-change-process.md](./04-schema-change-process.md)** | Safe schema change management across all phases | All developers | 25 min |
+| **[05-processor-documentation-guide.md](./05-processor-documentation-guide.md)** | Guide for documenting processors (cards vs full docs) | All developers | 15 min |
+| **[06-bigquery-best-practices.md](./06-bigquery-best-practices.md)** | Schema enforcement, streaming buffer, graceful failure patterns | All developers | 20 min |
 
 ### Pattern Deep-Dives
 
@@ -42,6 +46,7 @@ This directory contains comprehensive documentation for developing NBA stats pro
 | **[02-dependency-tracking.md](./processor-patterns/02-dependency-tracking.md)** | Check upstream data + track source metadata (4 fields/source) | Phase 3 | 25 min |
 | **[03-backfill-detection.md](./processor-patterns/03-backfill-detection.md)** | Automatically find historical data gaps for backfill | Phase 3 | 20 min |
 | **[04-smart-reprocessing.md](./processor-patterns/04-smart-reprocessing.md)** | Skip Phase 3 processing when Phase 2 source unchanged (~30-50% reduction) | Phase 3 | 20 min |
+| **[05-phase4-dependency-tracking.md](./processor-patterns/05-phase4-dependency-tracking.md)** | Phase 4 streamlined dependency tracking (3 fields/source, no hash) | Phase 4 | 15 min |
 
 ---
 

@@ -168,21 +168,73 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_precompute.player_composite_f
   source_team_defense_last_updated TIMESTAMP,       -- When source was last processed
   source_team_defense_rows_found INT64,             -- Rows returned from query
   source_team_defense_completeness_pct NUMERIC(5,2), -- % of expected data found
-  
+
+  -- ============================================================================
+  -- SMART REPROCESSING (Pattern #3) - 4 hash fields (1 per source)
+  -- ============================================================================
+  -- These hashes enable skipping processing when upstream data unchanged
+
+  source_player_context_hash STRING,               -- Hash from upcoming_player_game_context.data_hash
+                                                     -- Phase 3 source
+
+  source_team_context_hash STRING,                  -- Hash from upcoming_team_game_context.data_hash
+                                                     -- Phase 3 source
+
+  source_player_shot_hash STRING,                   -- Hash from player_shot_zone_analysis.data_hash
+                                                     -- Phase 4 source (Phase 4 → Phase 4 dependency!)
+
+  source_team_defense_hash STRING,                  -- Hash from team_defense_zone_analysis.data_hash
+                                                     -- Phase 4 source (Phase 4 → Phase 4 dependency!)
+
+  -- ============================================================================
+  -- SMART IDEMPOTENCY (Pattern #1) - 1 field
+  -- ============================================================================
+  data_hash STRING,                                 -- SHA256 hash of meaningful output fields
+                                                     -- Computed from: all composite scores and adjustments
+                                                     -- Excludes: processed_at, created_at, source tracking, context JSONs
+                                                     -- Used to detect if calculated factors changed
+                                                     -- NULL = pattern not yet implemented
+
   -- ============================================================================
   -- EARLY SEASON FIELDS - 2 fields
   -- ============================================================================
-  
+
   early_season_flag BOOLEAN,                        -- TRUE when insufficient data
                                                      -- Set when zone analysis has early_season_flag
-  
+
   insufficient_data_reason STRING,                  -- Why data was insufficient
                                                      -- Example: "Early season: 150/150 players lack historical data"
-  
+
+  -- ============================================================================
+  -- HISTORICAL COMPLETENESS CHECKING (14 fields)
+  -- Week 4 - Phase 4 Completeness Checking with Cascade Dependencies
+  -- ============================================================================
+  -- Completeness Metrics (4 fields)
+  expected_games_count INT64,                       -- Games expected from schedule
+  actual_games_count INT64,                         -- Games actually found in upstream table
+  completeness_percentage FLOAT64,                  -- Completeness percentage 0-100%
+  missing_games_count INT64,                        -- Number of games missing from upstream
+
+  -- Production Readiness (2 fields)
+  is_production_ready BOOLEAN,                      -- TRUE if completeness >= 90% AND upstream complete
+  data_quality_issues ARRAY<STRING>,                -- Specific quality issues found
+
+  -- Circuit Breaker (4 fields)
+  last_reprocess_attempt_at TIMESTAMP,              -- When reprocessing was last attempted
+  reprocess_attempt_count INT64,                    -- Number of reprocess attempts
+  circuit_breaker_active BOOLEAN,                   -- TRUE if max reprocess attempts reached
+  circuit_breaker_until TIMESTAMP,                  -- When circuit breaker expires (7 days from last attempt)
+
+  -- Bootstrap/Override (4 fields)
+  manual_override_required BOOLEAN,                 -- TRUE if manual intervention needed
+  season_boundary_detected BOOLEAN,                 -- TRUE if date near season start/end
+  backfill_bootstrap_mode BOOLEAN,                  -- TRUE if first 30 days of season/backfill
+  processing_decision_reason STRING,                -- Why record was processed or skipped
+
   -- ============================================================================
   -- PROCESSING METADATA - 2 fields
   -- ============================================================================
-  
+
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP(), -- Row creation timestamp
   processed_at TIMESTAMP                            -- When this calculation was performed
 )
@@ -196,7 +248,7 @@ OPTIONS(
 -- ============================================================================
 -- FIELD SUMMARY
 -- ============================================================================
--- Total fields: 43
+-- Total fields: 48 (43 + 5 smart pattern hash fields)
 --   - Identifiers: 5 (added analysis_date)
 --   - Active scores: 4
 --   - Deferred scores: 4
@@ -763,6 +815,56 @@ ORDER BY game_date DESC;
 -- 4. >5% of players with extreme adjustments (>15 or <-15)
 -- 5. >10% of players with warnings
 -- 6. Processing time >20 minutes
+-- ============================================================================
+
+-- ============================================================================
+-- ALTER TABLE (For Adding Completeness Checking - Week 4)
+-- ============================================================================
+-- Run this to add completeness checking columns to existing table:
+
+ALTER TABLE `nba-props-platform.nba_precompute.player_composite_factors`
+
+-- Historical completeness checking (14 fields)
+ADD COLUMN IF NOT EXISTS expected_games_count INT64
+  OPTIONS (description='Games expected from schedule'),
+ADD COLUMN IF NOT EXISTS actual_games_count INT64
+  OPTIONS (description='Games actually found in upstream table'),
+ADD COLUMN IF NOT EXISTS completeness_percentage FLOAT64
+  OPTIONS (description='Completeness percentage 0-100%'),
+ADD COLUMN IF NOT EXISTS missing_games_count INT64
+  OPTIONS (description='Number of games missing from upstream'),
+
+ADD COLUMN IF NOT EXISTS is_production_ready BOOLEAN
+  OPTIONS (description='TRUE if completeness >= 90% AND upstream complete'),
+ADD COLUMN IF NOT EXISTS data_quality_issues ARRAY<STRING>
+  OPTIONS (description='Specific quality issues found'),
+
+ADD COLUMN IF NOT EXISTS last_reprocess_attempt_at TIMESTAMP
+  OPTIONS (description='When reprocessing was last attempted'),
+ADD COLUMN IF NOT EXISTS reprocess_attempt_count INT64
+  OPTIONS (description='Number of reprocess attempts'),
+ADD COLUMN IF NOT EXISTS circuit_breaker_active BOOLEAN
+  OPTIONS (description='TRUE if max reprocess attempts reached'),
+ADD COLUMN IF NOT EXISTS circuit_breaker_until TIMESTAMP
+  OPTIONS (description='When circuit breaker expires (7 days from last attempt)'),
+
+ADD COLUMN IF NOT EXISTS manual_override_required BOOLEAN
+  OPTIONS (description='TRUE if manual intervention needed'),
+ADD COLUMN IF NOT EXISTS season_boundary_detected BOOLEAN
+  OPTIONS (description='TRUE if date near season start/end'),
+ADD COLUMN IF NOT EXISTS backfill_bootstrap_mode BOOLEAN
+  OPTIONS (description='TRUE if first 30 days of season/backfill'),
+ADD COLUMN IF NOT EXISTS processing_decision_reason STRING
+  OPTIONS (description='Why record was processed or skipped');
+
+-- ============================================================================
+-- Verify deployment:
+-- ============================================================================
+-- SELECT column_name, data_type, description
+-- FROM `nba-props-platform.nba_precompute.INFORMATION_SCHEMA.COLUMN_FIELD_PATHS`
+-- WHERE table_name = 'player_composite_factors'
+--   AND column_name IN ('completeness_percentage', 'is_production_ready', 'backfill_bootstrap_mode')
+-- ORDER BY column_name;
 -- ============================================================================
 
 -- ============================================================================

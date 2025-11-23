@@ -157,27 +157,128 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_precompute.team_defense_zone_
                                                      -- 100.0 = all expected data present
                                                      -- Range: 0.00-100.00
                                                      -- Example: 100.00
-  
+
+  source_team_defense_hash STRING,                  -- Hash from team_defense_game_summary.data_hash
+                                                     -- Used for smart reprocessing (Pattern #3)
+                                                     -- NULL = source has no hash or doesn't exist
+                                                     -- Example: 'a3b4c5d6e7f8...'
+
+  -- ============================================================================
+  -- SMART IDEMPOTENCY (Pattern #1) - 1 field
+  -- ============================================================================
+  -- This field enables skipping duplicate BigQuery writes when output unchanged
+
+  data_hash STRING,                                 -- SHA256 hash of meaningful output fields
+                                                     -- Computed from: all defense metrics + quality fields
+                                                     -- Excludes: processed_at, created_at, source tracking
+                                                     -- Used to detect if calculated values changed
+                                                     -- NULL = pattern not yet implemented
+                                                     -- Example: '1a2b3c4d5e6f...'
+
   -- ============================================================================
   -- OPTIONAL: EARLY SEASON FIELDS (2 fields)
   -- ============================================================================
   -- These fields are set when insufficient data exists for calculation
-  
+
   early_season_flag BOOLEAN,                        -- TRUE = insufficient data for calculation
                                                      -- Set when games_in_sample < min_games_required
                                                      -- NULL or FALSE = normal processing
                                                      -- Example: TRUE (first 2 weeks of season)
-  
+
   insufficient_data_reason STRING,                  -- Why data was insufficient
                                                      -- Only set when early_season_flag = TRUE
                                                      -- Example: "Only 3 games available, need 15"
-  
+
+  -- ============================================================================
+  -- HISTORICAL COMPLETENESS CHECKING (14 fields)
+  -- ============================================================================
+  -- These fields track whether all required historical data is present
+  -- Used during backfill to identify records that need reprocessing
+
+  -- Completeness Metrics (4 fields)
+  expected_games_count INT64,                       -- Games expected from schedule
+                                                     -- NULL = completeness not checked
+                                                     -- Example: 17 (team played 17 games)
+
+  actual_games_count INT64,                         -- Games actually found in upstream
+                                                     -- NULL = completeness not checked
+                                                     -- Example: 15 (missing 2 games)
+
+  completeness_percentage FLOAT64,                  -- Completeness (0-100%)
+                                                     -- Calculation: (actual / expected) × 100
+                                                     -- NULL = completeness not checked
+                                                     -- Range: 0.0-100.0
+                                                     -- Example: 88.2 (15/17 games)
+
+  missing_games_count INT64,                        -- Games missing from upstream
+                                                     -- Calculation: expected - actual
+                                                     -- NULL = completeness not checked
+                                                     -- Example: 2
+
+  -- Production Readiness (2 fields)
+  is_production_ready BOOLEAN,                      -- Ready for production use?
+                                                     -- TRUE = completeness_pct >= 90%
+                                                     -- FALSE = incomplete data, may need reprocessing
+                                                     -- NULL = completeness not checked
+                                                     -- Example: FALSE (only 88.2% complete)
+
+  data_quality_issues ARRAY<STRING>,                -- Specific quality issues found
+                                                     -- NULL or [] = no issues
+                                                     -- Example: ["missing_game_2024-11-05", "missing_game_2024-11-12"]
+
+  -- Circuit Breaker (4 fields)
+  last_reprocess_attempt_at TIMESTAMP,              -- When reprocessing was last attempted
+                                                     -- NULL = never reprocessed
+                                                     -- Example: '2025-01-27T23:00:00Z'
+
+  reprocess_attempt_count INT64,                    -- Number of reprocess attempts
+                                                     -- NULL or 0 = never reprocessed
+                                                     -- Max: 3 (circuit breaker trips at 3)
+                                                     -- Example: 2
+
+  circuit_breaker_active BOOLEAN,                   -- Circuit breaker tripped?
+                                                     -- TRUE = max attempts reached (3)
+                                                     -- FALSE = can still retry
+                                                     -- NULL = never reprocessed
+                                                     -- Example: FALSE
+
+  circuit_breaker_until TIMESTAMP,                  -- When circuit breaker expires
+                                                     -- NULL = circuit breaker not active
+                                                     -- Set to: last_attempt + 7 days
+                                                     -- Example: '2025-02-03T23:00:00Z'
+
+  -- Bootstrap/Override (4 fields)
+  manual_override_required BOOLEAN,                 -- Manual intervention needed?
+                                                     -- TRUE = circuit breaker tripped, manual fix required
+                                                     -- FALSE = automatic retry allowed
+                                                     -- NULL = no issues
+                                                     -- Example: FALSE
+
+  season_boundary_detected BOOLEAN,                 -- Date near season start/end?
+                                                     -- TRUE = Oct-Nov or April (expected gaps)
+                                                     -- FALSE = mid-season
+                                                     -- Used to prevent false alerts
+                                                     -- Example: FALSE
+
+  backfill_bootstrap_mode BOOLEAN,                  -- In bootstrap mode?
+                                                     -- TRUE = first 30 days of season/backfill
+                                                     -- FALSE = normal operation
+                                                     -- Allows partial data during early dates
+                                                     -- Example: FALSE
+
+  processing_decision_reason STRING,                -- Why processed or skipped?
+                                                     -- Values: 'processed_successfully',
+                                                     --         'incomplete_upstream_data',
+                                                     --         'circuit_breaker_active',
+                                                     --         'early_season_placeholder'
+                                                     -- Example: 'incomplete_upstream_data'
+
   -- ============================================================================
   -- PROCESSING METADATA (2 fields)
   -- ============================================================================
   processed_at TIMESTAMP NOT NULL,                  -- When this calculation was performed
                                                      -- Example: '2025-01-27T23:10:00Z'
-  
+
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP()  -- Row creation timestamp
 )
 PARTITION BY analysis_date
@@ -203,16 +304,52 @@ ADD COLUMN IF NOT EXISTS source_team_defense_rows_found INT64
 ADD COLUMN IF NOT EXISTS source_team_defense_completeness_pct NUMERIC(5,2)
   OPTIONS (description="Percentage of expected rows found (0-100)"),
 
+-- Smart patterns (2 fields)
+ADD COLUMN IF NOT EXISTS source_team_defense_hash STRING
+  OPTIONS (description="Hash from team_defense_game_summary for smart reprocessing"),
+ADD COLUMN IF NOT EXISTS data_hash STRING
+  OPTIONS (description="SHA256 hash of output for smart idempotency"),
+
 -- Early season fields (2 fields)
 ADD COLUMN IF NOT EXISTS early_season_flag BOOLEAN
   OPTIONS (description="TRUE when insufficient games for calculation"),
 ADD COLUMN IF NOT EXISTS insufficient_data_reason STRING
-  OPTIONS (description="Explanation of why data was insufficient");
+  OPTIONS (description="Explanation of why data was insufficient"),
+
+-- Historical completeness checking (14 fields)
+ADD COLUMN IF NOT EXISTS expected_games_count INT64
+  OPTIONS (description="Games expected from schedule"),
+ADD COLUMN IF NOT EXISTS actual_games_count INT64
+  OPTIONS (description="Games actually found in upstream table"),
+ADD COLUMN IF NOT EXISTS completeness_percentage FLOAT64
+  OPTIONS (description="Completeness percentage 0-100%"),
+ADD COLUMN IF NOT EXISTS missing_games_count INT64
+  OPTIONS (description="Number of games missing from upstream"),
+ADD COLUMN IF NOT EXISTS is_production_ready BOOLEAN
+  OPTIONS (description="TRUE if completeness >= 90%"),
+ADD COLUMN IF NOT EXISTS data_quality_issues ARRAY<STRING>
+  OPTIONS (description="Specific quality issues found"),
+ADD COLUMN IF NOT EXISTS last_reprocess_attempt_at TIMESTAMP
+  OPTIONS (description="When reprocessing was last attempted"),
+ADD COLUMN IF NOT EXISTS reprocess_attempt_count INT64
+  OPTIONS (description="Number of reprocess attempts"),
+ADD COLUMN IF NOT EXISTS circuit_breaker_active BOOLEAN
+  OPTIONS (description="TRUE if max reprocess attempts reached"),
+ADD COLUMN IF NOT EXISTS circuit_breaker_until TIMESTAMP
+  OPTIONS (description="When circuit breaker expires (7 days from last attempt)"),
+ADD COLUMN IF NOT EXISTS manual_override_required BOOLEAN
+  OPTIONS (description="TRUE if manual intervention needed"),
+ADD COLUMN IF NOT EXISTS season_boundary_detected BOOLEAN
+  OPTIONS (description="TRUE if date near season start/end"),
+ADD COLUMN IF NOT EXISTS backfill_bootstrap_mode BOOLEAN
+  OPTIONS (description="TRUE if first 30 days of season/backfill"),
+ADD COLUMN IF NOT EXISTS processing_decision_reason STRING
+  OPTIONS (description="Why record was processed or skipped");
 
 -- ============================================================================
 -- FIELD SUMMARY
 -- ============================================================================
--- Total fields: 32
+-- Total fields: 48
 --   - Identifiers: 2
 --   - Paint defense: 5
 --   - Mid-range defense: 4
@@ -220,8 +357,10 @@ ADD COLUMN IF NOT EXISTS insufficient_data_reason STRING
 --   - Overall metrics: 4
 --   - Strengths/weaknesses: 2
 --   - Data quality: 2
---   - Source tracking (v4.0): 3
+--   - Source tracking (v4.0): 4 (including hash)
+--   - Smart patterns (hash columns): 1
 --   - Early season (optional): 2
+--   - Historical completeness checking: 14
 --   - Processing metadata: 2
 
 -- ============================================================================
@@ -270,11 +409,15 @@ ADD COLUMN IF NOT EXISTS insufficient_data_reason STRING
   "source_team_defense_last_updated": "2025-01-27T23:05:00Z",
   "source_team_defense_rows_found": 450,
   "source_team_defense_completeness_pct": 100.00,
-  
+  "source_team_defense_hash": "a3b4c5d6e7f89a0b1c2d3e4f567890ab",
+
+  -- Smart patterns
+  "data_hash": "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d",
+
   -- Early season (not set for normal season)
   "early_season_flag": null,
   "insufficient_data_reason": null,
-  
+
   -- Processing metadata
   "processed_at": "2025-01-27T23:10:00Z",
   "created_at": "2025-01-27T23:10:15Z"
@@ -327,11 +470,15 @@ ADD COLUMN IF NOT EXISTS insufficient_data_reason STRING
   "source_team_defense_last_updated": "2024-10-28T23:05:00Z",
   "source_team_defense_rows_found": 90,
   "source_team_defense_completeness_pct": 100.00,
-  
+  "source_team_defense_hash": "7x8y9z0a1b2c3d4e5f6g7h8i9j0k1l2m",
+
+  -- Smart patterns
+  "data_hash": "9m0n1o2p3q4r5s6t7u8v9w0x1y2z3a4b",
+
   -- Early season (SET)
   "early_season_flag": true,
   "insufficient_data_reason": "Only 3 games available, need 15",
-  
+
   -- Processing metadata
   "processed_at": "2024-10-28T23:10:00Z",
   "created_at": "2024-10-28T23:10:15Z"

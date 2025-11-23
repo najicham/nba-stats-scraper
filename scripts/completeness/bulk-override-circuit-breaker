@@ -1,0 +1,237 @@
+#!/bin/bash
+#
+# Bulk Override Circuit Breakers
+#
+# Usage:
+#   ./scripts/bulk-override-circuit-breaker --date-from DATE --date-to DATE --reason "REASON" [--processor PROCESSOR] [--dry-run]
+#
+# Examples:
+#   # Override all circuit breakers from Dec 10-15 (scraper outage)
+#   ./scripts/bulk-override-circuit-breaker \
+#     --date-from 2024-12-10 \
+#     --date-to 2024-12-15 \
+#     --reason "Scraper outage resolved, data backfilled"
+#
+#   # Override only player_daily_cache
+#   ./scripts/bulk-override-circuit-breaker \
+#     --date-from 2024-12-10 \
+#     --date-to 2024-12-15 \
+#     --processor player_daily_cache \
+#     --reason "Player data backfilled after scraper fix"
+#
+#   # Dry run to see what would be affected
+#   ./scripts/bulk-override-circuit-breaker \
+#     --date-from 2024-12-10 \
+#     --date-to 2024-12-15 \
+#     --reason "Test" \
+#     --dry-run
+#
+
+set -e
+
+# Parse arguments
+DATE_FROM=""
+DATE_TO=""
+PROCESSOR=""
+REASON=""
+DRY_RUN=false
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --date-from)
+      DATE_FROM="$2"
+      shift 2
+      ;;
+    --date-to)
+      DATE_TO="$2"
+      shift 2
+      ;;
+    --processor)
+      PROCESSOR="$2"
+      shift 2
+      ;;
+    --reason)
+      REASON="$2"
+      shift 2
+      ;;
+    --dry-run)
+      DRY_RUN=true
+      shift
+      ;;
+    *)
+      echo "Unknown option: $1"
+      echo "Usage: $0 --date-from DATE --date-to DATE --reason REASON [--processor PROCESSOR] [--dry-run]"
+      exit 1
+      ;;
+  esac
+done
+
+# Validate required arguments
+if [ -z "$DATE_FROM" ] || [ -z "$DATE_TO" ] || [ -z "$REASON" ]; then
+  echo "Error: Missing required arguments"
+  echo ""
+  echo "Usage: $0 --date-from DATE --date-to DATE --reason REASON [--processor PROCESSOR] [--dry-run]"
+  echo ""
+  echo "Required:"
+  echo "  --date-from    Start date (YYYY-MM-DD)"
+  echo "  --date-to      End date (YYYY-MM-DD)"
+  echo "  --reason       Reason for bulk override"
+  echo ""
+  echo "Optional:"
+  echo "  --processor    Only override specific processor (default: all processors)"
+  echo "  --dry-run      Show what would be updated without making changes"
+  exit 1
+fi
+
+# Get current user
+USER=$(whoami)
+TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
+
+# Build WHERE clause
+WHERE_CLAUSE="
+WHERE analysis_date BETWEEN '$DATE_FROM' AND '$DATE_TO'
+  AND circuit_breaker_tripped = TRUE
+"
+
+if [ -n "$PROCESSOR" ]; then
+  WHERE_CLAUSE="$WHERE_CLAUSE
+  AND processor_name = '$PROCESSOR'"
+fi
+
+# Step 1: Show what will be affected
+echo "=== Step 1: Impact Analysis ==="
+echo ""
+echo "Date Range: $DATE_FROM to $DATE_TO"
+if [ -n "$PROCESSOR" ]; then
+  echo "Processor: $PROCESSOR"
+else
+  echo "Processor: ALL"
+fi
+echo "Reason: $REASON"
+echo ""
+
+PREVIEW_QUERY="
+SELECT
+  processor_name,
+  COUNT(DISTINCT entity_id) as unique_entities,
+  COUNT(*) as total_attempts,
+  MIN(analysis_date) as earliest_date,
+  MAX(analysis_date) as latest_date,
+  AVG(completeness_pct) as avg_completeness
+FROM \`nba-props-platform.nba_orchestration.reprocess_attempts\`
+$WHERE_CLAUSE
+GROUP BY processor_name
+ORDER BY total_attempts DESC
+"
+
+echo "Affected Processors:"
+bq query --use_legacy_sql=false --format=pretty "$PREVIEW_QUERY"
+
+# Get total count
+TOTAL_QUERY="
+SELECT COUNT(*) as total_records
+FROM \`nba-props-platform.nba_orchestration.reprocess_attempts\`
+$WHERE_CLAUSE
+"
+
+TOTAL_COUNT=$(bq query --use_legacy_sql=false --format=csv "$TOTAL_QUERY" | tail -n 1)
+echo ""
+echo "Total records to override: $TOTAL_COUNT"
+
+if [ "$TOTAL_COUNT" = "0" ]; then
+  echo "No records match criteria. Exiting."
+  exit 0
+fi
+
+# Step 2: Sample records
+echo ""
+echo "=== Step 2: Sample Records ==="
+SAMPLE_QUERY="
+SELECT
+  processor_name,
+  entity_id,
+  analysis_date,
+  attempt_number,
+  completeness_pct,
+  skip_reason,
+  circuit_breaker_until
+FROM \`nba-props-platform.nba_orchestration.reprocess_attempts\`
+$WHERE_CLAUSE
+ORDER BY attempted_at DESC
+LIMIT 10
+"
+
+bq query --use_legacy_sql=false --format=pretty "$SAMPLE_QUERY"
+
+# Ask for confirmation
+if [ "$DRY_RUN" = false ]; then
+  echo ""
+  echo "=== Confirmation Required ==="
+  echo "⚠️  WARNING: This will override $TOTAL_COUNT circuit breaker records!"
+  echo ""
+  echo "Date Range: $DATE_FROM to $DATE_TO"
+  if [ -n "$PROCESSOR" ]; then
+    echo "Processor: $PROCESSOR"
+  else
+    echo "Processor: ALL"
+  fi
+  echo "Reason: $REASON"
+  echo "User: $USER"
+  echo ""
+  read -p "Proceed with bulk override? Type 'yes' to confirm: " CONFIRM
+
+  if [ "$CONFIRM" != "yes" ]; then
+    echo "Bulk override cancelled."
+    exit 0
+  fi
+fi
+
+# Step 3: Apply override
+echo ""
+echo "=== Step 3: Applying Bulk Override ==="
+
+OVERRIDE_NOTES="Bulk override applied by $USER on $TIMESTAMP. Reason: $REASON"
+
+UPDATE_QUERY="
+UPDATE \`nba-props-platform.nba_orchestration.reprocess_attempts\`
+SET
+  manual_override_applied = TRUE,
+  notes = '$OVERRIDE_NOTES'
+$WHERE_CLAUSE
+"
+
+if [ "$DRY_RUN" = true ]; then
+  echo "[DRY RUN] Would execute:"
+  echo "$UPDATE_QUERY"
+  echo ""
+  echo "[DRY RUN] No changes made."
+else
+  bq query --use_legacy_sql=false "$UPDATE_QUERY"
+  echo "✓ Bulk override applied successfully"
+fi
+
+# Step 4: Verify
+echo ""
+echo "=== Step 4: Verification ==="
+VERIFY_QUERY="
+SELECT
+  processor_name,
+  COUNT(*) as override_count,
+  COUNT(DISTINCT entity_id) as unique_entities
+FROM \`nba-props-platform.nba_orchestration.reprocess_attempts\`
+WHERE manual_override_applied = TRUE
+  AND notes LIKE '%$USER%'
+  AND notes LIKE '%$TIMESTAMP%'
+GROUP BY processor_name
+ORDER BY override_count DESC
+"
+
+bq query --use_legacy_sql=false --format=pretty "$VERIFY_QUERY"
+
+if [ "$DRY_RUN" = false ]; then
+  echo ""
+  echo "✓ Bulk override complete"
+  echo ""
+  echo "IMPORTANT: This override does NOT automatically reprocess entities."
+  echo "You must manually trigger processors for date range: $DATE_FROM to $DATE_TO"
+fi

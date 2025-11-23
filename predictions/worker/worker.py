@@ -367,6 +367,27 @@ def process_player_predictions(
     logger.info(f"Features validated for {player_lookup} (quality: {features['feature_quality_score']:.1f})")
     metadata['feature_quality_score'] = features['feature_quality_score']
 
+    # Step 2.5: Check feature completeness (Phase 5)
+    completeness = features.get('completeness', {})
+    metadata['completeness'] = completeness
+
+    if not completeness.get('is_production_ready', False) and not completeness.get('backfill_bootstrap_mode', False):
+        logger.warning(
+            f"Features not production-ready for {player_lookup} "
+            f"(completeness: {completeness.get('completeness_percentage', 0):.1f}%) - skipping"
+        )
+        metadata['error_message'] = (
+            f"Features incomplete: {completeness.get('completeness_percentage', 0):.1f}% "
+            f"(expected: {completeness.get('expected_games_count', 0)}, "
+            f"actual: {completeness.get('actual_games_count', 0)})"
+        )
+        metadata['error_type'] = 'IncompleFeatureDataError'
+        metadata['skip_reason'] = 'features_not_production_ready'
+        return {'predictions': [], 'metadata': metadata}
+
+    if completeness.get('backfill_bootstrap_mode', False):
+        logger.info(f"Processing {player_lookup} in bootstrap mode (completeness: {completeness.get('completeness_percentage', 0):.1f}%)")
+
     # Step 3: Load historical games (REQUIRED for Similarity)
     logger.debug(f"Loading historical games for {player_lookup}")
     historical_load_start = time.time()
@@ -744,7 +765,26 @@ def format_prediction_for_bigquery(
                 'agreement_type': agreement.get('type')
             })
         })
-    
+
+    # Add completeness metadata (Phase 5)
+    completeness = features.get('completeness', {})
+    record.update({
+        'expected_games_count': completeness.get('expected_games_count'),
+        'actual_games_count': completeness.get('actual_games_count'),
+        'completeness_percentage': completeness.get('completeness_percentage', 0.0),
+        'missing_games_count': completeness.get('missing_games_count'),
+        'is_production_ready': completeness.get('is_production_ready', False),
+        'data_quality_issues': completeness.get('data_quality_issues', []),
+        'last_reprocess_attempt_at': None,  # Not tracked at worker level
+        'reprocess_attempt_count': 0,  # Not tracked at worker level
+        'circuit_breaker_active': False,  # Not tracked at worker level
+        'circuit_breaker_until': None,  # Not tracked at worker level
+        'manual_override_required': False,  # Not tracked at worker level
+        'season_boundary_detected': False,  # Not tracked at worker level
+        'backfill_bootstrap_mode': completeness.get('backfill_bootstrap_mode', False),
+        'processing_decision_reason': completeness.get('processing_decision_reason', 'processed_successfully')
+    })
+
     return record
 
 

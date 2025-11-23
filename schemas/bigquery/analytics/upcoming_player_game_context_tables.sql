@@ -194,6 +194,45 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_analytics.upcoming_player_gam
   processed_with_issues BOOLEAN,                    -- Issues flag (missing lines, <3 bookmakers, etc.)
   
   -- ============================================================================
+  -- COMPLETENESS CHECKING METADATA (25 fields) - Added Week 5
+  -- ============================================================================
+
+  -- Completeness Metrics (4 fields)
+  expected_games_count INT64,                       -- Games expected from schedule
+  actual_games_count INT64,                         -- Games actually found in upstream table
+  completeness_percentage FLOAT64,                  -- Completeness percentage 0-100%
+  missing_games_count INT64,                        -- Number of games missing from upstream
+
+  -- Production Readiness (2 fields)
+  is_production_ready BOOLEAN,                      -- TRUE if all windows >= 90% complete
+  data_quality_issues ARRAY<STRING>,                -- Specific quality issues found
+
+  -- Circuit Breaker (4 fields)
+  last_reprocess_attempt_at TIMESTAMP,              -- When reprocessing was last attempted
+  reprocess_attempt_count INT64,                    -- Number of reprocess attempts
+  circuit_breaker_active BOOLEAN,                   -- TRUE if max reprocess attempts reached
+  circuit_breaker_until TIMESTAMP,                  -- When circuit breaker expires (7 days from last attempt)
+
+  -- Bootstrap/Override (4 fields)
+  manual_override_required BOOLEAN,                 -- TRUE if manual intervention needed
+  season_boundary_detected BOOLEAN,                 -- TRUE if date near season start/end
+  backfill_bootstrap_mode BOOLEAN,                  -- TRUE if first 30 days of season/backfill
+  processing_decision_reason STRING,                -- Why record was processed or skipped
+
+  -- Multi-Window Completeness (11 fields - 5 windows × 2 + 1 all_windows)
+  l5_completeness_pct FLOAT64,                      -- L5 games completeness percentage
+  l5_is_complete BOOLEAN,                           -- TRUE if L5 >= 90% complete
+  l10_completeness_pct FLOAT64,                     -- L10 games completeness percentage
+  l10_is_complete BOOLEAN,                          -- TRUE if L10 >= 90% complete
+  l7d_completeness_pct FLOAT64,                     -- L7 days completeness percentage
+  l7d_is_complete BOOLEAN,                          -- TRUE if L7d >= 90% complete
+  l14d_completeness_pct FLOAT64,                    -- L14 days completeness percentage
+  l14d_is_complete BOOLEAN,                         -- TRUE if L14d >= 90% complete
+  l30d_completeness_pct FLOAT64,                    -- L30 days completeness percentage
+  l30d_is_complete BOOLEAN,                         -- TRUE if L30d >= 90% complete
+  all_windows_complete BOOLEAN,                     -- TRUE if ALL windows >= 90% complete
+
+  -- ============================================================================
   -- UPDATE TRACKING (3 fields)
   -- ============================================================================
   context_version INT64,                            -- Update counter (for intraday updates)
@@ -223,9 +262,10 @@ OPTIONS(
 -- Real-time updates:         4 fields
 -- Source tracking:          16 fields (4 sources × 4 fields - includes smart idempotency hashes)
 -- Data quality:              3 fields
+-- Completeness checking:    25 fields (14 standard + 11 multi-window)
 -- Update tracking:           3 fields
 -- -------------------------
--- TOTAL:                    88 fields
+-- TOTAL:                   113 fields (updated Week 5)
 
 -- ============================================================================
 -- CHANGE LOG
@@ -651,12 +691,73 @@ OPTIONS(
 -- WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY);
 
 -- ============================================================================
+-- DEPLOYMENT: Add completeness checking columns (Week 5)
+-- ============================================================================
+
+ALTER TABLE `nba-props-platform.nba_analytics.upcoming_player_game_context`
+ADD COLUMN IF NOT EXISTS expected_games_count INT64
+  OPTIONS (description='Games expected from schedule'),
+ADD COLUMN IF NOT EXISTS actual_games_count INT64
+  OPTIONS (description='Games actually found in upstream table'),
+ADD COLUMN IF NOT EXISTS completeness_percentage FLOAT64
+  OPTIONS (description='Completeness percentage 0-100%'),
+ADD COLUMN IF NOT EXISTS missing_games_count INT64
+  OPTIONS (description='Number of games missing from upstream'),
+
+ADD COLUMN IF NOT EXISTS is_production_ready BOOLEAN
+  OPTIONS (description='TRUE if all windows >= 90% complete'),
+ADD COLUMN IF NOT EXISTS data_quality_issues ARRAY<STRING>
+  OPTIONS (description='Specific quality issues found'),
+
+ADD COLUMN IF NOT EXISTS last_reprocess_attempt_at TIMESTAMP
+  OPTIONS (description='When reprocessing was last attempted'),
+ADD COLUMN IF NOT EXISTS reprocess_attempt_count INT64
+  OPTIONS (description='Number of reprocess attempts'),
+ADD COLUMN IF NOT EXISTS circuit_breaker_active BOOLEAN
+  OPTIONS (description='TRUE if max reprocess attempts reached'),
+ADD COLUMN IF NOT EXISTS circuit_breaker_until TIMESTAMP
+  OPTIONS (description='When circuit breaker expires (7 days from last attempt)'),
+
+ADD COLUMN IF NOT EXISTS manual_override_required BOOLEAN
+  OPTIONS (description='TRUE if manual intervention needed'),
+ADD COLUMN IF NOT EXISTS season_boundary_detected BOOLEAN
+  OPTIONS (description='TRUE if date near season start/end'),
+ADD COLUMN IF NOT EXISTS backfill_bootstrap_mode BOOLEAN
+  OPTIONS (description='TRUE if first 30 days of season/backfill'),
+ADD COLUMN IF NOT EXISTS processing_decision_reason STRING
+  OPTIONS (description='Why record was processed or skipped'),
+
+ADD COLUMN IF NOT EXISTS l5_completeness_pct FLOAT64
+  OPTIONS (description='L5 games completeness percentage'),
+ADD COLUMN IF NOT EXISTS l5_is_complete BOOLEAN
+  OPTIONS (description='TRUE if L5 >= 90% complete'),
+ADD COLUMN IF NOT EXISTS l10_completeness_pct FLOAT64
+  OPTIONS (description='L10 games completeness percentage'),
+ADD COLUMN IF NOT EXISTS l10_is_complete BOOLEAN
+  OPTIONS (description='TRUE if L10 >= 90% complete'),
+ADD COLUMN IF NOT EXISTS l7d_completeness_pct FLOAT64
+  OPTIONS (description='L7 days completeness percentage'),
+ADD COLUMN IF NOT EXISTS l7d_is_complete BOOLEAN
+  OPTIONS (description='TRUE if L7d >= 90% complete'),
+ADD COLUMN IF NOT EXISTS l14d_completeness_pct FLOAT64
+  OPTIONS (description='L14 days completeness percentage'),
+ADD COLUMN IF NOT EXISTS l14d_is_complete BOOLEAN
+  OPTIONS (description='TRUE if L14d >= 90% complete'),
+ADD COLUMN IF NOT EXISTS l30d_completeness_pct FLOAT64
+  OPTIONS (description='L30 days completeness percentage'),
+ADD COLUMN IF NOT EXISTS l30d_is_complete BOOLEAN
+  OPTIONS (description='TRUE if L30d >= 90% complete'),
+ADD COLUMN IF NOT EXISTS all_windows_complete BOOLEAN
+  OPTIONS (description='TRUE if ALL windows >= 90% complete');
+
+-- ============================================================================
 -- VERSION HISTORY
 -- ============================================================================
 -- v1.0 (Initial):       Complete schema design with Phase 2 source tracking
 -- v1.1 (+source_track): Added 4 Phase 2 sources × 3 fields = 12 tracking fields
 -- v1.2 (+docs):         Added comprehensive documentation and example queries
--- 
+-- v1.3 (+completeness): Added 25 completeness checking columns (Week 5)
+--
 -- Last Updated: November 2025
 -- Status: Ready for Implementation
 -- Next: Implement UpcomingPlayerGameContextProcessor

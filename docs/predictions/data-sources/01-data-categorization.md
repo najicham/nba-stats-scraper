@@ -1,638 +1,420 @@
-# Phase 5 Data Categorization Framework
+# NBA Predictions - Data Categorization Framework
 
-**File:** `docs/predictions/data-sources/01-data-categorization.md`
-**Created:** 2025-11-15
-**Last Updated:** 2025-11-15
-**Purpose:** Categorize all Phase 5 data by availability timing and usage in prediction pipeline
-**Status:** Current
-**Source:** Wiki documentation (Data Categorization Framework)
+**Created:** 2025-11-21 17:45:00 PST
+**Last Updated:** 2025-11-21 17:45:00 PST
 
----
+Quick reference for the four-category data framework used in similarity-based predictions.
 
-## 📋 Table of Contents
+## Overview
 
-1. [Overview](#overview)
-2. [The Four Categories](#four-categories)
-3. [Category 1: Pre-Game Context](#pre-game-context)
-4. [Category 2: Real-Time Context](#real-time-context)
-5. [Category 3: Game Results](#game-results)
-6. [Category 4: ML Predictions](#ml-predictions)
-7. [Data Pipeline Integration](#data-pipeline)
-8. [Business Applications](#business-applications)
-9. [Technical Implementation](#technical-implementation)
+**Purpose:** Organize data by when it becomes available and how it's used
 
----
+**Categories:**
+1. **Pre-Game Context** - Static before tipoff (similarity matching)
+2. **Real-Time Context** - Updates until game time (adjustments)
+3. **Game Results** - Actual outcomes (training data)
+4. **ML Predictions** - Model outputs (feedback loop)
 
-## 🎯 Overview {#overview}
+## The Four Categories
 
-The NBA props prediction system organizes all data into **four distinct categories** based on when the data becomes available and how it's used in the prediction process. This framework ensures clear data pipeline timing, enables reliable similarity matching, and creates a feedback loop for continuous model improvement.
+### 1. Pre-Game Context
 
-### How Historical Predictions Work
+**Definition:** Static data available before tipoff
+
+**Purpose:** Pattern matching to find historically similar games
+
+**Update Timing:** Overnight (11 PM - 6 AM)
+
+**Key Fields:**
 
 ```
-Step 1: Collect Pre-Game + Real-Time Context for today's games
-Step 2: Find historically similar situations using Pre-Game Context
-Step 3: Analyze Game Results from those similar historical games
-Step 4: Generate ML Predictions for today, which become tomorrow's historical context
+Player Situation:
+- days_rest
+- back_to_back
+- star_teammates_out
+- usage_rate_projection
+- season_phase
+
+Recent Performance:
+- points_avg_last_5
+- points_avg_last_10
+- prop_over_streak
+- prop_under_streak
+
+Matchup Context:
+- home_game
+- opponent_def_rating_last_10
+- team_win_streak_entering
+- games_vs_opponent_career
+- points_avg_vs_opponent_career
+
+Initial Market:
+- opening_line
+- line_movement (initial)
 ```
 
-### The Feedback Loop
-
-```
-Today's Predictions
-    ↓
-Tomorrow's Historical Context
-    ↓
-Improved Pattern Matching
-    ↓
-Better Predictions
-```
-
----
-
-## 📊 The Four Categories {#four-categories}
-
-| Category | Availability | Primary Purpose | Update Timing |
-|----------|-------------|-----------------|---------------|
-| **1. Pre-Game Context** | Before tipoff (static) | Pattern matching & similarity search | Overnight (11 PM - 6 AM) |
-| **2. Real-Time Context** | Before tipoff (dynamic) | Last-minute adjustments & risk assessment | Hourly (6 AM - game time) |
-| **3. Game Results** | After game complete | Training data & accuracy measurement | Nightly (11 PM - 2 AM) |
-| **4. ML Predictions** | Morning (6-8 AM) | Today's output → Tomorrow's input | Daily (6 AM - 8 AM) |
-
----
-
-## 1️⃣ Pre-Game Context {#pre-game-context}
-
-### Definition
-
-Information available before tipoff that remains static throughout the game.
-
-### Primary Purpose
-
-Pattern matching to find historically similar situations.
-
-### Update Timing
-
-Calculated overnight (11 PM - 6 AM) after previous day's games complete.
-
-### Data Fields
-
-**Player Situation Context:**
-
-| Field | Description | Example |
-|-------|-------------|---------|
-| `days_rest` | Rest days since last game | 2 |
-| `back_to_back` | Playing consecutive nights | true |
-| `star_teammates_out` | Key players unavailable | ["Anthony Davis"] |
-| `usage_rate_projection` | Expected role based on available players | 28.5% |
-| `season_phase` | Early/mid/late season or playoffs | "mid" |
-
-**Historical Performance Patterns:**
-
-| Field | Description | Example |
-|-------|-------------|---------|
-| `points_avg_last_5` | Recent 5-game scoring average | 26.8 |
-| `points_avg_last_10` | Broader 10-game trend | 25.3 |
-| `prop_over_streak` | Consecutive games exceeding prop line | 3 |
-| `prop_under_streak` | Consecutive games falling short | 0 |
-| `games_vs_opponent_career` | Historical sample size vs this team | 47 |
-| `points_avg_vs_opponent_career` | Career scoring vs this opponent | 28.1 |
-
-**Matchup and Environmental Context:**
-
-| Field | Description | Example |
-|-------|-------------|---------|
-| `home_game` | Playing at home venue | true |
-| `opponent_def_rating_last_10` | Recent opponent defensive strength | 112.4 |
-| `team_win_streak_entering` | Team momentum entering game | 3 |
-| `team_loss_streak_entering` | Team struggles entering game | 0 |
-
-**Initial Market Context:**
-
-| Field | Description | Example |
-|-------|-------------|---------|
-| `opening_line` | First posted prop line | 25.5 |
-| `line_movement` | Movement from opening to current | +1.0 |
-
-### Similarity Matching Logic
-
-Pre-Game Context creates the "search criteria" for finding historical games. The system looks for games where a player had similar rest, opponent strength, recent form, and situational factors.
-
-**Example Query:**
-
-```sql
-SELECT
-    game_date,
-    points,
-    over_under_result
-FROM player_game_summary
-WHERE player_lookup = 'lebron-james'
-  AND days_rest BETWEEN 1 AND 2
-  AND opponent_def_rating_last_10 BETWEEN 105 AND 115
-  AND prop_over_streak <= 1
-  AND season_phase = 'mid'
-  AND home_game = TRUE
-ORDER BY game_date DESC
-LIMIT 30;
-```
-
----
-
-## 2️⃣ Real-Time Context {#real-time-context}
-
-### Definition
-
-Information that changes throughout the day before game time.
-
-### Primary Purpose
-
-Last-minute adjustments to predictions and risk assessment.
-
-### Update Timing
-
-Hourly updates from 6 AM until game time.
-
-### Data Fields
-
-**Player Availability:**
-
-| Field | Description | Example |
-|-------|-------------|---------|
-| `player_status` | Injury report designation | "probable" |
-| `injury_report` | Detailed injury description | "Right ankle soreness" |
-| `star_teammates_out` | Updated based on latest injury reports | ["Anthony Davis"] |
-
-**Market Movement:**
-
-| Field | Description | Example |
-|-------|-------------|---------|
-| `current_points_line` | Most recent prop line | 26.5 |
-| `line_movement` | Total movement from opening | +1.0 |
-| `public_betting_pct` | Percentage of bets on over | 68% |
-
-**Lineup Projections:**
-
-| Field | Description | Example |
-|-------|-------------|---------|
-| `usage_rate_projection` | Updated based on final injury reports | 32.5% |
-| `game_spread` | Point spread for the game | LAL -7.5 |
-| `team_implied_points` | Team's expected scoring output | 115.5 |
-
-### Business Logic
-
-Real-Time Context allows the system to adjust predictions as new information becomes available. If a star teammate is ruled out 2 hours before tipoff, the system can update usage projections and re-calculate predictions.
-
-**Risk Management:**
-
-Props should be pulled from offering if key context changes dramatically:
-- Player becomes questionable
-- Star teammate ruled out
-- Line moves significantly (>2.0 points)
-
-**Example Adjustment:**
-
-```python
-# 2 PM: Anthony Davis ruled OUT
-initial_prediction = {
-    'predicted_points': 26.5,
-    'confidence': 75,
-    'usage_rate_projection': 28.5
-}
-
-# Re-calculate with updated context
-updated_prediction = {
-    'predicted_points': 29.2,  # Higher usage expected
-    'confidence': 80,           # More confident with clarity
-    'usage_rate_projection': 32.5
-}
-```
-
----
-
-## 3️⃣ Game Results {#game-results}
-
-### Definition
-
-Actual performance statistics and outcomes, available only after game completion.
-
-### Primary Purpose
-
-Training data for similarity matching and measuring prediction accuracy.
-
-### Update Timing
-
-Processed nightly (11 PM - 2 AM) after games complete.
-
-### Data Fields
-
-**Performance Statistics:**
-
-| Field | Description | Example |
-|-------|-------------|---------|
-| `points` | Total points scored | 31 |
-| `minutes_played` | Playing time | 38.2 |
-| `assists` | Assists recorded | 8 |
-| `rebounds` | Total rebounds | 7 |
-| `fg_attempts` | Shot attempts (volume indicator) | 22 |
-| `usage_rate` | Actual usage percentage | 31.8% |
-
-**Prop Outcomes:**
-
-| Field | Description | Example |
-|-------|-------------|---------|
-| `over_under_result` | Whether player went OVER or UNDER | "OVER" |
-| `margin` | Points scored minus prop line | +4.5 (31 - 26.5) |
-| `points_line` | The actual line that was bet | 26.5 |
-
-**Game Context Results:**
-
-| Field | Description | Example |
-|-------|-------------|---------|
-| `win_flag` | Whether player's team won | true |
-| `overtime_periods` | Extra playing time | 0 |
-| `margin_of_victory` | Final game margin | +12 |
-| `plus_minus` | Player's impact while on court | +15 |
-
-### Training Data Logic
-
-When the system finds historically similar Pre-Game Context situations, it analyzes the Game Results from those situations to predict today's outcome.
-
-**Example Pattern Analysis:**
+**Usage Example:**
 
 ```sql
 -- Find similar historical situations
-SELECT
-    AVG(points) as avg_points_in_similar_games,
-    AVG(CASE WHEN over_under_result = 'OVER' THEN 1.0 ELSE 0.0 END) as over_rate,
-    COUNT(*) as sample_size
+SELECT AVG(points) as avg_points_similar,
+       COUNT(*) as similar_games
 FROM player_game_summary
-WHERE player_lookup = 'lebron-james'
+WHERE player_lookup = 'lebronjames'
   AND days_rest BETWEEN 1 AND 2
   AND opponent_def_rating_last_10 BETWEEN 105 AND 115
   AND home_game = TRUE
-  AND season_phase = 'mid';
-
--- Result:
--- avg_points_in_similar_games: 28.5
--- over_rate: 0.72 (72% hit rate)
--- sample_size: 18
-
--- Interpretation:
--- In 18 similar situations, LeBron averaged 28.5 points and went OVER 72% of the time.
--- If today's line is 25.5, that suggests strong OVER recommendation.
+  AND season_phase = 'mid'
+  AND prop_over_streak <= 1
 ```
 
----
+### 2. Real-Time Context
 
-## 4️⃣ ML Predictions {#ml-predictions}
+**Definition:** Updates between line opening and game time
 
-### Definition
+**Purpose:** Last-minute prediction adjustments
 
-Model-generated forecasts that become historical context for future predictions.
+**Update Timing:** Hourly (6 AM - game time)
 
-### Primary Purpose
-
-Today's output becomes tomorrow's input for improved decision-making.
-
-### Update Timing
-
-Generated each morning (6-8 AM) after Pre-Game and Real-Time Context are ready.
-
-### Data Fields
-
-**Core Predictions:**
-
-| Field | Description | Example |
-|-------|-------------|---------|
-| `ml_points_prediction` | Model's point forecast | 28.7 |
-| `ml_over_probability` | Probability of exceeding the line | 76.5% |
-| `ml_prediction_confidence` | Model's confidence level | 82 |
-| `recommendation` | Final OVER/UNDER/PASS decision | "OVER" |
-| `model_version` | Which model generated the prediction | "v2.1" |
-
-**Historical ML Context (Future Enhancement):**
-
-| Field | Description | Example |
-|-------|-------------|---------|
-| `model_historical_accuracy` | Model's accuracy on this player in similar situations | 67.5% |
-| `avg_confidence_when_over` | Average confidence when player went OVER in past | 78.2 |
-| `prediction_vs_actual_margin` | Recent prediction accuracy margin | -1.3 |
-
-### Feedback Loop Logic
-
-Today's ML predictions become part of tomorrow's Pre-Game Context. The system can learn patterns like:
-- "When the model had 85% confidence on LeBron props, he hit 87% of the time"
-- "Model tends to be overconfident on back-to-back games"
-
-**Self-Improving Intelligence:**
-
-```sql
--- Historical model performance becomes context
-SELECT
-    player_lookup,
-    AVG(ml_prediction_confidence) as avg_model_confidence,
-    AVG(CASE WHEN prediction_correct = TRUE THEN 1.0 ELSE 0.0 END) as accuracy,
-    COUNT(*) as sample_size
-FROM prediction_accuracy
-WHERE model_version = 'v2.1'
-  AND similar_context_situation = TRUE
-GROUP BY player_lookup
-HAVING sample_size >= 20
-ORDER BY accuracy DESC;
-```
-
-**Example Insight:**
+**Key Fields:**
 
 ```
-Player: lebron-james
-Avg Confidence: 78.5
-Accuracy: 72.3% (84/116 games)
-Insight: Model is well-calibrated for LeBron (78% confidence → 72% accuracy)
+Player Availability:
+- player_status (probable/questionable/doubtful/out)
+- injury_report
+- star_teammates_out (updated)
 
-Player: austin-reaves
-Avg Confidence: 71.2
-Accuracy: 58.1% (18/31 games)
-Insight: Model overconfident on Reaves (71% confidence → 58% accuracy)
-→ Adjust confidence downward by 10-15 points for role players
+Market Movement:
+- current_points_line
+- line_movement (total)
+- public_betting_pct
+
+Game Context:
+- game_spread
+- team_implied_points
+- usage_rate_projection (updated)
 ```
 
----
-
-## 🔄 Data Pipeline Integration {#data-pipeline}
-
-### Overnight Processing (11 PM - 6 AM)
-
-```
-┌────────────────────────────────────────┐
-│ 1. Load Game Results                   │ (11 PM - 12 AM)
-│    - Process completed games           │
-│    - Calculate prop outcomes           │
-│    - Update player_game_summary table  │
-└────────────────────────────────────────┘
-                ↓
-┌────────────────────────────────────────┐
-│ 2. Calculate Pre-Game Context          │ (12 AM - 4 AM)
-│    - Historical patterns (last 5/10)   │
-│    - Opponent matchups                 │
-│    - Situational factors               │
-└────────────────────────────────────────┘
-                ↓
-┌────────────────────────────────────────┐
-│ 3. Update Similarity Databases         │ (4 AM - 6 AM)
-│    - Index new game data               │
-│    - Recalculate similarity scores     │
-└────────────────────────────────────────┘
-```
-
-### Morning Preparation (6 AM - 8 AM)
-
-```
-┌────────────────────────────────────────┐
-│ 1. Initialize Real-Time Context        │ (6 AM)
-│    - Load initial injury reports       │
-│    - Get opening betting lines         │
-│    - Set baseline projections          │
-└────────────────────────────────────────┘
-                ↓
-┌────────────────────────────────────────┐
-│ 2. Generate ML Predictions             │ (6:15 AM - 6:30 AM)
-│    - Use Pre-Game Context              │
-│    - Apply initial Real-Time Context   │
-│    - Create similarity matches         │
-│    - Run prediction systems            │
-└────────────────────────────────────────┘
-```
-
-### Intraday Updates (8 AM - Game Time)
-
-```
-Every Hour:
-┌────────────────────────────────────────┐
-│ 1. Update Real-Time Context            │
-│    - Refresh injury reports            │
-│    - Check line movement               │
-│    - Update betting percentages        │
-└────────────────────────────────────────┘
-                ↓
-┌────────────────────────────────────────┐
-│ 2. Refresh ML Predictions              │ (if significant change)
-│    - Re-run affected players           │
-│    - Update confidence levels          │
-│    - Trigger risk assessment           │
-└────────────────────────────────────────┘
-```
-
-### Post-Game Analysis (Next Day)
-
-```
-┌────────────────────────────────────────┐
-│ 1. Calculate Prediction Accuracy       │
-│    - Compare ML Predictions vs Results │
-│    - Update model performance metrics  │
-└────────────────────────────────────────┘
-                ↓
-┌────────────────────────────────────────┐
-│ 2. Identify Improvement Patterns       │
-│    - System-specific performance       │
-│    - Player-specific calibration       │
-│    - Context-specific adjustments      │
-└────────────────────────────────────────┘
-```
-
----
-
-## 💼 Business Applications {#business-applications}
-
-### 1. Similarity Matching Engine
-
-Uses Pre-Game Context to find historical games where similar conditions existed, then analyzes Game Results patterns from those situations.
-
-**Value:** Enables data-driven predictions based on historical patterns, not just recent averages.
-
-### 2. Risk Management
-
-Real-Time Context changes trigger re-evaluation of prop offerings and confidence levels.
-
-**Value:** Protects against offering bad lines when key information changes.
-
-**Example Rules:**
+**Risk Management:**
 
 ```python
-# Risk assessment thresholds
-RISK_RULES = {
-    'player_status_change': {
-        'questionable': 'PULL_PROP',
-        'doubtful': 'PULL_PROP',
-        'out': 'PULL_PROP'
-    },
-    'star_teammate_ruled_out': 'REASSESS_CONFIDENCE',
-    'line_movement_threshold': 2.0,  # Pull if line moves >2 points
-    'public_betting_extreme': 85  # Pull if >85% on one side
+# Pull prop if significant context change
+if context_changed_significantly(old, new):
+    if new.star_teammates_out > old.star_teammates_out:
+        logger.warning("Star teammate ruled out - pull prop")
+        return PULL_FROM_OFFERING
+```
+
+### 3. Game Results
+
+**Definition:** Actual performance (post-game only)
+
+**Purpose:** Training data for similarity analysis
+
+**Update Timing:** Nightly (11 PM - 2 AM)
+
+**Key Fields:**
+
+```
+Performance Stats:
+- points
+- minutes_played
+- assists, rebounds
+- fg_attempts
+- usage_rate (actual)
+
+Prop Outcomes:
+- over_under_result (OVER/UNDER)
+- margin (points - line)
+- points_line (actual)
+
+Game Context:
+- win_flag
+- overtime_periods
+- margin_of_victory
+- plus_minus
+```
+
+**Training Logic:**
+
+```sql
+-- Analyze outcomes in similar situations
+SELECT
+  AVG(points) as avg_points,
+  AVG(CASE WHEN over_under_result = 'OVER' THEN 1.0 ELSE 0.0 END) as over_rate,
+  COUNT(*) as sample_size
+FROM player_game_summary
+WHERE <similar_pre_game_context>
+  AND game_date < CURRENT_DATE()  -- Historical only
+```
+
+### 4. ML Predictions
+
+**Definition:** Model-generated forecasts
+
+**Purpose:** Today's output → tomorrow's historical context
+
+**Update Timing:** Morning (6-8 AM)
+
+**Key Fields:**
+
+```
+Core Predictions:
+- ml_points_prediction
+- ml_over_probability
+- ml_prediction_confidence
+- recommendation (OVER/UNDER/PASS)
+- model_version
+
+Future Enhancements:
+- ml_historical_accuracy (model's past performance)
+- avg_confidence_when_correct
+- prediction_vs_actual_margin
+```
+
+**Feedback Loop:**
+
+```sql
+-- Model performance becomes context
+SELECT
+  player_lookup,
+  AVG(ml_prediction_confidence) as avg_confidence,
+  AVG(CASE WHEN prediction_correct THEN 1.0 ELSE 0.0 END) as accuracy
+FROM prediction_accuracy
+WHERE model_version = 'similarity_v1'
+  AND <similar_context>
+GROUP BY player_lookup
+```
+
+## How Similarity Matching Works
+
+### Step 1: Collect Context for Today's Games
+
+```python
+# Pre-Game Context (overnight)
+context = {
+    'player_lookup': 'lebronjames',
+    'days_rest': 2,
+    'opponent_def_rating_last_10': 110.5,
+    'home_game': True,
+    'points_avg_last_5': 27.2,
+    'season_phase': 'mid'
 }
 ```
 
-### 3. Model Training
+### Step 2: Find Similar Historical Games
 
-Game Results provide ground truth for improving ML Predictions accuracy and calibration.
+```python
+# Query historical games with similar Pre-Game Context
+similar_games = find_similar_situations(
+    player='lebronjames',
+    days_rest_range=(1, 2),
+    opponent_def_rating_range=(105, 115),
+    home_game=True,
+    season_phase='mid'
+)
+```
 
-**Value:** Continuous improvement through feedback loops.
+### Step 3: Analyze Historical Game Results
 
-### 4. Continuous Improvement
+```python
+# What happened in those similar games?
+avg_points = similar_games['points'].mean()  # 28.5
+over_rate = (similar_games['over_under_result'] == 'OVER').mean()  # 0.72
+```
 
-ML Predictions accuracy becomes part of Pre-Game Context for future decision-making, creating a self-improving system.
+### Step 4: Generate ML Prediction
 
-**Value:** System gets smarter over time without manual intervention.
+```python
+# Today's prediction (becomes tomorrow's historical context)
+prediction = {
+    'ml_points_prediction': 28.5,
+    'ml_over_probability': 0.72,
+    'ml_prediction_confidence': 0.85,
+    'recommendation': 'OVER' if current_line < 25.5 else 'PASS'
+}
+```
 
----
+## Data Pipeline Schedule
 
-## 🛠️ Technical Implementation {#technical-implementation}
+### Overnight (11 PM - 6 AM)
 
-### Database Design
+1. Load Game Results from completed games
+2. Calculate Pre-Game Context for upcoming games
+3. Update historical similarity databases
 
-**Historical Tables (Pre-Game Context + Game Results):**
+### Morning (6 AM - 8 AM)
+
+1. Initialize Real-Time Context for today
+2. Generate ML Predictions using Pre-Game + initial Real-Time Context
+3. Create similarity matches
+
+### Intraday (8 AM - Game Time)
+
+1. Update Real-Time Context hourly
+2. Refresh ML Predictions when context changes significantly
+3. Risk assessment for prop offerings
+
+### Post-Game (Next Day)
+
+1. Calculate prediction accuracy
+2. Update model performance metrics
+3. Identify prediction improvements
+
+## Database Design
+
+### Historical Tables (Similarity Matching)
 
 ```sql
--- Similarity matching queries
-CREATE TABLE nba_analytics.player_game_summary (
-  -- Pre-Game Context fields
-  player_lookup STRING,
-  game_date DATE,
-  days_rest INT64,
-  opponent_def_rating_last_10 FLOAT64,
-  home_game BOOLEAN,
-  -- ... other Pre-Game Context fields
+-- Pre-Game Context + Game Results for pattern analysis
+CREATE TABLE player_game_summary (
+    -- Pre-Game Context fields
+    player_lookup STRING,
+    days_rest INT64,
+    opponent_def_rating_last_10 FLOAT64,
+    home_game BOOLEAN,
+    points_avg_last_5 FLOAT64,
 
-  -- Game Results fields
-  points INT64,
-  over_under_result STRING,
-  margin FLOAT64,
-  -- ... other Game Results fields
+    -- Game Results fields
+    points INT64,
+    over_under_result STRING,
+    margin FLOAT64,
 
-  PRIMARY KEY (player_lookup, game_date)
+    -- Indexed for similarity search
+    game_date DATE
 )
 PARTITION BY game_date
-CLUSTER BY player_lookup, days_rest, opponent_def_rating_last_10;
+CLUSTER BY player_lookup, days_rest, home_game;
 ```
 
-**Current Tables (Real-Time Context + ML Predictions):**
+### Current Tables (Today's Games)
 
 ```sql
--- Today's games and predictions
-CREATE TABLE nba_predictions.player_prop_predictions (
-  -- Real-Time Context
-  player_lookup STRING,
-  game_date DATE,
-  current_points_line FLOAT64,
-  player_status STRING,
-  line_movement FLOAT64,
+-- Real-Time Context + ML Predictions for today
+CREATE TABLE upcoming_player_game_context (
+    -- Real-Time Context
+    player_lookup STRING,
+    current_points_line FLOAT64,
+    player_status STRING,
 
-  -- ML Predictions
-  ml_points_prediction FLOAT64,
-  ml_over_probability FLOAT64,
-  recommendation STRING,
-  model_version STRING,
+    -- ML Predictions
+    ml_points_prediction FLOAT64,
+    ml_over_probability FLOAT64,
+    recommendation STRING,
 
-  PRIMARY KEY (player_lookup, game_date, model_version)
+    game_date DATE
 )
-PARTITION BY game_date
-CLUSTER BY player_lookup;
+PARTITION BY game_date;
 ```
 
-**Accuracy Tables (ML Predictions Performance):**
+### Accuracy Tables (Model Performance)
 
 ```sql
--- Track model performance over time
-CREATE TABLE nba_analytics.prediction_accuracy (
-  prediction_id STRING,
-  player_lookup STRING,
-  game_date DATE,
-
-  -- Prediction details
-  ml_points_prediction FLOAT64,
-  ml_prediction_confidence INT64,
-  points_line FLOAT64,
-
-  -- Actual results
-  actual_points INT64,
-  prediction_correct BOOLEAN,
-  margin_error FLOAT64,
-
-  -- Context
-  model_version STRING,
-  similar_context_situation BOOLEAN,
-
-  PRIMARY KEY (prediction_id)
+-- ML Predictions performance tracking
+CREATE TABLE prediction_accuracy (
+    player_lookup STRING,
+    model_version STRING,
+    ml_prediction_confidence FLOAT64,
+    prediction_correct BOOLEAN,
+    game_date DATE
 )
-PARTITION BY game_date
-CLUSTER BY player_lookup, model_version, prediction_correct;
+PARTITION BY game_date;
 ```
 
-### Query Optimization
+## Query Optimization
 
-**Pre-Game Context Fields:**
-
-Heavily indexed for similarity search performance:
-
-```sql
--- Optimized similarity search
-CREATE INDEX idx_similarity ON player_game_summary (
-  player_lookup,
-  days_rest,
-  opponent_def_rating_last_10,
-  home_game,
-  season_phase
-)
-WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 1095 DAY);  -- 3 years
-```
+**Pre-Game Context:**
+- Heavily indexed for similarity search
+- Cluster by most common search criteria
+- Partition by game_date for time-based queries
 
 **Real-Time Context:**
-
-Optimized for frequent updates:
-
-```sql
--- Partition by current date for fast updates
-PARTITION BY DATE(last_updated)
-CLUSTER BY player_lookup
-```
+- Optimized for frequent updates
+- Small working set (today's games only)
 
 **Game Results:**
+- Optimized for analytical queries
+- Read-heavy, write-once pattern
 
-Optimized for analytical queries:
+## Business Applications
 
-```sql
--- Partition by game date for historical analysis
-PARTITION BY game_date
-CLUSTER BY player_lookup, over_under_result
+### Similarity Matching Engine
+
+Uses Pre-Game Context to find historical games → analyzes Game Results patterns
+
+### Risk Management
+
+Real-Time Context changes → re-evaluate prop offerings
+
+### Model Training
+
+Game Results → improve ML Predictions accuracy
+
+### Continuous Improvement
+
+ML Predictions accuracy → becomes Pre-Game Context for future decisions
+
+## Example: Complete Prediction Flow
+
+```python
+# 1. Pre-Game Context (calculated overnight)
+pre_game = {
+    'player': 'lebronjames',
+    'days_rest': 2,
+    'opponent_def_rating': 110.5,
+    'home_game': True,
+    'points_avg_last_5': 27.2
+}
+
+# 2. Find similar historical games
+similar = query_similar_games(pre_game)
+# Returns: 45 games with avg 28.5 points, 72% OVER rate
+
+# 3. Real-Time Context (updated this morning)
+real_time = {
+    'current_line': 25.5,
+    'player_status': 'probable',
+    'star_teammates_out': 0
+}
+
+# 4. Generate ML Prediction
+prediction = {
+    'ml_points_prediction': 28.5,  # From similar games
+    'ml_over_probability': 0.72,    # From similar games
+    'ml_prediction_confidence': 0.85,
+    'recommendation': 'OVER'  # 28.5 > 25.5
+}
+
+# 5. After game completes → Game Results
+results = {
+    'points': 31,  # Actual performance
+    'over_under_result': 'OVER',
+    'margin': 5.5  # 31 - 25.5
+}
+
+# 6. Accuracy tracking
+accuracy = {
+    'prediction_correct': True,  # Was OVER
+    'confidence_was': 0.85,
+    'margin_was': 5.5
+}
+# This becomes context for future predictions
 ```
 
-### Data Quality Requirements
+## Implementation Files
 
-Each category has different quality requirements:
+**Prediction Systems:**
+- `predictions/worker/prediction_systems/similarity_balanced_v1.py`
 
-| Category | Quality Requirement | Validation |
-|----------|-------------------|------------|
-| **Pre-Game Context** | Must be stable and consistent | No changes after calculation |
-| **Real-Time Context** | Must be current (< 1 hour old) | Timestamp checks |
-| **Game Results** | Must be authoritative | Official NBA stats API |
-| **ML Predictions** | Must be reproducible | Version tracking |
+**Schemas:**
+- `schemas/bigquery/predictions/01_player_prop_predictions.sql`
+- `schemas/bigquery/predictions/02_prediction_results.sql`
+- `schemas/bigquery/predictions/09_ml_prediction_metadata.sql`
 
----
+**Tests:**
+- `tests/predictions/test_similarity.py`
 
-## 🔗 Related Documentation
+## See Also
 
-**Phase 5 Operations:**
-- **Deployment:** `docs/predictions/operations/01-deployment-guide.md` - How to deploy prediction services
-- **Scheduling:** `docs/predictions/operations/02-scheduling-strategy.md` - When data updates run
-- **Troubleshooting:** `docs/predictions/operations/03-troubleshooting.md` - How to debug data issues
-
-**Data Flow:**
-- **Phase 4→5:** `docs/data-flow/13-phase4-to-phase5-feature-consumption.md` - ML Feature Store consumption
-
-**Architecture:**
-- **Pipeline:** `docs/architecture/04-event-driven-pipeline-architecture.md` - Overall data flow
-
----
-
-**Last Updated:** 2025-11-15
-**Next Review:** After Phase 5 deployment
-**Status:** Current - Comprehensive data categorization framework
+- [Analytics Processors Reference](../reference/03-analytics-processors-reference.md)
+- [Predictions Documentation](../predictions/)

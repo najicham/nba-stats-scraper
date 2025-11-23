@@ -1,0 +1,822 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": "-- Grafana --",
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "Completeness Checking Dashboard - Monitor data quality, circuit breakers, and production readiness across all NBA processors",
+  "editable": true,
+  "gnetId": null,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": "BigQuery",
+      "description": "Overall completeness health by processor showing average completeness and production readiness percentage",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "displayMode": "auto"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "avg_completeness"
+            },
+            "properties": [
+              {
+                "id": "custom.displayMode",
+                "value": "color-background"
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 85
+                    },
+                    {
+                      "color": "green",
+                      "value": 90
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "production_ready_pct"
+            },
+            "properties": [
+              {
+                "id": "custom.displayMode",
+                "value": "color-background"
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 90
+                    },
+                    {
+                      "color": "green",
+                      "value": 95
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "showHeader": true,
+        "sortBy": []
+      },
+      "pluginVersion": "8.0.0",
+      "targets": [
+        {
+          "dataset": "nba-props-platform",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  processor_name,\n  COUNT(*) as total_records,\n  ROUND(AVG(completeness_percentage), 2) as avg_completeness,\n  SUM(CASE WHEN is_production_ready THEN 1 ELSE 0 END) as production_ready_count,\n  COUNT(*) - SUM(CASE WHEN is_production_ready THEN 1 ELSE 0 END) as not_ready_count,\n  ROUND(100.0 * SUM(CASE WHEN is_production_ready THEN 1 ELSE 0 END) / COUNT(*), 2) as production_ready_pct,\n  SUM(CASE WHEN circuit_breaker_active THEN 1 ELSE 0 END) as circuit_breaker_count\nFROM (\n  SELECT 'team_defense_zone_analysis' as processor_name, completeness_percentage, is_production_ready, circuit_breaker_active\n  FROM `nba_precompute.team_defense_zone_analysis`\n  WHERE analysis_date = CURRENT_DATE() - 1\n  UNION ALL\n  SELECT 'player_shot_zone_analysis' as processor_name, completeness_percentage, is_production_ready, circuit_breaker_active\n  FROM `nba_precompute.player_shot_zone_analysis`\n  WHERE analysis_date = CURRENT_DATE() - 1\n  UNION ALL\n  SELECT 'player_daily_cache' as processor_name, completeness_percentage, is_production_ready, circuit_breaker_active\n  FROM `nba_precompute.player_daily_cache`\n  WHERE analysis_date = CURRENT_DATE() - 1\n  UNION ALL\n  SELECT 'player_composite_factors' as processor_name, completeness_percentage, is_production_ready, circuit_breaker_active\n  FROM `nba_precompute.player_composite_factors`\n  WHERE analysis_date = CURRENT_DATE() - 1\n  UNION ALL\n  SELECT 'ml_feature_store' as processor_name, completeness_percentage, is_production_ready, circuit_breaker_active\n  FROM `nba_predictions.ml_feature_store_v2`\n  WHERE analysis_date = CURRENT_DATE() - 1\n  UNION ALL\n  SELECT 'upcoming_player_game_context' as processor_name, completeness_percentage, is_production_ready, circuit_breaker_active\n  FROM `nba_analytics.upcoming_player_game_context`\n  WHERE analysis_date = CURRENT_DATE() - 1\n  UNION ALL\n  SELECT 'upcoming_team_game_context' as processor_name, completeness_percentage, is_production_ready, circuit_breaker_active\n  FROM `nba_analytics.upcoming_team_game_context`\n  WHERE analysis_date = CURRENT_DATE() - 1\n)\nGROUP BY processor_name\nORDER BY production_ready_pct ASC, avg_completeness ASC",
+          "refId": "A"
+        }
+      ],
+      "title": "1. Overall Completeness Health by Processor",
+      "type": "table"
+    },
+    {
+      "datasource": "BigQuery",
+      "description": "Active circuit breakers requiring attention (ALERT if count > 10)",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "displayMode": "auto"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "days_remaining"
+            },
+            "properties": [
+              {
+                "id": "custom.displayMode",
+                "value": "color-background"
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 3
+                    },
+                    {
+                      "color": "red",
+                      "value": 6
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 8
+      },
+      "id": 2,
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "days_remaining"
+          }
+        ]
+      },
+      "pluginVersion": "8.0.0",
+      "targets": [
+        {
+          "dataset": "nba-props-platform",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  processor_name,\n  entity_id,\n  analysis_date,\n  attempt_number,\n  completeness_pct,\n  skip_reason,\n  circuit_breaker_until,\n  TIMESTAMP_DIFF(circuit_breaker_until, CURRENT_TIMESTAMP(), DAY) as days_remaining,\n  manual_override_applied,\n  notes\nFROM `nba_orchestration.reprocess_attempts`\nWHERE circuit_breaker_tripped = TRUE\n  AND circuit_breaker_until > CURRENT_TIMESTAMP()\n  AND manual_override_applied = FALSE\nORDER BY days_remaining DESC, processor_name\nLIMIT 100",
+          "refId": "A"
+        }
+      ],
+      "title": "2. Active Circuit Breakers (ALERT)",
+      "type": "table"
+    },
+    {
+      "datasource": "BigQuery",
+      "description": "Completeness trends over last 30 days by processor",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "tooltip": false,
+              "viz": false,
+              "legend": false
+            },
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 85
+              },
+              {
+                "color": "red",
+                "value": 90
+              }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 16
+      },
+      "id": 3,
+      "options": {
+        "legend": {
+          "calcs": ["mean", "lastNotNull"],
+          "displayMode": "table",
+          "placement": "right"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "pluginVersion": "8.0.0",
+      "targets": [
+        {
+          "dataset": "nba-props-platform",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  TIMESTAMP(analysis_date) as time,\n  processor_name as metric,\n  AVG(completeness_percentage) as value\nFROM (\n  SELECT analysis_date, 'team_defense_zone_analysis' as processor_name, completeness_percentage\n  FROM `nba_precompute.team_defense_zone_analysis`\n  WHERE analysis_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)\n  UNION ALL\n  SELECT analysis_date, 'player_shot_zone_analysis' as processor_name, completeness_percentage\n  FROM `nba_precompute.player_shot_zone_analysis`\n  WHERE analysis_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)\n  UNION ALL\n  SELECT analysis_date, 'player_daily_cache' as processor_name, completeness_percentage\n  FROM `nba_precompute.player_daily_cache`\n  WHERE analysis_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)\n  UNION ALL\n  SELECT analysis_date, 'player_composite_factors' as processor_name, completeness_percentage\n  FROM `nba_precompute.player_composite_factors`\n  WHERE analysis_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)\n  UNION ALL\n  SELECT analysis_date, 'ml_feature_store' as processor_name, completeness_percentage\n  FROM `nba_predictions.ml_feature_store_v2`\n  WHERE analysis_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)\n  UNION ALL\n  SELECT analysis_date, 'upcoming_player_game_context' as processor_name, completeness_percentage\n  FROM `nba_analytics.upcoming_player_game_context`\n  WHERE analysis_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)\n  UNION ALL\n  SELECT analysis_date, 'upcoming_team_game_context' as processor_name, completeness_percentage\n  FROM `nba_analytics.upcoming_team_game_context`\n  WHERE analysis_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)\n)\nGROUP BY analysis_date, processor_name\nORDER BY time, processor_name",
+          "refId": "A"
+        }
+      ],
+      "title": "3. Completeness Trends (Last 30 Days)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "BigQuery",
+      "description": "Entities below 90% completeness threshold requiring action",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "displayMode": "auto"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "completeness_percentage"
+            },
+            "properties": [
+              {
+                "id": "custom.displayMode",
+                "value": "color-background"
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "dark-red",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 70
+                    },
+                    {
+                      "color": "orange",
+                      "value": 80
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 85
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 24
+      },
+      "id": 4,
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": false,
+            "displayName": "completeness_percentage"
+          }
+        ]
+      },
+      "pluginVersion": "8.0.0",
+      "targets": [
+        {
+          "dataset": "nba-props-platform",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  processor_name,\n  entity_id,\n  analysis_date,\n  expected_games_count,\n  actual_games_count,\n  completeness_percentage,\n  missing_games_count,\n  circuit_breaker_active,\n  backfill_bootstrap_mode,\n  processing_decision_reason\nFROM (\n  SELECT 'team_defense_zone_analysis' as processor_name, team_abbr as entity_id, analysis_date, expected_games_count, actual_games_count, completeness_percentage, missing_games_count, circuit_breaker_active, backfill_bootstrap_mode, processing_decision_reason\n  FROM `nba_precompute.team_defense_zone_analysis`\n  WHERE analysis_date = CURRENT_DATE() - 1 AND completeness_percentage < 90.0\n  UNION ALL\n  SELECT 'player_shot_zone_analysis' as processor_name, player_lookup as entity_id, analysis_date, expected_games_count, actual_games_count, completeness_percentage, missing_games_count, circuit_breaker_active, backfill_bootstrap_mode, processing_decision_reason\n  FROM `nba_precompute.player_shot_zone_analysis`\n  WHERE analysis_date = CURRENT_DATE() - 1 AND completeness_percentage < 90.0\n  UNION ALL\n  SELECT 'player_daily_cache' as processor_name, player_lookup as entity_id, analysis_date, expected_games_count, actual_games_count, completeness_percentage, missing_games_count, circuit_breaker_active, backfill_bootstrap_mode, processing_decision_reason\n  FROM `nba_precompute.player_daily_cache`\n  WHERE analysis_date = CURRENT_DATE() - 1 AND completeness_percentage < 90.0\n  UNION ALL\n  SELECT 'player_composite_factors' as processor_name, player_lookup as entity_id, analysis_date, expected_games_count, actual_games_count, completeness_percentage, missing_games_count, circuit_breaker_active, backfill_bootstrap_mode, processing_decision_reason\n  FROM `nba_precompute.player_composite_factors`\n  WHERE analysis_date = CURRENT_DATE() - 1 AND completeness_percentage < 90.0\n  UNION ALL\n  SELECT 'ml_feature_store' as processor_name, player_lookup as entity_id, analysis_date, expected_games_count, actual_games_count, completeness_percentage, missing_games_count, circuit_breaker_active, backfill_bootstrap_mode, processing_decision_reason\n  FROM `nba_predictions.ml_feature_store_v2`\n  WHERE analysis_date = CURRENT_DATE() - 1 AND completeness_percentage < 90.0\n  UNION ALL\n  SELECT 'upcoming_player_game_context' as processor_name, player_lookup as entity_id, analysis_date, expected_games_count, actual_games_count, completeness_percentage, missing_games_count, circuit_breaker_active, backfill_bootstrap_mode, processing_decision_reason\n  FROM `nba_analytics.upcoming_player_game_context`\n  WHERE analysis_date = CURRENT_DATE() - 1 AND completeness_percentage < 90.0\n  UNION ALL\n  SELECT 'upcoming_team_game_context' as processor_name, team_abbr as entity_id, analysis_date, expected_games_count, actual_games_count, completeness_percentage, missing_games_count, circuit_breaker_active, backfill_bootstrap_mode, processing_decision_reason\n  FROM `nba_analytics.upcoming_team_game_context`\n  WHERE analysis_date = CURRENT_DATE() - 1 AND completeness_percentage < 90.0\n)\nORDER BY completeness_percentage ASC, processor_name\nLIMIT 100",
+          "refId": "A"
+        }
+      ],
+      "title": "4. Entities Below 90% Threshold (Action Required)",
+      "type": "table"
+    },
+    {
+      "datasource": "BigQuery",
+      "description": "Circuit breaker attempt history over last 30 days",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {
+              "tooltip": false,
+              "viz": false,
+              "legend": false
+            },
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 32
+      },
+      "id": 5,
+      "options": {
+        "legend": {
+          "calcs": ["sum"],
+          "displayMode": "table",
+          "placement": "right"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "pluginVersion": "8.0.0",
+      "targets": [
+        {
+          "dataset": "nba-props-platform",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  TIMESTAMP(DATE(attempted_at)) as time,\n  processor_name as metric,\n  COUNT(*) as value\nFROM `nba_orchestration.reprocess_attempts`\nWHERE attempted_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 30 DAY)\nGROUP BY DATE(attempted_at), processor_name\nORDER BY time, processor_name",
+          "refId": "A"
+        }
+      ],
+      "title": "5. Circuit Breaker History (Last 30 Days)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "BigQuery",
+      "description": "Records processed in bootstrap mode (early season or backfill)",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "displayMode": "auto"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 0,
+        "y": 40
+      },
+      "id": 6,
+      "options": {
+        "showHeader": true,
+        "sortBy": []
+      },
+      "pluginVersion": "8.0.0",
+      "targets": [
+        {
+          "dataset": "nba-props-platform",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  processor_name,\n  COUNT(*) as bootstrap_records,\n  MIN(analysis_date) as earliest_date,\n  MAX(analysis_date) as latest_date,\n  ROUND(AVG(completeness_percentage), 2) as avg_completeness_in_bootstrap\nFROM (\n  SELECT 'team_defense_zone_analysis' as processor_name, analysis_date, completeness_percentage\n  FROM `nba_precompute.team_defense_zone_analysis`\n  WHERE backfill_bootstrap_mode = TRUE AND analysis_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 60 DAY)\n  UNION ALL\n  SELECT 'player_shot_zone_analysis' as processor_name, analysis_date, completeness_percentage\n  FROM `nba_precompute.player_shot_zone_analysis`\n  WHERE backfill_bootstrap_mode = TRUE AND analysis_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 60 DAY)\n  UNION ALL\n  SELECT 'player_daily_cache' as processor_name, analysis_date, completeness_percentage\n  FROM `nba_precompute.player_daily_cache`\n  WHERE backfill_bootstrap_mode = TRUE AND analysis_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 60 DAY)\n  UNION ALL\n  SELECT 'player_composite_factors' as processor_name, analysis_date, completeness_percentage\n  FROM `nba_precompute.player_composite_factors`\n  WHERE backfill_bootstrap_mode = TRUE AND analysis_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 60 DAY)\n  UNION ALL\n  SELECT 'ml_feature_store' as processor_name, analysis_date, completeness_percentage\n  FROM `nba_predictions.ml_feature_store_v2`\n  WHERE backfill_bootstrap_mode = TRUE AND analysis_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 60 DAY)\n  UNION ALL\n  SELECT 'upcoming_player_game_context' as processor_name, analysis_date, completeness_percentage\n  FROM `nba_analytics.upcoming_player_game_context`\n  WHERE backfill_bootstrap_mode = TRUE AND analysis_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 60 DAY)\n  UNION ALL\n  SELECT 'upcoming_team_game_context' as processor_name, analysis_date, completeness_percentage\n  FROM `nba_analytics.upcoming_team_game_context`\n  WHERE backfill_bootstrap_mode = TRUE AND analysis_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 60 DAY)\n)\nGROUP BY processor_name\nORDER BY bootstrap_records DESC",
+          "refId": "A"
+        }
+      ],
+      "title": "6. Bootstrap Mode Records (Last 60 Days)",
+      "type": "table"
+    },
+    {
+      "datasource": "BigQuery",
+      "description": "Multi-window processor completeness detail showing per-window breakdown",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "displayMode": "auto"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*_completeness_pct"
+            },
+            "properties": [
+              {
+                "id": "custom.displayMode",
+                "value": "color-background"
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 85
+                    },
+                    {
+                      "color": "green",
+                      "value": 90
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 12,
+        "y": 40
+      },
+      "id": 7,
+      "options": {
+        "showHeader": true,
+        "sortBy": []
+      },
+      "pluginVersion": "8.0.0",
+      "targets": [
+        {
+          "dataset": "nba-props-platform",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  'player_daily_cache' as processor_name,\n  player_lookup as entity_id,\n  analysis_date,\n  l5_completeness_pct,\n  l10_completeness_pct,\n  l7d_completeness_pct,\n  l14d_completeness_pct,\n  all_windows_complete\nFROM `nba_precompute.player_daily_cache`\nWHERE analysis_date = CURRENT_DATE() - 1\n  AND all_windows_complete = FALSE\nORDER BY l5_completeness_pct + l10_completeness_pct + l7d_completeness_pct + l14d_completeness_pct ASC\nLIMIT 50",
+          "refId": "A"
+        }
+      ],
+      "title": "7. Multi-Window Completeness Detail (player_daily_cache)",
+      "type": "table"
+    },
+    {
+      "datasource": "BigQuery",
+      "description": "Production readiness summary - daily rollup",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "displayMode": "auto"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "production_ready_pct"
+            },
+            "properties": [
+              {
+                "id": "custom.displayMode",
+                "value": "lcd-gauge"
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 90
+                    },
+                    {
+                      "color": "green",
+                      "value": 95
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "max",
+                "value": 100
+              },
+              {
+                "id": "min",
+                "value": 0
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 46
+      },
+      "id": 8,
+      "options": {
+        "showHeader": true,
+        "sortBy": []
+      },
+      "pluginVersion": "8.0.0",
+      "targets": [
+        {
+          "dataset": "nba-props-platform",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "WITH daily_summary AS (\n  SELECT\n    CURRENT_DATE() - 1 as report_date,\n    processor_name,\n    COUNT(*) as total_entities,\n    SUM(CASE WHEN is_production_ready THEN 1 ELSE 0 END) as ready_count,\n    COUNT(*) - SUM(CASE WHEN is_production_ready THEN 1 ELSE 0 END) as not_ready_count,\n    ROUND(AVG(completeness_percentage), 2) as avg_completeness,\n    ROUND(100.0 * SUM(CASE WHEN is_production_ready THEN 1 ELSE 0 END) / COUNT(*), 2) as production_ready_pct,\n    SUM(CASE WHEN circuit_breaker_active THEN 1 ELSE 0 END) as active_circuit_breakers,\n    SUM(CASE WHEN backfill_bootstrap_mode THEN 1 ELSE 0 END) as bootstrap_mode_count\n  FROM (\n    SELECT 'team_defense_zone_analysis' as processor_name, is_production_ready, completeness_percentage, circuit_breaker_active, backfill_bootstrap_mode\n    FROM `nba_precompute.team_defense_zone_analysis`\n    WHERE analysis_date = CURRENT_DATE() - 1\n    UNION ALL\n    SELECT 'player_shot_zone_analysis' as processor_name, is_production_ready, completeness_percentage, circuit_breaker_active, backfill_bootstrap_mode\n    FROM `nba_precompute.player_shot_zone_analysis`\n    WHERE analysis_date = CURRENT_DATE() - 1\n    UNION ALL\n    SELECT 'player_daily_cache' as processor_name, is_production_ready, completeness_percentage, circuit_breaker_active, backfill_bootstrap_mode\n    FROM `nba_precompute.player_daily_cache`\n    WHERE analysis_date = CURRENT_DATE() - 1\n    UNION ALL\n    SELECT 'player_composite_factors' as processor_name, is_production_ready, completeness_percentage, circuit_breaker_active, backfill_bootstrap_mode\n    FROM `nba_precompute.player_composite_factors`\n    WHERE analysis_date = CURRENT_DATE() - 1\n    UNION ALL\n    SELECT 'ml_feature_store' as processor_name, is_production_ready, completeness_percentage, circuit_breaker_active, backfill_bootstrap_mode\n    FROM `nba_predictions.ml_feature_store_v2`\n    WHERE analysis_date = CURRENT_DATE() - 1\n    UNION ALL\n    SELECT 'upcoming_player_game_context' as processor_name, is_production_ready, completeness_percentage, circuit_breaker_active, backfill_bootstrap_mode\n    FROM `nba_analytics.upcoming_player_game_context`\n    WHERE analysis_date = CURRENT_DATE() - 1\n    UNION ALL\n    SELECT 'upcoming_team_game_context' as processor_name, is_production_ready, completeness_percentage, circuit_breaker_active, backfill_bootstrap_mode\n    FROM `nba_analytics.upcoming_team_game_context`\n    WHERE analysis_date = CURRENT_DATE() - 1\n  )\n  GROUP BY processor_name\n)\nSELECT\n  report_date,\n  processor_name,\n  total_entities,\n  ready_count,\n  not_ready_count,\n  avg_completeness,\n  production_ready_pct,\n  active_circuit_breakers,\n  bootstrap_mode_count\nFROM daily_summary\nORDER BY production_ready_pct ASC",
+          "refId": "A"
+        }
+      ],
+      "title": "8. Production Readiness Summary (Daily Report)",
+      "type": "table"
+    },
+    {
+      "datasource": "BigQuery",
+      "description": "Reprocessing attempt patterns showing retry behavior",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {
+              "tooltip": false,
+              "viz": false,
+              "legend": false
+            },
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 54
+      },
+      "id": 9,
+      "options": {
+        "legend": {
+          "calcs": ["sum", "mean"],
+          "displayMode": "table",
+          "placement": "right"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "pluginVersion": "8.0.0",
+      "targets": [
+        {
+          "dataset": "nba-props-platform",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  TIMESTAMP(DATE(attempted_at)) as time,\n  CONCAT(processor_name, ' - Attempt ', CAST(attempt_number as STRING)) as metric,\n  COUNT(*) as value\nFROM `nba_orchestration.reprocess_attempts`\nWHERE attempted_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 30 DAY)\nGROUP BY DATE(attempted_at), processor_name, attempt_number\nORDER BY time, processor_name, attempt_number",
+          "refId": "A"
+        }
+      ],
+      "title": "9. Reprocessing Attempt Patterns (By Attempt Number)",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "5m",
+  "schemaVersion": 27,
+  "style": "dark",
+  "tags": [
+    "completeness",
+    "data-quality",
+    "nba",
+    "circuit-breaker"
+  ],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-30d",
+    "to": "now"
+  },
+  "timepicker": {
+    "refresh_intervals": [
+      "5m",
+      "15m",
+      "30m",
+      "1h",
+      "2h",
+      "1d"
+    ]
+  },
+  "timezone": "browser",
+  "title": "NBA Completeness Checking Dashboard",
+  "uid": "nba-completeness-checking",
+  "version": 1
+}

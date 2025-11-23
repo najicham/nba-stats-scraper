@@ -1,9 +1,9 @@
 # Phase 2 Fixes and Deployment
 
 **Created:** 2025-11-21 17:19:00 PST
-**Last Updated:** 2025-11-21 17:30:00 PST
-**Status:** ⚠️ Deployment completed but service BROKEN - fixes need to be committed
-**Action:** Commit fixes and redeploy Phase 2 processors
+**Last Updated:** 2025-11-21 17:46:00 PST
+**Status:** ✅ Successfully deployed and verified
+**Action:** Deployment complete - Phase 2 processors running with smart idempotency
 
 ---
 
@@ -172,6 +172,46 @@ gcloud logging read \
 ```
 
 **Expected Result:** Service starts successfully with no syntax or import errors
+
+---
+
+## ✅ Second Deployment (SUCCESSFUL)
+
+### Deployment Details
+- **Started:** 2025-11-21 17:40:54 PST
+- **Completed:** 2025-11-21 17:46:21 PST
+- **Duration:** 5m 27s
+- **Revision:** nba-phase2-raw-processors-00009-6k7
+- **Status:** ✅ **SUCCESS** - Service running healthy
+
+### Deployment Timeline
+```
+17:40:54 - Started deployment
+17:40:54 - Phase 1: Setup completed (0s)
+17:40:54 - Phase 2: Building and deploying (327s)
+17:46:21 - Deployment completed ✅
+17:46:32 - Health check passed ✅
+```
+
+### Verification Results
+
+**Service Status:** ✅ All healthy
+```
+URL: https://nba-phase2-raw-processors-f7p3g7f6ya-wl.a.run.app
+STATUS: ['True', 'True', 'True']
+REVISION: nba-phase2-raw-processors-00009-6k7
+```
+
+**Logs Check:** ✅ No errors
+```
+- Gunicorn started successfully
+- Worker booted with pid: 2
+- STARTUP TCP probe succeeded
+- No syntax errors
+- No import errors
+```
+
+**Result:** Phase 2 processors deployed successfully with all fixes applied!
 
 ---
 
@@ -356,9 +396,11 @@ gcloud run services list --region=us-west2 | grep scraper
 ---
 
 **Created with:** Claude Code
-**Deployment Status:** ⚠️ First deployment completed but service BROKEN
-**Current Issue:** Fixes not committed before deployment - deployed old code with syntax errors
-**Next Action:**
-1. Commit staged fixes (user will handle)
-2. Redeploy with `./bin/raw/deploy/deploy_processors_simple.sh`
-3. Verify service starts without errors
+**Deployment Status:** ✅ Successfully deployed and verified
+**Final Revision:** nba-phase2-raw-processors-00009-6k7
+**Service URL:** https://nba-phase2-raw-processors-f7p3g7f6ya-wl.a.run.app
+**Deployment Summary:**
+- **Attempt 1:** Failed (deployed old code without committing fixes)
+- **Attempt 2:** Success (fixes committed and deployed)
+- **Total Time:** 9m 49s (across both attempts)
+- **Result:** Phase 2 processors running with smart idempotency enabled

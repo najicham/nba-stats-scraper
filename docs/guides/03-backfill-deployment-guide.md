@@ -1,5 +1,8 @@
 # NBA Backfill Job Creation & Deployment Guide
 
+**Created:** 2025-11-21 17:50:00 PST
+**Last Updated:** 2025-11-21 17:50:00 PST
+
 **Complete guide for deploying NBA data processors to production**
 
 Focus: Cloud Run deployment, backfill jobs, production testing

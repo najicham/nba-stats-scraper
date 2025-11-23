@@ -2,17 +2,19 @@
 
 **File:** `docs/SYSTEM_STATUS.md`
 **Created:** 2025-11-15
-**Last Updated:** 2025-11-15
+**Last Updated:** 2025-11-22 10:20:00 PST
 **Purpose:** Single source of truth for current deployment status and system roadmap
 **Audience:** Anyone asking "what's the current state of the system?"
+
+**⚠️ NOTE:** For detailed deployment status and history, see `docs/deployment/00-deployment-status.md`
 
 ---
 
 ## 🎯 TL;DR - Current State
 
-**Overall Progress:** ~45% Complete
-**Production Status:** Phases 1-2 fully operational, Phases 3-5 code-ready but not deployed
-**Next Critical Step:** Connect Phase 2 → Phase 3 (Sprint 1, ~2 hours)
+**Overall Progress:** ~70% Complete
+**Production Status:** Phases 1-3 fully operational, Phase 4 schemas deployed, Phase 5 partial
+**Next Critical Step:** Update Phase 4 processor code with historical dependency checking (~2-3 hours)
 
 ---
 
@@ -50,20 +52,28 @@
 ---
 
 ### Phase 2: Raw Data Processing
-**Status:** ✅ **DEPLOYED IN PRODUCTION**
-**Deployed:** 2025-11-15
-**Last Verified:** 2025-11-15 (1,482 Pub/Sub events in 3 hours, 100% delivery)
+**Status:** ✅ **DEPLOYED IN PRODUCTION** with Smart Idempotency
+**Deployed:** 2025-11-20 (Smart Idempotency), Fixed: 2025-11-21 17:47
+**Last Verified:** 2025-11-22
 
 **What It Does:**
 - Receives Pub/Sub messages from Phase 1 scrapers
 - Processes GCS JSON files → BigQuery raw tables
-- 21 processors handling different data types
+- 25 processors handling different data types
+- Smart idempotency: Skips writes when data hash unchanged (30-60% reduction)
 
 **Infrastructure:**
 - ✅ Pub/Sub topics and subscriptions (Phase 1 → Phase 2)
-- ✅ Cloud Run processors (21 processors deployed)
-- ✅ BigQuery raw dataset (`nba_raw` with 15+ tables)
+- ✅ Cloud Run processors (25 processors deployed)
+- ✅ BigQuery raw dataset (`nba_raw` with 25 tables)
 - ✅ Dead Letter Queue (DLQ) for failed messages
+- ✅ All tables with `data_hash` columns
+- ✅ SmartIdempotencyMixin pattern deployed
+
+**Smart Patterns Active:**
+- ✅ **Smart Idempotency (Pattern #14):** Compute SHA256 hash of output data, skip BigQuery write if hash unchanged
+- **Expected skip rate:** 30-60%
+- **Cost reduction:** 30-50%
 
 **Key Metrics:**
 - 100% Pub/Sub delivery rate
@@ -72,104 +82,133 @@
 
 **Documentation:**
 - ✅ Operations guide: `docs/processors/01-phase2-operations-guide.md`
+- ✅ Reference: `docs/reference/02-processors-reference.md`
 - ✅ Pub/Sub verification: `docs/infrastructure/01-pubsub-integration-verification.md`
 
 **Health Check:** Query `nba_raw` tables for recent data
 
+**Recent Changes:**
+- **2025-11-21 17:47:** Fixed critical syntax error in SmartIdempotencyMixin
+- **2025-11-20:** Deployed smart idempotency to all 25 processors
+
 **Known Gaps:**
-- ❌ **Phase 2 → Phase 3 Pub/Sub connection NOT implemented** (Sprint 1 priority)
+- ⏳ Phase 2 → Phase 3 Pub/Sub publishing (ready to connect)
 
 ---
 
 ### Phase 3: Analytics Processing
-**Status:** ⚠️ **CODE READY, NOT DEPLOYED**
-**Code Completeness:** 90%
-**Documentation:** ✅ Complete
+**Status:** ✅ **DEPLOYED IN PRODUCTION** with Smart Reprocessing
+**Deployed:** 2025-11-18 (Processors), 2025-11-21 (Schemas verified)
+**Last Verified:** 2025-11-22
 
 **What It Does:**
 - Transforms raw data → analytics tables (player/team summaries)
 - Creates forward-looking context for predictions (fatigue, streaks, betting lines)
 - 5 processors with comprehensive test coverage
+- Smart reprocessing: Skips processing when source hashes unchanged (30-50% reduction)
 
 **Processors:**
-| Processor | Lines | Fields | Tests | Status |
-|-----------|-------|--------|-------|--------|
-| Player Game Summary | 726 | 72 | 96 | ✅ Code ready |
-| Team Offense Summary | 692 | 47 | 97 | ✅ Code ready |
-| Team Defense Summary | 740 | 54 | 39 | ✅ Code ready |
-| Upcoming Player Context | 1198 | 64 | 89 | ✅ Code ready |
-| Upcoming Team Context | 1502 | 40 | 83 | ✅ Code ready |
+| Processor | Sources | Fields | Hash Columns | Status |
+|-----------|---------|--------|--------------|--------|
+| Player Game Summary | 6 | 72 | 6 | ✅ Deployed |
+| Team Offense Summary | 2 | 47 | 2 | ✅ Deployed |
+| Team Defense Summary | 3 | 54 | 3 | ✅ Deployed |
+| Upcoming Player Context | 4 | 64 | 4 | ✅ Deployed |
+| Upcoming Team Context | 3 | 40 | 3 | ✅ Deployed |
 
-**Infrastructure Needed:**
-- ❌ Pub/Sub connection from Phase 2 (Sprint 1: ~2 hours)
-- ❌ Cloud Run deployment (Sprint 1: ~3 hours)
-- ❌ BigQuery analytics dataset creation
-- ❌ Monitoring and alerts setup
+**Infrastructure:**
+- ✅ Cloud Run processors (5 processors deployed)
+- ✅ BigQuery analytics dataset (`nba_analytics` with 5 tables)
+- ✅ All schemas with dependency tracking (4 fields per source)
+- ✅ All schemas with source `data_hash` columns
+- ✅ Pub/Sub infrastructure ready (Phase 2 → Phase 3)
+
+**Smart Patterns Active:**
+- ✅ **Dependency Tracking (v4.0):** Track 4 fields per source (last_updated, rows_found, completeness_pct, data_hash)
+- ✅ **Smart Reprocessing:** Compare current vs. previous source hashes, skip if unchanged
+- ✅ **Backfill Detection:** Find games with Phase 2 data but no Phase 3 analytics
+- **Expected skip rate:** 30-50%
 
 **Documentation:**
 - ✅ Processor cards: `docs/processor-cards/phase3-*.md` (5 cards)
+- ✅ Reference: `docs/reference/03-analytics-processors-reference.md`
 - ✅ Operations guide: `docs/processors/02-phase3-operations-guide.md`
 - ✅ Scheduling strategy: `docs/processors/03-phase3-scheduling-strategy.md`
 - ✅ Troubleshooting: `docs/processors/04-phase3-troubleshooting.md`
+- ✅ Monitoring: `docs/deployment/guides/phase3-monitoring.md`
 - ✅ Data flow mappings: `docs/data-flow/` (5 detailed mapping docs)
 
-**Deployment Blockers:**
-- Missing: Phase 2 → Phase 3 Pub/Sub publishing
-- Missing: Cloud Run service deployment
+**Recent Changes:**
+- **2025-11-21:** Verified all schemas have hash columns deployed
 
-**Estimated Deployment Time:** Sprint 1 (~5 hours total)
+**Next Steps:**
+- Connect Phase 2 → Phase 3 Pub/Sub publishing
+- Monitor skip rates after connection
 
 ---
 
 ### Phase 4: Precompute & Feature Engineering
-**Status:** ⚠️ **CODE READY, NOT DEPLOYED**
-**Code Completeness:** 90%
-**Documentation:** ✅ Complete
+**Status:** ⏳ **SCHEMAS DEPLOYED** - Processor Code Updates Needed
+**Deployed:** 2025-11-22 08:43 (Schemas)
+**Last Verified:** 2025-11-22
 
 **What It Does:**
 - Pre-aggregates expensive calculations (zone analysis, composite factors)
 - Creates ML feature store for Phase 5 predictions
 - Runs nightly (11 PM - 12 AM) to prepare data for next day
-- 5 processors optimized for performance
+- 4 processors optimized for performance with historical dependency checking
 
 **Processors:**
-| Processor | Lines | Fields | Tests | Duration | Status |
-|-----------|-------|--------|-------|----------|--------|
-| Team Defense Zone Analysis | 804 | 30 | 45 | ~2 min | ✅ Code ready |
-| Player Shot Zone Analysis | 647 | 32 | 78 | 5-8 min | ✅ Code ready |
-| Player Composite Factors | 1010 | 39 | 54 | 10-15 min | ✅ Code ready |
-| Player Daily Cache | 652 | 43 | 50 | 5-10 min | ✅ Code ready |
-| ML Feature Store V2 | 613 | 30 | 158 | ~2 min | ✅ Code ready |
+| Processor | Source Tables | Hash Columns | Historical Deps | Status |
+|-----------|---------------|--------------|----------------|--------|
+| Team Defense Zone Analysis | 1 (P3) | 2 | ✅ Complete | ⏳ Code update |
+| Player Shot Zone Analysis | 1 (P3) | 2 | ✅ Complete | ⏳ Code update |
+| Player Composite Factors | 3 (P3+P4) | 4 | ✅ Complete | ⏳ Code update |
+| Player Daily Cache | 1 (P3) | 1 | ✅ Complete | ⏳ Code update |
 
-**Key Feature:**
-- Player Daily Cache saves ~$27/month by eliminating repeated queries
-
-**Infrastructure Needed:**
-- ❌ Phase 3 → Phase 4 Pub/Sub connection (Sprint 3)
-- ❌ Cloud Run deployment
-- ❌ BigQuery precompute dataset
+**Infrastructure:**
+- ✅ BigQuery schemas deployed (2025-11-22)
+- ✅ BigQuery precompute dataset (`nba_precompute` with 4 tables)
+- ✅ All schemas with source hash columns
+- ✅ Historical dependency tracking implemented
+- ❌ Cloud Run deployment (needs code updates)
+- ❌ Phase 3 → Phase 4 Pub/Sub topics (pending deployment)
 - ❌ Nightly scheduler setup (11 PM - 12 AM)
 
+**Smart Patterns Implemented:**
+- ✅ **Historical Dependency Checking:** Check for required historical data (last N games), early exit if insufficient
+- ✅ **Phase 4 Dependency Tracking (v4.0 - Streamlined):** Track 3 fields per source (last_updated, rows_found, completeness_pct)
+- Note: No data_hash for historical range queries (by design)
+
 **Documentation:**
-- ✅ Processor cards: `docs/processor-cards/phase4-*.md` (5 cards)
+- ✅ Processor cards: `docs/processor-cards/phase4-*.md` (4 cards)
 - ✅ Operations guide: `docs/processors/05-phase4-operations-guide.md`
 - ✅ Scheduling strategy: `docs/processors/06-phase4-scheduling-strategy.md`
 - ✅ Troubleshooting: `docs/processors/07-phase4-troubleshooting.md`
 - ✅ ML Feature Store deep dive: `docs/processors/08-phase4-ml-feature-store-deepdive.md`
 - ✅ Data flow mappings: `docs/data-flow/` (5 detailed mapping docs)
 
-**Dependencies:**
-- Requires: Phase 3 fully operational
-- Execution order: P1, P2 parallel → P3 (depends on P1+P2) → P4, P5 parallel (both depend on P3)
+**Recent Changes:**
+- **2025-11-22 08:43:** All 4 Phase 4 schemas deployed with hash columns
+- **2025-11-22 09:02:** Historical dependency checking implementation complete
 
-**Estimated Deployment Time:** Sprint 3 (~8 hours after Phase 3 deployed)
+**Next Steps:**
+1. Update processor code with historical dependency methods
+2. Deploy to Cloud Run (estimated 2-3 hours)
+3. Create Pub/Sub topics for Phase 3 → Phase 4
+4. Test with single game before full deployment
+5. Set up nightly scheduler (11 PM - 12 AM)
+
+**Dependencies:**
+- Requires: Phase 3 fully operational ✅
+- Execution order: P1, P2 parallel → P3 (depends on P1+P2) → P4 parallel (depends on P3)
 
 ---
 
 ### Phase 5: Predictions & ML Models
-**Status:** ✅ **CODE 100% COMPLETE**, ❌ **NOT DEPLOYED IN PIPELINE**
+**Status:** ❌ **NOT DEPLOYED** - ml_feature_store_v2 Schema Ready
 **Code Completeness:** 100%
-**Documentation:** ✅ Complete (but not integrated with processor cards)
+**Documentation:** ✅ Complete (23 docs)
 
 **What It Does:**
 - Generates player points predictions using 5 ML models
@@ -189,9 +228,13 @@
 **Infrastructure:**
 - ✅ Code: `predictions/` directory (22 Python files, ~3,500 lines)
 - ✅ Tests: Comprehensive test coverage
+- ✅ ml_feature_store_v2 schema deployed (2025-11-22 08:43)
+- ✅ Schema includes `data_hash` column
+- ✅ Schema ready for Phase 4 → Phase 5 integration
 - ❌ Deployment: Not deployed to Cloud Run
 - ❌ Integration: Not connected to Phase 4
 - ❌ Trained models: XGBoost needs real model (currently using mock)
+- ❌ Pub/Sub topics: Not created (Phase 4 → Phase 5)
 
 **Documentation:**
 - ✅ **Tutorials (4 docs):**
@@ -223,19 +266,24 @@
 - ✅ **Data Sources (1 doc):**
   - `data-sources/01-data-categorization.md` - Data pipeline
 
-**Documentation Status:** ✅ **100% Complete (21 docs across 7 categories, ~265KB)**
+**Documentation Status:** ✅ **100% Complete (23 docs across 7 categories)**
 
 **Documentation Gaps:**
 - ❌ No Phase 5 processor card (to match Phase 3/4 style)
-- ❌ Not included in cross-phase troubleshooting matrix (placeholders only)
-- ❌ Not referenced in workflow cards
+
+**Recent Changes:**
+- **2025-11-22 08:43:** ml_feature_store_v2 schema deployed with data_hash column
 
 **Deployment Needs:**
 1. Train XGBoost model with real data (~4 hours)
 2. Deploy coordinator and worker services to Cloud Run (~3 hours)
-3. Connect to Phase 4 via Pub/Sub (~2 hours)
+3. Create Pub/Sub topics for Phase 4 → Phase 5 (~2 hours)
 4. Set up monitoring and alerts (~2 hours)
-5. Create processor card and update docs (~2 hours)
+5. Create Phase 5 processor card (~2 hours)
+
+**Next Steps:**
+- Requires Phase 4 processors deployed first
+- Then Phase 5 deployment: Sprint 6 (~13 hours)
 
 **Estimated Deployment Time:** Sprint 6 (~13 hours after Phase 4 deployed)
 
@@ -268,17 +316,33 @@
 
 ## 🗺️ Roadmap - Next Steps
 
-### Week 1: Critical Integration (Sprint 1)
+### Current Sprint: Phase 4 Processor Deployment
+**Goal:** Deploy Phase 4 precompute processors to Cloud Run
+
+**Status:** ⏳ In Progress
+
+**Tasks:**
+1. ✅ Deploy Phase 4 schemas to BigQuery (COMPLETE - 2025-11-22)
+2. ✅ Implement historical dependency checking (COMPLETE - 2025-11-22)
+3. ⏳ Update processor code with historical dependency methods (~1 hour)
+4. ⏳ Deploy to Cloud Run (~2-3 hours)
+5. ⏳ Test with single game before full deployment (~1 hour)
+
+**Value:** Enables ML feature store for Phase 5 predictions
+
+---
+
+### Next Sprint: Phase 2→3 Integration
 **Goal:** Enable Phase 2 → Phase 3 automatic triggering
 
 **Tasks:**
 1. Implement Phase 2 Pub/Sub publishing (~2 hours)
-2. Deploy Phase 3 processors to Cloud Run (~3 hours)
+2. Connect to existing Phase 3 processors (~1 hour)
 3. Verify end-to-end Phase 1 → Phase 2 → Phase 3 flow (~1 hour)
 
-**Value:** Unblocks Phase 3 analytics, enables nightly processing pipeline
+**Value:** Enables automatic analytics updates, unblocks nightly processing pipeline
 
-**Status:** Ready to start (highest priority)
+**Dependencies:** None (Phase 3 already deployed)
 
 ---
 
@@ -296,17 +360,20 @@
 
 ---
 
-### Week 2: Phase 4 Integration (Sprint 3)
-**Goal:** Enable Phase 3 → Phase 4 precompute
+### Future Sprint: Phase 3→4 Integration
+**Goal:** Enable Phase 3 → Phase 4 automatic triggering
+
+**Status:** Waiting for Phase 4 processor deployment
 
 **Tasks:**
-1. Connect Phase 3 → Phase 4 Pub/Sub (~2 hours)
-2. Deploy Phase 4 processors (~4 hours)
-3. Set up nightly schedule (11 PM - 12 AM) (~2 hours)
+1. Create Phase 3 → Phase 4 Pub/Sub topics (~2 hours)
+2. Connect Phase 3 processors to publish events (~1 hour)
+3. Set up nightly scheduler (11 PM - 12 AM) (~2 hours)
+4. Verify end-to-end flow (~1 hour)
 
-**Value:** Unlocks ML feature store for Phase 5
+**Value:** Enables nightly precompute and ML feature store updates
 
-**Dependencies:** Sprint 1 complete
+**Dependencies:** Phase 4 processors deployed
 
 ---
 
@@ -342,11 +409,14 @@
 
 ## 📈 Success Metrics
 
-### Current Metrics (Phase 1-2)
-- ✅ 97-99% scraper success rate
-- ✅ 100% Pub/Sub delivery rate
+### Current Metrics (Phase 1-3 Operational)
+- ✅ 97-99% scraper success rate (Phase 1)
+- ✅ 100% Pub/Sub delivery rate (Phase 1→2)
 - ✅ Sub-second Phase 2 processing latency
-- ✅ 1,482 events processed in 3 hours (verified 2025-11-15)
+- ✅ Phase 2 smart idempotency: 30-60% expected skip rate
+- ✅ Phase 3 processors deployed and ready
+- ✅ Phase 3 smart reprocessing: 30-50% expected skip rate
+- ✅ Phase 4 schemas deployed (2025-11-22)
 
 ### Target Metrics (Phase 3-5 Deployed)
 - 🎯 End-to-end pipeline: Scraper → Prediction in <30 minutes
@@ -361,17 +431,23 @@
 
 ### Currently Operational ✅
 - Phase 1 orchestration (automated daily execution)
-- Phase 2 raw processing (Pub/Sub event-driven)
+- Phase 2 raw processing (Pub/Sub event-driven) with smart idempotency
+- Phase 3 analytics processing (deployed, ready for Pub/Sub connection)
 - Health check scripts (`./bin/orchestration/*.sh`)
 - Grafana monitoring dashboard (basic)
 
 ### Ready to Deploy ⚠️
-- Phase 3 analytics processors (code + docs complete)
-- Phase 4 precompute processors (code + docs complete)
-- Phase 5 prediction models (code + docs complete, needs trained XGBoost)
+- Phase 4 precompute processors (schemas deployed, code needs updates)
+- Phase 5 prediction models (ml_feature_store_v2 deployed, needs Cloud Run deployment)
+
+### In Progress 🔄
+- Phase 4 processor code updates (historical dependency methods)
+- Phase 2→3 Pub/Sub integration planning
 
 ### Not Yet Started ❌
 - Phase 6 publishing
+- Phase 3→4 Pub/Sub topics
+- Phase 4→5 Pub/Sub topics
 - Advanced monitoring (correlation IDs, unified logs)
 - Entity-level granularity (performance optimization)
 
@@ -381,20 +457,25 @@
 
 ### Complete ✅
 - **Phase 1:** 4 docs in `docs/orchestration/`
-- **Phase 2:** Operations guide + Pub/Sub docs
-- **Phase 3:** 5 processor cards + 3 operations docs
-- **Phase 4:** 5 processor cards + 4 operations docs
-- **Phase 5:** 23 comprehensive docs across 7 categories (tutorials, operations, ML training, algorithms, architecture, design, data sources)
-- **Workflows:** 2 workflow cards (daily timeline + real-time flow)
+- **Phase 2:** Operations guide + reference + Pub/Sub docs
+- **Phase 3:** 5 processor cards + reference + 4 operations docs + monitoring guide
+- **Phase 4:** 4 processor cards + 4 operations docs
+- **Phase 5:** 23 comprehensive docs across 7 categories
+- **Reference:** 6 reference docs (scrapers, processors, analytics, player registry, notifications, utilities)
+- **Guides:** BigQuery best practices, schema changes, backfill deployment, processor documentation
+- **Operations:** Cloud Run args, cross-phase troubleshooting
+- **Deployment:** Consolidated status, history, monitoring guide
+- **Workflows:** 2 workflow cards
 - **Monitoring:** 2 Grafana guides
-- **Operations:** Cross-phase troubleshooting matrix
+
+### Recent Documentation Updates (2025-11-21 to 2025-11-22)
+- ✅ Created 13 condensed reference and guide documents
+- ✅ Organized deployment documentation into structured directory
+- ✅ Created deployment status and history documents
+- ✅ Added BigQuery best practices and Cloud Run args guides
 
 ### Gaps 🎯
-- Phase 5 not integrated with processor cards system
-- No Phase 5 processor card
-- Cross-phase troubleshooting has Phase 5 placeholders
-- Workflow cards don't reference Phase 5 yet
-- No data flow mappings for Phase 5
+- No Phase 5 processor card (to match Phase 3/4 style)
 
 ---
 
@@ -403,38 +484,48 @@
 ### For Daily Operations
 - **Health check:** Run `./bin/orchestration/quick_health_check.sh`
 - **Monitoring:** `docs/monitoring/02-grafana-daily-health-check.md`
+- **Deployment status:** `docs/deployment/00-deployment-status.md` ⭐
 - **Troubleshooting Phase 1:** `docs/orchestration/04-troubleshooting.md`
 - **Troubleshooting Phase 2:** `docs/processors/01-phase2-operations-guide.md`
+- **Troubleshooting Phase 3:** `docs/deployment/guides/phase3-monitoring.md`
 
 ### For Understanding the System
 - **Quick overview:** `docs/architecture/00-quick-reference.md` (2-3 min)
 - **Complete architecture:** `docs/architecture/04-event-driven-pipeline-architecture.md` (30-45 min)
 - **Processor cards:** `docs/processor-cards/README.md`
-- **Phase 5 getting started:** `docs/predictions/tutorials/01-getting-started.md` ⭐
+- **Reference docs:** `docs/reference/README.md`
+- **Phase 5 getting started:** `docs/predictions/tutorials/01-getting-started.md`
 
 ### For Development
-- **Deployment roadmap:** `docs/architecture/05-implementation-status-and-roadmap.md`
+- **Deployment status:** `docs/deployment/00-deployment-status.md` ⭐
+- **Deployment history:** `docs/deployment/01-deployment-history.md`
+- **BigQuery best practices:** `docs/guides/06-bigquery-best-practices.md`
+- **Cloud Run args:** `docs/operations/03-cloud-run-jobs-arguments.md`
 - **Integration guide:** `docs/architecture/01-phase1-to-phase5-integration-plan.md`
-- **BigQuery schemas:** `docs/orchestration/03-bigquery-schemas.md`
 
 ---
 
 ## ❓ Frequently Asked Questions
 
 ### "What's working in production today?"
-Phases 1-2 are fully operational. We scrape data daily and process it into BigQuery raw tables automatically.
+Phases 1-3 are fully operational. We scrape data daily, process it into BigQuery raw tables with smart idempotency, and have analytics processors ready for connection.
 
 ### "When will predictions be live?"
-Estimated 3-4 weeks after starting Phase 3 deployment (Sprint 1 → Sprint 6). Phase 5 code is 100% complete.
+Estimated timeline:
+1. Phase 4 processor deployment: 2-3 hours
+2. Phase 2→3 Pub/Sub connection: 4 hours
+3. Phase 3→4 integration: 6 hours
+4. Phase 5 deployment: 13 hours after Phase 4
+Total: ~4-5 weeks after starting Phase 4 deployment
 
-### "Why isn't Phase 3 deployed yet?"
-Missing: Phase 2 → Phase 3 Pub/Sub connection (Sprint 1, ~2 hours to implement).
+### "What's the current priority?"
+Phase 4 processor code updates (historical dependency methods) - estimated 2-3 hours to complete and deploy.
 
 ### "What's the biggest risk?"
 XGBoost model training for Phase 5. Currently using mock model. Need real trained model (~4 hours work).
 
 ### "Can I use the system for development?"
-Yes! All Phase 1-2 data is live. Phase 3-5 code is ready to run locally for testing.
+Yes! Phase 1-3 data is live. Phase 4-5 code is ready to run locally for testing.
 
 ---
 
@@ -457,12 +548,12 @@ Yes! All Phase 1-2 data is live. Phase 3-5 code is ready to run locally for test
 
 ---
 
-**Document Version:** 1.0
-**Last System Verification:** 2025-11-15 (Phase 1-2 operational)
-**Next Review:** After Sprint 1 completion (Phase 3 deployment)
+**Document Version:** 2.0
+**Last System Verification:** 2025-11-22 10:20:00 PST (Phase 1-3 operational, Phase 4 schemas deployed)
+**Next Review:** After Phase 4 processor deployment
 **Maintained By:** Engineering team
-**Update Frequency:** After each sprint completion
+**Update Frequency:** After each major deployment
 
 ---
 
-*This is the single source of truth for system status. Keep updated after each deployment.*
+*This is the single source of truth for system status. For detailed deployment information, see `docs/deployment/00-deployment-status.md`*

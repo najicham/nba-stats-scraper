@@ -44,6 +44,9 @@ from data_processors.analytics.analytics_base import AnalyticsProcessorBase
 # Pattern imports (Week 1 - Foundation Patterns)
 from shared.processors.patterns import SmartSkipMixin, EarlyExitMixin, CircuitBreakerMixin
 
+# Completeness checking (Week 7 - Phase 3 Multi-Window for Teams)
+from shared.utils.completeness_checker import CompletenessChecker
+
 logger = logging.getLogger(__name__)
 
 
@@ -88,11 +91,17 @@ class UpcomingTeamGameContextProcessor(
         self.table_name = 'nba_analytics.upcoming_team_game_context'
         self.entity_type = 'team_game'
         self.entity_field = 'team_abbr'
-        
+
         # Initialize BigQuery client
         self.project_id = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
         self.bq_client = bigquery.Client(project=self.project_id)
-        
+
+        # Initialize completeness checker (Week 7 - Team Multi-Window)
+        self.completeness_checker = CompletenessChecker(self.bq_client, self.project_id)
+
+        # Season start date (for completeness checking - Week 7)
+        self.season_start_date = None
+
         # Data containers
         self.schedule_data: Optional[pd.DataFrame] = None
         self.betting_lines: Optional[pd.DataFrame] = None
@@ -259,6 +268,10 @@ class UpcomingTeamGameContextProcessor(
         logger.info("=" * 80)
         logger.info("PHASE 3: UPCOMING TEAM GAME CONTEXT - EXTRACTION STARTED")
         logger.info("=" * 80)
+
+        # Store season start date for completeness checking (Week 7)
+        season_year = self.target_date.year if self.target_date.month >= 10 else self.target_date.year - 1
+        self.season_start_date = date(season_year, 10, 1)
 
         # SMART REPROCESSING: Check if we can skip processing
         skip, reason = self.should_skip_processing(self.target_date)
@@ -883,11 +896,62 @@ class UpcomingTeamGameContextProcessor(
         else:
             logger.warning("VALIDATION PASSED WITH WARNINGS ⚠")
         logger.info("=" * 80)
-    
+
+    # ========================================================================
+    # CIRCUIT BREAKER METHODS (Week 7 - Completeness Checking)
+    # ========================================================================
+
+    def _check_circuit_breaker(self, entity_id: str, analysis_date: date) -> dict:
+        """Check if circuit breaker is active for entity."""
+        query = f"""
+        SELECT attempt_number, attempted_at, circuit_breaker_tripped, circuit_breaker_until
+        FROM `{self.project_id}.nba_orchestration.reprocess_attempts`
+        WHERE processor_name = '{self.table_name}'
+          AND entity_id = '{entity_id}'
+          AND analysis_date = DATE('{analysis_date}')
+        ORDER BY attempt_number DESC LIMIT 1
+        """
+        try:
+            result = list(self.bq_client.query(query).result())
+            if not result:
+                return {'active': False, 'attempts': 0, 'until': None}
+            row = result[0]
+            if row.circuit_breaker_tripped:
+                if row.circuit_breaker_until and datetime.now(timezone.utc) < row.circuit_breaker_until:
+                    return {'active': True, 'attempts': row.attempt_number, 'until': row.circuit_breaker_until}
+            return {'active': False, 'attempts': row.attempt_number, 'until': None}
+        except Exception as e:
+            logger.warning(f"Error checking circuit breaker for {entity_id}: {e}")
+            return {'active': False, 'attempts': 0, 'until': None}
+
+    def _increment_reprocess_count(self, entity_id: str, analysis_date: date, completeness_pct: float, skip_reason: str) -> None:
+        """Track reprocessing attempt and trip circuit breaker if needed."""
+        circuit_status = self._check_circuit_breaker(entity_id, analysis_date)
+        next_attempt = circuit_status['attempts'] + 1
+        circuit_breaker_tripped = next_attempt >= 3
+        circuit_breaker_until = None
+        if circuit_breaker_tripped:
+            circuit_breaker_until = datetime.now(timezone.utc) + timedelta(days=7)
+            logger.error(f"{entity_id}: Circuit breaker TRIPPED after {next_attempt} attempts")
+        insert_query = f"""
+        INSERT INTO `{self.project_id}.nba_orchestration.reprocess_attempts`
+        (processor_name, entity_id, analysis_date, attempt_number, attempted_at,
+         completeness_pct, skip_reason, circuit_breaker_tripped, circuit_breaker_until,
+         manual_override_applied, notes)
+        VALUES ('{self.table_name}', '{entity_id}', DATE('{analysis_date}'), {next_attempt},
+                CURRENT_TIMESTAMP(), {completeness_pct}, '{skip_reason}', {circuit_breaker_tripped},
+                {'TIMESTAMP("' + circuit_breaker_until.isoformat() + '")' if circuit_breaker_until else 'NULL'},
+                FALSE, 'Attempt {next_attempt}: {completeness_pct:.1f}% complete')
+        """
+        try:
+            self.bq_client.query(insert_query).result()
+        except Exception as e:
+            logger.warning(f"Failed to record reprocess attempt for {entity_id}: {e}")
+
     # ========================================================================
     # DATA TRANSFORMATION
     # ========================================================================
-    
+
     def calculate_analytics(self) -> None:
         """
         Calculate team game context with comprehensive tracking.
@@ -915,9 +979,53 @@ class UpcomingTeamGameContextProcessor(
             (self.schedule_data['game_date'].dt.date >= start_date) &
             (self.schedule_data['game_date'].dt.date <= end_date)
         ].copy()
-        
+
         logger.info(f"Processing {len(target_games)} games ({len(target_games) * 2} team-game records)")
-        
+
+        # ============================================================
+        # NEW (Week 7): Batch completeness checking for ALL teams (2 windows)
+        # ============================================================
+        # Collect all unique teams from games
+        all_teams = set(target_games['home_team_abbr'].tolist() + target_games['away_team_abbr'].tolist())
+
+        logger.info(f"Checking completeness for {len(all_teams)} teams across 2 windows...")
+
+        # Window 1: L7 days
+        comp_l7d = self.completeness_checker.check_completeness_batch(
+            entity_ids=list(all_teams),
+            entity_type='team',
+            analysis_date=end_date,  # Use end_date for consistency
+            upstream_table='nba_raw.nbac_schedule',
+            upstream_entity_field='home_team_abbr',  # Schedule uses home/away, checker will handle
+            lookback_window=7,
+            window_type='days',
+            season_start_date=self.season_start_date
+        )
+
+        # Window 2: L14 days
+        comp_l14d = self.completeness_checker.check_completeness_batch(
+            entity_ids=list(all_teams),
+            entity_type='team',
+            analysis_date=end_date,
+            upstream_table='nba_raw.nbac_schedule',
+            upstream_entity_field='home_team_abbr',
+            lookback_window=14,
+            window_type='days',
+            season_start_date=self.season_start_date
+        )
+
+        # Check bootstrap mode
+        is_bootstrap = self.completeness_checker.is_bootstrap_mode(
+            end_date, self.season_start_date
+        )
+        is_season_boundary = self.completeness_checker.is_season_boundary(end_date)
+
+        logger.info(
+            f"Completeness check complete. Bootstrap mode: {is_bootstrap}, "
+            f"Season boundary: {is_season_boundary}"
+        )
+        # ============================================================
+
         # Process each game
         for idx, game in target_games.iterrows():
             try:
@@ -926,20 +1034,28 @@ class UpcomingTeamGameContextProcessor(
                     game=game,
                     team_abbr=game['home_team_abbr'],
                     opponent_abbr=game['away_team_abbr'],
-                    home_game=True
+                    home_game=True,
+                    comp_l7d=comp_l7d,
+                    comp_l14d=comp_l14d,
+                    is_bootstrap=is_bootstrap,
+                    is_season_boundary=is_season_boundary
                 )
-                
+
                 if home_record:
                     successful_records.append(home_record)
                 else:
                     failed_count += 1
-                
+
                 # Create away team record
                 away_record = self._calculate_team_game_context(
                     game=game,
                     team_abbr=game['away_team_abbr'],
                     opponent_abbr=game['home_team_abbr'],
-                    home_game=False
+                    home_game=False,
+                    comp_l7d=comp_l7d,
+                    comp_l14d=comp_l14d,
+                    is_bootstrap=is_bootstrap,
+                    is_season_boundary=is_season_boundary
                 )
                 
                 if away_record:
@@ -974,19 +1090,27 @@ class UpcomingTeamGameContextProcessor(
         game: pd.Series,
         team_abbr: str,
         opponent_abbr: str,
-        home_game: bool
+        home_game: bool,
+        comp_l7d: Dict,
+        comp_l14d: Dict,
+        is_bootstrap: bool,
+        is_season_boundary: bool
     ) -> Optional[Dict]:
         """
         Calculate complete context for one team-game.
-        
+
         Args:
             game: Game record from schedule
             team_abbr: Team to calculate context for
             opponent_abbr: Opposing team
             home_game: True if team is home
-            
+            comp_l7d: L7d completeness results for all teams
+            comp_l14d: L14d completeness results for all teams
+            is_bootstrap: Whether in bootstrap mode
+            is_season_boundary: Whether at season boundary
+
         Returns:
-            Dict with all context fields or None if calculation fails
+            Dict with all context fields (including 19 completeness metadata fields) or None if calculation fails
         """
         
         try:
@@ -1018,11 +1142,66 @@ class UpcomingTeamGameContextProcessor(
             
             # Add source tracking (one line!)
             record.update(self.build_source_tracking_fields())
-            
+
+            # ============================================================
+            # NEW (Week 7): Completeness Checking Metadata (19 fields)
+            # ============================================================
+            # Get completeness for this team
+            default_comp = {
+                'expected_count': 0, 'actual_count': 0, 'completeness_pct': 0.0,
+                'missing_count': 0, 'is_complete': False, 'is_production_ready': False
+            }
+
+            completeness_l7d = comp_l7d.get(team_abbr, default_comp)
+            completeness_l14d = comp_l14d.get(team_abbr, default_comp)
+
+            # Check circuit breaker (entity_id is team_abbr+game_date for uniqueness)
+            entity_id = f"{team_abbr}_{game['game_date'].date()}"
+            circuit_breaker_status = self._check_circuit_breaker(entity_id, game['game_date'].date())
+
+            # Completeness Metrics (use L14d as primary - longer window)
+            record['expected_games_count'] = completeness_l14d['expected_count']
+            record['actual_games_count'] = completeness_l14d['actual_count']
+            record['completeness_percentage'] = completeness_l14d['completeness_pct']
+            record['missing_games_count'] = completeness_l14d['missing_count']
+
+            # Production Readiness (both windows must be ready)
+            record['is_production_ready'] = (
+                completeness_l7d['is_production_ready'] and
+                completeness_l14d['is_production_ready']
+            )
+            record['data_quality_issues'] = []  # Populate if specific issues found
+
+            # Circuit Breaker
+            record['last_reprocess_attempt_at'] = None  # Would need separate query
+            record['reprocess_attempt_count'] = circuit_breaker_status['attempts']
+            record['circuit_breaker_active'] = circuit_breaker_status['active']
+            record['circuit_breaker_until'] = (
+                circuit_breaker_status['until'].isoformat()
+                if circuit_breaker_status['until'] else None
+            )
+
+            # Bootstrap/Override
+            record['manual_override_required'] = False
+            record['season_boundary_detected'] = is_season_boundary
+            record['backfill_bootstrap_mode'] = is_bootstrap
+            record['processing_decision_reason'] = 'processed_successfully'
+
+            # Multi-Window Completeness (5 fields)
+            record['l7d_completeness_pct'] = completeness_l7d['completeness_pct']
+            record['l7d_is_complete'] = completeness_l7d['is_complete']
+            record['l14d_completeness_pct'] = completeness_l14d['completeness_pct']
+            record['l14d_is_complete'] = completeness_l14d['is_complete']
+            record['all_windows_complete'] = (
+                completeness_l7d['is_complete'] and
+                completeness_l14d['is_complete']
+            )
+            # ============================================================
+
             # Add processing metadata
             record['processed_at'] = datetime.now(timezone.utc).isoformat()
             record['created_at'] = datetime.now(timezone.utc).isoformat()
-            
+
             return record
             
         except Exception as e:

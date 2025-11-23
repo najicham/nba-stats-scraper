@@ -1,0 +1,304 @@
+#!/bin/bash
+#
+# Check Completeness for Entity
+#
+# This script checks completeness metadata for a specific entity across all processors,
+# helping diagnose data quality issues.
+#
+# Usage:
+#   ./scripts/check-completeness --entity ENTITY_ID [--date ANALYSIS_DATE] [--processor PROCESSOR_NAME]
+#
+# Examples:
+#   # Check all processors for LeBron James (latest date)
+#   ./scripts/check-completeness --entity lebron_james
+#
+#   # Check specific date
+#   ./scripts/check-completeness --entity lebron_james --date 2024-12-15
+#
+#   # Check specific processor
+#   ./scripts/check-completeness --entity lebron_james --processor player_daily_cache
+#
+#   # Check team
+#   ./scripts/check-completeness --entity LAL --date 2024-12-15
+#
+
+set -e
+
+# Parse arguments
+ENTITY=""
+DATE=""
+PROCESSOR=""
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --entity)
+      ENTITY="$2"
+      shift 2
+      ;;
+    --date)
+      DATE="$2"
+      shift 2
+      ;;
+    --processor)
+      PROCESSOR="$2"
+      shift 2
+      ;;
+    *)
+      echo "Unknown option: $1"
+      echo "Usage: $0 --entity ENTITY_ID [--date ANALYSIS_DATE] [--processor PROCESSOR_NAME]"
+      exit 1
+      ;;
+  esac
+done
+
+# Validate required arguments
+if [ -z "$ENTITY" ]; then
+  echo "Error: Missing required argument --entity"
+  echo ""
+  echo "Usage: $0 --entity ENTITY_ID [--date ANALYSIS_DATE] [--processor PROCESSOR_NAME]"
+  echo ""
+  echo "Required:"
+  echo "  --entity       Entity ID (e.g., lebron_james, LAL)"
+  echo ""
+  echo "Optional:"
+  echo "  --date         Analysis date (YYYY-MM-DD, default: latest)"
+  echo "  --processor    Specific processor to check"
+  exit 1
+fi
+
+# Set default date if not provided
+if [ -z "$DATE" ]; then
+  DATE_CLAUSE="ORDER BY analysis_date DESC LIMIT 1"
+  DATE_DISPLAY="(latest)"
+else
+  DATE_CLAUSE="AND analysis_date = '$DATE'"
+  DATE_DISPLAY="$DATE"
+fi
+
+echo "=== Completeness Check for Entity: $ENTITY ==="
+echo "Date: $DATE_DISPLAY"
+echo ""
+
+# Function to check a specific table
+check_table() {
+  local table=$1
+  local entity_field=$2
+  local processor_name=$3
+
+  echo "--- $processor_name ---"
+
+  QUERY="
+  SELECT
+    analysis_date,
+    expected_games_count,
+    actual_games_count,
+    completeness_percentage,
+    missing_games_count,
+    is_production_ready,
+    data_quality_issues,
+    circuit_breaker_active,
+    circuit_breaker_until,
+    backfill_bootstrap_mode,
+    processing_decision_reason
+  FROM \`nba-props-platform.$table\`
+  WHERE $entity_field = '$ENTITY'
+    $DATE_CLAUSE
+  "
+
+  RESULT=$(bq query --use_legacy_sql=false --format=csv "$QUERY" 2>&1)
+
+  if echo "$RESULT" | grep -q "analysis_date"; then
+    echo "$RESULT" | column -t -s,
+  else
+    echo "No data found"
+  fi
+  echo ""
+}
+
+# Function to check multi-window table
+check_multi_window_table() {
+  local table=$1
+  local entity_field=$2
+  local processor_name=$3
+
+  echo "--- $processor_name (Multi-Window) ---"
+
+  QUERY="
+  SELECT
+    analysis_date,
+    completeness_percentage,
+    is_production_ready,
+    l5_completeness_pct,
+    l5_is_complete,
+    l10_completeness_pct,
+    l10_is_complete,
+    l7d_completeness_pct,
+    l7d_is_complete,
+    l14d_completeness_pct,
+    l14d_is_complete,
+    all_windows_complete,
+    processing_decision_reason
+  FROM \`nba-props-platform.$table\`
+  WHERE $entity_field = '$ENTITY'
+    $DATE_CLAUSE
+  "
+
+  RESULT=$(bq query --use_legacy_sql=false --format=csv "$QUERY" 2>&1)
+
+  if echo "$RESULT" | grep -q "analysis_date"; then
+    echo "$RESULT" | column -t -s,
+  else
+    echo "No data found"
+  fi
+  echo ""
+}
+
+# Check processors based on filter
+if [ -z "$PROCESSOR" ] || [ "$PROCESSOR" = "team_defense_zone_analysis" ]; then
+  check_table "nba_precompute.team_defense_zone_analysis" "team_abbr" "team_defense_zone_analysis"
+fi
+
+if [ -z "$PROCESSOR" ] || [ "$PROCESSOR" = "player_shot_zone_analysis" ]; then
+  check_table "nba_precompute.player_shot_zone_analysis" "player_lookup" "player_shot_zone_analysis"
+fi
+
+if [ -z "$PROCESSOR" ] || [ "$PROCESSOR" = "player_daily_cache" ]; then
+  check_multi_window_table "nba_precompute.player_daily_cache" "player_lookup" "player_daily_cache"
+fi
+
+if [ -z "$PROCESSOR" ] || [ "$PROCESSOR" = "player_composite_factors" ]; then
+  check_table "nba_precompute.player_composite_factors" "player_lookup" "player_composite_factors"
+fi
+
+if [ -z "$PROCESSOR" ] || [ "$PROCESSOR" = "ml_feature_store" ]; then
+  check_table "nba_predictions.ml_feature_store_v2" "player_lookup" "ml_feature_store"
+fi
+
+if [ -z "$PROCESSOR" ] || [ "$PROCESSOR" = "upcoming_player_game_context" ]; then
+  # Note: This has 5 windows (L5, L10, L7d, L14d, L30d)
+  echo "--- upcoming_player_game_context (Multi-Window) ---"
+  QUERY="
+  SELECT
+    analysis_date,
+    completeness_percentage,
+    is_production_ready,
+    l5_completeness_pct,
+    l5_is_complete,
+    l10_completeness_pct,
+    l10_is_complete,
+    l7d_completeness_pct,
+    l7d_is_complete,
+    l14d_completeness_pct,
+    l14d_is_complete,
+    l30d_completeness_pct,
+    l30d_is_complete,
+    all_windows_complete,
+    processing_decision_reason
+  FROM \`nba-props-platform.nba_analytics.upcoming_player_game_context\`
+  WHERE player_lookup = '$ENTITY'
+    $DATE_CLAUSE
+  "
+
+  RESULT=$(bq query --use_legacy_sql=false --format=csv "$QUERY" 2>&1)
+
+  if echo "$RESULT" | grep -q "analysis_date"; then
+    echo "$RESULT" | column -t -s,
+  else
+    echo "No data found"
+  fi
+  echo ""
+fi
+
+if [ -z "$PROCESSOR" ] || [ "$PROCESSOR" = "upcoming_team_game_context" ]; then
+  # Note: This has 2 windows (L7d, L14d)
+  echo "--- upcoming_team_game_context (Multi-Window) ---"
+  QUERY="
+  SELECT
+    game_date,
+    team_abbr,
+    completeness_percentage,
+    is_production_ready,
+    l7d_completeness_pct,
+    l7d_is_complete,
+    l14d_completeness_pct,
+    l14d_is_complete,
+    all_windows_complete,
+    processing_decision_reason
+  FROM \`nba-props-platform.nba_analytics.upcoming_team_game_context\`
+  WHERE team_abbr = '$ENTITY'
+    $DATE_CLAUSE
+  "
+
+  RESULT=$(bq query --use_legacy_sql=false --format=csv "$QUERY" 2>&1)
+
+  if echo "$RESULT" | grep -q "game_date"; then
+    echo "$RESULT" | column -t -s,
+  else
+    echo "No data found"
+  fi
+  echo ""
+fi
+
+# Check upstream data
+echo "=== Upstream Data Check ==="
+echo "Checking source tables for entity: $ENTITY"
+echo ""
+
+# Determine entity type
+if [[ "$ENTITY" =~ ^[A-Z]{3}$ ]]; then
+  ENTITY_TYPE="team"
+
+  echo "--- Team Games (nba_analytics.team_defense_game_summary) ---"
+  if [ -z "$DATE" ]; then
+    DATE_FILTER="game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)"
+  else
+    DATE_FILTER="game_date >= DATE_SUB('$DATE', INTERVAL 30 DAY) AND game_date < '$DATE'"
+  fi
+
+  UPSTREAM_QUERY="
+  SELECT
+    game_date,
+    COUNT(*) as record_count
+  FROM \`nba-props-platform.nba_analytics.team_defense_game_summary\`
+  WHERE team_abbr = '$ENTITY'
+    AND $DATE_FILTER
+  GROUP BY game_date
+  ORDER BY game_date DESC
+  LIMIT 20
+  "
+
+  bq query --use_legacy_sql=false --format=pretty "$UPSTREAM_QUERY"
+
+else
+  ENTITY_TYPE="player"
+
+  echo "--- Player Games (nba_analytics.player_game_summary) ---"
+  if [ -z "$DATE" ]; then
+    DATE_FILTER="game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)"
+  else
+    DATE_FILTER="game_date >= DATE_SUB('$DATE', INTERVAL 30 DAY) AND game_date < '$DATE'"
+  fi
+
+  UPSTREAM_QUERY="
+  SELECT
+    game_date,
+    team_abbr,
+    minutes_played
+  FROM \`nba-props-platform.nba_analytics.player_game_summary\`
+  WHERE player_lookup = '$ENTITY'
+    AND $DATE_FILTER
+  ORDER BY game_date DESC
+  LIMIT 20
+  "
+
+  bq query --use_legacy_sql=false --format=pretty "$UPSTREAM_QUERY"
+fi
+
+echo ""
+echo "=== Summary ==="
+echo "Entity: $ENTITY"
+echo "Type: $ENTITY_TYPE"
+echo "Date: $DATE_DISPLAY"
+echo ""
+echo "Use circuit breaker scripts if override needed:"
+echo "  ./scripts/override-circuit-breaker --processor <name> --entity $ENTITY --date <date> --reason \"<reason>\""

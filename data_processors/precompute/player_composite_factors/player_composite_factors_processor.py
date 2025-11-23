@@ -46,11 +46,18 @@ from data_processors.precompute.precompute_base import PrecomputeProcessorBase
 # Pattern imports (Week 1 - Foundation Patterns)
 from shared.processors.patterns import SmartSkipMixin, EarlyExitMixin, CircuitBreakerMixin
 
+# Smart Idempotency (Pattern #1)
+from data_processors.raw.smart_idempotency_mixin import SmartIdempotencyMixin
+
+# Completeness checking (Week 4 - Phase 4 Cascade Dependencies)
+from shared.utils.completeness_checker import CompletenessChecker
+
 # Configure logging
 logger = logging.getLogger(__name__)
 
 
 class PlayerCompositeFactorsProcessor(
+    SmartIdempotencyMixin,
     SmartSkipMixin,
     EarlyExitMixin,
     CircuitBreakerMixin,
@@ -77,21 +84,47 @@ class PlayerCompositeFactorsProcessor(
     
     # League constants
     league_avg_pace = 100.0  # Baseline NBA pace
-    
+
+    # Smart Idempotency: Fields to hash (meaningful business fields only)
+    HASH_FIELDS = [
+        'player_lookup', 'universal_player_id', 'game_date', 'game_id', 'analysis_date',
+        'fatigue_score', 'shot_zone_mismatch_score', 'pace_score', 'usage_spike_score',
+        'referee_favorability_score', 'look_ahead_pressure_score', 'travel_impact_score',
+        'opponent_strength_score', 'total_composite_adjustment',
+        'calculation_version', 'early_season_flag', 'insufficient_data_reason',
+        'data_completeness_pct', 'missing_data_fields', 'has_warnings', 'warning_details'
+    ]
+
     def __init__(self):
         """Initialize processor."""
         super().__init__()
-        
+
+        # Initialize completeness checker (Week 4 - Cascade Dependencies)
+        from google.cloud import bigquery
+        import os
+        self.bq_client = bigquery.Client()
+        self.project_id = os.environ.get('GCP_PROJECT_ID', self.bq_client.project)
+        self.completeness_checker = CompletenessChecker(self.bq_client, self.project_id)
+
         # DataFrames for extracted data
         self.player_context_df = None
         self.team_context_df = None
         self.player_shot_df = None
         self.team_defense_df = None
-        
+
+        # Source hash cache (4 dependencies)
+        self.source_player_context_hash = None
+        self.source_team_context_hash = None
+        self.source_player_shot_hash = None
+        self.source_team_defense_hash = None
+
         # Early season tracking
         self.early_season_flag = False
         self.insufficient_data_reason = None
-        
+
+        # Season start date (for completeness checking)
+        self.season_start_date = None
+
         # Failed entity tracking
         self.failed_entities = []
 
@@ -207,7 +240,11 @@ class PlayerCompositeFactorsProcessor(
         
         analysis_date = self.opts['analysis_date']
         logger.info(f"Extracting data for {analysis_date}")
-        
+
+        # Store season start date for completeness checking (Week 4)
+        season_year = analysis_date.year if analysis_date.month >= 10 else analysis_date.year - 1
+        self.season_start_date = date(season_year, 10, 1)
+
         # Check for early season before extracting
         if self._is_early_season(analysis_date):
             logger.info("Early season detected - creating placeholder records")
@@ -289,7 +326,41 @@ class PlayerCompositeFactorsProcessor(
         
         self.team_defense_df = self.bq_client.query(team_defense_query).to_dataframe()
         logger.info(f"Extracted {len(self.team_defense_df)} team defense zone records")
-    
+
+        # Extract source hashes from all 4 dependencies (Smart Reprocessing - Pattern #3)
+        self._extract_source_hashes(analysis_date)
+
+    def _extract_source_hashes(self, analysis_date: date) -> None:
+        """Extract data_hash from all 4 upstream tables (2 Phase 3, 2 Phase 4)."""
+        try:
+            # 1. upcoming_player_game_context (Phase 3)
+            query = f"""SELECT data_hash FROM `{self.project_id}.nba_analytics.upcoming_player_game_context`
+            WHERE game_date = '{analysis_date}' AND data_hash IS NOT NULL ORDER BY processed_at DESC LIMIT 1"""
+            result = self.bq_client.query(query).to_dataframe()
+            self.source_player_context_hash = str(result['data_hash'].iloc[0]) if not result.empty else None
+
+            # 2. upcoming_team_game_context (Phase 3)
+            query = f"""SELECT data_hash FROM `{self.project_id}.nba_analytics.upcoming_team_game_context`
+            WHERE game_date = '{analysis_date}' AND data_hash IS NOT NULL ORDER BY processed_at DESC LIMIT 1"""
+            result = self.bq_client.query(query).to_dataframe()
+            self.source_team_context_hash = str(result['data_hash'].iloc[0]) if not result.empty else None
+
+            # 3. player_shot_zone_analysis (Phase 4!)
+            query = f"""SELECT data_hash FROM `{self.project_id}.nba_precompute.player_shot_zone_analysis`
+            WHERE analysis_date = '{analysis_date}' AND data_hash IS NOT NULL ORDER BY processed_at DESC LIMIT 1"""
+            result = self.bq_client.query(query).to_dataframe()
+            self.source_player_shot_hash = str(result['data_hash'].iloc[0]) if not result.empty else None
+
+            # 4. team_defense_zone_analysis (Phase 4!)
+            query = f"""SELECT data_hash FROM `{self.project_id}.nba_precompute.team_defense_zone_analysis`
+            WHERE analysis_date = '{analysis_date}' AND data_hash IS NOT NULL ORDER BY processed_at DESC LIMIT 1"""
+            result = self.bq_client.query(query).to_dataframe()
+            self.source_team_defense_hash = str(result['data_hash'].iloc[0]) if not result.empty else None
+
+            logger.info(f"Extracted 4 source hashes for smart reprocessing")
+        except Exception as e:
+            logger.warning(f"Failed to extract source hashes: {e}")
+
     def _is_early_season(self, analysis_date: date) -> bool:
         """
         Check if we're in early season (insufficient data).
@@ -381,15 +452,75 @@ class PlayerCompositeFactorsProcessor(
             
             # Add source tracking fields
             record.update(self.build_source_tracking_fields())
-            
+
+            # Add source hashes (Smart Reprocessing - Pattern #3)
+            record['source_player_context_hash'] = self.source_player_context_hash
+            record['source_team_context_hash'] = self.source_team_context_hash
+            record['source_player_shot_hash'] = self.source_player_shot_hash
+            record['source_team_defense_hash'] = self.source_team_defense_hash
+
+            # Compute and add data hash (Smart Idempotency - Pattern #1)
+            record['data_hash'] = self.compute_data_hash(record)
+
             self.transformed_data.append(record)
         
         logger.info(f"Created {len(self.transformed_data)} early season placeholder records")
-    
+
+    # ============================================================
+    # Completeness Checking Methods (Week 4 - Cascade Dependencies)
+    # ============================================================
+
+    def _check_circuit_breaker(self, entity_id: str, analysis_date: date) -> dict:
+        """Check if circuit breaker is active for entity."""
+        query = f"""
+        SELECT attempt_number, attempted_at, circuit_breaker_tripped, circuit_breaker_until
+        FROM `{self.project_id}.nba_orchestration.reprocess_attempts`
+        WHERE processor_name = '{self.table_name}'
+          AND entity_id = '{entity_id}'
+          AND analysis_date = DATE('{analysis_date}')
+        ORDER BY attempt_number DESC LIMIT 1
+        """
+        try:
+            result = list(self.bq_client.query(query).result())
+            if not result:
+                return {'active': False, 'attempts': 0, 'until': None}
+            row = result[0]
+            if row.circuit_breaker_tripped:
+                if row.circuit_breaker_until and datetime.now(timezone.utc) < row.circuit_breaker_until:
+                    return {'active': True, 'attempts': row.attempt_number, 'until': row.circuit_breaker_until}
+            return {'active': False, 'attempts': row.attempt_number, 'until': None}
+        except Exception as e:
+            logger.warning(f"Error checking circuit breaker for {entity_id}: {e}")
+            return {'active': False, 'attempts': 0, 'until': None}
+
+    def _increment_reprocess_count(self, entity_id: str, analysis_date: date, completeness_pct: float, skip_reason: str) -> None:
+        """Track reprocessing attempt and trip circuit breaker if needed."""
+        circuit_status = self._check_circuit_breaker(entity_id, analysis_date)
+        next_attempt = circuit_status['attempts'] + 1
+        circuit_breaker_tripped = next_attempt >= 3
+        circuit_breaker_until = None
+        if circuit_breaker_tripped:
+            circuit_breaker_until = datetime.now(timezone.utc) + timedelta(days=7)
+            logger.error(f"{entity_id}: Circuit breaker TRIPPED after {next_attempt} attempts")
+        insert_query = f"""
+        INSERT INTO `{self.project_id}.nba_orchestration.reprocess_attempts`
+        (processor_name, entity_id, analysis_date, attempt_number, attempted_at,
+         completeness_pct, skip_reason, circuit_breaker_tripped, circuit_breaker_until,
+         manual_override_applied, notes)
+        VALUES ('{self.table_name}', '{entity_id}', DATE('{analysis_date}'), {next_attempt},
+                CURRENT_TIMESTAMP(), {completeness_pct}, '{skip_reason}', {circuit_breaker_tripped},
+                {'TIMESTAMP("' + circuit_breaker_until.isoformat() + '")' if circuit_breaker_until else 'NULL'},
+                FALSE, 'Attempt {next_attempt}: {completeness_pct:.1f}% complete')
+        """
+        try:
+            self.bq_client.query(insert_query).result()
+        except Exception as e:
+            logger.warning(f"Failed to record reprocess attempt for {entity_id}: {e}")
+
     # ========================================================================
     # CALCULATION - MAIN FLOW
     # ========================================================================
-    
+
     def calculate_precompute(self) -> None:
         """
         Calculate composite factors for each player.
@@ -411,18 +542,104 @@ class PlayerCompositeFactorsProcessor(
         
         self.transformed_data = []
         self.failed_entities = []
-        
+
+        # Get all players and analysis date
+        all_players = self.player_context_df['player_lookup'].unique()
+        analysis_date = self.opts['analysis_date']
+
+        # ============================================================
+        # NEW (Week 4): Batch completeness checking + upstream tracking
+        # ============================================================
+        logger.info(f"Checking completeness for {len(all_players)} players...")
+
+        # Check own data completeness (player_game_summary)
+        completeness_results = self.completeness_checker.check_completeness_batch(
+            entity_ids=list(all_players),
+            entity_type='player',
+            analysis_date=analysis_date,
+            upstream_table='nba_analytics.player_game_summary',
+            upstream_entity_field='player_lookup',
+            lookback_window=10,
+            window_type='games',
+            season_start_date=self.season_start_date
+        )
+
+        # Check bootstrap mode
+        is_bootstrap = self.completeness_checker.is_bootstrap_mode(
+            analysis_date, self.season_start_date
+        )
+        is_season_boundary = self.completeness_checker.is_season_boundary(analysis_date)
+
+        logger.info(
+            f"Completeness check complete. Bootstrap mode: {is_bootstrap}, "
+            f"Season boundary: {is_season_boundary}"
+        )
+        # ============================================================
+
         logger.info(f"Calculating composite factors for {len(self.player_context_df)} players")
-        
+
         for idx, player_row in self.player_context_df.iterrows():
             try:
-                record = self._calculate_player_composite(player_row)
+                player_lookup = player_row.get('player_lookup', 'unknown')
+
+                # ============================================================
+                # NEW (Week 4): Get completeness for this player
+                # ============================================================
+                completeness = completeness_results.get(player_lookup, {
+                    'expected_count': 0, 'actual_count': 0, 'completeness_pct': 0.0,
+                    'missing_count': 0, 'is_complete': False, 'is_production_ready': False
+                })
+
+                # Check circuit breaker
+                circuit_breaker_status = self._check_circuit_breaker(player_lookup, analysis_date)
+
+                if circuit_breaker_status['active']:
+                    logger.warning(
+                        f"{player_lookup}: Circuit breaker active until "
+                        f"{circuit_breaker_status['until']} - skipping"
+                    )
+                    self.failed_entities.append({
+                        'entity_id': player_lookup,
+                        'entity_type': 'player',
+                        'reason': f"Circuit breaker active until {circuit_breaker_status['until']}",
+                        'category': 'CIRCUIT_BREAKER_ACTIVE'
+                    })
+                    continue
+
+                # Check production readiness (skip if incomplete, unless in bootstrap mode)
+                if not completeness['is_production_ready'] and not is_bootstrap:
+                    logger.warning(
+                        f"{player_lookup}: Completeness {completeness['completeness_pct']:.1f}% "
+                        f"({completeness['actual_count']}/{completeness['expected_count']} games) - skipping"
+                    )
+
+                    # Track reprocessing attempt
+                    self._increment_reprocess_count(
+                        player_lookup, analysis_date,
+                        completeness['completeness_pct'],
+                        'incomplete_upstream_data'
+                    )
+
+                    self.failed_entities.append({
+                        'entity_id': player_lookup,
+                        'entity_type': 'player',
+                        'reason': f"Incomplete data: {completeness['completeness_pct']:.1f}%",
+                        'category': 'INCOMPLETE_DATA'
+                    })
+                    continue
+                # ============================================================
+
+                # Calculate composite factors (pass completeness metadata)
+                record = self._calculate_player_composite(
+                    player_row, completeness, circuit_breaker_status,
+                    is_bootstrap, is_season_boundary
+                )
                 self.transformed_data.append(record)
-                
+
             except Exception as e:
                 player_lookup = player_row.get('player_lookup', 'unknown')
                 logger.error(f"Failed to process {player_lookup}: {e}")
-                
+
                 self.failed_entities.append({
                     'entity_id': player_lookup,
                     'entity_type': 'player',
@@ -434,10 +651,24 @@ class PlayerCompositeFactorsProcessor(
         if self.failed_entities:
             logger.warning(f"Failed to process {len(self.failed_entities)} players")
     
-    def _calculate_player_composite(self, player_row: pd.Series) -> dict:
+    def _calculate_player_composite(
+        self,
+        player_row: pd.Series,
+        completeness: dict,
+        circuit_breaker_status: dict,
+        is_bootstrap: bool,
+        is_season_boundary: bool
+    ) -> dict:
         """
         Calculate all composite factors for one player.
-        
+
+        Args:
+            player_row: Player context data from DataFrame
+            completeness: Completeness check results
+            circuit_breaker_status: Circuit breaker status
+            is_bootstrap: Bootstrap mode flag
+            is_season_boundary: Season boundary flag
+
         Returns complete record dict ready for BigQuery.
         """
         player_lookup = player_row['player_lookup']
@@ -527,7 +758,36 @@ class PlayerCompositeFactorsProcessor(
             'missing_data_fields': missing_fields,
             'has_warnings': has_warnings,
             'warning_details': warning_details,
-            
+
+            # ============================================================
+            # NEW (Week 4): Completeness Checking Metadata (14 fields)
+            # ============================================================
+            # Completeness Metrics
+            'expected_games_count': completeness['expected_count'],
+            'actual_games_count': completeness['actual_count'],
+            'completeness_percentage': completeness['completeness_pct'],
+            'missing_games_count': completeness['missing_count'],
+
+            # Production Readiness (includes upstream completeness check)
+            'is_production_ready': completeness['is_production_ready'],
+            'data_quality_issues': [],  # Populate if specific issues found
+
+            # Circuit Breaker
+            'last_reprocess_attempt_at': None,  # Would need separate query
+            'reprocess_attempt_count': circuit_breaker_status['attempts'],
+            'circuit_breaker_active': circuit_breaker_status['active'],
+            'circuit_breaker_until': (
+                circuit_breaker_status['until'].isoformat()
+                if circuit_breaker_status['until'] else None
+            ),
+
+            # Bootstrap/Override
+            'manual_override_required': False,
+            'season_boundary_detected': is_season_boundary,
+            'backfill_bootstrap_mode': is_bootstrap,
+            'processing_decision_reason': 'processed_successfully',
+            # ============================================================
+
             # Timestamps
             'created_at': datetime.now(timezone.utc).isoformat(),
             'processed_at': datetime.now(timezone.utc).isoformat()
@@ -535,7 +795,16 @@ class PlayerCompositeFactorsProcessor(
         
         # Add v4.0 source tracking fields
         record.update(self.build_source_tracking_fields())
-        
+
+        # Add source hashes (Smart Reprocessing - Pattern #3)
+        record['source_player_context_hash'] = self.source_player_context_hash
+        record['source_team_context_hash'] = self.source_team_context_hash
+        record['source_player_shot_hash'] = self.source_player_shot_hash
+        record['source_team_defense_hash'] = self.source_team_defense_hash
+
+        # Compute and add data hash (Smart Idempotency - Pattern #1)
+        record['data_hash'] = self.compute_data_hash(record)
+
         return record
     
     # ========================================================================

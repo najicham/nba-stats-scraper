@@ -1,0 +1,172 @@
+#!/bin/bash
+#
+# Override Circuit Breaker for Single Entity
+#
+# Usage:
+#   ./scripts/override-circuit-breaker --processor PROCESSOR_NAME --entity ENTITY_ID --date ANALYSIS_DATE --reason "REASON"
+#
+# Example:
+#   ./scripts/override-circuit-breaker \
+#     --processor player_daily_cache \
+#     --entity lebron_james \
+#     --date 2024-12-15 \
+#     --reason "Upstream data now available after scraper fix"
+#
+
+set -e
+
+# Parse arguments
+PROCESSOR=""
+ENTITY=""
+DATE=""
+REASON=""
+DRY_RUN=false
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --processor)
+      PROCESSOR="$2"
+      shift 2
+      ;;
+    --entity)
+      ENTITY="$2"
+      shift 2
+      ;;
+    --date)
+      DATE="$2"
+      shift 2
+      ;;
+    --reason)
+      REASON="$2"
+      shift 2
+      ;;
+    --dry-run)
+      DRY_RUN=true
+      shift
+      ;;
+    *)
+      echo "Unknown option: $1"
+      echo "Usage: $0 --processor PROCESSOR_NAME --entity ENTITY_ID --date ANALYSIS_DATE --reason REASON [--dry-run]"
+      exit 1
+      ;;
+  esac
+done
+
+# Validate required arguments
+if [ -z "$PROCESSOR" ] || [ -z "$ENTITY" ] || [ -z "$DATE" ] || [ -z "$REASON" ]; then
+  echo "Error: Missing required arguments"
+  echo ""
+  echo "Usage: $0 --processor PROCESSOR_NAME --entity ENTITY_ID --date ANALYSIS_DATE --reason REASON [--dry-run]"
+  echo ""
+  echo "Required:"
+  echo "  --processor    Processor name (e.g., player_daily_cache)"
+  echo "  --entity       Entity ID (e.g., lebron_james)"
+  echo "  --date         Analysis date (YYYY-MM-DD)"
+  echo "  --reason       Reason for override"
+  echo ""
+  echo "Optional:"
+  echo "  --dry-run      Show what would be updated without making changes"
+  exit 1
+fi
+
+# Get current user
+USER=$(whoami)
+TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
+
+# Step 1: Check current status
+echo "=== Step 1: Checking Current Status ==="
+CHECK_QUERY="
+SELECT
+  processor_name,
+  entity_id,
+  analysis_date,
+  attempt_number,
+  attempted_at,
+  completeness_pct,
+  skip_reason,
+  circuit_breaker_tripped,
+  circuit_breaker_until,
+  manual_override_applied,
+  notes
+FROM \`nba-props-platform.nba_orchestration.reprocess_attempts\`
+WHERE processor_name = '$PROCESSOR'
+  AND entity_id = '$ENTITY'
+  AND analysis_date = '$DATE'
+ORDER BY attempted_at DESC
+LIMIT 1
+"
+
+echo "Checking: $PROCESSOR / $ENTITY / $DATE"
+echo ""
+bq query --use_legacy_sql=false --format=pretty "$CHECK_QUERY"
+
+# Ask for confirmation
+if [ "$DRY_RUN" = false ]; then
+  echo ""
+  echo "=== Confirmation Required ==="
+  echo "Processor: $PROCESSOR"
+  echo "Entity: $ENTITY"
+  echo "Date: $DATE"
+  echo "Reason: $REASON"
+  echo "User: $USER"
+  echo ""
+  read -p "Apply manual override? (yes/no): " CONFIRM
+
+  if [ "$CONFIRM" != "yes" ]; then
+    echo "Override cancelled."
+    exit 0
+  fi
+fi
+
+# Step 2: Apply override
+echo ""
+echo "=== Step 2: Applying Override ==="
+
+OVERRIDE_NOTES="Manual override applied by $USER on $TIMESTAMP. Reason: $REASON"
+
+UPDATE_QUERY="
+UPDATE \`nba-props-platform.nba_orchestration.reprocess_attempts\`
+SET
+  manual_override_applied = TRUE,
+  notes = '$OVERRIDE_NOTES'
+WHERE processor_name = '$PROCESSOR'
+  AND entity_id = '$ENTITY'
+  AND analysis_date = '$DATE'
+  AND circuit_breaker_tripped = TRUE
+"
+
+if [ "$DRY_RUN" = true ]; then
+  echo "[DRY RUN] Would execute:"
+  echo "$UPDATE_QUERY"
+else
+  bq query --use_legacy_sql=false "$UPDATE_QUERY"
+  echo "✓ Override applied successfully"
+fi
+
+# Step 3: Verify
+echo ""
+echo "=== Step 3: Verification ==="
+VERIFY_QUERY="
+SELECT
+  processor_name,
+  entity_id,
+  analysis_date,
+  manual_override_applied,
+  notes
+FROM \`nba-props-platform.nba_orchestration.reprocess_attempts\`
+WHERE processor_name = '$PROCESSOR'
+  AND entity_id = '$ENTITY'
+  AND analysis_date = '$DATE'
+ORDER BY attempted_at DESC
+LIMIT 1
+"
+
+bq query --use_legacy_sql=false --format=pretty "$VERIFY_QUERY"
+
+if [ "$DRY_RUN" = false ]; then
+  echo ""
+  echo "✓ Override complete"
+  echo ""
+  echo "IMPORTANT: This override does NOT automatically reprocess the entity."
+  echo "You must manually trigger the processor for date: $DATE"
+fi

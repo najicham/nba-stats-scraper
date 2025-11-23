@@ -30,6 +30,9 @@ from data_processors.precompute.precompute_base import PrecomputeProcessorBase
 # Pattern imports (Week 1 - Foundation Patterns)
 from shared.processors.patterns import SmartSkipMixin, EarlyExitMixin, CircuitBreakerMixin
 
+# Smart Idempotency (Pattern #1)
+from data_processors.raw.smart_idempotency_mixin import SmartIdempotencyMixin
+
 # Import utilities
 from shared.config.nba_season_dates import (
     get_season_start_date,
@@ -37,6 +40,9 @@ from shared.config.nba_season_dates import (
     get_season_year_from_date
 )
 from shared.utils.nba_team_mapper import NBATeamMapper
+
+# Completeness checking (Week 1 - Phase 4 Historical Dependency Checking)
+from shared.utils.completeness_checker import CompletenessChecker
 
 # Notification imports
 from shared.utils.notification_system import (
@@ -49,6 +55,7 @@ logger = logging.getLogger(__name__)
 
 
 class TeamDefenseZoneAnalysisProcessor(
+    SmartIdempotencyMixin,
     SmartSkipMixin,
     EarlyExitMixin,
     CircuitBreakerMixin,
@@ -81,19 +88,40 @@ class TeamDefenseZoneAnalysisProcessor(
     min_games_required = 15  # Minimum games for calculation
     league_avg_lookback_days = 30  # Days to look back for league averages (configurable)
     early_season_threshold_days = 14  # Days to consider "early season"
+
+    # Smart Idempotency: Fields to hash (meaningful business fields only)
+    HASH_FIELDS = [
+        'team_abbr', 'analysis_date',
+        'paint_pct_allowed_last_15', 'paint_attempts_allowed_per_game',
+        'paint_points_allowed_per_game', 'paint_blocks_per_game',
+        'paint_defense_vs_league_avg',
+        'mid_range_pct_allowed_last_15', 'mid_range_attempts_allowed_per_game',
+        'mid_range_blocks_per_game', 'mid_range_defense_vs_league_avg',
+        'three_pt_pct_allowed_last_15', 'three_pt_attempts_allowed_per_game',
+        'three_pt_blocks_per_game', 'three_pt_defense_vs_league_avg',
+        'defensive_rating_last_15', 'opponent_points_per_game', 'opponent_pace',
+        'games_in_sample', 'strongest_zone', 'weakest_zone',
+        'data_quality_tier', 'calculation_notes'
+    ]
     
     def __init__(self):
         super().__init__()
-        
+
         # Initialize clients
         self.bq_client = bigquery.Client()
         self.project_id = self.bq_client.project
-        
+
         # Initialize team mapper
         self.team_mapper = NBATeamMapper(use_database=False)
-        
+
+        # Initialize completeness checker (Week 1 - Phase 4 Completeness Checking)
+        self.completeness_checker = CompletenessChecker(self.bq_client, self.project_id)
+
         # League average cache (calculated per run)
         self.league_averages = None
+
+        # Source hash cache (extracted from upstream table)
+        self.source_hash = None
 
         logger.info(f"Initialized {self.__class__.__name__}")
 
@@ -388,6 +416,9 @@ class TeamDefenseZoneAnalysisProcessor(
         
         # Calculate league averages for this analysis date
         self._calculate_league_averages()
+
+        # Extract source hash from upstream table (Smart Reprocessing - Pattern #3)
+        self._extract_source_hash()
     
     def _calculate_league_averages(self) -> None:
         """
@@ -469,34 +500,255 @@ class TeamDefenseZoneAnalysisProcessor(
             f"Three-pt {self.league_averages['three_pt_pct']:.3f} "
             f"({self.league_averages['teams_in_sample']} teams)"
         )
-    
+
+    def _extract_source_hash(self) -> None:
+        """
+        Extract data_hash from upstream Phase 3 table (team_defense_game_summary).
+
+        This hash represents the source data used for this analysis.
+        Used for Smart Reprocessing (Pattern #3) to skip processing when
+        upstream data hasn't changed.
+        """
+        try:
+            query = f"""
+            SELECT data_hash
+            FROM `{self.project_id}.nba_analytics.team_defense_game_summary`
+            WHERE game_date <= '{self.opts['analysis_date']}'
+              AND game_date >= '{self.season_start_date}'
+              AND data_hash IS NOT NULL
+            ORDER BY processed_at DESC
+            LIMIT 1
+            """
+
+            result = self.bq_client.query(query).to_dataframe()
+
+            if not result.empty and result['data_hash'].iloc[0]:
+                self.source_hash = str(result['data_hash'].iloc[0])
+                logger.info(f"Extracted source hash: {self.source_hash[:16]}...")
+            else:
+                logger.warning("No data_hash found in upstream table")
+                self.source_hash = None
+
+        except Exception as e:
+            logger.warning(f"Failed to extract source hash: {e}")
+            self.source_hash = None
+
+    # ============================================================
+    # Completeness Checking Methods (Week 1 - Phase 4)
+    # ============================================================
+
+    def _check_circuit_breaker(self, entity_id: str, analysis_date: date) -> dict:
+        """
+        Check if circuit breaker is active for entity.
+
+        Returns dict with:
+            - active: bool (True if circuit breaker active)
+            - attempts: int (number of attempts so far)
+            - until: datetime (when circuit breaker expires)
+        """
+        query = f"""
+        SELECT
+            attempt_number,
+            attempted_at,
+            circuit_breaker_tripped,
+            circuit_breaker_until
+        FROM `{self.project_id}.nba_orchestration.reprocess_attempts`
+        WHERE processor_name = '{self.table_name}'
+          AND entity_id = '{entity_id}'
+          AND analysis_date = DATE('{analysis_date}')
+        ORDER BY attempt_number DESC
+        LIMIT 1
+        """
+
+        try:
+            result = list(self.bq_client.query(query).result())
+
+            if not result:
+                return {'active': False, 'attempts': 0, 'until': None}
+
+            row = result[0]
+
+            if row.circuit_breaker_tripped:
+                # Check if 7 days have passed
+                if row.circuit_breaker_until and datetime.now(UTC) < row.circuit_breaker_until:
+                    return {
+                        'active': True,
+                        'attempts': row.attempt_number,
+                        'until': row.circuit_breaker_until
+                    }
+
+            return {
+                'active': False,
+                'attempts': row.attempt_number,
+                'until': None
+            }
+
+        except Exception as e:
+            logger.warning(f"Error checking circuit breaker for {entity_id}: {e}")
+            return {'active': False, 'attempts': 0, 'until': None}
+
+    def _increment_reprocess_count(self, entity_id: str, analysis_date: date, completeness_pct: float, skip_reason: str) -> None:
+        """
+        Track reprocessing attempt and trip circuit breaker if needed.
+
+        Circuit breaker trips on 3rd attempt.
+        """
+        circuit_status = self._check_circuit_breaker(entity_id, analysis_date)
+        next_attempt = circuit_status['attempts'] + 1
+
+        # Trip circuit breaker on 3rd attempt
+        circuit_breaker_tripped = next_attempt >= 3
+        circuit_breaker_until = None
+
+        if circuit_breaker_tripped:
+            circuit_breaker_until = datetime.now(UTC) + timedelta(days=7)
+            logger.error(
+                f"{entity_id}: Circuit breaker TRIPPED after {next_attempt} attempts. "
+                f"Manual intervention required. Next retry allowed: {circuit_breaker_until}"
+            )
+
+        # Record attempt
+        insert_query = f"""
+        INSERT INTO `{self.project_id}.nba_orchestration.reprocess_attempts`
+        (processor_name, entity_id, analysis_date, attempt_number, attempted_at,
+         completeness_pct, skip_reason, circuit_breaker_tripped, circuit_breaker_until,
+         manual_override_applied, notes)
+        VALUES (
+            '{self.table_name}',
+            '{entity_id}',
+            DATE('{analysis_date}'),
+            {next_attempt},
+            CURRENT_TIMESTAMP(),
+            {completeness_pct},
+            '{skip_reason}',
+            {circuit_breaker_tripped},
+            {'TIMESTAMP("' + circuit_breaker_until.isoformat() + '")' if circuit_breaker_until else 'NULL'},
+            FALSE,
+            'Attempt {next_attempt}: {completeness_pct:.1f}% complete'
+        )
+        """
+
+        try:
+            self.bq_client.query(insert_query).result()
+            logger.debug(f"{entity_id}: Recorded reprocess attempt {next_attempt}")
+        except Exception as e:
+            logger.warning(f"Failed to record reprocess attempt for {entity_id}: {e}")
+
     def calculate_precompute(self) -> None:
         """
         Calculate team defense zone metrics for all teams.
-        
+
         For each team:
         - Calculate FG% allowed by zone
         - Calculate volume metrics (attempts/points per game)
         - Compare to league averages
         - Identify strengths and weaknesses
+
+        NEW (Week 1): Includes completeness checking to ensure all required
+        historical data is present before processing.
         """
         logger.info("Calculating team defense zone metrics")
-        
+
         successful = []
         failed = []
-        
+
         # Get all unique teams
         all_teams = self.raw_data['defending_team_abbr'].unique()
-        
+        analysis_date = self.opts['analysis_date']
+
+        # ============================================================
+        # NEW (Week 1): Batch completeness checking
+        # ============================================================
+        # Check if all teams have complete historical data (L15 games)
+        logger.info(f"Checking completeness for {len(all_teams)} teams...")
+
+        completeness_results = self.completeness_checker.check_completeness_batch(
+            entity_ids=list(all_teams),
+            entity_type='team',
+            analysis_date=analysis_date,
+            upstream_table='nba_analytics.team_defense_game_summary',
+            upstream_entity_field='defending_team_abbr',
+            lookback_window=self.min_games_required,
+            window_type='games',
+            season_start_date=self.season_start_date
+        )
+
+        # Check bootstrap mode
+        is_bootstrap = self.completeness_checker.is_bootstrap_mode(
+            analysis_date, self.season_start_date
+        )
+        is_season_boundary = self.completeness_checker.is_season_boundary(analysis_date)
+
+        logger.info(
+            f"Completeness check complete. Bootstrap mode: {is_bootstrap}, "
+            f"Season boundary: {is_season_boundary}"
+        )
+        # ============================================================
+
         for team_abbr in all_teams:
             try:
+                # ============================================================
+                # NEW (Week 1): Get completeness for this team
+                # ============================================================
+                completeness = completeness_results.get(team_abbr, {
+                    'expected_count': 0,
+                    'actual_count': 0,
+                    'completeness_pct': 0.0,
+                    'missing_count': 0,
+                    'is_complete': False,
+                    'is_production_ready': False
+                })
+
+                # Check circuit breaker
+                circuit_breaker_status = self._check_circuit_breaker(team_abbr, analysis_date)
+
+                if circuit_breaker_status['active']:
+                    logger.warning(
+                        f"{team_abbr}: Circuit breaker active until "
+                        f"{circuit_breaker_status['until']} - skipping"
+                    )
+                    failed.append({
+                        'entity_id': team_abbr,
+                        'reason': f"Circuit breaker active until {circuit_breaker_status['until']}",
+                        'category': 'CIRCUIT_BREAKER_ACTIVE',
+                        'can_retry': False
+                    })
+                    continue
+
+                # Check production readiness (skip if incomplete, unless in bootstrap mode)
+                if not completeness['is_production_ready'] and not is_bootstrap:
+                    logger.warning(
+                        f"{team_abbr}: Completeness {completeness['completeness_pct']}% "
+                        f"({completeness['actual_count']}/{completeness['expected_count']} games) "
+                        f"- below 90% threshold, skipping"
+                    )
+
+                    # Track reprocessing attempt
+                    self._increment_reprocess_count(
+                        team_abbr, analysis_date,
+                        completeness['completeness_pct'],
+                        'incomplete_upstream_data'
+                    )
+
+                    failed.append({
+                        'entity_id': team_abbr,
+                        'reason': (
+                            f"Incomplete data: {completeness['completeness_pct']}% "
+                            f"({completeness['actual_count']}/{completeness['expected_count']} games)"
+                        ),
+                        'category': 'INCOMPLETE_DATA',
+                        'can_retry': True
+                    })
+                    continue
+                # ============================================================
+
                 # Get team's games
                 team_data = self.raw_data[
                     self.raw_data['defending_team_abbr'] == team_abbr
                 ].copy()
-                
+
                 games_count = len(team_data)
-                
+
                 # Validate sufficient games
                 if games_count < self.min_games_required:
                     failed.append({
@@ -554,13 +806,48 @@ class TeamDefenseZoneAnalysisProcessor(
                     # Data quality
                     'data_quality_tier': self._determine_quality_tier(games_count),
                     'calculation_notes': zone_metrics.get('notes'),
-                    
+
                     # Source tracking (v4.0 - one line via base class method!)
                     **self.build_source_tracking_fields(),
-                    
+
+                    # ============================================================
+                    # NEW (Week 1): Completeness Checking Metadata (14 fields)
+                    # ============================================================
+                    # Completeness Metrics
+                    'expected_games_count': completeness['expected_count'],
+                    'actual_games_count': completeness['actual_count'],
+                    'completeness_percentage': completeness['completeness_pct'],
+                    'missing_games_count': completeness['missing_count'],
+
+                    # Production Readiness
+                    'is_production_ready': completeness['is_production_ready'],
+                    'data_quality_issues': [],  # Populate if specific issues found
+
+                    # Circuit Breaker (queried per entity)
+                    'last_reprocess_attempt_at': None,  # Would need separate query
+                    'reprocess_attempt_count': circuit_breaker_status['attempts'],
+                    'circuit_breaker_active': circuit_breaker_status['active'],
+                    'circuit_breaker_until': (
+                        circuit_breaker_status['until'].isoformat()
+                        if circuit_breaker_status['until'] else None
+                    ),
+
+                    # Bootstrap/Override
+                    'manual_override_required': False,
+                    'season_boundary_detected': is_season_boundary,
+                    'backfill_bootstrap_mode': is_bootstrap,
+                    'processing_decision_reason': 'processed_successfully',
+                    # ============================================================
+
                     # Processing metadata
                     'processed_at': datetime.now(UTC).isoformat()
                 }
+
+                # Add source hash (Smart Reprocessing - Pattern #3)
+                record['source_team_defense_hash'] = self.source_hash
+
+                # Compute and add data hash (Smart Idempotency - Pattern #1)
+                record['data_hash'] = self.compute_data_hash(record)
                 
                 successful.append(record)
                 
@@ -815,15 +1102,21 @@ class TeamDefenseZoneAnalysisProcessor(
                 
                 # Source tracking (v4.0 - still populated!)
                 **self.build_source_tracking_fields(),
-                
+
                 # Early season flags (AFTER source tracking to prevent overwrite)
                 'early_season_flag': True,
                 'insufficient_data_reason': f"Only {games_count} games available, need {self.min_games_required}",
-                
+
                 # Processing metadata
                 'processed_at': datetime.now(UTC).isoformat()
             }
-            
+
+            # Add source hash (Smart Reprocessing - Pattern #3)
+            placeholder['source_team_defense_hash'] = self.source_hash
+
+            # Compute and add data hash (Smart Idempotency - Pattern #1)
+            placeholder['data_hash'] = self.compute_data_hash(placeholder)
+
             placeholders.append(placeholder)
         
         self.transformed_data = placeholders

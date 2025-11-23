@@ -140,13 +140,18 @@ class PlayerLoader:
             AVG(projected_minutes) as avg_projected_minutes,
             MIN(projected_minutes) as min_projected_minutes,
             MAX(projected_minutes) as max_projected_minutes,
-            
+
             -- Players by position (for validation)
             COUNTIF(position = 'PG') as pg_count,
             COUNTIF(position = 'SG') as sg_count,
             COUNTIF(position = 'SF') as sf_count,
             COUNTIF(position = 'PF') as pf_count,
-            COUNTIF(position = 'C') as c_count
+            COUNTIF(position = 'C') as c_count,
+
+            -- Completeness tracking (Phase 5)
+            COUNTIF(is_production_ready = TRUE) as production_ready_count,
+            COUNTIF(is_production_ready = FALSE OR is_production_ready IS NULL) as not_ready_count,
+            AVG(completeness_percentage) as avg_completeness_pct
         FROM `{project}.nba_analytics.upcoming_player_game_context`
         WHERE game_date = @game_date
         """.format(project=self.project_id)
@@ -185,12 +190,19 @@ class PlayerLoader:
                     'SF': row.sf_count or 0,
                     'PF': row.pf_count or 0,
                     'C': row.c_count or 0
+                },
+                'completeness': {
+                    'production_ready_count': int(row.production_ready_count or 0),
+                    'not_ready_count': int(row.not_ready_count or 0),
+                    'avg_completeness_pct': round(float(row.avg_completeness_pct or 0), 2)
                 }
             }
             
             logger.info(
                 f"Summary for {game_date}: {summary['total_games']} games, "
-                f"{summary['total_players']} players"
+                f"{summary['total_players']} players "
+                f"({summary['completeness']['production_ready_count']} production ready, "
+                f"avg completeness: {summary['completeness']['avg_completeness_pct']}%)"
             )
             
             return summary
@@ -249,6 +261,7 @@ class PlayerLoader:
           AND projected_minutes >= @min_minutes
           AND is_active = TRUE
           AND (injury_status IS NULL OR injury_status NOT IN ('OUT', 'DOUBTFUL'))
+          AND is_production_ready = TRUE  -- Only process players with complete upstream data
         ORDER BY projected_minutes DESC
         """.format(project=self.project_id)
         
