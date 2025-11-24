@@ -19,107 +19,192 @@ Performance:
 - Per-player: ~200-300ms (data loading + 5 predictions + write)
 """
 
-from flask import Flask, request, jsonify
-import json
+# Early logging setup for debugging import issues
 import logging
-import os
-from typing import Dict, List, Optional
-from datetime import datetime, date
-import uuid
-import base64
-import time
-
-from google.cloud import bigquery, pubsub_v1
-
-# Import prediction systems
-from prediction_systems.moving_average_baseline import MovingAverageBaseline
-from prediction_systems.zone_matchup_v1 import ZoneMatchupV1
-from prediction_systems.similarity_balanced_v1 import SimilarityBalancedV1
-from prediction_systems.xgboost_v1 import XGBoostV1
-from prediction_systems.ensemble_v1 import EnsembleV1
-
-# Import data loader
-from data_loaders import PredictionDataLoader, normalize_confidence, validate_features
-
-# Pattern imports (Week 1 - Foundation Patterns)
-from system_circuit_breaker import SystemCircuitBreaker
-from execution_logger import ExecutionLogger
-
-# Import player registry for universal_player_id lookup
-import sys
-import os
-project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
-
-from shared.utils.player_registry import RegistryReader, PlayerNotFoundError
-
-# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
+logger.info("=== WORKER MODULE IMPORT START ===")
+
+from flask import Flask, request, jsonify
+logger.info("✓ Flask imported")
+
+import json
+import os
+from typing import Dict, List, Optional, TYPE_CHECKING
+from datetime import datetime, date
+import uuid
+import base64
+import time
+logger.info("✓ Standard library imports completed")
+
+# Defer google.cloud imports to lazy loading functions to avoid cold start hang
+if TYPE_CHECKING:
+    from google.cloud import bigquery, pubsub_v1
+logger.info("✓ Google Cloud client imports deferred (will lazy-load)")
+
+# Import prediction systems
+from prediction_systems.moving_average_baseline import MovingAverageBaseline
+logger.info("✓ MovingAverageBaseline imported")
+
+from prediction_systems.zone_matchup_v1 import ZoneMatchupV1
+logger.info("✓ ZoneMatchupV1 imported")
+
+from prediction_systems.similarity_balanced_v1 import SimilarityBalancedV1
+logger.info("✓ SimilarityBalancedV1 imported")
+
+from prediction_systems.xgboost_v1 import XGBoostV1
+logger.info("✓ XGBoostV1 imported")
+
+from prediction_systems.ensemble_v1 import EnsembleV1
+logger.info("✓ EnsembleV1 imported")
+
+# Import data loader
+from data_loaders import PredictionDataLoader, normalize_confidence, validate_features
+logger.info("✓ Data loaders imported")
+
+# Pattern imports (Week 1 - Foundation Patterns)
+from system_circuit_breaker import SystemCircuitBreaker
+logger.info("✓ SystemCircuitBreaker imported")
+
+from execution_logger import ExecutionLogger
+logger.info("✓ ExecutionLogger imported")
+
+# Import player registry for universal_player_id lookup
+# Note: PYTHONPATH is set to /app in Dockerfile, so imports work correctly
+from shared.utils.player_registry import RegistryReader, PlayerNotFoundError
+logger.info("✓ Player registry imported")
+
 # Flask app
 app = Flask(__name__)
+logger.info("✓ Flask app created")
 
 # Environment configuration
 PROJECT_ID = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
 PREDICTIONS_TABLE = os.environ.get('PREDICTIONS_TABLE', 'nba_predictions.player_prop_predictions')
 PUBSUB_READY_TOPIC = os.environ.get('PUBSUB_READY_TOPIC', 'prediction-ready')
+logger.info("✓ Environment configuration loaded")
 
-# Initialize components (reused across requests)
-data_loader = PredictionDataLoader(PROJECT_ID)
-bq_client = bigquery.Client(project=PROJECT_ID)
-pubsub_publisher = pubsub_v1.PublisherClient()
+# Lazy-loaded components (initialized on first request to avoid cold start timeout)
+_data_loader: Optional[PredictionDataLoader] = None
+_bq_client: Optional['bigquery.Client'] = None
+_pubsub_publisher: Optional['pubsub_v1.PublisherClient'] = None
+_player_registry: Optional[RegistryReader] = None
+_moving_average: Optional[MovingAverageBaseline] = None
+_zone_matchup: Optional[ZoneMatchupV1] = None
+_similarity: Optional[SimilarityBalancedV1] = None
+_xgboost: Optional[XGBoostV1] = None
+_ensemble: Optional[EnsembleV1] = None
 
-# Initialize player registry for universal_player_id lookup
-logger.info("Initializing player registry...")
-player_registry = RegistryReader(
-    project_id=PROJECT_ID,
-    source_name='prediction_worker',
-    cache_ttl_seconds=300  # 5-minute cache for repeated lookups
-)
-logger.info("Player registry initialized")
+def get_data_loader() -> PredictionDataLoader:
+    """Lazy-load data loader on first use"""
+    global _data_loader
+    if _data_loader is None:
+        logger.info("Initializing PredictionDataLoader...")
+        _data_loader = PredictionDataLoader(PROJECT_ID)
+        logger.info("PredictionDataLoader initialized")
+    return _data_loader
 
-# Initialize prediction systems
-logger.info("Initializing prediction systems...")
-moving_average = MovingAverageBaseline()
-zone_matchup = ZoneMatchupV1()
-similarity = SimilarityBalancedV1()
-xgboost = XGBoostV1()  # Uses mock model by default
+def get_bq_client() -> 'bigquery.Client':
+    """Lazy-load BigQuery client on first use"""
+    from google.cloud import bigquery
+    global _bq_client
+    if _bq_client is None:
+        logger.info("Initializing BigQuery client...")
+        _bq_client = bigquery.Client(project=PROJECT_ID)
+        logger.info("BigQuery client initialized")
+    return _bq_client
 
-# Initialize ensemble with base systems
-ensemble = EnsembleV1(
-    moving_average_system=moving_average,
-    zone_matchup_system=zone_matchup,
-    similarity_system=similarity,
-    xgboost_system=xgboost
-)
+def get_pubsub_publisher() -> 'pubsub_v1.PublisherClient':
+    """Lazy-load Pub/Sub publisher on first use"""
+    from google.cloud import pubsub_v1
+    global _pubsub_publisher
+    if _pubsub_publisher is None:
+        logger.info("Initializing Pub/Sub publisher...")
+        _pubsub_publisher = pubsub_v1.PublisherClient()
+        logger.info("Pub/Sub publisher initialized")
+    return _pubsub_publisher
 
-logger.info("All prediction systems initialized successfully")
+def get_player_registry() -> RegistryReader:
+    """Lazy-load player registry on first use"""
+    global _player_registry
+    if _player_registry is None:
+        logger.info("Initializing player registry...")
+        _player_registry = RegistryReader(
+            project_id=PROJECT_ID,
+            source_name='prediction_worker',
+            cache_ttl_seconds=300
+        )
+        logger.info("Player registry initialized")
+    return _player_registry
 
-# Initialize pattern helpers (Week 1 - Foundation Patterns)
-logger.info("Initializing pattern helpers...")
-circuit_breaker = SystemCircuitBreaker(bq_client, PROJECT_ID)
-execution_logger = ExecutionLogger(bq_client, PROJECT_ID, worker_version="1.0")
-logger.info("Pattern helpers initialized successfully")
+def get_prediction_systems() -> tuple:
+    """Lazy-load all prediction systems on first use"""
+    global _moving_average, _zone_matchup, _similarity, _xgboost, _ensemble
+    if _ensemble is None:
+        logger.info("Initializing prediction systems...")
+        _moving_average = MovingAverageBaseline()
+        _zone_matchup = ZoneMatchupV1()
+        _similarity = SimilarityBalancedV1()
+        _xgboost = XGBoostV1()
+        _ensemble = EnsembleV1(
+            moving_average_system=_moving_average,
+            zone_matchup_system=_zone_matchup,
+            similarity_system=_similarity,
+            xgboost_system=_xgboost
+        )
+        logger.info("All prediction systems initialized")
+    return _moving_average, _zone_matchup, _similarity, _xgboost, _ensemble
+
+_circuit_breaker: Optional[SystemCircuitBreaker] = None
+_execution_logger: Optional[ExecutionLogger] = None
+
+def get_circuit_breaker() -> SystemCircuitBreaker:
+    """Lazy-load circuit breaker on first use"""
+    global _circuit_breaker
+    if _circuit_breaker is None:
+        logger.info("Initializing SystemCircuitBreaker...")
+        _circuit_breaker = SystemCircuitBreaker(get_bq_client(), PROJECT_ID)
+        logger.info("SystemCircuitBreaker initialized")
+    return _circuit_breaker
+
+def get_execution_logger() -> ExecutionLogger:
+    """Lazy-load execution logger on first use"""
+    global _execution_logger
+    if _execution_logger is None:
+        logger.info("Initializing ExecutionLogger...")
+        _execution_logger = ExecutionLogger(get_bq_client(), PROJECT_ID, worker_version="1.0")
+        logger.info("ExecutionLogger initialized")
+    return _execution_logger
+
+logger.info("✓ Lazy loading functions defined")
+logger.info("=== WORKER MODULE IMPORT COMPLETE ===")
+logger.info("Worker initialized successfully (heavy clients will lazy-load on first request)")
 
 
 @app.route('/', methods=['GET'])
 def index():
     """Health check endpoint"""
+    # Get systems only if they're already loaded (don't force lazy load for health check)
+    systems_info = {}
+    if _ensemble is not None:
+        systems_info = {
+            'moving_average': str(_moving_average),
+            'zone_matchup': str(_zone_matchup),
+            'similarity': str(_similarity),
+            'xgboost': str(_xgboost),
+            'ensemble': str(_ensemble)
+        }
+    else:
+        systems_info = {'status': 'not yet loaded (will lazy-load on first prediction)'}
+
     return jsonify({
         'service': 'Phase 5 Prediction Worker',
         'status': 'healthy',
-        'systems': {
-            'moving_average': str(moving_average),
-            'zone_matchup': str(zone_matchup),
-            'similarity': str(similarity),
-            'xgboost': str(xgboost),
-            'ensemble': str(ensemble)
-        }
+        'systems': systems_info
     }), 200
 
 
@@ -146,6 +231,16 @@ def handle_prediction_request():
         204 on success, 400/500 on error
     """
     start_time = time.time()
+
+    # Lazy-load all components on first request
+    data_loader = get_data_loader()
+    bq_client = get_bq_client()
+    pubsub_publisher = get_pubsub_publisher()
+    player_registry = get_player_registry()
+    moving_average, zone_matchup, similarity, xgboost, ensemble = get_prediction_systems()
+    circuit_breaker = get_circuit_breaker()
+    execution_logger = get_execution_logger()
+
     player_lookup = None
     game_date_str = None
     game_id = None

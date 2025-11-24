@@ -810,22 +810,32 @@ class NBATeamMapper:
 # Global instance and convenience functions for backward compatibility
 # ============================================================================
 
-# Global instance for easy importing
-nba_team_mapper = NBATeamMapper()
+# Lazy-loaded global instance (initialized on first use to avoid cold start issues)
+_nba_team_mapper: Optional['NBATeamMapper'] = None
+
+def get_nba_team_mapper() -> 'NBATeamMapper':
+    """Get or create the global NBATeamMapper instance."""
+    global _nba_team_mapper
+    if _nba_team_mapper is None:
+        _nba_team_mapper = NBATeamMapper()
+    return _nba_team_mapper
+
+# Backward compatibility alias (deprecated, use convenience functions instead)
+nba_team_mapper = get_nba_team_mapper
 
 # Convenience functions
 def get_nba_tricode(team_identifier: str) -> Optional[str]:
     """Convenience function - get NBA tricode."""
-    return nba_team_mapper.get_nba_tricode(team_identifier)
+    return get_nba_team_mapper().get_nba_tricode(team_identifier)
 
 def get_nba_tricode_fuzzy(team_identifier: str, min_confidence: int = 80) -> Optional[str]:
-    """Convenience function - get NBA tricode with fuzzy matching.""" 
-    return nba_team_mapper.get_nba_tricode_fuzzy(team_identifier, min_confidence)
+    """Convenience function - get NBA tricode with fuzzy matching."""
+    return get_nba_team_mapper().get_nba_tricode_fuzzy(team_identifier, min_confidence)
 
 def get_team_info(team_identifier: str) -> Optional[TeamInfo]:
     """Convenience function - get complete team info."""
-    return nba_team_mapper.get_team_info(team_identifier)
+    return get_nba_team_mapper().get_team_info(team_identifier)
 
 def get_team_full_name(team_code: str) -> Optional[str]:
     """Convenience function - get full team name."""
-    return nba_team_mapper.get_team_full_name(team_code)
+    return get_nba_team_mapper().get_team_full_name(team_code)

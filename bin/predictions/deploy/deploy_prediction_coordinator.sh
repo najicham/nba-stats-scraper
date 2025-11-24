@@ -41,13 +41,13 @@ ENVIRONMENT="${1:-dev}"
 case "$ENVIRONMENT" in
     dev)
         PROJECT_ID="nba-props-platform-dev"
-        REGION="us-central1"
+        REGION="us-west2"
         SERVICE_NAME="prediction-coordinator-dev"
-        
+
         # Scaling: Single instance for threading lock compatibility
         MIN_INSTANCES=0
         MAX_INSTANCES=1  # IMPORTANT: Threading locks require single instance
-        
+
         CONCURRENCY=8  # 8 concurrent /complete events
         MEMORY="1Gi"   # Coordinator is lightweight
         CPU=1
@@ -55,13 +55,13 @@ case "$ENVIRONMENT" in
         ;;
     staging)
         PROJECT_ID="nba-props-platform-staging"
-        REGION="us-central1"
+        REGION="us-west2"
         SERVICE_NAME="prediction-coordinator-staging"
-        
+
         # Scaling: Single instance for threading lock compatibility
         MIN_INSTANCES=0
         MAX_INSTANCES=1
-        
+
         CONCURRENCY=8
         MEMORY="1Gi"
         CPU=1
@@ -69,15 +69,15 @@ case "$ENVIRONMENT" in
         ;;
     prod)
         PROJECT_ID="nba-props-platform"
-        REGION="us-central1"
+        REGION="us-west2"
         SERVICE_NAME="prediction-coordinator"
-        
+
         # Scaling: Production can use single instance OR migrate to Firestore
         # Current: Single instance with threading locks
         # Future: Multiple instances with Firestore state management
         MIN_INSTANCES=1  # Always running for immediate response
         MAX_INSTANCES=1  # Threading locks - increase after Firestore migration
-        
+
         CONCURRENCY=8
         MEMORY="2Gi"
         CPU=2

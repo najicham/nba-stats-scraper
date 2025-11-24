@@ -22,6 +22,14 @@ COPY predictions/worker/prediction_systems/ /app/prediction_systems/
 # Copy worker code
 COPY predictions/worker/data_loaders.py /app/data_loaders.py
 COPY predictions/worker/worker.py /app/worker.py
+COPY predictions/worker/system_circuit_breaker.py /app/system_circuit_breaker.py
+COPY predictions/worker/execution_logger.py /app/execution_logger.py
+
+# Copy shared utilities (player_registry needed by worker)
+COPY shared/ /app/shared/
+
+# Copy predictions/shared for mock model imports (needed by XGBoost)
+COPY predictions/shared/ /app/predictions/shared/
 
 # Set environment variables
 ENV PYTHONPATH=/app

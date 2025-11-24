@@ -21,6 +21,7 @@ import uuid
 from datetime import datetime, date, timezone
 from typing import Dict, List, Optional
 from google.cloud import bigquery
+from google.cloud import pubsub_v1
 import sentry_sdk
 
 # Import notification system
@@ -243,10 +244,14 @@ class AnalyticsProcessorBase:
             
             # Log failed processing run
             self.log_processing_run(success=False, error=str(e))
-            
+
+            # Publish failure message (if target table is set)
+            if self.table_name:
+                self._publish_completion_message(success=False, error=str(e))
+
             if self.save_on_error:
                 self._save_partial_data(e)
-                
+
             self.report_error(e)
             return False
         
@@ -1249,24 +1254,69 @@ class AnalyticsProcessorBase:
             logger.warning(f"Failed to log processing run: {e}")
     
     def post_process(self) -> None:
-        """Post-processing - log summary stats."""
+        """Post-processing - log summary stats and publish completion message."""
         summary = {
             "run_id": self.run_id,
             "processor": self.__class__.__name__,
             "timestamp_utc": datetime.now(timezone.utc).isoformat(),
             "total_runtime": self.stats.get("total_runtime", 0),
         }
-        
+
         # Merge analytics stats
         analytics_stats = self.get_analytics_stats()
         if isinstance(analytics_stats, dict):
             summary.update(analytics_stats)
-            
+
         logger.info("ANALYTICS_STATS %s", json.dumps(summary))
+
+        # Publish completion message to trigger Phase 4 (if target table is set)
+        if self.table_name:
+            self._publish_completion_message(success=True)
     
     def get_analytics_stats(self) -> Dict:
         """Get analytics stats - child classes override."""
         return {}
+
+    def _publish_completion_message(self, success: bool, error: str = None) -> None:
+        """
+        Publish completion message to nba-phase3-analytics-complete topic.
+        This triggers Phase 4 precompute processors that depend on this analytics table.
+
+        Args:
+            success: Whether processing completed successfully
+            error: Optional error message if failed
+        """
+        try:
+            publisher = pubsub_v1.PublisherClient()
+            topic_path = publisher.topic_path(self.project_id, 'nba-phase3-analytics-complete')
+
+            # Get the analysis date (use end_date for single-date processing)
+            analysis_date = self.opts.get('end_date')
+            if isinstance(analysis_date, date):
+                analysis_date = analysis_date.strftime('%Y-%m-%d')
+
+            message_data = {
+                'source_table': self.table_name,
+                'analysis_date': str(analysis_date),
+                'processor_name': self.__class__.__name__,
+                'success': success,
+                'run_id': self.run_id
+            }
+
+            if error:
+                message_data['error'] = error
+
+            # Publish message
+            message_json = json.dumps(message_data)
+            future = publisher.publish(topic_path, message_json.encode('utf-8'))
+            message_id = future.result()  # Block until published
+
+            logger.info(f"Published completion message to nba-phase3-analytics-complete (message_id: {message_id})")
+            logger.debug(f"Message data: {message_json}")
+
+        except Exception as e:
+            logger.warning(f"Failed to publish completion message: {e}")
+            # Don't fail the whole processor if Pub/Sub publishing fails
     
     # =========================================================================
     # Time Tracking

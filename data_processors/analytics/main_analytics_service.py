@@ -16,6 +16,8 @@ import base64
 from data_processors.analytics.player_game_summary.player_game_summary_processor import PlayerGameSummaryProcessor
 from data_processors.analytics.team_offense_game_summary.team_offense_game_summary_processor import TeamOffenseGameSummaryProcessor
 from data_processors.analytics.team_defense_game_summary.team_defense_game_summary_processor import TeamDefenseGameSummaryProcessor
+from data_processors.analytics.upcoming_player_game_context.upcoming_player_game_context_processor import UpcomingPlayerGameContextProcessor
+from data_processors.analytics.upcoming_team_game_context.upcoming_team_game_context_processor import UpcomingTeamGameContextProcessor
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -24,8 +26,8 @@ logger = logging.getLogger(__name__)
 # Analytics processor registry - maps source tables to dependent analytics processors
 ANALYTICS_TRIGGERS = {
     'nbac_gamebook_player_stats': [PlayerGameSummaryProcessor],
-    'bdl_player_boxscores': [PlayerGameSummaryProcessor, TeamOffenseGameSummaryProcessor],
-    'nbac_scoreboard_v2': [TeamOffenseGameSummaryProcessor, TeamDefenseGameSummaryProcessor],
+    'bdl_player_boxscores': [PlayerGameSummaryProcessor, TeamOffenseGameSummaryProcessor, UpcomingPlayerGameContextProcessor],
+    'nbac_scoreboard_v2': [TeamOffenseGameSummaryProcessor, TeamDefenseGameSummaryProcessor, UpcomingTeamGameContextProcessor],
     'bdl_standings': [],  # No analytics dependencies yet
     'nbac_injury_report': [PlayerGameSummaryProcessor],  # Updates player context
     'odds_api_player_points_props': [PlayerGameSummaryProcessor],  # Updates prop context
@@ -169,6 +171,8 @@ def process_date_range():
             'PlayerGameSummaryProcessor': PlayerGameSummaryProcessor,
             'TeamOffenseGameSummaryProcessor': TeamOffenseGameSummaryProcessor,
             'TeamDefenseGameSummaryProcessor': TeamDefenseGameSummaryProcessor,
+            'UpcomingPlayerGameContextProcessor': UpcomingPlayerGameContextProcessor,
+            'UpcomingTeamGameContextProcessor': UpcomingTeamGameContextProcessor,
         }
         
         if not processor_names:

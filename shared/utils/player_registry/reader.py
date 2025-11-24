@@ -11,11 +11,13 @@ Supports batch operations, context tracking, and unresolved player management.
 import os
 import logging
 from datetime import datetime, date
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Optional, Tuple, Any, TYPE_CHECKING
 from collections import defaultdict
 import time
 
-from google.cloud import bigquery
+# Defer google.cloud import to avoid cold start hang
+if TYPE_CHECKING:
+    from google.cloud import bigquery
 
 from .exceptions import (
     PlayerNotFoundError,
@@ -62,16 +64,16 @@ class RegistryReader:
     # Maximum batch size for bulk operations
     MAX_BATCH_SIZE = 100
     
-    def __init__(self, 
+    def __init__(self,
                  project_id: str = None,
-                 bq_client: bigquery.Client = None,
+                 bq_client: 'bigquery.Client' = None,
                  source_name: str = 'unknown',
                  cache_ttl_seconds: int = 0,
                  auto_flush: bool = False,
                  test_mode: bool = False):
         """
         Initialize registry reader.
-        
+
         Args:
             project_id: GCP project ID (defaults to environment variable)
             bq_client: Optional BigQuery client (creates one if not provided)
@@ -80,6 +82,9 @@ class RegistryReader:
             auto_flush: Auto-flush unresolved players on destruction
             test_mode: Use test tables (for development)
         """
+        # Import google.cloud here to avoid cold start hang
+        from google.cloud import bigquery
+
         # BigQuery setup
         if bq_client is not None:
             self.bq_client = bq_client

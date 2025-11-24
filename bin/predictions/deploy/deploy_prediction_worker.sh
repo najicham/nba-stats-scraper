@@ -29,7 +29,7 @@ ENVIRONMENT="${1:-dev}"
 case "$ENVIRONMENT" in
     dev)
         PROJECT_ID="nba-props-platform-dev"
-        REGION="us-central1"
+        REGION="us-west2"
         SERVICE_NAME="prediction-worker-dev"
         MIN_INSTANCES=0
         MAX_INSTANCES=5
@@ -40,7 +40,7 @@ case "$ENVIRONMENT" in
         ;;
     staging)
         PROJECT_ID="nba-props-platform-staging"
-        REGION="us-central1"
+        REGION="us-west2"
         SERVICE_NAME="prediction-worker-staging"
         MIN_INSTANCES=0
         MAX_INSTANCES=10
@@ -51,7 +51,7 @@ case "$ENVIRONMENT" in
         ;;
     prod)
         PROJECT_ID="nba-props-platform"
-        REGION="us-central1"
+        REGION="us-west2"
         SERVICE_NAME="prediction-worker"
         MIN_INSTANCES=1
         MAX_INSTANCES=20

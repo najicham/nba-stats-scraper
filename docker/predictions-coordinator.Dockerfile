@@ -36,8 +36,7 @@ RUN apt-get update && apt-get install -y \
 COPY predictions/coordinator/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy coordinator code
-# Separate COPY commands allow better layer caching
+# Copy coordinator code (flat structure for simple imports)
 COPY predictions/coordinator/coordinator.py /app/coordinator.py
 COPY predictions/coordinator/player_loader.py /app/player_loader.py
 COPY predictions/coordinator/progress_tracker.py /app/progress_tracker.py

@@ -23,15 +23,17 @@ from flask import Flask, request, jsonify
 import json
 import logging
 import os
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, TYPE_CHECKING
 from datetime import datetime, date
 import base64
 import time
 
-from google.cloud import bigquery, pubsub_v1
+# Defer google.cloud imports to lazy loading functions to avoid cold start hang
+if TYPE_CHECKING:
+    from google.cloud import bigquery, pubsub_v1
 
-from coordinator.player_loader import PlayerLoader
-from coordinator.progress_tracker import ProgressTracker
+from player_loader import PlayerLoader
+from progress_tracker import ProgressTracker
 
 # Configure logging
 logging.basicConfig(
@@ -49,15 +51,34 @@ PREDICTION_REQUEST_TOPIC = os.environ.get('PREDICTION_REQUEST_TOPIC', 'predictio
 PREDICTION_READY_TOPIC = os.environ.get('PREDICTION_READY_TOPIC', 'prediction-ready')
 BATCH_SUMMARY_TOPIC = os.environ.get('BATCH_SUMMARY_TOPIC', 'prediction-batch-complete')
 
-# Initialize components (reused across requests)
-player_loader = PlayerLoader(PROJECT_ID)
-pubsub_publisher = pubsub_v1.PublisherClient()
+# Lazy-loaded components (initialized on first request to avoid cold start timeout)
+_player_loader: Optional[PlayerLoader] = None
+_pubsub_publisher: Optional['pubsub_v1.PublisherClient'] = None
 
 # Global state (in production, use Firestore or Redis for multi-instance support)
 current_tracker: Optional[ProgressTracker] = None
 current_batch_id: Optional[str] = None
 
-logger.info("Coordinator initialized successfully")
+def get_player_loader() -> PlayerLoader:
+    """Lazy-load PlayerLoader on first use"""
+    global _player_loader
+    if _player_loader is None:
+        logger.info("Initializing PlayerLoader...")
+        _player_loader = PlayerLoader(PROJECT_ID)
+        logger.info("PlayerLoader initialized successfully")
+    return _player_loader
+
+def get_pubsub_publisher() -> 'pubsub_v1.PublisherClient':
+    """Lazy-load Pub/Sub publisher on first use"""
+    from google.cloud import pubsub_v1
+    global _pubsub_publisher
+    if _pubsub_publisher is None:
+        logger.info("Initializing Pub/Sub publisher...")
+        _pubsub_publisher = pubsub_v1.PublisherClient()
+        logger.info("Pub/Sub publisher initialized successfully")
+    return _pubsub_publisher
+
+logger.info("Coordinator initialized successfully (heavy clients will lazy-load on first request)")
 
 
 @app.route('/', methods=['GET'])
@@ -127,11 +148,11 @@ def start_prediction_batch():
         current_batch_id = batch_id
         
         # Get summary stats first
-        summary_stats = player_loader.get_summary_stats(game_date)
+        summary_stats = get_player_loader().get_summary_stats(game_date)
         logger.info(f"Game date summary: {summary_stats}")
-        
+
         # Create prediction requests
-        requests = player_loader.create_prediction_requests(
+        requests = get_player_loader().create_prediction_requests(
             game_date=game_date,
             min_minutes=min_minutes,
             use_multiple_lines=use_multiple_lines
@@ -280,11 +301,12 @@ def publish_prediction_requests(requests: List[Dict], batch_id: str) -> int:
     Returns:
         Number of successfully published messages
     """
-    topic_path = pubsub_publisher.topic_path(PROJECT_ID, PREDICTION_REQUEST_TOPIC)
-    
+    publisher = get_pubsub_publisher()
+    topic_path = publisher.topic_path(PROJECT_ID, PREDICTION_REQUEST_TOPIC)
+
     published_count = 0
     failed_count = 0
-    
+
     for request_data in requests:
         try:
             # Add batch metadata
@@ -293,10 +315,10 @@ def publish_prediction_requests(requests: List[Dict], batch_id: str) -> int:
                 'batch_id': batch_id,
                 'timestamp': datetime.now(datetime.UTC).isoformat()
             }
-            
+
             # Publish to Pub/Sub
             message_bytes = json.dumps(message).encode('utf-8')
-            future = pubsub_publisher.publish(topic_path, data=message_bytes)
+            future = publisher.publish(topic_path, data=message_bytes)
             
             # Wait for publish (with timeout)
             future.result(timeout=5.0)
@@ -334,14 +356,15 @@ def publish_batch_summary(tracker: ProgressTracker, batch_id: str):
         tracker: Progress tracker with final stats
         batch_id: Batch identifier
     """
-    topic_path = pubsub_publisher.topic_path(PROJECT_ID, BATCH_SUMMARY_TOPIC)
-    
+    publisher = get_pubsub_publisher()
+    topic_path = publisher.topic_path(PROJECT_ID, BATCH_SUMMARY_TOPIC)
+
     summary = tracker.get_summary()
     summary['batch_id'] = batch_id
-    
+
     try:
         message_bytes = json.dumps(summary).encode('utf-8')
-        future = pubsub_publisher.publish(topic_path, data=message_bytes)
+        future = publisher.publish(topic_path, data=message_bytes)
         future.result(timeout=5.0)
         
         logger.info(f"Published batch summary for {batch_id}")
