@@ -137,16 +137,9 @@ class PlayerLoader:
             COUNT(DISTINCT game_id) as total_games,
             COUNT(DISTINCT player_lookup) as total_players,
             COUNT(DISTINCT team_abbr) as teams_playing,
-            AVG(projected_minutes) as avg_projected_minutes,
-            MIN(projected_minutes) as min_projected_minutes,
-            MAX(projected_minutes) as max_projected_minutes,
-
-            -- Players by position (for validation)
-            COUNTIF(position = 'PG') as pg_count,
-            COUNTIF(position = 'SG') as sg_count,
-            COUNTIF(position = 'SF') as sf_count,
-            COUNTIF(position = 'PF') as pf_count,
-            COUNTIF(position = 'C') as c_count,
+            AVG(avg_minutes_per_game_last_7) as avg_projected_minutes,
+            MIN(avg_minutes_per_game_last_7) as min_projected_minutes,
+            MAX(avg_minutes_per_game_last_7) as max_projected_minutes,
 
             -- Completeness tracking (Phase 5)
             COUNTIF(is_production_ready = TRUE) as production_ready_count,
@@ -184,13 +177,6 @@ class PlayerLoader:
                 'avg_projected_minutes': round(float(row.avg_projected_minutes or 0), 1),
                 'min_projected_minutes': round(float(row.min_projected_minutes or 0), 1),
                 'max_projected_minutes': round(float(row.max_projected_minutes or 0), 1),
-                'players_by_position': {
-                    'PG': row.pg_count or 0,
-                    'SG': row.sg_count or 0,
-                    'SF': row.sf_count or 0,
-                    'PF': row.pf_count or 0,
-                    'C': row.c_count or 0
-                },
                 'completeness': {
                     'production_ready_count': int(row.production_ready_count or 0),
                     'not_ready_count': int(row.not_ready_count or 0),
@@ -249,20 +235,17 @@ class PlayerLoader:
             game_date,
             team_abbr,
             opponent_team_abbr,
-            is_home,
+            home_game as is_home,
             days_rest,
             back_to_back,
-            projected_minutes,
-            is_active,
-            injury_status,
-            position
+            avg_minutes_per_game_last_7 as projected_minutes,
+            player_status as injury_status
         FROM `{project}.nba_analytics.upcoming_player_game_context`
         WHERE game_date = @game_date
-          AND projected_minutes >= @min_minutes
-          AND is_active = TRUE
-          AND (injury_status IS NULL OR injury_status NOT IN ('OUT', 'DOUBTFUL'))
+          AND avg_minutes_per_game_last_7 >= @min_minutes
+          AND (player_status IS NULL OR player_status NOT IN ('OUT', 'DOUBTFUL'))
           AND is_production_ready = TRUE  -- Only process players with complete upstream data
-        ORDER BY projected_minutes DESC
+        ORDER BY avg_minutes_per_game_last_7 DESC
         """.format(project=self.project_id)
         
         job_config = bigquery.QueryJobConfig(
@@ -288,9 +271,7 @@ class PlayerLoader:
                     'days_rest': row.days_rest,
                     'back_to_back': row.back_to_back,
                     'projected_minutes': float(row.projected_minutes),
-                    'is_active': row.is_active,
-                    'injury_status': row.injury_status,
-                    'position': row.position
+                    'injury_status': row.injury_status
                 }
                 players.append(player)
             
@@ -331,13 +312,12 @@ class PlayerLoader:
             'game_date': game_date.isoformat(),
             'game_id': player['game_id'],
             'line_values': lines,
-            
+
             # Optional context (for debugging/monitoring)
             'team_abbr': player['team_abbr'],
             'opponent_team_abbr': player['opponent_team_abbr'],
             'is_home': player['is_home'],
-            'projected_minutes': player['projected_minutes'],
-            'position': player.get('position')
+            'projected_minutes': player['projected_minutes']
         }
         
         return request
@@ -505,7 +485,6 @@ class PlayerLoader:
         FROM `{project}.nba_analytics.upcoming_player_game_context`
         WHERE player_lookup = @player_lookup
           AND game_date = @game_date
-          AND is_active = TRUE
         """.format(project=self.project_id)
         
         job_config = bigquery.QueryJobConfig(
@@ -540,13 +519,11 @@ class PlayerLoader:
             player_lookup,
             team_abbr,
             opponent_team_abbr,
-            projected_minutes,
-            position,
-            injury_status
+            avg_minutes_per_game_last_7 as projected_minutes,
+            player_status as injury_status
         FROM `{project}.nba_analytics.upcoming_player_game_context`
         WHERE game_id = @game_id
-          AND is_active = TRUE
-        ORDER BY team_abbr, projected_minutes DESC
+        ORDER BY team_abbr, avg_minutes_per_game_last_7 DESC
         """.format(project=self.project_id)
         
         job_config = bigquery.QueryJobConfig(
@@ -565,7 +542,6 @@ class PlayerLoader:
                     'team_abbr': row.team_abbr,
                     'opponent_team_abbr': row.opponent_team_abbr,
                     'projected_minutes': float(row.projected_minutes),
-                    'position': row.position,
                     'injury_status': row.injury_status
                 })
             
@@ -616,27 +592,27 @@ class PlayerLoader:
 def validate_game_date(game_date: date) -> bool:
     """
     Validate game date is reasonable
-    
+
     Prevents querying dates too far in past or future
-    
+
     Args:
         game_date: Date to validate
-    
+
     Returns:
         bool: True if valid, False otherwise
     """
     today = date.today()
-    
-    # Can't be in the past (more than 1 day ago)
-    if game_date < today:
-        logger.warning(f"Game date {game_date} is in the past")
+
+    # Allow dates up to 30 days in the past (for testing/backfilling)
+    if (today - game_date).days > 30:
+        logger.warning(f"Game date {game_date} is too far in the past (>30 days)")
         return False
-    
+
     # Can't be too far in the future (more than 14 days)
     if (game_date - today).days > 14:
         logger.warning(f"Game date {game_date} is too far in the future")
         return False
-    
+
     return True
 
 

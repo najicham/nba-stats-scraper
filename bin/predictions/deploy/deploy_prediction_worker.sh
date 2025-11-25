@@ -150,9 +150,9 @@ deploy_cloud_run() {
         --min-instances "$MIN_INSTANCES" \
         --max-instances "$MAX_INSTANCES" \
         --set-env-vars "GCP_PROJECT_ID=${PROJECT_ID},PREDICTIONS_TABLE=nba_predictions.player_prop_predictions,PUBSUB_READY_TOPIC=${PUBSUB_READY_TOPIC}" \
-        --no-allow-unauthenticated \
+        --allow-unauthenticated \
         --service-account "prediction-worker@${PROJECT_ID}.iam.gserviceaccount.com" \
-        --ingress internal-and-cloud-load-balancing \
+        --ingress all \
         --quiet
     
     log "Cloud Run deployment complete"

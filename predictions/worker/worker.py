@@ -46,37 +46,19 @@ if TYPE_CHECKING:
     from google.cloud import bigquery, pubsub_v1
 logger.info("✓ Google Cloud client imports deferred (will lazy-load)")
 
-# Import prediction systems
-from prediction_systems.moving_average_baseline import MovingAverageBaseline
-logger.info("✓ MovingAverageBaseline imported")
+# Defer ALL heavy imports to lazy loading functions to avoid cold start timeouts
+if TYPE_CHECKING:
+    from prediction_systems.moving_average_baseline import MovingAverageBaseline
+    from prediction_systems.zone_matchup_v1 import ZoneMatchupV1
+    from prediction_systems.similarity_balanced_v1 import SimilarityBalancedV1
+    from prediction_systems.xgboost_v1 import XGBoostV1
+    from prediction_systems.ensemble_v1 import EnsembleV1
+    from data_loaders import PredictionDataLoader, normalize_confidence, validate_features
+    from system_circuit_breaker import SystemCircuitBreaker
+    from execution_logger import ExecutionLogger
+    from shared.utils.player_registry import RegistryReader, PlayerNotFoundError
 
-from prediction_systems.zone_matchup_v1 import ZoneMatchupV1
-logger.info("✓ ZoneMatchupV1 imported")
-
-from prediction_systems.similarity_balanced_v1 import SimilarityBalancedV1
-logger.info("✓ SimilarityBalancedV1 imported")
-
-from prediction_systems.xgboost_v1 import XGBoostV1
-logger.info("✓ XGBoostV1 imported")
-
-from prediction_systems.ensemble_v1 import EnsembleV1
-logger.info("✓ EnsembleV1 imported")
-
-# Import data loader
-from data_loaders import PredictionDataLoader, normalize_confidence, validate_features
-logger.info("✓ Data loaders imported")
-
-# Pattern imports (Week 1 - Foundation Patterns)
-from system_circuit_breaker import SystemCircuitBreaker
-logger.info("✓ SystemCircuitBreaker imported")
-
-from execution_logger import ExecutionLogger
-logger.info("✓ ExecutionLogger imported")
-
-# Import player registry for universal_player_id lookup
-# Note: PYTHONPATH is set to /app in Dockerfile, so imports work correctly
-from shared.utils.player_registry import RegistryReader, PlayerNotFoundError
-logger.info("✓ Player registry imported")
+logger.info("✓ Heavy imports deferred (will lazy-load on first request)")
 
 # Flask app
 app = Flask(__name__)
@@ -89,18 +71,19 @@ PUBSUB_READY_TOPIC = os.environ.get('PUBSUB_READY_TOPIC', 'prediction-ready')
 logger.info("✓ Environment configuration loaded")
 
 # Lazy-loaded components (initialized on first request to avoid cold start timeout)
-_data_loader: Optional[PredictionDataLoader] = None
+_data_loader: Optional['PredictionDataLoader'] = None
 _bq_client: Optional['bigquery.Client'] = None
 _pubsub_publisher: Optional['pubsub_v1.PublisherClient'] = None
-_player_registry: Optional[RegistryReader] = None
-_moving_average: Optional[MovingAverageBaseline] = None
-_zone_matchup: Optional[ZoneMatchupV1] = None
-_similarity: Optional[SimilarityBalancedV1] = None
-_xgboost: Optional[XGBoostV1] = None
-_ensemble: Optional[EnsembleV1] = None
+_player_registry: Optional['RegistryReader'] = None
+_moving_average: Optional['MovingAverageBaseline'] = None
+_zone_matchup: Optional['ZoneMatchupV1'] = None
+_similarity: Optional['SimilarityBalancedV1'] = None
+_xgboost: Optional['XGBoostV1'] = None
+_ensemble: Optional['EnsembleV1'] = None
 
-def get_data_loader() -> PredictionDataLoader:
+def get_data_loader() -> 'PredictionDataLoader':
     """Lazy-load data loader on first use"""
+    from data_loaders import PredictionDataLoader
     global _data_loader
     if _data_loader is None:
         logger.info("Initializing PredictionDataLoader...")
@@ -128,8 +111,9 @@ def get_pubsub_publisher() -> 'pubsub_v1.PublisherClient':
         logger.info("Pub/Sub publisher initialized")
     return _pubsub_publisher
 
-def get_player_registry() -> RegistryReader:
+def get_player_registry() -> 'RegistryReader':
     """Lazy-load player registry on first use"""
+    from shared.utils.player_registry import RegistryReader
     global _player_registry
     if _player_registry is None:
         logger.info("Initializing player registry...")
@@ -143,6 +127,12 @@ def get_player_registry() -> RegistryReader:
 
 def get_prediction_systems() -> tuple:
     """Lazy-load all prediction systems on first use"""
+    from prediction_systems.moving_average_baseline import MovingAverageBaseline
+    from prediction_systems.zone_matchup_v1 import ZoneMatchupV1
+    from prediction_systems.similarity_balanced_v1 import SimilarityBalancedV1
+    from prediction_systems.xgboost_v1 import XGBoostV1
+    from prediction_systems.ensemble_v1 import EnsembleV1
+
     global _moving_average, _zone_matchup, _similarity, _xgboost, _ensemble
     if _ensemble is None:
         logger.info("Initializing prediction systems...")
@@ -159,11 +149,12 @@ def get_prediction_systems() -> tuple:
         logger.info("All prediction systems initialized")
     return _moving_average, _zone_matchup, _similarity, _xgboost, _ensemble
 
-_circuit_breaker: Optional[SystemCircuitBreaker] = None
-_execution_logger: Optional[ExecutionLogger] = None
+_circuit_breaker: Optional['SystemCircuitBreaker'] = None
+_execution_logger: Optional['ExecutionLogger'] = None
 
-def get_circuit_breaker() -> SystemCircuitBreaker:
+def get_circuit_breaker() -> 'SystemCircuitBreaker':
     """Lazy-load circuit breaker on first use"""
+    from system_circuit_breaker import SystemCircuitBreaker
     global _circuit_breaker
     if _circuit_breaker is None:
         logger.info("Initializing SystemCircuitBreaker...")
@@ -171,8 +162,9 @@ def get_circuit_breaker() -> SystemCircuitBreaker:
         logger.info("SystemCircuitBreaker initialized")
     return _circuit_breaker
 
-def get_execution_logger() -> ExecutionLogger:
+def get_execution_logger() -> 'ExecutionLogger':
     """Lazy-load execution logger on first use"""
+    from execution_logger import ExecutionLogger
     global _execution_logger
     if _execution_logger is None:
         logger.info("Initializing ExecutionLogger...")
