@@ -15,9 +15,8 @@ from typing import Dict, List, Optional, Tuple, Any, TYPE_CHECKING
 from collections import defaultdict
 import time
 
-# Defer google.cloud import to avoid cold start hang
-if TYPE_CHECKING:
-    from google.cloud import bigquery
+# Import bigquery at module level (needed for QueryJobConfig usage throughout)
+from google.cloud import bigquery
 
 from .exceptions import (
     PlayerNotFoundError,

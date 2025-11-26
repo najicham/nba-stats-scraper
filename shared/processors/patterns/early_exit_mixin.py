@@ -133,7 +133,7 @@ class EarlyExitMixin:
         Check if date is too far in the past.
 
         Useful to prevent reprocessing very old data unnecessarily.
-        Default cutoff is 90 days (~3 months).
+        Default cutoff is 90 days.
         """
         game_datetime = datetime.strptime(game_date, '%Y-%m-%d')
         today = datetime.now()

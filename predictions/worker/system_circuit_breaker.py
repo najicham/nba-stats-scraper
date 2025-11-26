@@ -223,6 +223,9 @@ class SystemCircuitBreaker:
     def _refresh_cache(self) -> None:
         """Refresh circuit breaker state cache from BigQuery."""
         try:
+            # Schema: processor_name, state, failure_count, success_count,
+            # last_failure, last_success, opened_at, half_opened_at, updated_at,
+            # last_error_message, last_error_type, failure_history, threshold, timeout_seconds, half_open_max_calls
             query = f"""
             SELECT
                 processor_name as system_id,
@@ -232,8 +235,8 @@ class SystemCircuitBreaker:
                 last_error_message,
                 last_error_type,
                 opened_at,
-                closed_at,
-                last_failure_at
+                last_success as closed_at,
+                last_failure as last_failure_at
             FROM `{self.circuit_breaker_table}`
             WHERE processor_name IN ('moving_average', 'zone_matchup_v1', 'similarity_balanced_v1', 'xgboost_v1', 'ensemble_v1')
             """
@@ -269,7 +272,7 @@ class SystemCircuitBreaker:
         """Create initial circuit breaker entry."""
         query = f"""
         INSERT INTO `{self.circuit_breaker_table}`
-        (processor_name, state, failure_count, success_count, last_error_message, last_error_type, last_failure_at, created_at)
+        (processor_name, state, failure_count, success_count, last_error_message, last_error_type, last_failure, updated_at)
         VALUES
         (@system_id, 'CLOSED', 1, 0, @error_message, @error_type, CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP())
         """
@@ -295,7 +298,8 @@ class SystemCircuitBreaker:
             last_error_message = @error_message,
             last_error_type = @error_type,
             opened_at = CURRENT_TIMESTAMP(),
-            last_failure_at = CURRENT_TIMESTAMP()
+            last_failure = CURRENT_TIMESTAMP(),
+            updated_at = CURRENT_TIMESTAMP()
         WHERE processor_name = @system_id
         """
 
@@ -317,7 +321,9 @@ class SystemCircuitBreaker:
         UPDATE `{self.circuit_breaker_table}`
         SET
             state = 'HALF_OPEN',
-            success_count = 0
+            success_count = 0,
+            half_opened_at = CURRENT_TIMESTAMP(),
+            updated_at = CURRENT_TIMESTAMP()
         WHERE processor_name = @system_id
         """
 
@@ -338,7 +344,8 @@ class SystemCircuitBreaker:
             state = 'CLOSED',
             failure_count = 0,
             success_count = 0,
-            closed_at = CURRENT_TIMESTAMP()
+            last_success = CURRENT_TIMESTAMP(),
+            updated_at = CURRENT_TIMESTAMP()
         WHERE processor_name = @system_id
         """
 
@@ -355,7 +362,10 @@ class SystemCircuitBreaker:
         """Reset failure count on success."""
         query = f"""
         UPDATE `{self.circuit_breaker_table}`
-        SET failure_count = 0
+        SET
+            failure_count = 0,
+            last_success = CURRENT_TIMESTAMP(),
+            updated_at = CURRENT_TIMESTAMP()
         WHERE processor_name = @system_id
         """
 
@@ -376,7 +386,8 @@ class SystemCircuitBreaker:
             failure_count = @failure_count,
             last_error_message = @error_message,
             last_error_type = @error_type,
-            last_failure_at = CURRENT_TIMESTAMP()
+            last_failure = CURRENT_TIMESTAMP(),
+            updated_at = CURRENT_TIMESTAMP()
         WHERE processor_name = @system_id
         """
 
@@ -396,7 +407,10 @@ class SystemCircuitBreaker:
         """Update success count during HALF_OPEN recovery."""
         query = f"""
         UPDATE `{self.circuit_breaker_table}`
-        SET success_count = @success_count
+        SET
+            success_count = @success_count,
+            last_success = CURRENT_TIMESTAMP(),
+            updated_at = CURRENT_TIMESTAMP()
         WHERE processor_name = @system_id
         """
 

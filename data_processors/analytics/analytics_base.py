@@ -149,7 +149,6 @@ class AnalyticsProcessorBase:
                 # Handle stale data FAIL threshold
                 if dep_check.get('has_stale_fail'):
                     error_msg = f"Stale dependencies (FAIL threshold): {dep_check['stale_fail']}"
-                    logger.error(error_msg)
                     notify_error(
                         title=f"Analytics Processor: Stale Data - {self.__class__.__name__}",
                         message=error_msg,

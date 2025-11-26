@@ -278,7 +278,9 @@ def handle_prediction_request():
             player_lookup=player_lookup,
             game_date=game_date,
             game_id=game_id,
-            line_values=line_values
+            line_values=line_values,
+            data_loader=data_loader,
+            circuit_breaker=circuit_breaker
         )
 
         predictions = result['predictions']
@@ -387,7 +389,9 @@ def process_player_predictions(
     player_lookup: str,
     game_date: date,
     game_id: str,
-    line_values: List[float]
+    line_values: List[float],
+    data_loader: 'PredictionDataLoader',
+    circuit_breaker: 'SystemCircuitBreaker'
 ) -> Dict:
     """
     Generate predictions for one player across multiple lines
@@ -408,6 +412,9 @@ def process_player_predictions(
     Returns:
         Dict with 'predictions' and 'metadata' keys
     """
+    # Lazy-load prediction systems
+    moving_average, zone_matchup, similarity, xgboost, ensemble = get_prediction_systems()
+
     all_predictions = []
 
     # Metadata tracking
@@ -440,6 +447,7 @@ def process_player_predictions(
         return {'predictions': [], 'metadata': metadata}
 
     # Step 2: Validate features before running predictions
+    from data_loaders import validate_features
     is_valid, validation_errors = validate_features(features, min_quality_score=70.0)
     if not is_valid:
         logger.error(
@@ -775,6 +783,9 @@ def format_prediction_for_bigquery(
     Returns:
         Dict formatted for BigQuery insertion
     """
+    from data_loaders import normalize_confidence
+    player_registry = get_player_registry()
+
     # Lookup universal player ID from registry
     universal_player_id = None
     try:
@@ -836,32 +847,40 @@ def format_prediction_for_bigquery(
     elif system_id == 'xgboost_v1' and 'metadata' in prediction:
         metadata = prediction['metadata']
         record.update({
-            'ml_model_id': metadata.get('model_version', 'v1')
+            'model_version': metadata.get('model_version', 'xgboost_v1')
         })
     
     elif system_id == 'ensemble_v1' and 'metadata' in prediction:
         metadata = prediction['metadata']
         agreement = metadata.get('agreement', {})
-        
+
+        # Store ensemble metadata in feature_importance as JSON (schema-compatible)
         record.update({
-            'prediction_variance': agreement.get('variance'),
-            'system_agreement_score': agreement.get('agreement_percentage'),
-            'contributing_systems': metadata.get('systems_used'),
-            'key_factors': json.dumps({
-                'systems': metadata.get('predictions'),
+            'feature_importance': json.dumps({
+                'variance': agreement.get('variance'),
+                'agreement_percentage': agreement.get('agreement_percentage'),
+                'systems_used': metadata.get('systems_used'),
+                'predictions': metadata.get('predictions'),
                 'agreement_type': agreement.get('type')
-            })
+            }),
+            'model_version': 'ensemble_v1'
         })
 
     # Add completeness metadata (Phase 5)
     completeness = features.get('completeness', {})
+
+    # Convert data_quality_issues list to JSON string (schema expects STRING)
+    data_quality_issues = completeness.get('data_quality_issues', [])
+    if isinstance(data_quality_issues, list):
+        data_quality_issues = json.dumps(data_quality_issues) if data_quality_issues else None
+
     record.update({
         'expected_games_count': completeness.get('expected_games_count'),
         'actual_games_count': completeness.get('actual_games_count'),
         'completeness_percentage': completeness.get('completeness_percentage', 0.0),
         'missing_games_count': completeness.get('missing_games_count'),
         'is_production_ready': completeness.get('is_production_ready', False),
-        'data_quality_issues': completeness.get('data_quality_issues', []),
+        'data_quality_issues': data_quality_issues,
         'last_reprocess_attempt_at': None,  # Not tracked at worker level
         'reprocess_attempt_count': 0,  # Not tracked at worker level
         'circuit_breaker_active': False,  # Not tracked at worker level
@@ -878,18 +897,20 @@ def format_prediction_for_bigquery(
 def write_predictions_to_bigquery(predictions: List[Dict]):
     """
     Write predictions to BigQuery player_prop_predictions table
-    
+
     Uses streaming insert for low latency
-    
+
     Args:
         predictions: List of prediction dicts
     """
+    bq_client = get_bq_client()
+
     if not predictions:
         logger.warning("No predictions to write")
         return
-    
+
     table_id = f"{PROJECT_ID}.{PREDICTIONS_TABLE}"
-    
+
     try:
         errors = bq_client.insert_rows_json(table_id, predictions)
         
@@ -907,14 +928,15 @@ def write_predictions_to_bigquery(predictions: List[Dict]):
 def publish_completion_event(player_lookup: str, game_date: str, prediction_count: int):
     """
     Publish prediction-ready event to Pub/Sub
-    
+
     Notifies downstream systems that predictions are available
-    
+
     Args:
         player_lookup: Player identifier
         game_date: Game date string
         prediction_count: Number of predictions generated
     """
+    pubsub_publisher = get_pubsub_publisher()
     topic_path = pubsub_publisher.topic_path(PROJECT_ID, PUBSUB_READY_TOPIC)
     
     message_data = {

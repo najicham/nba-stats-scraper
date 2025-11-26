@@ -38,17 +38,19 @@ class PlayerLoader:
     prediction request messages for the worker.
     """
     
-    def __init__(self, project_id: str):
+    def __init__(self, project_id: str, location: str = 'us-west2'):
         """
         Initialize player loader
-        
+
         Args:
             project_id: GCP project ID (e.g., 'nba-props-platform')
+            location: BigQuery location (default: us-west2)
         """
         self.project_id = project_id
-        self.client = bigquery.Client(project=project_id)
-        
-        logger.info(f"Initialized PlayerLoader for project {project_id}")
+        self.location = location
+        self.client = bigquery.Client(project=project_id, location=location)
+
+        logger.info(f"Initialized PlayerLoader for project {project_id} (location: {location})")
     
     # ========================================================================
     # MAIN API
@@ -431,10 +433,13 @@ class PlayerLoader:
         Returns:
             float: Estimated line (defaults to 15.5 if no data)
         """
+        # Use upcoming_player_game_context which has the actual averages
+        # Fallback: use points_avg_last_5 (most recent 5-game average)
         query = """
         SELECT
-            points_avg_season
-        FROM `{project}.nba_analytics.player_game_summary`
+            points_avg_last_5,
+            points_avg_last_10
+        FROM `{project}.nba_analytics.upcoming_player_game_context`
         WHERE player_lookup = @player_lookup
         ORDER BY game_date DESC
         LIMIT 1
@@ -450,13 +455,20 @@ class PlayerLoader:
             results = self.client.query(query, job_config=job_config).result()
             row = next(results, None)
             
-            if row is not None and row.points_avg_season is not None:
-                # Round to nearest 0.5 (common for betting lines)
-                avg = float(row.points_avg_season)
-                return round(avg * 2) / 2.0
-            
+            if row is not None:
+                # Prefer L5 average, fallback to L10
+                avg = None
+                if row.points_avg_last_5 is not None:
+                    avg = float(row.points_avg_last_5)
+                elif row.points_avg_last_10 is not None:
+                    avg = float(row.points_avg_last_10)
+
+                if avg is not None:
+                    # Round to nearest 0.5 (common for betting lines)
+                    return round(avg * 2) / 2.0
+
             # Default fallback
-            logger.warning(f"No season average found for {player_lookup}, using default 15.5")
+            logger.warning(f"No recent average found for {player_lookup}, using default 15.5")
             return 15.5
             
         except Exception as e:
@@ -603,7 +615,7 @@ def validate_game_date(game_date: date) -> bool:
     """
     today = date.today()
 
-    # Allow dates up to 30 days in the past (for testing/backfilling)
+    # Allow dates up to 30 days in the past
     if (today - game_date).days > 30:
         logger.warning(f"Game date {game_date} is too far in the past (>30 days)")
         return False

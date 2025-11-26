@@ -220,11 +220,11 @@ class PlayerGameSummaryProcessor(
         # SMART REPROCESSING: Check if we can skip processing
         skip, reason = self.should_skip_processing(start_date)
         if skip:
-            self.logger.info(f"✅ SMART REPROCESSING: Skipping processing - {reason}")
+            logger.info(f"SMART REPROCESSING: Skipping processing - {reason}")
             self.raw_data = []
             return
 
-        self.logger.info(f"🔄 PROCESSING: {reason}")
+        logger.info(f"PROCESSING: {reason}")
 
         # Just extract the data
         query = f"""

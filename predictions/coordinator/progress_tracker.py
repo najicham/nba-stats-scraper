@@ -66,7 +66,7 @@ class ProgressTracker:
             expected_players: Number of players expected (typically 450)
         """
         self.expected_players = expected_players
-        self.start_time = datetime.now(datetime.UTC)
+        self.start_time = datetime.utcnow()
         
         # ==================================================================
         # SHARED STATE (protected by self._lock)
@@ -156,7 +156,7 @@ class ProgressTracker:
             
             # Mark player as completed
             self.completed_players.add(player_lookup)
-            self.completion_times.append(datetime.now(datetime.UTC))
+            self.completion_times.append(datetime.utcnow())
             
             # Track predictions
             self.total_predictions += predictions_count
@@ -211,7 +211,7 @@ class ProgressTracker:
         (e.g., from process_completion_event while lock is held).
         """
         self.is_complete = True
-        self.completion_time = datetime.now(datetime.UTC)
+        self.completion_time = datetime.utcnow()
         
         duration = (self.completion_time - self.start_time).total_seconds()
         
@@ -234,7 +234,7 @@ class ProgressTracker:
         Returns:
             Dict with progress info
         """
-        now = datetime.now(datetime.UTC)
+        now = datetime.utcnow()
         elapsed = (now - self.start_time).total_seconds()
         
         # =====================================================================
@@ -366,7 +366,7 @@ class ProgressTracker:
             
             if not self.completion_times:
                 # No completions yet - check if we've exceeded threshold since start
-                elapsed = (datetime.now(datetime.UTC) - self.start_time).total_seconds()
+                elapsed = (datetime.utcnow() - self.start_time).total_seconds()
                 return elapsed > stall_threshold_seconds
             
             # Check time since last completion
@@ -374,7 +374,7 @@ class ProgressTracker:
         
         # Lock released - work with local copy
         
-        time_since_last = (datetime.now(datetime.UTC) - last_completion).total_seconds()
+        time_since_last = (datetime.utcnow() - last_completion).total_seconds()
         return time_since_last > stall_threshold_seconds
     
     def get_missing_players(self, all_players: List[str]) -> List[str]:
@@ -419,7 +419,7 @@ class ProgressTracker:
         # =====================================================================
         
         with self._lock:
-            self.start_time = datetime.now(datetime.UTC)
+            self.start_time = datetime.utcnow()
             self.completed_players.clear()
             self.failed_players.clear()
             self.completion_times.clear()

@@ -8,5 +8,5 @@
 CREATE SCHEMA IF NOT EXISTS `nba-props-platform.nba_analytics`
 OPTIONS (
   description = "Phase 3: Historical player and team performance with calculated metrics. Enriched data ready for predictions.",
-  location = "US"
+  location = "us-west2"
 );

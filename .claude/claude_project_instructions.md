@@ -217,36 +217,45 @@ python tools/validation/validate_phase3_analytics.py --date 2025-01-15
 - Both fields required: "Created" and "Last Updated"
 - **This applies to ALL documentation files - no exceptions**
 
-### Documentation Organization
-
-**Two complementary guides for documentation:**
-
-1. **`docs/DOCS_DIRECTORY_STRUCTURE.md`** - WHERE to put docs (which directory)
-   - 6 top-level doc directories with clear purposes
-   - Decision tree: "I have a doc about X, where does it go?"
-   - Migration guide from old structure
-
-2. **`docs/DOCUMENTATION_GUIDE.md`** - HOW to organize files within directories
-   - Chronological numbering (01-99) for files
-   - README.md with reading order
-   - Archive pattern for completed docs
+### Documentation Organization (Reorganized 2025-11-25)
 
 **Documentation Directory Structure:**
 ```
 docs/
-├── architecture/       # Design, planning, future vision
-├── orchestration/      # Phase 1: Scheduler & daily workflows
-├── infrastructure/     # Cross-phase: Pub/Sub, shared services
-├── processors/         # Phase 2+: Data processor operations
-├── monitoring/         # Cross-phase: Grafana, observability
-└── data-flow/          # Phase-to-phase data mappings
+├── 00-start-here/     # Navigation, status, getting started
+├── 01-architecture/   # System design & decisions
+├── 02-operations/     # Daily ops, backfills, troubleshooting
+├── 03-phases/         # Phase-specific documentation
+│   ├── phase1-orchestration/
+│   ├── phase2-raw/
+│   ├── phase3-analytics/
+│   ├── phase4-precompute/
+│   ├── phase5-predictions/
+│   └── phase6-publishing/
+├── 04-deployment/     # Deployment status & guides
+├── 05-development/    # Guides, patterns, testing
+├── 06-reference/      # Quick lookups, processor cards
+├── 07-monitoring/     # Grafana, alerts, observability
+├── 08-projects/       # Active work tracking
+├── 09-handoff/        # Session handoffs
+└── archive/           # Historical documentation
 ```
 
-**When creating new documentation:**
-1. Determine which directory using `DOCS_DIRECTORY_STRUCTURE.md`
-2. Find next available number (chronological)
-3. Use standard metadata header
-4. Update directory's README.md with reading order
+**Where to Put New Documentation:**
+
+| You're creating... | Put it in... |
+|--------------------|--------------|
+| Active project/task tracking | `08-projects/current/{project-name}/` |
+| Session handoff notes | `09-handoff/sessions/` |
+| Backfill runbooks | `02-operations/runbooks/backfill/` |
+| Operational procedures | `02-operations/` |
+| Phase-specific docs | `03-phases/phase{N}/` |
+| How-to guides | `05-development/guides/` |
+| Pattern documentation | `05-development/patterns/` |
+| Quick reference/lookups | `06-reference/` |
+| Monitoring/alerting | `07-monitoring/` |
+
+**Full guide:** `docs/05-development/docs-organization.md`
 
 ### Documentation Types
 
@@ -269,52 +278,65 @@ docs/
 - For markdown docs, include path in backticks below title AND use standard metadata header
 - When unsure, ask clarifying questions rather than making assumptions
 - When organizing documentation:
-  - Reference `docs/DOCS_DIRECTORY_STRUCTURE.md` for WHERE to put docs
-  - Reference `docs/DOCUMENTATION_GUIDE.md` for HOW to organize files
+  - Reference `docs/README.md` for quick "where to put docs" table
+  - Reference `docs/05-development/docs-organization.md` for detailed guide
+  - Active work/projects go in `docs/08-projects/current/{project-name}/`
 
 ## Documentation References
 
-### Documentation Organization Guides
-- **Directory Structure**: `docs/DOCS_DIRECTORY_STRUCTURE.md` - Where to put docs
-- **File Organization**: `docs/DOCUMENTATION_GUIDE.md` - How to organize within directories
+### Key Entry Points
+- **Start Here**: `docs/00-start-here/README.md` - Navigation hub
+- **System Status**: `docs/00-start-here/SYSTEM_STATUS.md` - Current deployment state
+- **Where to Put Docs**: `docs/README.md` - Quick reference table
 
 ### Operational Guides by Topic
 
 **Phase 1 Orchestration:**
 - `bin/orchestration/README.md` - Workflow schedule system scripts
-- `docs/orchestration/01-how-it-works.md` - System overview
-- `docs/orchestration/02-phase1-overview.md` - Architecture & components
-- `docs/orchestration/03-bigquery-schemas.md` - Orchestration table schemas
-- `docs/orchestration/04-troubleshooting.md` - Common issues & fixes
+- `docs/03-phases/phase1-orchestration/how-it-works.md` - System overview
+- `docs/03-phases/phase1-orchestration/overview.md` - Architecture & components
+- `docs/03-phases/phase1-orchestration/troubleshooting.md` - Common issues & fixes
 
-**Infrastructure (Cross-Phase):**
-- `docs/infrastructure/01-pubsub-integration-verification.md` - Pub/Sub testing
-- `docs/infrastructure/02-pubsub-schema-management.md` - Message schemas
+**Operations:**
+- `docs/02-operations/backfill-guide.md` - Backfill procedures
+- `docs/02-operations/troubleshooting-matrix.md` - Cross-phase troubleshooting
+- `docs/02-operations/runbooks/` - Step-by-step runbooks
 
-**Data Processors:**
-- `docs/processors/01-phase2-operations-guide.md` - Phase 2 raw processors
+**Phase 5 Predictions:**
+- `docs/03-phases/phase5-predictions/README.md` - Overview
+- `docs/03-phases/phase5-predictions/tutorials/` - Getting started guides
+- `docs/03-phases/phase5-predictions/operations/` - Deployment & operations
 
 **Monitoring:**
-- `docs/monitoring/01-grafana-monitoring-guide.md` - Comprehensive monitoring
-- `docs/monitoring/02-grafana-daily-health-check.md` - Daily health checks
+- `docs/07-monitoring/grafana/monitoring-guide.md` - Comprehensive monitoring
+- `docs/07-monitoring/grafana/daily-health-check.md` - Daily health checks
 
-**Other Technical Docs:**
-- **Scrapers**: `docs/scrapers/parameter-formats-reference.md` (comprehensive params)
-- **Testing**: `docs/testing/unit-test-writing-guide-phase4.md` (test patterns)
-- **Schema Changes**: `docs/data/schema-change-management-process.md` (change process)
+**Development:**
+- `docs/05-development/guides/` - How-to guides
+- `docs/05-development/patterns/` - All processing patterns
+- `docs/05-development/testing/` - Test strategies
+
+**Reference:**
+- `docs/06-reference/processor-cards/` - Quick processor lookups
+- `docs/06-reference/data-flow/` - Field mappings between phases
 
 ---
 
-*Last Updated: 2025-11-21 09:45 AM PST*
+*Last Updated: 2025-11-25 08:45 PM PST*
 *Recent Changes:*
+- **2025-11-25**: Major documentation reorganization - 23 directories consolidated to 10 numbered directories
+  - New structure: `00-start-here/` through `09-handoff/` + `archive/`
+  - All phases consolidated in `03-phases/phase{1-6}/`
+  - Active work tracking in `08-projects/current/`
+  - All patterns consolidated in `05-development/patterns/`
+  - Single archive location for all historical docs
 - **2025-11-21**: Emphasized timestamp requirements (date + time + timezone mandatory)
-- **2025-11-15**: Reorganized documentation structure
-- Reorganized documentation into 6 focused directories (architecture, orchestration, infrastructure, processors, monitoring, data-flow)
-- Created `docs/DOCS_DIRECTORY_STRUCTURE.md` - guide for directory organization
-- Updated documentation references to reflect new structure
-- Split orchestration docs: Phase 1 only in orchestration/, cross-phase in infrastructure/, monitoring in monitoring/
+- **2025-11-15**: Initial documentation reorganization
 
 *Project Status:*
 - **Phase 1 (Orchestration)**: ✅ Deployed to production (Nov 2025)
-- **Phase 5 (Predictions)**: ✅ Complete
-- **Phase 4 (Precompute)**: 🚧 In progress
+- **Phase 2 (Raw Processing)**: ✅ Deployed to production (Nov 2025)
+- **Phase 3 (Analytics)**: ✅ Deployed to production (Nov 2025)
+- **Phase 4 (Precompute)**: ✅ Deployed to production (Nov 2025)
+- **Phase 5 (Predictions)**: 🧪 Testing
+- **Phase 6 (Publishing)**: 🚧 Planned

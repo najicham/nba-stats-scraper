@@ -131,17 +131,25 @@ def start_prediction_batch():
         
         min_minutes = request_data.get('min_minutes', 15)
         use_multiple_lines = request_data.get('use_multiple_lines', False)
-        
+        force = request_data.get('force', False)
+
         logger.info(f"Starting prediction batch for {game_date}")
-        
+
         # Check if batch already running
         if current_tracker and not current_tracker.is_complete:
-            logger.warning("Batch already in progress")
-            return jsonify({
-                'status': 'already_running',
-                'batch_id': current_batch_id,
-                'progress': current_tracker.get_progress()
-            }), 409  # Conflict
+            is_stalled = current_tracker.is_stalled(stall_threshold_seconds=600)
+            if not force and not is_stalled:
+                logger.warning("Batch already in progress")
+                return jsonify({
+                    'status': 'already_running',
+                    'batch_id': current_batch_id,
+                    'progress': current_tracker.get_progress()
+                }), 409  # Conflict
+            else:
+                # Allow override if forced or stalled
+                reason = "forced" if force else "stalled"
+                logger.warning(f"Overriding existing batch ({reason}), starting new batch")
+                current_tracker.reset()
         
         # Create batch ID
         batch_id = f"batch_{game_date.isoformat()}_{int(time.time())}"
@@ -313,7 +321,7 @@ def publish_prediction_requests(requests: List[Dict], batch_id: str) -> int:
             message = {
                 **request_data,
                 'batch_id': batch_id,
-                'timestamp': datetime.now(datetime.UTC).isoformat()
+                'timestamp': datetime.now().isoformat()
             }
 
             # Publish to Pub/Sub
