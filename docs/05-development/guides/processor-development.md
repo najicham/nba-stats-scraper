@@ -1,11 +1,17 @@
 # 01 - NBA Processor Development Guide
 
-**Version**: 4.0
+**Version**: 4.1
 **Created**: 2025-11-21 14:35 PST
-**Last Updated**: 2025-11-21 14:35 PST
-**Focus**: Code development, schema design, smart idempotency, dependency management, Pub/Sub integration
+**Last Updated**: 2025-11-27
+**Focus**: Code development, schema design, smart idempotency, dependency management, Pub/Sub integration, run history logging
 
 ---
+
+## 📋 What's New in v4.1
+
+- ✅ **Run History Logging** - All processor runs now automatically logged via `RunHistoryMixin`
+- ✅ **Alert Tracking** - Track which runs triggered alerts for easier debugging
+- ✅ **Trigger Tracing** - Correlate Pub/Sub messages to processor runs
 
 ## 📋 What's New in v4.0
 
@@ -97,12 +103,14 @@ python bin/maintenance/phase3_backfill_check.py --dry-run
 
 Determine which type you're creating:
 
-| Type | Path | Trigger | Smart Idempotency | Hash Tracking |
-|------|------|---------|-------------------|---------------|
-| Raw | `data_processors/raw/[source]/` | Pub/Sub | ✅ Required | N/A |
-| Analytics | `data_processors/analytics/[name]/` | Scheduler | N/A | ✅ 4 fields/source |
-| Precompute | `data_processors/precompute/[name]/` | Scheduler | N/A | ✅ 4 fields/source |
-| Reference | `data_processors/reference/[name]/` | Manual/Scheduler | N/A | N/A |
+| Type | Path | Trigger | Smart Idempotency | Hash Tracking | Run History |
+|------|------|---------|-------------------|---------------|-------------|
+| Raw | `data_processors/raw/[source]/` | Pub/Sub | ✅ Required | N/A | ✅ Auto |
+| Analytics | `data_processors/analytics/[name]/` | Scheduler | N/A | ✅ 4 fields/source | ✅ Auto |
+| Precompute | `data_processors/precompute/[name]/` | Scheduler | N/A | ✅ 4 fields/source | ✅ Auto |
+| Reference | `data_processors/reference/[name]/` | Manual/Scheduler | N/A | N/A | ✅ Manual |
+
+> **Note:** Run History logging is automatic via `RunHistoryMixin` for Phase 2, 3, and 4 processors. All runs are logged to `nba_reference.processor_run_history`.
 
 ### Step 2: Design BigQuery Schema
 

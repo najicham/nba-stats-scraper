@@ -2,10 +2,10 @@
 
 **File:** `docs/architecture/03-pipeline-monitoring-and-error-handling.md`
 **Created:** 2025-11-14 22:22 PST
-**Last Updated:** 2025-11-15 (Major expansion: dependency failure handling, ACK/NACK strategy, monitoring framework)
-**Purpose:** End-to-end monitoring, dependency failure handling, correlation ID tracking, DLQ handling, and recovery procedures
-**Status:** Design Complete - Ready for Sprint 1-4 implementation
-**Related:** [04-event-driven-pipeline-architecture.md](./04-event-driven-pipeline-architecture.md), `docs/monitoring/01-grafana-monitoring-guide.md`
+**Last Updated:** 2025-11-27 (Added processor run history logging via RunHistoryMixin)
+**Purpose:** End-to-end monitoring, dependency failure handling, correlation ID tracking, DLQ handling, run history logging, and recovery procedures
+**Status:** Design Complete - Partially Implemented (Run History Logging complete)
+**Related:** [04-event-driven-pipeline-architecture.md](./04-event-driven-pipeline-architecture.md), `docs/monitoring/01-grafana-monitoring-guide.md`, `docs/07-monitoring/run-history-guide.md`
 
 ---
 
@@ -17,8 +17,9 @@
 4. [Dependency Failure Scenarios](#dependency-failure-scenarios)
 5. [Enhanced Dependency Checking](#enhanced-dependency-checking)
 6. [End-to-End Pipeline Tracking](#end-to-end-pipeline-tracking)
-7. [Monitoring & Alerting](#monitoring--alerting)
-8. [Recovery Procedures](#recovery-procedures)
+7. [Processor Run History Logging](#processor-run-history-logging) *(NEW - Implemented)*
+8. [Monitoring & Alerting](#monitoring--alerting)
+9. [Recovery Procedures](#recovery-procedures)
 
 ---
 
@@ -1508,6 +1509,133 @@ ORDER BY phase, started_at;
 ```
 
 **Answer to Question 3:** ✅ YES, we can detect the change didn't reach Phase 5/6!
+
+---
+
+## Processor Run History Logging
+
+> **Status:** ✅ **IMPLEMENTED** (2025-11-27)
+
+All processor base classes now automatically log runs to `nba_reference.processor_run_history` via `RunHistoryMixin`. This provides comprehensive audit trails for debugging and investigation.
+
+### Overview
+
+Every processor run is automatically logged with:
+- **Trigger information:** What caused the run (Pub/Sub, scheduler, manual)
+- **Dependency check results:** What dependencies were checked and their status
+- **Alert tracking:** Whether an alert was sent and what type
+- **Cloud Run metadata:** Service name, revision for deployment correlation
+- **Performance metrics:** Duration, records processed, etc.
+
+### Implementation
+
+**Mixin-based approach:**
+
+```python
+# All processor base classes now inherit from RunHistoryMixin
+class ProcessorBase(RunHistoryMixin):          # Phase 2 Raw
+class AnalyticsProcessorBase(RunHistoryMixin): # Phase 3 Analytics
+class PrecomputeProcessorBase(RunHistoryMixin): # Phase 4 Precompute
+```
+
+**Location:** `shared/processors/mixins/run_history_mixin.py`
+
+### Schema: processor_run_history
+
+**Key columns for debugging:**
+
+| Column | Type | Purpose |
+|--------|------|---------|
+| `run_id` | STRING | Unique run identifier |
+| `processor_name` | STRING | Which processor ran |
+| `phase` | STRING | Processing phase (phase_2_raw, phase_3_analytics, etc.) |
+| `status` | STRING | success, failed, skipped |
+| `trigger_source` | STRING | pubsub, scheduler, manual, api |
+| `trigger_message_id` | STRING | Pub/Sub message ID for correlation |
+| `parent_processor` | STRING | Upstream processor that triggered this |
+| `dependency_check_passed` | BOOLEAN | Did all critical dependencies pass? |
+| `missing_dependencies` | JSON | Array of missing table names |
+| `stale_dependencies` | JSON | Array of stale table names |
+| `alert_sent` | BOOLEAN | Was an alert sent? |
+| `alert_type` | STRING | error, warning, info |
+| `cloud_run_service` | STRING | K_SERVICE environment variable |
+| `cloud_run_revision` | STRING | K_REVISION environment variable |
+
+### Tracing an Alert Back to Its Cause
+
+When you receive an error alert, use the `run_id` to investigate:
+
+```sql
+-- Find the failed run by run_id (from alert email)
+SELECT
+    processor_name,
+    phase,
+    status,
+    trigger_source,
+    trigger_message_id,
+    parent_processor,
+    dependency_check_passed,
+    missing_dependencies,
+    alert_sent,
+    alert_type,
+    errors,
+    started_at,
+    duration_seconds
+FROM nba_reference.processor_run_history
+WHERE run_id LIKE '%fea26b01%'  -- run_id from alert
+ORDER BY started_at DESC;
+```
+
+### Finding What Triggered a Failure
+
+```sql
+-- Find all runs for a specific date and processor
+SELECT
+    run_id,
+    status,
+    trigger_source,
+    trigger_message_id,
+    dependency_check_passed,
+    missing_dependencies,
+    started_at
+FROM nba_reference.processor_run_history
+WHERE processor_name = 'MLFeatureStoreProcessor'
+  AND data_date = '2025-11-26'
+ORDER BY started_at DESC;
+```
+
+### Correlating with Pub/Sub Messages
+
+```sql
+-- Find all processors triggered by the same Pub/Sub message
+SELECT
+    processor_name,
+    phase,
+    status,
+    started_at
+FROM nba_reference.processor_run_history
+WHERE trigger_message_id = '12345678901234567'
+ORDER BY started_at;
+```
+
+### Phase 5 Prediction Worker Tracking
+
+Phase 5 uses a separate table (`nba_predictions.prediction_worker_runs`) optimized for per-player prediction tracking. It now includes tracing columns:
+
+| Column | Type | Purpose |
+|--------|------|---------|
+| `trigger_source` | STRING | What triggered: pubsub, scheduler, manual |
+| `trigger_message_id` | STRING | Pub/Sub message ID |
+| `cloud_run_service` | STRING | K_SERVICE environment variable |
+| `cloud_run_revision` | STRING | K_REVISION environment variable |
+| `retry_attempt` | INTEGER | Which retry attempt |
+| `batch_id` | STRING | Batch ID for bulk requests |
+
+### See Also
+
+- **Full guide:** `docs/07-monitoring/run-history-guide.md`
+- **Mixin implementation:** `shared/processors/mixins/run_history_mixin.py`
+- **Schema migration:** `scripts/migrations/add_run_history_columns.py`
 
 ---
 

@@ -2,7 +2,9 @@
 
 Complete guide to the NBA Props Platform intelligent alerting system.
 
-**Last Updated:** 2025-10-14
+**Last Updated:** 2025-11-27
+
+> **New in 2025-11-27:** Alerts are now tracked in `processor_run_history` table. When an alert is sent, `alert_sent=TRUE` and `alert_type` fields are recorded, making it easy to correlate alerts with specific processor runs. See [Run History Guide](../run-history-guide.md).
 
 ---
 

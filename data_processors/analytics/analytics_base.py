@@ -9,9 +9,10 @@ Base class for Phase 3 analytics processors that handles:
  - Loading to analytics tables
  - Error handling and quality tracking
  - Multi-channel notifications (Email + Slack)
+ - Run history logging (via RunHistoryMixin)
 
-Version: 2.0 (with dependency tracking)
-Updated: January 2025
+Version: 2.1 (with run history logging)
+Updated: November 2025
 """
 
 import json
@@ -31,6 +32,9 @@ from shared.utils.notification_system import (
     notify_info
 )
 
+# Import run history mixin
+from shared.processors.mixins import RunHistoryMixin
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -39,13 +43,13 @@ logging.basicConfig(
 logger = logging.getLogger("analytics_base")
 
 
-class AnalyticsProcessorBase:
+class AnalyticsProcessorBase(RunHistoryMixin):
     """
     Base class for Phase 3 analytics processors with full dependency tracking.
-    
+
     Phase 3 processors depend on Phase 2 (Raw) tables.
     This base class provides dependency checking, source tracking, and validation.
-    
+
     Lifecycle:
       1) Check dependencies (are upstream Phase 2 tables ready?)
       2) Extract data from raw BigQuery tables
@@ -53,23 +57,31 @@ class AnalyticsProcessorBase:
       4) Calculate analytics
       5) Load to analytics BigQuery tables
       6) Log processing run with source metadata
+
+    Run History:
+      Automatically logs runs to processor_run_history table via RunHistoryMixin.
     """
-    
+
     # Class-level configs
     required_opts: List[str] = ['start_date', 'end_date']
     additional_opts: List[str] = []
-    
+
     # Processing settings
     validate_on_extract: bool = True
     save_on_error: bool = True
-    
+
     # BigQuery settings
     dataset_id: str = "nba_analytics"
     table_name: str = ""  # Child classes must set
     processing_strategy: str = "MERGE_UPDATE"  # Default for analytics
-    
+
     # Time tracking
     time_markers: Dict = {}
+
+    # Run history settings (from RunHistoryMixin)
+    PHASE: str = 'phase_3_analytics'
+    OUTPUT_TABLE: str = ''  # Set to table_name in run()
+    OUTPUT_DATASET: str = 'nba_analytics'
     
     def __init__(self):
         """Initialize analytics processor."""
@@ -96,37 +108,63 @@ class AnalyticsProcessorBase:
     def run(self, opts: Optional[Dict] = None) -> bool:
         """
         Main entry point - returns True on success, False on failure.
+        Enhanced with run history logging.
         """
         if opts is None:
             opts = {}
-            
+
+        # Track dependency check results for run history
+        dep_check_results = None
+
         try:
             # Re-init but preserve run_id
             saved_run_id = self.run_id
             self.__init__()
             self.run_id = saved_run_id
             self.stats["run_id"] = saved_run_id
-            
+
             self.mark_time("total")
             self.step_info("start", "Analytics processor run starting", extra={"opts": opts})
-            
+
             # Setup
             self.set_opts(opts)
             self.validate_opts()
             self.set_additional_opts()
             self.validate_additional_opts()
             self.init_clients()
-            
+
+            # Start run history tracking
+            self.OUTPUT_TABLE = self.table_name
+            self.OUTPUT_DATASET = self.dataset_id
+            data_date = opts.get('end_date') or opts.get('start_date')
+            self.start_run_tracking(
+                data_date=data_date,
+                trigger_source=opts.get('trigger_source', 'manual'),
+                trigger_message_id=opts.get('trigger_message_id'),
+                parent_processor=opts.get('parent_processor')
+            )
+
             # Check dependencies BEFORE extracting (if processor defines them)
             if hasattr(self, 'get_dependencies') and callable(self.get_dependencies):
                 self.mark_time("dependency_check")
                 dep_check = self.check_dependencies(
-                    self.opts['start_date'], 
+                    self.opts['start_date'],
                     self.opts['end_date']
                 )
+                dep_check_results = dep_check
                 dep_check_seconds = self.get_elapsed_seconds("dependency_check")
                 self.stats["dependency_check_time"] = dep_check_seconds
-                
+
+                # Record dependency results for run history
+                self.set_dependency_results(
+                    dependencies=[
+                        {'table': k, **v} for k, v in dep_check.get('details', {}).items()
+                    ],
+                    all_passed=dep_check['all_critical_present'],
+                    missing=dep_check.get('missing', []),
+                    stale=dep_check.get('stale_fail', []) + dep_check.get('stale_warn', [])
+                )
+
                 # Handle critical dependency failures
                 if not dep_check['all_critical_present']:
                     error_msg = f"Missing critical dependencies: {dep_check['missing']}"
@@ -144,8 +182,9 @@ class AnalyticsProcessorBase:
                         },
                         processor_name=self.__class__.__name__
                     )
+                    self.set_alert_sent('error')
                     raise ValueError(error_msg)
-                
+
                 # Handle stale data FAIL threshold
                 if dep_check.get('has_stale_fail'):
                     error_msg = f"Stale dependencies (FAIL threshold): {dep_check['stale_fail']}"
@@ -160,8 +199,9 @@ class AnalyticsProcessorBase:
                         },
                         processor_name=self.__class__.__name__
                     )
+                    self.set_alert_sent('error')
                     raise ValueError(error_msg)
-                
+
                 # Warn about stale data (WARN threshold only)
                 if dep_check.get('has_stale_warn'):
                     logger.warning(f"Stale upstream data detected: {dep_check['stale_warn']}")
@@ -175,53 +215,63 @@ class AnalyticsProcessorBase:
                             'stale_sources': dep_check['stale_warn']
                         }
                     )
-                
+                    self.set_alert_sent('warning')
+
                 # Track source metadata from dependency check
                 self.track_source_usage(dep_check)
-                
-                self.step_info("dependency_check_complete", 
+
+                self.step_info("dependency_check_complete",
                               f"Dependencies validated in {dep_check_seconds:.1f}s")
             else:
                 logger.info("No dependency checking configured for this processor")
-            
+
             # Extract from raw tables
             self.mark_time("extract")
             self.extract_raw_data()
             extract_seconds = self.get_elapsed_seconds("extract")
             self.stats["extract_time"] = extract_seconds
             self.step_info("extract_complete", f"Data extracted in {extract_seconds:.1f}s")
-            
+
             # Validate
             if self.validate_on_extract:
                 self.validate_extracted_data()
-            
+
             # Transform/calculate analytics
             self.mark_time("transform")
             self.calculate_analytics()
             transform_seconds = self.get_elapsed_seconds("transform")
             self.stats["transform_time"] = transform_seconds
-            
+
             # Save to analytics tables
             self.mark_time("save")
             self.save_analytics()
             save_seconds = self.get_elapsed_seconds("save")
             self.stats["save_time"] = save_seconds
-            
+
             # Complete
             total_seconds = self.get_elapsed_seconds("total")
             self.stats["total_runtime"] = total_seconds
-            self.step_info("finish", 
+            self.step_info("finish",
                           f"Analytics processor completed in {total_seconds:.1f}s")
-            
+
             # Log processing run
             self.log_processing_run(success=True)
             self.post_process()
+
+            # Record successful run to history
+            self.record_run_complete(
+                status='success',
+                records_processed=self.stats.get('rows_processed', 0),
+                records_created=self.stats.get('rows_processed', 0),
+                summary=self.stats
+            )
+
             return True
-            
+
         except Exception as e:
             logger.error("AnalyticsProcessorBase Error: %s", e, exc_info=True)
             sentry_sdk.capture_exception(e)
-            
+
             # Send notification for failure
             try:
                 notify_error(
@@ -238,9 +288,10 @@ class AnalyticsProcessorBase:
                     },
                     processor_name=self.__class__.__name__
                 )
+                self.set_alert_sent('error')
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             # Log failed processing run
             self.log_processing_run(success=False, error=str(e))
 
@@ -252,8 +303,16 @@ class AnalyticsProcessorBase:
                 self._save_partial_data(e)
 
             self.report_error(e)
+
+            # Record failed run to history
+            self.record_run_complete(
+                status='failed',
+                error=e,
+                summary=self.stats
+            )
+
             return False
-        
+
         finally:
             # Always run finalize, even on error
             try:

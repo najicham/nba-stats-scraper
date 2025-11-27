@@ -9,7 +9,11 @@ Base class for Phase 4 precompute processors that handles:
  - Loading to precompute tables
  - Error handling and quality tracking
  - Multi-channel notifications (Email + Slack)
+ - Run history logging (via RunHistoryMixin)
  - Matches AnalyticsProcessorBase patterns
+
+Version: 2.1 (with run history logging)
+Updated: November 2025
 """
 
 import json
@@ -28,6 +32,9 @@ from shared.utils.notification_system import (
     notify_info
 )
 
+# Import run history mixin
+from shared.processors.mixins import RunHistoryMixin
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -36,13 +43,13 @@ logging.basicConfig(
 logger = logging.getLogger("precompute_base")
 
 
-class PrecomputeProcessorBase:
+class PrecomputeProcessorBase(RunHistoryMixin):
     """
     Base class for Phase 4 precompute processors.
-    
+
     Phase 4 processors depend on Phase 3 (Analytics) and other Phase 4 processors.
     This base class provides dependency checking, source tracking, and validation.
-    
+
     Lifecycle:
       1) Check dependencies (are upstream tables ready?)
       2) Extract data from analytics BigQuery tables
@@ -50,23 +57,31 @@ class PrecomputeProcessorBase:
       4) Calculate precompute metrics
       5) Load to precompute BigQuery tables
       6) Log processing run with source metadata
+
+    Run History:
+      Automatically logs runs to processor_run_history table via RunHistoryMixin.
     """
-    
+
     # Class-level configs
     required_opts: List[str] = ['analysis_date']
     additional_opts: List[str] = []
-    
+
     # Processing settings
     validate_on_extract: bool = True
     save_on_error: bool = True
-    
+
     # BigQuery settings
     dataset_id: str = "nba_precompute"
     table_name: str = ""  # Child classes must set
     processing_strategy: str = "MERGE_UPDATE"  # Default for precompute
-    
+
     # Time tracking
     time_markers: Dict = {}
+
+    # Run history settings (from RunHistoryMixin)
+    PHASE: str = 'phase_4_precompute'
+    OUTPUT_TABLE: str = ''  # Set to table_name in run()
+    OUTPUT_DATASET: str = 'nba_precompute'
     
     def __init__(self):
         """Initialize precompute processor."""
@@ -98,33 +113,55 @@ class PrecomputeProcessorBase:
         """
         Main entry point - matches AnalyticsProcessorBase.run() pattern.
         Returns True on success, False on failure.
+        Enhanced with run history logging.
         """
         if opts is None:
             opts = {}
-            
+
         try:
             # Re-init but preserve run_id
             saved_run_id = self.run_id
             self.__init__()
             self.run_id = saved_run_id
             self.stats["run_id"] = saved_run_id
-            
+
             self.mark_time("total")
             self.step_info("start", "Precompute processor run starting", extra={"opts": opts})
-            
+
             # Setup
             self.set_opts(opts)
             self.validate_opts()
             self.set_additional_opts()
             self.validate_additional_opts()
             self.init_clients()
-            
+
+            # Start run history tracking
+            self.OUTPUT_TABLE = self.table_name
+            self.OUTPUT_DATASET = self.dataset_id
+            data_date = opts.get('analysis_date')
+            self.start_run_tracking(
+                data_date=data_date,
+                trigger_source=opts.get('trigger_source', 'manual'),
+                trigger_message_id=opts.get('trigger_message_id'),
+                parent_processor=opts.get('parent_processor')
+            )
+
             # Check dependencies BEFORE extracting
             self.mark_time("dependency_check")
             dep_check = self.check_dependencies(self.opts['analysis_date'])
             dep_check_seconds = self.get_elapsed_seconds("dependency_check")
             self.stats["dependency_check_time"] = dep_check_seconds
-            
+
+            # Record dependency results for run history
+            self.set_dependency_results(
+                dependencies=[
+                    {'table': k, **v} for k, v in dep_check.get('details', {}).items()
+                ],
+                all_passed=dep_check['all_critical_present'],
+                missing=dep_check.get('missing', []),
+                stale=dep_check.get('stale', [])
+            )
+
             if not dep_check['all_critical_present']:
                 error_msg = f"Missing critical dependencies: {dep_check['missing']}"
                 logger.error(error_msg)
@@ -141,8 +178,9 @@ class PrecomputeProcessorBase:
                     },
                     processor_name=self.__class__.__name__
                 )
+                self.set_alert_sent('error')
                 raise ValueError(error_msg)
-            
+
             if not dep_check['all_fresh']:
                 logger.warning(f"Stale upstream data detected: {dep_check['stale']}")
                 notify_warning(
@@ -155,51 +193,61 @@ class PrecomputeProcessorBase:
                         'stale_sources': dep_check['stale']
                     }
                 )
-            
+                self.set_alert_sent('warning')
+
             # Track source metadata from dependency check
             self.track_source_usage(dep_check)
-            
-            self.step_info("dependency_check_complete", 
+
+            self.step_info("dependency_check_complete",
                           f"Dependencies validated in {dep_check_seconds:.1f}s")
-            
+
             # Extract from analytics tables
             self.mark_time("extract")
             self.extract_raw_data()
             extract_seconds = self.get_elapsed_seconds("extract")
             self.stats["extract_time"] = extract_seconds
             self.step_info("extract_complete", f"Data extracted in {extract_seconds:.1f}s")
-            
+
             # Validate
             if self.validate_on_extract:
                 self.validate_extracted_data()
-            
+
             # Calculate precompute metrics
             self.mark_time("calculate")
             self.calculate_precompute()
             calculate_seconds = self.get_elapsed_seconds("calculate")
             self.stats["calculate_time"] = calculate_seconds
-            
+
             # Save to precompute tables
             self.mark_time("save")
             self.save_precompute()
             save_seconds = self.get_elapsed_seconds("save")
             self.stats["save_time"] = save_seconds
-            
+
             # Complete
             total_seconds = self.get_elapsed_seconds("total")
             self.stats["total_runtime"] = total_seconds
-            self.step_info("finish", 
+            self.step_info("finish",
                           f"Precompute processor completed in {total_seconds:.1f}s")
-            
+
             # Log processing run
             self.log_processing_run(success=True)
             self.post_process()
+
+            # Record successful run to history
+            self.record_run_complete(
+                status='success',
+                records_processed=self.stats.get('rows_processed', 0),
+                records_created=self.stats.get('rows_processed', 0),
+                summary=self.stats
+            )
+
             return True
-            
+
         except Exception as e:
             logger.error("PrecomputeProcessorBase Error: %s", e, exc_info=True)
             sentry_sdk.capture_exception(e)
-            
+
             # Send notification for failure
             try:
                 notify_error(
@@ -216,18 +264,27 @@ class PrecomputeProcessorBase:
                     },
                     processor_name=self.__class__.__name__
                 )
+                self.set_alert_sent('error')
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             # Log failed processing run
             self.log_processing_run(success=False, error=str(e))
-            
+
             if self.save_on_error:
                 self._save_partial_data(e)
-                
+
             self.report_error(e)
+
+            # Record failed run to history
+            self.record_run_complete(
+                status='failed',
+                error=e,
+                summary=self.stats
+            )
+
             return False
-        
+
         finally:
             # Always run finalize, even on error
             try:

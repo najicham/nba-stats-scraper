@@ -7,8 +7,10 @@ Base class for all data processors that handles:
  - Loading to BigQuery
  - Error handling and logging
  - Multi-channel notifications (Email + Slack)
- 
-UPDATED: 2025-10-01
+ - Run history logging (via RunHistoryMixin)
+
+UPDATED: 2025-11-27
+ - Added RunHistoryMixin for processor run history logging
  - Added load_json_from_gcs() helper for raw processors
  - Fixed duplicate error notifications
  - Improved documentation
@@ -31,6 +33,9 @@ from shared.utils.notification_system import (
     notify_info
 )
 
+# Import run history mixin
+from shared.processors.mixins import RunHistoryMixin
+
 # Configure logging to match scraper_base pattern
 logging.basicConfig(
     level=logging.INFO,
@@ -39,46 +44,55 @@ logging.basicConfig(
 logger = logging.getLogger("processor_base")
 
 
-class ProcessorBase:
+class ProcessorBase(RunHistoryMixin):
     """
     Base class for data processors - matches ScraperBase patterns.
-    
+
     There are two types of processors:
     1. Raw Processors: Load JSON from GCS → Transform → Save to BigQuery
     2. Reference Processors: Load from BigQuery → Transform → Save back to BigQuery
-    
+
     Lifecycle:
       1) load_data() - Load data from source (GCS or BigQuery)
       2) validate_loaded_data() - Validate the loaded data
       3) transform_data() - Transform data for target schema
       4) save_data() - Save to BigQuery
       5) post_process() - Log stats and cleanup
-    
+
     Child classes must implement:
       - load_data(): Load self.raw_data from source
       - transform_data(): Transform self.raw_data → self.transformed_data
-      
+
     Child classes can override:
       - validate_loaded_data(): Custom validation logic
       - save_data(): Custom save logic (MERGE, DELETE, etc.)
       - get_processor_stats(): Return custom statistics
+
+    Run History:
+      Automatically logs runs to processor_run_history table via RunHistoryMixin.
+      Child classes can set OUTPUT_TABLE and OUTPUT_DATASET for better tracking.
     """
-    
+
     # Class-level configs (matching ScraperBase pattern)
     required_opts: List[str] = []
     additional_opts: List[str] = []
-    
+
     # Processing settings
     validate_on_load: bool = True
     save_on_error: bool = True
-    
+
     # BigQuery settings
     dataset_id: str = "nba_raw"
     table_name: str = ""  # Child classes must set
     write_disposition = bigquery.WriteDisposition.WRITE_APPEND
-    
+
     # Time tracking (matching scraper pattern)
     time_markers: Dict = {}
+
+    # Run history settings (from RunHistoryMixin)
+    PHASE: str = 'phase_2_raw'
+    OUTPUT_TABLE: str = ''  # Set to table_name in run()
+    OUTPUT_DATASET: str = 'nba_raw'
     
     def __init__(self):
         """Initialize processor with same pattern as ScraperBase."""
@@ -100,45 +114,56 @@ class ProcessorBase:
         """
         Main entry point - matches ScraperBase.run() pattern.
         Returns True on success, False on failure.
-        Enhanced with notifications.
+        Enhanced with notifications and run history logging.
         """
         if opts is None:
             opts = {}
-            
+
         try:
             # Re-init but preserve run_id (matching scraper pattern)
             saved_run_id = self.run_id
             self.__init__()
             self.run_id = saved_run_id
             self.stats["run_id"] = saved_run_id
-            
+
             self.mark_time("total")
             self.step_info("start", "Processor run starting", extra={"opts": opts})
-            
+
             # Setup
             self.set_opts(opts)
             self.validate_opts()
             self.set_additional_opts()
             self.validate_additional_opts()
             self.init_clients()
-            
+
+            # Start run history tracking
+            self.OUTPUT_TABLE = self.table_name
+            self.OUTPUT_DATASET = self.dataset_id
+            data_date = opts.get('date') or opts.get('game_date')
+            self.start_run_tracking(
+                data_date=data_date,
+                trigger_source=opts.get('trigger_source', 'manual'),
+                trigger_message_id=opts.get('trigger_message_id'),
+                parent_processor=opts.get('parent_processor')
+            )
+
             # Load from source
             self.mark_time("load")
             self.load_data()
             load_seconds = self.get_elapsed_seconds("load")
             self.stats["load_time"] = load_seconds
             self.step_info("load_complete", f"Data loaded in {load_seconds:.1f}s")
-            
+
             # Validate
             if self.validate_on_load:
                 self.validate_loaded_data()
-            
+
             # Transform
             self.mark_time("transform")
             self.transform_data()
             transform_seconds = self.get_elapsed_seconds("transform")
             self.stats["transform_time"] = transform_seconds
-            
+
             # Save to BigQuery
             self.mark_time("save")
             self.save_data()
@@ -154,13 +179,23 @@ class ProcessorBase:
             self.step_info("finish", f"Processor completed in {total_seconds:.1f}s")
 
             self.post_process()
+
+            # Record successful run to history
+            self.record_run_complete(
+                status='success',
+                records_processed=self.stats.get('rows_inserted', 0),
+                records_created=self.stats.get('rows_inserted', 0),
+                summary=self.stats
+            )
+
             return True
-            
+
         except Exception as e:
             logger.error("ProcessorBase Error: %s", e, exc_info=True)
             sentry_sdk.capture_exception(e)
-            
+
             # Send notification for processor failure (only place we notify errors)
+            alert_sent = False
             try:
                 notify_error(
                     title=f"Processor Failed: {self.__class__.__name__}",
@@ -179,13 +214,23 @@ class ProcessorBase:
                     },
                     processor_name=self.__class__.__name__
                 )
+                alert_sent = True
+                self.set_alert_sent('error')
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             if self.save_on_error:
                 self._save_partial_data(e)
-                
+
             self.report_error(e)
+
+            # Record failed run to history
+            self.record_run_complete(
+                status='failed',
+                error=e,
+                summary=self.stats
+            )
+
             return False
     
     def _get_current_step(self) -> str:

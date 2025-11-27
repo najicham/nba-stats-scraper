@@ -2,11 +2,13 @@
 
 **File:** `docs/dependency-checks/03-precompute-processors.md`
 **Created:** 2025-11-21
-**Last Updated:** 2025-11-25
+**Last Updated:** 2025-11-27
 **Purpose:** Dependency checking specs for 5 Phase 4 precompute processors
-**Status:** Current - Schemas deployed, code updates pending
+**Status:** Current - Run history logging implemented
 
 📖 **Parent Document**: [Dependency Checking System Overview](./00-overview.md)
+
+> **New in 2025-11-27:** All Phase 4 processors now automatically log runs to `processor_run_history` via `RunHistoryMixin`. This includes dependency check results (`dependency_check_passed`, `missing_dependencies`, `stale_dependencies`), alert tracking, and trigger correlation. See [Run History Guide](../../07-monitoring/run-history-guide.md).
 
 ⚠️ **NOTE**: Multi-phase dependency checking (Phase 4 checking Phase 2 directly) and historical backfill patterns are documented as proposed approaches. Exact implementation details still being finalized based on operational requirements.
 

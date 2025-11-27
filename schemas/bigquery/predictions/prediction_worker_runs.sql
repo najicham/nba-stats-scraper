@@ -4,6 +4,7 @@
 -- Location: nba-stats-scraper/schemas/bigquery/predictions/prediction_worker_runs.sql
 -- Purpose: Track Phase 5 prediction worker execution for monitoring, debugging,
 --          and pattern support (circuit breakers, data quality tracking)
+-- Updated: 2025-11-27 - Added tracing columns (trigger, Cloud Run metadata)
 --
 -- Usage: bq query --use_legacy_sql=false < schemas/bigquery/predictions/prediction_worker_runs.sql
 
@@ -60,7 +61,19 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.prediction_worker
 
   -- Metadata
   worker_version STRING,                            -- Worker code version
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP()  -- When record was created
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP(), -- When record was created
+
+  -- Trigger tracking (Added 2025-11-27)
+  trigger_source STRING,                            -- What triggered: pubsub, scheduler, manual, api
+  trigger_message_id STRING,                        -- Pub/Sub message ID for correlation
+
+  -- Cloud Run metadata (Added 2025-11-27)
+  cloud_run_service STRING,                         -- K_SERVICE environment variable
+  cloud_run_revision STRING,                        -- K_REVISION environment variable
+
+  -- Retry and batch tracking (Added 2025-11-27)
+  retry_attempt INT64,                              -- Which retry attempt (1, 2, 3...)
+  batch_id STRING                                   -- Batch ID if part of bulk prediction request
 )
 PARTITION BY DATE(run_date)
 CLUSTER BY player_lookup, success, game_date

@@ -1,8 +1,9 @@
 -- File: schemas/bigquery/nba_reference/processor_run_history.sql
--- Description: Tracks all registry processor runs for temporal ordering and gap detection
+-- Description: Tracks all processor runs across Phase 2, 3, 4 and reference processors
 -- Created: 2025-10-04
 -- Updated: 2025-10-05 - Added source date tracking fields for strict date matching
--- Purpose: Prevent duplicate processing, detect gaps, provide audit trail
+-- Updated: 2025-11-27 - Added tracing columns (trigger, dependency, alert tracking) via RunHistoryMixin
+-- Purpose: Prevent duplicate processing, detect gaps, provide audit trail, enable alert tracing
 
 CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_reference.processor_run_history` (
     -- =============================================================================
@@ -96,11 +97,59 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_reference.processor_run_histo
     -- =============================================================================
     -- DATES: When and what (at end per convention)
     -- =============================================================================
-    
+
     data_date DATE NOT NULL, -- The date this data represents (partition key)
     started_at TIMESTAMP NOT NULL, -- When processor execution started
     processed_at TIMESTAMP, -- When processing completed (NULL while status='running')
-    
+
+    -- =============================================================================
+    -- PHASE AND OUTPUT TRACKING (Added 2025-11-27)
+    -- =============================================================================
+
+    phase STRING, -- Processing phase (phase_2_raw, phase_3_analytics, phase_4_precompute, reference)
+    output_table STRING, -- Target table name (e.g., 'player_game_summary')
+    output_dataset STRING, -- Target dataset name (e.g., 'nba_analytics')
+
+    -- =============================================================================
+    -- TRIGGER TRACKING (Added 2025-11-27)
+    -- =============================================================================
+
+    trigger_source STRING, -- What triggered this run (pubsub, scheduler, manual, api)
+    trigger_message_id STRING, -- Pub/Sub message ID for correlation
+    trigger_message_data JSON, -- Raw trigger message data for debugging
+    parent_processor STRING, -- Upstream processor that triggered this (if applicable)
+
+    -- =============================================================================
+    -- DEPENDENCY TRACKING (Added 2025-11-27)
+    -- =============================================================================
+
+    upstream_dependencies JSON, -- Array of dependencies checked with status [{table, status, age_hours}]
+    dependency_check_passed BOOLEAN, -- Whether all critical dependencies passed
+    missing_dependencies JSON, -- Array of missing dependency table names
+    stale_dependencies JSON, -- Array of stale dependency table names
+
+    -- =============================================================================
+    -- ALERT TRACKING (Added 2025-11-27)
+    -- =============================================================================
+
+    alert_sent BOOLEAN, -- Was an alert sent during this run?
+    alert_type STRING, -- Type of alert sent (error, warning, info)
+
+    -- =============================================================================
+    -- CLOUD RUN METADATA (Added 2025-11-27)
+    -- =============================================================================
+
+    cloud_run_service STRING, -- K_SERVICE environment variable
+    cloud_run_revision STRING, -- K_REVISION environment variable
+
+    -- =============================================================================
+    -- RETRY AND SKIP TRACKING (Added 2025-11-27)
+    -- =============================================================================
+
+    retry_attempt INT64, -- Which retry attempt (1, 2, 3...)
+    skipped BOOLEAN, -- Was processing skipped?
+    skip_reason STRING, -- Why processing was skipped (smart_skip, early_exit, already_processed, no_data)
+
     PRIMARY KEY (processor_name, data_date, run_id) NOT ENFORCED
 )
 PARTITION BY data_date

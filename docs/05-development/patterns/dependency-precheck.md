@@ -1,7 +1,7 @@
 # 02 - Dependency Precheck Pattern (Comparison)
 
 **Created:** 2025-11-19 11:25 PM PST
-**Last Updated:** 2025-11-19 11:25 PM PST
+**Last Updated:** 2025-11-27
 **Pattern:** Dependency Precheck
 **Effort:** N/A (already implemented)
 **Impact:** High (250x faster fail)
@@ -12,6 +12,13 @@
 > We have **Dependency Tracking v4.0** in `analytics_base.py:319-413` which is MORE sophisticated than this pattern.
 >
 > **Purpose of this document:** Show what we already have vs the basic pattern, document how to use our existing implementation.
+
+> **New in 2025-11-27:** Dependency check results are now automatically logged to `processor_run_history`:
+> - `dependency_check_passed`: BOOLEAN - Did all critical dependencies pass?
+> - `missing_dependencies`: JSON - Array of missing table names
+> - `stale_dependencies`: JSON - Array of stale table names
+>
+> This makes debugging dependency failures much easier. See [Run History Guide](../../07-monitoring/run-history-guide.md).
 
 ---
 

@@ -2,9 +2,11 @@
 
 **File:** `docs/dependency-checks/01-raw-processors.md`
 **Created:** 2025-11-21
-**Last Updated:** 2025-11-25
+**Last Updated:** 2025-11-27
 **Purpose:** Dependency checking specs for 22 Phase 2 raw processors
 **Status:** Current (3/22 detailed, rest templated)
+
+> **New in 2025-11-27:** All Phase 2 processors now automatically log runs to `processor_run_history` via `RunHistoryMixin`. This includes trigger source, alert tracking, and performance metrics. See [Run History Guide](../../07-monitoring/run-history-guide.md).
 
 📖 **Parent Document**: [Dependency Checking System Overview](./00-overview.md)
 

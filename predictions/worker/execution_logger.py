@@ -9,6 +9,7 @@ Logs worker execution to prediction_worker_runs table for:
 - Data quality analysis
 - Circuit breaker support
 - Pattern #4: Processing Metadata
+- Trigger tracing (Pub/Sub correlation)
 
 Tracks:
 - Which prediction systems ran (and which succeeded/failed)
@@ -16,13 +17,15 @@ Tracks:
 - Performance breakdown (data load, compute, write times)
 - Circuit breaker triggers
 - Error details
+- Trigger source and Pub/Sub message ID for tracing
 
-Version: 1.0
-Date: 2025-11-20
+Version: 1.1
+Date: 2025-11-27
 """
 
 import logging
 import json
+import os
 import uuid
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
@@ -57,6 +60,10 @@ class ExecutionLogger:
         self.project_id = project_id
         self.worker_version = worker_version
         self.table_id = f'{project_id}.nba_predictions.prediction_worker_runs'
+
+        # Capture Cloud Run metadata from environment
+        self.cloud_run_service = os.environ.get('K_SERVICE')
+        self.cloud_run_revision = os.environ.get('K_REVISION')
 
         logger.info(f"Initialized ExecutionLogger for {self.table_id}")
 
@@ -105,7 +112,13 @@ class ExecutionLogger:
 
         # Circuit breaker
         circuit_breaker_triggered: bool = False,
-        circuits_opened: Optional[List[str]] = None
+        circuits_opened: Optional[List[str]] = None,
+
+        # NEW: Tracing fields
+        trigger_source: Optional[str] = None,
+        trigger_message_id: Optional[str] = None,
+        retry_attempt: Optional[int] = None,
+        batch_id: Optional[str] = None
     ) -> None:
         """
         Log worker execution to BigQuery.
@@ -171,16 +184,36 @@ class ExecutionLogger:
 
                 # Metadata
                 'worker_version': self.worker_version,
-                'created_at': datetime.now(timezone.utc).isoformat()
+                'created_at': datetime.now(timezone.utc).isoformat(),
+
+                # NEW: Tracing fields
+                'trigger_source': trigger_source,
+                'trigger_message_id': trigger_message_id,
+                'cloud_run_service': self.cloud_run_service,
+                'cloud_run_revision': self.cloud_run_revision,
+                'retry_attempt': retry_attempt,
+                'batch_id': batch_id
             }
 
-            # Write to BigQuery (streaming insert for real-time logging)
-            errors = self.bq_client.insert_rows_json(self.table_id, [log_entry])
+            # Write to BigQuery using batch loading (not streaming insert)
+            # This avoids the 20 DML limit when 100+ workers run concurrently
+            table = self.bq_client.get_table(self.table_id)
 
-            if errors:
-                logger.error(f"Failed to log execution: {errors}")
-            else:
-                logger.debug(f"Logged execution for {player_lookup} (request_id={request_id})")
+            job_config = bigquery.LoadJobConfig(
+                schema=table.schema,
+                autodetect=False,
+                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+                create_disposition=bigquery.CreateDisposition.CREATE_IF_NEEDED
+            )
+
+            load_job = self.bq_client.load_table_from_json(
+                [log_entry],
+                self.table_id,
+                job_config=job_config
+            )
+
+            load_job.result()
+            logger.debug(f"Logged execution for {player_lookup} (request_id={request_id})")
 
         except Exception as e:
             logger.error(f"Error logging execution: {e}")
