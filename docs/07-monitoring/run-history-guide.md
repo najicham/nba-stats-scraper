@@ -1,7 +1,7 @@
 # Processor Run History Guide
 
-**Created:** 2025-11-27
-**Last Updated:** 2025-11-27
+**Created:** 2025-11-27 10:30 PST
+**Last Updated:** 2025-11-27 10:30 PST
 **Purpose:** Guide for using `processor_run_history` table for debugging and investigation
 **Status:** Implemented
 
