@@ -207,14 +207,22 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
         return status_map.get(status_id, "Unknown")
     
     def is_business_relevant_game(self, game: Dict) -> bool:
-        """Determine if game should be included in database based on business rules."""
-        # Include regular season, playoffs, and All-Star games
-        # Exclude preseason games
+        """
+        Determine if game should be included in database based on business rules.
+
+        Only include games that we actually process for predictions:
+        - Regular Season: Competitive games
+        - Playoffs: Competitive playoff games (including Play-In)
+
+        Exclude exhibition games:
+        - Pre-Season: Not competitive, rosters not finalized
+        - All-Star: Exhibition games, not useful for predictions
+        """
         return (
-            game.get('isRegularSeason', False) or 
-            game.get('isPlayoffs', False) or 
-            game.get('isAllStar', False)
+            game.get('isRegularSeason', False) or
+            game.get('isPlayoffs', False)
         )
+        # Note: All-Star and Pre-Season excluded to match raw data processor filtering
     
     def extract_enhanced_fields(self, game_data: Dict) -> Dict:
         """Extract the 18 enhanced fields provided by the scraper."""
@@ -606,31 +614,31 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
                         
                         raise e
             
-            # Insert new data
-            result = self.bq_client.insert_rows_json(table_id, rows)
-            if result:
-                errors.extend([str(e) for e in result])
-                logging.error(f"BigQuery insert errors: {errors}")
-                
-                # Notify about insert errors
-                try:
-                    notify_error(
-                        title="BigQuery Insert Errors",
-                        message=f"Encountered {len(result)} errors inserting schedule data",
-                        details={
-                            'table_id': table_id,
-                            'rows_attempted': len(rows),
-                            'error_count': len(result),
-                            'errors': str(result)[:500],
-                            'season': rows[0].get('season') if rows else None,
-                            'data_source': self.data_source
-                        },
-                        processor_name="NBA.com Schedule Processor"
-                    )
-                except Exception as notify_ex:
-                    logging.warning(f"Failed to send notification: {notify_ex}")
-            else:
-                logging.info(f"Successfully inserted {len(rows)} rows to {self.table_name} (source: {self.data_source})")
+            # Insert new data using batch loading (not streaming insert)
+            # This avoids the 20 DML limit and streaming buffer issues
+            logging.info(f"Loading {len(rows)} rows to {table_id} using batch load")
+
+            # Get table schema for load job
+            table = self.bq_client.get_table(table_id)
+
+            # Configure batch load job
+            job_config = bigquery.LoadJobConfig(
+                schema=table.schema,
+                autodetect=False,
+                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+                create_disposition=bigquery.CreateDisposition.CREATE_IF_NEEDED
+            )
+
+            # Load using batch job
+            load_job = self.bq_client.load_table_from_json(
+                rows,
+                table_id,
+                job_config=job_config
+            )
+
+            # Wait for completion
+            load_job.result()
+            logging.info(f"Successfully loaded {len(rows)} rows to {self.table_name} (source: {self.data_source})")
                 
         except Exception as e:
             error_msg = str(e)

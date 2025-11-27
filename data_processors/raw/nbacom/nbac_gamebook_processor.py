@@ -48,6 +48,9 @@ except ImportError:
 # Simple team mapper import now that shared/utils/__init__.py is clean
 from shared.utils.nba_team_mapper import get_nba_tricode, get_nba_tricode_fuzzy
 
+# Schedule service for season type detection
+from shared.utils.schedule import NBAScheduleService
+
 logger = logging.getLogger(__name__)
 
 
@@ -80,14 +83,17 @@ class NbacGamebookProcessor(SmartIdempotencyMixin, ProcessorBase):
         self.br_roster_cache = {}  # Cache for Basketball Reference rosters
         self.project_id = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
         self.bq_client = bigquery.Client(project=self.project_id)
-        
+
+        # Schedule service for season type detection
+        self.schedule_service = NBAScheduleService()
+
         # Resolution logging
         self.processing_run_id = f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{str(uuid.uuid4())[:8]}"
         self.resolution_logs = []  # Batch resolution logs
         self.log_batch_size = 100  # Insert logs in batches
         self.processing_start_time = datetime.now()
         self.files_processed = 0
-        
+
         logger.info(f"Initialized processor with run ID: {self.processing_run_id}")
     
     def set_processing_date_range(self, start_date: str, end_date: str):
@@ -1045,14 +1051,30 @@ class NbacGamebookProcessor(SmartIdempotencyMixin, ProcessorBase):
         file_path = self.raw_data.get('metadata', {}).get('source_file', 'unknown')
         """Transform gamebook data to BigQuery rows."""
         rows = []
-        
+
         try:
             # Track file processing
             self.files_processed += 1
-            
+
             # Extract game information
             game_info = self.extract_game_info(file_path, raw_data)
-            
+
+            # Check game type - skip exhibition games (All-Star and Pre-Season)
+            game_date = game_info.get('game_date')
+            if game_date:
+                # Convert date object to string if needed
+                game_date_str = game_date.isoformat() if hasattr(game_date, 'isoformat') else str(game_date)
+                season_type = self.schedule_service.get_season_type_for_date(game_date_str)
+
+                # Skip exhibition games - they aren't useful for predictions
+                # All-Star: Uses non-NBA teams (Team LeBron, Team Giannis, etc.)
+                # Pre-Season: Teams rest starters, rosters not finalized, stats not indicative
+                if season_type in ["All Star", "Pre Season"]:
+                    logger.info(f"Skipping {season_type} game data for {game_date_str} (game_id: {game_info.get('game_id')}) - "
+                               "exhibition games not processed")
+                    self.transformed_data = []
+                    return
+
             # Process active players
             for player in raw_data.get('active_players', []):
                 row = self.process_active_player(player, game_info, file_path)
@@ -1115,26 +1137,31 @@ class NbacGamebookProcessor(SmartIdempotencyMixin, ProcessorBase):
                 self.bq_client.query(delete_query).result()
                 logger.info(f"Deleted existing data for game {game_id}")
             
-            # Insert new rows
-            result = self.bq_client.insert_rows_json(table_id, rows)
-            if result:
-                errors.extend([str(e) for e in result])
-                
-                # Notify about insert errors
-                try:
-                    notify_error(
-                        title="BigQuery Insert Errors",
-                        message=f"Encountered {len(result)} errors inserting gamebook data",
-                        details={
-                            'table_id': table_id,
-                            'rows_attempted': len(rows),
-                            'processing_run_id': self.processing_run_id,
-                            'errors': str(errors)[:500]
-                        },
-                        processor_name="NBA.com Gamebook Processor"
-                    )
-                except Exception as notify_ex:
-                    logger.warning(f"Failed to send notification: {notify_ex}")
+            # Insert new rows using batch loading (not streaming insert)
+            # This avoids the 20 DML limit and streaming buffer issues
+            logger.info(f"Loading {len(rows)} rows to {table_id} using batch load")
+
+            # Get table schema for load job
+            table = self.bq_client.get_table(table_id)
+
+            # Configure batch load job
+            job_config = bigquery.LoadJobConfig(
+                schema=table.schema,
+                autodetect=False,
+                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+                create_disposition=bigquery.CreateDisposition.CREATE_IF_NEEDED
+            )
+
+            # Load using batch job
+            load_job = self.bq_client.load_table_from_json(
+                rows,
+                table_id,
+                job_config=job_config
+            )
+
+            # Wait for completion
+            load_job.result()
+            logger.info(f"Successfully loaded {len(rows)} gamebook rows")
                 
             # If this is the final batch, finalize processing
             if kwargs.get('is_final_batch', False):

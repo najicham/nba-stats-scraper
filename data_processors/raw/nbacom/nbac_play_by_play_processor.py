@@ -19,6 +19,9 @@ from shared.utils.notification_system import (
     notify_info
 )
 
+# Schedule service for season type detection
+from shared.utils.schedule import NBAScheduleService
+
 class NbacPlayByPlayProcessor(SmartIdempotencyMixin, ProcessorBase):
     """
     NBA.com Play-by-Play Processor
@@ -49,6 +52,9 @@ class NbacPlayByPlayProcessor(SmartIdempotencyMixin, ProcessorBase):
         self.storage_client = storage.Client()
         self.bq_client = bigquery.Client()
         self.project_id = os.environ.get('GCP_PROJECT_ID', self.bq_client.project)
+
+        # Schedule service for season type detection
+        self.schedule_service = NBAScheduleService()
         
         # NBA team ID to abbreviation mapping
         self.team_id_mapping = {
@@ -298,7 +304,20 @@ class NbacPlayByPlayProcessor(SmartIdempotencyMixin, ProcessorBase):
                     )
                 except Exception as notify_ex:
                     logging.warning(f"Failed to send notification: {notify_ex}")
-            
+
+            # Check game type - skip exhibition games (All-Star and Pre-Season)
+            if game_date_str:
+                season_type = self.schedule_service.get_season_type_for_date(game_date_str)
+
+                # Skip exhibition games - they aren't useful for predictions
+                # All-Star: Uses non-NBA teams (Team LeBron, Team Giannis, etc.)
+                # Pre-Season: Teams rest starters, rosters not finalized, stats not indicative
+                if season_type in ["All Star", "Pre Season"]:
+                    logging.info(f"Skipping {season_type} game data for {game_date_str} (NBA ID: {nba_game_id}) - "
+                               "exhibition games not processed")
+                    self.transformed_data = []
+                    return
+
             # Process actions
             actions = game_info.get('actions', [])
             
@@ -638,29 +657,31 @@ class NbacPlayByPlayProcessor(SmartIdempotencyMixin, ProcessorBase):
                     
                     raise e
             
-            # Insert new data
-            result = self.bq_client.insert_rows_json(table_id, rows)
-            if result:
-                errors.extend([str(e) for e in result])
-                
-                # Notify about insert errors
-                try:
-                    notify_error(
-                        title="BigQuery Insert Errors",
-                        message=f"Encountered {len(result)} errors inserting play-by-play data",
-                        details={
-                            'table_id': table_id,
-                            'events_attempted': len(rows),
-                            'error_count': len(result),
-                            'errors': str(result)[:500],
-                            'game_id': rows[0].get('game_id') if rows else None
-                        },
-                        processor_name="NBA.com Play-by-Play Processor"
-                    )
-                except Exception as notify_ex:
-                    logging.warning(f"Failed to send notification: {notify_ex}")
-            else:
-                logging.info(f"Successfully inserted {len(rows)} play-by-play events")
+            # Insert new data using batch loading (not streaming insert)
+            # This avoids the 20 DML limit and streaming buffer issues
+            logging.info(f"Loading {len(rows)} rows to {table_id} using batch load")
+
+            # Get table schema for load job
+            table = self.bq_client.get_table(table_id)
+
+            # Configure batch load job
+            job_config = bigquery.LoadJobConfig(
+                schema=table.schema,
+                autodetect=False,
+                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+                create_disposition=bigquery.CreateDisposition.CREATE_IF_NEEDED
+            )
+
+            # Load using batch job
+            load_job = self.bq_client.load_table_from_json(
+                rows,
+                table_id,
+                job_config=job_config
+            )
+
+            # Wait for completion
+            load_job.result()
+            logging.info(f"Successfully loaded {len(rows)} play-by-play events")
         
         except Exception as e:
             errors.append(str(e))

@@ -57,6 +57,9 @@ from shared.utils.notification_system import (
     notify_info
 )
 
+# Schedule service for season type detection
+from shared.utils.schedule import NBAScheduleService
+
 logger = logging.getLogger("scraper_base")
 
 
@@ -128,6 +131,16 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
         },
     ]
 
+    # Class-level schedule service (lazy initialization)
+    _schedule_service: Optional[NBAScheduleService] = None
+
+    @classmethod
+    def _get_schedule_service(cls) -> NBAScheduleService:
+        """Get or create the schedule service instance."""
+        if cls._schedule_service is None:
+            cls._schedule_service = NBAScheduleService()
+        return cls._schedule_service
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         # Initialize parsing issues tracker
@@ -146,6 +159,25 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
     # ------------------------------------------------------------------ #
     # AUTO-DERIVE everything from game_code
     # ------------------------------------------------------------------ #
+    def _detect_season_type(self, game_date: str) -> str:
+        """
+        Auto-detect season type from schedule database.
+
+        Args:
+            game_date: Date string in YYYY-MM-DD format
+
+        Returns:
+            Season type string (e.g., "Regular Season", "Playoffs", "All Star")
+        """
+        try:
+            schedule = self._get_schedule_service()
+            season_type = schedule.get_season_type_for_date(game_date)
+            return season_type
+        except Exception as e:
+            logger.warning("Failed to detect season type from schedule for %s: %s. "
+                          "Falling back to Regular Season.", game_date, e)
+            return "Regular Season"
+
     def set_additional_opts(self) -> None:
         # Parse game_code BEFORE calling super() to extract the correct date
         game_code = self.opts["game_code"]
@@ -183,6 +215,19 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
         self.opts["pdf_source"] = self.opts.get("pdf_source", "download")
         self.opts["bucket_name"] = self.opts.get("bucket_name", "nba-scraped-data")
         self.opts["version"] = self.opts.get("version", "short")
+
+        # Auto-detect season type and skip All-Star games
+        season_type = self._detect_season_type(self.opts["date"])
+        self.opts["season_type"] = season_type
+        logger.info(f"Auto-detected season_type: {season_type} for date {self.opts['date']}")
+
+        # Skip All-Star games - they use non-NBA teams (e.g., "Team LeBron", "Team Durant")
+        # and have non-standard team codes that break PDF URL construction
+        if season_type == "All Star":
+            raise DownloadDataException(
+                f"Skipping All-Star game on {self.opts['date']} - "
+                f"exhibition games use non-standard team codes (game_code: {game_code})"
+            )
 
         if self.opts["pdf_source"] == "gcs":
             # Enable GCS download instead of HTTP

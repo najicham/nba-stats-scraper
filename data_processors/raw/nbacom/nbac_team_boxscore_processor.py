@@ -27,6 +27,9 @@ from google.cloud import bigquery
 from data_processors.raw.processor_base import ProcessorBase
 from data_processors.raw.smart_idempotency_mixin import SmartIdempotencyMixin
 
+# Schedule service for season type detection
+from shared.utils.schedule import NBAScheduleService
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -87,15 +90,25 @@ class NbacTeamBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
     # Primary keys for smart idempotency hash lookup
     PRIMARY_KEYS = ['game_id', 'team_abbr']
 
+    # Valid NBA team codes - used to detect non-NBA games (All-Star, exhibition)
+    VALID_NBA_TEAMS = {
+        'ATL', 'BOS', 'BKN', 'CHA', 'CHI', 'CLE', 'DAL', 'DEN', 'DET', 'GSW',
+        'HOU', 'IND', 'LAC', 'LAL', 'MEM', 'MIA', 'MIL', 'MIN', 'NOP', 'NYK',
+        'OKC', 'ORL', 'PHI', 'PHX', 'POR', 'SAC', 'SAS', 'TOR', 'UTA', 'WAS'
+    }
+
     def __init__(self):
         super().__init__()
         self.table_name = 'nba_raw.nbac_team_boxscore'
         self.processing_strategy = 'MERGE_UPDATE'
-        
+
         # CRITICAL: Initialize BigQuery client and project ID
         self.bq_client = bigquery.Client()
         self.project_id = os.environ.get('GCP_PROJECT_ID', self.bq_client.project)
-        
+
+        # Schedule service for season type detection
+        self.schedule_service = NBAScheduleService()
+
         logger.info(f"Initialized {self.__class__.__name__} v2.0")
         logger.info(f"  Table: {self.table_name}")
         logger.info(f"  Strategy: {self.processing_strategy}")
@@ -410,20 +423,33 @@ class NbacTeamBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
         file_path = self.raw_data.get('metadata', {}).get('source_file', 'unknown')
         """
         Transform raw data into BigQuery format.
-        
+
         Args:
             raw_data: Parsed JSON from GCS file
             file_path: Full GCS path for tracking
-            
+
         Returns:
             List of records ready for BigQuery insertion
         """
         rows = []
-        
+
         # Extract top-level metadata
         nba_game_id = raw_data.get('gameId')  # NBA.com format (e.g., "0022400561")
         game_date = raw_data.get('gameDate')
-        
+
+        # Check game type - skip exhibition games (All-Star and Pre-Season)
+        if game_date:
+            season_type = self.schedule_service.get_season_type_for_date(game_date)
+
+            # Skip exhibition games - they aren't useful for predictions
+            # All-Star: Uses non-NBA teams (Team LeBron, Team Giannis, etc.)
+            # Pre-Season: Teams rest starters, rosters not finalized, stats not indicative
+            if season_type in ["All Star", "Pre Season"]:
+                logger.info(f"Skipping {season_type} game data for {game_date} (NBA ID: {nba_game_id}) - "
+                           "exhibition games not processed")
+                self.transformed_data = []
+                return
+
         # Calculate season year
         season_year = self.extract_season_year(game_date)
         
@@ -514,7 +540,13 @@ class NbacTeamBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
         self.add_data_hash()
     
     def save_data(self) -> None:
-        """Save transformed data to BigQuery (overrides ProcessorBase.save_data())."""
+        """Save transformed data to BigQuery (overrides ProcessorBase.save_data()).
+
+        Uses batch loading (load_table_from_json) instead of streaming inserts
+        (insert_rows_json) to avoid:
+        1. The 20 DML concurrent operation limit per table
+        2. The 90-minute streaming buffer that blocks DELETE/UPDATE operations
+        """
         rows = self.transformed_data
 
         if not rows:
@@ -527,7 +559,6 @@ class NbacTeamBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
             return
 
         table_id = f"{self.project_id}.{self.table_name}"
-        errors = []
 
         try:
             # MERGE_UPDATE strategy: Delete existing records for this game
@@ -547,25 +578,37 @@ class NbacTeamBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
                         bigquery.ScalarQueryParameter("game_date", "DATE", game_date)
                     ]
                 )
-                
+
                 delete_job = self.bq_client.query(delete_query, job_config=job_config)
                 delete_job.result()  # Wait for completion
-                
+
                 logger.info(f"Deleted existing records for game {game_id}")
-            
-            # Insert new records
-            result = self.bq_client.insert_rows_json(table_id, rows)
-            
-            if result:
-                # Insertion errors occurred
-                errors.extend([str(e) for e in result])
-                logger.error(f"BigQuery insert errors: {errors}")
-            else:
-                logger.info(f"✓ Successfully inserted {len(rows)} rows to {self.table_name}")
-                
+
+            # Get table schema for load job
+            table = self.bq_client.get_table(table_id)
+
+            # Configure batch load job (not streaming insert)
+            load_job_config = bigquery.LoadJobConfig(
+                schema=table.schema,
+                autodetect=False,
+                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+                create_disposition=bigquery.CreateDisposition.CREATE_IF_NEEDED
+            )
+
+            # Insert new records using batch loading
+            logger.info(f"Loading {len(rows)} rows into {table_id} using batch load")
+            load_job = self.bq_client.load_table_from_json(
+                rows,
+                table_id,
+                job_config=load_job_config
+            )
+
+            # Wait for job completion
+            load_job.result()
+            logger.info(f"Successfully loaded {len(rows)} rows to {self.table_name}")
+
         except Exception as e:
             error_msg = str(e)
-            errors.append(error_msg)
             logger.error(f"Error loading data to BigQuery: {error_msg}")
             raise
     

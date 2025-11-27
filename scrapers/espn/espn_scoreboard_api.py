@@ -78,6 +78,12 @@ except ImportError:
     def notify_info(*args, **kwargs):
         pass
 
+# Schedule service for season type detection
+try:
+    from shared.utils.schedule import NBAScheduleService
+except ImportError:
+    NBAScheduleService = None
+
 logger = logging.getLogger("scraper_base")
 
 
@@ -99,6 +105,46 @@ class GetEspnScoreboard(ScraperBase, ScraperFlaskMixin):
     download_type: DownloadType = DownloadType.JSON
     decode_download_data: bool = True
     header_profile: str | None = "espn"
+
+    # Class-level schedule service (lazy initialization)
+    _schedule_service = None
+
+    @classmethod
+    def _get_schedule_service(cls):
+        """Get or create the schedule service instance."""
+        if NBAScheduleService is None:
+            return None
+        if cls._schedule_service is None:
+            cls._schedule_service = NBAScheduleService()
+        return cls._schedule_service
+
+    def _detect_season_type(self, game_date: str) -> str:
+        """
+        Auto-detect season type from schedule database.
+
+        Args:
+            game_date: Date string in YYYYMMDD format
+
+        Returns:
+            Season type string (e.g., "Regular Season", "Playoffs", "All Star")
+        """
+        try:
+            schedule = self._get_schedule_service()
+            if schedule is None:
+                return "Regular Season"
+
+            # Convert YYYYMMDD to YYYY-MM-DD
+            if len(game_date) == 8:
+                formatted_date = f"{game_date[0:4]}-{game_date[4:6]}-{game_date[6:8]}"
+            else:
+                formatted_date = game_date
+
+            season_type = schedule.get_season_type_for_date(formatted_date)
+            return season_type
+        except Exception as e:
+            logger.warning("Failed to detect season type from schedule for %s: %s. "
+                          "Falling back to Regular Season.", game_date, e)
+            return "Regular Season"
 
     # ------------------------------------------------------------------ #
     # Exporters
@@ -201,6 +247,15 @@ class GetEspnScoreboard(ScraperBase, ScraperFlaskMixin):
     # Transform -> self.data
     # ------------------------------------------------------------------ #
     def transform_data(self) -> None:
+        # Auto-detect season type for proper game categorization
+        season_type = self._detect_season_type(self.opts["gamedate"])
+        logger.info(f"Auto-detected season_type: {season_type} for date {self.opts['gamedate']}")
+
+        # Log info if this is an All-Star date (API should handle correctly)
+        if season_type == "All Star":
+            logger.info(f"Scraping All-Star games on {self.opts['gamedate']} - "
+                       f"ESPN API should return All-Star game data correctly")
+
         events: List[dict] = self.decoded_data.get("events", [])
         logger.info("Found %d events for %s", len(events), self.opts["gamedate"])
 
@@ -251,6 +306,7 @@ class GetEspnScoreboard(ScraperBase, ScraperFlaskMixin):
         self.data = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "gamedate": self.opts["gamedate"],
+            "season_type": season_type,
             "gameCount": len(games),
             "games": games,
         }

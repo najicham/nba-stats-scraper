@@ -54,6 +54,10 @@ from shared.utils.notification_system import (
     notify_info
 )
 
+# Schedule service for season type detection
+from shared.utils.schedule import NBAScheduleService
+from typing import Optional
+
 logger = logging.getLogger("scraper_base")
 
 
@@ -75,6 +79,35 @@ class GetNbaComScoreboardV2(ScraperBase, ScraperFlaskMixin):
     decode_download_data = True
     header_profile = "stats"  # Use standard NBA stats headers
     proxy_enabled = True      # NBA.com may need proxy
+
+    # Class-level schedule service (lazy initialization)
+    _schedule_service: Optional[NBAScheduleService] = None
+
+    @classmethod
+    def _get_schedule_service(cls) -> NBAScheduleService:
+        """Get or create the schedule service instance."""
+        if cls._schedule_service is None:
+            cls._schedule_service = NBAScheduleService()
+        return cls._schedule_service
+
+    def _detect_season_type(self, game_date: str) -> str:
+        """
+        Auto-detect season type from schedule database.
+
+        Args:
+            game_date: Date string in YYYY-MM-DD format
+
+        Returns:
+            Season type string (e.g., "Regular Season", "Playoffs", "All Star")
+        """
+        try:
+            schedule = self._get_schedule_service()
+            season_type = schedule.get_season_type_for_date(game_date)
+            return season_type
+        except Exception as e:
+            logger.warning("Failed to detect season type from schedule for %s: %s. "
+                          "Falling back to Regular Season.", game_date, e)
+            return "Regular Season"
     
     # ------------------------------------------------------------------ #
     # Exporters - Updated to include capture group
@@ -136,7 +169,18 @@ class GetNbaComScoreboardV2(ScraperBase, ScraperFlaskMixin):
         super().set_additional_opts()
         """Normalize gamedate for exporters"""
         # Normalize date for exporters (remove dashes)
-        self.opts["gamedate"] = self._yyyy_mm_dd().replace("-", "")
+        normalized_date = self._yyyy_mm_dd()
+        self.opts["gamedate"] = normalized_date.replace("-", "")
+
+        # Auto-detect season type for proper game categorization
+        season_type = self._detect_season_type(normalized_date)
+        self.opts["season_type"] = season_type
+        logger.info(f"Auto-detected season_type: {season_type} for date {normalized_date}")
+
+        # Log info if this is an All-Star date (API should handle correctly)
+        if season_type == "All Star":
+            logger.info(f"Scraping All-Star games on {normalized_date} - "
+                       f"API should return All-Star game data correctly")
 
     def download_and_decode(self) -> None:
         """Download using V2 endpoint with proper proxy handling"""
