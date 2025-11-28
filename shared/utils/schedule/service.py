@@ -259,7 +259,110 @@ class NBAScheduleService:
     def get_team_full_name(self, team_code: str) -> Optional[str]:
         """Get full team name from team code."""
         return self.NBA_TEAMS.get(team_code)
-    
+
+    def get_season_type_for_date(self, game_date: str, default: str = "Regular Season") -> str:
+        """
+        Get the NBA.com API season_type for a specific date.
+
+        This method queries the schedule database to determine the correct
+        season_type parameter for NBA.com stats API calls.
+
+        Args:
+            game_date: Date string in YYYY-MM-DD format
+            default: Default value if no games found (default: "Regular Season")
+
+        Returns:
+            NBA.com API season_type string:
+            - "All Star" for All-Star Weekend games
+            - "PlayIn" for Play-In Tournament games
+            - "Playoffs" for playoff games (first round through finals)
+            - "Pre Season" for preseason games
+            - "Regular Season" for regular season (including Emirates Cup)
+
+        Example:
+            >>> schedule = NBAScheduleService()
+            >>> schedule.get_season_type_for_date('2024-02-18')
+            'All Star'
+            >>> schedule.get_season_type_for_date('2024-04-16')
+            'PlayIn'
+            >>> schedule.get_season_type_for_date('2024-04-20')
+            'Playoffs'
+        """
+        # Try database first (fast path)
+        if self.db_reader:
+            season_type = self.db_reader.get_nba_api_season_type(game_date)
+            if season_type:
+                return season_type
+
+        # Fallback to GCS-based detection
+        try:
+            games = self.get_games_for_date(game_date, game_type=GameType.ALL)
+            if not games:
+                logger.debug("No games found for %s, using default: %s", game_date, default)
+                return default
+
+            game = games[0]
+
+            # Map game_type to NBA.com API season_type
+            game_type_map = {
+                'all_star_special': 'All Star',
+                'play_in': 'PlayIn',
+                'playoff': 'Playoffs',
+                'preseason': 'Pre Season',
+                'regular_season': 'Regular Season',
+            }
+            return game_type_map.get(game.game_type, default)
+
+        except Exception as e:
+            logger.warning("Error getting season type for %s: %s", game_date, e)
+            return default
+
+    def get_season_start_date(self, season_year: int) -> Optional[str]:
+        """
+        Get the first regular season game date for a given season.
+
+        Uses database for fast lookup, with fallback to GCS if needed.
+
+        Args:
+            season_year: Season year (e.g., 2024 for 2024-25 season)
+
+        Returns:
+            Date string in YYYY-MM-DD format (e.g., '2024-10-22'), or None if not found
+
+        Example:
+            >>> schedule = NBAScheduleService()
+            >>> schedule.get_season_start_date(2024)
+            '2024-10-22'
+            >>> schedule.get_season_start_date(2023)
+            '2023-10-24'
+        """
+        # Try database first (fast)
+        if self.use_database and self.db_reader:
+            db_result = self.db_reader.get_season_start_date(season_year)
+            if db_result is not None:
+                return db_result
+            logger.debug("Database unavailable for season %d, using GCS fallback", season_year)
+
+        # Fallback to GCS: get all games and find first regular season game
+        try:
+            all_games = self.gcs_reader.get_games_for_season(season_year)
+            regular_season_games = [
+                game for game in all_games
+                if game.game_type == 'regular_season' and game.completed
+            ]
+
+            if regular_season_games:
+                # Sort by date and return earliest
+                regular_season_games.sort(key=lambda g: g.game_date)
+                return regular_season_games[0].game_date
+
+            logger.warning("No regular season games found for season %d", season_year)
+            return None
+
+        except Exception as e:
+            logger.error("Error getting season start for %d: %s", season_year, e)
+            return None
+
     def clear_cache(self):
         """Clear all cached schedule data."""
         self.gcs_reader.clear_cache()

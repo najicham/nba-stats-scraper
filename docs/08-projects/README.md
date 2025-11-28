@@ -44,8 +44,17 @@ When working on a multi-session project:
 
 | Project | Status | Last Updated |
 |---------|--------|--------------|
-| Scraper Audit | In Progress | 2025-11-25 |
+| **Scraper Backfill** | In Progress - Player Boxscore Blocked | 2025-11-26 |
+| Source Coverage System | Design Complete | 2025-11-26 |
+| Streaming Buffer Migration | Not Started | 2025-11-26 |
+| Scraper Audit | Completed → Backfill | 2025-11-26 |
 | Pattern Rollout | In Progress | 2025-11-25 |
+
+### Project Notes
+
+**Source Coverage System:** Design complete via external AI chat. 5 design docs ready to save to `docs/architecture/source-coverage/`. See `docs/09-handoff/2025-11-26-source-coverage-design.md` for details and adaptation notes.
+
+**Streaming Buffer Migration:** Related to Source Coverage - both need batch loading pattern. Consider fixing this first.
 
 ---
 

@@ -33,7 +33,7 @@ import logging
 import os
 import sys
 from datetime import datetime, timezone
-from typing import List
+from typing import List, Optional
 
 # Support both module execution (python -m) and direct execution
 try:
@@ -58,6 +58,9 @@ from shared.utils.notification_system import (
     notify_warning,
     notify_info
 )
+
+# Schedule service for season type detection
+from shared.utils.schedule import NBAScheduleService
 
 logger = logging.getLogger("scraper_base")
 
@@ -146,10 +149,60 @@ class GetNbaComPlayerBoxscore(ScraperBase, ScraperFlaskMixin):
         # setdefault() doesn't work if key exists with None value
         if not self.opts.get("season"):
             self.opts["season"] = str(season_start_year)
+
+        # Auto-detect season type if not explicitly set
         if not self.opts.get("season_type"):
-            self.opts["season_type"] = "Regular Season"
-        
+            # Format date as YYYY-MM-DD for schedule lookup
+            formatted_date = f"{raw_date[0:4]}-{raw_date[4:6]}-{raw_date[6:8]}"
+            self.opts["season_type"] = self._detect_season_type(formatted_date)
+            logger.info(f"Auto-detected season_type: {self.opts['season_type']} for date {raw_date}")
+
+        # Skip All-Star games - they use non-NBA teams (e.g., "Team LeBron", "Team Durant")
+        # and are not useful for player prop predictions
+        if self.opts.get("season_type") == "All Star":
+            raise DownloadDataException(
+                f"Skipping All-Star game on {raw_date} - exhibition games not useful for predictions"
+            )
+
         self.opts["time"] = datetime.now(timezone.utc).strftime("%H-%M-%S")
+
+    # Class-level schedule service (lazy initialization)
+    _schedule_service: Optional[NBAScheduleService] = None
+
+    @classmethod
+    def _get_schedule_service(cls) -> NBAScheduleService:
+        """Get or create the schedule service instance."""
+        if cls._schedule_service is None:
+            cls._schedule_service = NBAScheduleService()
+        return cls._schedule_service
+
+    def _detect_season_type(self, game_date: str) -> str:
+        """
+        Auto-detect season type from schedule database.
+
+        Uses the NBAScheduleService to look up the correct season_type
+        based on actual game data, handling all game types correctly:
+        - Regular Season (including Emirates NBA Cup)
+        - Playoffs (First Round through NBA Finals)
+        - Play-In Tournament
+        - All-Star Weekend
+        - Pre Season
+
+        Args:
+            game_date: Date string in YYYY-MM-DD format
+
+        Returns:
+            NBA.com API season_type string (e.g., "Regular Season", "Playoffs",
+            "PlayIn", "All Star", "Pre Season")
+        """
+        try:
+            schedule = self._get_schedule_service()
+            season_type = schedule.get_season_type_for_date(game_date)
+            return season_type
+        except Exception as e:
+            logger.warning("Failed to detect season type from schedule for %s: %s. "
+                          "Falling back to Regular Season.", game_date, e)
+            return "Regular Season"
 
     # ------------------------------------------------------------------ #
     # URL builder

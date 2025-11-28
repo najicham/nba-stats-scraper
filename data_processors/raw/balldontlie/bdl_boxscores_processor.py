@@ -627,54 +627,53 @@ class BdlBoxscoresProcessor(SmartIdempotencyMixin, ProcessorBase):
                     
                     return {'rows_processed': 0, 'errors': errors, 'streaming_conflicts': streaming_conflicts}
             
-            # Insert new data only if no streaming conflicts
-            logger.info(f"Inserting {len(rows)} rows for {len(set(row['game_id'] for row in rows))} games")
-            result = self.bq_client.insert_rows_json(table_id, rows)
-            
-            if result:
-                errors.extend([str(e) for e in result])
-                logger.error(f"BigQuery insert errors: {result}")
-                
-                # Notify about BigQuery insert errors
-                try:
-                    notify_error(
-                        title="BigQuery Insert Failed",
-                        message=f"Failed to insert box score data into BigQuery",
-                        details={
-                            'error_count': len(result),
-                            'sample_errors': [str(e) for e in result[:3]],
-                            'rows_attempted': len(rows),
-                            'table': self.table_name,
-                            'processor': 'BDL Box Scores'
-                        },
-                        processor_name="BDL Box Scores Processor"
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to send notification: {e}")
-            else:
-                game_ids = set(row['game_id'] for row in rows)
-                logger.info(f"Successfully inserted {len(rows)} rows for {len(game_ids)} games")
-                
-                # Log game ID format compliance
-                sample_game_ids = list(game_ids)[:3]
-                logger.info(f"Sample game IDs inserted (AWAY_HOME format): {sample_game_ids}")
-                
-                # Send success notification
-                try:
-                    notify_info(
-                        title="BDL Box Scores Processing Complete",
-                        message=f"Successfully processed {len(rows)} player box scores from {len(game_ids)} games",
-                        details={
-                            'player_records': len(rows),
-                            'games_processed': len(game_ids),
-                            'sample_game_ids': sample_game_ids,
-                            'table': self.table_name,
-                            'processor': 'BDL Box Scores'
-                        }
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to send notification: {e}")
-                
+            # Insert new data using batch loading (not streaming insert)
+            # This avoids the 20 DML limit and streaming buffer issues
+            game_ids = set(row['game_id'] for row in rows)
+            logger.info(f"Loading {len(rows)} rows for {len(game_ids)} games using batch load")
+
+            # Get table schema for load job
+            table = self.bq_client.get_table(table_id)
+
+            # Configure batch load job
+            job_config = bigquery.LoadJobConfig(
+                schema=table.schema,
+                autodetect=False,
+                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+                create_disposition=bigquery.CreateDisposition.CREATE_IF_NEEDED
+            )
+
+            # Load using batch job
+            load_job = self.bq_client.load_table_from_json(
+                rows,
+                table_id,
+                job_config=job_config
+            )
+
+            # Wait for completion
+            load_job.result()
+            logger.info(f"Successfully loaded {len(rows)} rows for {len(game_ids)} games")
+
+            # Log game ID format compliance
+            sample_game_ids = list(game_ids)[:3]
+            logger.info(f"Sample game IDs inserted (AWAY_HOME format): {sample_game_ids}")
+
+            # Send success notification
+            try:
+                notify_info(
+                    title="BDL Box Scores Processing Complete",
+                    message=f"Successfully processed {len(rows)} player box scores from {len(game_ids)} games",
+                    details={
+                        'player_records': len(rows),
+                        'games_processed': len(game_ids),
+                        'sample_game_ids': sample_game_ids,
+                        'table': self.table_name,
+                        'processor': 'BDL Box Scores'
+                    }
+                )
+            except Exception as e:
+                logger.warning(f"Failed to send notification: {e}")
+
         except Exception as e:
             error_msg = str(e)
             errors.append(error_msg)

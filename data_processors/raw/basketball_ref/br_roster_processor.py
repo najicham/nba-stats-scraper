@@ -291,30 +291,32 @@ class BasketballRefRosterProcessor(SmartIdempotencyMixin, ProcessorBase):
             new_rows = [r for r in self.transformed_data if "first_seen_date" in r]
             update_rows = [r for r in self.transformed_data if "first_seen_date" not in r]
             
-            # Insert new players
+            # Insert new players using batch loading (not streaming insert)
+            # This avoids the 20 DML limit and streaming buffer issues
             if new_rows:
-                logger.info(f"Inserting {len(new_rows)} new players")
-                errors = self.bq_client.insert_rows_json(table_id, new_rows)
-                if errors:
-                    error_msg = f"Failed to insert new players: {errors}"
-                    
-                    # Notify BigQuery error
-                    try:
-                        notify_error(
-                            title="Basketball Reference Roster BigQuery Insert Failed",
-                            message=f"Failed to insert {len(new_rows)} new players",
-                            details={
-                                'team_abbrev': self.opts.get('team_abbrev'),
-                                'season_year': self.opts.get('season_year'),
-                                'new_players_count': len(new_rows),
-                                'errors': str(errors)[:500]
-                            },
-                            processor_name="Basketball Reference Roster Processor"
-                        )
-                    except Exception as notify_ex:
-                        logger.warning(f"Failed to send notification: {notify_ex}")
-                    
-                    raise Exception(error_msg)
+                logger.info(f"Loading {len(new_rows)} new players using batch load")
+
+                # Get table schema for load job
+                table = self.bq_client.get_table(table_id)
+
+                # Configure batch load job
+                job_config = bigquery.LoadJobConfig(
+                    schema=table.schema,
+                    autodetect=False,
+                    write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+                    create_disposition=bigquery.CreateDisposition.CREATE_IF_NEEDED
+                )
+
+                # Load using batch job
+                load_job = self.bq_client.load_table_from_json(
+                    new_rows,
+                    table_id,
+                    job_config=job_config
+                )
+
+                # Wait for completion
+                load_job.result()
+                logger.info(f"Successfully loaded {len(new_rows)} new players")
             
             # Update existing players (just update last_scraped_date)
             if update_rows:

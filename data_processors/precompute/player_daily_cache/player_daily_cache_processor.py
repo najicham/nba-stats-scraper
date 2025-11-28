@@ -49,6 +49,9 @@ from data_processors.raw.smart_idempotency_mixin import SmartIdempotencyMixin
 # Completeness checking (Week 3 - Phase 4 Historical Dependency Checking - Multi-Window)
 from shared.utils.completeness_checker import CompletenessChecker
 
+# Bootstrap period support (Week 5 - Early Season Handling)
+from shared.config.nba_season_dates import is_early_season, get_season_year_from_date
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -274,19 +277,45 @@ class PlayerDailyCacheProcessor(
     def extract_raw_data(self) -> None:
         """
         Extract data from all upstream sources with dependency checking.
-        
+
+        Bootstrap Period Handling:
+            Skips processing for first 7 days of season (days 0-6).
+            Uses schedule service to determine season start date.
+
         Queries:
             1. player_game_summary: Season games for all active players
             2. team_offense_game_summary: Last 10 games per team
             3. upcoming_player_game_context: Today's context (fatigue, age)
             4. player_shot_zone_analysis: Today's shot zone analysis
-        
+
         Raises:
             DependencyError: If critical dependencies missing
             DataTooStaleError: If critical data too old
         """
         analysis_date = self.opts['analysis_date']
-        season_year = self.opts.get('season_year', analysis_date.year)
+        season_year = self.opts.get('season_year')
+
+        # Determine season year if not provided
+        if season_year is None:
+            season_year = get_season_year_from_date(analysis_date)
+            self.opts['season_year'] = season_year
+            logger.debug(f"Determined season year: {season_year} for date {analysis_date}")
+
+        # BOOTSTRAP PERIOD: Skip early season (days 0-6)
+        # Uses schedule service to get accurate season start date
+        if is_early_season(analysis_date, season_year, days_threshold=7):
+            logger.info(
+                f"⏭️  Skipping {analysis_date}: early season period (day 0-6 of season {season_year}). "
+                f"Regular processing starts day 7."
+            )
+            # Set flag for run history logging
+            self.stats['processing_decision'] = 'skipped_early_season'
+            self.stats['processing_decision_reason'] = f'bootstrap_period_day_0_6_of_season_{season_year}'
+
+            # Exit early - no data extraction, no records written
+            # This signals to base class to skip transform/load phases
+            self.raw_data = None
+            return
 
         # Store season start date for completeness checking (Week 3)
         self.season_start_date = date(season_year, 10, 1)

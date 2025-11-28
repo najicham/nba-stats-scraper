@@ -31,17 +31,18 @@ logger = logging.getLogger(__name__)
 class PredictionDataLoader:
     """Loads data from BigQuery for Phase 5 predictions"""
     
-    def __init__(self, project_id: str):
+    def __init__(self, project_id: str, location: str = 'us-west2'):
         """
         Initialize data loader
-        
+
         Args:
             project_id: GCP project ID (e.g., 'nba-props-platform')
+            location: BigQuery location (default: us-west2)
         """
         self.project_id = project_id
-        self.client = bigquery.Client(project=project_id)
-        
-        logger.info(f"Initialized PredictionDataLoader for project {project_id}")
+        self.client = bigquery.Client(project=project_id, location=location)
+
+        logger.info(f"Initialized PredictionDataLoader for project {project_id} in {location}")
     
     # ========================================================================
     # FEATURES LOADING (Required by ALL systems)

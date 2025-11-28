@@ -26,12 +26,14 @@ from shared.utils.notification_system import notify_error, notify_warning, notif
 from shared.utils.player_registry import RegistryReader, PlayerNotFoundError
 
 # Pattern imports (Week 1 - Foundation Patterns)
-from shared.processors.patterns import SmartSkipMixin, EarlyExitMixin, CircuitBreakerMixin
+from shared.processors.patterns import SmartSkipMixin, EarlyExitMixin, CircuitBreakerMixin, QualityMixin
+from shared.config.source_coverage import SourceCoverageEventType, SourceCoverageSeverity
 
 logger = logging.getLogger(__name__)
 
 
 class PlayerGameSummaryProcessor(
+    QualityMixin,          # Source coverage quality tracking
     SmartSkipMixin,
     EarlyExitMixin,
     CircuitBreakerMixin,
@@ -672,13 +674,24 @@ class PlayerGameSummaryProcessor(
                     
                     # SOURCE TRACKING: One-liner adds all 18 fields! ✨
                     **self.build_source_tracking_fields(),
-                    
-                    # Quality
+
+                    # Quality (legacy fields - kept for backward compatibility)
                     'data_quality_tier': 'high' if row['primary_source'] == 'nbac_gamebook' else 'medium',
                     'primary_source_used': row['primary_source'],
                     'processed_with_issues': False,
                     'shot_zones_estimated': None,
-                    
+
+                    # Source Coverage Quality (new system)
+                    'quality_tier': 'gold' if row['primary_source'] == 'nbac_gamebook' else 'silver',
+                    'quality_score': 100.0 if row['primary_source'] == 'nbac_gamebook' else 85.0,
+                    'quality_issues': [] if row['primary_source'] == 'nbac_gamebook' else ['backup_source_used'],
+                    'data_sources': [row['primary_source']] if row['primary_source'] else ['unknown'],
+                    'quality_sample_size': None,  # Populated by Phase 4
+                    'quality_used_fallback': row['primary_source'] != 'nbac_gamebook',
+                    'quality_reconstructed': False,
+                    'quality_calculated_at': datetime.now(timezone.utc).isoformat(),
+                    'quality_metadata': {'sources_used': [row['primary_source']], 'early_season': False},
+
                     # Metadata
                     'processed_at': datetime.now(timezone.utc).isoformat()
                 }

@@ -1,0 +1,108 @@
+{
+  "timestamp": "2025-11-26T08:16:06.191417",
+  "total_failed": 17,
+  "failed_games": [
+    {
+      "game_id": "0022100668",
+      "game_date": "2022-01-19",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022100869",
+      "game_date": "2022-02-15",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022200167",
+      "game_date": "2022-11-09",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022200403",
+      "game_date": "2022-12-12",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0042200156",
+      "game_date": "2023-04-28",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022301204",
+      "game_date": "2023-12-04",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022300622",
+      "game_date": "2024-01-24",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022400168",
+      "game_date": "2024-11-04",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022400334",
+      "game_date": "2024-12-06",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022400571",
+      "game_date": "2025-01-15",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022400634",
+      "game_date": "2025-01-25",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0052400121",
+      "game_date": "2025-04-15",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0052400101",
+      "game_date": "2025-04-15",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0052400211",
+      "game_date": "2025-04-18",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0052400131",
+      "game_date": "2025-04-16",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0052400111",
+      "game_date": "2025-04-16",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0052400201",
+      "game_date": "2025-04-18",
+      "status": "failed",
+      "error": "HTTP 500"
+    }
+  ]
+}

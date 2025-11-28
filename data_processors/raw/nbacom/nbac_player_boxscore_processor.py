@@ -18,6 +18,7 @@ from shared.utils.notification_system import (
     notify_warning,
     notify_info
 )
+from shared.utils.schedule import NBAScheduleService
 
 class NbacPlayerBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
     """
@@ -47,12 +48,19 @@ class NbacPlayerBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
         'game_id',
         'player_lookup',
         'points',
-        'rebounds',
+        'total_rebounds',
         'assists',
         'minutes',
         'field_goals_made',
         'field_goals_attempted'
     ]
+
+    # Valid NBA team codes - used to detect non-NBA games (All-Star, exhibition)
+    VALID_NBA_TEAMS = {
+        'ATL', 'BOS', 'BKN', 'CHA', 'CHI', 'CLE', 'DAL', 'DEN', 'DET', 'GSW',
+        'HOU', 'IND', 'LAC', 'LAL', 'MEM', 'MIA', 'MIL', 'MIN', 'NOP', 'NYK',
+        'OKC', 'ORL', 'PHI', 'PHX', 'POR', 'SAC', 'SAS', 'TOR', 'UTA', 'WAS'
+    }
 
     def __init__(self):
         super().__init__()
@@ -60,7 +68,8 @@ class NbacPlayerBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
         self.dataset_id = 'nba_raw'
         self.processing_strategy = 'MERGE_UPDATE'
         self.team_mapper = NBATeamMapper()
-        
+        self.schedule_service = NBAScheduleService()
+
         self.project_id = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
         self.bq_client = bigquery.Client(project=self.project_id)
         
@@ -163,7 +172,59 @@ class NbacPlayerBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
         """Construct consistent game_id format: YYYYMMDD_AWAY_HOME"""
         date_str = game_date.replace('-', '')
         return f"{date_str}_{away_team}_{home_team}"
-    
+
+    def _extract_game_date(self, rows_data: List) -> Optional[str]:
+        """Extract game date from data rows or file path."""
+        # Try to get from file path first (format: .../player-boxscores/2024-01-15/...)
+        file_path = self.opts.get('file_path', '')
+        if file_path:
+            import re
+            match = re.search(r'/(\d{4}-\d{2}-\d{2})/', file_path)
+            if match:
+                return match.group(1)
+
+        # Fallback to first row's game date
+        if rows_data and len(rows_data) > 0:
+            game_date_idx = self.COLUMN_MAP.get('GAME_DATE', 7)
+            if len(rows_data[0]) > game_date_idx:
+                return rows_data[0][game_date_idx]
+
+        return None
+
+    def _validate_team_code(self, team_code: str, game_date: str, context: str) -> bool:
+        """
+        Validate team code is a real NBA team.
+
+        For non-All-Star games, invalid team codes indicate a data quality issue.
+        """
+        if not team_code:
+            return False
+
+        if team_code in self.VALID_NBA_TEAMS:
+            return True
+
+        # Check game type - only alert for non-All-Star games
+        season_type = self.schedule_service.get_season_type_for_date(game_date)
+        if season_type == "All Star":
+            # All-Star teams (DRT, LBN, etc.) are expected
+            logging.debug(f"All-Star team code {team_code} in {context} - expected")
+            return False  # Still invalid for processing, but don't alert
+
+        # Non-All-Star game with invalid team - this is a real problem!
+        logging.error(f"Invalid team code '{team_code}' in {context} for {game_date} "
+                      f"(season_type={season_type}) - possible data quality issue")
+        notify_warning(
+            title="Invalid Team Code in Player Boxscore",
+            message=f"Found non-NBA team code '{team_code}' in a {season_type} game",
+            details={
+                'team_code': team_code,
+                'game_date': game_date,
+                'season_type': season_type,
+                'context': context
+            }
+        )
+        return False
+
     def load_data(self) -> None:
         """Load JSON from GCS."""
         self.raw_data = self.load_json_from_gcs()
@@ -196,7 +257,19 @@ class NbacPlayerBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
             result_set = self.raw_data['resultSets'][0]
             headers = result_set['headers']
             rows_data = result_set['rowSet']
-            
+
+            # Extract game date from file path or first row to check game type
+            game_date = self._extract_game_date(rows_data)
+            if game_date:
+                season_type = self.schedule_service.get_season_type_for_date(game_date)
+
+                # Skip All-Star games - they use non-NBA teams and aren't useful for predictions
+                if season_type == "All Star":
+                    logging.info(f"Skipping All-Star game data for {game_date} - "
+                                 "exhibition games not processed")
+                    self.transformed_data = []
+                    return
+
             # Validate column structure matches expectations
             if len(headers) != 32:
                 logging.warning(f"Expected 32 columns, got {len(headers)}")
@@ -377,52 +450,71 @@ class NbacPlayerBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
             raise
     
     def load_data_to_bq(self, rows: List[Dict]) -> Dict:
-        """Load transformed data into BigQuery with MERGE strategy."""
+        """Load transformed data into BigQuery with MERGE strategy.
+
+        Uses batch loading (load_table_from_json) instead of streaming inserts
+        (insert_rows_json) to avoid:
+        1. The 20 DML concurrent operation limit per table
+        2. The 90-minute streaming buffer that blocks DELETE/UPDATE operations
+        """
         if not rows:
             logging.warning("No rows to load")
             return {'rows_processed': 0, 'errors': []}
-        
+
         table_id = f"{self.project_id}.{self.dataset_id}.{self.table_name}"
         errors = []
-        
+
         try:
             # Get all unique game_ids and game_dates in this batch
             game_ids = list(self.games_found)
             game_dates = list(set(row['game_date'] for row in rows))
-            
+
             if self.processing_strategy == 'MERGE_UPDATE':
                 # Delete existing data for these games
                 # MUST include game_date filter for partitioned table
                 game_ids_str = "', '".join(game_ids)
                 game_dates_str = "', '".join(game_dates)
                 delete_query = f"""
-                DELETE FROM `{table_id}` 
+                DELETE FROM `{table_id}`
                 WHERE game_date IN ('{game_dates_str}')
                   AND game_id IN ('{game_ids_str}')
                 """
                 logging.info(f"Deleting existing records for {len(game_ids)} games on {len(game_dates)} dates")
-                
+
                 try:
                     self.bq_client.query(delete_query).result()
                 except Exception as e:
                     logging.error(f"Error deleting existing data: {e}")
                     raise e
-            
-            # Insert new data
-            logging.info(f"Inserting {len(rows)} rows into {table_id}")
-            result = self.bq_client.insert_rows_json(table_id, rows)
-            
-            if result:
-                errors.extend([str(e) for e in result])
-                logging.error(f"BigQuery insert errors: {errors}")
-            else:
-                logging.info(f"Successfully loaded {len(rows)} rows for {len(game_ids)} games")
-                
+
+            # Get table schema for load job
+            table = self.bq_client.get_table(table_id)
+
+            # Configure batch load job (not streaming insert)
+            job_config = bigquery.LoadJobConfig(
+                schema=table.schema,
+                autodetect=False,
+                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+                create_disposition=bigquery.CreateDisposition.CREATE_IF_NEEDED
+            )
+
+            # Insert new data using batch loading
+            logging.info(f"Loading {len(rows)} rows into {table_id} using batch load")
+            load_job = self.bq_client.load_table_from_json(
+                rows,
+                table_id,
+                job_config=job_config
+            )
+
+            # Wait for job completion
+            load_job.result()
+            logging.info(f"Successfully loaded {len(rows)} rows for {len(game_ids)} games")
+
         except Exception as e:
             error_msg = str(e)
             errors.append(error_msg)
             logging.error(f"Error loading data to BigQuery: {error_msg}")
-        
+
         return {
             'rows_processed': len(rows) if not errors else 0,
             'errors': errors,

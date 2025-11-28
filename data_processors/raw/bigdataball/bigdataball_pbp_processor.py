@@ -505,44 +505,46 @@ class BigDataBallPbpProcessor(SmartIdempotencyMixin, ProcessorBase):
                 }
             else:
                 # First time processing this game - safe to insert
-                logging.info(f"Inserting {len(rows)} rows for new game {game_id}")
-                result = self.bq_client.insert_rows_json(table_id, rows)
-                
-                if result:
-                    errors.extend([str(e) for e in result])
-                    logging.error(f"BigQuery insert errors: {errors}")
-                    
-                    # Notify BigQuery errors
-                    try:
-                        notify_error(
-                            title="BigDataBall Play-by-Play BigQuery Insert Failed",
-                            message=f"Failed to insert {len(rows)} play-by-play events for game {game_id}",
-                            details={
-                                'game_id': game_id,
-                                'game_date': game_date,
-                                'rows_attempted': len(rows),
-                                'errors': str(errors)[:500]
-                            },
-                            processor_name="BigDataBall Play-by-Play Processor"
-                        )
-                    except Exception as notify_ex:
-                        logging.warning(f"Failed to send notification: {notify_ex}")
-                else:
-                    # Success - send info notification
-                    try:
-                        notify_info(
-                            title="BigDataBall Play-by-Play Processing Complete",
-                            message=f"Successfully processed {len(rows)} play-by-play events for game {game_id}",
-                            details={
-                                'game_id': game_id,
-                                'game_date': game_date,
-                                'rows_processed': len(rows),
-                                'away_team': rows[0]['away_team_abbr'],
-                                'home_team': rows[0]['home_team_abbr']
-                            }
-                        )
-                    except Exception as notify_ex:
-                        logging.warning(f"Failed to send notification: {notify_ex}")
+                # Use batch loading (not streaming insert) to avoid DML limit and streaming buffer issues
+                logging.info(f"Loading {len(rows)} rows for new game {game_id} using batch load")
+
+                # Get table schema for load job
+                table = self.bq_client.get_table(table_id)
+
+                # Configure batch load job
+                job_config = bigquery.LoadJobConfig(
+                    schema=table.schema,
+                    autodetect=False,
+                    write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+                    create_disposition=bigquery.CreateDisposition.CREATE_IF_NEEDED
+                )
+
+                # Load using batch job
+                load_job = self.bq_client.load_table_from_json(
+                    rows,
+                    table_id,
+                    job_config=job_config
+                )
+
+                # Wait for completion
+                load_job.result()
+                logging.info(f"Successfully loaded {len(rows)} play-by-play events for game {game_id}")
+
+                # Success - send info notification
+                try:
+                    notify_info(
+                        title="BigDataBall Play-by-Play Processing Complete",
+                        message=f"Successfully processed {len(rows)} play-by-play events for game {game_id}",
+                        details={
+                            'game_id': game_id,
+                            'game_date': game_date,
+                            'rows_processed': len(rows),
+                            'away_team': rows[0]['away_team_abbr'],
+                            'home_team': rows[0]['home_team_abbr']
+                        }
+                    )
+                except Exception as notify_ex:
+                    logging.warning(f"Failed to send notification: {notify_ex}")
                         
         except Exception as e:
             error_msg = str(e)

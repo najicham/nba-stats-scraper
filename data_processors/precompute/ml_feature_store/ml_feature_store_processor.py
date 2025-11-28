@@ -47,6 +47,9 @@ from .feature_calculator import FeatureCalculator
 from .quality_scorer import QualityScorer
 from .batch_writer import BatchWriter
 
+# Bootstrap period support (Week 5 - Early Season Handling)
+from shared.config.nba_season_dates import is_early_season, get_season_year_from_date
+
 # Configure logging
 logger = logging.getLogger(__name__)
 
@@ -268,8 +271,14 @@ class MLFeatureStoreProcessor(
         analysis_date = self.opts['analysis_date']
         logger.info(f"Extracting data for {analysis_date}")
 
+        # Determine season year using schedule service (Bootstrap period - Week 5)
+        season_year = self.opts.get('season_year')
+        if season_year is None:
+            season_year = get_season_year_from_date(analysis_date)
+            self.opts['season_year'] = season_year
+            logger.debug(f"Determined season year: {season_year} for date {analysis_date}")
+
         # Store season start date for completeness checking (Week 4)
-        season_year = analysis_date.year if analysis_date.month >= 10 else analysis_date.year - 1
         self.season_start_date = date(season_year, 10, 1)
         
         # Check dependencies FIRST (v4.0 pattern)
@@ -278,9 +287,13 @@ class MLFeatureStoreProcessor(
         # Track source usage (populates source_* attributes for v4.0 tracking)
         self.track_source_usage(dep_check)
         
-        # Check for early season BEFORE failing on missing dependencies
-        if self._is_early_season(analysis_date):
-            logger.warning("Early season detected - creating placeholder records")
+        # BOOTSTRAP PERIOD: Check for early season BEFORE failing on missing dependencies
+        # If early season (days 0-6), CREATE PLACEHOLDERS instead of failing
+        if self._is_early_season(analysis_date, season_year):
+            logger.info(
+                f"📝 Early season detected for {analysis_date} (day 0-6 of season {season_year}): "
+                f"creating placeholder records with NULL features"
+            )
             self._create_early_season_placeholders(analysis_date)
             return
         
@@ -337,44 +350,35 @@ class MLFeatureStoreProcessor(
         except Exception as e:
             logger.warning(f"Failed to extract source hashes: {e}")
 
-    def _is_early_season(self, analysis_date: date) -> bool:
+    def _is_early_season(self, analysis_date: date, season_year: int) -> bool:
         """
-        Check if we're in early season (insufficient data).
-        
-        Early season = >50% of players have early_season_flag set in
-        their Phase 4 player_daily_cache data.
-        
-        This cascades the early season decision from upstream processor.
+        Check if we're in early season (first 7 days of season).
+
+        Bootstrap Period Handling:
+            Uses deterministic date-based check instead of threshold-based.
+            Queries schedule service for accurate season start date.
+
+        Changed from threshold-based (>50% players) to date-based (first 7 days).
+        This is more reliable and consistent with other Phase 4 processors.
+
+        Args:
+            analysis_date: Date being analyzed
+            season_year: Season year (e.g., 2024 for 2024-25 season)
+
+        Returns:
+            True if within first 7 days of regular season, False otherwise
         """
-        try:
-            # Check player_daily_cache for early_season_flag
-            query = f"""
-            SELECT
-                COUNT(*) as total_players,
-                SUM(CASE WHEN early_season_flag = TRUE THEN 1 ELSE 0 END) as early_season_players
-            FROM `{self.project_id}.nba_precompute.player_daily_cache`
-            WHERE cache_date = '{analysis_date}'
-            """
-            
-            result_df = self.bq_client.query(query).to_dataframe()
-            
-            if result_df.empty:
-                return False
-            
-            total = result_df.iloc[0].get('total_players', 0)
-            early = result_df.iloc[0].get('early_season_players', 0)
-            
-            if total > 0 and (early / total) > 0.5:
-                self.early_season_flag = True
-                self.insufficient_data_reason = f"Early season: {early}/{total} players lack historical data"
-                logger.warning(self.insufficient_data_reason)
-                return True
-            
-            return False
-            
-        except Exception as e:
-            logger.warning(f"Error checking early season status: {e}")
-            return False
+        # Use schedule service-based detection (Week 5 - Bootstrap period fix)
+        if is_early_season(analysis_date, season_year, days_threshold=7):
+            self.early_season_flag = True
+            self.insufficient_data_reason = 'early_season_skip_first_7_days'
+            logger.info(
+                f"Early season detected for {analysis_date} (season {season_year}): "
+                f"within first 7 days of regular season"
+            )
+            return True
+
+        return False
     
     def _create_early_season_placeholders(self, analysis_date: date) -> None:
         """

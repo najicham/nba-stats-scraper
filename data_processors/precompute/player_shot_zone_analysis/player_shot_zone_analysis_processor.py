@@ -40,6 +40,9 @@ from data_processors.raw.smart_idempotency_mixin import SmartIdempotencyMixin
 # Completeness checking (Week 2 - Phase 4 Historical Dependency Checking)
 from shared.utils.completeness_checker import CompletenessChecker
 
+# Bootstrap period support (Week 5 - Early Season Handling)
+from shared.config.nba_season_dates import is_early_season, get_season_year_from_date
+
 # Custom exceptions for dependency handling
 class DependencyError(Exception):
     """Raised when critical dependencies are missing."""
@@ -193,14 +196,40 @@ class PlayerShotZoneAnalysisProcessor(
     def extract_raw_data(self) -> None:
         """
         Extract player game data from Phase 3 analytics.
-        
+
+        Bootstrap Period Handling:
+            Skips processing for first 7 days of season (days 0-6).
+            Uses schedule service to determine season start date.
+
         Queries last 10 games (and last 20 for trends) per player from
         player_game_summary. Includes dependency checking and early season handling.
         """
         analysis_date = self.opts.get('analysis_date')
         if not analysis_date:
             raise ValueError("analysis_date is required")
-        
+
+        # Determine season year
+        season_year = self.opts.get('season_year')
+        if season_year is None:
+            season_year = get_season_year_from_date(analysis_date)
+            self.opts['season_year'] = season_year
+            logger.debug(f"Determined season year: {season_year} for date {analysis_date}")
+
+        # BOOTSTRAP PERIOD: Skip early season (days 0-6)
+        # Uses schedule service to get accurate season start date
+        if is_early_season(analysis_date, season_year, days_threshold=7):
+            logger.info(
+                f"⏭️  Skipping {analysis_date}: early season period (day 0-6 of season {season_year}). "
+                f"Regular processing starts day 7."
+            )
+            # Set flag for run history logging
+            self.stats['processing_decision'] = 'skipped_early_season'
+            self.stats['processing_decision_reason'] = f'bootstrap_period_day_0_6_of_season_{season_year}'
+
+            # Exit early - no data extraction, no records written
+            self.raw_data = None
+            return
+
         logger.info(f"Extracting player shot zone data for {analysis_date}")
         
         # Check dependencies

@@ -399,74 +399,76 @@ class BdlActivePlayersProcessor(SmartIdempotencyMixin, ProcessorBase):
                     
                     raise delete_error
             
-            result = self.bq_client.insert_rows_json(table_id, rows)
-            if result:
-                errors.extend([str(e) for e in result])
-                logging.error(f"BigQuery insert errors: {errors}")
-                
-                # Notify about BigQuery insert errors
+            # Insert using batch loading (not streaming insert)
+            # This avoids the 20 DML limit and streaming buffer issues
+            logging.info(f"Loading {len(rows)} rows to {table_id} using batch load")
+
+            # Get table schema for load job
+            table = self.bq_client.get_table(table_id)
+
+            # Configure batch load job
+            job_config = bigquery.LoadJobConfig(
+                schema=table.schema,
+                autodetect=False,
+                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+                create_disposition=bigquery.CreateDisposition.CREATE_IF_NEEDED
+            )
+
+            # Load using batch job
+            load_job = self.bq_client.load_table_from_json(
+                rows,
+                table_id,
+                job_config=job_config
+            )
+
+            # Wait for completion
+            load_job.result()
+            logging.info(f"Successfully loaded {len(rows)} rows into {table_id}")
+
+            # Log validation summary
+            total_issues = sum(1 for row in rows if row['has_validation_issues'])
+            missing_nba_com = sum(1 for row in rows if row['validation_status'] == 'missing_nba_com')
+            team_mismatches = sum(1 for row in rows if row['validation_status'] == 'team_mismatch')
+
+            logging.info(f"Validation summary: {total_issues}/{len(rows)} players have validation issues")
+
+            # Notify about high validation issue rate
+            validation_issue_rate = (total_issues / len(rows)) * 100 if rows else 0
+            if validation_issue_rate > 20:  # More than 20% have issues
                 try:
-                    notify_error(
-                        title="BigQuery Insert Failed",
-                        message=f"Failed to insert active players data into BigQuery",
-                        details={
-                            'error_count': len(result),
-                            'sample_errors': [str(e) for e in result[:3]],
-                            'rows_attempted': len(rows),
-                            'table': self.table_name,
-                            'processor': 'BDL Active Players'
-                        },
-                        processor_name="BDL Active Players Processor"
-                    )
-                except Exception as e:
-                    logging.warning(f"Failed to send notification: {e}")
-            else:
-                logging.info(f"Successfully inserted {len(rows)} rows into {table_id}")
-                
-                # Log validation summary
-                total_issues = sum(1 for row in rows if row['has_validation_issues'])
-                missing_nba_com = sum(1 for row in rows if row['validation_status'] == 'missing_nba_com')
-                team_mismatches = sum(1 for row in rows if row['validation_status'] == 'team_mismatch')
-                
-                logging.info(f"Validation summary: {total_issues}/{len(rows)} players have validation issues")
-                
-                # Notify about high validation issue rate
-                validation_issue_rate = (total_issues / len(rows)) * 100 if rows else 0
-                if validation_issue_rate > 20:  # More than 20% have issues
-                    try:
-                        notify_warning(
-                            title="High Validation Issue Rate",
-                            message=f"{validation_issue_rate:.1f}% of active players have validation issues",
-                            details={
-                                'total_players': len(rows),
-                                'total_issues': total_issues,
-                                'missing_nba_com': missing_nba_com,
-                                'team_mismatches': team_mismatches,
-                                'issue_rate_pct': round(validation_issue_rate, 1),
-                                'processor': 'BDL Active Players'
-                            }
-                        )
-                    except Exception as e:
-                        logging.warning(f"Failed to send notification: {e}")
-                
-                # Send success notification
-                try:
-                    notify_info(
-                        title="BDL Active Players Processing Complete",
-                        message=f"Successfully processed {len(rows)} active players",
+                    notify_warning(
+                        title="High Validation Issue Rate",
+                        message=f"{validation_issue_rate:.1f}% of active players have validation issues",
                         details={
                             'total_players': len(rows),
-                            'validation_issues': total_issues,
-                            'missing_from_nba_com': missing_nba_com,
+                            'total_issues': total_issues,
+                            'missing_nba_com': missing_nba_com,
                             'team_mismatches': team_mismatches,
-                            'validated_clean': len(rows) - total_issues,
-                            'table': self.table_name,
+                            'issue_rate_pct': round(validation_issue_rate, 1),
                             'processor': 'BDL Active Players'
                         }
                     )
                 except Exception as e:
                     logging.warning(f"Failed to send notification: {e}")
-                    
+
+            # Send success notification
+            try:
+                notify_info(
+                    title="BDL Active Players Processing Complete",
+                    message=f"Successfully processed {len(rows)} active players",
+                    details={
+                        'total_players': len(rows),
+                        'validation_issues': total_issues,
+                        'missing_from_nba_com': missing_nba_com,
+                        'team_mismatches': team_mismatches,
+                        'validated_clean': len(rows) - total_issues,
+                        'table': self.table_name,
+                        'processor': 'BDL Active Players'
+                    }
+                )
+            except Exception as e:
+                logging.warning(f"Failed to send notification: {e}")
+
         except Exception as e:
             errors.append(str(e))
             logging.error(f"Error loading data: {e}")

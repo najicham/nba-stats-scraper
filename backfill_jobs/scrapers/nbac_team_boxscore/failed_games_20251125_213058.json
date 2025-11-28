@@ -1,0 +1,24 @@
+{
+  "timestamp": "2025-11-25T21:34:06.938892",
+  "total_failed": 3,
+  "failed_games": [
+    {
+      "game_id": "0022100019",
+      "game_date": "2021-10-22",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022100007",
+      "game_date": "2021-10-20",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022100006",
+      "game_date": "2021-10-20",
+      "status": "failed",
+      "error": "HTTP 500"
+    }
+  ]
+}

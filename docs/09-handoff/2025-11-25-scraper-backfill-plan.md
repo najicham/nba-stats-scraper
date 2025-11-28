@@ -1,7 +1,7 @@
 # Scraper Backfill Plan Handoff
 
-**Date:** 2025-11-25
-**Status:** Ready to Execute
+**Date:** 2025-11-25 (Updated: 2025-11-26)
+**Status:** In Progress - Team Boxscore Complete ✅
 **Priority:** CRITICAL - Blocks Phase 3 predictions pipeline
 
 ---
@@ -25,21 +25,26 @@ From `nbac_schedule` in BigQuery:
 
 ## Scrapers Needing Backfill
 
-### ❌ CRITICAL - Empty (need full backfill)
+### ✅ COMPLETED
 
-| Scraper | Current | Need | Script Ready |
-|---------|---------|------|--------------|
-| **GetNbaComTeamBoxscore** | 1 date | 5,299 games | ✅ |
-| GetNbaComPlayerBoxscore | 13 dates | 853 dates | ✅ |
-| GetNbaComPlayByPlay | 2 dates | 5,299 games | ✅ |
-| GetEspnBoxscore | 1 date | 5,299 games | ✅ |
+| Scraper | Status | Completion | Notes |
+|---------|--------|------------|-------|
+| **GetNbaComTeamBoxscore** | ✅ DONE | 5,293/5,299 (99.9%) | 6 Play-In games missing - see `known-data-gaps.md` |
 
-### ⚠️ Partial (gaps identified)
+### 🔴 CRITICAL - Empty (need full backfill)
 
-| Scraper | Current | Gap | Script Ready |
-|---------|---------|-----|--------------|
-| GetOddsApiHistoricalGameLines | 749/853 | ~104 playoff dates | ✅ (existing) |
-| BdlStandingsScraper | 2/4 seasons | 2021, 2022, 2023 | ✅ |
+| Scraper | Current | Need | Script Ready | Next Action |
+|---------|---------|------|--------------|-------------|
+| **GetNbaComPlayerBoxscore** | 13 dates | 853 dates | ✅ | **RUN NEXT** (~14 min) |
+| GetNbaComPlayByPlay | 2 dates | 5,299 games | ✅ | Defer (optional) |
+| GetEspnBoxscore | 1 date | 5,299 games | ✅ | Defer (backup source) |
+
+### 🟡 PARTIAL - Gaps identified
+
+| Scraper | Current | Gap | Script Ready | Next Action |
+|---------|---------|-----|--------------|-------------|
+| **BdlStandingsScraper** | 2/4 seasons | 2021, 2022, 2023 | ✅ | **RUN NEXT** (~6 sec) |
+| GetOddsApiHistoricalGameLines | 749/853 | ~104 playoff dates | ✅ (existing) | Defer (investigate API limit) |
 
 ### ✅ Complete (verified)
 
@@ -156,6 +161,13 @@ All scripts support:
 
 ## Related Files
 
+### Backfill Tracking
+- **This Document:** Original backfill plan (static reference)
+- **Live Tracker:** `docs/09-handoff/data-coverage-tracker.md` (real-time status)
+- **Known Gaps:** `docs/09-handoff/known-data-gaps.md` (gap registry)
+- **Game Plan:** `docs/09-handoff/GAME-PLAN-2025-11-26.md` (current session)
+
+### Original Audit
 - **Audit Plan:** `docs/08-projects/current/scraper-audit/plan.md`
 - **Checklist:** `docs/08-projects/current/scraper-audit/checklist.md`
 - **Changelog:** `docs/08-projects/current/scraper-audit/changelog.md`
@@ -163,11 +175,20 @@ All scripts support:
 
 ---
 
-## Known Issues
+## Known Issues & Gaps
 
-1. **OddsAPI playoff gaps (~104 dates)** - May be API limitation, not a data collection issue
-2. **BigDataBall missing 6 dates** - All-Star weekend dates (no regular games)
-3. **ESPN boxscore** - Uses NBA.com game_ids; scraper may need to resolve to ESPN IDs
+1. **Play-In Tournament Games (6 games - 2025 season)** - Documented in `known-data-gaps.md`
+   - All sources failed (NBA.com, ESPN, BDL)
+   - Game IDs: 0052400101, 0052400121, 0052400111, 0052400131, 0052400201, 0052400211
+   - Resolution: Accepted gap, will be tracked by source coverage audit job
+
+2. **OddsAPI playoff gaps (~104 dates)** - May be API limitation, not a data collection issue
+
+3. **BigDataBall missing 6 dates** - All-Star weekend dates (no regular games)
+
+4. **ESPN boxscore** - Uses NBA.com game_ids; scraper may need to resolve to ESPN IDs
+
+5. **Streaming buffer errors (101 during team boxscore)** - See `streaming-buffer-migration/`
 
 ---
 

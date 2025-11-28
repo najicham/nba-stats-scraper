@@ -1,0 +1,16 @@
+{
+  "timestamp": "2025-11-26T23:11:52.526223",
+  "total_failed": 2,
+  "failed_dates": [
+    {
+      "game_date": "2021-10-31",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_date": "2022-02-01",
+      "status": "timeout",
+      "error": "Timeout after 180s"
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "timestamp": "2025-11-26T16:26:57.525721",
+  "total_failed": 2,
+  "failed_dates": [
+    {
+      "game_date": "2021-10-19",
+      "status": "timeout",
+      "error": "Timeout after 60s"
+    },
+    {
+      "game_date": "2021-10-22",
+      "status": "timeout",
+      "error": "Timeout after 60s"
+    }
+  ]
+}

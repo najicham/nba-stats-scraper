@@ -348,65 +348,65 @@ class BdlStandingsProcessor(SmartIdempotencyMixin, ProcessorBase):
             for row in rows:
                 row['processed_at'] = datetime.utcnow().isoformat()
             
-            # Insert new data
-            result = self.bq_client.insert_rows_json(table_id, rows)
-            if result:
-                errors.extend([str(e) for e in result])
-                
-                # Notify about BigQuery insert errors
-                try:
-                    notify_error(
-                        title="BigQuery Insert Failed",
-                        message=f"Failed to insert standings data into BigQuery",
-                        details={
-                            'error_count': len(result),
-                            'sample_errors': [str(e) for e in result[:3]],
-                            'rows_attempted': len(rows),
-                            'date_recorded': date_recorded,
-                            'season_year': season_year,
-                            'table': self.table_name,
-                            'processor': 'BDL Standings'
-                        },
-                        processor_name="BDL Standings Processor"
-                    )
-                except Exception as e:
-                    logging.warning(f"Failed to send notification: {e}")
-            else:
-                logging.info(f"Successfully inserted {len(rows)} standings for {date_recorded}")
-                
-                # Calculate summary statistics
-                east_teams = sum(1 for row in rows if row['conference'] == 'East')
-                west_teams = sum(1 for row in rows if row['conference'] == 'West')
-                avg_games_played = sum(row['games_played'] for row in rows) / len(rows)
-                
-                # Get top teams by conference
-                east_leader = next((row for row in sorted(rows, key=lambda x: x['conference_rank'] or 99) 
-                                   if row['conference'] == 'East'), None)
-                west_leader = next((row for row in sorted(rows, key=lambda x: x['conference_rank'] or 99) 
-                                   if row['conference'] == 'West'), None)
-                
-                # Send success notification
-                try:
-                    notify_info(
-                        title="BDL Standings Processing Complete",
-                        message=f"Successfully processed standings for {len(rows)} teams on {date_recorded}",
-                        details={
-                            'total_teams': len(rows),
-                            'date_recorded': date_recorded,
-                            'season_year': season_year,
-                            'season_display': rows[0]['season_display'],
-                            'east_teams': east_teams,
-                            'west_teams': west_teams,
-                            'avg_games_played': round(avg_games_played, 1),
-                            'east_leader': f"{east_leader['team_abbr']} ({east_leader['wins']}-{east_leader['losses']})" if east_leader else 'N/A',
-                            'west_leader': f"{west_leader['team_abbr']} ({west_leader['wins']}-{west_leader['losses']})" if west_leader else 'N/A',
-                            'table': self.table_name,
-                            'processor': 'BDL Standings'
-                        }
-                    )
-                except Exception as e:
-                    logging.warning(f"Failed to send notification: {e}")
-                
+            # Insert new data using batch loading (not streaming insert)
+            # This avoids the 20 DML limit and streaming buffer issues
+            logging.info(f"Loading {len(rows)} standings for {date_recorded} using batch load")
+
+            # Get table schema for load job
+            table = self.bq_client.get_table(table_id)
+
+            # Configure batch load job
+            job_config = bigquery.LoadJobConfig(
+                schema=table.schema,
+                autodetect=False,
+                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+                create_disposition=bigquery.CreateDisposition.CREATE_IF_NEEDED
+            )
+
+            # Load using batch job
+            load_job = self.bq_client.load_table_from_json(
+                rows,
+                table_id,
+                job_config=job_config
+            )
+
+            # Wait for completion
+            load_job.result()
+            logging.info(f"Successfully loaded {len(rows)} standings for {date_recorded}")
+
+            # Calculate summary statistics
+            east_teams = sum(1 for row in rows if row['conference'] == 'East')
+            west_teams = sum(1 for row in rows if row['conference'] == 'West')
+            avg_games_played = sum(row['games_played'] for row in rows) / len(rows)
+
+            # Get top teams by conference
+            east_leader = next((row for row in sorted(rows, key=lambda x: x['conference_rank'] or 99)
+                               if row['conference'] == 'East'), None)
+            west_leader = next((row for row in sorted(rows, key=lambda x: x['conference_rank'] or 99)
+                               if row['conference'] == 'West'), None)
+
+            # Send success notification
+            try:
+                notify_info(
+                    title="BDL Standings Processing Complete",
+                    message=f"Successfully processed standings for {len(rows)} teams on {date_recorded}",
+                    details={
+                        'total_teams': len(rows),
+                        'date_recorded': date_recorded,
+                        'season_year': season_year,
+                        'season_display': rows[0]['season_display'],
+                        'east_teams': east_teams,
+                        'west_teams': west_teams,
+                        'avg_games_played': round(avg_games_played, 1),
+                        'east_leader': f"{east_leader['team_abbr']} ({east_leader['wins']}-{east_leader['losses']})" if east_leader else 'N/A',
+                        'west_leader': f"{west_leader['team_abbr']} ({west_leader['wins']}-{west_leader['losses']})" if west_leader else 'N/A',
+                        'table': self.table_name,
+                        'processor': 'BDL Standings'
+                    }
+                )
+            except Exception as e:
+                logging.warning(f"Failed to send notification: {e}")
+
         except Exception as e:
             error_msg = f"Error loading standings data: {str(e)}"
             logging.error(error_msg)

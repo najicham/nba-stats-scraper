@@ -1669,15 +1669,31 @@ class UpcomingTeamGameContextProcessor(
             logger.info(f"Deleting existing records: {start_date} to {end_date}")
             self.bq_client.query(delete_query).result()
             
-            # Insert new records
-            logger.info(f"Inserting {len(self.transformed_data)} new records")
-            errors = self.bq_client.insert_rows_json(table_id, self.transformed_data)
-            
-            if errors:
-                logger.error(f"Insert errors: {errors}")
-                return False
-            
-            logger.info("✓ Save successful")
+            # Insert new records using batch loading (not streaming insert)
+            # This avoids the 20 DML limit and streaming buffer issues
+            logger.info(f"Loading {len(self.transformed_data)} records using batch load")
+
+            # Get table schema for load job
+            table = self.bq_client.get_table(table_id)
+
+            # Configure batch load job
+            job_config = bigquery.LoadJobConfig(
+                schema=table.schema,
+                autodetect=False,
+                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+                create_disposition=bigquery.CreateDisposition.CREATE_IF_NEEDED
+            )
+
+            # Load using batch job
+            load_job = self.bq_client.load_table_from_json(
+                self.transformed_data,
+                table_id,
+                job_config=job_config
+            )
+
+            # Wait for completion
+            load_job.result()
+            logger.info(f"Successfully loaded {len(self.transformed_data)} records")
             logger.info("=" * 80)
             return True
             

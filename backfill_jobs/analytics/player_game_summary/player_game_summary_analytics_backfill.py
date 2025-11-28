@@ -14,14 +14,15 @@ Features:
 - Batch insert (no streaming buffer issues)
 - Comprehensive error tracking and retry support
 - Data availability validation
+- Backfill mode: Disables historical date check (>90 days) and suppresses alerts
 
 Usage:
     # Dry run to check data
     python player_game_summary_backfill_job.py --dry-run --start-date 2024-01-01 --end-date 2024-01-07
-    
-    # Process date range
-    python player_game_summary_backfill_job.py --start-date 2024-01-01 --end-date 2024-01-31
-    
+
+    # Process date range (alerts suppressed, historical check disabled)
+    python player_game_summary_backfill_job.py --start-date 2021-10-19 --end-date 2025-06-22
+
     # Retry specific failed dates
     python player_game_summary_backfill_job.py --dates 2024-01-05,2024-01-12,2024-01-18
 """
@@ -154,7 +155,8 @@ class PlayerGameSummaryBackfill:
         opts = {
             'start_date': single_date.isoformat(),
             'end_date': single_date.isoformat(),  # Same day for single-day processing
-            'project_id': 'nba-props-platform'
+            'project_id': 'nba-props-platform',
+            'backfill_mode': True  # Disables historical date check and suppresses alerts
         }
         
         try:

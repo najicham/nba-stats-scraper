@@ -33,7 +33,7 @@ from shared.processors.patterns import SmartSkipMixin, EarlyExitMixin, CircuitBr
 # Smart Idempotency (Pattern #1)
 from data_processors.raw.smart_idempotency_mixin import SmartIdempotencyMixin
 
-# Import utilities
+# Import utilities (Bootstrap period support - Week 5)
 from shared.config.nba_season_dates import (
     get_season_start_date,
     is_early_season,
@@ -331,9 +331,38 @@ class TeamDefenseZoneAnalysisProcessor(
     def extract_raw_data(self) -> None:
         """
         Extract last 15 games per team from Phase 3 table.
+
+        Bootstrap Period Handling:
+            Skips processing for first 7 days of season (days 0-6).
+            Uses schedule service to determine season start date.
+
         Handles dependency checking and early season behavior.
         """
-        logger.info(f"Extracting team defense data for {self.opts['analysis_date']}")
+        analysis_date = self.opts['analysis_date']
+
+        # Determine season year
+        season_year = self.opts.get('season_year')
+        if season_year is None:
+            season_year = get_season_year_from_date(analysis_date)
+            self.opts['season_year'] = season_year
+            logger.debug(f"Determined season year: {season_year} for date {analysis_date}")
+
+        # BOOTSTRAP PERIOD: Skip early season (days 0-6)
+        # Uses schedule service to get accurate season start date
+        if is_early_season(analysis_date, season_year, days_threshold=7):
+            logger.info(
+                f"⏭️  Skipping {analysis_date}: early season period (day 0-6 of season {season_year}). "
+                f"Regular processing starts day 7."
+            )
+            # Set flag for run history logging
+            self.stats['processing_decision'] = 'skipped_early_season'
+            self.stats['processing_decision_reason'] = f'bootstrap_period_day_0_6_of_season_{season_year}'
+
+            # Exit early - no data extraction, no records written
+            self.raw_data = None
+            return
+
+        logger.info(f"Extracting team defense data for {analysis_date}")
         
         # Check dependencies
         dep_check = self.check_dependencies(self.opts['analysis_date'])

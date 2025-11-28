@@ -1,0 +1,1704 @@
+{
+  "timestamp": "2025-11-26T03:20:54.319459",
+  "total_failed": 283,
+  "failed_games": [
+    {
+      "game_id": "0022100036",
+      "game_date": "2021-10-24",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022100076",
+      "game_date": "2021-10-29",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022100047",
+      "game_date": "2021-10-25",
+      "status": "timeout",
+      "error": "Timeout after 300s"
+    },
+    {
+      "game_id": "0022100051",
+      "game_date": "2021-10-26",
+      "status": "timeout",
+      "error": "Timeout after 300s"
+    },
+    {
+      "game_id": "0022100058",
+      "game_date": "2021-10-27",
+      "status": "timeout",
+      "error": "Timeout after 300s"
+    },
+    {
+      "game_id": "0022100072",
+      "game_date": "2021-10-29",
+      "status": "timeout",
+      "error": "Timeout after 300s"
+    },
+    {
+      "game_id": "0022100079",
+      "game_date": "2021-10-30",
+      "status": "timeout",
+      "error": "Timeout after 300s"
+    },
+    {
+      "game_id": "0022100083",
+      "game_date": "2021-10-30",
+      "status": "timeout",
+      "error": "Timeout after 300s"
+    },
+    {
+      "game_id": "0022100085",
+      "game_date": "2021-10-30",
+      "status": "timeout",
+      "error": "Timeout after 300s"
+    },
+    {
+      "game_id": "0022100086",
+      "game_date": "2021-10-30",
+      "status": "timeout",
+      "error": "Timeout after 300s"
+    },
+    {
+      "game_id": "0022100087",
+      "game_date": "2021-10-30",
+      "status": "timeout",
+      "error": "Timeout after 300s"
+    },
+    {
+      "game_id": "0022100089",
+      "game_date": "2021-10-31",
+      "status": "timeout",
+      "error": "Timeout after 300s"
+    },
+    {
+      "game_id": "0022100090",
+      "game_date": "2021-10-31",
+      "status": "timeout",
+      "error": "Timeout after 300s"
+    },
+    {
+      "game_id": "0022100092",
+      "game_date": "2021-10-31",
+      "status": "timeout",
+      "error": "Timeout after 300s"
+    },
+    {
+      "game_id": "0022100131",
+      "game_date": "2021-11-05",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022100165",
+      "game_date": "2021-11-10",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022100152",
+      "game_date": "2021-11-08",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022100225",
+      "game_date": "2021-11-18",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022100243",
+      "game_date": "2021-11-20",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022100200",
+      "game_date": "2021-11-15",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022100241",
+      "game_date": "2021-11-20",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022100261",
+      "game_date": "2021-11-22",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022100279",
+      "game_date": "2021-11-24",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022100308",
+      "game_date": "2021-11-29",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022100319",
+      "game_date": "2021-12-01",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022100352",
+      "game_date": "2021-12-05",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022100370",
+      "game_date": "2021-12-08",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022100383",
+      "game_date": "2021-12-10",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022100405",
+      "game_date": "2021-12-13",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022100431",
+      "game_date": "2021-12-16",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022100450",
+      "game_date": "2021-12-19",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022100444",
+      "game_date": "2021-12-18",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022100451",
+      "game_date": "2021-12-19",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022100459",
+      "game_date": "2021-12-20",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022100485",
+      "game_date": "2021-12-23",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022100493",
+      "game_date": "2021-12-26",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022100525",
+      "game_date": "2021-12-30",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022100566",
+      "game_date": "2022-01-04",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022100517",
+      "game_date": "2021-12-29",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022100559",
+      "game_date": "2022-01-03",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022100539",
+      "game_date": "2022-01-01",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022100571",
+      "game_date": "2022-01-05",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022100634",
+      "game_date": "2022-01-14",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022100617",
+      "game_date": "2022-01-16",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022100666",
+      "game_date": "2022-01-18",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022100677",
+      "game_date": "2022-01-19",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022100694",
+      "game_date": "2022-01-21",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022100681",
+      "game_date": "2022-01-20",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022100668",
+      "game_date": "2022-01-19",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022100672",
+      "game_date": "2022-01-19",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022100724",
+      "game_date": "2022-01-26",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022100750",
+      "game_date": "2022-01-29",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022100727",
+      "game_date": "2022-01-26",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022100772",
+      "game_date": "2022-02-01",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022100803",
+      "game_date": "2022-02-06",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022100791",
+      "game_date": "2022-02-04",
+      "status": "error",
+      "error": "('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))"
+    },
+    {
+      "game_id": "0022100854",
+      "game_date": "2022-02-12",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022100869",
+      "game_date": "2022-02-15",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022100893",
+      "game_date": "2022-02-24",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022100894",
+      "game_date": "2022-02-24",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022100927",
+      "game_date": "2022-03-01",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022100945",
+      "game_date": "2022-03-03",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022100978",
+      "game_date": "2022-03-08",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022100974",
+      "game_date": "2022-03-07",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022100969",
+      "game_date": "2022-03-07",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022100977",
+      "game_date": "2022-03-08",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022100993",
+      "game_date": "2022-03-10",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022100528",
+      "game_date": "2022-03-07",
+      "status": "failed",
+      "error": "HTTP 504"
+    },
+    {
+      "game_id": "0022101056",
+      "game_date": "2022-03-18",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022101080",
+      "game_date": "2022-03-22",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022101110",
+      "game_date": "2022-03-26",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022101136",
+      "game_date": "2022-03-30",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022101223",
+      "game_date": "2022-04-10",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022101177",
+      "game_date": "2022-04-03",
+      "status": "failed",
+      "error": "HTTP 504"
+    },
+    {
+      "game_id": "0042100103",
+      "game_date": "2022-04-22",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0042100113",
+      "game_date": "2022-04-23",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0042100156",
+      "game_date": "2022-04-29",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0042100204",
+      "game_date": "2022-05-08",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0042100205",
+      "game_date": "2022-05-10",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0042100306",
+      "game_date": "2022-05-27",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0042100401",
+      "game_date": "2022-06-02",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022200102",
+      "game_date": "2022-10-31",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022200143",
+      "game_date": "2022-11-06",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022200167",
+      "game_date": "2022-11-09",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022200121",
+      "game_date": "2022-11-04",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022200166",
+      "game_date": "2022-11-09",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022200179",
+      "game_date": "2022-11-11",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022200205",
+      "game_date": "2022-11-14",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022200209",
+      "game_date": "2022-11-15",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022200243",
+      "game_date": "2022-11-20",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022200194",
+      "game_date": "2022-11-13",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022200245",
+      "game_date": "2022-11-20",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022200268",
+      "game_date": "2022-11-23",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022200312",
+      "game_date": "2022-11-30",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022200352",
+      "game_date": "2022-12-05",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022200374",
+      "game_date": "2022-12-08",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022200360",
+      "game_date": "2022-12-06",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022200403",
+      "game_date": "2022-12-12",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022200421",
+      "game_date": "2022-12-14",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022200481",
+      "game_date": "2022-12-23",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022200531",
+      "game_date": "2022-12-30",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022200556",
+      "game_date": "2023-01-02",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022200573",
+      "game_date": "2023-01-04",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022200553",
+      "game_date": "2023-01-02",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022200572",
+      "game_date": "2023-01-04",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022200598",
+      "game_date": "2023-01-08",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022200603",
+      "game_date": "2023-01-08",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022200609",
+      "game_date": "2023-01-09",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022200621",
+      "game_date": "2023-01-11",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022200657",
+      "game_date": "2023-01-16",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022200687",
+      "game_date": "2023-01-20",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022200691",
+      "game_date": "2023-01-20",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022200759",
+      "game_date": "2023-01-30",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022200794",
+      "game_date": "2023-02-04",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022200772",
+      "game_date": "2023-02-01",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022200830",
+      "game_date": "2023-02-08",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022200855",
+      "game_date": "2023-02-12",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022200787",
+      "game_date": "2023-02-03",
+      "status": "failed",
+      "error": "HTTP 504"
+    },
+    {
+      "game_id": "0022200878",
+      "game_date": "2023-02-15",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022200880",
+      "game_date": "2023-02-15",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022200874",
+      "game_date": "2023-02-15",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022200972",
+      "game_date": "2023-03-06",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022201008",
+      "game_date": "2023-03-11",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022201002",
+      "game_date": "2023-03-10",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022200941",
+      "game_date": "2023-03-01",
+      "status": "failed",
+      "error": "HTTP 504"
+    },
+    {
+      "game_id": "0022201042",
+      "game_date": "2023-03-16",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022201066",
+      "game_date": "2023-03-19",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022201079",
+      "game_date": "2023-03-21",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022201096",
+      "game_date": "2023-03-23",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022201116",
+      "game_date": "2023-03-26",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022201172",
+      "game_date": "2023-04-02",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022201164",
+      "game_date": "2023-04-02",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022201189",
+      "game_date": "2023-04-05",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022201211",
+      "game_date": "2023-04-07",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022201193",
+      "game_date": "2023-04-05",
+      "status": "failed",
+      "error": "HTTP 504"
+    },
+    {
+      "game_id": "0042200164",
+      "game_date": "2023-04-23",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0042200156",
+      "game_date": "2023-04-28",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0042200223",
+      "game_date": "2023-05-05",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022300093",
+      "game_date": "2023-10-28",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022300102",
+      "game_date": "2023-10-30",
+      "status": "failed",
+      "error": "HTTP 502"
+    },
+    {
+      "game_id": "0022300125",
+      "game_date": "2023-11-01",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022300017",
+      "game_date": "2023-11-14",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022300163",
+      "game_date": "2023-11-08",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022300024",
+      "game_date": "2023-11-14",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022300028",
+      "game_date": "2023-11-17",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022300041",
+      "game_date": "2023-11-21",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022300270",
+      "game_date": "2023-11-30",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022301204",
+      "game_date": "2023-12-04",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022300289",
+      "game_date": "2023-12-02",
+      "status": "failed",
+      "error": "HTTP 504"
+    },
+    {
+      "game_id": "0022300389",
+      "game_date": "2023-12-23",
+      "status": "failed",
+      "error": "HTTP 502"
+    },
+    {
+      "game_id": "0022300391",
+      "game_date": "2023-12-23",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022300400",
+      "game_date": "2023-12-23",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022300421",
+      "game_date": "2023-12-28",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022300453",
+      "game_date": "2024-01-01",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022300467",
+      "game_date": "2024-01-03",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022300429",
+      "game_date": "2023-12-29",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022300531",
+      "game_date": "2024-01-11",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022300552",
+      "game_date": "2024-01-14",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022300601",
+      "game_date": "2024-01-21",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022300602",
+      "game_date": "2024-01-21",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022300622",
+      "game_date": "2024-01-24",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022300655",
+      "game_date": "2024-01-28",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022300649",
+      "game_date": "2024-01-27",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022300702",
+      "game_date": "2024-02-03",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022300757",
+      "game_date": "2024-02-10",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022300759",
+      "game_date": "2024-02-11",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022300756",
+      "game_date": "2024-02-10",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022300760",
+      "game_date": "2024-02-11",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022300782",
+      "game_date": "2024-02-14",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0032300006",
+      "game_date": "2024-02-16",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022300803",
+      "game_date": "2024-02-22",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022300790",
+      "game_date": "2024-02-15",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022300831",
+      "game_date": "2024-02-26",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022300834",
+      "game_date": "2024-02-27",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022300841",
+      "game_date": "2024-02-27",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022300842",
+      "game_date": "2024-02-27",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022300804",
+      "game_date": "2024-02-23",
+      "status": "failed",
+      "error": "HTTP 504"
+    },
+    {
+      "game_id": "0022300809",
+      "game_date": "2024-02-23",
+      "status": "failed",
+      "error": "HTTP 504"
+    },
+    {
+      "game_id": "0022300912",
+      "game_date": "2024-03-08",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022300897",
+      "game_date": "2024-03-06",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022300905",
+      "game_date": "2024-03-07",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022300922",
+      "game_date": "2024-03-09",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022300963",
+      "game_date": "2024-03-15",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022300957",
+      "game_date": "2024-03-14",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022300997",
+      "game_date": "2024-03-20",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022301014",
+      "game_date": "2024-03-22",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022300951",
+      "game_date": "2024-03-13",
+      "status": "failed",
+      "error": "HTTP 504"
+    },
+    {
+      "game_id": "0022301034",
+      "game_date": "2024-03-25",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022301006",
+      "game_date": "2024-03-21",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022301033",
+      "game_date": "2024-03-25",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022301053",
+      "game_date": "2024-03-27",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022301060",
+      "game_date": "2024-03-28",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022300994",
+      "game_date": "2024-03-19",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022301057",
+      "game_date": "2024-03-27",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022301043",
+      "game_date": "2024-03-25",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022301105",
+      "game_date": "2024-04-03",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022301123",
+      "game_date": "2024-04-05",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022301119",
+      "game_date": "2024-04-05",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022301147",
+      "game_date": "2024-04-09",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022301164",
+      "game_date": "2024-04-10",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0052300121",
+      "game_date": "2024-04-16",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022301142",
+      "game_date": "2024-04-07",
+      "status": "failed",
+      "error": "HTTP 504"
+    },
+    {
+      "game_id": "0042300113",
+      "game_date": "2024-04-25",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022301190",
+      "game_date": "2024-04-14",
+      "status": "failed",
+      "error": "HTTP 504"
+    },
+    {
+      "game_id": "0042300155",
+      "game_date": "2024-04-29",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0042300237",
+      "game_date": "2024-05-19",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022400098",
+      "game_date": "2024-10-27",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022400105",
+      "game_date": "2024-10-28",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022400065",
+      "game_date": "2024-10-23",
+      "status": "failed",
+      "error": "HTTP 504"
+    },
+    {
+      "game_id": "0022400070",
+      "game_date": "2024-10-23",
+      "status": "failed",
+      "error": "HTTP 504"
+    },
+    {
+      "game_id": "0022400100",
+      "game_date": "2024-10-27",
+      "status": "timeout",
+      "error": "Timeout after 300s"
+    },
+    {
+      "game_id": "0022400168",
+      "game_date": "2024-11-04",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022400154",
+      "game_date": "2024-11-04",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022400182",
+      "game_date": "2024-11-07",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022400232",
+      "game_date": "2024-11-16",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022400025",
+      "game_date": "2024-11-19",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022400255",
+      "game_date": "2024-11-20",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022400030",
+      "game_date": "2024-11-22",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022400292",
+      "game_date": "2024-11-27",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022400053",
+      "game_date": "2024-12-03",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022400334",
+      "game_date": "2024-12-06",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022400349",
+      "game_date": "2024-12-08",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022400350",
+      "game_date": "2024-12-08",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022400373",
+      "game_date": "2024-12-20",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022400376",
+      "game_date": "2024-12-21",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022400389",
+      "game_date": "2024-12-22",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022400414",
+      "game_date": "2024-12-26",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022400435",
+      "game_date": "2024-12-28",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022400445",
+      "game_date": "2024-12-30",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022400452",
+      "game_date": "2024-12-31",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022400513",
+      "game_date": "2025-01-08",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022400491",
+      "game_date": "2025-01-05",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022400549",
+      "game_date": "2025-01-13",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022400562",
+      "game_date": "2025-01-15",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022400571",
+      "game_date": "2025-01-15",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022400590",
+      "game_date": "2025-01-18",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022400607",
+      "game_date": "2025-01-21",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022400613",
+      "game_date": "2025-01-22",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022400634",
+      "game_date": "2025-01-25",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022400671",
+      "game_date": "2025-01-29",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022400689",
+      "game_date": "2025-02-01",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022400681",
+      "game_date": "2025-01-31",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022400723",
+      "game_date": "2025-02-05",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022400720",
+      "game_date": "2025-02-05",
+      "status": "failed",
+      "error": "HTTP 504"
+    },
+    {
+      "game_id": "0022400797",
+      "game_date": "2025-02-21",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022400799",
+      "game_date": "2025-02-21",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022400816",
+      "game_date": "2025-02-23",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022400805",
+      "game_date": "2025-02-21",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022400829",
+      "game_date": "2025-02-25",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022400831",
+      "game_date": "2025-02-25",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022400822",
+      "game_date": "2025-02-24",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022400851",
+      "game_date": "2025-02-28",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022400869",
+      "game_date": "2025-03-02",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022400868",
+      "game_date": "2025-03-02",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022400809",
+      "game_date": "2025-02-22",
+      "status": "failed",
+      "error": "HTTP 504"
+    },
+    {
+      "game_id": "0022400880",
+      "game_date": "2025-03-03",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022400919",
+      "game_date": "2025-03-08",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022400932",
+      "game_date": "2025-03-10",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022400926",
+      "game_date": "2025-03-09",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022400970",
+      "game_date": "2025-03-15",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022400964",
+      "game_date": "2025-03-14",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022400537",
+      "game_date": "2025-03-17",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022400968",
+      "game_date": "2025-03-15",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022401001",
+      "game_date": "2025-03-19",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022401036",
+      "game_date": "2025-03-23",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022401029",
+      "game_date": "2025-03-23",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022401046",
+      "game_date": "2025-03-25",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022401059",
+      "game_date": "2025-03-27",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022401169",
+      "game_date": "2025-04-10",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022401172",
+      "game_date": "2025-04-11",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022401173",
+      "game_date": "2025-04-11",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022401179",
+      "game_date": "2025-04-11",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022401182",
+      "game_date": "2025-04-11",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0052400101",
+      "game_date": "2025-04-15",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0052400201",
+      "game_date": "2025-04-18",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0052400211",
+      "game_date": "2025-04-18",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0052400121",
+      "game_date": "2025-04-15",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0022401159",
+      "game_date": "2025-04-09",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0052400111",
+      "game_date": "2025-04-16",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0042400132",
+      "game_date": "2025-04-22",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0052400131",
+      "game_date": "2025-04-16",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0042400176",
+      "game_date": "2025-05-01",
+      "status": "failed",
+      "error": "HTTP 500"
+    },
+    {
+      "game_id": "0042400215",
+      "game_date": "2025-05-14",
+      "status": "failed",
+      "error": "HTTP 500"
+    }
+  ]
+}

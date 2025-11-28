@@ -97,7 +97,7 @@ def get_bq_client() -> 'bigquery.Client':
     global _bq_client
     if _bq_client is None:
         logger.info("Initializing BigQuery client...")
-        _bq_client = bigquery.Client(project=PROJECT_ID)
+        _bq_client = bigquery.Client(project=PROJECT_ID, location='us-west2')
         logger.info("BigQuery client initialized")
     return _bq_client
 
@@ -898,11 +898,14 @@ def write_predictions_to_bigquery(predictions: List[Dict]):
     """
     Write predictions to BigQuery player_prop_predictions table
 
-    Uses streaming insert for low latency
+    Uses batch loading (load_table_from_json) instead of streaming insert
+    to avoid the 20 DML limit and streaming buffer issues during concurrent processing.
 
     Args:
         predictions: List of prediction dicts
     """
+    from google.cloud import bigquery
+
     bq_client = get_bq_client()
 
     if not predictions:
@@ -912,17 +915,31 @@ def write_predictions_to_bigquery(predictions: List[Dict]):
     table_id = f"{PROJECT_ID}.{PREDICTIONS_TABLE}"
 
     try:
-        errors = bq_client.insert_rows_json(table_id, predictions)
-        
-        if errors:
-            logger.error(f"Errors writing to BigQuery: {errors}")
-            # Don't raise - log and continue (graceful degradation)
-        else:
-            logger.info(f"Successfully wrote {len(predictions)} predictions to BigQuery")
-            
+        # Get table schema for load job
+        table = bq_client.get_table(table_id)
+
+        # Configure batch load job (not streaming insert)
+        job_config = bigquery.LoadJobConfig(
+            schema=table.schema,
+            autodetect=False,
+            write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+            create_disposition=bigquery.CreateDisposition.CREATE_IF_NEEDED
+        )
+
+        # Load using batch job
+        load_job = bq_client.load_table_from_json(
+            predictions,
+            table_id,
+            job_config=job_config
+        )
+
+        # Wait for completion
+        load_job.result()
+        logger.info(f"Successfully wrote {len(predictions)} predictions to BigQuery")
+
     except Exception as e:
         logger.error(f"Error writing to BigQuery: {e}")
-        # Don't raise - log and continue
+        # Don't raise - log and continue (graceful degradation)
 
 
 def publish_completion_event(player_lookup: str, game_date: str, prediction_count: int):

@@ -13,6 +13,16 @@ Exits early when:
 - No games scheduled
 - Offseason (July-September)
 - Too far in past (>90 days)
+
+Backfill Mode:
+    When opts['backfill_mode'] = True, the historical date check is disabled.
+    This allows processing of dates older than 90 days during backfills.
+
+    Example:
+        processor.run({
+            'start_date': '2021-10-19',
+            'backfill_mode': True  # Disables historical check
+        })
 """
 
 from typing import Dict
@@ -41,9 +51,12 @@ class EarlyExitMixin:
     def run(self, opts: Dict) -> bool:
         """
         Enhanced run method with early exit checks.
+
+        Supports backfill_mode option to disable historical date check.
         """
         start_date = opts.get('start_date')
         end_date = opts.get('end_date')
+        backfill_mode = opts.get('backfill_mode', False)
 
         # Use start_date for checks (or game_date for backward compat)
         check_date = start_date or opts.get('game_date')
@@ -51,6 +64,9 @@ class EarlyExitMixin:
         if not check_date:
             # No date to check, proceed normally
             return super().run(opts)
+
+        if backfill_mode:
+            logger.info(f"BACKFILL_MODE: Historical date check disabled for {check_date}")
 
         # EARLY EXIT 1: No games scheduled
         if self.ENABLE_NO_GAMES_CHECK:
@@ -66,8 +82,8 @@ class EarlyExitMixin:
                 self._log_skip('offseason')
                 return True
 
-        # EARLY EXIT 3: Date too far in past
-        if self.ENABLE_HISTORICAL_DATE_CHECK:
+        # EARLY EXIT 3: Date too far in past (skip in backfill_mode)
+        if self.ENABLE_HISTORICAL_DATE_CHECK and not backfill_mode:
             if self._is_too_historical(check_date):
                 logger.info(f"{check_date} is too far in past, skipping")
                 self._log_skip('too_historical')

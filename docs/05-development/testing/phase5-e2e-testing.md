@@ -51,10 +51,10 @@ gcloud run services list --project=nba-props-platform --region=us-west2
 
 ### BigQuery Tables
 
-Required tables:
-- `nba_analytics.upcoming_player_game_context` (us-west2)
-- `nba_predictions.ml_feature_store_v2` (US)
-- `nba_predictions.player_prop_predictions` (US)
+Required tables (all in us-west2):
+- `nba_analytics.upcoming_player_game_context`
+- `nba_predictions.ml_feature_store_v2`
+- `nba_predictions.player_prop_predictions`
 
 ---
 
@@ -101,7 +101,7 @@ VALUES
 The worker loads features from this table to generate predictions.
 
 ```bash
-bq query --use_legacy_sql=false --location=US "
+bq query --use_legacy_sql=false --location=us-west2 "
 INSERT INTO \`nba-props-platform.nba_predictions.ml_feature_store_v2\`
 (
   player_lookup, game_date, game_id, team_abbr, opponent_team_abbr,
@@ -138,7 +138,7 @@ WHERE game_date = '${TEST_DATE}'
 "
 
 # Check ml_feature_store_v2
-bq query --use_legacy_sql=false --location=US "
+bq query --use_legacy_sql=false --location=us-west2 "
 SELECT player_lookup, game_date, feature_count, data_source
 FROM \`nba-props-platform.nba_predictions.ml_feature_store_v2\`
 WHERE game_date = '${TEST_DATE}'
@@ -152,7 +152,7 @@ WHERE game_date = '${TEST_DATE}'
 ### 2.1 Clear Any Existing Predictions (Optional)
 
 ```bash
-bq query --use_legacy_sql=false --location=US "
+bq query --use_legacy_sql=false --location=us-west2 "
 DELETE FROM \`nba-props-platform.nba_predictions.player_prop_predictions\`
 WHERE game_date = '${TEST_DATE}'
 "
@@ -206,7 +206,7 @@ Look for these log messages:
 ### 3.1 Count Predictions
 
 ```bash
-bq query --use_legacy_sql=false --location=US "
+bq query --use_legacy_sql=false --location=us-west2 "
 SELECT
   COUNT(*) as total_predictions,
   COUNT(DISTINCT player_lookup) as unique_players,
@@ -228,7 +228,7 @@ Expected output:
 ### 3.2 View Sample Predictions
 
 ```bash
-bq query --use_legacy_sql=false --location=US "
+bq query --use_legacy_sql=false --location=us-west2 "
 SELECT
   player_lookup,
   system_id,
@@ -245,7 +245,7 @@ LIMIT 20
 ### 3.3 Validate All Systems Present
 
 ```bash
-bq query --use_legacy_sql=false --location=US "
+bq query --use_legacy_sql=false --location=us-west2 "
 SELECT
   system_id,
   COUNT(*) as predictions,
@@ -272,13 +272,13 @@ Expected systems:
 
 ```bash
 # Remove test predictions
-bq query --use_legacy_sql=false --location=US "
+bq query --use_legacy_sql=false --location=us-west2 "
 DELETE FROM \`nba-props-platform.nba_predictions.player_prop_predictions\`
 WHERE game_date = '${TEST_DATE}'
 "
 
 # Remove mock features
-bq query --use_legacy_sql=false --location=US "
+bq query --use_legacy_sql=false --location=us-west2 "
 DELETE FROM \`nba-props-platform.nba_predictions.ml_feature_store_v2\`
 WHERE game_date = '${TEST_DATE}' AND data_source = 'mock_test'
 "
