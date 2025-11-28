@@ -863,11 +863,12 @@ class PrecomputeProcessorBase(RunHistoryMixin):
     # Quality Tracking
     # =========================================================================
     
-    def log_quality_issue(self, issue_type: str, severity: str, identifier: str, 
+    def log_quality_issue(self, issue_type: str, severity: str, identifier: str,
                          details: Dict):
         """
         Log data quality issues for review.
         Enhanced with notifications for high-severity issues.
+        Uses batch loading to avoid streaming buffer issues.
         """
         issue_record = {
             'issue_id': str(uuid.uuid4()),
@@ -880,13 +881,24 @@ class PrecomputeProcessorBase(RunHistoryMixin):
             'resolved': False,
             'created_at': datetime.now(timezone.utc).isoformat()
         }
-        
+
         # Track locally
         self.quality_issues.append(issue_record)
-        
+
         try:
             table_id = f"{self.project_id}.nba_processing.precompute_data_issues"
-            self.bq_client.insert_rows_json(table_id, [issue_record])
+
+            # Use batch loading via load_table_from_json
+            job_config = bigquery.LoadJobConfig(
+                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+                autodetect=True
+            )
+            load_job = self.bq_client.load_table_from_json(
+                [issue_record],
+                table_id,
+                job_config=job_config
+            )
+            load_job.result()  # Wait for completion
             
             # Send notification for high-severity issues
             if severity in ['CRITICAL', 'HIGH']:
@@ -916,7 +928,10 @@ class PrecomputeProcessorBase(RunHistoryMixin):
     # =========================================================================
     
     def log_processing_run(self, success: bool, error: str = None) -> None:
-        """Log processing run to monitoring table."""
+        """
+        Log processing run to monitoring table.
+        Uses batch loading to avoid streaming buffer issues.
+        """
         run_record = {
             'processor_name': self.__class__.__name__,
             'run_id': self.run_id,
@@ -931,10 +946,21 @@ class PrecomputeProcessorBase(RunHistoryMixin):
             'errors_json': json.dumps([error] if error else []),
             'created_at': datetime.now(timezone.utc).isoformat()
         }
-        
+
         try:
             table_id = f"{self.project_id}.nba_processing.precompute_processor_runs"
-            self.bq_client.insert_rows_json(table_id, [run_record])
+
+            # Use batch loading via load_table_from_json
+            job_config = bigquery.LoadJobConfig(
+                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+                autodetect=True
+            )
+            load_job = self.bq_client.load_table_from_json(
+                [run_record],
+                table_id,
+                job_config=job_config
+            )
+            load_job.result()  # Wait for completion
         except Exception as e:
             logger.warning(f"Failed to log processing run: {e}")
     

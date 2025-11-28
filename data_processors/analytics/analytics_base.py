@@ -104,7 +104,26 @@ class AnalyticsProcessorBase(RunHistoryMixin):
         # GCP clients
         self.bq_client = bigquery.Client()
         self.project_id = os.environ.get('GCP_PROJECT_ID', self.bq_client.project)
-        
+
+    @property
+    def is_backfill_mode(self) -> bool:
+        """Check if running in backfill mode (alerts suppressed)."""
+        return self.opts.get('backfill_mode', False)
+
+    def _send_notification(self, alert_func, *args, **kwargs):
+        """
+        Send notification alert unless in backfill mode.
+
+        In backfill mode, alerts are suppressed to avoid flooding
+        email/Slack when processing historical data.
+
+        Note: Named _send_notification to avoid collision with QualityMixin._send_alert
+        """
+        if self.is_backfill_mode:
+            logger.info(f"BACKFILL_MODE: Suppressing alert - {kwargs.get('title', args[0] if args else 'unknown')}")
+            return
+        return alert_func(*args, **kwargs)
+
     def run(self, opts: Optional[Dict] = None) -> bool:
         """
         Main entry point - returns True on success, False on failure.
@@ -169,7 +188,8 @@ class AnalyticsProcessorBase(RunHistoryMixin):
                 if not dep_check['all_critical_present']:
                     error_msg = f"Missing critical dependencies: {dep_check['missing']}"
                     logger.error(error_msg)
-                    notify_error(
+                    self._send_notification(
+                        notify_error,
                         title=f"Analytics Processor: Missing Dependencies - {self.__class__.__name__}",
                         message=error_msg,
                         details={
@@ -185,10 +205,11 @@ class AnalyticsProcessorBase(RunHistoryMixin):
                     self.set_alert_sent('error')
                     raise ValueError(error_msg)
 
-                # Handle stale data FAIL threshold
-                if dep_check.get('has_stale_fail'):
+                # Handle stale data FAIL threshold (skip in backfill mode)
+                if dep_check.get('has_stale_fail') and not self.is_backfill_mode:
                     error_msg = f"Stale dependencies (FAIL threshold): {dep_check['stale_fail']}"
-                    notify_error(
+                    self._send_notification(
+                        notify_error,
                         title=f"Analytics Processor: Stale Data - {self.__class__.__name__}",
                         message=error_msg,
                         details={
@@ -201,11 +222,14 @@ class AnalyticsProcessorBase(RunHistoryMixin):
                     )
                     self.set_alert_sent('error')
                     raise ValueError(error_msg)
+                elif dep_check.get('has_stale_fail') and self.is_backfill_mode:
+                    logger.info(f"BACKFILL_MODE: Ignoring stale data check - {dep_check['stale_fail']}")
 
                 # Warn about stale data (WARN threshold only)
                 if dep_check.get('has_stale_warn'):
                     logger.warning(f"Stale upstream data detected: {dep_check['stale_warn']}")
-                    notify_warning(
+                    self._send_notification(
+                        notify_warning,
                         title=f"Analytics Processor: Stale Data Warning - {self.__class__.__name__}",
                         message=f"Some sources are stale: {dep_check['stale_warn']}",
                         details={
@@ -272,9 +296,10 @@ class AnalyticsProcessorBase(RunHistoryMixin):
             logger.error("AnalyticsProcessorBase Error: %s", e, exc_info=True)
             sentry_sdk.capture_exception(e)
 
-            # Send notification for failure
+            # Send notification for failure (suppressed in backfill mode)
             try:
-                notify_error(
+                self._send_notification(
+                    notify_error,
                     title=f"Analytics Processor Failed: {self.__class__.__name__}",
                     message=f"Analytics calculation failed: {str(e)}",
                     details={
@@ -965,9 +990,10 @@ class AnalyticsProcessorBase(RunHistoryMixin):
         for required_opt in self.required_opts:
             if required_opt not in self.opts:
                 error_msg = f"Missing required option [{required_opt}]"
-                
+
                 try:
-                    notify_error(
+                    self._send_notification(
+                        notify_error,
                         title=f"Analytics Processor Configuration Error: {self.__class__.__name__}",
                         message=f"Missing required option: {required_opt}",
                         details={
@@ -981,7 +1007,7 @@ class AnalyticsProcessorBase(RunHistoryMixin):
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
-                
+
                 raise ValueError(error_msg)
     
     def set_additional_opts(self) -> None:
@@ -1001,7 +1027,8 @@ class AnalyticsProcessorBase(RunHistoryMixin):
         except Exception as e:
             logger.error(f"Failed to initialize BigQuery client: {e}")
             try:
-                notify_error(
+                self._send_notification(
+                    notify_error,
                     title=f"Analytics Processor Client Initialization Failed: {self.__class__.__name__}",
                     message="Unable to initialize BigQuery client",
                     details={
@@ -1034,7 +1061,8 @@ class AnalyticsProcessorBase(RunHistoryMixin):
         """Validate extracted data - child classes override."""
         if self.raw_data is None or (hasattr(self.raw_data, 'empty') and self.raw_data.empty):
             try:
-                notify_warning(
+                self._send_notification(
+                    notify_warning,
                     title=f"Analytics Processor No Data Extracted: {self.__class__.__name__}",
                     message="No data extracted from raw tables",
                     details={
@@ -1071,7 +1099,8 @@ class AnalyticsProcessorBase(RunHistoryMixin):
         if not self.transformed_data:
             logger.warning("No transformed data to save")
             try:
-                notify_warning(
+                self._send_notification(
+                    notify_warning,
                     title=f"Analytics Processor No Data to Save: {self.__class__.__name__}",
                     message="No analytics data calculated to save",
                     details={
@@ -1085,9 +1114,9 @@ class AnalyticsProcessorBase(RunHistoryMixin):
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
             return
-            
+
         table_id = f"{self.project_id}.{self.dataset_id}.{self.table_name}"
-        
+
         # Handle different data types
         if isinstance(self.transformed_data, list):
             rows = self.transformed_data
@@ -1096,7 +1125,8 @@ class AnalyticsProcessorBase(RunHistoryMixin):
         else:
             error_msg = f"Unexpected data type: {type(self.transformed_data)}"
             try:
-                notify_error(
+                self._send_notification(
+                    notify_error,
                     title=f"Analytics Processor Data Type Error: {self.__class__.__name__}",
                     message=error_msg,
                     details={
@@ -1180,7 +1210,8 @@ class AnalyticsProcessorBase(RunHistoryMixin):
             error_msg = f"Batch insert failed: {str(e)}"
             logger.error(error_msg)
             try:
-                notify_error(
+                self._send_notification(
+                    notify_error,
                     title=f"Analytics Processor Batch Insert Failed: {self.__class__.__name__}",
                     message=f"Failed to batch insert {len(rows)} analytics rows",
                     details={
@@ -1238,11 +1269,12 @@ class AnalyticsProcessorBase(RunHistoryMixin):
     # Quality Tracking
     # =========================================================================
     
-    def log_quality_issue(self, issue_type: str, severity: str, identifier: str, 
+    def log_quality_issue(self, issue_type: str, severity: str, identifier: str,
                          details: Dict):
         """
         Log data quality issues for review.
         Enhanced with notifications for high-severity issues.
+        Uses batch loading to avoid streaming buffer issues.
         """
         issue_record = {
             'issue_id': str(uuid.uuid4()),
@@ -1255,13 +1287,24 @@ class AnalyticsProcessorBase(RunHistoryMixin):
             'resolved': False,
             'created_at': datetime.now(timezone.utc).isoformat()
         }
-        
+
         # Track locally
         self.quality_issues.append(issue_record)
-        
+
         try:
             table_id = f"{self.project_id}.nba_processing.analytics_data_issues"
-            self.bq_client.insert_rows_json(table_id, [issue_record])
+
+            # Use batch loading via load_table_from_json
+            job_config = bigquery.LoadJobConfig(
+                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+                autodetect=True
+            )
+            load_job = self.bq_client.load_table_from_json(
+                [issue_record],
+                table_id,
+                job_config=job_config
+            )
+            load_job.result()  # Wait for completion
             
             # Send notification for high-severity issues
             if severity in ['CRITICAL', 'HIGH']:
@@ -1291,7 +1334,10 @@ class AnalyticsProcessorBase(RunHistoryMixin):
     # =========================================================================
     
     def log_processing_run(self, success: bool, error: str = None) -> None:
-        """Log processing run to monitoring table."""
+        """
+        Log processing run to monitoring table.
+        Uses batch loading to avoid streaming buffer issues.
+        """
         run_record = {
             'processor_name': self.__class__.__name__,
             'run_id': self.run_id,
@@ -1304,10 +1350,21 @@ class AnalyticsProcessorBase(RunHistoryMixin):
             'errors_json': json.dumps([error] if error else []),
             'created_at': datetime.now(timezone.utc).isoformat()
         }
-        
+
         try:
             table_id = f"{self.project_id}.nba_processing.analytics_processor_runs"
-            self.bq_client.insert_rows_json(table_id, [run_record])
+
+            # Use batch loading via load_table_from_json
+            job_config = bigquery.LoadJobConfig(
+                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+                autodetect=True
+            )
+            load_job = self.bq_client.load_table_from_json(
+                [run_record],
+                table_id,
+                job_config=job_config
+            )
+            load_job.result()  # Wait for completion
         except Exception as e:
             logger.warning(f"Failed to log processing run: {e}")
     
