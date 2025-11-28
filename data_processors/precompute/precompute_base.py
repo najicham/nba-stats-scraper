@@ -20,7 +20,7 @@ import json
 import logging
 import os
 import uuid
-from datetime import datetime, date, timezone
+from datetime import datetime, date, timezone, timedelta
 from typing import Dict, List, Optional
 from google.cloud import bigquery
 import sentry_sdk
@@ -34,6 +34,9 @@ from shared.utils.notification_system import (
 
 # Import run history mixin
 from shared.processors.mixins import RunHistoryMixin
+
+# Import completeness checker and DependencyError for defensive checks
+from shared.utils.completeness_checker import CompletenessChecker, DependencyError
 
 # Configure logging
 logging.basicConfig(
@@ -145,6 +148,19 @@ class PrecomputeProcessorBase(RunHistoryMixin):
                 trigger_message_id=opts.get('trigger_message_id'),
                 parent_processor=opts.get('parent_processor')
             )
+
+            # ═══════════════════════════════════════════════════════════════
+            # DEFENSIVE CHECKS: Upstream Status + Gap Detection
+            # ═══════════════════════════════════════════════════════════════
+            # Enabled by strict_mode flag (default: enabled for production)
+            # Checks for:
+            #   1. Upstream processor failures (prevents processing with failed deps)
+            #   2. Gaps in historical data (prevents processing with incomplete windows)
+            # ═══════════════════════════════════════════════════════════════
+            strict_mode = opts.get('strict_mode', True)  # Default: enabled
+            analysis_date = opts.get('analysis_date')
+
+            self._run_defensive_checks(analysis_date, strict_mode)
 
             # Check dependencies BEFORE extracting
             self.mark_time("dependency_check")
@@ -571,7 +587,171 @@ class PrecomputeProcessorBase(RunHistoryMixin):
         if not self.missing_dependencies_list:
             return None
         return ", ".join(self.missing_dependencies_list)
-    
+
+    # =========================================================================
+    # Defensive Checks (Upstream Status + Gap Detection)
+    # =========================================================================
+
+    @property
+    def is_backfill_mode(self) -> bool:
+        """
+        Detect if we're in backfill mode.
+
+        Backfill mode indicators:
+        - backfill_mode=True in opts
+        - skip_downstream_trigger=True (implies backfill)
+
+        Returns:
+            bool: True if in backfill mode
+        """
+        return (
+            self.opts.get('backfill_mode', False) or
+            self.opts.get('skip_downstream_trigger', False)
+        )
+
+    def _run_defensive_checks(self, analysis_date: date, strict_mode: bool) -> None:
+        """
+        Run defensive checks to prevent processing with incomplete upstream data.
+
+        Defensive checks validate that upstream Phase 3 (and Phase 4) processors
+        completed successfully and that there are no gaps in the lookback window.
+
+        Only runs when:
+        - strict_mode=True (default)
+        - is_backfill_mode=False (checks bypassed during backfills)
+
+        Checks:
+        1. Upstream processor status: Did upstream Phase 3 processor succeed yesterday?
+        2. Gap detection: Any missing dates in the lookback window?
+
+        Args:
+            analysis_date: Date being processed
+            strict_mode: Whether to enforce defensive checks (default: True)
+
+        Raises:
+            DependencyError: If defensive checks fail
+
+        Configuration Required (in child classes):
+            - upstream_processor_name: Name of upstream Phase 3 processor (e.g., 'PlayerGameSummaryProcessor')
+            - upstream_table: Upstream Phase 3 table (e.g., 'nba_analytics.player_game_summary')
+            - lookback_days: Number of days to check for gaps (e.g., 10)
+        """
+        # Skip defensive checks in backfill mode
+        if self.is_backfill_mode:
+            logger.info("⏭️  BACKFILL MODE: Skipping defensive checks")
+            return
+
+        # Skip if strict mode disabled
+        if not strict_mode:
+            logger.info("⏭️  STRICT MODE DISABLED: Skipping defensive checks")
+            return
+
+        logger.info("🛡️  Running defensive checks...")
+
+        try:
+            # Initialize completeness checker
+            checker = CompletenessChecker(self.bq_client, self.project_id)
+
+            # DEFENSE 1: Check upstream Phase 3 processor status
+            # Check if yesterday's Phase 3 processor succeeded
+            # (Phase 4 typically runs day-of, so check day-before)
+            if hasattr(self, 'upstream_processor_name') and self.upstream_processor_name:
+                yesterday = analysis_date - timedelta(days=1)
+
+                logger.info(f"  Checking upstream processor: {self.upstream_processor_name} for {yesterday}")
+
+                status = checker.check_upstream_processor_status(
+                    processor_name=self.upstream_processor_name,
+                    data_date=yesterday
+                )
+
+                if not status['safe_to_process']:
+                    error_msg = f"⚠️ Upstream processor {self.upstream_processor_name} failed for {yesterday}"
+                    logger.error(error_msg)
+
+                    # Send alert with recovery details
+                    try:
+                        notify_error(
+                            title=f"Precompute BLOCKED: Upstream Failure - {self.__class__.__name__}",
+                            message=error_msg,
+                            details={
+                                'processor': self.__class__.__name__,
+                                'run_id': self.run_id,
+                                'blocked_date': str(analysis_date),
+                                'missing_upstream_date': str(yesterday),
+                                'upstream_processor': self.upstream_processor_name,
+                                'upstream_error': status['error_message'],
+                                'upstream_run_id': status.get('run_id'),
+                                'resolution': f"Fix {self.upstream_processor_name} for {yesterday} first",
+                                'table': self.table_name
+                            },
+                            processor_name=self.__class__.__name__
+                        )
+                        self.set_alert_sent('error')
+                    except Exception as notify_ex:
+                        logger.warning(f"Failed to send notification: {notify_ex}")
+
+                    raise DependencyError(
+                        f"Upstream {self.upstream_processor_name} failed for {yesterday}. "
+                        f"Error: {status['error_message']}"
+                    )
+
+            # DEFENSE 2: Check for gaps in upstream data range
+            # Check Phase 3 table for missing dates in lookback window
+            if hasattr(self, 'upstream_table') and hasattr(self, 'lookback_days'):
+                lookback_start = analysis_date - timedelta(days=self.lookback_days)
+
+                logger.info(f"  Checking for gaps in {self.upstream_table} from {lookback_start} to {analysis_date}")
+
+                gaps = checker.check_date_range_completeness(
+                    table=self.upstream_table,
+                    date_column='game_date',
+                    start_date=lookback_start,
+                    end_date=analysis_date
+                )
+
+                if gaps['has_gaps']:
+                    error_msg = f"⚠️ {gaps['gap_count']} gaps in {self.upstream_table} lookback window"
+                    logger.error(error_msg)
+
+                    # Send alert with recovery details
+                    try:
+                        notify_error(
+                            title=f"Precompute BLOCKED: Data Gaps - {self.__class__.__name__}",
+                            message=error_msg,
+                            details={
+                                'processor': self.__class__.__name__,
+                                'run_id': self.run_id,
+                                'analysis_date': str(analysis_date),
+                                'lookback_window': f"{lookback_start} to {analysis_date}",
+                                'missing_dates': [str(d) for d in gaps['missing_dates'][:10]],  # Show first 10
+                                'gap_count': gaps['gap_count'],
+                                'coverage_pct': gaps['coverage_pct'],
+                                'upstream_table': self.upstream_table,
+                                'resolution': 'Backfill missing dates in upstream table before proceeding',
+                                'table': self.table_name
+                            },
+                            processor_name=self.__class__.__name__
+                        )
+                        self.set_alert_sent('error')
+                    except Exception as notify_ex:
+                        logger.warning(f"Failed to send notification: {notify_ex}")
+
+                    raise DependencyError(
+                        f"{gaps['gap_count']} gaps detected in historical data "
+                        f"({lookback_start} to {analysis_date}). "
+                        f"Missing dates: {gaps['missing_dates'][:5]}"
+                    )
+
+            logger.info("✅ Defensive checks passed - safe to process")
+
+        except DependencyError:
+            # Re-raise DependencyError (already logged/alerted)
+            raise
+        except Exception as e:
+            # Log but don't fail on defensive check errors (defensive checks are themselves optional)
+            logger.warning(f"Defensive checks encountered error (non-blocking): {e}")
+
     # =========================================================================
     # Options Management
     # =========================================================================

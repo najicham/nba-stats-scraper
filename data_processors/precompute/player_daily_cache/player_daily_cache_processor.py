@@ -103,6 +103,11 @@ class PlayerDailyCacheProcessor(
         'cache_version'
     ]
 
+    # Defensive check configuration (upstream Phase 3 dependency)
+    upstream_processor_name = 'PlayerGameSummaryProcessor'
+    upstream_table = 'nba_analytics.player_game_summary'
+    lookback_days = 10  # Must match data requirements
+
     def __init__(self):
         """Initialize the player daily cache processor."""
         super().__init__()

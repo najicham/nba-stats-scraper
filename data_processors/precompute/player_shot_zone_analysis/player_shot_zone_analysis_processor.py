@@ -88,15 +88,20 @@ class PlayerShotZoneAnalysisProcessor(
         'data_quality_tier', 'calculation_notes'
     ]
 
+    # Defensive check configuration (upstream Phase 3 dependency)
+    upstream_processor_name = 'PlayerGameSummaryProcessor'
+    upstream_table = 'nba_analytics.player_game_summary'
+    lookback_days = 10  # Must match min_games_required
+
     def __init__(self):
         """Initialize the processor."""
         super().__init__()
-        
+
         # Table configuration
         self.table_name = 'player_shot_zone_analysis'
         self.entity_type = 'player'
         self.entity_field = 'player_lookup'
-        
+
         # Processing requirements
         self.min_games_required = 10  # Minimum games for quality analysis
         self.sample_window = 10       # Primary analysis window

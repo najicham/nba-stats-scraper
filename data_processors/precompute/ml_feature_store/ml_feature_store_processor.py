@@ -103,13 +103,18 @@ class MLFeatureStoreProcessor(
     # Processor configuration
     table_name = "ml_feature_store_v2"
     dataset_id = "nba_predictions"  # Cross-dataset write!
-    
+
     # Required options
     required_opts = ['analysis_date']
-    
+
     # Feature version
     feature_version = FEATURE_VERSION
     feature_count = FEATURE_COUNT
+
+    # Defensive check configuration (upstream Phase 3 dependency)
+    upstream_processor_name = 'PlayerGameSummaryProcessor'
+    upstream_table = 'nba_analytics.player_game_summary'
+    lookback_days = 10  # Must match feature requirements
 
     # Smart Idempotency: Fields to hash (meaningful business fields only)
     HASH_FIELDS = [

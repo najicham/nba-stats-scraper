@@ -77,16 +77,21 @@ class TeamDefenseZoneAnalysisProcessor(
     # Configuration
     required_opts = ['analysis_date']
     additional_opts = ['season_year']
-    
+
     # BigQuery settings
     dataset_id = "nba_precompute"
     table_name = "team_defense_zone_analysis"
     processing_strategy = "MERGE_UPDATE"
-    
+
     # Processing parameters
     min_games_required = 15  # Minimum games for calculation
     league_avg_lookback_days = 30  # Days to look back for league averages (configurable)
     early_season_threshold_days = 14  # Days to consider "early season"
+
+    # Defensive check configuration (upstream Phase 3 dependency)
+    upstream_processor_name = 'TeamDefenseGameSummaryProcessor'
+    upstream_table = 'nba_analytics.team_defense_game_summary'
+    lookback_days = 15  # Must match min_games_required
 
     # Smart Idempotency: Fields to hash (meaningful business fields only)
     HASH_FIELDS = [

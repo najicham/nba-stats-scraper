@@ -79,15 +79,20 @@ class PlayerCompositeFactorsProcessor(
     table_name = "player_composite_factors"
     dataset_id = "nba_precompute"
     processing_strategy = "MERGE_UPDATE"
-    
+
     # Required options
     required_opts = ['analysis_date']
-    
+
     # Calculation version
     calculation_version = "v1_4factors"
-    
+
     # League constants
     league_avg_pace = 100.0  # Baseline NBA pace
+
+    # Defensive check configuration (upstream Phase 3 dependency)
+    upstream_processor_name = 'UpcomingPlayerGameContextProcessor'
+    upstream_table = 'nba_analytics.upcoming_player_game_context'
+    lookback_days = 14  # Check for upcoming games context
 
     # Smart Idempotency: Fields to hash (meaningful business fields only)
     HASH_FIELDS = [
