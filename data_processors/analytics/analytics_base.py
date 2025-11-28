@@ -1346,7 +1346,7 @@ class AnalyticsProcessorBase(RunHistoryMixin):
             'date_range_start': self.opts.get('start_date'),
             'date_range_end': self.opts.get('end_date'),
             'records_processed': self.stats.get('rows_processed', 0),
-            'duration_seconds': self.stats.get('total_runtime', 0),
+            'duration_seconds': float(self.stats.get('total_runtime', 0.0)),
             'errors_json': json.dumps([error] if error else []),
             'created_at': datetime.now(timezone.utc).isoformat()
         }

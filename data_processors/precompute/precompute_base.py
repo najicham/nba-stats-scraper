@@ -939,10 +939,10 @@ class PrecomputeProcessorBase(RunHistoryMixin):
             'success': success,
             'analysis_date': str(self.opts.get('analysis_date')),
             'records_processed': self.stats.get('rows_processed', 0),
-            'duration_seconds': self.stats.get('total_runtime', 0),
+            'duration_seconds': float(self.stats.get('total_runtime', 0.0)),
             'dependency_check_passed': self.dependency_check_passed,
-            'data_completeness_pct': self.data_completeness_pct,
-            'upstream_data_age_hours': self.upstream_data_age_hours,
+            'data_completeness_pct': float(self.data_completeness_pct) if self.data_completeness_pct is not None else None,
+            'upstream_data_age_hours': float(self.upstream_data_age_hours) if self.upstream_data_age_hours is not None else None,
             'errors_json': json.dumps([error] if error else []),
             'created_at': datetime.now(timezone.utc).isoformat()
         }
