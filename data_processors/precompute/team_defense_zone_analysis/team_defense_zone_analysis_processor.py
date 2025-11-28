@@ -35,7 +35,6 @@ from data_processors.raw.smart_idempotency_mixin import SmartIdempotencyMixin
 
 # Import utilities (Bootstrap period support - Week 5)
 from shared.config.nba_season_dates import (
-    get_season_start_date,
     is_early_season,
     get_season_year_from_date
 )
@@ -204,11 +203,12 @@ class TeamDefenseZoneAnalysisProcessor(
             analysis_date = self.opts['analysis_date']
             self.opts['season_year'] = get_season_year_from_date(analysis_date)
         
-        # Get season start date for early season detection
+        # Get season start date for completeness checking
+        # Use hardcoded October 1 as approximate season boundary (actual skip logic uses schedule service)
         season_year = self.opts['season_year']
-        self.season_start_date = get_season_start_date(season_year)
-        
-        logger.info(f"Processing season {season_year}, start date: {self.season_start_date}")
+        self.season_start_date = date(season_year, 10, 1)
+
+        logger.info(f"Processing season {season_year}, season boundary: {self.season_start_date}")
     
     def _check_table_data(self, table_name: str, analysis_date: date, 
                           config: dict) -> tuple:
