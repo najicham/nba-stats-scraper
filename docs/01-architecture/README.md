@@ -80,6 +80,16 @@
    - Dependency check queries
    - **Critical for backfill operations and Phase 4 processors**
 
+### 9. **pipeline-integrity.md** 🛡️ PIPELINE SAFETY (15 minutes) ⚠️ *Awaiting Field Testing*
+   - **Created:** 2025-11-28
+   - **Status:** Production-ready code, awaiting field testing
+   - **Prevents cascading failures and data gaps**
+   - Cascade control for safe backfills (`--skip-downstream-trigger`)
+   - Defensive checks (upstream status, gap detection)
+   - Backfill strategy for 4 seasons
+   - **Read before doing historical backfills or investigating pipeline failures**
+   - Detailed docs: `docs/08-projects/current/pipeline-integrity/`
+
 ---
 
 ## 🗂️ Document Organization

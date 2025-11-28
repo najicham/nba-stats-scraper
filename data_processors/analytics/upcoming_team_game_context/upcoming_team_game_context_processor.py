@@ -1709,36 +1709,42 @@ class UpcomingTeamGameContextProcessor(
 def main():
     """
     Main entry point for processor.
-    
+
     Usage:
         python processor.py --start_date=2024-11-01 --end_date=2024-11-07
     """
     import argparse
-    
+
     parser = argparse.ArgumentParser(description='Upcoming Team Game Context Processor')
     parser.add_argument('--start_date', required=True, help='Start date (YYYY-MM-DD)')
     parser.add_argument('--end_date', required=True, help='End date (YYYY-MM-DD)')
     parser.add_argument('--debug', action='store_true', help='Enable debug logging')
-    
+    parser.add_argument(
+        '--skip-downstream-trigger',
+        action='store_true',
+        help='Disable Pub/Sub trigger to Phase 4 (for backfills)'
+    )
+
     args = parser.parse_args()
-    
+
     # Configure logging
     log_level = logging.DEBUG if args.debug else logging.INFO
     logging.basicConfig(
         level=log_level,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
-    
+
     # Parse dates
     from datetime import datetime as dt
     start_date = dt.strptime(args.start_date, '%Y-%m-%d').date()
     end_date = dt.strptime(args.end_date, '%Y-%m-%d').date()
-    
+
     # Create and run processor
     processor = UpcomingTeamGameContextProcessor()
     processor.opts = {
         'start_date': start_date,
-        'end_date': end_date
+        'end_date': end_date,
+        'skip_downstream_trigger': args.skip_downstream_trigger
     }
     
     try:

@@ -622,37 +622,43 @@ class NbacPlayerListProcessor(SmartIdempotencyMixin, ProcessorBase):
 # CLI entry point
 if __name__ == "__main__":
     import argparse
-    
+
     parser = argparse.ArgumentParser(description="Process NBA.com player list")
     parser.add_argument("--bucket", default="nba-scraped-data", help="GCS bucket name")
     parser.add_argument("--file-path", help="Path to file in bucket")
     parser.add_argument("--date", help="Date to process (YYYY-MM-DD), discovers latest file automatically")
     parser.add_argument("--project-id", default="nba-props-platform", help="GCP project ID")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
-    
+    parser.add_argument(
+        '--skip-downstream-trigger',
+        action='store_true',
+        help='Disable Pub/Sub trigger to Phase 3 (for backfills)'
+    )
+
     args = parser.parse_args()
-    
+
     if args.debug:
         logging.basicConfig(level=logging.DEBUG)
     else:
         logging.basicConfig(level=logging.INFO)
-    
+
     # Require either file-path or date
     if not args.file_path and not args.date:
         parser.error("Must provide either --file-path or --date")
-    
+
     # Build opts dict
     opts = {
         'bucket': args.bucket,
-        'project_id': args.project_id
+        'project_id': args.project_id,
+        'skip_downstream_trigger': args.skip_downstream_trigger
     }
-    
+
     if args.file_path:
         opts['file_path'] = args.file_path
-    
+
     if args.date:
         opts['date'] = args.date
-    
+
     # Run processor
     processor = NbacPlayerListProcessor()
     success = processor.run(opts)

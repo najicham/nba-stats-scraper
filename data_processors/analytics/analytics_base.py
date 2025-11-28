@@ -19,7 +19,7 @@ import json
 import logging
 import os
 import uuid
-from datetime import datetime, date, timezone
+from datetime import datetime, date, timezone, timedelta
 from typing import Dict, List, Optional
 from google.cloud import bigquery
 from google.cloud import pubsub_v1
@@ -34,6 +34,9 @@ from shared.utils.notification_system import (
 
 # Import run history mixin
 from shared.processors.mixins import RunHistoryMixin
+
+# Import completeness checking for defensive checks
+from shared.utils.completeness_checker import CompletenessChecker, DependencyError
 
 # Configure logging
 logging.basicConfig(
@@ -248,6 +251,111 @@ class AnalyticsProcessorBase(RunHistoryMixin):
                               f"Dependencies validated in {dep_check_seconds:.1f}s")
             else:
                 logger.info("No dependency checking configured for this processor")
+
+            # ═══════════════════════════════════════════════════════════════
+            # DEFENSIVE CHECKS: Upstream Status + Gap Detection
+            # ═══════════════════════════════════════════════════════════════
+            # Enabled by strict_mode flag (default: enabled for production)
+            # Checks for:
+            #   1. Upstream processor failures (prevents processing with failed deps)
+            #   2. Gaps in historical data (prevents processing with incomplete windows)
+            # ═══════════════════════════════════════════════════════════════
+            strict_mode = self.opts.get('strict_mode', True)  # Default: enabled
+
+            if strict_mode and not self.is_backfill_mode:
+                logger.info("🔒 STRICT MODE: Running defensive checks...")
+
+                try:
+                    # Initialize completeness checker
+                    checker = CompletenessChecker(self.bq_client, self.project_id)
+
+                    # DEFENSE 1: Check if yesterday's upstream processor succeeded
+                    # (Prevents cascade failure scenario where Monday fails, Tuesday runs anyway)
+                    analysis_date = self.opts.get('end_date') or self.opts.get('start_date')
+                    if analysis_date and hasattr(self, 'upstream_processor_name'):
+                        yesterday = analysis_date - timedelta(days=1) if isinstance(analysis_date, date) else None
+
+                        if yesterday:
+                            status = checker.check_upstream_processor_status(
+                                processor_name=self.upstream_processor_name,
+                                data_date=yesterday
+                            )
+
+                            if not status['safe_to_process']:
+                                error_msg = f"⚠️ Upstream processor {self.upstream_processor_name} failed for {yesterday}"
+                                logger.error(error_msg)
+                                self._send_notification(
+                                    notify_error,
+                                    title=f"Analytics BLOCKED: Upstream Failure - {self.__class__.__name__}",
+                                    message=error_msg,
+                                    details={
+                                        'processor': self.__class__.__name__,
+                                        'run_id': self.run_id,
+                                        'blocked_date': str(analysis_date),
+                                        'missing_upstream_date': str(yesterday),
+                                        'upstream_processor': self.upstream_processor_name,
+                                        'upstream_error': status['error_message'],
+                                        'upstream_run_id': status['run_id'],
+                                        'resolution': f'Fix {self.upstream_processor_name} for {yesterday} first'
+                                    },
+                                    processor_name=self.__class__.__name__
+                                )
+                                self.set_alert_sent('error')
+                                raise DependencyError(
+                                    f"Upstream {self.upstream_processor_name} failed for {yesterday}",
+                                    details=status
+                                )
+
+                    # DEFENSE 2: Check for gaps in upstream data range
+                    # (Prevents processing with missing dates in lookback window)
+                    if hasattr(self, 'upstream_table') and hasattr(self, 'lookback_days'):
+                        lookback_start = analysis_date - timedelta(days=self.lookback_days)
+
+                        gaps = checker.check_date_range_completeness(
+                            table=self.upstream_table,
+                            date_column='game_date',
+                            start_date=lookback_start,
+                            end_date=analysis_date
+                        )
+
+                        if gaps['has_gaps']:
+                            error_msg = f"⚠️ {gaps['gap_count']} gaps in {self.upstream_table} lookback window"
+                            logger.error(error_msg)
+                            self._send_notification(
+                                notify_error,
+                                title=f"Analytics BLOCKED: Data Gaps - {self.__class__.__name__}",
+                                message=error_msg,
+                                details={
+                                    'processor': self.__class__.__name__,
+                                    'run_id': self.run_id,
+                                    'analysis_date': str(analysis_date),
+                                    'lookback_window': f"{lookback_start} to {analysis_date}",
+                                    'missing_dates': [str(d) for d in gaps['missing_dates']],
+                                    'gap_count': gaps['gap_count'],
+                                    'coverage_pct': gaps['coverage_pct'],
+                                    'resolution': 'Backfill missing dates first'
+                                },
+                                processor_name=self.__class__.__name__
+                            )
+                            self.set_alert_sent('error')
+                            raise DependencyError(
+                                f"{gaps['gap_count']} gaps in historical data",
+                                details=gaps
+                            )
+
+                    logger.info("✅ Defensive checks passed - safe to process")
+
+                except DependencyError:
+                    # Re-raise DependencyError (already logged/alerted)
+                    raise
+                except Exception as e:
+                    # Log but don't fail on defensive check errors
+                    logger.warning(f"Defensive checks failed (non-blocking): {e}")
+
+            elif self.is_backfill_mode:
+                logger.info("⏭️  BACKFILL MODE: Skipping defensive checks")
+            elif not strict_mode:
+                logger.info("⏭️  STRICT MODE DISABLED: Skipping defensive checks")
 
             # Extract from raw tables
             self.mark_time("extract")
@@ -576,7 +684,14 @@ class AnalyticsProcessorBase(RunHistoryMixin):
                 age_hours = None
 
             # Determine if exists based on minimum count
-            expected_min = config.get('expected_count_min', 1)
+            # In backfill mode, use 1 (any data present) instead of expected_count_min
+            # This allows processing dates with fewer games (e.g., early season)
+            if self.is_backfill_mode:
+                expected_min = 1
+                if config.get('expected_count_min', 1) > 1:
+                    logger.debug(f"BACKFILL_MODE: Using expected_count_min=1 instead of {config.get('expected_count_min')}")
+            else:
+                expected_min = config.get('expected_count_min', 1)
             exists = row_count >= expected_min
 
             details = {
@@ -1385,7 +1500,13 @@ class AnalyticsProcessorBase(RunHistoryMixin):
         logger.info("ANALYTICS_STATS %s", json.dumps(summary))
 
         # Publish completion message to trigger Phase 4 (if target table is set)
-        if self.table_name:
+        # Can be disabled with skip_downstream_trigger flag for backfills
+        if self.opts.get('skip_downstream_trigger', False):
+            logger.info(
+                f"⏸️  Skipping downstream trigger (backfill mode) - "
+                f"Phase 4 will not be auto-triggered for {self.table_name}"
+            )
+        elif self.table_name:
             self._publish_completion_message(success=True)
     
     def get_analytics_stats(self) -> Dict:

@@ -786,15 +786,20 @@ def batch_process_rosters(bucket: str, date: str, project_id: str, team: str = N
 
 if __name__ == "__main__":
     import argparse
-    
+
     parser = argparse.ArgumentParser(description="Process ESPN team roster data (OPTIMIZED v2)")
     parser.add_argument("--bucket", default="nba-scraped-data", help="GCS bucket name")
     parser.add_argument("--date", required=True, help="Date to process (YYYY-MM-DD)")
     parser.add_argument("--team", help="Process specific team only (e.g., LAL)")
     parser.add_argument("--project-id", default="nba-props-platform", help="GCP project ID")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
-    parser.add_argument("--batch", action="store_true", 
+    parser.add_argument("--batch", action="store_true",
                        help="🚀 Batch mode v2: Parallel + batch DELETE (RECOMMENDED - 3x faster)")
+    parser.add_argument(
+        '--skip-downstream-trigger',
+        action='store_true',
+        help='Disable Pub/Sub trigger to Phase 3 (for backfills)'
+    )
     
     args = parser.parse_args()
     
@@ -895,13 +900,14 @@ if __name__ == "__main__":
             logger.info(f"\nProcessing {team_abbr}: {file_path}...")
             
             processor = EspnTeamRosterProcessor()
-            
+
             opts = {
                 'bucket': args.bucket,
                 'file_path': file_path,
-                'project_id': args.project_id
+                'project_id': args.project_id,
+                'skip_downstream_trigger': args.skip_downstream_trigger
             }
-            
+
             success = processor.run(opts)
             
             if success:

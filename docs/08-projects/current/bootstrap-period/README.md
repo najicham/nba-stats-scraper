@@ -1,21 +1,210 @@
-# Bootstrap Period Design Project
+# Bootstrap Period Implementation - Documentation Index
 
-**Status:** ✅ COMPLETE - Recommendation Ready for Implementation
-**Date:** 2025-11-27
-**Priority:** Medium
+**Status:** 🧪 Testing Phase - Implementation Complete, Awaiting Validation
+**Date:** 2025-11-27 (Updated)
 **Decision:** **Option A: Current-Season-Only** ⭐
 
 ---
 
-## Quick Links
+## 📋 TL;DR - Start Here
 
-- 🚀 **[HANDOFF DOCUMENT](../../../09-handoff/2025-11-27-bootstrap-period-handoff.md)** - **NEW DEVELOPER START HERE** - Complete implementation guide
-- ⭐ **[EXECUTIVE SUMMARY](./EXECUTIVE-SUMMARY.md)** - **DECISION MAKER START HERE** - Final recommendation with all test results
-- 📊 **[Comprehensive Testing Plan & Results](./comprehensive-testing-plan.md)** - All 4 test suites with findings
-- 🎯 **[Preliminary Findings](./preliminary-findings.md)** - Fast Track results (90 min investigation)
-- 📋 **[Full Investigation Findings](./investigation-findings.md)** - Detailed codebase analysis
-- 📖 **[Design Decision Document](./bootstrap-design-decision.md)** - Complete design options
-- ❓ **[Validation Questions Answered](./validation-questions-answered.md)** - Q&A about Phase 5, role changes, validation
+**New to this project?** Read these 3 docs in order:
+
+1. **[IMPLEMENTATION-COMPLETE.md](./IMPLEMENTATION-COMPLETE.md)** - What we built (5 min read) ⭐
+2. **[TESTING-GUIDE.md](./TESTING-GUIDE.md)** - How to test it (10 min read) ⭐
+3. **[BACKFILL-BEHAVIOR.md](./BACKFILL-BEHAVIOR.md)** - How backfills work (5 min read) ⭐
+
+**Want background on the decision?** See [Investigation & Background](#-investigation--background-7-docs) section.
+
+---
+
+## 📁 All Documents (20 Files)
+
+### 🎯 Essential Reading - Implementation (3 docs)
+
+| Document | Purpose | Read Time |
+|----------|---------|-----------|
+| **[IMPLEMENTATION-COMPLETE.md](./IMPLEMENTATION-COMPLETE.md)** | What was built, code changes, next steps | 5 min |
+| **[TESTING-GUIDE.md](./TESTING-GUIDE.md)** | How to test (unit tests, SQL verification) | 10 min |
+| **[BACKFILL-BEHAVIOR.md](./BACKFILL-BEHAVIOR.md)** | How backfills automatically handle bootstrap | 5 min |
+
+### 🏗️ Architecture & Design (5 docs)
+
+| Document | Purpose | Read Time |
+|----------|---------|-----------|
+| **[EARLY-SEASON-STRATEGY.md](./EARLY-SEASON-STRATEGY.md)** | Data flow during days 0-6 | 8 min |
+| **[CROSS-SEASON-DATA-POLICY.md](./CROSS-SEASON-DATA-POLICY.md)** | When to use historical vs current season data | 10 min |
+| **[PARTIAL-WINDOWS-AND-NULL-HANDLING.md](./PARTIAL-WINDOWS-AND-NULL-HANDLING.md)** | How we handle L10 averages with 7 games | 8 min |
+| **[METADATA-PROPAGATION.md](./METADATA-PROPAGATION.md)** | What metadata flows Phase 4 → Phase 5 | 8 min |
+| **[INJURY-AND-QUALITY-SCORING.md](./INJURY-AND-QUALITY-SCORING.md)** | How injuries affect quality scores | 8 min |
+
+### 🔧 Implementation Details (3 docs)
+
+| Document | Purpose | Read Time |
+|----------|---------|-----------|
+| **[SCHEDULE-SERVICE-INTEGRATION.md](./SCHEDULE-SERVICE-INTEGRATION.md)** | How season dates are queried from DB | 6 min |
+| **[FILES-TO-MODIFY.md](./FILES-TO-MODIFY.md)** | Quick checklist of all 13 files modified | 3 min |
+| **[IMPLEMENTATION-PLAN.md](./IMPLEMENTATION-PLAN.md)** | Original detailed plan with Q&A | 15 min |
+
+### 📊 Operations & Monitoring (1 doc)
+
+| Document | Purpose | Read Time |
+|----------|---------|-----------|
+| **[DATA-QUALITY-VISIBILITY.md](./DATA-QUALITY-VISIBILITY.md)** | SQL queries + Grafana for monitoring | 10 min |
+
+### 📚 Investigation & Background (7 docs)
+
+| Document | Purpose | Read Time |
+|----------|---------|-----------|
+| **[HANDOFF DOCUMENT](../../../09-handoff/2025-11-27-bootstrap-period-handoff.md)** | Original handoff - complete investigation | 20 min |
+| **[EXECUTIVE-SUMMARY.md](./EXECUTIVE-SUMMARY.md)** | Investigation summary & recommendation | 5 min |
+| **[investigation-findings.md](./investigation-findings.md)** | Detailed investigation of bootstrap period | 10 min |
+| **[bootstrap-design-decision.md](./bootstrap-design-decision.md)** | Why Option A (current-season-only) | 8 min |
+| **[comprehensive-testing-plan.md](./comprehensive-testing-plan.md)** | Original testing plan | 10 min |
+| **[validation-questions-answered.md](./validation-questions-answered.md)** | Q&A from investigation | 8 min |
+| **[preliminary-findings.md](./preliminary-findings.md)** | Early investigation notes | 5 min |
+
+### 📝 Session Notes (1 doc)
+
+| Document | Purpose | Read Time |
+|----------|---------|-----------|
+| **[SESSION-SUMMARY-2025-11-27.md](./SESSION-SUMMARY-2025-11-27.md)** | Implementation session timeline | 5 min |
+
+---
+
+## 🗂️ Reading Paths by Use Case
+
+### "I need to understand what was built"
+1. [IMPLEMENTATION-COMPLETE.md](./IMPLEMENTATION-COMPLETE.md) - Overview ⭐
+2. [FILES-TO-MODIFY.md](./FILES-TO-MODIFY.md) - What changed
+3. [EARLY-SEASON-STRATEGY.md](./EARLY-SEASON-STRATEGY.md) - How it works
+
+### "I need to test/validate this"
+1. [TESTING-GUIDE.md](./TESTING-GUIDE.md) - All testing steps ⭐
+2. [DATA-QUALITY-VISIBILITY.md](./DATA-QUALITY-VISIBILITY.md) - SQL queries
+
+### "I need to run a backfill"
+1. [BACKFILL-BEHAVIOR.md](./BACKFILL-BEHAVIOR.md) - Complete guide ⭐
+
+### "I'm adding ML features (CRITICAL!)"
+1. [CROSS-SEASON-DATA-POLICY.md](./CROSS-SEASON-DATA-POLICY.md) - ⚠️ **MUST READ**
+2. [METADATA-PROPAGATION.md](./METADATA-PROPAGATION.md) - Available metadata
+3. [PARTIAL-WINDOWS-AND-NULL-HANDLING.md](./PARTIAL-WINDOWS-AND-NULL-HANDLING.md) - Data handling
+
+### "I'm debugging an issue"
+1. [DATA-QUALITY-VISIBILITY.md](./DATA-QUALITY-VISIBILITY.md) - SQL queries
+2. [INJURY-AND-QUALITY-SCORING.md](./INJURY-AND-QUALITY-SCORING.md) - Edge cases
+
+### "I want background/context"
+1. [EXECUTIVE-SUMMARY.md](./EXECUTIVE-SUMMARY.md) - Investigation overview
+2. [bootstrap-design-decision.md](./bootstrap-design-decision.md) - Why Option A
+
+---
+
+## 🎓 Reading Paths by Role
+
+### Data Engineer / Ops (30 min)
+**Priority:**
+1. IMPLEMENTATION-COMPLETE.md
+2. TESTING-GUIDE.md
+3. BACKFILL-BEHAVIOR.md
+4. DATA-QUALITY-VISIBILITY.md
+
+### ML Engineer / Data Scientist (45 min)
+**Priority:**
+1. IMPLEMENTATION-COMPLETE.md
+2. CROSS-SEASON-DATA-POLICY.md ⚠️ **CRITICAL**
+3. PARTIAL-WINDOWS-AND-NULL-HANDLING.md
+4. METADATA-PROPAGATION.md
+5. INJURY-AND-QUALITY-SCORING.md
+
+### Software Engineer / Backend (30 min)
+**Priority:**
+1. IMPLEMENTATION-COMPLETE.md
+2. FILES-TO-MODIFY.md
+3. SCHEDULE-SERVICE-INTEGRATION.md
+4. TESTING-GUIDE.md
+
+---
+
+## 📝 Documentation Strategy
+
+### ✅ Current Approach (Testing Phase)
+
+**Keep all 20 docs here for now:**
+- Location: `docs/08-projects/current/bootstrap-period/`
+- Use this README for navigation
+- No consolidation during testing phase
+
+**Why wait to consolidate?**
+1. ⏰ Testing might reveal issues → Docs may need updates
+2. 🔄 Don't duplicate work → Consolidate once, not twice
+3. 👍 Current structure works for development
+4. 🎯 Easy to reference specific topics via this index
+
+### 📦 After Validation (1-2 Weeks)
+
+**Consolidate to ~5 focused docs:**
+
+```
+docs/01-architecture/
+  └── bootstrap-period.md              # Architecture & design decisions
+                                       # Merges: EARLY-SEASON-STRATEGY,
+                                       # CROSS-SEASON-DATA-POLICY,
+                                       # PARTIAL-WINDOWS, METADATA,
+                                       # INJURY-SCORING
+
+docs/02-operations/
+  └── bootstrap-operations-guide.md    # Operations & monitoring
+                                       # Merges: BACKFILL-BEHAVIOR,
+                                       # DATA-QUALITY-VISIBILITY
+
+docs/03-phases/phase4-precompute/
+  └── bootstrap-handling.md            # Phase 4 reference
+                                       # Merges: Implementation details,
+                                       # processor-specific info
+
+docs/05-development/
+  └── bootstrap-testing.md             # Testing guide
+                                       # TESTING-GUIDE (moved)
+
+docs/09-handoff/
+  └── 2025-11-27-bootstrap-impl.md     # Historical record
+                                       # Merges: IMPLEMENTATION-COMPLETE,
+                                       # SESSION-SUMMARY, investigation docs
+```
+
+**Benefits of consolidation:**
+- Reduces 20 docs → 5 focused docs
+- Better organization by audience/purpose
+- Integrated into existing doc structure
+- Easier to maintain long-term
+
+---
+
+## 📞 Quick Reference
+
+| Question | Answer |
+|----------|--------|
+| **Where do I start?** | [IMPLEMENTATION-COMPLETE.md](./IMPLEMENTATION-COMPLETE.md) |
+| **How do I test this?** | [TESTING-GUIDE.md](./TESTING-GUIDE.md) |
+| **How do backfills work?** | [BACKFILL-BEHAVIOR.md](./BACKFILL-BEHAVIOR.md) |
+| **Can I use historical data?** | [CROSS-SEASON-DATA-POLICY.md](./CROSS-SEASON-DATA-POLICY.md) |
+| **How do I monitor quality?** | [DATA-QUALITY-VISIBILITY.md](./DATA-QUALITY-VISIBILITY.md) |
+| **What code changed?** | [FILES-TO-MODIFY.md](./FILES-TO-MODIFY.md) |
+| **Why this approach?** | [EXECUTIVE-SUMMARY.md](./EXECUTIVE-SUMMARY.md) |
+
+---
+
+## 📊 Documentation Metrics
+
+- **Total Files:** 20 documents
+- **Total Size:** ~250 KB
+- **Estimated Reading Time:**
+  - Essential (3 docs): 20 minutes ⭐
+  - Core implementation (11 docs): 90 minutes
+  - Everything: 2-3 hours
+- **Lines of Content:** ~6,500 lines
 
 ---
 
@@ -191,50 +380,47 @@ After **comprehensive testing** (13 queries, 10 dates, 2 seasons):
 
 ---
 
-## Project History
+## 📅 Project Timeline
 
-**2025-11-27:**
-- ✅ Created comprehensive design decision document
-- ✅ Ran Fast Track investigation (90 min - 2 dates)
-- ✅ Discovered cross-season advantage is small
-- ✅ Ran comprehensive testing (3 hours - 4 test suites)
-  - Test Suite 1: Multi-date trend (8 dates)
-  - Test Suite 2: Role change impact (critical finding!)
-  - Test Suite 3: 2024 validation
-  - Test Suite 4: Confidence calibration
-- ✅ Created executive summary with final recommendation
-- ✅ **Decision: Option A (Current-Season-Only)**
-
-**Critical Discovery:**
-- 🚨 Cross-season HURTS 24% of predictions (team changes: -0.91 MAE)
-- This finding was not expected and validates Option A
-
-**Earlier:**
-- Initial problem statement discussed
-- Bootstrap handling patterns identified in codebase
-- Validation questions answered
-- Investigation guide created
+| Phase | Date | Status | Deliverables |
+|-------|------|--------|--------------|
+| **Investigation** | 2025-11-27 (AM) | ✅ Complete | Executive summary, testing plan, design options |
+| **Implementation** | 2025-11-27 (PM) | ✅ Complete | Code changes (8 files), test suite, 12 new docs |
+| **Testing** | 2025-11-28+ | 🧪 In Progress | Unit tests, integration tests, SQL verification |
+| **Consolidation** | Week 2 | ⏳ Pending | Merge 20 docs → 5 focused docs |
+| **Deployment** | Week 3 | ⏳ Pending | Deploy to production |
+| **Validation** | Oct 2025 | ⏳ Pending | First live season start test |
 
 ---
 
-## Contact / Questions
+## 🔮 Next Steps
 
-**For technical questions:**
-- See `investigation-findings.md` for codebase details
-- See `preliminary-findings.md` for accuracy test results
-- See `bootstrap-design-decision.md` for full design options
+### This Week (Testing)
+1. Run unit tests (`./tests/run_bootstrap_tests.sh --skip-integration`)
+2. Test with historical dates (2023-10-24, 2024-10-22)
+3. Verify SQL queries return expected results
+4. Review code changes
 
-**For product questions:**
-- See "Decision Required" section above
-- Review Option A vs B vs C trade-offs
-- Consider: Is 7-10 days without predictions acceptable?
+### Next Week (Consolidation)
+1. Update docs based on testing findings
+2. Consolidate 20 docs → 5 focused docs
+3. Move to permanent locations
+4. Update references
+
+### Week 3 (Deployment)
+1. Deploy to staging
+2. Deploy to production
+3. Monitor for issues
+
+### October 2025 (Validation)
+1. First live season start
+2. Gather user feedback
+3. Measure actual performance
 
 ---
 
-**Status:** ✅ **COMPLETE - Ready for Implementation**
+**Last Updated:** 2025-11-27
+**Status:** 🧪 Testing Phase - Implementation Complete
+**Next Review:** After validation (1-2 weeks)
 
-**Decision:** **Option A: Current-Season-Only**
-**Confidence:** HIGH (validated across 2 seasons, 10 dates, 13 queries)
-**Next step:** Proceed with implementation (10 hours)
-**Timeline:** 3 weeks to production deployment
-**First validation:** Oct 2025 (live season start)
+For questions, start with [IMPLEMENTATION-COMPLETE.md](./IMPLEMENTATION-COMPLETE.md) or consult this README.

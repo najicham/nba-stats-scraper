@@ -540,7 +540,17 @@ class ProcessorBase(RunHistoryMixin):
 
         This method is called after save_data() successfully completes.
         Publishing is non-blocking - failures are logged but don't fail the processor.
+
+        Can be disabled with skip_downstream_trigger flag for backfills.
         """
+        # Check if downstream triggering should be skipped (for backfills)
+        if self.opts.get('skip_downstream_trigger', False):
+            logger.info(
+                f"⏸️  Skipping downstream trigger (backfill mode) - "
+                f"Phase 3 will not be auto-triggered for {self.table_name}"
+            )
+            return
+
         try:
             from shared.utils.pubsub_publishers import RawDataPubSubPublisher
 

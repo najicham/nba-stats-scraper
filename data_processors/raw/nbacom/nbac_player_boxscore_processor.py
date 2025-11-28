@@ -544,14 +544,19 @@ class NbacPlayerBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
 if __name__ == "__main__":
     import sys
     import argparse
-    
+
     parser = argparse.ArgumentParser(description='Process NBA.com leaguegamelog data')
     parser.add_argument('--bucket', default='nba-scraped-data', help='GCS bucket name')
     parser.add_argument('--file', required=True, help='File path in bucket (e.g., nba-com/player-boxscores/2024-10-29/file.json)')
     parser.add_argument('--project', default='nba-props-platform', help='GCP project ID')
-    
+    parser.add_argument(
+        '--skip-downstream-trigger',
+        action='store_true',
+        help='Disable Pub/Sub trigger to Phase 3 (for backfills)'
+    )
+
     args = parser.parse_args()
-    
+
     # Extract bucket and file_path from full gs:// URI if provided
     file_input = args.file
     if file_input.startswith('gs://'):
@@ -562,13 +567,14 @@ if __name__ == "__main__":
     else:
         bucket = args.bucket
         file_path = file_input
-    
+
     processor = NbacPlayerBoxscoreProcessor()
     opts = {
         'bucket': bucket,
         'file_path': file_path,
-        'project_id': args.project
+        'project_id': args.project,
+        'skip_downstream_trigger': args.skip_downstream_trigger
     }
-    
+
     success = processor.run(opts)
     sys.exit(0 if success else 1)

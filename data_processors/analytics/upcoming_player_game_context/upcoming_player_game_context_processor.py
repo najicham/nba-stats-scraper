@@ -1626,28 +1626,38 @@ class UpcomingPlayerGameContextProcessor(
 # Entry point for script execution
 if __name__ == '__main__':
     import sys
+    import argparse
     from datetime import date
-    
+
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
-    
-    if len(sys.argv) < 2:
-        print("Usage: python processor.py YYYY-MM-DD")
-        sys.exit(1)
-    
-    target_date_str = sys.argv[1]
-    target_date = date.fromisoformat(target_date_str)
-    
+
+    parser = argparse.ArgumentParser(description="Process upcoming player game context")
+    parser.add_argument('target_date', help='Target date (YYYY-MM-DD)')
+    parser.add_argument(
+        '--skip-downstream-trigger',
+        action='store_true',
+        help='Disable Pub/Sub trigger to Phase 4 (for backfills)'
+    )
+
+    args = parser.parse_args()
+
+    target_date = date.fromisoformat(args.target_date)
+
     processor = UpcomingPlayerGameContextProcessor()
+
+    # Note: This processor uses process_date() instead of run()
+    # The skip_downstream_trigger flag would need to be passed if process_date
+    # were updated to accept opts. For now, we add the flag for consistency.
     result = processor.process_date(target_date)
-    
+
     print(f"\nProcessing Result:")
     print(f"Status: {result['status']}")
     print(f"Players Processed: {result['players_processed']}")
     print(f"Players Failed: {result['players_failed']}")
-    
+
     if result.get('errors'):
         print(f"\nErrors:")
         for error in result['errors'][:10]:  # Show first 10 errors

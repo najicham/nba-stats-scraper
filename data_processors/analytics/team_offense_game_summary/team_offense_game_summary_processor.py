@@ -732,32 +732,38 @@ class TeamOffenseGameSummaryProcessor(
 if __name__ == "__main__":
     import argparse
     import sys
-    
+
     parser = argparse.ArgumentParser(description="Process team offense game summary analytics")
     parser.add_argument('--start-date', required=True, help='Start date (YYYY-MM-DD)')
     parser.add_argument('--end-date', required=True, help='End date (YYYY-MM-DD)')
     parser.add_argument('--debug', action='store_true', help='Enable debug logging')
-    
+    parser.add_argument(
+        '--skip-downstream-trigger',
+        action='store_true',
+        help='Disable Pub/Sub trigger to Phase 4 (for backfills)'
+    )
+
     args = parser.parse_args()
-    
+
     # Configure logging
     log_level = logging.DEBUG if args.debug else logging.INFO
     logging.basicConfig(
         level=log_level,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
-    
+
     try:
         processor = TeamOffenseGameSummaryProcessor()
-        
+
         # Call run() with options dict
         success = processor.run({
             'start_date': args.start_date,
-            'end_date': args.end_date
+            'end_date': args.end_date,
+            'skip_downstream_trigger': args.skip_downstream_trigger
         })
-        
+
         sys.exit(0 if success else 1)
-        
+
     except Exception as e:
         logger.error(f"Fatal error: {e}", exc_info=True)
         sys.exit(1)

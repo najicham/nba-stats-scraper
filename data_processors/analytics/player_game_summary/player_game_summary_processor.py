@@ -787,24 +787,30 @@ class PlayerGameSummaryProcessor(
 if __name__ == "__main__":
     import argparse
     import sys
-    
+
     parser = argparse.ArgumentParser(description="Process player game summary")
     parser.add_argument('--start-date', required=True, help='YYYY-MM-DD')
     parser.add_argument('--end-date', required=True, help='YYYY-MM-DD')
     parser.add_argument('--debug', action='store_true')
-    
+    parser.add_argument(
+        '--skip-downstream-trigger',
+        action='store_true',
+        help='Disable Pub/Sub trigger to Phase 4 (for backfills)'
+    )
+
     args = parser.parse_args()
-    
+
     logging.basicConfig(
         level=logging.DEBUG if args.debug else logging.INFO,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
-    
+
     try:
         processor = PlayerGameSummaryProcessor()
         success = processor.run({
             'start_date': args.start_date,
-            'end_date': args.end_date
+            'end_date': args.end_date,
+            'skip_downstream_trigger': args.skip_downstream_trigger
         })
         sys.exit(0 if success else 1)
     except Exception as e:
