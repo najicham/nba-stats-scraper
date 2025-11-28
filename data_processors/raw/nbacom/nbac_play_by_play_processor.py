@@ -708,3 +708,42 @@ class NbacPlayByPlayProcessor(SmartIdempotencyMixin, ProcessorBase):
             'errors': errors,
             'events_processed': len(rows)
         }
+
+
+# CLI entry point for testing
+if __name__ == '__main__':
+    import sys
+
+    if len(sys.argv) < 2:
+        print("Usage: python nbac_play_by_play_processor.py <gcs_file_path>")
+        print("Example: python nbac_play_by_play_processor.py gs://nba-scraped-data/nba-com/play-by-play/20250115/0022400561/20250115_123045.json")
+        sys.exit(1)
+
+    file_path = sys.argv[1]
+
+    # Setup logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+
+    # Initialize processor
+    processor = NbacPlayByPlayProcessor()
+
+    # Process file
+    result = processor.process_file(file_path, dry_run=False)
+
+    # Print results
+    print("\n" + "="*70)
+    print("PLAY-BY-PLAY PROCESSING RESULTS")
+    print("="*70)
+    print(f"File: {result['file_path']}")
+    print(f"Status: {result['status']}")
+    print(f"Events Processed: {result.get('events_processed', result['rows_processed'])}")
+
+    if result.get('errors'):
+        print(f"\nErrors ({len(result['errors'])}):")
+        for error in result['errors'][:10]:  # Show first 10
+            print(f"  - {error}")
+
+    print("="*70)

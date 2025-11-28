@@ -1359,3 +1359,43 @@ class NbacGamebookProcessor(SmartIdempotencyMixin, ProcessorBase):
             
             # Fall back to Basketball Reference on error
             return self.resolve_inactive_player(last_name, team_abbr, season_year, game_id, game_date, player_status, source_file_path)
+
+
+# CLI entry point for testing
+if __name__ == '__main__':
+    import sys
+
+    if len(sys.argv) < 2:
+        print("Usage: python nbac_gamebook_processor.py <gcs_file_path>")
+        print("Example: python nbac_gamebook_processor.py gs://nba-scraped-data/nba-com/gamebook/20250115/0022400561/20250115_123045.json")
+        sys.exit(1)
+
+    file_path = sys.argv[1]
+
+    # Setup logging
+    import logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+
+    # Initialize processor
+    processor = NbacGamebookProcessor()
+
+    # Process file
+    result = processor.process_file(file_path, dry_run=False)
+
+    # Print results
+    print("\n" + "="*70)
+    print("GAMEBOOK PROCESSING RESULTS")
+    print("="*70)
+    print(f"File: {result['file_path']}")
+    print(f"Status: {result['status']}")
+    print(f"Rows Processed: {result['rows_processed']}")
+
+    if result.get('errors'):
+        print(f"\nErrors ({len(result['errors'])}):")
+        for error in result['errors'][:10]:  # Show first 10
+            print(f"  - {error}")
+
+    print("="*70)
