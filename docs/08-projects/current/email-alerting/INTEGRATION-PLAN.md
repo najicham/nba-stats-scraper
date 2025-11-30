@@ -140,8 +140,8 @@ Modify orchestrators to track wait time and send alert:
 ### Files to Modify
 
 ```
-orchestrators/phase2_to_phase3/main.py   # Add stall detection
-orchestrators/phase3_to_phase4/main.py   # Add stall detection
+orchestration/cloud_functions/phase2_to_phase3/main.py   # Add stall detection
+orchestration/cloud_functions/phase3_to_phase4/main.py   # Add stall detection
 ```
 
 ### Integration Point
@@ -358,16 +358,16 @@ def _check_data_freshness(self, upstream_table: str, expected_hours: int = 6):
 
 ---
 
-## Implementation Priority
+## Implementation Status
 
-| Priority | Email Type | Complexity | Impact |
-|----------|------------|------------|--------|
-| 1 | ✅ Pipeline Health | Medium | High - daily visibility |
-| 2 | 🏀 Prediction Completion | Low | High - core output notification |
-| 3 | ⏳ Dependency Stall | Medium | High - prevents silent failures |
-| 4 | 📦 Backfill Progress | Low | Medium - operational visibility |
-| 5 | 📉 Data Quality | Medium | Medium - prediction reliability |
-| 6 | 🕐 Stale Data | Low | Medium - early warning |
+| Priority | Email Type | Status | Implementation |
+|----------|------------|--------|----------------|
+| 1 | ✅ Pipeline Health | DONE | `monitoring/health_summary/main.py` |
+| 2 | 🏀 Prediction Completion | DONE | `predictions/coordinator/coordinator.py` |
+| 3 | ⏳ Dependency Stall | DONE | `monitoring/stall_detection/main.py` |
+| 4 | 📦 Backfill Progress | DONE | `shared/alerts/backfill_progress_tracker.py` |
+| 5 | 📉 Data Quality | DONE | `shared/processors/patterns/quality_mixin.py` |
+| 6 | 🕐 Stale Data | DONE | `shared/utils/data_freshness_checker.py` |
 
 ---
 
