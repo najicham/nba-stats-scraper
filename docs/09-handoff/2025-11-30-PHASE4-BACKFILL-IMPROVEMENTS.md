@@ -72,12 +72,44 @@ python bin/backfill/verify_phase3_for_phase4.py \
 - `docs/08-projects/current/backfill/BACKFILL-RUNBOOK.md` - Updated Phase 4 section
 - `docs/08-projects/current/backfill/BACKFILL-PRE-EXECUTION-HANDOFF.md` - Marked Task 1 complete
 
+### 7. Directory Reorganization: orchestrators/ → orchestration/cloud_functions/
+
+Consolidated orchestration code into single directory:
+
+**Before:**
+```
+orchestrators/                    # Separate top-level directory
+├── phase2_to_phase3/
+└── phase3_to_phase4/
+```
+
+**After:**
+```
+orchestration/
+├── master_controller.py          # Phase 1 local orchestration
+├── workflow_executor.py
+├── ...
+└── cloud_functions/              # Phase transition Cloud Functions
+    ├── README.md
+    ├── phase2_to_phase3/
+    └── phase3_to_phase4/
+```
+
+Updated:
+- Deploy scripts (`bin/orchestrators/`)
+- Architecture docs (`docs/01-architecture/orchestration/`)
+- Test imports (`tests/cloud_functions/`)
+- Added `__init__.py` files for proper Python package imports
+
 ---
 
-## Commit
+## Commits
 
 ```
 d337d08 feat: Add Phase 4 precompute backfill jobs with checkpoint support
+0aef8fc refactor: Move orchestrators/ into orchestration/cloud_functions/
+542626f docs: Update orchestrator paths after reorganization
+8802e37 fix: Update orchestrator test imports after reorganization
 ```
 
 Files:
