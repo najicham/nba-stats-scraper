@@ -134,7 +134,7 @@ check_prerequisites() {
     fi
 
     # Check if we're in project root
-    if [ ! -f "$PROJECT_ROOT/orchestrators/phase2_to_phase3/main.py" ]; then
+    if [ ! -f "$PROJECT_ROOT/orchestration/cloud_functions/phase2_to_phase3/main.py" ]; then
         log_error "Not in project root directory. Run from: nba-stats-scraper/"
         exit 1
     fi
