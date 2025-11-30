@@ -1,13 +1,22 @@
-# 00 - Reference Documentation
+# 06 - Reference Documentation
 
 **Created:** 2025-11-19 10:26 PM PST
-**Last Updated:** 2025-11-25
+**Last Updated:** 2025-11-30
 
-> **📌 These are reference materials from research and planning.**
+> **📌 Quick reference materials for the NBA Props Platform.**
 >
 > **For actual implementation**, see:
 > - [Architecture Overview](../01-architecture/quick-reference.md) ⭐ **Start Here**
 > - [Quick Reference](phase2-phase3-quick-ref.md)
+
+## Subdirectories
+
+| Directory | Purpose |
+|-----------|---------|
+| [data-flow/](data-flow/) | Data transformations between phases |
+| [data-sources/](data-sources/) | Raw data source coverage and fallback strategies |
+| [dependencies/](dependencies/) | Dependency checking logic by phase |
+| [processor-cards/](processor-cards/) | Quick reference cards for each processor |
 
 ## What's in This Folder
 

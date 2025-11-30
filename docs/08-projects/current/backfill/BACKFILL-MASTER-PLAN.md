@@ -1,8 +1,8 @@
 # Backfill Master Plan: 4 Years of NBA Data
 
 **Created:** 2025-11-29 20:30 PST
-**Last Updated:** 2025-11-29 21:53 PST
-**Status:** Planning - Pre-Execution Review
+**Last Updated:** 2025-11-30
+**Status:** Ready for Execution (Phase 4 backfill jobs complete)
 **Goal:** Backfill 675 game dates (2021-22 through 2024-25) across all phases
 
 ---
@@ -52,7 +52,7 @@
 | team_defense_zone_analysis | 0/675 | 0% | 🔴 Needs full backfill |
 | player_composite_factors | 0/675 | 0% | 🔴 Needs full backfill |
 | player_daily_cache | 0/675 | 0% | 🔴 Needs full backfill |
-| ml_feature_store | N/A | N/A | 🔴 Table doesn't exist |
+| ml_feature_store_v2 | 0/675 | 0% | 🔴 Needs full backfill |
 
 ### Scraper Status (Phase 1)
 
@@ -68,18 +68,18 @@
 
 ## Infrastructure Gaps
 
-### Gap 1: Phase 4 Backfill Jobs Don't Exist
+### ~~Gap 1: Phase 4 Backfill Jobs Don't Exist~~ - RESOLVED
 
-**Problem:** The `backfill_jobs/precompute/` directory is empty. No backfill jobs exist for:
-- `team_defense_zone_analysis`
-- `player_shot_zone_analysis`
-- `player_composite_factors`
-- `player_daily_cache`
-- `ml_feature_store`
+**Status:** Completed 2025-11-30
 
-**Impact:** Cannot run Phase 4 backfill until jobs are created.
+All 5 Phase 4 backfill jobs have been created:
+- `backfill_jobs/precompute/team_defense_zone_analysis/team_defense_zone_analysis_precompute_backfill.py`
+- `backfill_jobs/precompute/player_shot_zone_analysis/player_shot_zone_analysis_precompute_backfill.py`
+- `backfill_jobs/precompute/player_composite_factors/player_composite_factors_precompute_backfill.py`
+- `backfill_jobs/precompute/player_daily_cache/player_daily_cache_precompute_backfill.py`
+- `backfill_jobs/precompute/ml_feature_store/ml_feature_store_precompute_backfill.py`
 
-**Resolution:** Create backfill jobs following the pattern in `backfill_jobs/analytics/`.
+**Documentation:** See `PHASE4-BACKFILL-JOBS.md` for usage details.
 
 ### Gap 2: Player Boxscore Scraper Broken
 
@@ -114,7 +114,7 @@
 | Odds API | 271 | 40% |
 | BettingPros | 673 | 99.7% |
 
-**Action:** Verify `upcoming_player_game_context` uses BettingPros as fallback.
+**Status:** ✅ IMPLEMENTED (2025-11-30) - See `docs/09-handoff/2025-11-30-bettingpros-fallback-complete.md`
 
 ---
 

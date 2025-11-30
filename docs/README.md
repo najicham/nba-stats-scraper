@@ -34,6 +34,7 @@
 | **How-to guides** | `05-development/guides/` |
 | **Pattern documentation** | `05-development/patterns/` |
 | **Quick reference/lookups** | `06-reference/` |
+| **Data source coverage/fallbacks** | `06-reference/data-sources/` |
 | **Monitoring/alerting** | `07-monitoring/` |
 | **Architecture decisions** | `01-architecture/decisions/` |
 | **Deployment status/history** | `04-deployment/` |
@@ -42,4 +43,4 @@
 
 ---
 
-**Last reorganized:** 2025-11-25
+**Last reorganized:** 2025-11-30

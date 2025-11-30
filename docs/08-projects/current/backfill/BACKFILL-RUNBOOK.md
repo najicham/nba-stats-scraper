@@ -1,9 +1,9 @@
 # Backfill Execution Runbook
 
 **Created:** 2025-11-29 21:00 PST
-**Last Updated:** 2025-11-29 21:35 PST
+**Last Updated:** 2025-11-30
 **Purpose:** Step-by-step instructions for executing the 4-year backfill
-**Prerequisites:** Phase 4 backfill jobs created, player boxscore scraper fixed
+**Prerequisites:** ~~Phase 4 backfill jobs created~~ ✅, player boxscore scraper fixed
 
 ---
 
@@ -646,24 +646,35 @@ python backfill_jobs/precompute/team_defense_zone_analysis/... --start-date 2022
 | Odds API | 271 | 40% |
 | BettingPros | 673 | 99.7% |
 
-**Action:** Verify `upcoming_player_game_context` processor uses BettingPros as fallback when Odds API data is missing. If it does, this problem is solved.
+**Status:** ✅ IMPLEMENTED (2025-11-30)
+
+BettingPros fallback has been implemented in `upcoming_player_game_context` processor.
+See `docs/09-handoff/2025-11-30-bettingpros-fallback-complete.md` for implementation details and test results.
 
 ---
 
-## Open Questions
+## ~~Open Questions~~ - RESOLVED
 
-### Phase 4 Backfill Jobs
+### ~~Phase 4 Backfill Jobs~~ - COMPLETE
 
-**Status:** To be created in separate session.
+**Status:** Completed 2025-11-30
 
-**Requirements:**
-- Follow same pattern as Phase 3 analytics backfill
+All 5 Phase 4 backfill jobs have been created in `backfill_jobs/precompute/`:
+- `team_defense_zone_analysis/team_defense_zone_analysis_precompute_backfill.py`
+- `player_shot_zone_analysis/player_shot_zone_analysis_precompute_backfill.py`
+- `player_composite_factors/player_composite_factors_precompute_backfill.py`
+- `player_daily_cache/player_daily_cache_precompute_backfill.py`
+- `ml_feature_store/ml_feature_store_precompute_backfill.py`
+
+**Features implemented:**
 - Day-by-day processing
 - `--dry-run`, `--start-date`, `--end-date`, `--dates` flags
 - Progress logging every 10 days
-- Failed dates tracking
+- Failed dates tracking with retry commands
 - Bootstrap period handling (skip first 7 days of each season)
-- Validate Phase 3 complete before processing each date
+- Phase 4 dependency validation
+
+**Documentation:** See `PHASE4-BACKFILL-JOBS.md` for detailed usage.
 
 ---
 
@@ -687,9 +698,9 @@ After successful backfill:
 
 ---
 
-## Phase 4 Backfill Job Guidance
+## Phase 4 Backfill Job Reference
 
-When creating Phase 4 backfill jobs, include:
+Phase 4 backfill jobs have been created with these features:
 
 ### Must Have
 
@@ -731,8 +742,8 @@ Phase 4 processors MUST run in order:
 
 ---
 
-**Document Version:** 1.3
-**Last Updated:** 2025-11-29 22:05 PST
+**Document Version:** 1.4
+**Last Updated:** 2025-11-30
 
 ## Related Documentation
 

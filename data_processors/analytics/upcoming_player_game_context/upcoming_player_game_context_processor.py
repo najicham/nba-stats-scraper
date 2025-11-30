@@ -14,6 +14,11 @@ FIXES IN THIS VERSION:
 - Fixed deprecation warnings (datetime.utcnow() → datetime.now(timezone.utc))
 - Added timezone import
 
+v3.1 ENHANCEMENTS:
+- Added BettingPros fallback when Odds API has no data for a date
+- Increases historical coverage from 40% to 99.7%
+- Fallback logic in _extract_players_with_props() and _extract_prop_lines()
+
 Input: Phase 2 raw tables only
   - nba_raw.odds_api_player_points_props (DRIVER - which players to process)
   - nba_raw.bdl_player_boxscores (PRIMARY - historical performance)
@@ -316,20 +321,29 @@ class UpcomingPlayerGameContextProcessor(
     def _extract_players_with_props(self) -> None:
         """
         Extract all players who have prop bets for target date.
-        
+
         This is the DRIVER query - determines which players to process.
         Uses the most recent prop snapshot for the target date.
+
+        FALLBACK LOGIC (v3.1):
+        - First tries Odds API (odds_api_player_points_props)
+        - If empty, falls back to BettingPros (bettingpros_player_points_props)
+        - BettingPros has 99.7% historical coverage vs 40% for Odds API
         """
-        query = f"""
+        # Track which source we used
+        self._props_source = 'odds_api'  # Default
+
+        # Step 1: Try Odds API first
+        odds_api_query = f"""
         WITH latest_props AS (
-            SELECT 
+            SELECT
                 player_lookup,
                 game_id,
                 game_date,
                 home_team_abbr,
                 away_team_abbr,
                 ROW_NUMBER() OVER (
-                    PARTITION BY player_lookup, game_id 
+                    PARTITION BY player_lookup, game_id
                     ORDER BY snapshot_timestamp DESC
                 ) as rn
             FROM `{self.project_id}.nba_raw.odds_api_player_points_props`
@@ -345,15 +359,21 @@ class UpcomingPlayerGameContextProcessor(
         FROM latest_props
         WHERE rn = 1
         """
-        
+
         try:
-            df = self.bq_client.query(query).to_dataframe()
-            
+            df = self.bq_client.query(odds_api_query).to_dataframe()
+
+            # Step 2: If Odds API is empty, fall back to BettingPros
+            if df.empty:
+                logger.info(f"No Odds API data for {self.target_date}, using BettingPros fallback")
+                self._props_source = 'bettingpros'
+                df = self._extract_players_from_bettingpros()
+
             # Track source usage (FIX: use timezone-aware datetime)
             self.source_tracking['props']['rows_found'] = len(df)
             self.source_tracking['props']['last_updated'] = datetime.now(timezone.utc)
-            
-            # Store players to process (need to determine team_abbr later)
+
+            # Store players to process
             for _, row in df.iterrows():
                 self.players_to_process.append({
                     'player_lookup': row['player_lookup'],
@@ -361,13 +381,63 @@ class UpcomingPlayerGameContextProcessor(
                     'home_team_abbr': row['home_team_abbr'],
                     'away_team_abbr': row['away_team_abbr']
                 })
-            
-            logger.info(f"Found {len(self.players_to_process)} players with props")
-            
+
+            logger.info(f"Found {len(self.players_to_process)} players with props (source: {self._props_source})")
+
         except Exception as e:
             logger.error(f"Error extracting players with props: {e}")
             self.source_tracking['props']['rows_found'] = 0
             raise
+
+    def _extract_players_from_bettingpros(self) -> pd.DataFrame:
+        """
+        Extract players from BettingPros as fallback when Odds API has no data.
+
+        BettingPros doesn't have game_id, so we join with schedule to get it.
+        Returns DataFrame with same columns as Odds API query.
+        """
+        # Query BettingPros and join with schedule to get game_id
+        bettingpros_query = f"""
+        WITH bp_props AS (
+            SELECT DISTINCT
+                bp.player_lookup,
+                bp.game_date,
+                -- Use validated_team if available, otherwise player_team
+                COALESCE(bp.validated_team, bp.player_team) as player_team
+            FROM `{self.project_id}.nba_raw.bettingpros_player_points_props` bp
+            WHERE bp.game_date = '{self.target_date}'
+              AND bp.player_lookup IS NOT NULL
+              AND bp.is_active = TRUE
+        ),
+        schedule AS (
+            SELECT
+                game_id,
+                game_date,
+                home_team_tricode as home_team_abbr,
+                away_team_tricode as away_team_abbr
+            FROM `{self.project_id}.nba_raw.nbac_schedule`
+            WHERE game_date = '{self.target_date}'
+        )
+        SELECT DISTINCT
+            bp.player_lookup,
+            s.game_id,
+            bp.game_date,
+            s.home_team_abbr,
+            s.away_team_abbr
+        FROM bp_props bp
+        INNER JOIN schedule s
+            ON bp.game_date = s.game_date
+            AND (bp.player_team = s.home_team_abbr OR bp.player_team = s.away_team_abbr)
+        WHERE s.game_id IS NOT NULL
+        """
+
+        try:
+            df = self.bq_client.query(bettingpros_query).to_dataframe()
+            logger.info(f"BettingPros fallback: Found {len(df)} players for {self.target_date}")
+            return df
+        except Exception as e:
+            logger.error(f"Error extracting from BettingPros: {e}")
+            return pd.DataFrame()
     
     def _extract_schedule_data(self) -> None:
         """
@@ -524,16 +594,33 @@ class UpcomingPlayerGameContextProcessor(
     def _extract_prop_lines(self) -> None:
         """
         Extract prop lines (opening and current) for each player.
-        
+
         Opening line: Earliest snapshot
         Current line: Most recent snapshot
+
+        FALLBACK LOGIC (v3.1):
+        - Uses same source as driver query (self._props_source)
+        - Odds API has snapshot_timestamp for line history
+        - BettingPros has opening_line field and bookmaker_last_update
         """
         player_game_pairs = [(p['player_lookup'], p['game_id']) for p in self.players_to_process]
-        
+
+        # Use the same source as the driver query
+        use_bettingpros = getattr(self, '_props_source', 'odds_api') == 'bettingpros'
+
+        if use_bettingpros:
+            logger.info(f"Extracting prop lines from BettingPros for {len(player_game_pairs)} players")
+            self._extract_prop_lines_from_bettingpros(player_game_pairs)
+        else:
+            logger.info(f"Extracting prop lines from Odds API for {len(player_game_pairs)} players")
+            self._extract_prop_lines_from_odds_api(player_game_pairs)
+
+    def _extract_prop_lines_from_odds_api(self, player_game_pairs: List[Tuple[str, str]]) -> None:
+        """Extract prop lines from Odds API (original implementation)."""
         for player_lookup, game_id in player_game_pairs:
             # Get opening line (earliest snapshot)
             opening_query = f"""
-            SELECT 
+            SELECT
                 points_line,
                 bookmaker,
                 snapshot_timestamp
@@ -544,10 +631,10 @@ class UpcomingPlayerGameContextProcessor(
             ORDER BY snapshot_timestamp ASC
             LIMIT 1
             """
-            
+
             # Get current line (latest snapshot)
             current_query = f"""
-            SELECT 
+            SELECT
                 points_line,
                 bookmaker,
                 snapshot_timestamp
@@ -558,27 +645,115 @@ class UpcomingPlayerGameContextProcessor(
             ORDER BY snapshot_timestamp DESC
             LIMIT 1
             """
-            
+
             try:
                 opening_df = self.bq_client.query(opening_query).to_dataframe()
                 current_df = self.bq_client.query(current_query).to_dataframe()
-                
+
                 prop_info = {
                     'opening_line': opening_df['points_line'].iloc[0] if not opening_df.empty else None,
                     'opening_source': opening_df['bookmaker'].iloc[0] if not opening_df.empty else None,
                     'current_line': current_df['points_line'].iloc[0] if not current_df.empty else None,
                     'current_source': current_df['bookmaker'].iloc[0] if not current_df.empty else None,
                 }
-                
+
                 if prop_info['opening_line'] and prop_info['current_line']:
                     prop_info['line_movement'] = prop_info['current_line'] - prop_info['opening_line']
                 else:
                     prop_info['line_movement'] = None
-                
+
                 self.prop_lines[(player_lookup, game_id)] = prop_info
-                
+
             except Exception as e:
                 logger.warning(f"Error extracting prop lines for {player_lookup}/{game_id}: {e}")
+                self.prop_lines[(player_lookup, game_id)] = {
+                    'opening_line': None,
+                    'opening_source': None,
+                    'current_line': None,
+                    'current_source': None,
+                    'line_movement': None
+                }
+
+    def _extract_prop_lines_from_bettingpros(self, player_game_pairs: List[Tuple[str, str]]) -> None:
+        """
+        Extract prop lines from BettingPros as fallback.
+
+        BettingPros has:
+        - opening_line: The opening line value
+        - points_line: The current line value
+        - bookmaker: The bookmaker name
+        - bookmaker_last_update: Timestamp of last update
+        """
+        # Batch query for efficiency - get all players at once
+        player_lookups = list(set([p[0] for p in player_game_pairs]))
+        player_lookups_str = "', '".join(player_lookups)
+
+        batch_query = f"""
+        WITH best_lines AS (
+            SELECT
+                player_lookup,
+                points_line as current_line,
+                opening_line,
+                bookmaker,
+                bookmaker_last_update,
+                ROW_NUMBER() OVER (
+                    PARTITION BY player_lookup
+                    ORDER BY is_best_line DESC, bookmaker_last_update DESC
+                ) as rn
+            FROM `{self.project_id}.nba_raw.bettingpros_player_points_props`
+            WHERE player_lookup IN ('{player_lookups_str}')
+              AND game_date = '{self.target_date}'
+              AND is_active = TRUE
+        )
+        SELECT
+            player_lookup,
+            current_line,
+            opening_line,
+            bookmaker
+        FROM best_lines
+        WHERE rn = 1
+        """
+
+        try:
+            df = self.bq_client.query(batch_query).to_dataframe()
+
+            # Create lookup dict
+            bp_props = {}
+            for _, row in df.iterrows():
+                bp_props[row['player_lookup']] = {
+                    'current_line': row['current_line'],
+                    'opening_line': row['opening_line'],
+                    'bookmaker': row['bookmaker']
+                }
+
+            # Populate prop_lines for each player_game pair
+            for player_lookup, game_id in player_game_pairs:
+                bp_data = bp_props.get(player_lookup, {})
+
+                opening_line = bp_data.get('opening_line')
+                current_line = bp_data.get('current_line')
+                bookmaker = bp_data.get('bookmaker')
+
+                prop_info = {
+                    'opening_line': opening_line,
+                    'opening_source': bookmaker,
+                    'current_line': current_line,
+                    'current_source': bookmaker,
+                    'line_movement': None
+                }
+
+                # Calculate line movement if both lines available
+                if opening_line is not None and current_line is not None:
+                    prop_info['line_movement'] = current_line - opening_line
+
+                self.prop_lines[(player_lookup, game_id)] = prop_info
+
+            logger.info(f"BettingPros: Extracted prop lines for {len(bp_props)} players")
+
+        except Exception as e:
+            logger.error(f"Error extracting prop lines from BettingPros: {e}")
+            # Fallback: set empty prop info for all players
+            for player_lookup, game_id in player_game_pairs:
                 self.prop_lines[(player_lookup, game_id)] = {
                     'opening_line': None,
                     'opening_source': None,

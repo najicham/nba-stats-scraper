@@ -1,8 +1,9 @@
 # Backfill Pre-Execution Handoff
 
 **Created:** 2025-11-29 22:19 PST
+**Last Updated:** 2025-11-30
 **Purpose:** Tasks that must be completed before backfill execution
-**Status:** Blocking - Complete these first
+**Status:** ALL TASKS COMPLETE - Ready for backfill execution
 
 ---
 
@@ -10,88 +11,64 @@
 
 Two categories of work must be completed before executing the 4-year backfill:
 
-| Category | Items | Priority |
-|----------|-------|----------|
-| Create Phase 4 Backfill Jobs | 5 processors | HIGH - Blocking |
-| Fix BettingPros Fallback | 1 processor | HIGH - Affects coverage |
+| Category | Items | Priority | Status |
+|----------|-------|----------|--------|
+| Create Phase 4 Backfill Jobs | 5 processors | HIGH - Blocking | **COMPLETE** |
+| Fix BettingPros Fallback | 1 processor | HIGH - Affects coverage | **COMPLETE** |
 
 ---
 
-## Task 1: Create Phase 4 Backfill Jobs
+## Task 1: Create Phase 4 Backfill Jobs - **COMPLETE**
 
-### What's Missing
+**Completed:** 2025-11-30
 
-All 5 Phase 4 precompute processors need backfill jobs created:
+All 5 Phase 4 precompute backfill jobs have been created:
 
-| Processor | Location to Create |
-|-----------|-------------------|
-| team_defense_zone_analysis | `backfill_jobs/precompute/team_defense_zone_analysis/` |
-| player_shot_zone_analysis | `backfill_jobs/precompute/player_shot_zone_analysis/` |
-| player_composite_factors | `backfill_jobs/precompute/player_composite_factors/` |
-| player_daily_cache | `backfill_jobs/precompute/player_daily_cache/` |
-| ml_feature_store | `backfill_jobs/precompute/ml_feature_store/` |
+| Processor | Location | Status |
+|-----------|----------|--------|
+| team_defense_zone_analysis | `backfill_jobs/precompute/team_defense_zone_analysis/team_defense_zone_analysis_precompute_backfill.py` | ✅ |
+| player_shot_zone_analysis | `backfill_jobs/precompute/player_shot_zone_analysis/player_shot_zone_analysis_precompute_backfill.py` | ✅ |
+| player_composite_factors | `backfill_jobs/precompute/player_composite_factors/player_composite_factors_precompute_backfill.py` | ✅ |
+| player_daily_cache | `backfill_jobs/precompute/player_daily_cache/player_daily_cache_precompute_backfill.py` | ✅ |
+| ml_feature_store | `backfill_jobs/precompute/ml_feature_store/ml_feature_store_precompute_backfill.py` | ✅ |
 
-### Template to Follow
+### Usage
 
-Use the Phase 3 analytics backfill job as template:
-```
-backfill_jobs/analytics/player_game_summary/player_game_summary_analytics_backfill.py
-```
-
-### Required Features
-
-Each Phase 4 backfill job must have:
-
-1. **CLI Arguments:**
-   - `--dry-run` - Check data without processing
-   - `--start-date` / `--end-date` - Date range
-   - `--dates` - Retry specific failed dates
-
-2. **Processing:**
-   - Day-by-day processing (avoids BigQuery limits)
-   - `backfill_mode=True` in processor options
-   - Progress logging every 10 days
-
-3. **Bootstrap Period Skip:**
-   ```python
-   BOOTSTRAP_PERIODS = [
-       ('2021-10-19', '2021-10-25'),
-       ('2022-10-18', '2022-10-24'),
-       ('2023-10-24', '2023-10-30'),
-       ('2024-10-22', '2024-10-28'),
-   ]
-   # Skip these dates - Phase 4 intentionally produces no data
-   ```
-
-4. **Failed Dates Tracking:**
-   - Collect failed dates during run
-   - Print retry command at end
-
-5. **Phase 3 Validation (Optional but Recommended):**
-   - Before processing each date, check Phase 3 has data for lookback window
-   - Log warning if incomplete
-
-### Execution Order Reminder
-
-Phase 4 processors have inter-dependencies. The backfill jobs should be run in this order:
-
-```
-1. team_defense_zone_analysis   (reads Phase 3 only)
-2. player_shot_zone_analysis    (reads Phase 3 only)
-3. player_composite_factors     (reads #1, #2, Phase 3)
-4. player_daily_cache           (reads #1, #2, #3, Phase 3)
-5. ml_feature_store             (reads #1, #2, #3, #4)
-```
-
-**Do NOT parallelize these for the same date range.**
+See `PHASE4-BACKFILL-JOBS.md` for complete documentation including:
+- CLI arguments (`--dry-run`, `--start-date`, `--end-date`, `--dates`)
+- Execution order (must run sequentially: 1→2→3→4→5)
+- Bootstrap period handling
+- Backfill mode options
 
 ---
 
-## Task 2: Fix BettingPros Fallback in upcoming_player_game_context
+## Task 2: Fix BettingPros Fallback in upcoming_player_game_context - **COMPLETE**
 
-### The Problem
+**Completed:** 2025-11-30
+**Handoff Document:** `docs/09-handoff/2025-11-30-bettingpros-fallback-complete.md`
 
-The `upcoming_player_game_context` processor currently only queries Odds API:
+### Implementation Summary
+
+Implemented Python fallback (Option B) with these changes:
+- Added `_extract_players_from_bettingpros()` method
+- Added `_extract_prop_lines_from_bettingpros()` method
+- Modified driver query to try Odds API first, fall back to BettingPros if empty
+- Handles schema differences (BettingPros lacks `game_id`, uses JOINs with schedule)
+
+### Test Results (2021-11-01)
+
+| Metric | Result |
+|--------|--------|
+| Props source | BettingPros (Odds API had 0) |
+| Players found | 57 |
+| Players processed | 53 |
+| Coverage improvement | 40% → 99.7% |
+
+---
+
+### Original Problem (Resolved)
+
+The `upcoming_player_game_context` processor previously only queried Odds API:
 
 **File:** `data_processors/analytics/upcoming_player_game_context/upcoming_player_game_context_processor.py`
 
