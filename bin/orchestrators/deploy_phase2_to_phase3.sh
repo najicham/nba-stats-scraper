@@ -36,7 +36,7 @@ MAX_INSTANCES="10"
 MIN_INSTANCES="0"
 
 # Source directory (relative to project root)
-SOURCE_DIR="orchestrators/phase2_to_phase3"
+SOURCE_DIR="orchestration/cloud_functions/phase2_to_phase3"
 
 echo -e "${BLUE}========================================${NC}"
 echo -e "${BLUE}Phase 2→3 Orchestrator Deployment${NC}"
@@ -168,7 +168,7 @@ echo "2. View logs:"
 echo "   ${BLUE}gcloud functions logs read $FUNCTION_NAME --region $REGION --limit 50${NC}"
 echo ""
 echo "3. Test by triggering Phase 2 processors and checking Firestore:"
-echo "   ${BLUE}python orchestrators/phase2_to_phase3/main.py <game_date>${NC}"
+echo "   ${BLUE}python orchestration/cloud_functions/phase2_to_phase3/main.py <game_date>${NC}"
 echo ""
 echo "4. Monitor Firestore state:"
 echo "   ${BLUE}https://console.firebase.google.com/project/$PROJECT_ID/firestore/data/phase2_completion${NC}"

@@ -71,7 +71,7 @@ Orchestrators are Cloud Functions that coordinate transitions between processing
 ## Phase 2→3 Orchestrator
 
 **Function:** `phase2-to-phase3-orchestrator`
-**Location:** `orchestrators/phase2_to_phase3/main.py`
+**Location:** `orchestration/cloud_functions/phase2_to_phase3/main.py`
 **Entry Point:** `orchestrate_phase2_to_phase3`
 
 ### Configuration
@@ -113,7 +113,7 @@ The orchestrator tracks these 21 Phase 2 raw processors:
 ## Phase 3→4 Orchestrator
 
 **Function:** `phase3-to-phase4-orchestrator`
-**Location:** `orchestrators/phase3_to_phase4/main.py`
+**Location:** `orchestration/cloud_functions/phase3_to_phase4/main.py`
 **Entry Point:** `orchestrate_phase3_to_phase4`
 
 ### Configuration
