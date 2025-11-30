@@ -43,6 +43,7 @@ COPY shared/ /app/shared/
 COPY predictions/coordinator/coordinator.py /app/coordinator.py
 COPY predictions/coordinator/player_loader.py /app/player_loader.py
 COPY predictions/coordinator/progress_tracker.py /app/progress_tracker.py
+COPY predictions/coordinator/run_history.py /app/run_history.py
 
 # Environment variables
 # PYTHONPATH: Ensures imports work correctly
