@@ -36,6 +36,9 @@ RUN apt-get update && apt-get install -y \
 COPY predictions/coordinator/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Copy shared utilities (needed for UnifiedPubSubPublisher imports)
+COPY shared/ /app/shared/
+
 # Copy coordinator code (flat structure for simple imports)
 COPY predictions/coordinator/coordinator.py /app/coordinator.py
 COPY predictions/coordinator/player_loader.py /app/player_loader.py

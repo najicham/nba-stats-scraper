@@ -1,194 +1,139 @@
 """
-Pub/Sub Topic Name Configuration - Single Source of Truth
+Pub/Sub Topics Configuration - Centralized topic definitions.
 
-This file defines all Pub/Sub topic names used across the NBA stats pipeline.
-All phases should import from this file to ensure consistency.
+All topic names and subscriptions for the event-driven pipeline.
 
-Usage:
-    from shared.config.pubsub_topics import TOPICS
-
-    # Publishing
-    publisher.publish(TOPICS.PHASE2_RAW_COMPLETE, message)
-
-    # Subscribing
-    subscriber.subscribe(TOPICS.PHASE2_RAW_COMPLETE, callback)
-
-Last Updated: 2025-11-16
-Topic Naming Convention: nba-phase{N}-{content}-{type}
+Version: 1.0
+Created: 2025-11-28
 """
-
-from typing import Dict
 
 
 class PubSubTopics:
     """
-    Centralized Pub/Sub topic name constants.
+    Centralized Pub/Sub topic definitions.
 
-    Topic Naming Convention:
-        nba-phase{N}-{content}-complete      Main event topics
-        nba-phase{N}-{content}-complete-dlq  Dead Letter Queues
-        nba-phase{N}-fallback-trigger        Time-based fallbacks
+    Usage:
+        from shared.config.pubsub_topics import TOPICS
 
-    Sport Prefix: 'nba-' (future: 'mlb-', 'nfl-', etc.)
-    Phase Number: Indicates pipeline position (1-6)
-    Content Type: Describes data type (scrapers, raw, analytics, etc.)
+        publisher.publish(topic=TOPICS.PHASE2_RAW_COMPLETE, message=...)
     """
 
     # =========================================================================
-    # PHASE 1 → PHASE 2 (Scrapers → Raw Processors)
+    # PHASE 1: SCRAPERS
     # =========================================================================
-    PHASE1_SCRAPERS_COMPLETE = "nba-phase1-scrapers-complete"
-    PHASE1_SCRAPERS_COMPLETE_DLQ = "nba-phase1-scrapers-complete-dlq"
 
-    # Legacy name (for migration reference only - DO NOT USE)
-    _LEGACY_SCRAPER_COMPLETE = "nba-scraper-complete"
+    # Published by: Scrapers
+    # Consumed by: Phase 2 raw processors
+    PHASE1_SCRAPERS_COMPLETE = 'nba-phase1-scrapers-complete'
 
-    # =========================================================================
-    # PHASE 2 → PHASE 3 (Raw Processors → Analytics Processors)
-    # =========================================================================
-    PHASE2_RAW_COMPLETE = "nba-phase2-raw-complete"
-    PHASE2_RAW_COMPLETE_DLQ = "nba-phase2-raw-complete-dlq"
-    PHASE3_FALLBACK_TRIGGER = "nba-phase3-fallback-trigger"
+    # Legacy topic (dual publishing during migration)
+    LEGACY_SCRAPER_COMPLETE = 'nba-scraper-complete'
 
     # =========================================================================
-    # PHASE 3 → PHASE 4 (Analytics → Precompute)
+    # PHASE 2: RAW PROCESSORS
     # =========================================================================
-    PHASE3_ANALYTICS_COMPLETE = "nba-phase3-analytics-complete"
-    PHASE3_ANALYTICS_COMPLETE_DLQ = "nba-phase3-analytics-complete-dlq"
-    PHASE4_FALLBACK_TRIGGER = "nba-phase4-fallback-trigger"
+
+    # Published by: Phase 2 raw processors
+    # Consumed by: Phase 2→3 orchestrator
+    PHASE2_RAW_COMPLETE = 'nba-phase2-raw-complete'
 
     # =========================================================================
-    # PHASE 4 → PHASE 5 (Precompute → Predictions)
+    # PHASE 2→3 ORCHESTRATION
     # =========================================================================
-    PHASE4_PRECOMPUTE_COMPLETE = "nba-phase4-precompute-complete"
-    PHASE4_PRECOMPUTE_COMPLETE_DLQ = "nba-phase4-precompute-complete-dlq"
-    PHASE5_FALLBACK_TRIGGER = "nba-phase5-fallback-trigger"
+
+    # Published by: Phase 2→3 orchestrator (when all 21 processors complete)
+    # Consumed by: Phase 3 analytics processors
+    PHASE3_TRIGGER = 'nba-phase3-trigger'
 
     # =========================================================================
-    # PHASE 5 → PHASE 6 (Predictions → Publishing)
+    # PHASE 3: ANALYTICS PROCESSORS
     # =========================================================================
-    PHASE5_PREDICTIONS_COMPLETE = "nba-phase5-predictions-complete"
-    PHASE5_PREDICTIONS_COMPLETE_DLQ = "nba-phase5-predictions-complete-dlq"
-    PHASE6_FALLBACK_TRIGGER = "nba-phase6-fallback-trigger"
+
+    # Published by: Phase 3 analytics processors
+    # Consumed by: Phase 3→4 orchestrator
+    PHASE3_ANALYTICS_COMPLETE = 'nba-phase3-analytics-complete'
 
     # =========================================================================
-    # FALLBACK TRIGGERS (Time-based safety nets)
+    # PHASE 3→4 ORCHESTRATION
     # =========================================================================
-    # Note: Named for the phase they TRIGGER, not the phase that publishes
-    PHASE2_FALLBACK_TRIGGER = "nba-phase2-fallback-trigger"
 
-    # Phase 3 fallback already defined above in Phase 2→3 section
-    # Phase 4 fallback already defined above in Phase 3→4 section
-    # Phase 5 fallback already defined above in Phase 4→5 section
-    # Phase 6 fallback already defined above in Phase 5→6 section
+    # Published by: Phase 3→4 orchestrator (when all 5 processors complete)
+    # Consumed by: Phase 4 precompute processors
+    PHASE4_TRIGGER = 'nba-phase4-trigger'
 
     # =========================================================================
-    # MANUAL OPERATIONS
+    # PHASE 4: PRECOMPUTE PROCESSORS
     # =========================================================================
-    MANUAL_REPROCESS = "nba-manual-reprocess"
+
+    # Published by: Phase 4 precompute processors
+    # Consumed by: Phase 4 internal orchestrator
+    PHASE4_PROCESSOR_COMPLETE = 'nba-phase4-processor-complete'
+
+    # Published by: ml_feature_store_v2 (final Phase 4 processor)
+    # Consumed by: Phase 5 prediction coordinator
+    PHASE4_PRECOMPUTE_COMPLETE = 'nba-phase4-precompute-complete'
+
+    # =========================================================================
+    # PHASE 5: PREDICTIONS
+    # =========================================================================
+
+    # Published by: Phase 5 prediction coordinator
+    # Consumed by: (optional) downstream systems, monitoring
+    PHASE5_PREDICTIONS_COMPLETE = 'nba-phase5-predictions-complete'
+
+    # =========================================================================
+    # HELPER METHODS
+    # =========================================================================
 
     @classmethod
-    def get_all_topics(cls) -> Dict[str, str]:
+    def get_all_topics(cls) -> dict:
         """
-        Get all topic names as a dictionary.
-        Useful for validation and documentation.
+        Get all topic definitions.
 
         Returns:
-            Dict mapping topic description to topic name
+            Dictionary of {name: topic_path}
         """
         return {
-            # Phase 1 → 2
-            "phase1_scrapers_complete": cls.PHASE1_SCRAPERS_COMPLETE,
-            "phase1_scrapers_complete_dlq": cls.PHASE1_SCRAPERS_COMPLETE_DLQ,
-
-            # Phase 2 → 3
-            "phase2_raw_complete": cls.PHASE2_RAW_COMPLETE,
-            "phase2_raw_complete_dlq": cls.PHASE2_RAW_COMPLETE_DLQ,
-            "phase2_fallback_trigger": cls.PHASE2_FALLBACK_TRIGGER,
-            "phase3_fallback_trigger": cls.PHASE3_FALLBACK_TRIGGER,
-
-            # Phase 3 → 4
-            "phase3_analytics_complete": cls.PHASE3_ANALYTICS_COMPLETE,
-            "phase3_analytics_complete_dlq": cls.PHASE3_ANALYTICS_COMPLETE_DLQ,
-            "phase4_fallback_trigger": cls.PHASE4_FALLBACK_TRIGGER,
-
-            # Phase 4 → 5
-            "phase4_precompute_complete": cls.PHASE4_PRECOMPUTE_COMPLETE,
-            "phase4_precompute_complete_dlq": cls.PHASE4_PRECOMPUTE_COMPLETE_DLQ,
-            "phase5_fallback_trigger": cls.PHASE5_FALLBACK_TRIGGER,
-
-            # Phase 5 → 6
-            "phase5_predictions_complete": cls.PHASE5_PREDICTIONS_COMPLETE,
-            "phase5_predictions_complete_dlq": cls.PHASE5_PREDICTIONS_COMPLETE_DLQ,
-            "phase6_fallback_trigger": cls.PHASE6_FALLBACK_TRIGGER,
-
-            # Manual
-            "manual_reprocess": cls.MANUAL_REPROCESS,
+            'PHASE1_SCRAPERS_COMPLETE': cls.PHASE1_SCRAPERS_COMPLETE,
+            'LEGACY_SCRAPER_COMPLETE': cls.LEGACY_SCRAPER_COMPLETE,
+            'PHASE2_RAW_COMPLETE': cls.PHASE2_RAW_COMPLETE,
+            'PHASE3_TRIGGER': cls.PHASE3_TRIGGER,
+            'PHASE3_ANALYTICS_COMPLETE': cls.PHASE3_ANALYTICS_COMPLETE,
+            'PHASE4_TRIGGER': cls.PHASE4_TRIGGER,
+            'PHASE4_PROCESSOR_COMPLETE': cls.PHASE4_PROCESSOR_COMPLETE,
+            'PHASE4_PRECOMPUTE_COMPLETE': cls.PHASE4_PRECOMPUTE_COMPLETE,
+            'PHASE5_PREDICTIONS_COMPLETE': cls.PHASE5_PREDICTIONS_COMPLETE,
         }
 
     @classmethod
-    def get_phase_topics(cls, phase: int) -> Dict[str, str]:
+    def get_topic_for_phase(cls, phase: str) -> str:
         """
-        Get all topics for a specific phase.
+        Get completion topic for a phase.
 
         Args:
-            phase: Phase number (1-6)
+            phase: Phase identifier (phase_1_scrapers, phase_2_raw, etc.)
 
         Returns:
-            Dict of topic types to topic names for that phase
+            Topic name
 
-        Example:
-            >>> TOPICS.get_phase_topics(2)
-            {
-                'complete': 'nba-phase2-raw-complete',
-                'complete_dlq': 'nba-phase2-raw-complete-dlq',
-                'next_fallback': 'nba-phase3-fallback-trigger'
-            }
+        Raises:
+            ValueError if phase not recognized
         """
-        phase_map = {
-            1: {
-                'complete': cls.PHASE1_SCRAPERS_COMPLETE,
-                'complete_dlq': cls.PHASE1_SCRAPERS_COMPLETE_DLQ,
-                'next_fallback': cls.PHASE2_FALLBACK_TRIGGER,
-            },
-            2: {
-                'complete': cls.PHASE2_RAW_COMPLETE,
-                'complete_dlq': cls.PHASE2_RAW_COMPLETE_DLQ,
-                'fallback': cls.PHASE2_FALLBACK_TRIGGER,
-                'next_fallback': cls.PHASE3_FALLBACK_TRIGGER,
-            },
-            3: {
-                'complete': cls.PHASE3_ANALYTICS_COMPLETE,
-                'complete_dlq': cls.PHASE3_ANALYTICS_COMPLETE_DLQ,
-                'fallback': cls.PHASE3_FALLBACK_TRIGGER,
-                'next_fallback': cls.PHASE4_FALLBACK_TRIGGER,
-            },
-            4: {
-                'complete': cls.PHASE4_PRECOMPUTE_COMPLETE,
-                'complete_dlq': cls.PHASE4_PRECOMPUTE_COMPLETE_DLQ,
-                'fallback': cls.PHASE4_FALLBACK_TRIGGER,
-                'next_fallback': cls.PHASE5_FALLBACK_TRIGGER,
-            },
-            5: {
-                'complete': cls.PHASE5_PREDICTIONS_COMPLETE,
-                'complete_dlq': cls.PHASE5_PREDICTIONS_COMPLETE_DLQ,
-                'fallback': cls.PHASE5_FALLBACK_TRIGGER,
-                'next_fallback': cls.PHASE6_FALLBACK_TRIGGER,
-            },
-            6: {
-                'fallback': cls.PHASE6_FALLBACK_TRIGGER,
-            },
+        mapping = {
+            'phase_1_scrapers': cls.PHASE1_SCRAPERS_COMPLETE,
+            'phase_2_raw': cls.PHASE2_RAW_COMPLETE,
+            'phase_3_analytics': cls.PHASE3_ANALYTICS_COMPLETE,
+            'phase_4_precompute': cls.PHASE4_PRECOMPUTE_COMPLETE,
+            'phase_5_predictions': cls.PHASE5_PREDICTIONS_COMPLETE,
         }
 
-        return phase_map.get(phase, {})
+        if phase not in mapping:
+            raise ValueError(
+                f"Unknown phase: {phase}. Valid phases: {list(mapping.keys())}"
+            )
+
+        return mapping[phase]
 
 
-# Singleton instance for easy imports
+# Singleton instance for easy import
 TOPICS = PubSubTopics()
-
-
-# Backward compatibility aliases (for migration period only)
-# TODO: Remove these after all code migrated to TOPICS.* pattern
-SCRAPER_COMPLETE_TOPIC = TOPICS.PHASE1_SCRAPERS_COMPLETE
-RAW_DATA_COMPLETE_TOPIC = TOPICS.PHASE2_RAW_COMPLETE
-ANALYTICS_COMPLETE_TOPIC = TOPICS.PHASE3_ANALYTICS_COMPLETE

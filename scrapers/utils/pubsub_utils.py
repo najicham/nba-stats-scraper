@@ -5,14 +5,14 @@ Pub/Sub utility for Phase 1 → Phase 2 handoff in NBA Props Platform.
 
 File Path: scrapers/utils/pubsub_utils.py
 
-Purpose: 
-- Publish scraper completion events to nba-scraper-complete topic
+Purpose:
+- Publish scraper completion events using unified message format
 - Enable event-driven Phase 2 processor triggering
 - Track execution metadata for orchestration
 
 Usage:
     from scrapers.utils.pubsub_utils import ScraperPubSubPublisher
-    
+
     publisher = ScraperPubSubPublisher()
     message_id = publisher.publish_completion_event(
         scraper_name='bdl_games',
@@ -27,18 +27,17 @@ Status Values:
     - 'no_data': Tried but empty (record_count = 0)
     - 'failed': Error occurred
 
-This enables Phase 2 processors to automatically process scraped data without polling.
+Version: 2.0 (uses UnifiedPubSubPublisher)
+Updated: 2025-11-28
 """
 
 import logging
-import json
 import os
 from datetime import datetime, timezone
 from typing import Optional
 
-from google.cloud import pubsub_v1
-
-# NEW: Import centralized topic config
+# NEW: Use unified publisher
+from shared.publishers import UnifiedPubSubPublisher
 from shared.config.pubsub_topics import TOPICS
 
 logger = logging.getLogger(__name__)
@@ -47,49 +46,39 @@ logger = logging.getLogger(__name__)
 class ScraperPubSubPublisher:
     """
     Publishes scraper completion events to Pub/Sub for Phase 2 processors.
-    
+
     The critical handoff between Phase 1 (data collection) and Phase 2 (processing).
     Phase 2 processors subscribe to these events and automatically process GCS files.
+
+    Version: 2.0 - Uses UnifiedPubSubPublisher for standardized message format.
     """
-    
+
     def __init__(
         self,
         project_id: str = None,
-        dual_publish: bool = True  # NEW: Enable dual publishing during migration
+        dual_publish: bool = False  # Disabled by default - v1.0 uses unified format only
     ):
         """
         Initialize publisher.
 
         Args:
             project_id: GCP project ID (defaults to GCP_PROJECT_ID env var)
-            dual_publish: If True, publishes to both old and new topics (migration mode)
+            dual_publish: DEPRECATED - kept for backwards compatibility but ignored
         """
         self.project_id = project_id or os.getenv('GCP_PROJECT_ID', 'nba-props-platform')
-        self.dual_publish = dual_publish
 
-        # OLD topic (will deprecate after migration)
-        self.old_topic_name = 'nba-scraper-complete'
+        # Use unified publisher
+        self.publisher = UnifiedPubSubPublisher(project_id=self.project_id)
 
-        # NEW topic (from centralized config)
-        self.new_topic_name = TOPICS.PHASE1_SCRAPERS_COMPLETE
+        # Topic from centralized config
+        self.topic_name = TOPICS.PHASE1_SCRAPERS_COMPLETE
 
-        try:
-            self.publisher = pubsub_v1.PublisherClient()
+        if dual_publish:
+            logger.warning(
+                "dual_publish parameter is deprecated - v1.0 uses unified format only"
+            )
 
-            # Create topic paths for both
-            self.old_topic_path = self.publisher.topic_path(self.project_id, self.old_topic_name)
-            self.new_topic_path = self.publisher.topic_path(self.project_id, self.new_topic_name)
-
-            if self.dual_publish:
-                logger.info(
-                    f"Dual publishing mode: {self.old_topic_name} + {self.new_topic_name}"
-                )
-            else:
-                logger.info(f"Publishing to: {self.new_topic_name}")
-
-        except Exception as e:
-            logger.error(f"Failed to initialize Pub/Sub publisher: {e}")
-            raise
+        logger.info(f"ScraperPubSubPublisher initialized: {self.topic_name}")
     
     def publish_completion_event(
         self,
@@ -101,11 +90,12 @@ class ScraperPubSubPublisher:
         duration_seconds: float = 0,
         error_message: Optional[str] = None,
         workflow: Optional[str] = None,
-        metadata: Optional[dict] = None
+        metadata: Optional[dict] = None,
+        game_date: Optional[str] = None  # NEW: for unified format
     ) -> Optional[str]:
         """
-        Publish scraper completion event to Pub/Sub.
-        
+        Publish scraper completion event using unified message format.
+
         Args:
             scraper_name: Name of scraper (e.g., 'bdl_games', 'oddsa_events')
             execution_id: Unique execution ID (run_id from scraper)
@@ -116,10 +106,11 @@ class ScraperPubSubPublisher:
             error_message: Error message if status is 'failed'
             workflow: Workflow name if triggered by orchestration
             metadata: Additional metadata to include in event
-            
+            game_date: Game date being processed (extracted from workflow if not provided)
+
         Returns:
             message_id: Pub/Sub message ID (or None if publish failed)
-            
+
         Example:
             >>> publisher = ScraperPubSubPublisher()
             >>> message_id = publisher.publish_completion_event(
@@ -130,129 +121,108 @@ class ScraperPubSubPublisher:
             ...     record_count=150,
             ...     duration_seconds=28.5
             ... )
-            >>> print(f"Published: {message_id}")
-
-        Note:
-            Message payload includes both 'name' and 'scraper_name' fields.
-            Processors expect 'name', but 'scraper_name' is kept for backwards compatibility.
         """
-        
-        # Validate required fields
+
+        # Validate
         if not scraper_name:
-            logger.error("Cannot publish event: scraper_name is required")
+            logger.error("Cannot publish: scraper_name required")
             return None
-        
+
         if not execution_id:
-            logger.error("Cannot publish event: execution_id is required")
+            logger.error("Cannot publish: execution_id required")
             return None
-        
+
         if status not in ['success', 'no_data', 'failed']:
-            logger.warning(f"Unexpected status value: {status} (expected: success/no_data/failed)")
-        
-        # Build message payload
-        # NOTE: Processors expect 'name' field, but we also include 'scraper_name' for backwards compatibility
-        message_data = {
-            'name': scraper_name,  # Processors expect 'name'
-            'scraper_name': scraper_name,  # Keep for backwards compatibility
-            'execution_id': execution_id,
-            'status': status,
+            logger.warning(f"Unexpected status: {status}")
+
+        # Extract game_date from GCS path if not provided
+        if not game_date and gcs_path:
+            # Try to extract from path like: gs://bucket/bdl/2024-25/2025-11-28/file.json
+            import re
+            match = re.search(r'/(\d{4}-\d{2}-\d{2})/', gcs_path)
+            if match:
+                game_date = match.group(1)
+
+        # Fallback to today
+        if not game_date:
+            game_date = datetime.now().strftime('%Y-%m-%d')
+
+        # Build metadata with scraper-specific info
+        scraper_metadata = metadata or {}
+        scraper_metadata.update({
             'gcs_path': gcs_path,
-            'record_count': record_count,
-            'duration_seconds': round(duration_seconds, 2),
-            'timestamp': datetime.now(timezone.utc).isoformat(),
-            'workflow': workflow,
-            'error_message': error_message
-        }
-        
-        # Add optional metadata
-        if metadata:
-            message_data['metadata'] = metadata
-        
+            'workflow': workflow or 'MANUAL',
+            'scraper_type': 'api'  # Could be enhanced to detect type
+        })
+
+        # Use unified publisher
         try:
-            message_ids = []
-
-            # Publish to NEW topic (always)
-            future_new = self.publisher.publish(
-                self.new_topic_path,
-                data=json.dumps(message_data).encode('utf-8'),
-                scraper_name=scraper_name,
-                status=status,
+            message_id = self.publisher.publish_completion(
+                topic=self.topic_name,
+                processor_name=scraper_name,
+                phase='phase_1_scrapers',
                 execution_id=execution_id,
-                workflow=workflow or 'MANUAL'
+                correlation_id=execution_id,  # For scrapers, execution_id = correlation_id
+                game_date=game_date,
+                output_table=scraper_name.replace('_', ''),  # Approximate - Phase 2 has actual table
+                output_dataset='nba_raw',
+                status=status,
+                record_count=record_count,
+                records_failed=0,
+                duration_seconds=duration_seconds,
+                error_message=error_message,
+                error_type=type(Exception).__name__ if error_message else None,
+                metadata=scraper_metadata,
+                trigger_source='scheduler' if workflow else 'manual',
+                skip_downstream=False  # Never skip for production scrapers
             )
 
-            message_id_new = future_new.result(timeout=10)
-            message_ids.append(message_id_new)
+            if message_id:
+                logger.info(
+                    f"✅ Published {scraper_name}: {game_date} - {status} "
+                    f"({record_count} records, message_id={message_id})"
+                )
+            else:
+                logger.warning(
+                    f"⚠️  Publish returned None for {scraper_name} (non-fatal)"
+                )
 
-            logger.info(
-                f"✅ Published to {self.new_topic_name}: {scraper_name} "
-                f"(status={status}, records={record_count}, message_id={message_id_new})"
-            )
+            return message_id
 
-            # DUAL PUBLISH: Also publish to OLD topic during migration
-            if self.dual_publish:
-                try:
-                    future_old = self.publisher.publish(
-                        self.old_topic_path,
-                        data=json.dumps(message_data).encode('utf-8'),
-                        scraper_name=scraper_name,
-                        status=status,
-                        execution_id=execution_id,
-                        workflow=workflow or 'MANUAL'
-                    )
-
-                    message_id_old = future_old.result(timeout=10)
-                    message_ids.append(message_id_old)
-
-                    logger.debug(
-                        f"✅ Also published to {self.old_topic_name} (backward compatibility)"
-                    )
-                except Exception as dual_error:
-                    # Don't fail if old topic publish fails (migration period)
-                    logger.warning(
-                        f"Failed to publish to old topic {self.old_topic_name}: {dual_error}"
-                    )
-
-            return message_id_new  # Return new topic's message ID
-            
         except Exception as e:
-            # Log error but don't fail the scraper
-            logger.error(
-                f"Failed to publish Pub/Sub event for {scraper_name}: {e}",
-                exc_info=True
-            )
-            
-            # Capture in Sentry if available
+            # Non-blocking - log but don't fail scraper
+            logger.error(f"Failed to publish for {scraper_name}: {e}", exc_info=True)
+
+            # Capture in Sentry
             try:
                 import sentry_sdk
                 sentry_sdk.capture_exception(e)
             except:
                 pass
-            
+
             return None
     
     def publish_batch_events(self, events: list[dict]) -> dict:
         """
-        Publish multiple scraper events in batch (for backfills or bulk operations).
-        
+        Publish multiple scraper events in batch.
+
         Args:
-            events: List of event dicts (each with same structure as publish_completion_event args)
-            
+            events: List of event dicts (kwargs for publish_completion_event)
+
         Returns:
             dict: Summary with 'succeeded', 'failed', 'message_ids'
-            
+
         Example:
             >>> events = [
             ...     {'scraper_name': 'bdl_games', 'execution_id': '001', 'status': 'success', ...},
             ...     {'scraper_name': 'oddsa_events', 'execution_id': '002', 'status': 'success', ...}
             ... ]
             >>> result = publisher.publish_batch_events(events)
-            >>> print(f"Published {result['succeeded']} events")
         """
         succeeded = 0
         failed = 0
         message_ids = []
-        
+
         for event in events:
             message_id = self.publish_completion_event(**event)
             if message_id:
@@ -260,51 +230,49 @@ class ScraperPubSubPublisher:
                 message_ids.append(message_id)
             else:
                 failed += 1
-        
-        summary = {
+
+        logger.info(f"Batch publish: {succeeded}/{len(events)} succeeded, {failed} failed")
+
+        return {
             'succeeded': succeeded,
             'failed': failed,
             'total': len(events),
             'message_ids': message_ids
         }
-        
-        logger.info(
-            f"Batch publish complete: {succeeded}/{len(events)} succeeded, {failed} failed"
-        )
-        
-        return summary
 
 
 def test_pubsub_publisher():
     """
     Test function to verify Pub/Sub publishing works.
-    
+
     Run with: python -m scrapers.utils.pubsub_utils
     """
-    print("🧪 Testing Pub/Sub Publisher...")
-    
+    print("🧪 Testing ScraperPubSubPublisher (v2.0 - UnifiedPubSubPublisher)")
+
     try:
         publisher = ScraperPubSubPublisher()
-        print(f"✅ Publisher initialized: {publisher.topic_path}")
-        
+        print(f"✅ Publisher initialized: {publisher.topic_name}")
+
         # Test event
         message_id = publisher.publish_completion_event(
             scraper_name='test_scraper',
             execution_id='test-123',
             status='success',
-            gcs_path='gs://bucket/test/file.json',
+            gcs_path='gs://bucket/test/2025-11-28/file.json',
             record_count=10,
             duration_seconds=5.5,
-            workflow='TEST'
+            workflow='TEST',
+            game_date='2025-11-28'
         )
-        
+
         if message_id:
-            print(f"✅ Test event published successfully: {message_id}")
+            print(f"✅ Test event published: {message_id}")
+            print("✅ Message format: unified (phase_1_scrapers)")
             return True
         else:
             print("❌ Test event failed to publish")
             return False
-            
+
     except Exception as e:
         print(f"❌ Test failed: {e}")
         import traceback

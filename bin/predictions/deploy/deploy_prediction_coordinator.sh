@@ -3,336 +3,134 @@
 #
 # Deploy Phase 5 Prediction Coordinator to Cloud Run
 #
-# Purpose:
-#   Builds Docker image and deploys coordinator service that orchestrates
-#   daily prediction batches by fanning out work to prediction workers.
-#
 # Usage:
-#   ./bin/predictions/deploy/deploy_prediction_coordinator.sh [environment]
+#   ./bin/predictions/deploy/deploy_prediction_coordinator.sh [prod|dev]
 #
-# Arguments:
-#   environment - dev, staging, or prod (default: dev)
-#
-# Example:
-#   ./bin/predictions/deploy/deploy_prediction_coordinator.sh dev
-#   ./bin/predictions/deploy/deploy_prediction_coordinator.sh prod
-#
-# What This Script Does:
-#   1. Validates prerequisites (gcloud, docker)
-#   2. Builds Docker image with coordinator code
-#   3. Pushes image to Artifact Registry
-#   4. Deploys to Cloud Run with environment-specific config
-#   5. Verifies deployment health
-#   6. (Optional) Sets up Cloud Scheduler job for daily triggers
+# This script follows the same pattern as scrapers/analytics deployments:
+# 1. Copy Dockerfile to root
+# 2. Deploy with --source=.
+# 3. Cleanup temp Dockerfile
 
-set -euo pipefail
+set -e
 
-# ============================================================================
 # Configuration
-# ============================================================================
+ENVIRONMENT="${1:-prod}"
+SERVICE_NAME="prediction-coordinator"
+REGION="us-west2"
+PROJECT_ID="nba-props-platform"
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
-
-# Environment (default: dev)
-ENVIRONMENT="${1:-dev}"
-
-# Project configuration by environment
+# Environment-specific config
 case "$ENVIRONMENT" in
     dev)
         PROJECT_ID="nba-props-platform-dev"
-        REGION="us-west2"
         SERVICE_NAME="prediction-coordinator-dev"
-
-        # Scaling: Single instance for threading lock compatibility
-        MIN_INSTANCES=0
-        MAX_INSTANCES=1  # IMPORTANT: Threading locks require single instance
-
-        CONCURRENCY=8  # 8 concurrent /complete events
-        MEMORY="1Gi"   # Coordinator is lightweight
-        CPU=1
-        TIMEOUT=600    # 10 minutes (batch startup can be slow with 450 players)
-        ;;
-    staging)
-        PROJECT_ID="nba-props-platform-staging"
-        REGION="us-west2"
-        SERVICE_NAME="prediction-coordinator-staging"
-
-        # Scaling: Single instance for threading lock compatibility
         MIN_INSTANCES=0
         MAX_INSTANCES=1
-
-        CONCURRENCY=8
         MEMORY="1Gi"
         CPU=1
-        TIMEOUT=600
         ;;
     prod)
         PROJECT_ID="nba-props-platform"
-        REGION="us-west2"
         SERVICE_NAME="prediction-coordinator"
-
-        # Scaling: Production can use single instance OR migrate to Firestore
-        # Current: Single instance with threading locks
-        # Future: Multiple instances with Firestore state management
-        MIN_INSTANCES=1  # Always running for immediate response
-        MAX_INSTANCES=1  # Threading locks - increase after Firestore migration
-
-        CONCURRENCY=8
+        MIN_INSTANCES=1  # Always warm for fast response
+        MAX_INSTANCES=1  # Single instance (threading locks)
         MEMORY="2Gi"
         CPU=2
-        TIMEOUT=600
         ;;
     *)
-        echo "Error: Invalid environment '$ENVIRONMENT'"
-        echo "Valid environments: dev, staging, prod"
+        echo "❌ Invalid environment: $ENVIRONMENT"
+        echo "Valid: dev, prod"
         exit 1
         ;;
 esac
 
-# Docker image configuration
-IMAGE_NAME="predictions-coordinator"
-IMAGE_TAG="${ENVIRONMENT}-$(date +%Y%m%d-%H%M%S)"
-IMAGE_FULL="${REGION}-docker.pkg.dev/${PROJECT_ID}/nba-props/${IMAGE_NAME}:${IMAGE_TAG}"
-IMAGE_LATEST="${REGION}-docker.pkg.dev/${PROJECT_ID}/nba-props/${IMAGE_NAME}:${ENVIRONMENT}-latest"
+# Start timing
+DEPLOY_START_TIME=$(date +%s)
+echo "🚀 Deploying Phase 5 Prediction Coordinator ($ENVIRONMENT)"
+echo "============================================="
+echo "⏰ Start time: $(date '+%Y-%m-%d %H:%M:%S')"
 
-# Pub/Sub topics (coordinator publishes to these)
-PREDICTION_REQUEST_TOPIC="prediction-request-${ENVIRONMENT}"
-PREDICTION_READY_TOPIC="prediction-ready-${ENVIRONMENT}"
-BATCH_SUMMARY_TOPIC="prediction-batch-complete-${ENVIRONMENT}"
+# Build environment variables string
+ENV_VARS="GCP_PROJECT_ID=${PROJECT_ID}"
 
-# ============================================================================
-# Functions
-# ============================================================================
-
-log() {
-    echo "[$(date +'%Y-%m-%d %H:%M:%S')] $*"
-}
-
-error() {
-    echo "[$(date +'%Y-%m-%d %H:%M:%S')] ERROR: $*" >&2
+# Check if Dockerfile exists
+if [ ! -f "docker/predictions-coordinator.Dockerfile" ]; then
+    echo "❌ docker/predictions-coordinator.Dockerfile not found!"
     exit 1
-}
+fi
 
-check_prerequisites() {
-    log "Checking prerequisites..."
-    
-    # Check if gcloud is installed
-    if ! command -v gcloud &> /dev/null; then
-        error "gcloud CLI not found. Please install Google Cloud SDK."
-    fi
-    
-    # Check if docker is installed
-    if ! command -v docker &> /dev/null; then
-        error "docker not found. Please install Docker."
-    fi
-    
-    # Check if logged in to gcloud
-    if ! gcloud auth list --filter=status:ACTIVE --format="value(account)" | grep -q .; then
-        error "Not logged in to gcloud. Run: gcloud auth login"
-    fi
-    
-    # Check if project exists
-    if ! gcloud projects describe "$PROJECT_ID" &> /dev/null; then
-        error "Project $PROJECT_ID not found. Check PROJECT_ID configuration."
-    fi
-    
-    log "Prerequisites OK"
-}
+# Backup existing root Dockerfile if it exists
+if [ -f "Dockerfile" ]; then
+    echo "📋 Backing up existing root Dockerfile..."
+    mv Dockerfile Dockerfile.backup.$(date +%s)
+fi
 
-build_and_push_image() {
-    log "Building Docker image..."
-    
-    cd "$PROJECT_ROOT"
-    
-    # Build image
-    docker build \
-        -f docker/predictions-coordinator.Dockerfile \
-        -t "$IMAGE_FULL" \
-        -t "$IMAGE_LATEST" \
-        .
-    
-    log "Pushing Docker image to Artifact Registry..."
-    
-    # Configure docker auth
-    gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
-    
-    # Push both tags
-    docker push "$IMAGE_FULL"
-    docker push "$IMAGE_LATEST"
-    
-    log "Image pushed: $IMAGE_FULL"
-}
+# Phase 1: Setup
+SETUP_START=$(date +%s)
+echo "📋 Phase 1: Copying docker/predictions-coordinator.Dockerfile to root..."
+cp docker/predictions-coordinator.Dockerfile ./Dockerfile
+SETUP_END=$(date +%s)
+echo "⏱️  Setup completed in $((SETUP_END - SETUP_START))s"
 
-deploy_cloud_run() {
-    log "Deploying to Cloud Run..."
-    
-    # Deploy coordinator service
-    gcloud run deploy "$SERVICE_NAME" \
-        --image "$IMAGE_FULL" \
-        --project "$PROJECT_ID" \
-        --region "$REGION" \
-        --platform managed \
-        --memory "$MEMORY" \
-        --cpu "$CPU" \
-        --timeout "$TIMEOUT" \
-        --concurrency "$CONCURRENCY" \
-        --min-instances "$MIN_INSTANCES" \
-        --max-instances "$MAX_INSTANCES" \
-        --set-env-vars "GCP_PROJECT_ID=${PROJECT_ID},PREDICTION_REQUEST_TOPIC=${PREDICTION_REQUEST_TOPIC},PREDICTION_READY_TOPIC=${PREDICTION_READY_TOPIC},BATCH_SUMMARY_TOPIC=${BATCH_SUMMARY_TOPIC}" \
-        --allow-unauthenticated \
-        --service-account "prediction-coordinator@${PROJECT_ID}.iam.gserviceaccount.com" \
-        --ingress all \
-        --quiet
-    
-    log "Cloud Run deployment complete"
-}
+# Phase 2: Deployment
+DEPLOY_PHASE_START=$(date +%s)
+echo "📋 Phase 2: Deploying to Cloud Run..."
+gcloud run deploy $SERVICE_NAME \
+    --source=. \
+    --region=$REGION \
+    --platform=managed \
+    --allow-unauthenticated \
+    --port=8080 \
+    --memory=$MEMORY \
+    --cpu=$CPU \
+    --timeout=600 \
+    --concurrency=8 \
+    --min-instances=$MIN_INSTANCES \
+    --max-instances=$MAX_INSTANCES \
+    --set-env-vars="$ENV_VARS"
 
-setup_cloud_scheduler() {
-    log "Setting up Cloud Scheduler (optional)..."
-    
-    # Get Cloud Run service URL
-    SERVICE_URL=$(gcloud run services describe "$SERVICE_NAME" \
-        --project "$PROJECT_ID" \
-        --region "$REGION" \
-        --format "value(status.url)")
-    
-    # Cloud Scheduler job name
-    SCHEDULER_JOB="prediction-coordinator-daily-${ENVIRONMENT}"
-    
-    # Check if job already exists
-    if gcloud scheduler jobs describe "$SCHEDULER_JOB" \
-        --project "$PROJECT_ID" \
-        --location "$REGION" &> /dev/null; then
-        
-        log "Updating existing Cloud Scheduler job..."
-        gcloud scheduler jobs update http "$SCHEDULER_JOB" \
-            --project "$PROJECT_ID" \
-            --location "$REGION" \
-            --schedule "0 6 * * *" \
-            --time-zone "America/Los_Angeles" \
-            --uri "${SERVICE_URL}/start" \
-            --http-method POST \
-            --oidc-service-account-email "prediction-coordinator@${PROJECT_ID}.iam.gserviceaccount.com" \
-            --headers "Content-Type=application/json" \
-            --message-body '{}' \
-            --quiet
-    else
-        log "Creating new Cloud Scheduler job..."
-        gcloud scheduler jobs create http "$SCHEDULER_JOB" \
-            --project "$PROJECT_ID" \
-            --location "$REGION" \
-            --schedule "0 6 * * *" \
-            --time-zone "America/Los_Angeles" \
-            --uri "${SERVICE_URL}/start" \
-            --http-method POST \
-            --oidc-service-account-email "prediction-coordinator@${PROJECT_ID}.iam.gserviceaccount.com" \
-            --headers "Content-Type=application/json" \
-            --message-body '{}' \
-            --quiet
-    fi
-    
-    log "Cloud Scheduler configured (runs daily at 6:00 AM PT)"
-}
+DEPLOY_STATUS=$?
+DEPLOY_PHASE_END=$(date +%s)
+echo "⏱️  Cloud Run deployment completed in $((DEPLOY_PHASE_END - DEPLOY_PHASE_START))s"
 
-verify_deployment() {
-    log "Verifying deployment..."
-    
-    # Get service URL
-    SERVICE_URL=$(gcloud run services describe "$SERVICE_NAME" \
-        --project "$PROJECT_ID" \
-        --region "$REGION" \
-        --format "value(status.url)")
-    
-    log "Service deployed at: $SERVICE_URL"
-    
-    # Check service status
-    gcloud run services describe "$SERVICE_NAME" \
-        --project "$PROJECT_ID" \
-        --region "$REGION" \
-        --format "value(status.conditions[0].status)" | grep -q "True" || \
-        error "Service not ready"
-    
-    log "Deployment verified successfully"
-}
+# Phase 3: Cleanup
+CLEANUP_START=$(date +%s)
+echo "📋 Phase 3: Cleaning up temporary Dockerfile..."
+rm ./Dockerfile
+CLEANUP_END=$(date +%s)
+echo "⏱️  Cleanup completed in $((CLEANUP_END - CLEANUP_START))s"
 
-show_deployment_info() {
-    log "============================================"
-    log "Deployment Summary"
-    log "============================================"
-    log "Environment:       $ENVIRONMENT"
-    log "Project ID:        $PROJECT_ID"
-    log "Region:            $REGION"
-    log "Service Name:      $SERVICE_NAME"
-    log "Image:             $IMAGE_FULL"
-    log "Min Instances:     $MIN_INSTANCES"
-    log "Max Instances:     $MAX_INSTANCES"
-    log "Concurrency:       $CONCURRENCY"
-    log "Memory:            $MEMORY"
-    log "CPU:               $CPU"
-    log "Timeout:           ${TIMEOUT}s"
-    log "Topics:"
-    log "  - Request:       $PREDICTION_REQUEST_TOPIC"
-    log "  - Ready:         $PREDICTION_READY_TOPIC"
-    log "  - Summary:       $BATCH_SUMMARY_TOPIC"
-    log "============================================"
-    
-    # Get service URL
-    SERVICE_URL=$(gcloud run services describe "$SERVICE_NAME" \
-        --project "$PROJECT_ID" \
-        --region "$REGION" \
-        --format "value(status.url)")
-    
-    log "Service URL: $SERVICE_URL"
-    log "Health Check: ${SERVICE_URL}/health"
-    log ""
-    log "Endpoints:"
-    log "  POST ${SERVICE_URL}/start    - Start prediction batch"
-    log "  GET  ${SERVICE_URL}/status   - Check batch status"
-    log "  POST ${SERVICE_URL}/complete - Worker completion event (internal)"
-    log ""
-    log "Test batch manually:"
-    log "  TOKEN=\$(gcloud auth print-identity-token)"
-    log "  curl -X POST ${SERVICE_URL}/start \\"
-    log "    -H \"Authorization: Bearer \$TOKEN\" \\"
-    log "    -H \"Content-Type: application/json\" \\"
-    log "    -d '{\"game_date\": \"2025-11-08\"}'"
-    log ""
-    log "Monitor logs:"
-    log "  gcloud run services logs read $SERVICE_NAME \\"
-    log "    --project $PROJECT_ID --region $REGION --limit 100"
-    log ""
-    log "View metrics:"
-    log "  https://console.cloud.google.com/run/detail/${REGION}/${SERVICE_NAME}/metrics?project=${PROJECT_ID}"
-}
+# Check deployment status
+if [ $DEPLOY_STATUS -ne 0 ]; then
+    echo "❌ Deployment failed!"
+    exit 1
+fi
 
-# ============================================================================
-# Main
-# ============================================================================
+# Get service URL
+SERVICE_URL=$(gcloud run services describe $SERVICE_NAME \
+    --region=$REGION \
+    --format="value(status.url)")
 
-main() {
-    log "Starting deployment for environment: $ENVIRONMENT"
-    
-    check_prerequisites
-    build_and_push_image
-    deploy_cloud_run
-    verify_deployment
-    
-    # Ask about Cloud Scheduler setup
-    if [ "$ENVIRONMENT" = "prod" ]; then
-        read -p "Set up Cloud Scheduler for daily 6 AM triggers? (y/N): " -n 1 -r
-        echo
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
-            setup_cloud_scheduler
-        else
-            log "Skipping Cloud Scheduler setup (can run manually later)"
-        fi
-    fi
-    
-    show_deployment_info
-    
-    log "Deployment complete! 🚀"
-}
+# Final summary
+DEPLOY_END_TIME=$(date +%s)
+TOTAL_DURATION=$((DEPLOY_END_TIME - DEPLOY_START_TIME))
 
-# Run main function
-main
+echo ""
+echo "✅ Deployment Complete!"
+echo "============================================="
+echo "Environment:     $ENVIRONMENT"
+echo "Service:         $SERVICE_NAME"
+echo "Region:          $REGION"
+echo "URL:             $SERVICE_URL"
+echo "Min Instances:   $MIN_INSTANCES"
+echo "Max Instances:   $MAX_INSTANCES"
+echo "Memory:          $MEMORY"
+echo "CPU:             $CPU"
+echo "Total time:      ${TOTAL_DURATION}s"
+echo "============================================="
+echo ""
+echo "📖 Next Steps:"
+echo "  1. Test health:   curl $SERVICE_URL/health"
+echo "  2. Test start:    curl -X POST $SERVICE_URL/start -H 'Content-Type: application/json' -d '{\"game_date\":\"2025-11-29\"}'"
+echo "  3. View logs:     gcloud run services logs read $SERVICE_NAME --region $REGION --limit 50"
+echo ""

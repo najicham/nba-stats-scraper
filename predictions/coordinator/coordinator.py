@@ -23,6 +23,7 @@ from flask import Flask, request, jsonify
 import json
 import logging
 import os
+import uuid
 from typing import Dict, List, Optional, TYPE_CHECKING
 from datetime import datetime, date
 import base64
@@ -34,6 +35,11 @@ if TYPE_CHECKING:
 
 from player_loader import PlayerLoader
 from progress_tracker import ProgressTracker
+
+# Import unified publishing (lazy import to avoid cold start)
+import sys
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
+from shared.publishers.unified_pubsub_publisher import UnifiedPubSubPublisher
 
 # Configure logging
 logging.basicConfig(
@@ -58,6 +64,7 @@ _pubsub_publisher: Optional['pubsub_v1.PublisherClient'] = None
 # Global state (in production, use Firestore or Redis for multi-instance support)
 current_tracker: Optional[ProgressTracker] = None
 current_batch_id: Optional[str] = None
+current_correlation_id: Optional[str] = None  # Track correlation_id for this batch
 
 def get_player_loader() -> PlayerLoader:
     """Lazy-load PlayerLoader on first use"""
@@ -103,37 +110,47 @@ def health_check():
 def start_prediction_batch():
     """
     Start a new prediction batch
-    
-    Triggered by Cloud Scheduler or manual HTTP request
-    
+
+    Triggered by Cloud Scheduler or manual HTTP request (or Phase 4 completion)
+
     Request body (optional):
     {
-        "game_date": "2025-11-08",  # defaults to today
-        "min_minutes": 15,           # minimum projected minutes
-        "use_multiple_lines": false  # test multiple betting lines
+        "game_date": "2025-11-08",     # defaults to today
+        "min_minutes": 15,              # minimum projected minutes
+        "use_multiple_lines": false,    # test multiple betting lines
+        "correlation_id": "abc-123",    # optional - for pipeline tracing
+        "parent_processor": "MLFeatureStore"  # optional
     }
-    
+
     Returns:
         202 Accepted with batch info
     """
-    global current_tracker, current_batch_id
+    global current_tracker, current_batch_id, current_correlation_id
     
     try:
         # Parse request
         request_data = request.get_json() or {}
-        
+
         # Get game date (default to today)
         game_date_str = request_data.get('game_date')
         if game_date_str:
             game_date = datetime.strptime(game_date_str, '%Y-%m-%d').date()
         else:
             game_date = date.today()
-        
+
         min_minutes = request_data.get('min_minutes', 15)
         use_multiple_lines = request_data.get('use_multiple_lines', False)
         force = request_data.get('force', False)
 
-        logger.info(f"Starting prediction batch for {game_date}")
+        # Extract correlation tracking (for pipeline tracing Phase 1→5)
+        correlation_id = request_data.get('correlation_id') or str(uuid.uuid4())[:8]
+        parent_processor = request_data.get('parent_processor')
+        current_correlation_id = correlation_id
+
+        logger.info(
+            f"Starting prediction batch for {game_date} "
+            f"(correlation_id={correlation_id}, parent={parent_processor})"
+        )
 
         # Check if batch already running
         if current_tracker and not current_tracker.is_complete:
@@ -358,28 +375,76 @@ def publish_prediction_requests(requests: List[Dict], batch_id: str) -> int:
 
 def publish_batch_summary(tracker: ProgressTracker, batch_id: str):
     """
-    Publish batch completion summary
-    
+    Publish unified batch completion summary
+
+    Uses UnifiedPubSubPublisher for consistency with Phases 1-4.
+
     Args:
         tracker: Progress tracker with final stats
         batch_id: Batch identifier
     """
-    publisher = get_pubsub_publisher()
-    topic_path = publisher.topic_path(PROJECT_ID, BATCH_SUMMARY_TOPIC)
-
-    summary = tracker.get_summary()
-    summary['batch_id'] = batch_id
+    global current_correlation_id
 
     try:
-        message_bytes = json.dumps(summary).encode('utf-8')
-        future = publisher.publish(topic_path, data=message_bytes)
-        future.result(timeout=5.0)
-        
-        logger.info(f"Published batch summary for {batch_id}")
-        logger.info(f"Summary: {json.dumps(summary, indent=2)}")
-        
+        # Use unified publisher
+        unified_publisher = UnifiedPubSubPublisher(project_id=PROJECT_ID)
+
+        summary = tracker.get_summary()
+        game_date = summary.get('game_date', date.today().isoformat())
+
+        # Determine status based on completion
+        if summary.get('completed', 0) == summary.get('expected', 0):
+            status = 'success'
+        elif summary.get('completed', 0) > 0:
+            status = 'partial'
+        else:
+            status = 'failed'
+
+        # Publish unified message
+        message_id = unified_publisher.publish_completion(
+            topic='nba-phase5-predictions-complete',
+            processor_name='PredictionCoordinator',
+            phase='phase_5_predictions',
+            execution_id=batch_id,
+            correlation_id=current_correlation_id or batch_id,
+            game_date=game_date,
+            output_table='player_prop_predictions',
+            output_dataset='nba_predictions',
+            status=status,
+            record_count=summary.get('completed', 0),
+            records_failed=summary.get('failed', 0),
+            parent_processor=None,  # Could track Phase 4 processor
+            trigger_source='scheduler',
+            trigger_message_id=None,
+            duration_seconds=summary.get('duration_seconds', 0),
+            error_message=None,
+            error_type=None,
+            metadata={
+                # Phase 5 specific metadata
+                'batch_id': batch_id,
+                'expected_predictions': summary.get('expected', 0),
+                'completed_predictions': summary.get('completed', 0),
+                'failed_predictions': summary.get('failed', 0),
+                'completion_pct': summary.get('completion_pct', 0),
+                'stall_detected': summary.get('stall_detected', False),
+
+                # Include full summary
+                'summary': summary
+            },
+            skip_downstream=False
+        )
+
+        if message_id:
+            logger.info(
+                f"✅ Published unified batch summary for {batch_id} "
+                f"(message_id={message_id}, correlation_id={current_correlation_id})"
+            )
+            logger.info(f"Summary: {json.dumps(summary, indent=2)}")
+        else:
+            logger.warning("Failed to publish batch summary")
+
     except Exception as e:
-        logger.error(f"Error publishing batch summary: {e}")
+        logger.error(f"Error publishing batch summary: {e}", exc_info=True)
 
 
 if __name__ == '__main__':

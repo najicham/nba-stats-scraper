@@ -1,0 +1,1758 @@
+{
+  "with_schema": [
+    {
+      "dataset": "nba_analytics",
+      "table": "team_defense_quality_check",
+      "type": "VIEW",
+      "field_count": 0,
+      "schema_files": [
+        "schemas/bigquery/analytics/team_defense_game_summary_tables.sql"
+      ]
+    },
+    {
+      "dataset": "nba_analytics",
+      "table": "team_defense_recent_quality",
+      "type": "VIEW",
+      "field_count": 0,
+      "schema_files": [
+        "schemas/bigquery/analytics/team_defense_game_summary_tables.sql"
+      ]
+    },
+    {
+      "dataset": "nba_analytics",
+      "table": "team_defense_source_freshness",
+      "type": "VIEW",
+      "field_count": 0,
+      "schema_files": [
+        "schemas/bigquery/analytics/team_defense_game_summary_tables.sql"
+      ]
+    },
+    {
+      "dataset": "nba_predictions",
+      "table": "ml_feature_store_v2_high_quality",
+      "type": "VIEW",
+      "field_count": 0,
+      "schema_files": [
+        "schemas/bigquery/predictions/04_ml_feature_store_v2.sql"
+      ]
+    },
+    {
+      "dataset": "nba_predictions",
+      "table": "ml_feature_store_v2_recent",
+      "type": "VIEW",
+      "field_count": 0,
+      "schema_files": [
+        "schemas/bigquery/predictions/04_ml_feature_store_v2.sql"
+      ]
+    },
+    {
+      "dataset": "nba_reference",
+      "table": "active_aliases",
+      "type": "VIEW",
+      "field_count": 0,
+      "schema_files": [
+        "schemas/bigquery/nba_reference/views.sql"
+      ]
+    },
+    {
+      "dataset": "nba_reference",
+      "table": "current_season_players",
+      "type": "VIEW",
+      "field_count": 0,
+      "schema_files": [
+        "schemas/bigquery/nba_reference/views.sql"
+      ]
+    },
+    {
+      "dataset": "nba_reference",
+      "table": "data_quality_summary",
+      "type": "VIEW",
+      "field_count": 0,
+      "schema_files": [
+        "schemas/bigquery/nba_reference/views.sql"
+      ]
+    },
+    {
+      "dataset": "nba_reference",
+      "table": "name_resolution_debug",
+      "type": "VIEW",
+      "field_count": 0,
+      "schema_files": [
+        "schemas/bigquery/nba_reference/views.sql"
+      ]
+    },
+    {
+      "dataset": "nba_reference",
+      "table": "resolution_success_rates",
+      "type": "VIEW",
+      "field_count": 0,
+      "schema_files": [
+        "schemas/bigquery/nba_reference/views.sql"
+      ]
+    },
+    {
+      "dataset": "nba_reference",
+      "table": "review_queue",
+      "type": "VIEW",
+      "field_count": 0,
+      "schema_files": [
+        "schemas/bigquery/nba_reference/views.sql"
+      ]
+    },
+    {
+      "dataset": "nba_reference",
+      "table": "team_rosters_current",
+      "type": "VIEW",
+      "field_count": 0,
+      "schema_files": [
+        "schemas/bigquery/nba_reference/views.sql"
+      ]
+    },
+    {
+      "dataset": "nba_raw",
+      "table": "bdl_active_players_validation_summary",
+      "type": "VIEW",
+      "field_count": 0,
+      "schema_files": [
+        "schemas/bigquery/raw/bdl_active_players_tables.sql"
+      ]
+    },
+    {
+      "dataset": "nba_raw",
+      "table": "bdl_boxscores_prop_validation",
+      "type": "VIEW",
+      "field_count": 0,
+      "schema_files": [
+        "schemas/bigquery/raw/bdl_boxscores_tables.sql"
+      ]
+    },
+    {
+      "dataset": "nba_raw",
+      "table": "bdl_boxscores_quality_check",
+      "type": "VIEW",
+      "field_count": 0,
+      "schema_files": [
+        "schemas/bigquery/raw/bdl_boxscores_tables.sql"
+      ]
+    },
+    {
+      "dataset": "nba_raw",
+      "table": "bdl_boxscores_recent",
+      "type": "VIEW",
+      "field_count": 0,
+      "schema_files": [
+        "schemas/bigquery/raw/bdl_boxscores_tables.sql"
+      ]
+    },
+    {
+      "dataset": "nba_raw",
+      "table": "bdl_injuries_high_confidence",
+      "type": "VIEW",
+      "field_count": 0,
+      "schema_files": [
+        "schemas/bigquery/raw/bdl_injuries_table.sql"
+      ]
+    },
+    {
+      "dataset": "nba_raw",
+      "table": "bdl_injuries_latest_daily",
+      "type": "VIEW",
+      "field_count": 0,
+      "schema_files": [
+        "schemas/bigquery/raw/bdl_injuries_table.sql"
+      ]
+    },
+    {
+      "dataset": "nba_raw",
+      "table": "bdl_injuries_quality_metrics",
+      "type": "VIEW",
+      "field_count": 0,
+      "schema_files": [
+        "schemas/bigquery/raw/bdl_injuries_table.sql"
+      ]
+    },
+    {
+      "dataset": "nba_raw",
+      "table": "bdl_nba_team_comparison",
+      "type": "VIEW",
+      "field_count": 0,
+      "schema_files": [
+        "schemas/bigquery/raw/bdl_active_players_tables.sql"
+      ]
+    },
+    {
+      "dataset": "nba_raw",
+      "table": "bettingpros_props_best_lines",
+      "type": "VIEW",
+      "field_count": 0,
+      "schema_files": [
+        "schemas/bigquery/raw/bettingpros_player_props_tables.sql"
+      ]
+    },
+    {
+      "dataset": "nba_raw",
+      "table": "bettingpros_props_recent",
+      "type": "VIEW",
+      "field_count": 0,
+      "schema_files": [
+        "schemas/bigquery/raw/bettingpros_player_props_tables.sql"
+      ]
+    },
+    {
+      "dataset": "nba_raw",
+      "table": "bettingpros_props_validated",
+      "type": "VIEW",
+      "field_count": 0,
+      "schema_files": [
+        "schemas/bigquery/raw/bettingpros_player_props_tables.sql"
+      ]
+    },
+    {
+      "dataset": "nba_raw",
+      "table": "bettingpros_validation_summary",
+      "type": "VIEW",
+      "field_count": 0,
+      "schema_files": [
+        "schemas/bigquery/raw/bettingpros_player_props_tables.sql"
+      ]
+    },
+    {
+      "dataset": "nba_raw",
+      "table": "bigdataball_lineups",
+      "type": "VIEW",
+      "field_count": 0,
+      "schema_files": [
+        "schemas/bigquery/raw/bigdataball_tables.sql"
+      ]
+    },
+    {
+      "dataset": "nba_raw",
+      "table": "bigdataball_pbp_recent",
+      "type": "VIEW",
+      "field_count": 0,
+      "schema_files": [
+        "schemas/bigquery/raw/bigdataball_tables.sql"
+      ]
+    },
+    {
+      "dataset": "nba_raw",
+      "table": "bigdataball_shots_only",
+      "type": "VIEW",
+      "field_count": 0,
+      "schema_files": [
+        "schemas/bigquery/raw/bigdataball_tables.sql"
+      ]
+    },
+    {
+      "dataset": "nba_raw",
+      "table": "boxscores_cross_validation",
+      "type": "VIEW",
+      "field_count": 0,
+      "schema_files": [
+        "schemas/bigquery/raw/espn_boxscore_tables.sql"
+      ]
+    },
+    {
+      "dataset": "nba_raw",
+      "table": "data_health_check",
+      "type": "VIEW",
+      "field_count": 0,
+      "schema_files": [
+        "schemas/bigquery/raw/nbac_gamebook_tables.sql"
+      ]
+    },
+    {
+      "dataset": "nba_raw",
+      "table": "espn_boxscores_prop_validation",
+      "type": "VIEW",
+      "field_count": 0,
+      "schema_files": [
+        "schemas/bigquery/raw/espn_boxscore_tables.sql"
+      ]
+    },
+    {
+      "dataset": "nba_raw",
+      "table": "espn_boxscores_recent",
+      "type": "VIEW",
+      "field_count": 0,
+      "schema_files": [
+        "schemas/bigquery/raw/espn_boxscore_tables.sql"
+      ]
+    },
+    {
+      "dataset": "nba_raw",
+      "table": "espn_scoreboard_final",
+      "type": "VIEW",
+      "field_count": 0,
+      "schema_files": [
+        "schemas/bigquery/raw/espn_scoreboard_tables.sql"
+      ]
+    },
+    {
+      "dataset": "nba_raw",
+      "table": "espn_scoreboard_recent",
+      "type": "VIEW",
+      "field_count": 0,
+      "schema_files": [
+        "schemas/bigquery/raw/espn_scoreboard_tables.sql"
+      ]
+    },
+    {
+      "dataset": "nba_raw",
+      "table": "espn_scoreboard_validation",
+      "type": "VIEW",
+      "field_count": 0,
+      "schema_files": [
+        "schemas/bigquery/raw/espn_scoreboard_tables.sql"
+      ]
+    },
+    {
+      "dataset": "nba_raw",
+      "table": "espn_team_rosters",
+      "type": "TABLE",
+      "field_count": 28,
+      "schema_files": [
+        "schemas/bigquery/raw/espn_team_roster_tables.sql"
+      ]
+    },
+    {
+      "dataset": "nba_raw",
+      "table": "gamebook_data_quality_dashboard",
+      "type": "VIEW",
+      "field_count": 0,
+      "schema_files": [
+        "schemas/bigquery/raw/nbac_gamebook_tables.sql"
+      ]
+    },
+    {
+      "dataset": "nba_raw",
+      "table": "injured_players_attention_needed",
+      "type": "VIEW",
+      "field_count": 0,
+      "schema_files": [
+        "schemas/bigquery/raw/nbac_gamebook_tables.sql"
+      ]
+    },
+    {
+      "dataset": "nba_raw",
+      "table": "injury_impact_for_props",
+      "type": "VIEW",
+      "field_count": 0,
+      "schema_files": [
+        "schemas/bigquery/raw/nbac_injury_report_tables.sql"
+      ]
+    },
+    {
+      "dataset": "nba_raw",
+      "table": "injury_report_comparison",
+      "type": "VIEW",
+      "field_count": 0,
+      "schema_files": [
+        "schemas/bigquery/raw/bdl_injuries_table.sql"
+      ]
+    },
+    {
+      "dataset": "nba_raw",
+      "table": "nbac_chief_referee_summary",
+      "type": "VIEW",
+      "field_count": 0,
+      "schema_files": [
+        "schemas/bigquery/raw/nbac_referee_pivot_view.sql"
+      ]
+    },
+    {
+      "dataset": "nba_raw",
+      "table": "nbac_gamebook_player_stats",
+      "type": "TABLE",
+      "field_count": 43,
+      "schema_files": [
+        "schemas/bigquery/raw/nbac_gamebook_tables.sql"
+      ]
+    },
+    {
+      "dataset": "nba_raw",
+      "table": "nbac_injury_report_latest",
+      "type": "VIEW",
+      "field_count": 0,
+      "schema_files": [
+        "schemas/bigquery/raw/nbac_injury_report_tables.sql"
+      ]
+    },
+    {
+      "dataset": "nba_orchestration",
+      "table": "v_recent_execution_failures",
+      "type": "VIEW",
+      "field_count": 0,
+      "schema_files": [
+        "schemas/bigquery/nba_orchestration/workflow_executions.sql"
+      ]
+    },
+    {
+      "dataset": "nba_orchestration",
+      "table": "v_todays_executions",
+      "type": "VIEW",
+      "field_count": 0,
+      "schema_files": [
+        "schemas/bigquery/nba_orchestration/workflow_executions.sql"
+      ]
+    }
+  ],
+  "missing_schema": [
+    {
+      "dataset": "nba_analytics",
+      "table": "player_game_summary",
+      "type": "TABLE",
+      "field_count": 87,
+      "has_partitioning": true,
+      "has_clustering": true
+    },
+    {
+      "dataset": "nba_analytics",
+      "table": "team_defense_game_summary",
+      "type": "TABLE",
+      "field_count": 57,
+      "has_partitioning": true,
+      "has_clustering": true
+    },
+    {
+      "dataset": "nba_analytics",
+      "table": "team_offense_game_summary",
+      "type": "TABLE",
+      "field_count": 49,
+      "has_partitioning": true,
+      "has_clustering": true
+    },
+    {
+      "dataset": "nba_analytics",
+      "table": "upcoming_player_game_context",
+      "type": "TABLE",
+      "field_count": 113,
+      "has_partitioning": true,
+      "has_clustering": true
+    },
+    {
+      "dataset": "nba_analytics",
+      "table": "upcoming_team_game_context",
+      "type": "TABLE",
+      "field_count": 62,
+      "has_partitioning": true,
+      "has_clustering": true
+    },
+    {
+      "dataset": "nba_precompute",
+      "table": "daily_game_context",
+      "type": "TABLE",
+      "field_count": 17,
+      "has_partitioning": true,
+      "has_clustering": true
+    },
+    {
+      "dataset": "nba_precompute",
+      "table": "daily_opponent_defense_zones",
+      "type": "TABLE",
+      "field_count": 17,
+      "has_partitioning": true,
+      "has_clustering": true
+    },
+    {
+      "dataset": "nba_precompute",
+      "table": "player_composite_factors",
+      "type": "TABLE",
+      "field_count": 54,
+      "has_partitioning": true,
+      "has_clustering": true
+    },
+    {
+      "dataset": "nba_precompute",
+      "table": "player_daily_cache",
+      "type": "TABLE",
+      "field_count": 58,
+      "has_partitioning": true,
+      "has_clustering": true
+    },
+    {
+      "dataset": "nba_precompute",
+      "table": "player_shot_zone_analysis",
+      "type": "TABLE",
+      "field_count": 43,
+      "has_partitioning": true,
+      "has_clustering": true
+    },
+    {
+      "dataset": "nba_precompute",
+      "table": "team_defense_zone_analysis",
+      "type": "TABLE",
+      "field_count": 41,
+      "has_partitioning": true,
+      "has_clustering": true
+    },
+    {
+      "dataset": "nba_predictions",
+      "table": "current_ml_predictions",
+      "type": "TABLE",
+      "field_count": 16,
+      "has_partitioning": true,
+      "has_clustering": true
+    },
+    {
+      "dataset": "nba_predictions",
+      "table": "ml_feature_store_v2",
+      "type": "TABLE",
+      "field_count": 49,
+      "has_partitioning": true,
+      "has_clustering": true
+    },
+    {
+      "dataset": "nba_predictions",
+      "table": "player_prop_predictions",
+      "type": "TABLE",
+      "field_count": 41,
+      "has_partitioning": true,
+      "has_clustering": true
+    },
+    {
+      "dataset": "nba_predictions",
+      "table": "prediction_accuracy",
+      "type": "TABLE",
+      "field_count": 17,
+      "has_partitioning": true,
+      "has_clustering": true
+    },
+    {
+      "dataset": "nba_predictions",
+      "table": "prediction_worker_runs",
+      "type": "TABLE",
+      "field_count": 38,
+      "has_partitioning": true,
+      "has_clustering": true
+    },
+    {
+      "dataset": "nba_reference",
+      "table": "nba_players_registry",
+      "type": "TABLE",
+      "field_count": 26,
+      "has_partitioning": false,
+      "has_clustering": true
+    },
+    {
+      "dataset": "nba_reference",
+      "table": "nba_players_registry_fixed",
+      "type": "TABLE",
+      "field_count": 18,
+      "has_partitioning": false,
+      "has_clustering": false
+    },
+    {
+      "dataset": "nba_reference",
+      "table": "nba_players_registry_test_FIXED2",
+      "type": "TABLE",
+      "field_count": 18,
+      "has_partitioning": false,
+      "has_clustering": true
+    },
+    {
+      "dataset": "nba_reference",
+      "table": "player_aliases",
+      "type": "TABLE",
+      "field_count": 11,
+      "has_partitioning": false,
+      "has_clustering": true
+    },
+    {
+      "dataset": "nba_reference",
+      "table": "player_aliases_test_FIXED2",
+      "type": "TABLE",
+      "field_count": 11,
+      "has_partitioning": false,
+      "has_clustering": true
+    },
+    {
+      "dataset": "nba_reference",
+      "table": "player_name_mappings",
+      "type": "TABLE",
+      "field_count": 11,
+      "has_partitioning": true,
+      "has_clustering": true
+    },
+    {
+      "dataset": "nba_reference",
+      "table": "processor_run_history",
+      "type": "TABLE",
+      "field_count": 57,
+      "has_partitioning": true,
+      "has_clustering": true
+    },
+    {
+      "dataset": "nba_reference",
+      "table": "source_coverage_log",
+      "type": "TABLE",
+      "field_count": 33,
+      "has_partitioning": true,
+      "has_clustering": true
+    },
+    {
+      "dataset": "nba_reference",
+      "table": "unresolved_player_names",
+      "type": "TABLE",
+      "field_count": 18,
+      "has_partitioning": false,
+      "has_clustering": false
+    },
+    {
+      "dataset": "nba_reference",
+      "table": "unresolved_player_names_test_FIXED2",
+      "type": "TABLE",
+      "field_count": 17,
+      "has_partitioning": false,
+      "has_clustering": false
+    },
+    {
+      "dataset": "nba_reference",
+      "table": "unresolved_resolution_log",
+      "type": "TABLE",
+      "field_count": 9,
+      "has_partitioning": true,
+      "has_clustering": true
+    },
+    {
+      "dataset": "nba_raw",
+      "table": "bdl_active_players_current",
+      "type": "TABLE",
+      "field_count": 30,
+      "has_partitioning": false,
+      "has_clustering": true
+    },
+    {
+      "dataset": "nba_raw",
+      "table": "bdl_injuries",
+      "type": "TABLE",
+      "field_count": 20,
+      "has_partitioning": true,
+      "has_clustering": true
+    },
+    {
+      "dataset": "nba_raw",
+      "table": "bdl_player_boxscores",
+      "type": "TABLE",
+      "field_count": 39,
+      "has_partitioning": true,
+      "has_clustering": true
+    },
+    {
+      "dataset": "nba_raw",
+      "table": "bdl_standings",
+      "type": "TABLE",
+      "field_count": 33,
+      "has_partitioning": true,
+      "has_clustering": true
+    },
+    {
+      "dataset": "nba_raw",
+      "table": "bettingpros_player_points_props",
+      "type": "TABLE",
+      "field_count": 34,
+      "has_partitioning": true,
+      "has_clustering": true
+    },
+    {
+      "dataset": "nba_raw",
+      "table": "bettingpros_player_points_props_backup_20251015",
+      "type": "TABLE",
+      "field_count": 33,
+      "has_partitioning": false,
+      "has_clustering": false
+    },
+    {
+      "dataset": "nba_raw",
+      "table": "bigdataball_play_by_play",
+      "type": "TABLE",
+      "field_count": 62,
+      "has_partitioning": true,
+      "has_clustering": true
+    },
+    {
+      "dataset": "nba_raw",
+      "table": "br_roster_changes",
+      "type": "TABLE",
+      "field_count": 7,
+      "has_partitioning": true,
+      "has_clustering": true
+    },
+    {
+      "dataset": "nba_raw",
+      "table": "br_rosters_current",
+      "type": "TABLE",
+      "field_count": 19,
+      "has_partitioning": true,
+      "has_clustering": true
+    },
+    {
+      "dataset": "nba_raw",
+      "table": "espn_boxscores",
+      "type": "TABLE",
+      "field_count": 44,
+      "has_partitioning": true,
+      "has_clustering": true
+    },
+    {
+      "dataset": "nba_raw",
+      "table": "espn_scoreboard",
+      "type": "TABLE",
+      "field_count": 29,
+      "has_partitioning": true,
+      "has_clustering": true
+    },
+    {
+      "dataset": "nba_raw",
+      "table": "espn_scoreboard_temp_0107f431",
+      "type": "TABLE",
+      "field_count": 28,
+      "has_partitioning": false,
+      "has_clustering": false
+    },
+    {
+      "dataset": "nba_raw",
+      "table": "espn_scoreboard_temp_1be62b1b",
+      "type": "TABLE",
+      "field_count": 28,
+      "has_partitioning": false,
+      "has_clustering": false
+    },
+    {
+      "dataset": "nba_raw",
+      "table": "espn_scoreboard_temp_775aff06",
+      "type": "TABLE",
+      "field_count": 28,
+      "has_partitioning": false,
+      "has_clustering": false
+    },
+    {
+      "dataset": "nba_raw",
+      "table": "nbac_injury_report",
+      "type": "TABLE",
+      "field_count": 23,
+      "has_partitioning": true,
+      "has_clustering": true
+    },
+    {
+      "dataset": "nba_raw",
+      "table": "nbac_play_by_play",
+      "type": "TABLE",
+      "field_count": 36,
+      "has_partitioning": true,
+      "has_clustering": true
+    },
+    {
+      "dataset": "nba_orchestration",
+      "table": "circuit_breaker_state",
+      "type": "TABLE",
+      "field_count": 15,
+      "has_partitioning": false,
+      "has_clustering": true
+    },
+    {
+      "dataset": "nba_orchestration",
+      "table": "cleanup_operations",
+      "type": "TABLE",
+      "field_count": 11,
+      "has_partitioning": true,
+      "has_clustering": true
+    },
+    {
+      "dataset": "nba_orchestration",
+      "table": "daily_expected_schedule",
+      "type": "TABLE",
+      "field_count": 12,
+      "has_partitioning": true,
+      "has_clustering": true
+    },
+    {
+      "dataset": "nba_orchestration",
+      "table": "reprocess_attempts",
+      "type": "TABLE",
+      "field_count": 12,
+      "has_partitioning": true,
+      "has_clustering": true
+    },
+    {
+      "dataset": "nba_orchestration",
+      "table": "scraper_execution_log",
+      "type": "TABLE",
+      "field_count": 19,
+      "has_partitioning": true,
+      "has_clustering": true
+    },
+    {
+      "dataset": "nba_orchestration",
+      "table": "workflow_decisions",
+      "type": "TABLE",
+      "field_count": 15,
+      "has_partitioning": true,
+      "has_clustering": true
+    },
+    {
+      "dataset": "nba_orchestration",
+      "table": "workflow_executions",
+      "type": "TABLE",
+      "field_count": 13,
+      "has_partitioning": true,
+      "has_clustering": true
+    }
+  ],
+  "extra_schema": [
+    {
+      "table": "source_freshness_status",
+      "schema_files": [
+        "schemas/bigquery/processing/processing_tables.sql"
+      ]
+    },
+    {
+      "table": "active_data_issues",
+      "schema_files": [
+        "schemas/bigquery/processing/processing_tables.sql"
+      ]
+    },
+    {
+      "table": "processor_performance_summary",
+      "schema_files": [
+        "schemas/bigquery/processing/processing_tables.sql"
+      ]
+    },
+    {
+      "table": "worker_performance_by_player",
+      "schema_files": [
+        "schemas/bigquery/predictions/prediction_worker_runs.sql"
+      ]
+    },
+    {
+      "table": "active_circuit_breakers",
+      "schema_files": [
+        "schemas/bigquery/predictions/prediction_worker_runs.sql",
+        "schemas/bigquery/monitoring/create_monitoring_views.sql"
+      ]
+    },
+    {
+      "table": "data_quality_issues",
+      "schema_files": [
+        "schemas/bigquery/predictions/prediction_worker_runs.sql"
+      ]
+    },
+    {
+      "table": "system_reliability",
+      "schema_files": [
+        "schemas/bigquery/predictions/prediction_worker_runs.sql"
+      ]
+    },
+    {
+      "table": "system_comparison_today",
+      "schema_files": [
+        "schemas/bigquery/predictions/views/v_system_comparison_today.sql"
+      ]
+    },
+    {
+      "table": "v_system_performance_comparison",
+      "schema_files": [
+        "schemas/bigquery/predictions/views/v_system_performance_comparison.sql"
+      ]
+    },
+    {
+      "table": "v_system_agreement",
+      "schema_files": [
+        "schemas/bigquery/predictions/views/v_system_agreement.sql"
+      ]
+    },
+    {
+      "table": "system_accuracy_leaderboard",
+      "schema_files": [
+        "schemas/bigquery/predictions/views/v_system_accuracy_leaderboard.sql"
+      ]
+    },
+    {
+      "table": "todays_predictions_summary",
+      "schema_files": [
+        "schemas/bigquery/predictions/views/v_todays_predictions_summary.sql"
+      ]
+    },
+    {
+      "table": "v_cache_data_issues",
+      "schema_files": [
+        "schemas/bigquery/precompute/player_daily_cache.sql"
+      ]
+    },
+    {
+      "table": "v_latest_player_cache",
+      "schema_files": [
+        "schemas/bigquery/precompute/player_daily_cache.sql"
+      ]
+    },
+    {
+      "table": "v_cache_quality_summary",
+      "schema_files": [
+        "schemas/bigquery/precompute/player_daily_cache.sql"
+      ]
+    },
+    {
+      "table": "v_extreme_defense",
+      "schema_files": [
+        "schemas/bigquery/precompute/team_defense_zone_analysis.sql"
+      ]
+    },
+    {
+      "table": "v_latest_team_defense",
+      "schema_files": [
+        "schemas/bigquery/precompute/team_defense_zone_analysis.sql"
+      ]
+    },
+    {
+      "table": "v_extreme_game_setups",
+      "schema_files": [
+        "schemas/bigquery/precompute/player_composite_factors.sql"
+      ]
+    },
+    {
+      "table": "v_composite_factors_source_health",
+      "schema_files": [
+        "schemas/bigquery/precompute/player_composite_factors.sql"
+      ]
+    },
+    {
+      "table": "v_latest_composite_factors",
+      "schema_files": [
+        "schemas/bigquery/precompute/player_composite_factors.sql"
+      ]
+    },
+    {
+      "table": "processor_health_summary",
+      "schema_files": [
+        "schemas/bigquery/validation/validation_results.sql"
+      ]
+    },
+    {
+      "table": "validation_trends",
+      "schema_files": [
+        "schemas/bigquery/validation/validation_results.sql"
+      ]
+    },
+    {
+      "table": "validation_coverage",
+      "schema_files": [
+        "schemas/bigquery/validation/validation_results.sql"
+      ]
+    },
+    {
+      "table": "processor_status_current",
+      "schema_files": [
+        "schemas/bigquery/validation/validation_results.sql"
+      ]
+    },
+    {
+      "table": "validation_failures_recent",
+      "schema_files": [
+        "schemas/bigquery/validation/validation_results.sql"
+      ]
+    },
+    {
+      "table": "v_missing_files_by_age",
+      "schema_files": [
+        "schemas/bigquery/nba_orchestration/cleanup_operations.sql"
+      ]
+    },
+    {
+      "table": "v_latest_cleanup_status",
+      "schema_files": [
+        "schemas/bigquery/nba_orchestration/cleanup_operations.sql"
+      ]
+    },
+    {
+      "table": "v_todays_schedule_status",
+      "schema_files": [
+        "schemas/bigquery/nba_orchestration/daily_expected_schedule.sql"
+      ]
+    },
+    {
+      "table": "v_todays_workflows",
+      "schema_files": [
+        "schemas/bigquery/nba_orchestration/workflow_decisions.sql"
+      ]
+    },
+    {
+      "table": "v_recent_workflow_failures",
+      "schema_files": [
+        "schemas/bigquery/nba_orchestration/workflow_decisions.sql"
+      ]
+    },
+    {
+      "table": "v_circuit_breaker_status",
+      "schema_files": [
+        "schemas/bigquery/orchestration/reprocess_attempts.sql"
+      ]
+    },
+    {
+      "table": "game_source_coverage_summary",
+      "schema_files": [
+        "schemas/bigquery/nba_reference/source_coverage_log.sql"
+      ]
+    },
+    {
+      "table": "pubsub_flow_health",
+      "schema_files": [
+        "schemas/bigquery/monitoring/create_monitoring_views.sql"
+      ]
+    },
+    {
+      "table": "multi_window_completeness",
+      "schema_files": [
+        "schemas/bigquery/monitoring/create_monitoring_views.sql"
+      ]
+    },
+    {
+      "table": "production_readiness_daily",
+      "schema_files": [
+        "schemas/bigquery/monitoring/create_monitoring_views.sql"
+      ]
+    },
+    {
+      "table": "cascade_scheduler_status",
+      "schema_files": [
+        "schemas/bigquery/monitoring/create_monitoring_views.sql"
+      ]
+    },
+    {
+      "table": "completeness_summary",
+      "schema_files": [
+        "schemas/bigquery/monitoring/create_monitoring_views.sql"
+      ]
+    },
+    {
+      "table": "completeness_trends",
+      "schema_files": [
+        "schemas/bigquery/monitoring/create_monitoring_views.sql"
+      ]
+    },
+    {
+      "table": "incomplete_entities",
+      "schema_files": [
+        "schemas/bigquery/monitoring/create_monitoring_views.sql"
+      ]
+    },
+    {
+      "table": "nbac_referee_game_pivot_recent",
+      "schema_files": [
+        "schemas/bigquery/raw/nbac_referee_pivot_view.sql"
+      ]
+    },
+    {
+      "table": "nbac_referee_game_pivot",
+      "schema_files": [
+        "schemas/bigquery/raw/nbac_referee_pivot_view.sql"
+      ]
+    },
+    {
+      "table": "player_boxscore_comparison",
+      "schema_files": [
+        "schemas/bigquery/raw/nbac_player_boxscore_tables.sql"
+      ]
+    },
+    {
+      "table": "nbac_player_boxscores_recent",
+      "schema_files": [
+        "schemas/bigquery/raw/nbac_player_boxscore_tables.sql"
+      ]
+    },
+    {
+      "table": "nbac_player_boxscores_prop_validation",
+      "schema_files": [
+        "schemas/bigquery/raw/nbac_player_boxscore_tables.sql"
+      ]
+    },
+    {
+      "table": "nbac_player_boxscores_quality",
+      "schema_files": [
+        "schemas/bigquery/raw/nbac_player_boxscore_tables.sql"
+      ]
+    },
+    {
+      "table": "nbac_player_boxscores_active",
+      "schema_files": [
+        "schemas/bigquery/raw/nbac_player_boxscore_tables.sql"
+      ]
+    },
+    {
+      "table": "player_name_collisions",
+      "schema_files": [
+        "schemas/bigquery/raw/nbac_player_list_tables.sql"
+      ]
+    },
+    {
+      "table": "nbac_referee_game_assignments_recent",
+      "schema_files": [
+        "schemas/bigquery/raw/nbac_referee_tables.sql"
+      ]
+    },
+    {
+      "table": "nbac_referee_assignments_summary",
+      "schema_files": [
+        "schemas/bigquery/raw/nbac_referee_tables.sql"
+      ]
+    },
+    {
+      "table": "nbac_schedule_today_source",
+      "schema_files": [
+        "schemas/bigquery/raw/nbac_schedule_source_tracking.sql"
+      ]
+    },
+    {
+      "table": "nbac_schedule_source_daily",
+      "schema_files": [
+        "schemas/bigquery/raw/nbac_schedule_source_tracking.sql"
+      ]
+    },
+    {
+      "table": "nbac_schedule_source_changes",
+      "schema_files": [
+        "schemas/bigquery/raw/nbac_schedule_source_tracking.sql"
+      ]
+    },
+    {
+      "table": "nbac_schedule_source_reliability",
+      "schema_files": [
+        "schemas/bigquery/raw/nbac_schedule_source_tracking.sql"
+      ]
+    },
+    {
+      "table": "nbac_schedule_source_quality",
+      "schema_files": [
+        "schemas/bigquery/raw/nbac_schedule_source_tracking.sql"
+      ]
+    },
+    {
+      "table": "nbac_schedule_source_usage",
+      "schema_files": [
+        "schemas/bigquery/raw/nbac_schedule_source_tracking.sql"
+      ]
+    },
+    {
+      "table": "nbac_schedule_fallback_stats",
+      "schema_files": [
+        "schemas/bigquery/raw/nbac_schedule_source_tracking.sql"
+      ]
+    },
+    {
+      "table": "nbac_play_by_play_recent",
+      "schema_files": [
+        "schemas/bigquery/raw/nbac_play_by_play_tables.sql"
+      ]
+    },
+    {
+      "table": "nbac_play_by_play_shots",
+      "schema_files": [
+        "schemas/bigquery/raw/nbac_play_by_play_tables.sql"
+      ]
+    },
+    {
+      "table": "nbac_play_by_play_active_events",
+      "schema_files": [
+        "schemas/bigquery/raw/nbac_play_by_play_tables.sql"
+      ]
+    },
+    {
+      "table": "props_players_validation_status",
+      "schema_files": [
+        "schemas/bigquery/raw/bdl_active_players_tables.sql"
+      ]
+    },
+    {
+      "table": "nbac_scoreboard_v2_final",
+      "schema_files": [
+        "schemas/bigquery/raw/nbac_scoreboard_v2_tables.sql"
+      ]
+    },
+    {
+      "table": "nbac_scoreboard_v2_team_records",
+      "schema_files": [
+        "schemas/bigquery/raw/nbac_scoreboard_v2_tables.sql"
+      ]
+    },
+    {
+      "table": "nbac_scoreboard_v2_recent",
+      "schema_files": [
+        "schemas/bigquery/raw/nbac_scoreboard_v2_tables.sql"
+      ]
+    },
+    {
+      "table": "nbac_player_movement_recent",
+      "schema_files": [
+        "schemas/bigquery/raw/player_movement_tables.sql"
+      ]
+    },
+    {
+      "table": "nbac_player_movement_players_only",
+      "schema_files": [
+        "schemas/bigquery/raw/player_movement_tables.sql"
+      ]
+    },
+    {
+      "table": "nbac_player_movement_trades",
+      "schema_files": [
+        "schemas/bigquery/raw/player_movement_tables.sql"
+      ]
+    },
+    {
+      "table": "odds_api_player_points_props_source_stats",
+      "schema_files": [
+        "schemas/bigquery/raw/odds_api_props_tables.sql"
+      ]
+    },
+    {
+      "table": "odds_api_player_points_props_recent",
+      "schema_files": [
+        "schemas/bigquery/raw/odds_api_props_tables.sql"
+      ]
+    },
+    {
+      "table": "odds_api_player_points_props_live_only",
+      "schema_files": [
+        "schemas/bigquery/raw/odds_api_props_tables.sql"
+      ]
+    },
+    {
+      "table": "odds_api_player_points_props_latest_by_player",
+      "schema_files": [
+        "schemas/bigquery/raw/odds_api_props_tables.sql"
+      ]
+    },
+    {
+      "table": "odds_api_latest_props",
+      "schema_files": [
+        "schemas/bigquery/raw/odds_api_props_tables.sql"
+      ]
+    },
+    {
+      "table": "odds_api_line_movements",
+      "schema_files": [
+        "schemas/bigquery/raw/odds_api_props_tables.sql"
+      ]
+    },
+    {
+      "table": "nbac_schedule_current_season",
+      "schema_files": [
+        "schemas/bigquery/raw/nbac_schedule_tables.sql"
+      ]
+    },
+    {
+      "table": "nbac_schedule_analytics",
+      "schema_files": [
+        "schemas/bigquery/raw/nbac_schedule_tables.sql"
+      ]
+    },
+    {
+      "table": "nbac_schedule_recent",
+      "schema_files": [
+        "schemas/bigquery/raw/nbac_schedule_tables.sql"
+      ]
+    },
+    {
+      "table": "nbac_schedule_playoffs",
+      "schema_files": [
+        "schemas/bigquery/raw/nbac_schedule_tables.sql"
+      ]
+    },
+    {
+      "table": "nbac_schedule_upcoming",
+      "schema_files": [
+        "schemas/bigquery/raw/nbac_schedule_tables.sql"
+      ]
+    },
+    {
+      "table": "nbac_schedule_primetime",
+      "schema_files": [
+        "schemas/bigquery/raw/nbac_schedule_tables.sql"
+      ]
+    },
+    {
+      "table": "nbac_schedule_national_tv",
+      "schema_files": [
+        "schemas/bigquery/raw/nbac_schedule_tables.sql"
+      ]
+    },
+    {
+      "table": "odds_api_game_lines_preferred",
+      "schema_files": [
+        "schemas/bigquery/raw/odds_game_lines_views.sql"
+      ]
+    },
+    {
+      "table": "odds_api_game_lines_latest_by_game",
+      "schema_files": [
+        "schemas/bigquery/raw/odds_game_lines_tables.sql"
+      ]
+    },
+    {
+      "table": "odds_api_game_lines_source_stats",
+      "schema_files": [
+        "schemas/bigquery/raw/odds_game_lines_tables.sql"
+      ]
+    },
+    {
+      "table": "odds_api_game_lines_recent",
+      "schema_files": [
+        "schemas/bigquery/raw/odds_game_lines_tables.sql"
+      ]
+    },
+    {
+      "table": "odds_api_game_lines_live_only",
+      "schema_files": [
+        "schemas/bigquery/raw/odds_game_lines_tables.sql"
+      ]
+    },
+    {
+      "table": "team_mapping_analysis",
+      "schema_files": [
+        "schemas/bigquery/raw/nbac_gamebook_tables.sql"
+      ]
+    },
+    {
+      "table": "processing_run_audit",
+      "schema_files": [
+        "schemas/bigquery/raw/nbac_gamebook_tables.sql"
+      ]
+    },
+    {
+      "table": "fixable_resolutions",
+      "schema_files": [
+        "schemas/bigquery/raw/name_resolution_logging_tables.sql"
+      ]
+    },
+    {
+      "table": "resolution_quality_by_team",
+      "schema_files": [
+        "schemas/bigquery/raw/name_resolution_logging_tables.sql"
+      ]
+    },
+    {
+      "table": "injured_player_failures",
+      "schema_files": [
+        "schemas/bigquery/raw/name_resolution_logging_tables.sql"
+      ]
+    },
+    {
+      "table": "team_mapping_issues",
+      "schema_files": [
+        "schemas/bigquery/raw/name_resolution_logging_tables.sql"
+      ]
+    }
+  ],
+  "schema_file_summary": {
+    "source_freshness_status": [
+      "schemas/bigquery/processing/processing_tables.sql"
+    ],
+    "active_data_issues": [
+      "schemas/bigquery/processing/processing_tables.sql"
+    ],
+    "processor_performance_summary": [
+      "schemas/bigquery/processing/processing_tables.sql"
+    ],
+    "team_defense_source_freshness": [
+      "schemas/bigquery/analytics/team_defense_game_summary_tables.sql"
+    ],
+    "team_defense_recent_quality": [
+      "schemas/bigquery/analytics/team_defense_game_summary_tables.sql"
+    ],
+    "team_defense_quality_check": [
+      "schemas/bigquery/analytics/team_defense_game_summary_tables.sql"
+    ],
+    "worker_performance_by_player": [
+      "schemas/bigquery/predictions/prediction_worker_runs.sql"
+    ],
+    "active_circuit_breakers": [
+      "schemas/bigquery/predictions/prediction_worker_runs.sql",
+      "schemas/bigquery/monitoring/create_monitoring_views.sql"
+    ],
+    "data_quality_issues": [
+      "schemas/bigquery/predictions/prediction_worker_runs.sql"
+    ],
+    "system_reliability": [
+      "schemas/bigquery/predictions/prediction_worker_runs.sql"
+    ],
+    "ml_feature_store_v2_recent": [
+      "schemas/bigquery/predictions/04_ml_feature_store_v2.sql"
+    ],
+    "ml_feature_store_v2_high_quality": [
+      "schemas/bigquery/predictions/04_ml_feature_store_v2.sql"
+    ],
+    "system_comparison_today": [
+      "schemas/bigquery/predictions/views/v_system_comparison_today.sql"
+    ],
+    "v_system_performance_comparison": [
+      "schemas/bigquery/predictions/views/v_system_performance_comparison.sql"
+    ],
+    "v_system_agreement": [
+      "schemas/bigquery/predictions/views/v_system_agreement.sql"
+    ],
+    "system_accuracy_leaderboard": [
+      "schemas/bigquery/predictions/views/v_system_accuracy_leaderboard.sql"
+    ],
+    "todays_predictions_summary": [
+      "schemas/bigquery/predictions/views/v_todays_predictions_summary.sql"
+    ],
+    "v_cache_data_issues": [
+      "schemas/bigquery/precompute/player_daily_cache.sql"
+    ],
+    "v_latest_player_cache": [
+      "schemas/bigquery/precompute/player_daily_cache.sql"
+    ],
+    "v_cache_quality_summary": [
+      "schemas/bigquery/precompute/player_daily_cache.sql"
+    ],
+    "v_extreme_defense": [
+      "schemas/bigquery/precompute/team_defense_zone_analysis.sql"
+    ],
+    "v_latest_team_defense": [
+      "schemas/bigquery/precompute/team_defense_zone_analysis.sql"
+    ],
+    "v_extreme_game_setups": [
+      "schemas/bigquery/precompute/player_composite_factors.sql"
+    ],
+    "v_composite_factors_source_health": [
+      "schemas/bigquery/precompute/player_composite_factors.sql"
+    ],
+    "v_latest_composite_factors": [
+      "schemas/bigquery/precompute/player_composite_factors.sql"
+    ],
+    "processor_health_summary": [
+      "schemas/bigquery/validation/validation_results.sql"
+    ],
+    "validation_trends": [
+      "schemas/bigquery/validation/validation_results.sql"
+    ],
+    "validation_coverage": [
+      "schemas/bigquery/validation/validation_results.sql"
+    ],
+    "processor_status_current": [
+      "schemas/bigquery/validation/validation_results.sql"
+    ],
+    "validation_failures_recent": [
+      "schemas/bigquery/validation/validation_results.sql"
+    ],
+    "v_missing_files_by_age": [
+      "schemas/bigquery/nba_orchestration/cleanup_operations.sql"
+    ],
+    "v_latest_cleanup_status": [
+      "schemas/bigquery/nba_orchestration/cleanup_operations.sql"
+    ],
+    "v_todays_schedule_status": [
+      "schemas/bigquery/nba_orchestration/daily_expected_schedule.sql"
+    ],
+    "v_recent_execution_failures": [
+      "schemas/bigquery/nba_orchestration/workflow_executions.sql"
+    ],
+    "v_todays_executions": [
+      "schemas/bigquery/nba_orchestration/workflow_executions.sql"
+    ],
+    "v_todays_workflows": [
+      "schemas/bigquery/nba_orchestration/workflow_decisions.sql"
+    ],
+    "v_recent_workflow_failures": [
+      "schemas/bigquery/nba_orchestration/workflow_decisions.sql"
+    ],
+    "v_circuit_breaker_status": [
+      "schemas/bigquery/orchestration/reprocess_attempts.sql"
+    ],
+    "review_queue": [
+      "schemas/bigquery/nba_reference/views.sql"
+    ],
+    "data_quality_summary": [
+      "schemas/bigquery/nba_reference/views.sql"
+    ],
+    "current_season_players": [
+      "schemas/bigquery/nba_reference/views.sql"
+    ],
+    "name_resolution_debug": [
+      "schemas/bigquery/nba_reference/views.sql"
+    ],
+    "resolution_success_rates": [
+      "schemas/bigquery/nba_reference/views.sql"
+    ],
+    "team_rosters_current": [
+      "schemas/bigquery/nba_reference/views.sql"
+    ],
+    "active_aliases": [
+      "schemas/bigquery/nba_reference/views.sql"
+    ],
+    "game_source_coverage_summary": [
+      "schemas/bigquery/nba_reference/source_coverage_log.sql"
+    ],
+    "pubsub_flow_health": [
+      "schemas/bigquery/monitoring/create_monitoring_views.sql"
+    ],
+    "multi_window_completeness": [
+      "schemas/bigquery/monitoring/create_monitoring_views.sql"
+    ],
+    "production_readiness_daily": [
+      "schemas/bigquery/monitoring/create_monitoring_views.sql"
+    ],
+    "cascade_scheduler_status": [
+      "schemas/bigquery/monitoring/create_monitoring_views.sql"
+    ],
+    "completeness_summary": [
+      "schemas/bigquery/monitoring/create_monitoring_views.sql"
+    ],
+    "completeness_trends": [
+      "schemas/bigquery/monitoring/create_monitoring_views.sql"
+    ],
+    "incomplete_entities": [
+      "schemas/bigquery/monitoring/create_monitoring_views.sql"
+    ],
+    "nbac_chief_referee_summary": [
+      "schemas/bigquery/raw/nbac_referee_pivot_view.sql"
+    ],
+    "nbac_referee_game_pivot_recent": [
+      "schemas/bigquery/raw/nbac_referee_pivot_view.sql"
+    ],
+    "nbac_referee_game_pivot": [
+      "schemas/bigquery/raw/nbac_referee_pivot_view.sql"
+    ],
+    "player_boxscore_comparison": [
+      "schemas/bigquery/raw/nbac_player_boxscore_tables.sql"
+    ],
+    "nbac_player_boxscores_recent": [
+      "schemas/bigquery/raw/nbac_player_boxscore_tables.sql"
+    ],
+    "nbac_player_boxscores_prop_validation": [
+      "schemas/bigquery/raw/nbac_player_boxscore_tables.sql"
+    ],
+    "nbac_player_boxscores_quality": [
+      "schemas/bigquery/raw/nbac_player_boxscore_tables.sql"
+    ],
+    "nbac_player_boxscores_active": [
+      "schemas/bigquery/raw/nbac_player_boxscore_tables.sql"
+    ],
+    "bdl_boxscores_quality_check": [
+      "schemas/bigquery/raw/bdl_boxscores_tables.sql"
+    ],
+    "bdl_boxscores_prop_validation": [
+      "schemas/bigquery/raw/bdl_boxscores_tables.sql"
+    ],
+    "bdl_boxscores_recent": [
+      "schemas/bigquery/raw/bdl_boxscores_tables.sql"
+    ],
+    "player_name_collisions": [
+      "schemas/bigquery/raw/nbac_player_list_tables.sql"
+    ],
+    "nbac_referee_game_assignments_recent": [
+      "schemas/bigquery/raw/nbac_referee_tables.sql"
+    ],
+    "nbac_referee_assignments_summary": [
+      "schemas/bigquery/raw/nbac_referee_tables.sql"
+    ],
+    "espn_scoreboard_final": [
+      "schemas/bigquery/raw/espn_scoreboard_tables.sql"
+    ],
+    "espn_scoreboard_validation": [
+      "schemas/bigquery/raw/espn_scoreboard_tables.sql"
+    ],
+    "espn_scoreboard_recent": [
+      "schemas/bigquery/raw/espn_scoreboard_tables.sql"
+    ],
+    "nbac_schedule_today_source": [
+      "schemas/bigquery/raw/nbac_schedule_source_tracking.sql"
+    ],
+    "nbac_schedule_source_daily": [
+      "schemas/bigquery/raw/nbac_schedule_source_tracking.sql"
+    ],
+    "nbac_schedule_source_changes": [
+      "schemas/bigquery/raw/nbac_schedule_source_tracking.sql"
+    ],
+    "nbac_schedule_source_reliability": [
+      "schemas/bigquery/raw/nbac_schedule_source_tracking.sql"
+    ],
+    "nbac_schedule_source_quality": [
+      "schemas/bigquery/raw/nbac_schedule_source_tracking.sql"
+    ],
+    "nbac_schedule_source_usage": [
+      "schemas/bigquery/raw/nbac_schedule_source_tracking.sql"
+    ],
+    "nbac_schedule_fallback_stats": [
+      "schemas/bigquery/raw/nbac_schedule_source_tracking.sql"
+    ],
+    "nbac_play_by_play_recent": [
+      "schemas/bigquery/raw/nbac_play_by_play_tables.sql"
+    ],
+    "nbac_play_by_play_shots": [
+      "schemas/bigquery/raw/nbac_play_by_play_tables.sql"
+    ],
+    "nbac_play_by_play_active_events": [
+      "schemas/bigquery/raw/nbac_play_by_play_tables.sql"
+    ],
+    "bdl_active_players_validation_summary": [
+      "schemas/bigquery/raw/bdl_active_players_tables.sql"
+    ],
+    "bdl_nba_team_comparison": [
+      "schemas/bigquery/raw/bdl_active_players_tables.sql"
+    ],
+    "props_players_validation_status": [
+      "schemas/bigquery/raw/bdl_active_players_tables.sql"
+    ],
+    "nbac_scoreboard_v2_final": [
+      "schemas/bigquery/raw/nbac_scoreboard_v2_tables.sql"
+    ],
+    "nbac_scoreboard_v2_team_records": [
+      "schemas/bigquery/raw/nbac_scoreboard_v2_tables.sql"
+    ],
+    "nbac_scoreboard_v2_recent": [
+      "schemas/bigquery/raw/nbac_scoreboard_v2_tables.sql"
+    ],
+    "nbac_player_movement_recent": [
+      "schemas/bigquery/raw/player_movement_tables.sql"
+    ],
+    "nbac_player_movement_players_only": [
+      "schemas/bigquery/raw/player_movement_tables.sql"
+    ],
+    "nbac_player_movement_trades": [
+      "schemas/bigquery/raw/player_movement_tables.sql"
+    ],
+    "odds_api_player_points_props_source_stats": [
+      "schemas/bigquery/raw/odds_api_props_tables.sql"
+    ],
+    "odds_api_player_points_props_recent": [
+      "schemas/bigquery/raw/odds_api_props_tables.sql"
+    ],
+    "odds_api_player_points_props_live_only": [
+      "schemas/bigquery/raw/odds_api_props_tables.sql"
+    ],
+    "odds_api_player_points_props_latest_by_player": [
+      "schemas/bigquery/raw/odds_api_props_tables.sql"
+    ],
+    "odds_api_latest_props": [
+      "schemas/bigquery/raw/odds_api_props_tables.sql"
+    ],
+    "odds_api_line_movements": [
+      "schemas/bigquery/raw/odds_api_props_tables.sql"
+    ],
+    "bigdataball_shots_only": [
+      "schemas/bigquery/raw/bigdataball_tables.sql"
+    ],
+    "bigdataball_pbp_recent": [
+      "schemas/bigquery/raw/bigdataball_tables.sql"
+    ],
+    "bigdataball_lineups": [
+      "schemas/bigquery/raw/bigdataball_tables.sql"
+    ],
+    "bdl_injuries_quality_metrics": [
+      "schemas/bigquery/raw/bdl_injuries_table.sql"
+    ],
+    "bdl_injuries_high_confidence": [
+      "schemas/bigquery/raw/bdl_injuries_table.sql"
+    ],
+    "injury_report_comparison": [
+      "schemas/bigquery/raw/bdl_injuries_table.sql"
+    ],
+    "bdl_injuries_latest_daily": [
+      "schemas/bigquery/raw/bdl_injuries_table.sql"
+    ],
+    "nbac_schedule_current_season": [
+      "schemas/bigquery/raw/nbac_schedule_tables.sql"
+    ],
+    "nbac_schedule_analytics": [
+      "schemas/bigquery/raw/nbac_schedule_tables.sql"
+    ],
+    "nbac_schedule_recent": [
+      "schemas/bigquery/raw/nbac_schedule_tables.sql"
+    ],
+    "nbac_schedule_playoffs": [
+      "schemas/bigquery/raw/nbac_schedule_tables.sql"
+    ],
+    "nbac_schedule_upcoming": [
+      "schemas/bigquery/raw/nbac_schedule_tables.sql"
+    ],
+    "nbac_schedule_primetime": [
+      "schemas/bigquery/raw/nbac_schedule_tables.sql"
+    ],
+    "nbac_schedule_national_tv": [
+      "schemas/bigquery/raw/nbac_schedule_tables.sql"
+    ],
+    "boxscores_cross_validation": [
+      "schemas/bigquery/raw/espn_boxscore_tables.sql"
+    ],
+    "espn_boxscores_prop_validation": [
+      "schemas/bigquery/raw/espn_boxscore_tables.sql"
+    ],
+    "espn_boxscores_recent": [
+      "schemas/bigquery/raw/espn_boxscore_tables.sql"
+    ],
+    "nbac_injury_report_latest": [
+      "schemas/bigquery/raw/nbac_injury_report_tables.sql"
+    ],
+    "injury_impact_for_props": [
+      "schemas/bigquery/raw/nbac_injury_report_tables.sql"
+    ],
+    "bettingpros_props_recent": [
+      "schemas/bigquery/raw/bettingpros_player_props_tables.sql"
+    ],
+    "bettingpros_validation_summary": [
+      "schemas/bigquery/raw/bettingpros_player_props_tables.sql"
+    ],
+    "bettingpros_props_validated": [
+      "schemas/bigquery/raw/bettingpros_player_props_tables.sql"
+    ],
+    "bettingpros_props_best_lines": [
+      "schemas/bigquery/raw/bettingpros_player_props_tables.sql"
+    ],
+    "odds_api_game_lines_preferred": [
+      "schemas/bigquery/raw/odds_game_lines_views.sql"
+    ],
+    "odds_api_game_lines_latest_by_game": [
+      "schemas/bigquery/raw/odds_game_lines_tables.sql"
+    ],
+    "odds_api_game_lines_source_stats": [
+      "schemas/bigquery/raw/odds_game_lines_tables.sql"
+    ],
+    "odds_api_game_lines_recent": [
+      "schemas/bigquery/raw/odds_game_lines_tables.sql"
+    ],
+    "odds_api_game_lines_live_only": [
+      "schemas/bigquery/raw/odds_game_lines_tables.sql"
+    ],
+    "injured_players_attention_needed": [
+      "schemas/bigquery/raw/nbac_gamebook_tables.sql"
+    ],
+    "data_health_check": [
+      "schemas/bigquery/raw/nbac_gamebook_tables.sql"
+    ],
+    "gamebook_data_quality_dashboard": [
+      "schemas/bigquery/raw/nbac_gamebook_tables.sql"
+    ],
+    "nbac_gamebook_player_stats": [
+      "schemas/bigquery/raw/nbac_gamebook_tables.sql"
+    ],
+    "team_mapping_analysis": [
+      "schemas/bigquery/raw/nbac_gamebook_tables.sql"
+    ],
+    "processing_run_audit": [
+      "schemas/bigquery/raw/nbac_gamebook_tables.sql"
+    ],
+    "fixable_resolutions": [
+      "schemas/bigquery/raw/name_resolution_logging_tables.sql"
+    ],
+    "resolution_quality_by_team": [
+      "schemas/bigquery/raw/name_resolution_logging_tables.sql"
+    ],
+    "injured_player_failures": [
+      "schemas/bigquery/raw/name_resolution_logging_tables.sql"
+    ],
+    "team_mapping_issues": [
+      "schemas/bigquery/raw/name_resolution_logging_tables.sql"
+    ],
+    "espn_team_rosters": [
+      "schemas/bigquery/raw/espn_team_roster_tables.sql"
+    ]
+  },
+  "totals": {
+    "deployed_tables": 52,
+    "deployed_views": 52,
+    "schema_files": 84,
+    "tables_with_schema": 44,
+    "tables_missing_schema": 50,
+    "extra_schema_files": 90
+  }
+}

@@ -1,7 +1,7 @@
 # Backfill Master Plan: 4 Years of NBA Data
 
 **Created:** 2025-11-29 20:30 PST
-**Last Updated:** 2025-11-29 21:12 PST
+**Last Updated:** 2025-11-29 21:53 PST
 **Status:** Planning - Pre-Execution Review
 **Goal:** Backfill 675 game dates (2021-22 through 2024-25) across all phases
 
@@ -103,17 +103,18 @@
 2. Backfill play-by-play (88+ minutes, may not be available historically)
 3. Use BigDataBall play-by-play as alternative source
 
-### Gap 4: Historical Odds Data Limited
+### ~~Gap 4: Historical Odds Data Limited~~ - RESOLVED
 
 **Problem:** `odds_api_player_points_props` only 40% coverage.
 
-**Impact:**
-- `upcoming_player_game_context` uses props as DRIVER (determines which players to process)
-- Without props, won't know which players to process for 60% of dates
+**Solution Found:** BettingPros has 99.7% coverage (673/675 dates).
 
-**Resolution Options:**
-1. Run `upcoming_player_game_context` only for dates with odds data
-2. Modify processor to use all players from boxscores instead of props-driven
+| Source | Dates | Coverage |
+|--------|-------|----------|
+| Odds API | 271 | 40% |
+| BettingPros | 673 | 99.7% |
+
+**Action:** Verify `upcoming_player_game_context` uses BettingPros as fallback.
 
 ---
 

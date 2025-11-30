@@ -136,10 +136,26 @@ class ProcessorBase(RunHistoryMixin):
             self.validate_additional_opts()
             self.init_clients()
 
-            # Start run history tracking
+            # DEDUPLICATION CHECK - Skip if already processed
+            data_date = opts.get('date') or opts.get('game_date')
+            if data_date:
+                # Check if already processed (prevents duplicate processing on Pub/Sub retries)
+                already_processed = self.check_already_processed(
+                    processor_name=self.__class__.__name__,
+                    data_date=data_date,
+                    stale_threshold_hours=2  # Retry if stuck for > 2 hours
+                )
+
+                if already_processed:
+                    logger.info(
+                        f"⏭️  Skipping {self.__class__.__name__} for {data_date} - already processed"
+                    )
+                    # Don't start run tracking - this isn't a real run
+                    return True  # Return success (not an error)
+
+            # Start run history tracking (writes 'running' status immediately for deduplication)
             self.OUTPUT_TABLE = self.table_name
             self.OUTPUT_DATASET = self.dataset_id
-            data_date = opts.get('date') or opts.get('game_date')
             self.start_run_tracking(
                 data_date=data_date,
                 trigger_source=opts.get('trigger_source', 'manual'),
@@ -197,6 +213,9 @@ class ProcessorBase(RunHistoryMixin):
             # Send notification for processor failure (only place we notify errors)
             alert_sent = False
             try:
+                # Detect backfill mode from opts
+                backfill_mode = self.opts.get('skip_downstream_trigger', False)
+
                 notify_error(
                     title=f"Processor Failed: {self.__class__.__name__}",
                     message=f"Processor run failed: {str(e)}",
@@ -212,7 +231,8 @@ class ProcessorBase(RunHistoryMixin):
                         },
                         'stats': self.stats
                     },
-                    processor_name=self.__class__.__name__
+                    processor_name=self.__class__.__name__,
+                    backfill_mode=backfill_mode  # Suppress alerts during backfill
                 )
                 alert_sent = True
                 self.set_alert_sent('error')
@@ -254,8 +274,9 @@ class ProcessorBase(RunHistoryMixin):
         for required_opt in self.required_opts:
             if required_opt not in self.opts:
                 error_msg = f"Missing required option [{required_opt}]"
-                
+
                 try:
+                    # Configuration errors are critical even in backfill
                     notify_error(
                         title=f"Processor Configuration Error: {self.__class__.__name__}",
                         message=f"Missing required option: {required_opt}",
@@ -266,11 +287,12 @@ class ProcessorBase(RunHistoryMixin):
                             'required_opts': self.required_opts,
                             'provided_opts': list(self.opts.keys())
                         },
-                        processor_name=self.__class__.__name__
+                        processor_name=self.__class__.__name__,
+                        backfill_mode=False  # Always alert for config errors
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
-                
+
                 raise ValueError(error_msg)
     
     def set_additional_opts(self) -> None:
@@ -301,6 +323,7 @@ class ProcessorBase(RunHistoryMixin):
         except Exception as e:
             logger.error(f"Failed to initialize GCP clients: {e}")
             try:
+                # Client initialization errors are critical even in backfill
                 notify_error(
                     title=f"Processor Client Initialization Failed: {self.__class__.__name__}",
                     message="Unable to initialize BigQuery or GCS clients",
@@ -311,7 +334,8 @@ class ProcessorBase(RunHistoryMixin):
                         'error_type': type(e).__name__,
                         'error': str(e)
                     },
-                    processor_name=self.__class__.__name__
+                    processor_name=self.__class__.__name__,
+                    backfill_mode=False  # Always alert for client init errors
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
@@ -536,63 +560,91 @@ class ProcessorBase(RunHistoryMixin):
 
     def _publish_completion_event(self) -> None:
         """
-        Publish Phase 2 completion event to trigger Phase 3 analytics.
+        Publish Phase 2 completion event using unified message format.
 
         This method is called after save_data() successfully completes.
         Publishing is non-blocking - failures are logged but don't fail the processor.
 
         Can be disabled with skip_downstream_trigger flag for backfills.
+
+        Version: 2.0 - Uses UnifiedPubSubPublisher
         """
         # Check if downstream triggering should be skipped (for backfills)
-        if self.opts.get('skip_downstream_trigger', False):
+        skip_downstream = self.opts.get('skip_downstream_trigger', False)
+
+        if skip_downstream:
             logger.info(
                 f"⏸️  Skipping downstream trigger (backfill mode) - "
                 f"Phase 3 will not be auto-triggered for {self.table_name}"
             )
-            return
+            # Still need to return - UnifiedPubSubPublisher handles skip_downstream flag
+            # but we can short-circuit here to avoid unnecessary work
 
         try:
-            from shared.utils.pubsub_publishers import RawDataPubSubPublisher
+            from shared.publishers import UnifiedPubSubPublisher
+            from shared.config.pubsub_topics import TOPICS
 
-            # Extract game_date from opts (different processors may use different keys)
+            # Extract game_date from opts
             game_date = self.opts.get('date') or self.opts.get('game_date')
             if not game_date:
                 logger.debug(
-                    f"No game_date in opts for {self.__class__.__name__}, skipping Phase 2 completion publish"
+                    f"No game_date in opts for {self.__class__.__name__}, skipping publish"
                 )
                 return
 
-            # Get correlation_id if available (traces back to scraper)
-            correlation_id = self.opts.get('correlation_id') or self.opts.get('execution_id')
+            # Get correlation_id (traces back to scraper)
+            correlation_id = self.opts.get('correlation_id') or self.opts.get('execution_id') or self.run_id
+
+            # Get parent processor from trigger message
+            parent_processor = self.opts.get('processor_name') or self.opts.get('scraper_name')
+
+            # Get trigger info
+            trigger_source = self.opts.get('trigger_source', 'pubsub')
+            trigger_message_id = self.opts.get('trigger_message_id')
 
             # Initialize publisher
             project_id = self.bq_client.project
-            publisher = RawDataPubSubPublisher(project_id=project_id)
+            publisher = UnifiedPubSubPublisher(project_id=project_id)
 
-            # Publish completion event
-            message_id = publisher.publish_raw_data_loaded(
-                source_table=self.table_name,
-                game_date=str(game_date),
-                record_count=self.stats.get('rows_inserted', 0),
+            # Publish using unified format
+            message_id = publisher.publish_completion(
+                topic=TOPICS.PHASE2_RAW_COMPLETE,
+                processor_name=self.__class__.__name__,
+                phase='phase_2_raw',
                 execution_id=self.run_id,
                 correlation_id=correlation_id,
-                success=True
+                game_date=str(game_date),
+                output_table=self.table_name,
+                output_dataset=self.dataset_id,
+                status='success',
+                record_count=self.stats.get('rows_inserted', 0),
+                records_failed=0,
+                duration_seconds=self.stats.get('total_runtime', 0),
+                parent_processor=parent_processor,
+                trigger_source=trigger_source,
+                trigger_message_id=trigger_message_id,
+                metadata={
+                    'rows_updated': self.stats.get('rows_updated', 0),
+                    'processing_strategy': 'INSERT'  # Or 'MERGE' depending on processor
+                },
+                skip_downstream=skip_downstream
             )
 
             if message_id:
                 logger.info(
-                    f"✅ Published Phase 2 completion event: {self.table_name} "
+                    f"✅ Published Phase 2 completion: {self.table_name} "
                     f"for {game_date} (message_id={message_id})"
                 )
             else:
-                logger.warning(
-                    f"⚠️ Phase 2 completion event publish returned None for {self.table_name}"
-                )
+                if not skip_downstream:
+                    logger.warning(
+                        f"⚠️ Publish returned None for {self.table_name} (non-fatal)"
+                    )
 
         except Exception as e:
             # Log but DON'T fail the processor - publishing is non-critical
             logger.warning(
-                f"Failed to publish Phase 2 completion event for {self.table_name}: {e}",
+                f"Failed to publish Phase 2 completion for {self.table_name}: {e}",
                 exc_info=True
             )
 

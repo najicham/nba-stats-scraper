@@ -37,7 +37,7 @@ import json
 import logging
 import os
 import uuid
-from datetime import datetime, date, timezone
+from datetime import datetime, date, timezone, timedelta
 from typing import Dict, List, Optional, Any, Union
 
 from google.cloud import bigquery
@@ -150,6 +150,10 @@ class RunHistoryMixin:
 
         logger.info(f"Started run tracking: {self._run_history_id} (phase={self.PHASE}, trigger={trigger_source})")
 
+        # CRITICAL: Write 'running' status immediately to prevent duplicate processing
+        # If Pub/Sub redelivers message, deduplication check will see this 'running' status
+        self._write_running_status()
+
         return self._run_history_id
 
     def set_trigger_from_pubsub(self, envelope: Dict) -> None:
@@ -229,6 +233,10 @@ class RunHistoryMixin:
     ) -> None:
         """
         Record completed processor run to BigQuery.
+
+        Note: This creates a second row with final status (success/failed/etc).
+        The first row (status='running') was created by start_run_tracking().
+        Deduplication queries use ORDER BY started_at DESC LIMIT 1 to get the latest.
 
         Args:
             status: Final status (success, failed, partial, skipped)
@@ -360,6 +368,51 @@ class RunHistoryMixin:
         self._run_history_id = None
         self._run_start_time = None
 
+    def _write_running_status(self) -> None:
+        """
+        Write 'running' status immediately to prevent duplicate processing.
+
+        This is called at the START of processing to create a deduplication marker.
+        Subsequent calls to _already_processed() will see this and skip duplicate runs.
+        """
+        # Get processor name and output info
+        processor_name = getattr(self, 'processor_type', None) or self.__class__.__name__
+        output_table = getattr(self, 'OUTPUT_TABLE', '') or getattr(self, 'table_name', '')
+        output_dataset = getattr(self, 'OUTPUT_DATASET', '') or getattr(self, 'dataset_id', '')
+
+        # Get Cloud Run metadata
+        cloud_run_service = os.environ.get('K_SERVICE')
+        cloud_run_revision = os.environ.get('K_REVISION')
+
+        # Build minimal record for 'running' status
+        record = {
+            'processor_name': processor_name,
+            'run_id': self._run_history_id,
+            'phase': self.PHASE,
+            'status': 'running',  # Key field for deduplication
+            'data_date': str(self._run_data_date),
+            'started_at': self._run_start_time.isoformat(),
+            'trigger_source': self._trigger_source,
+            'trigger_message_id': self._trigger_message_id,
+            'parent_processor': self._parent_processor,
+            'output_table': output_table,
+            'output_dataset': output_dataset,
+            'cloud_run_service': cloud_run_service,
+            'cloud_run_revision': cloud_run_revision,
+            'retry_attempt': self._retry_attempt,
+        }
+
+        # Remove None values
+        record = {k: v for k, v in record.items() if v is not None}
+
+        # Write immediately (non-blocking - don't fail processor if this fails)
+        try:
+            self._insert_run_history(record)
+            logger.debug(f"Wrote 'running' status for deduplication: {self._run_history_id}")
+        except Exception as e:
+            # Log but don't fail - deduplication is nice-to-have, not critical
+            logger.warning(f"Failed to write 'running' status (non-fatal): {e}")
+
     def _insert_run_history(self, record: Dict) -> None:
         """
         Insert run history record to BigQuery.
@@ -429,3 +482,96 @@ class RunHistoryMixin:
         """Convenience method to record skipped run."""
         self.set_skipped(reason)
         self.record_run_complete(status='skipped')
+
+    def check_already_processed(
+        self,
+        processor_name: str,
+        data_date: Union[date, str],
+        stale_threshold_hours: int = 2
+    ) -> bool:
+        """
+        Check if this processor already processed this date (deduplication).
+
+        Checks processor_run_history for existing runs with:
+        - status IN ('running', 'success', 'partial')
+        - If status='running', checks if stale (> threshold hours)
+
+        Args:
+            processor_name: Name of processor to check
+            data_date: Date to check
+            stale_threshold_hours: Hours after which 'running' status is considered stale
+
+        Returns:
+            True if already processed (skip this run)
+            False if not processed or stale (proceed with this run)
+        """
+        try:
+            # Get BigQuery client
+            bq_client = getattr(self, 'bq_client', None)
+            if bq_client is None:
+                bq_client = bigquery.Client()
+
+            project_id = getattr(self, 'project_id', None) or bq_client.project
+
+            # Convert date if string
+            if isinstance(data_date, str):
+                check_date = data_date
+            else:
+                check_date = str(data_date)
+
+            # Query for existing runs
+            query = f"""
+            SELECT
+                status,
+                started_at,
+                processed_at,
+                run_id
+            FROM `{project_id}.{self.RUN_HISTORY_TABLE}`
+            WHERE processor_name = @processor_name
+              AND data_date = @data_date
+              AND status IN ('running', 'success', 'partial')
+            ORDER BY started_at DESC
+            LIMIT 1
+            """
+
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("processor_name", "STRING", processor_name),
+                    bigquery.ScalarQueryParameter("data_date", "DATE", check_date)
+                ]
+            )
+
+            results = list(bq_client.query(query, job_config=job_config).result())
+
+            if not results:
+                return False  # No previous runs found
+
+            row = results[0]
+
+            if row.status == 'running':
+                # Check if stale
+                age = datetime.now(timezone.utc) - row.started_at
+                if age > timedelta(hours=stale_threshold_hours):
+                    logger.warning(
+                        f"Found stale 'running' status for {processor_name} on {check_date} "
+                        f"(age: {age}, run_id: {row.run_id}). Allowing retry."
+                    )
+                    return False  # Stale - allow retry
+                else:
+                    logger.info(
+                        f"Processor {processor_name} is currently running for {check_date} "
+                        f"(started {age} ago, run_id: {row.run_id}). Skipping duplicate."
+                    )
+                    return True  # Currently running - skip
+
+            else:  # status is 'success' or 'partial'
+                logger.info(
+                    f"Processor {processor_name} already processed {check_date} "
+                    f"with status '{row.status}' (run_id: {row.run_id}). Skipping duplicate."
+                )
+                return True  # Already completed successfully
+
+        except Exception as e:
+            # On error, log but don't block processing
+            logger.warning(f"Failed to check deduplication (non-fatal): {e}")
+            return False  # Allow processing if check fails

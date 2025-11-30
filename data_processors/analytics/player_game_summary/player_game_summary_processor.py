@@ -29,6 +29,9 @@ from shared.utils.player_registry import RegistryReader, PlayerNotFoundError
 from shared.processors.patterns import SmartSkipMixin, EarlyExitMixin, CircuitBreakerMixin, QualityMixin
 from shared.config.source_coverage import SourceCoverageEventType, SourceCoverageSeverity
 
+# Change detection (v1.1 feature)
+from shared.change_detection.change_detector import PlayerChangeDetector
+
 logger = logging.getLogger(__name__)
 
 
@@ -202,7 +205,19 @@ class PlayerGameSummaryProcessor(
                 'critical': False  # Backup only
             }
         }
-    
+
+    def get_change_detector(self) -> PlayerChangeDetector:
+        """
+        Provide change detector for incremental processing (v1.1 feature).
+
+        Enables 99%+ efficiency gain for mid-day updates by detecting
+        which players have changed data since last processing.
+
+        Returns:
+            PlayerChangeDetector configured for player stats
+        """
+        return PlayerChangeDetector(project_id=self.project_id)
+
     def extract_raw_data(self) -> None:
         """
         Extract data with automatic dependency checking and source tracking.
@@ -228,10 +243,27 @@ class PlayerGameSummaryProcessor(
 
         logger.info(f"PROCESSING: {reason}")
 
+        # ═══════════════════════════════════════════════════════════════
+        # SELECTIVE PROCESSING (v1.1 Feature)
+        # ═══════════════════════════════════════════════════════════════
+        # If incremental mode, only process changed players
+        # Otherwise, process all players
+        # ═══════════════════════════════════════════════════════════════
+        player_filter_clause = ""
+        if self.is_incremental_run and self.entities_changed:
+            # Build IN clause for changed players
+            changed_players_list = "', '".join(self.entities_changed)
+            player_filter_clause = f"AND player_lookup IN ('{changed_players_list}')"
+            logger.info(
+                f"🎯 INCREMENTAL: Filtering query to {len(self.entities_changed)} changed players"
+            )
+        else:
+            logger.info("📊 FULL BATCH: Processing all players")
+
         # Just extract the data
         query = f"""
         WITH nba_com_data AS (
-            SELECT 
+            SELECT
                 game_id,
                 game_date,
                 season_year,
@@ -239,10 +271,10 @@ class PlayerGameSummaryProcessor(
                 player_name as player_full_name,
                 team_abbr,
                 player_status,
-                
+
                 -- Core stats
                 points,
-                assists, 
+                assists,
                 total_rebounds,
                 offensive_rebounds,
                 defensive_rebounds,
@@ -250,7 +282,7 @@ class PlayerGameSummaryProcessor(
                 blocks,
                 turnovers,
                 personal_fouls,
-                
+
                 -- Shooting stats
                 field_goals_made,
                 field_goals_attempted,
@@ -258,18 +290,19 @@ class PlayerGameSummaryProcessor(
                 three_pointers_attempted,
                 free_throws_made,
                 free_throws_attempted,
-                
+
                 -- Game context
                 minutes,
                 plus_minus,
-                
+
                 -- Metadata
                 processed_at as source_processed_at,
                 'nbac_gamebook' as primary_source
-                
+
             FROM `{self.project_id}.nba_raw.nbac_gamebook_player_stats`
             WHERE game_date BETWEEN '{start_date}' AND '{end_date}'
                 AND player_status = 'active'
+                {player_filter_clause}
         ),
         
         bdl_data AS (
@@ -309,8 +342,9 @@ class PlayerGameSummaryProcessor(
                 processed_at as source_processed_at,
                 'bdl_boxscores' as primary_source
                 
-            FROM `{self.project_id}.nba_raw.bdl_player_boxscores`  
+            FROM `{self.project_id}.nba_raw.bdl_player_boxscores`
             WHERE game_date BETWEEN '{start_date}' AND '{end_date}'
+                {player_filter_clause}
         ),
         
         -- Combine with NBA.com priority

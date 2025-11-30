@@ -38,6 +38,10 @@ from shared.processors.mixins import RunHistoryMixin
 # Import completeness checking for defensive checks
 from shared.utils.completeness_checker import CompletenessChecker, DependencyError
 
+# Import unified publishing and change detection
+from shared.publishers.unified_pubsub_publisher import UnifiedPubSubPublisher
+from shared.change_detection.change_detector import ChangeDetector
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -93,20 +97,30 @@ class AnalyticsProcessorBase(RunHistoryMixin):
         self.validated_data = {}
         self.transformed_data = {}
         self.stats = {}
-        
+
         # Source metadata tracking (populated by track_source_usage)
         self.source_metadata = {}
-        
+
         # Quality issue tracking
         self.quality_issues = []
-        
+
         # Generate run_id
         self.run_id = str(uuid.uuid4())[:8]
         self.stats["run_id"] = self.run_id
-        
+
         # GCP clients
         self.bq_client = bigquery.Client()
         self.project_id = os.environ.get('GCP_PROJECT_ID', self.bq_client.project)
+
+        # Correlation tracking (for tracing through pipeline)
+        self.correlation_id = None
+        self.parent_processor = None
+        self.trigger_message_id = None
+
+        # Change detection (v1.1 feature)
+        self.entities_changed = []  # List of entity IDs that changed
+        self.is_incremental_run = False  # True if processing only changed entities
+        self.change_detector = None  # Initialized if child class provides get_change_detector()
 
     @property
     def is_backfill_mode(self) -> bool:
@@ -155,6 +169,11 @@ class AnalyticsProcessorBase(RunHistoryMixin):
             self.validate_additional_opts()
             self.init_clients()
 
+            # Extract correlation tracking info from upstream message
+            self.correlation_id = opts.get('correlation_id') or self.run_id
+            self.parent_processor = opts.get('parent_processor')
+            self.trigger_message_id = opts.get('trigger_message_id')
+
             # Start run history tracking
             self.OUTPUT_TABLE = self.table_name
             self.OUTPUT_DATASET = self.dataset_id
@@ -162,8 +181,8 @@ class AnalyticsProcessorBase(RunHistoryMixin):
             self.start_run_tracking(
                 data_date=data_date,
                 trigger_source=opts.get('trigger_source', 'manual'),
-                trigger_message_id=opts.get('trigger_message_id'),
-                parent_processor=opts.get('parent_processor')
+                trigger_message_id=self.trigger_message_id,
+                parent_processor=self.parent_processor
             )
 
             # Check dependencies BEFORE extracting (if processor defines them)
@@ -356,6 +375,84 @@ class AnalyticsProcessorBase(RunHistoryMixin):
                 logger.info("⏭️  BACKFILL MODE: Skipping defensive checks")
             elif not strict_mode:
                 logger.info("⏭️  STRICT MODE DISABLED: Skipping defensive checks")
+
+            # ═══════════════════════════════════════════════════════════════
+            # CHANGE DETECTION (v1.1 Feature)
+            # ═══════════════════════════════════════════════════════════════
+            # Detects which entities changed since last processing
+            # Enables 99%+ efficiency gain for mid-day updates
+            # Falls back to full batch if change detection fails
+            # ═══════════════════════════════════════════════════════════════
+            analysis_date = self.opts.get('end_date') or self.opts.get('start_date')
+
+            # Check if entities_changed was passed from upstream (orchestrator)
+            if opts.get('entities_changed'):
+                self.entities_changed = opts['entities_changed']
+                self.is_incremental_run = True
+                logger.info(
+                    f"🎯 INCREMENTAL RUN: Processing {len(self.entities_changed)} changed entities "
+                    f"(from upstream message)"
+                )
+                self.stats['entities_changed_count'] = len(self.entities_changed)
+                self.stats['is_incremental'] = True
+
+            # Otherwise, run change detection if processor supports it
+            elif hasattr(self, 'get_change_detector') and callable(self.get_change_detector):
+                try:
+                    self.mark_time("change_detection")
+
+                    # Get change detector from child class
+                    self.change_detector = self.get_change_detector()
+
+                    if self.change_detector and analysis_date:
+                        # Run change detection query
+                        self.entities_changed = self.change_detector.detect_changes(
+                            game_date=analysis_date
+                        )
+
+                        # Get statistics
+                        change_stats = self.change_detector.get_change_stats(
+                            game_date=analysis_date,
+                            changed_entities=self.entities_changed
+                        )
+
+                        # If some entities changed (not all, not none), use incremental mode
+                        if 0 < len(self.entities_changed) < change_stats['entities_total']:
+                            self.is_incremental_run = True
+                            logger.info(
+                                f"🎯 INCREMENTAL RUN: {len(self.entities_changed)}/{change_stats['entities_total']} entities changed "
+                                f"({change_stats['efficiency_gain_pct']:.1f}% efficiency gain)"
+                            )
+                            self.stats['entities_changed_count'] = len(self.entities_changed)
+                            self.stats['entities_total'] = change_stats['entities_total']
+                            self.stats['efficiency_gain_pct'] = change_stats['efficiency_gain_pct']
+                            self.stats['is_incremental'] = True
+                        else:
+                            # All changed or none changed - process full batch
+                            logger.info(
+                                f"📊 FULL BATCH: {len(self.entities_changed)}/{change_stats['entities_total']} entities changed "
+                                f"(processing all)"
+                            )
+                            self.entities_changed = []
+                            self.is_incremental_run = False
+                            self.stats['is_incremental'] = False
+
+                        change_detect_seconds = self.get_elapsed_seconds("change_detection")
+                        self.stats["change_detection_time"] = change_detect_seconds
+                        logger.info(f"Change detection completed in {change_detect_seconds:.2f}s")
+
+                except Exception as e:
+                    # Don't fail on change detection errors - fall back to full batch
+                    logger.warning(f"Change detection failed (non-fatal): {e}, falling back to full batch")
+                    self.entities_changed = []
+                    self.is_incremental_run = False
+                    self.stats['change_detection_error'] = str(e)
+                    self.stats['is_incremental'] = False
+
+            else:
+                # No change detection configured - always full batch
+                logger.debug("No change detection configured, running full batch")
+                self.stats['is_incremental'] = False
 
             # Extract from raw tables
             self.mark_time("extract")
@@ -1515,40 +1612,80 @@ class AnalyticsProcessorBase(RunHistoryMixin):
 
     def _publish_completion_message(self, success: bool, error: str = None) -> None:
         """
-        Publish completion message to nba-phase3-analytics-complete topic.
+        Publish unified completion message to nba-phase3-analytics-complete topic.
         This triggers Phase 4 precompute processors that depend on this analytics table.
+
+        Uses UnifiedPubSubPublisher for consistent message format across all phases.
 
         Args:
             success: Whether processing completed successfully
             error: Optional error message if failed
         """
         try:
-            publisher = pubsub_v1.PublisherClient()
-            topic_path = publisher.topic_path(self.project_id, 'nba-phase3-analytics-complete')
+            # Use unified publisher
+            publisher = UnifiedPubSubPublisher(project_id=self.project_id)
 
             # Get the analysis date (use end_date for single-date processing)
             analysis_date = self.opts.get('end_date')
             if isinstance(analysis_date, date):
                 analysis_date = analysis_date.strftime('%Y-%m-%d')
 
-            message_data = {
-                'source_table': self.table_name,
-                'analysis_date': str(analysis_date),
-                'processor_name': self.__class__.__name__,
-                'success': success,
-                'run_id': self.run_id
-            }
+            # Determine status
+            if success:
+                status = 'success'
+            elif error:
+                status = 'failed'
+            else:
+                status = 'no_data'
 
-            if error:
-                message_data['error'] = error
+            # Calculate duration
+            duration_seconds = self.stats.get('total_runtime', 0)
 
-            # Publish message
-            message_json = json.dumps(message_data)
-            future = publisher.publish(topic_path, message_json.encode('utf-8'))
-            message_id = future.result()  # Block until published
+            # Publish unified message
+            message_id = publisher.publish_completion(
+                topic='nba-phase3-analytics-complete',
+                processor_name=self.__class__.__name__,
+                phase='phase_3_analytics',
+                execution_id=self.run_id,
+                correlation_id=self.correlation_id or self.run_id,
+                game_date=str(analysis_date),
+                output_table=self.table_name,
+                output_dataset=self.dataset_id,
+                status=status,
+                record_count=self.stats.get('rows_processed', 0),
+                records_failed=0,  # Could track partial failures
+                parent_processor=self.parent_processor,
+                trigger_source=self.opts.get('trigger_source', 'manual'),
+                trigger_message_id=self.trigger_message_id,
+                duration_seconds=duration_seconds,
+                error_message=error,
+                error_type=type(error).__name__ if error else None,
+                metadata={
+                    # Analytics-specific metadata
+                    'is_incremental': self.stats.get('is_incremental', False),
+                    'entities_changed_count': self.stats.get('entities_changed_count'),
+                    'entities_total': self.stats.get('entities_total'),
+                    'efficiency_gain_pct': self.stats.get('efficiency_gain_pct'),
+                    'change_detection_time': self.stats.get('change_detection_time'),
 
-            logger.info(f"Published completion message to nba-phase3-analytics-complete (message_id: {message_id})")
-            logger.debug(f"Message data: {message_json}")
+                    # Pass changed entities to downstream (Phase 4)
+                    'entities_changed': self.entities_changed if self.is_incremental_run else [],
+
+                    # Standard stats
+                    'extract_time': self.stats.get('extract_time'),
+                    'transform_time': self.stats.get('transform_time'),
+                    'save_time': self.stats.get('save_time')
+                },
+                skip_downstream=self.opts.get('skip_downstream_trigger', False)
+            )
+
+            if message_id:
+                logger.info(
+                    f"✅ Published unified completion message to nba-phase3-analytics-complete "
+                    f"(message_id: {message_id}, correlation_id: {self.correlation_id})"
+                )
+            else:
+                logger.info("⏸️  Skipped publishing (backfill mode or skip_downstream_trigger=True)")
 
         except Exception as e:
             logger.warning(f"Failed to publish completion message: {e}")

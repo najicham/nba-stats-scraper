@@ -25,6 +25,14 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
+# Import AlertManager for backfill-aware alerting
+try:
+    from shared.alerts import get_alert_manager
+    ALERT_MANAGER_AVAILABLE = True
+except ImportError:
+    logger.warning("AlertManager not available, falling back to direct notifications")
+    ALERT_MANAGER_AVAILABLE = False
+
 # Module-level singleton for performance
 _router_instance = None
 
@@ -127,8 +135,16 @@ class NotificationRouter:
         """Initialize notification handlers with error protection."""
         if self.config.email_enabled:
             try:
-                from shared.utils.email_alerting import EmailAlerter
-                self._email_handler = EmailAlerter()
+                # Try AWS SES first, fall back to Brevo if not configured
+                try:
+                    from shared.utils.email_alerting_ses import EmailAlerterSES
+                    self._email_handler = EmailAlerterSES()
+                    logger.info("Using AWS SES for email alerts")
+                except (ImportError, ValueError) as ses_error:
+                    logger.warning(f"AWS SES not available ({ses_error}), falling back to Brevo")
+                    from shared.utils.email_alerting import EmailAlerter
+                    self._email_handler = EmailAlerter()
+                    logger.info("Using Brevo for email alerts")
             except Exception as e:
                 logger.error(f"Failed to initialize email handler: {e}")
                 self._email_handler = None
@@ -623,8 +639,36 @@ def _get_router() -> NotificationRouter:
 
 
 # Convenience functions for quick notifications (use singleton)
-def notify_error(title: str, message: str, details: Dict = None, processor_name: str = "NBA Platform"):
-    """Quick function to send error notification."""
+def notify_error(title: str, message: str, details: Dict = None, processor_name: str = "NBA Platform", backfill_mode: bool = False):
+    """
+    Quick function to send error notification.
+
+    Args:
+        title: Alert title
+        message: Alert message
+        details: Additional context
+        processor_name: Name of processor sending alert
+        backfill_mode: If True, suppresses non-critical alerts via AlertManager
+    """
+    # If AlertManager available and backfill mode, use rate limiting
+    if ALERT_MANAGER_AVAILABLE and backfill_mode:
+        alert_mgr = get_alert_manager(backfill_mode=True)
+
+        # Determine category for rate limiting
+        category = f"{processor_name}_error"
+        if details and 'error_type' in details:
+            category = f"{processor_name}_{details['error_type']}"
+
+        # Use AlertManager (will batch/suppress during backfill)
+        return alert_mgr.send_alert(
+            severity='warning',  # Downgrade to warning during backfill
+            title=title,
+            message=message,
+            category=category,
+            context=details
+        )
+
+    # Normal path (not backfill)
     router = _get_router()
     return router.send_notification(
         level=NotificationLevel.ERROR,

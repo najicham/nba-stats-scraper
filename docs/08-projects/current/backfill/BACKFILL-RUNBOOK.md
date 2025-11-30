@@ -1,17 +1,87 @@
 # Backfill Execution Runbook
 
 **Created:** 2025-11-29 21:00 PST
-**Last Updated:** 2025-11-29 21:12 PST
+**Last Updated:** 2025-11-29 21:35 PST
 **Purpose:** Step-by-step instructions for executing the 4-year backfill
 **Prerequisites:** Phase 4 backfill jobs created, player boxscore scraper fixed
 
 ---
 
+## Table of Contents
+
+1. [Overview](#overview)
+2. [Why Historical Predictions Matter for ML](#why-historical-predictions-matter-for-ml)
+3. [Pre-Flight Checklist](#pre-flight-checklist)
+4. [How the Backfill Jobs Work](#how-the-backfill-jobs-work)
+5. [Step-by-Step Execution](#step-by-step-execution)
+6. [Monitoring](#monitoring)
+7. [Troubleshooting](#troubleshooting)
+8. [Open Questions](#open-questions)
+
+---
+
 ## Overview
 
-**Total Scope:** 675 game dates across 4 seasons
+**Total Scope:** 675 game dates across 4 seasons (2021-22 through 2024-25)
 **Strategy:** Season-by-season with validation gates
-**Estimated Time:** Several hours per phase (can run overnight)
+**Execution:** Run locally to capture output and errors, with Claude Code monitoring logs
+
+| Phase | Processors | Parallelization | Estimated Time per Season |
+|-------|------------|-----------------|---------------------------|
+| Phase 3 | 5 processors | Can run in parallel | ~2-3 hours |
+| Phase 4 | 5 processors | MUST run sequentially | ~3-4 hours |
+
+---
+
+## Why Historical Predictions Matter for ML
+
+### Goal of the Backfill
+
+The backfill enables three key capabilities:
+
+1. **ML Model Training** - Historical data provides training examples
+2. **Backtesting** - See how predictions would have performed historically
+3. **Similarity Matching** - Current predictions use historical patterns to find similar game contexts
+
+### How Historical Predictions Help Learning
+
+**Backtesting for Model Validation:**
+```
+If you predict Player X will score 25.5 points with 70% confidence,
+and historically when the model said 70% confidence it was right 68% of the time,
+you know the model is well-calibrated.
+```
+
+**Error Analysis:**
+- Identify patterns where predictions consistently fail
+- Example: Model underperforms for back-to-back games? Add fatigue features.
+- Example: Model fails for certain matchups? Add opponent-specific features.
+
+**Feature Importance:**
+- Which features correlate most with accurate predictions?
+- Historical data lets you test feature combinations
+
+**Similarity-Based Predictions:**
+- "This player in this situation is similar to 50 historical games"
+- Historical features make similarity matching possible
+
+### Preventing Data Leakage
+
+**Important:** Don't train and test on the same data.
+
+**Recommended approach:**
+```
+Training data:    2021-22, 2022-23 seasons
+Validation data:  2023-24 season
+Test data:        2024-25 season (current)
+```
+
+Or use **rolling windows**:
+- Train on games 1-100
+- Predict game 101
+- Train on games 2-101
+- Predict game 102
+- etc.
 
 ---
 
@@ -20,23 +90,120 @@
 Before starting, verify:
 
 ```bash
-# 1. Check Phase 4 backfill jobs exist
-./bin/run_backfill.sh --list | grep precompute
+# 1. Verify backfill jobs exist
+ls -la backfill_jobs/analytics/
+ls -la backfill_jobs/precompute/  # Phase 4 jobs - you're creating these
 
 # 2. Verify you're in tmux/screen (for long-running jobs)
-tmux list-sessions  # or screen -ls
+tmux new-session -s backfill  # or screen -S backfill
 
-# 3. Set up monitoring in separate terminal
-# (see Monitoring section below)
+# 3. Set up log file location for monitoring
+export BACKFILL_LOG="/tmp/backfill_$(date +%Y%m%d_%H%M%S).log"
+echo "Logs will be written to: $BACKFILL_LOG"
+
+# 4. Open a second terminal/tmux pane for monitoring
+# See Monitoring section below
 ```
 
 ---
 
-## Step 1: Validate Phase 2 Data
+## Data Readiness Patterns During Backfill
+
+**Reference:** See [`docs/01-architecture/data-readiness-patterns.md`](../../../01-architecture/data-readiness-patterns.md) for full details on all patterns.
+
+### Which Patterns Are Active During Backfill?
+
+| Pattern | Status During Backfill | Notes |
+|---------|------------------------|-------|
+| Deduplication Check | ✅ Active | Skips already-processed dates |
+| Dependency Checking | ✅ Active (relaxed) | `expected_count_min=1` instead of configured |
+| Smart Idempotency | ✅ Active | Skips unchanged data |
+| Run History Tracking | ✅ Active | Records all runs |
+| **Defensive Checks** | ❌ Disabled | Gap detection + upstream status skipped |
+| **Alerts** | ❌ Suppressed | Non-critical alerts not sent |
+| **Cascade Control** | ❌ Disabled | `skip_downstream_trigger=true` |
+| Bootstrap Period | ✅ Active | Phase 4 skips first 7 days of season |
+
+### Key Implication
+
+**During backfill, YOU must validate data quality manually** - the system trusts you because defensive checks are disabled.
+
+---
+
+## How the Backfill Jobs Work
+
+### Analytics Backfill Pattern (Phase 3)
+
+Based on `backfill_jobs/analytics/player_game_summary/player_game_summary_analytics_backfill.py`:
+
+```python
+# Key features:
+# - Day-by-day processing (avoids BigQuery size limits)
+# - Sets backfill_mode=True (disables historical check, suppresses alerts)
+# - Tracks failed days for retry
+# - Logs progress every 10 days
+```
+
+**Usage:**
+```bash
+# Dry run - check data availability
+python backfill_jobs/analytics/player_game_summary/player_game_summary_analytics_backfill.py \
+  --dry-run \
+  --start-date 2021-10-19 \
+  --end-date 2021-10-25
+
+# Actual run
+python backfill_jobs/analytics/player_game_summary/player_game_summary_analytics_backfill.py \
+  --start-date 2021-10-19 \
+  --end-date 2022-04-10
+
+# Retry specific failed dates
+python backfill_jobs/analytics/player_game_summary/player_game_summary_analytics_backfill.py \
+  --dates 2022-01-05,2022-01-12
+```
+
+**Output includes:**
+- Progress every 10 days
+- Per-day record counts
+- Registry integration stats (players found/not found)
+- Failed dates list for retry
+- Retry command suggestion
+
+### Scraper Backfill Pattern (Phase 1 Reference)
+
+Based on `backfill_jobs/scrapers/nbac_team_boxscore/nbac_team_boxscore_scraper_backfill.py`:
+
+```python
+# Key features:
+# - Parallel execution with workers (ThreadPoolExecutor)
+# - Loads game IDs from CSV file
+# - GCS skip check (resume logic - skips already-scraped games)
+# - Saves failed games to JSON for retry
+# - Progress logging every 50 games
+```
+
+**Usage:**
+```bash
+# Dry run
+python backfill_jobs/scrapers/nbac_team_boxscore/nbac_team_boxscore_scraper_backfill.py \
+  --dry-run --limit=10
+
+# Parallel execution with 15 workers
+python backfill_jobs/scrapers/nbac_team_boxscore/nbac_team_boxscore_scraper_backfill.py \
+  --workers=15
+
+# Season filter
+python backfill_jobs/scrapers/nbac_team_boxscore/nbac_team_boxscore_scraper_backfill.py \
+  --season=2024 --workers=15
+```
+
+---
+
+## Step-by-Step Execution
+
+### Step 1: Validate Phase 2 Data
 
 **Goal:** Confirm Phase 2 has sufficient data before starting Phase 3.
-
-### 1.1 Run Phase 2 Validation Query
 
 ```bash
 timeout 60 bq query --use_legacy_sql=false --format=pretty "
@@ -60,112 +227,64 @@ FROM (
   UNION ALL
   SELECT 'bdl_player_boxscores', COUNT(DISTINCT game_date)
   FROM \`nba-props-platform.nba_raw.bdl_player_boxscores\` WHERE game_date BETWEEN '2021-10-01' AND '2024-11-29'
-  UNION ALL
-  SELECT 'nbac_schedule', COUNT(DISTINCT game_date)
-  FROM \`nba-props-platform.nba_raw.nbac_schedule\` WHERE game_status = 3 AND game_date BETWEEN '2021-10-01' AND '2024-11-29'
 )
 ORDER BY pct ASC
 "
 ```
 
-### 1.2 Decision Point
-
-| Result | Action |
-|--------|--------|
-| All critical tables 99%+ | Proceed to Step 2 |
-| Any critical table <95% | Fix Phase 2 gaps first |
-| Only optional tables low | Document and proceed |
-
-### 1.3 If Gaps Found - Fix Phase 2
-
-```bash
-# Find specific missing dates
-timeout 60 bq query --use_legacy_sql=false "
-WITH expected AS (
-  SELECT DISTINCT game_date
-  FROM \`nba-props-platform.nba_raw.nbac_schedule\`
-  WHERE game_status = 3 AND game_date BETWEEN '2021-10-01' AND '2024-11-29'
-),
-actual AS (
-  SELECT DISTINCT game_date
-  FROM \`nba-props-platform.nba_raw.nbac_team_boxscore\`
-)
-SELECT e.game_date as missing_date
-FROM expected e
-LEFT JOIN actual a ON e.game_date = a.game_date
-WHERE a.game_date IS NULL
-ORDER BY e.game_date
-LIMIT 20
-"
-
-# Then run appropriate scraper/processor for missing dates
-```
+**Decision point:**
+- All critical tables 99%+ → Proceed to Step 2
+- Any critical table <95% → Fix Phase 2 gaps first
 
 ---
 
-## Step 2: Phase 3 Backfill - Season 2021-22
+### Step 2: Phase 3 Backfill - Season 2021-22
 
 **Dates:** 2021-10-19 to 2022-04-10 (regular season)
-**Note:** First 7 days (Oct 19-25) will have Phase 4 skip due to bootstrap.
+**Note:** First 7 days will have Phase 4 skip due to bootstrap period.
 
-### 2.1 Run All 5 Phase 3 Processors (Parallel OK)
-
-```bash
-# These can run in parallel - no inter-dependencies
-# Run in separate terminals or use & for background
-
-# Terminal 1
-./bin/run_backfill.sh analytics/player_game_summary \
-  --start-date=2021-10-19 \
-  --end-date=2022-04-10 \
-  --dry-run  # Remove after confirming command looks right
-
-# Terminal 2
-./bin/run_backfill.sh analytics/team_defense_game_summary \
-  --start-date=2021-10-19 \
-  --end-date=2022-04-10
-
-# Terminal 3
-./bin/run_backfill.sh analytics/team_offense_game_summary \
-  --start-date=2021-10-19 \
-  --end-date=2022-04-10
-
-# Terminal 4
-./bin/run_backfill.sh analytics/upcoming_team_game_context \
-  --start-date=2021-10-19 \
-  --end-date=2022-04-10
-
-# Terminal 5 (will be limited by odds data availability)
-./bin/run_backfill.sh analytics/upcoming_player_game_context \
-  --start-date=2021-10-19 \
-  --end-date=2022-04-10
-```
-
-### 2.2 Monitor Progress
-
-In a separate terminal, run periodically:
+#### 2.1 Dry Run First (Recommended)
 
 ```bash
-# Quick progress check
-timeout 30 bq query --use_legacy_sql=false --format=pretty "
-SELECT
-  processor_name,
-  COUNTIF(status = 'success') as success,
-  COUNTIF(status = 'failed') as failed,
-  COUNTIF(status = 'skipped') as skipped,
-  MAX(data_date) as latest_date
-FROM \`nba-props-platform.nba_reference.processor_run_history\`
-WHERE phase = 'phase_3_analytics'
-  AND data_date BETWEEN '2021-10-19' AND '2022-04-10'
-  AND started_at > TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)
-GROUP BY processor_name
-ORDER BY processor_name
-"
+# Check data availability for each processor
+cd /home/naji/code/nba-stats-scraper
+
+python backfill_jobs/analytics/player_game_summary/player_game_summary_analytics_backfill.py \
+  --dry-run --start-date 2021-10-19 --end-date 2021-10-25
 ```
 
-### 2.3 Validate Phase 3 Complete
+#### 2.2 Run All 5 Phase 3 Processors
 
-After all processors finish:
+**These can run in parallel** (different terminals or background jobs):
+
+```bash
+# Terminal 1: player_game_summary
+python backfill_jobs/analytics/player_game_summary/player_game_summary_analytics_backfill.py \
+  --start-date 2021-10-19 --end-date 2022-04-10 \
+  2>&1 | tee -a /tmp/backfill_pgs_2021.log
+
+# Terminal 2: team_defense_game_summary
+python backfill_jobs/analytics/team_defense_game_summary/team_defense_game_summary_analytics_backfill.py \
+  --start-date 2021-10-19 --end-date 2022-04-10 \
+  2>&1 | tee -a /tmp/backfill_tdgs_2021.log
+
+# Terminal 3: team_offense_game_summary
+python backfill_jobs/analytics/team_offense_game_summary/team_offense_game_summary_analytics_backfill.py \
+  --start-date 2021-10-19 --end-date 2022-04-10 \
+  2>&1 | tee -a /tmp/backfill_togs_2021.log
+
+# Terminal 4: upcoming_team_game_context
+python backfill_jobs/analytics/upcoming_team_game_context/upcoming_team_game_context_analytics_backfill.py \
+  --start-date 2021-10-19 --end-date 2022-04-10 \
+  2>&1 | tee -a /tmp/backfill_utgc_2021.log
+
+# Terminal 5: upcoming_player_game_context (limited by odds data)
+python backfill_jobs/analytics/upcoming_player_game_context/upcoming_player_game_context_analytics_backfill.py \
+  --start-date 2021-10-19 --end-date 2022-04-10 \
+  2>&1 | tee -a /tmp/backfill_upgc_2021.log
+```
+
+#### 2.3 Validate Phase 3 Complete
 
 ```bash
 timeout 30 bq query --use_legacy_sql=false --format=pretty "
@@ -188,355 +307,363 @@ FROM (
   WHERE game_date BETWEEN '2021-10-19' AND '2022-04-10'
 )
 GROUP BY table_name
-ORDER BY table_name
 "
 ```
 
-**Expected:** ~170 dates for each table (varies by season length)
-
-### 2.4 Check for Failures
-
-```bash
-timeout 30 bq query --use_legacy_sql=false --format=pretty "
-SELECT
-  data_date,
-  processor_name,
-  SUBSTR(CAST(errors AS STRING), 1, 100) as error_preview
-FROM \`nba-props-platform.nba_reference.processor_run_history\`
-WHERE phase = 'phase_3_analytics'
-  AND status = 'failed'
-  AND data_date BETWEEN '2021-10-19' AND '2022-04-10'
-ORDER BY data_date
-LIMIT 20
-"
-```
-
-**If failures found:** Note the dates and errors, decide whether to fix now or continue.
+**Expected:** ~170 dates per table (varies by season).
 
 ---
 
-## Step 3: Phase 4 Backfill - Season 2021-22
+### Step 3: Phase 4 Backfill - Season 2021-22
 
-**CRITICAL:** Phase 4 processors MUST run in sequence, not parallel!
+**CRITICAL: Phase 4 processors MUST run sequentially!**
 
-### 3.1 Run Phase 4 Processors (Sequential - One at a Time)
+Each processor depends on the previous one:
+1. team_defense_zone_analysis (reads Phase 3)
+2. player_shot_zone_analysis (reads Phase 3)
+3. player_composite_factors (reads #1, #2, Phase 3)
+4. player_daily_cache (reads #1, #2, #3, Phase 3)
+5. ml_feature_store (reads #1, #2, #3, #4)
 
 ```bash
-# MUST run in this exact order - each depends on previous
-
-# Step 3.1.1: Team Defense Zone Analysis
-./bin/run_backfill.sh precompute/team_defense_zone_analysis \
-  --start-date=2021-10-19 \
-  --end-date=2022-04-10
+# Step 3.1: team_defense_zone_analysis
+python backfill_jobs/precompute/team_defense_zone_analysis/team_defense_zone_analysis_precompute_backfill.py \
+  --start-date 2021-10-19 --end-date 2022-04-10 \
+  2>&1 | tee -a /tmp/backfill_p4_tdza_2021.log
 
 # Wait for completion, then...
 
-# Step 3.1.2: Player Shot Zone Analysis
-./bin/run_backfill.sh precompute/player_shot_zone_analysis \
-  --start-date=2021-10-19 \
-  --end-date=2022-04-10
+# Step 3.2: player_shot_zone_analysis
+python backfill_jobs/precompute/player_shot_zone_analysis/player_shot_zone_analysis_precompute_backfill.py \
+  --start-date 2021-10-19 --end-date 2022-04-10 \
+  2>&1 | tee -a /tmp/backfill_p4_psza_2021.log
 
 # Wait for completion, then...
 
-# Step 3.1.3: Player Composite Factors
-./bin/run_backfill.sh precompute/player_composite_factors \
-  --start-date=2021-10-19 \
-  --end-date=2022-04-10
+# Step 3.3: player_composite_factors
+python backfill_jobs/precompute/player_composite_factors/player_composite_factors_precompute_backfill.py \
+  --start-date 2021-10-19 --end-date 2022-04-10 \
+  2>&1 | tee -a /tmp/backfill_p4_pcf_2021.log
 
 # Wait for completion, then...
 
-# Step 3.1.4: Player Daily Cache
-./bin/run_backfill.sh precompute/player_daily_cache \
-  --start-date=2021-10-19 \
-  --end-date=2022-04-10
+# Step 3.4: player_daily_cache
+python backfill_jobs/precompute/player_daily_cache/player_daily_cache_precompute_backfill.py \
+  --start-date 2021-10-19 --end-date 2022-04-10 \
+  2>&1 | tee -a /tmp/backfill_p4_pdc_2021.log
 
 # Wait for completion, then...
 
-# Step 3.1.5: ML Feature Store
-./bin/run_backfill.sh precompute/ml_feature_store \
-  --start-date=2021-10-19 \
-  --end-date=2022-04-10
-```
-
-### 3.2 Validate Phase 4 Complete
-
-```bash
-timeout 30 bq query --use_legacy_sql=false --format=pretty "
-SELECT
-  table_name,
-  COUNT(DISTINCT date_col) as dates
-FROM (
-  SELECT 'team_defense_zone_analysis' as table_name, analysis_date as date_col
-  FROM \`nba-props-platform.nba_precompute.team_defense_zone_analysis\`
-  WHERE analysis_date BETWEEN '2021-10-19' AND '2022-04-10'
-  UNION ALL
-  SELECT 'player_shot_zone_analysis', analysis_date
-  FROM \`nba-props-platform.nba_precompute.player_shot_zone_analysis\`
-  WHERE analysis_date BETWEEN '2021-10-19' AND '2022-04-10'
-  UNION ALL
-  SELECT 'player_composite_factors', game_date
-  FROM \`nba-props-platform.nba_precompute.player_composite_factors\`
-  WHERE game_date BETWEEN '2021-10-19' AND '2022-04-10'
-  UNION ALL
-  SELECT 'player_daily_cache', cache_date
-  FROM \`nba-props-platform.nba_precompute.player_daily_cache\`
-  WHERE cache_date BETWEEN '2021-10-19' AND '2022-04-10'
-)
-GROUP BY table_name
-ORDER BY table_name
-"
-```
-
-**Note:** First 7 days (Oct 19-25) will have 0 records due to bootstrap - this is expected!
-
-### 3.3 Check Quality Scores
-
-```bash
-timeout 30 bq query --use_legacy_sql=false --format=pretty "
-SELECT
-  CASE
-    WHEN completeness_pct >= 90 THEN '90-100% (Good)'
-    WHEN completeness_pct >= 70 THEN '70-89% (OK)'
-    WHEN completeness_pct >= 50 THEN '50-69% (Degraded)'
-    ELSE '0-49% (Bootstrap/Poor)'
-  END as quality_bucket,
-  COUNT(*) as records,
-  ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER (), 1) as pct
-FROM \`nba-props-platform.nba_precompute.player_shot_zone_analysis\`
-WHERE analysis_date BETWEEN '2021-10-19' AND '2022-04-10'
-GROUP BY 1
-ORDER BY 1
-"
-```
-
-**Expected:** Mostly "Good" after first few weeks of season.
-
----
-
-## Step 4: Repeat for Remaining Seasons
-
-### Season 2022-23
-
-```bash
-# Phase 3 (parallel OK)
-./bin/run_backfill.sh analytics/player_game_summary --start-date=2022-10-18 --end-date=2023-04-09 &
-./bin/run_backfill.sh analytics/team_defense_game_summary --start-date=2022-10-18 --end-date=2023-04-09 &
-./bin/run_backfill.sh analytics/team_offense_game_summary --start-date=2022-10-18 --end-date=2023-04-09 &
-./bin/run_backfill.sh analytics/upcoming_team_game_context --start-date=2022-10-18 --end-date=2023-04-09 &
-./bin/run_backfill.sh analytics/upcoming_player_game_context --start-date=2022-10-18 --end-date=2023-04-09 &
-wait
-
-# Validate Phase 3 complete (run validation query)
-
-# Phase 4 (sequential ONLY)
-./bin/run_backfill.sh precompute/team_defense_zone_analysis --start-date=2022-10-18 --end-date=2023-04-09
-./bin/run_backfill.sh precompute/player_shot_zone_analysis --start-date=2022-10-18 --end-date=2023-04-09
-./bin/run_backfill.sh precompute/player_composite_factors --start-date=2022-10-18 --end-date=2023-04-09
-./bin/run_backfill.sh precompute/player_daily_cache --start-date=2022-10-18 --end-date=2023-04-09
-./bin/run_backfill.sh precompute/ml_feature_store --start-date=2022-10-18 --end-date=2023-04-09
-
-# Validate Phase 4 complete
-```
-
-### Season 2023-24
-
-```bash
-# Phase 3
-./bin/run_backfill.sh analytics/player_game_summary --start-date=2023-10-24 --end-date=2024-04-14 &
-./bin/run_backfill.sh analytics/team_defense_game_summary --start-date=2023-10-24 --end-date=2024-04-14 &
-./bin/run_backfill.sh analytics/team_offense_game_summary --start-date=2023-10-24 --end-date=2024-04-14 &
-./bin/run_backfill.sh analytics/upcoming_team_game_context --start-date=2023-10-24 --end-date=2024-04-14 &
-./bin/run_backfill.sh analytics/upcoming_player_game_context --start-date=2023-10-24 --end-date=2024-04-14 &
-wait
-
-# Phase 4 (sequential)
-./bin/run_backfill.sh precompute/team_defense_zone_analysis --start-date=2023-10-24 --end-date=2024-04-14
-./bin/run_backfill.sh precompute/player_shot_zone_analysis --start-date=2023-10-24 --end-date=2024-04-14
-./bin/run_backfill.sh precompute/player_composite_factors --start-date=2023-10-24 --end-date=2024-04-14
-./bin/run_backfill.sh precompute/player_daily_cache --start-date=2023-10-24 --end-date=2024-04-14
-./bin/run_backfill.sh precompute/ml_feature_store --start-date=2023-10-24 --end-date=2024-04-14
-```
-
-### Season 2024-25 (Current - Partial)
-
-```bash
-# Phase 3
-./bin/run_backfill.sh analytics/player_game_summary --start-date=2024-10-22 --end-date=2024-11-29 &
-./bin/run_backfill.sh analytics/team_defense_game_summary --start-date=2024-10-22 --end-date=2024-11-29 &
-./bin/run_backfill.sh analytics/team_offense_game_summary --start-date=2024-10-22 --end-date=2024-11-29 &
-./bin/run_backfill.sh analytics/upcoming_team_game_context --start-date=2024-10-22 --end-date=2024-11-29 &
-./bin/run_backfill.sh analytics/upcoming_player_game_context --start-date=2024-10-22 --end-date=2024-11-29 &
-wait
-
-# Phase 4 (sequential)
-./bin/run_backfill.sh precompute/team_defense_zone_analysis --start-date=2024-10-22 --end-date=2024-11-29
-./bin/run_backfill.sh precompute/player_shot_zone_analysis --start-date=2024-10-22 --end-date=2024-11-29
-./bin/run_backfill.sh precompute/player_composite_factors --start-date=2024-10-22 --end-date=2024-11-29
-./bin/run_backfill.sh precompute/player_daily_cache --start-date=2024-10-22 --end-date=2024-11-29
-./bin/run_backfill.sh precompute/ml_feature_store --start-date=2024-10-22 --end-date=2024-11-29
+# Step 3.5: ml_feature_store
+python backfill_jobs/precompute/ml_feature_store/ml_feature_store_precompute_backfill.py \
+  --start-date 2021-10-19 --end-date 2022-04-10 \
+  2>&1 | tee -a /tmp/backfill_p4_mlfs_2021.log
 ```
 
 ---
 
-## Step 5: Final Validation
+### Step 4: Repeat for Remaining Seasons
 
-### 5.1 Overall Coverage Check
+**Season date ranges:**
+- 2022-23: `--start-date 2022-10-18 --end-date 2023-04-09`
+- 2023-24: `--start-date 2023-10-24 --end-date 2024-04-14`
+- 2024-25: `--start-date 2024-10-22 --end-date 2024-11-29` (current, partial)
+
+For each season:
+1. Run Phase 3 (all 5 processors in parallel)
+2. Validate Phase 3 complete
+3. Run Phase 4 (5 processors sequentially)
+4. Validate Phase 4 complete
+
+---
+
+### Step 5: Final Validation
 
 ```bash
+# Overall coverage check
 timeout 60 bq query --use_legacy_sql=false --format=pretty "
 SELECT
-  'Phase 2' as phase,
-  'nbac_team_boxscore' as table_name,
+  'Phase 3' as phase, 'player_game_summary' as table_name,
   COUNT(DISTINCT game_date) as dates
-FROM \`nba-props-platform.nba_raw.nbac_team_boxscore\`
-WHERE game_date BETWEEN '2021-10-01' AND '2024-11-29'
-
-UNION ALL
-
-SELECT 'Phase 3', 'player_game_summary', COUNT(DISTINCT game_date)
 FROM \`nba-props-platform.nba_analytics.player_game_summary\`
 WHERE game_date BETWEEN '2021-10-01' AND '2024-11-29'
-
 UNION ALL
-
-SELECT 'Phase 3', 'team_defense_game_summary', COUNT(DISTINCT game_date)
-FROM \`nba-props-platform.nba_analytics.team_defense_game_summary\`
-WHERE game_date BETWEEN '2021-10-01' AND '2024-11-29'
-
-UNION ALL
-
 SELECT 'Phase 4', 'player_shot_zone_analysis', COUNT(DISTINCT analysis_date)
 FROM \`nba-props-platform.nba_precompute.player_shot_zone_analysis\`
 WHERE analysis_date BETWEEN '2021-10-01' AND '2024-11-29'
-
 ORDER BY phase, table_name
 "
 ```
 
-### 5.2 Failure Summary
+---
+
+## Monitoring
+
+### Option 1: Watch Log Files (Claude Code can monitor)
+
+```bash
+# In separate terminal, tail the log files
+tail -f /tmp/backfill_pgs_2021.log
+```
+
+### Option 2: Periodic BigQuery Check
+
+```bash
+# Run every 15-30 minutes to check progress
+timeout 30 bq query --use_legacy_sql=false --format=pretty "
+SELECT
+  processor_name,
+  COUNTIF(status = 'success') as ok,
+  COUNTIF(status = 'failed') as fail,
+  MAX(data_date) as latest
+FROM \`nba-props-platform.nba_reference.processor_run_history\`
+WHERE started_at > TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 2 HOUR)
+GROUP BY processor_name
+ORDER BY processor_name
+"
+```
+
+### Option 3: Check for Recent Failures
 
 ```bash
 timeout 30 bq query --use_legacy_sql=false --format=pretty "
-SELECT
-  phase,
-  processor_name,
-  COUNT(*) as failure_count
+SELECT data_date, processor_name, SUBSTR(CAST(errors AS STRING), 1, 80) as error
 FROM \`nba-props-platform.nba_reference.processor_run_history\`
 WHERE status = 'failed'
-  AND data_date BETWEEN '2021-10-01' AND '2024-11-29'
-GROUP BY phase, processor_name
-HAVING COUNT(*) > 0
-ORDER BY failure_count DESC
-"
-```
-
-### 5.3 Quality Distribution
-
-```bash
-timeout 30 bq query --use_legacy_sql=false --format=pretty "
-SELECT
-  EXTRACT(YEAR FROM analysis_date) as year,
-  CASE
-    WHEN completeness_pct >= 90 THEN 'Good (90%+)'
-    WHEN completeness_pct >= 70 THEN 'OK (70-89%)'
-    ELSE 'Degraded (<70%)'
-  END as quality,
-  COUNT(*) as records
-FROM \`nba-props-platform.nba_precompute.player_shot_zone_analysis\`
-GROUP BY year, quality
-ORDER BY year, quality
+  AND started_at > TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 2 HOUR)
+ORDER BY started_at DESC
+LIMIT 10
 "
 ```
 
 ---
 
-## Monitoring Commands
+## Troubleshooting
 
-### Active Progress Monitor (Run in Separate Terminal)
+### Failed Days - How to Retry
+
+The backfill jobs output failed dates at the end. Use the `--dates` flag:
 
 ```bash
-#!/bin/bash
-# Save as monitor_backfill.sh
-
-while true; do
-  clear
-  echo "=== BACKFILL MONITOR - $(date) ==="
-  echo ""
-
-  echo "=== RECENT ACTIVITY (last hour) ==="
-  bq query --use_legacy_sql=false --format=pretty "
-  SELECT
-    processor_name,
-    COUNTIF(status = 'success') as ok,
-    COUNTIF(status = 'failed') as fail,
-    MAX(data_date) as latest
-  FROM \`nba-props-platform.nba_reference.processor_run_history\`
-  WHERE started_at > TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 1 HOUR)
-  GROUP BY processor_name
-  ORDER BY processor_name
-  " 2>/dev/null
-
-  echo ""
-  echo "=== FAILURES (last hour) ==="
-  bq query --use_legacy_sql=false --format=pretty "
-  SELECT data_date, processor_name, SUBSTR(CAST(errors AS STRING), 1, 60) as error
-  FROM \`nba-props-platform.nba_reference.processor_run_history\`
-  WHERE status = 'failed'
-    AND started_at > TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 1 HOUR)
-  ORDER BY started_at DESC
-  LIMIT 5
-  " 2>/dev/null
-
-  echo ""
-  echo "Next refresh in 5 minutes... (Ctrl+C to stop)"
-  sleep 300
-done
+# Retry specific failed dates
+python backfill_jobs/analytics/player_game_summary/player_game_summary_analytics_backfill.py \
+  --dates 2022-01-05,2022-01-12,2022-01-18
 ```
-
----
-
-## Troubleshooting Quick Reference
 
 ### Processor Fails with DependencyError
 
 ```bash
-# Find what's missing
-bq query --use_legacy_sql=false "
-SELECT data_date, missing_dependencies
+# Check what's missing
+timeout 30 bq query --use_legacy_sql=false "
+SELECT data_date, processor_name, missing_dependencies
 FROM \`nba-props-platform.nba_reference.processor_run_history\`
 WHERE status = 'failed'
   AND errors LIKE '%DependencyError%'
-ORDER BY data_date DESC
+  AND data_date BETWEEN '2021-10-01' AND '2022-04-10'
+ORDER BY data_date
 LIMIT 10
 "
-
-# Fix: Backfill the missing Phase 2 data, then re-run
 ```
 
-### Phase 4 Has 0 Records for Some Dates
+**Fix:** Backfill the missing Phase 2 data, then retry.
+
+### Phase 4 Has 0 Records for Early Season Dates
+
+**This is expected!** Bootstrap period (first 7 days of season) intentionally skips Phase 4.
+
+Expected empty Phase 4 dates:
+- 2021-10-19 to 2021-10-25
+- 2022-10-18 to 2022-10-24
+- 2023-10-24 to 2023-10-30
+- 2024-10-22 to 2024-10-28
+
+---
+
+## Error Handling
+
+### Error Types and Actions
+
+| Error Type | Example | Action |
+|------------|---------|--------|
+| **Transient** | BigQuery timeout, network error | Retry same date |
+| **Rate limit** | 429 Too Many Requests | Wait 60s, retry |
+| **Missing dependency** | Phase 2 data missing | Log, skip, fix later |
+| **Invalid data** | Malformed records | Log, investigate |
+| **Fatal** | Auth failure, schema mismatch | Stop backfill, fix first |
+
+### When to Stop vs. Continue
+
+**Stop the backfill if:**
+- Authentication/credentials error
+- Schema mismatch (table structure changed)
+- >50% of dates failing in a row
+- Disk/memory exhaustion
+
+**Continue (log and skip) if:**
+- Individual date fails
+- Missing optional data source
+- Partial data for a date
+
+---
+
+## Recovery After Interruption
+
+If backfill stops unexpectedly:
+
+### 1. Find Last Successful Date
 
 ```bash
-# Check if it's bootstrap period (first 7 days of season)
-# Expected: Oct 19-25 (2021), Oct 18-24 (2022), Oct 24-30 (2023), Oct 22-28 (2024)
-# These dates SHOULD have 0 Phase 4 records - that's correct behavior!
-```
-
-### Re-run Failed Dates Only
-
-```bash
-# Get list of failed dates
-bq query --use_legacy_sql=false --format=csv "
-SELECT DISTINCT CAST(data_date AS STRING)
+timeout 30 bq query --use_legacy_sql=false --format=pretty "
+SELECT
+  processor_name,
+  MAX(data_date) as last_success
 FROM \`nba-props-platform.nba_reference.processor_run_history\`
-WHERE processor_name = 'PlayerGameSummaryProcessor'
-  AND status = 'failed'
-" > /tmp/failed_dates.txt
-
-# Then re-run each (or create a loop)
-for date in $(cat /tmp/failed_dates.txt | tail -n +2); do
-  ./bin/run_backfill.sh analytics/player_game_summary --dates=$date
-done
+WHERE status = 'success'
+  AND data_date BETWEEN '2021-10-01' AND '2024-11-29'
+GROUP BY processor_name
+ORDER BY processor_name
+"
 ```
+
+### 2. Resume from Next Date
+
+```bash
+# If last success was 2022-01-15, resume from 2022-01-16
+python backfill_jobs/analytics/player_game_summary/player_game_summary_analytics_backfill.py \
+  --start-date 2022-01-16 --end-date 2022-04-10
+```
+
+### 3. The Job Handles Duplicates
+
+The backfill jobs are idempotent - re-running a date that already succeeded will either:
+- Skip it (if skip logic is implemented)
+- Overwrite with same data (safe)
+
+---
+
+## Quality Validation Queries
+
+Run these after each phase completes.
+
+### Check for NULL Critical Fields
+
+```sql
+SELECT game_date, COUNT(*) as null_count
+FROM `nba-props-platform.nba_analytics.player_game_summary`
+WHERE points IS NULL OR minutes IS NULL
+GROUP BY game_date
+HAVING COUNT(*) > 10
+ORDER BY game_date;
+```
+
+### Check Record Counts Per Game
+
+```sql
+-- Should have ~10-15 players per team (20-30 per game)
+SELECT game_date, game_id, COUNT(*) as players
+FROM `nba-props-platform.nba_analytics.player_game_summary`
+WHERE game_date BETWEEN '2021-10-19' AND '2022-04-10'
+GROUP BY game_date, game_id
+HAVING COUNT(*) < 15
+ORDER BY game_date;
+```
+
+### Check Phase 4 Quality Distribution
+
+```sql
+SELECT
+  CASE
+    WHEN completeness_pct >= 90 THEN 'Good (90%+)'
+    WHEN completeness_pct >= 70 THEN 'OK (70-89%)'
+    WHEN completeness_pct >= 50 THEN 'Degraded (50-69%)'
+    ELSE 'Poor (<50%)'
+  END as quality,
+  COUNT(*) as records,
+  ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER (), 1) as pct
+FROM `nba-props-platform.nba_precompute.player_shot_zone_analysis`
+WHERE analysis_date BETWEEN '2021-10-01' AND '2024-11-29'
+GROUP BY 1
+ORDER BY 1;
+```
+
+---
+
+## Rollback Procedure
+
+If backfill produces bad data that needs to be deleted and re-run:
+
+### Important: Delete in Reverse Phase Order
+
+```
+Phase 4 first → Phase 3 second
+(Because Phase 4 depends on Phase 3)
+```
+
+### Delete Phase 4 Data
+
+```sql
+-- Delete Phase 4 for a date range
+DELETE FROM `nba-props-platform.nba_precompute.player_shot_zone_analysis`
+WHERE analysis_date BETWEEN '2022-01-01' AND '2022-01-15';
+
+DELETE FROM `nba-props-platform.nba_precompute.team_defense_zone_analysis`
+WHERE analysis_date BETWEEN '2022-01-01' AND '2022-01-15';
+
+-- Repeat for other Phase 4 tables...
+```
+
+### Delete Phase 3 Data
+
+```sql
+DELETE FROM `nba-props-platform.nba_analytics.player_game_summary`
+WHERE game_date BETWEEN '2022-01-01' AND '2022-01-15';
+
+-- Repeat for other Phase 3 tables...
+```
+
+### Then Re-run Backfill
+
+```bash
+# Phase 3 first
+python backfill_jobs/analytics/player_game_summary/... --start-date 2022-01-01 --end-date 2022-01-15
+
+# Then Phase 4 (after Phase 3 complete)
+python backfill_jobs/precompute/team_defense_zone_analysis/... --start-date 2022-01-01 --end-date 2022-01-15
+# etc.
+```
+
+---
+
+## Resolved Questions
+
+### ~~No Odds Data for Historical Dates~~ - SOLVED
+
+**Solution:** BettingPros has 673/675 dates (99.7% coverage) vs Odds API's 271 dates (40%).
+
+**Coverage comparison:**
+| Source | Dates | Coverage |
+|--------|-------|----------|
+| Odds API | 271 | 40% |
+| BettingPros | 673 | 99.7% |
+
+**Action:** Verify `upcoming_player_game_context` processor uses BettingPros as fallback when Odds API data is missing. If it does, this problem is solved.
+
+---
+
+## Open Questions
+
+### Phase 4 Backfill Jobs
+
+**Status:** To be created in separate session.
+
+**Requirements:**
+- Follow same pattern as Phase 3 analytics backfill
+- Day-by-day processing
+- `--dry-run`, `--start-date`, `--end-date`, `--dates` flags
+- Progress logging every 10 days
+- Failed dates tracking
+- Bootstrap period handling (skip first 7 days of each season)
+- Validate Phase 3 complete before processing each date
 
 ---
 
@@ -549,19 +676,66 @@ After successful backfill:
 | Phase 3 | player_game_summary | ~650 | All game dates |
 | Phase 3 | team_defense_game_summary | ~650 | All game dates |
 | Phase 3 | team_offense_game_summary | ~650 | All game dates |
-| Phase 3 | upcoming_player_game_context | ~270 | Limited by odds data |
+| Phase 3 | upcoming_player_game_context | ~650 | BettingPros provides 99.7% coverage |
 | Phase 3 | upcoming_team_game_context | ~650 | All game dates |
-| Phase 4 | player_shot_zone_analysis | ~620 | Minus bootstrap periods |
-| Phase 4 | team_defense_zone_analysis | ~620 | Minus bootstrap periods |
-| Phase 4 | player_composite_factors | ~620 | Minus bootstrap periods |
-| Phase 4 | player_daily_cache | ~620 | Minus bootstrap periods |
+| Phase 4 | All tables | ~620 | Minus ~28 bootstrap days (7 days × 4 seasons) |
 
 **Quality expectations:**
 - First 2-3 weeks of each season: degraded quality (limited history)
 - After week 3: 80%+ should be "Good" quality
-- Shot zones will be NULL for most historical data (play-by-play sparse)
+- Shot zones: Will be NULL for most historical data (play-by-play sparse)
 
 ---
 
-**Document Version:** 1.0
-**Last Updated:** 2025-11-29 21:12 PST
+## Phase 4 Backfill Job Guidance
+
+When creating Phase 4 backfill jobs, include:
+
+### Must Have
+
+1. **Same CLI pattern as Phase 3:**
+   - `--dry-run` for testing
+   - `--start-date` / `--end-date` for range
+   - `--dates` for retry of specific dates
+   - `backfill_mode=True` in processor options
+
+2. **Day-by-day processing:**
+   - Avoids BigQuery size limits
+   - Enables resumability
+   - Clear progress visibility
+
+3. **Bootstrap period skip:**
+   ```
+   2021-10-19 to 2021-10-25
+   2022-10-18 to 2022-10-24
+   2023-10-24 to 2023-10-30
+   2024-10-22 to 2024-10-28
+   ```
+
+4. **Phase 3 validation before processing:**
+   - Check Phase 3 tables have data for lookback window
+   - Log warning if incomplete, but continue
+
+5. **Failed dates tracking:**
+   - List failed dates at end
+   - Suggest retry command
+
+### Execution Order Reminder
+
+Phase 4 processors MUST run in order:
+1. team_defense_zone_analysis
+2. player_shot_zone_analysis
+3. player_composite_factors
+4. player_daily_cache
+5. ml_feature_store
+
+---
+
+**Document Version:** 1.3
+**Last Updated:** 2025-11-29 22:05 PST
+
+## Related Documentation
+
+- [`docs/01-architecture/data-readiness-patterns.md`](../../../01-architecture/data-readiness-patterns.md) - All data safety patterns
+- [`docs/01-architecture/pipeline-integrity.md`](../../../01-architecture/pipeline-integrity.md) - Cascade control
+- [`docs/01-architecture/bootstrap-period-overview.md`](../../../01-architecture/bootstrap-period-overview.md) - Early season handling

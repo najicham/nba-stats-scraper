@@ -38,6 +38,9 @@ from shared.processors.mixins import RunHistoryMixin
 # Import completeness checker and DependencyError for defensive checks
 from shared.utils.completeness_checker import CompletenessChecker, DependencyError
 
+# Import unified publishing
+from shared.publishers.unified_pubsub_publisher import UnifiedPubSubPublisher
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -93,24 +96,33 @@ class PrecomputeProcessorBase(RunHistoryMixin):
         self.validated_data = {}
         self.transformed_data = {}
         self.stats = {}
-        
+
         # Source metadata tracking
         self.source_metadata = {}
         self.data_completeness_pct = 100.0
         self.dependency_check_passed = True
         self.upstream_data_age_hours = 0.0
         self.missing_dependencies_list = []
-        
+
         # Quality issue tracking
         self.quality_issues = []
-        
+
         # Generate run_id
         self.run_id = str(uuid.uuid4())[:8]
         self.stats["run_id"] = self.run_id
-        
+
         # GCP clients
         self.bq_client = bigquery.Client()
         self.project_id = os.environ.get('GCP_PROJECT_ID', self.bq_client.project)
+
+        # Correlation tracking (for tracing through pipeline)
+        self.correlation_id = None
+        self.parent_processor = None
+        self.trigger_message_id = None
+
+        # Selective processing (v1.1 feature - inherited from Phase 3)
+        self.entities_changed = []  # List of entity IDs that changed
+        self.is_incremental_run = False  # True if processing only changed entities
         
     def run(self, opts: Optional[Dict] = None) -> bool:
         """
@@ -138,6 +150,19 @@ class PrecomputeProcessorBase(RunHistoryMixin):
             self.validate_additional_opts()
             self.init_clients()
 
+            # Extract correlation tracking info from upstream message
+            self.correlation_id = opts.get('correlation_id') or self.run_id
+            self.parent_processor = opts.get('parent_processor')
+            self.trigger_message_id = opts.get('trigger_message_id')
+
+            # Extract entities_changed for selective processing (from Phase 3 orchestrator)
+            self.entities_changed = opts.get('entities_changed', [])
+            if self.entities_changed:
+                self.is_incremental_run = True
+                logger.info(
+                    f"🎯 INCREMENTAL RUN: Received {len(self.entities_changed)} changed entities from upstream"
+                )
+
             # Start run history tracking
             self.OUTPUT_TABLE = self.table_name
             self.OUTPUT_DATASET = self.dataset_id
@@ -145,8 +170,8 @@ class PrecomputeProcessorBase(RunHistoryMixin):
             self.start_run_tracking(
                 data_date=data_date,
                 trigger_source=opts.get('trigger_source', 'manual'),
-                trigger_message_id=opts.get('trigger_message_id'),
-                parent_processor=opts.get('parent_processor')
+                trigger_message_id=self.trigger_message_id,
+                parent_processor=self.parent_processor
             )
 
             # ═══════════════════════════════════════════════════════════════
@@ -1145,7 +1170,7 @@ class PrecomputeProcessorBase(RunHistoryMixin):
             logger.warning(f"Failed to log processing run: {e}")
     
     def post_process(self) -> None:
-        """Post-processing - log summary stats."""
+        """Post-processing - log summary stats and publish completion message."""
         summary = {
             "run_id": self.run_id,
             "processor": self.__class__.__name__,
@@ -1155,18 +1180,109 @@ class PrecomputeProcessorBase(RunHistoryMixin):
             "data_completeness_pct": self.data_completeness_pct,
             "upstream_data_age_hours": self.upstream_data_age_hours
         }
-        
+
         # Merge precompute stats
         precompute_stats = self.get_precompute_stats()
         if isinstance(precompute_stats, dict):
             summary.update(precompute_stats)
-            
+
         logger.info("PRECOMPUTE_STATS %s", json.dumps(summary))
+
+        # Publish completion message to trigger Phase 5 (if target table is set)
+        # Can be disabled with skip_downstream_trigger flag for backfills
+        if self.opts.get('skip_downstream_trigger', False):
+            logger.info(
+                f"⏸️  Skipping downstream trigger (backfill mode) - "
+                f"Phase 5 will not be auto-triggered for {self.table_name}"
+            )
+        elif self.table_name:
+            self._publish_completion_message(success=True)
     
     def get_precompute_stats(self) -> Dict:
         """Get precompute stats - child classes override."""
         return {}
-    
+
+    def _publish_completion_message(self, success: bool, error: str = None) -> None:
+        """
+        Publish unified completion message to nba-phase4-precompute-complete topic.
+        This triggers Phase 5 prediction processors that depend on this precompute table.
+
+        Uses UnifiedPubSubPublisher for consistent message format across all phases.
+
+        Args:
+            success: Whether processing completed successfully
+            error: Optional error message if failed
+        """
+        try:
+            # Use unified publisher
+            publisher = UnifiedPubSubPublisher(project_id=self.project_id)
+
+            # Get the analysis date
+            analysis_date = self.opts.get('analysis_date')
+            if isinstance(analysis_date, date):
+                analysis_date = analysis_date.strftime('%Y-%m-%d')
+
+            # Determine status
+            if success:
+                status = 'success'
+            elif error:
+                status = 'failed'
+            else:
+                status = 'no_data'
+
+            # Calculate duration
+            duration_seconds = self.stats.get('total_runtime', 0)
+
+            # Publish unified message
+            message_id = publisher.publish_completion(
+                topic='nba-phase4-precompute-complete',
+                processor_name=self.__class__.__name__,
+                phase='phase_4_precompute',
+                execution_id=self.run_id,
+                correlation_id=self.correlation_id or self.run_id,
+                game_date=str(analysis_date),
+                output_table=self.table_name,
+                output_dataset=self.dataset_id,
+                status=status,
+                record_count=self.stats.get('rows_processed', 0),
+                records_failed=0,
+                parent_processor=self.parent_processor,
+                trigger_source=self.opts.get('trigger_source', 'manual'),
+                trigger_message_id=self.trigger_message_id,
+                duration_seconds=duration_seconds,
+                error_message=error,
+                error_type=type(error).__name__ if error else None,
+                metadata={
+                    # Precompute-specific metadata
+                    'dependency_check_passed': self.dependency_check_passed,
+                    'data_completeness_pct': self.data_completeness_pct,
+                    'upstream_data_age_hours': self.upstream_data_age_hours,
+                    'missing_dependencies': self.missing_dependencies_list,
+
+                    # Selective processing (inherited from Phase 3)
+                    'is_incremental': self.is_incremental_run,
+                    'entities_changed': self.entities_changed if self.is_incremental_run else [],
+
+                    # Standard stats
+                    'extract_time': self.stats.get('extract_time'),
+                    'calculate_time': self.stats.get('calculate_time'),
+                    'save_time': self.stats.get('save_time')
+                },
+                skip_downstream=self.opts.get('skip_downstream_trigger', False)
+            )
+
+            if message_id:
+                logger.info(
+                    f"✅ Published unified completion message to nba-phase4-precompute-complete "
+                    f"(message_id: {message_id}, correlation_id: {self.correlation_id})"
+                )
+            else:
+                logger.info("⏸️  Skipped publishing (backfill mode or skip_downstream_trigger=True)")
+
+        except Exception as e:
+            logger.warning(f"Failed to publish completion message: {e}")
+            # Don't fail the whole processor if Pub/Sub publishing fails
+
     # =========================================================================
     # Time Tracking
     # =========================================================================

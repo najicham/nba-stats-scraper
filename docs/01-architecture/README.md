@@ -28,12 +28,21 @@
 | [Pub/Sub Operations](../02-operations/pubsub-operations.md) | Manage Pub/Sub infrastructure |
 | [v1.0 Deployment Guide](../04-deployment/v1.0-deployment-guide.md) | Deployment procedures |
 
+### Data Readiness & Safety
+
+| Document | Description |
+|----------|-------------|
+| [Data Readiness Patterns](./data-readiness-patterns.md) | **All mechanisms that ensure processors don't start without proper data** |
+| [Pipeline Integrity](./pipeline-integrity.md) | Cascade control, gap detection, defensive checks |
+| [Bootstrap Period](./bootstrap-period-overview.md) | Early season handling (days 0-6) |
+
 ### Key Features
 
 - **Event-Driven:** All 5 phases connected via Pub/Sub
 - **Atomic Orchestration:** Firestore transactions prevent race conditions
 - **Correlation Tracking:** End-to-end request tracing
 - **Change Detection:** 99%+ efficiency with selective processing
+- **Data Readiness:** 10 patterns ensuring safe processing
 
 ### Directory Structure
 
@@ -47,8 +56,12 @@
 │   ├── change-detection-design.md
 │   ├── change-detection-investigation.md
 │   └── granular-updates.md
+├── source-coverage/            # Source data quality tracking
 ├── decisions/                  # Architecture decision records
 ├── diagrams/                   # Architecture diagrams
+├── data-readiness-patterns.md  # ⭐ Consolidated safety mechanisms
+├── pipeline-integrity.md       # Cascade control, gap detection
+├── bootstrap-period-overview.md # Early season handling
 └── [other docs]                # Pipeline, monitoring, etc.
 ```
 
@@ -126,7 +139,15 @@
    - Dependency check queries
    - **Critical for backfill operations and Phase 4 processors**
 
-### 9. **pipeline-integrity.md** 🛡️ PIPELINE SAFETY (15 minutes) ⚠️ *Awaiting Field Testing*
+### 9. **data-readiness-patterns.md** 🛡️ DATA SAFETY OVERVIEW (10 minutes) ⭐ NEW
+   - **Created:** 2025-11-29
+   - **Consolidates all 10 data readiness mechanisms**
+   - Quick reference table: what runs when?
+   - Processing flow diagram
+   - Decision matrix for different scenarios
+   - **Start here to understand "what guards my processing?"**
+
+### 10. **pipeline-integrity.md** 🛡️ PIPELINE SAFETY (15 minutes) ⚠️ *Awaiting Field Testing*
    - **Created:** 2025-11-28
    - **Status:** Production-ready code, awaiting field testing
    - **Prevents cascading failures and data gaps**
