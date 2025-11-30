@@ -20,6 +20,50 @@ Orchestrators are Cloud Functions that coordinate transitions between processing
 
 ---
 
+## When Orchestrators Are Used
+
+| Mode | Orchestrators | How Sequencing Works |
+|------|---------------|---------------------|
+| **Daily Operations** | ✅ Active | Cloud Functions coordinate via Pub/Sub |
+| **Backfill** | ❌ Bypassed | Local script controls sequencing manually |
+
+### Daily Operations (Production Pipeline)
+
+Orchestrators are the coordination layer for real-time data processing:
+
+```
+Scrapers → Phase 2 → [Orchestrator] → Phase 3 → [Orchestrator] → Phase 4 → Phase 5
+                          ↑                          ↑
+              Waits for 21/21              Waits for 5/5
+              processors                   processors
+```
+
+Each processor publishes completion to Pub/Sub. Orchestrators count completions and trigger the next phase when all upstream processors finish.
+
+### Backfill (Historical Data Processing)
+
+Backfill jobs **bypass orchestrators entirely**:
+
+```
+Backfill Script → Phase 2 → Phase 3 → Phase 4 (all local, manual sequencing)
+```
+
+**How backfill bypasses orchestrators:**
+1. Processors run with `backfill_mode=True`
+2. This sets `skip_downstream_trigger=True`
+3. No Pub/Sub messages are published
+4. The backfill script controls sequencing (day by day, phase by phase)
+
+**Why this design?**
+- Backfill processes 675+ days - orchestrators would receive 17,000+ messages
+- Backfill needs checkpoint/resume; orchestrators don't (single day processing)
+- Backfill can run in parallel with daily ops without interference
+- Backfill has different error handling needs (retry dates, not individual processors)
+
+**Related:** See `docs/08-projects/current/backfill/PHASE4-BACKFILL-JOBS.md` for backfill documentation.
+
+---
+
 ## Architecture Diagram
 
 ```

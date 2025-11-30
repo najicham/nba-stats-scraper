@@ -15,6 +15,19 @@ Phase 4 (Precompute) processors have backfill jobs for historical data processin
 - Support progress persistence with checkpoint files (auto-resume on restart)
 - Do NOT trigger downstream processors (Phase 5)
 
+### Backfill vs Daily Operations
+
+| Aspect | Daily Operations | Backfill |
+|--------|------------------|----------|
+| Orchestration | Cloud Functions (Pub/Sub) | Local script (manual) |
+| Triggers | Pub/Sub messages | `skip_downstream_trigger=True` |
+| Sequencing | Orchestrators coordinate | Script controls order |
+| Error handling | Per-processor alerts | Checkpoint + retry dates |
+
+**Key point:** Backfill bypasses the orchestrator Cloud Functions entirely. The backfill script controls all sequencing locally.
+
+See `docs/01-architecture/orchestration/orchestrators.md` for how daily operations work.
+
 ---
 
 ## Backfill Jobs Location
