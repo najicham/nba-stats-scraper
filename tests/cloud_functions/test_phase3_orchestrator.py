@@ -17,7 +17,7 @@ import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 
-from orchestrators.phase3_to_phase4.main import (
+from orchestration.cloud_functions.phase3_to_phase4.main import (
     orchestrate_phase3_to_phase4,
     update_completion_atomic,
     trigger_phase4,

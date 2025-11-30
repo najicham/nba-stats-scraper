@@ -7,7 +7,7 @@ Run:
     pytest tests/cloud_functions/test_phase2_orchestrator.py -v
 
 Coverage:
-    pytest tests/cloud_functions/test_phase2_orchestrator.py --cov=orchestrators.phase2_to_phase3 --cov-report=html
+    pytest tests/cloud_functions/test_phase2_orchestrator.py --cov=orchestration.cloud_functions.phase2_to_phase3 --cov-report=html
 """
 
 import json
@@ -21,7 +21,7 @@ import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 
-from orchestrators.phase2_to_phase3.main import (
+from orchestration.cloud_functions.phase2_to_phase3.main import (
     orchestrate_phase2_to_phase3,
     update_completion_atomic,
     trigger_phase3,
