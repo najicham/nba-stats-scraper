@@ -148,7 +148,7 @@ class EmailAlerterSES:
 
         html_body = f"""
         <html>
-        <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+        <body>
             <h2 style="color: #d32f2f;">🚨 Critical Error Alert</h2>
             <p><strong>Processor:</strong> {safe_processor}</p>
             <p><strong>Time:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}</p>
@@ -156,7 +156,7 @@ class EmailAlerterSES:
 
             {details_html}
 
-            <hr style="margin-top: 30px; border: none; border-top: 1px solid #ccc;">
+            <hr>
             <p style="color: #666; font-size: 12px;">
                 This is an automated alert from the NBA Registry System.
                 Immediate investigation may be required.
@@ -174,18 +174,18 @@ class EmailAlerterSES:
 
         html_body = f"""
         <html>
-        <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+        <body>
             <h2 style="color: #ff9800;">⚠️ Unresolved Players Alert</h2>
             <p><strong>Time:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}</p>
             <p><strong>Unresolved Count:</strong> {unresolved_count}</p>
             <p><strong>Threshold:</strong> {threshold}</p>
 
-            <p style="margin-top: 20px;">
+            <p>
                 The number of unresolved players has exceeded the threshold.
                 Manual review may be required.
             </p>
 
-            <hr style="margin-top: 30px; border: none; border-top: 1px solid #ccc;">
+            <hr>
             <p style="color: #666; font-size: 12px;">
                 This is an automated alert from the NBA Registry System.
             </p>
@@ -208,7 +208,7 @@ class EmailAlerterSES:
 
         html_body = f"""
         <html>
-        <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+        <body>
             <h2 style="color: #0d6efd;">📊 Daily Summary</h2>
             <p><strong>Date:</strong> {datetime.now().strftime('%Y-%m-%d')}</p>
 
@@ -217,7 +217,7 @@ class EmailAlerterSES:
                 {summary_items}
             </ul>
 
-            <hr style="margin-top: 30px; border: none; border-top: 1px solid #ccc;">
+            <hr>
             <p style="color: #666; font-size: 12px;">
                 This is an automated daily summary from the NBA Registry System.
             </p>
@@ -243,7 +243,7 @@ class EmailAlerterSES:
 
         html_body = f"""
         <html>
-        <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+        <body>
             <h2 style="color: #28a745;">🆕 New Players Discovered</h2>
             <p><strong>Time:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}</p>
             <p><strong>Processing Run:</strong> {html.escape(processing_run_id)}</p>
@@ -254,7 +254,7 @@ class EmailAlerterSES:
                 {player_items}
             </ul>
 
-            <hr style="margin-top: 30px; border: none; border-top: 1px solid #ccc;">
+            <hr>
             <p style="color: #666; font-size: 12px;">
                 This is an automated alert from the NBA Registry System.
             </p>
@@ -263,6 +263,476 @@ class EmailAlerterSES:
         """
 
         return self._send_email(subject, html_body, self.alert_recipients, "INFO")
+
+    def send_pipeline_health_summary(self, health_data: Dict) -> bool:
+        """
+        Send daily pipeline health summary email.
+
+        Args:
+            health_data: Dictionary containing:
+                - date: Processing date
+                - phases: Dict of phase statuses {phase_name: {complete: int, total: int, status: str}}
+                - total_duration_minutes: Total pipeline duration
+                - data_quality: Overall quality (GOLD/SILVER/BRONZE)
+                - gaps_detected: Number of gaps found
+                - records_processed: Total records
+        """
+        date_str = health_data.get('date', datetime.now().strftime('%Y-%m-%d'))
+        subject = f"✅ Pipeline Health - {date_str}"
+
+        # Build phase status rows
+        phases = health_data.get('phases', {})
+        phase_rows = ""
+        for phase_name, phase_info in phases.items():
+            complete = phase_info.get('complete', 0)
+            total = phase_info.get('total', 0)
+            status = phase_info.get('status', 'unknown')
+
+            if status == 'success':
+                icon = "✅"
+                color = "#28a745"
+            elif status == 'partial':
+                icon = "⚠️"
+                color = "#ff9800"
+            else:
+                icon = "❌"
+                color = "#d32f2f"
+
+            phase_rows += f'<tr><td>{html.escape(phase_name)}</td><td style="color: {color};">{icon} {complete}/{total}</td></tr>'
+
+        duration = health_data.get('total_duration_minutes', 0)
+        quality = health_data.get('data_quality', 'UNKNOWN')
+        gaps = health_data.get('gaps_detected', 0)
+        records = health_data.get('records_processed', 0)
+
+        # Quality color
+        quality_color = "#28a745" if quality == "GOLD" else "#ff9800" if quality == "SILVER" else "#d32f2f"
+
+        html_body = f"""
+        <html>
+        <body>
+            <h2 style="color: #28a745;">✅ Daily Pipeline Health Summary</h2>
+            <p><strong>Date:</strong> {html.escape(date_str)}</p>
+            <p><strong>Generated:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}</p>
+
+            <h3>Phase Status</h3>
+            <table border="1" cellpadding="8" cellspacing="0" style="border-collapse: collapse;">
+                <tr style="background-color: #f5f5f5;">
+                    <th>Phase</th>
+                    <th>Status</th>
+                </tr>
+                {phase_rows}
+            </table>
+
+            <h3>Summary</h3>
+            <ul>
+                <li><strong>Total Duration:</strong> {duration} minutes</li>
+                <li><strong>Data Quality:</strong> <span style="color: {quality_color};">{html.escape(quality)}</span></li>
+                <li><strong>Gaps Detected:</strong> {gaps}</li>
+                <li><strong>Records Processed:</strong> {records:,}</li>
+            </ul>
+
+            <hr>
+            <p style="color: #666; font-size: 12px;">
+                This is an automated daily health summary from the NBA Registry System.
+            </p>
+        </body>
+        </html>
+        """
+
+        return self._send_email(subject, html_body, self.alert_recipients, "INFO")
+
+    def send_prediction_completion_summary(self, prediction_data: Dict) -> bool:
+        """
+        Send prediction completion summary email.
+
+        Args:
+            prediction_data: Dictionary containing:
+                - date: Prediction date
+                - games_count: Number of games today
+                - players_predicted: Number successfully predicted
+                - players_total: Total players attempted
+                - failed_players: List of {name, reason} for failures
+                - confidence_distribution: Dict {high: n, medium: n, low: n}
+                - top_recommendations: List of {player, line, recommendation, confidence}
+                - duration_minutes: Time to complete
+        """
+        date_str = prediction_data.get('date', datetime.now().strftime('%Y-%m-%d'))
+        predicted = prediction_data.get('players_predicted', 0)
+        total = prediction_data.get('players_total', 0)
+
+        subject = f"🏀 Predictions Ready - {date_str} ({predicted}/{total})"
+
+        games = prediction_data.get('games_count', 0)
+        duration = prediction_data.get('duration_minutes', 0)
+
+        # Failed players section
+        failed_players = prediction_data.get('failed_players', [])
+        failed_html = ""
+        if failed_players:
+            failed_html = "<h3>Failed Predictions</h3><ul>"
+            for player in failed_players[:10]:
+                name = html.escape(player.get('name', 'Unknown'))
+                reason = html.escape(player.get('reason', 'Unknown error'))
+                failed_html += f"<li><strong>{name}:</strong> {reason}</li>"
+            if len(failed_players) > 10:
+                failed_html += f"<li><em>... and {len(failed_players) - 10} more</em></li>"
+            failed_html += "</ul>"
+
+        # Confidence distribution
+        conf_dist = prediction_data.get('confidence_distribution', {})
+        high_conf = conf_dist.get('high', 0)
+        med_conf = conf_dist.get('medium', 0)
+        low_conf = conf_dist.get('low', 0)
+
+        # Top recommendations
+        recommendations = prediction_data.get('top_recommendations', [])
+        recs_html = ""
+        if recommendations:
+            recs_html = "<h3>Top Recommendations</h3><ul>"
+            for rec in recommendations[:5]:
+                player = html.escape(rec.get('player', 'Unknown'))
+                line = rec.get('line', 0)
+                action = html.escape(rec.get('recommendation', 'N/A'))
+                confidence = rec.get('confidence', 0)
+                recs_html += f"<li><strong>{player}:</strong> {action} {line} pts ({confidence}% confidence)</li>"
+            recs_html += "</ul>"
+
+        # Status color
+        success_rate = (predicted / total * 100) if total > 0 else 0
+        status_color = "#28a745" if success_rate >= 95 else "#ff9800" if success_rate >= 80 else "#d32f2f"
+
+        html_body = f"""
+        <html>
+        <body>
+            <h2 style="color: #6f42c1;">🏀 Prediction Completion Summary</h2>
+            <p><strong>Date:</strong> {html.escape(date_str)}</p>
+            <p><strong>Generated:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}</p>
+
+            <h3>Overview</h3>
+            <ul>
+                <li><strong>Games Today:</strong> {games}</li>
+                <li><strong>Players Predicted:</strong> <span style="color: {status_color};">{predicted}/{total}</span></li>
+                <li><strong>Duration:</strong> {duration} minutes</li>
+            </ul>
+
+            <h3>Confidence Distribution</h3>
+            <ul>
+                <li><strong>High (&gt;80%):</strong> {high_conf} players</li>
+                <li><strong>Medium (50-80%):</strong> {med_conf} players</li>
+                <li><strong>Low (&lt;50%):</strong> {low_conf} players</li>
+            </ul>
+
+            {recs_html}
+            {failed_html}
+
+            <hr>
+            <p style="color: #666; font-size: 12px;">
+                This is an automated prediction summary from the NBA Registry System.
+            </p>
+        </body>
+        </html>
+        """
+
+        return self._send_email(subject, html_body, self.alert_recipients, "INFO")
+
+    def send_dependency_stall_alert(self, stall_data: Dict) -> bool:
+        """
+        Send alert when pipeline is stalled waiting for dependencies.
+
+        Args:
+            stall_data: Dictionary containing:
+                - waiting_phase: Phase that is waiting (e.g., "Phase 3")
+                - blocked_by_phase: Phase being waited on (e.g., "Phase 2")
+                - wait_minutes: How long it has been waiting
+                - missing_processors: List of processor names not yet complete
+                - completed_count: Number of processors completed
+                - total_count: Total processors expected
+        """
+        waiting = stall_data.get('waiting_phase', 'Unknown')
+        blocked_by = stall_data.get('blocked_by_phase', 'Unknown')
+        wait_mins = stall_data.get('wait_minutes', 0)
+
+        subject = f"⏳ Pipeline Stall - {waiting} waiting {wait_mins}+ mins"
+
+        missing = stall_data.get('missing_processors', [])
+        completed = stall_data.get('completed_count', 0)
+        total = stall_data.get('total_count', 0)
+
+        # Build missing processors list
+        missing_html = ""
+        if missing:
+            missing_html = "<h3>Missing Processors</h3><ul>"
+            for proc in missing[:15]:
+                missing_html += f"<li>❌ {html.escape(proc)}</li>"
+            if len(missing) > 15:
+                missing_html += f"<li><em>... and {len(missing) - 15} more</em></li>"
+            missing_html += "</ul>"
+
+        html_body = f"""
+        <html>
+        <body>
+            <h2 style="color: #ff9800;">⏳ Pipeline Stall Detected</h2>
+            <p><strong>Time:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}</p>
+
+            <p style="font-size: 16px;">
+                <strong>{html.escape(waiting)}</strong> has been waiting
+                <strong style="color: #d32f2f;">{wait_mins} minutes</strong>
+                for <strong>{html.escape(blocked_by)}</strong> to complete.
+            </p>
+
+            <h3>Status</h3>
+            <ul>
+                <li><strong>Completed:</strong> {completed}/{total} processors</li>
+                <li><strong>Missing:</strong> {len(missing)} processors</li>
+            </ul>
+
+            {missing_html}
+
+            <h3>Recommended Actions</h3>
+            <ul>
+                <li>Check Cloud Run logs for the missing processors</li>
+                <li>Verify Phase 1 scrapers completed successfully</li>
+                <li>Check GCS for expected data files</li>
+                <li>Manually trigger missing processors if needed</li>
+            </ul>
+
+            <hr>
+            <p style="color: #666; font-size: 12px;">
+                This is an automated stall alert from the NBA Registry System.
+                Investigation recommended.
+            </p>
+        </body>
+        </html>
+        """
+
+        return self._send_email(subject, html_body, self.critical_recipients or self.alert_recipients, "WARNING")
+
+    def send_backfill_progress_report(self, progress_data: Dict) -> bool:
+        """
+        Send backfill progress report email.
+
+        Args:
+            progress_data: Dictionary containing:
+                - season: Season being backfilled (e.g., "2023-24")
+                - phase: Current phase (e.g., "Phase 3 Analytics")
+                - completed_dates: Number of dates completed
+                - total_dates: Total dates to process
+                - successful: Number of successful dates
+                - partial: Number of partial successes
+                - failed: Number of failed dates
+                - failed_dates: List of failed date strings
+                - estimated_remaining_minutes: Estimated time remaining
+                - alerts_suppressed: Number of alerts suppressed
+        """
+        season = progress_data.get('season', 'Unknown')
+        phase = progress_data.get('phase', 'Unknown')
+        completed = progress_data.get('completed_dates', 0)
+        total = progress_data.get('total_dates', 0)
+
+        progress_pct = (completed / total * 100) if total > 0 else 0
+        subject = f"📦 Backfill Progress - {season} {phase} ({progress_pct:.0f}%)"
+
+        successful = progress_data.get('successful', 0)
+        partial = progress_data.get('partial', 0)
+        failed = progress_data.get('failed', 0)
+        failed_dates = progress_data.get('failed_dates', [])
+        remaining = progress_data.get('estimated_remaining_minutes', 0)
+        suppressed = progress_data.get('alerts_suppressed', 0)
+
+        # Failed dates list
+        failed_html = ""
+        if failed_dates:
+            failed_html = "<h3>Failed Dates</h3><ul>"
+            for date in failed_dates[:10]:
+                failed_html += f"<li>❌ {html.escape(str(date))}</li>"
+            if len(failed_dates) > 10:
+                failed_html += f"<li><em>... and {len(failed_dates) - 10} more</em></li>"
+            failed_html += "</ul>"
+
+        # Progress bar (simple text-based)
+        filled = int(progress_pct / 5)
+        progress_bar = "█" * filled + "░" * (20 - filled)
+
+        html_body = f"""
+        <html>
+        <body>
+            <h2 style="color: #17a2b8;">📦 Backfill Progress Report</h2>
+            <p><strong>Time:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}</p>
+
+            <h3>Current Operation</h3>
+            <ul>
+                <li><strong>Season:</strong> {html.escape(season)}</li>
+                <li><strong>Phase:</strong> {html.escape(phase)}</li>
+            </ul>
+
+            <h3>Progress</h3>
+            <p style="font-family: monospace; font-size: 14px;">
+                [{progress_bar}] {progress_pct:.1f}%
+            </p>
+            <p><strong>{completed}/{total}</strong> dates processed</p>
+
+            <h3>Results</h3>
+            <ul>
+                <li style="color: #28a745;">✅ Successful: {successful}</li>
+                <li style="color: #ff9800;">⚠️ Partial: {partial}</li>
+                <li style="color: #d32f2f;">❌ Failed: {failed}</li>
+            </ul>
+
+            {failed_html}
+
+            <h3>Estimates</h3>
+            <ul>
+                <li><strong>Time Remaining:</strong> ~{remaining} minutes</li>
+                <li><strong>Alerts Suppressed:</strong> {suppressed:,}</li>
+            </ul>
+
+            <hr>
+            <p style="color: #666; font-size: 12px;">
+                This is an automated backfill progress report from the NBA Registry System.
+            </p>
+        </body>
+        </html>
+        """
+
+        return self._send_email(subject, html_body, self.alert_recipients, "INFO")
+
+    def send_data_quality_alert(self, quality_data: Dict) -> bool:
+        """
+        Send alert when data quality degrades.
+
+        Args:
+            quality_data: Dictionary containing:
+                - processor_name: Name of the processor
+                - date: Processing date
+                - previous_quality: Previous quality level (GOLD/SILVER/BRONZE)
+                - current_quality: Current quality level
+                - reason: Reason for degradation
+                - fallback_sources: List of fallback sources used
+                - impact: Description of impact
+        """
+        processor = quality_data.get('processor_name', 'Unknown')
+        date_str = quality_data.get('date', datetime.now().strftime('%Y-%m-%d'))
+        prev_quality = quality_data.get('previous_quality', 'GOLD')
+        curr_quality = quality_data.get('current_quality', 'UNKNOWN')
+
+        subject = f"📉 Data Quality Degraded - {prev_quality} → {curr_quality}"
+
+        reason = quality_data.get('reason', 'Unknown reason')
+        fallbacks = quality_data.get('fallback_sources', [])
+        impact = quality_data.get('impact', 'Prediction confidence may be affected.')
+
+        # Fallback sources
+        fallback_html = ""
+        if fallbacks:
+            fallback_html = "<h3>Fallback Sources Used</h3><ul>"
+            for source in fallbacks:
+                fallback_html += f"<li>{html.escape(source)}</li>"
+            fallback_html += "</ul>"
+
+        # Quality color
+        curr_color = "#28a745" if curr_quality == "GOLD" else "#ff9800" if curr_quality == "SILVER" else "#d32f2f"
+
+        html_body = f"""
+        <html>
+        <body>
+            <h2 style="color: #ff9800;">📉 Data Quality Degradation Alert</h2>
+            <p><strong>Time:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}</p>
+
+            <h3>Details</h3>
+            <ul>
+                <li><strong>Processor:</strong> {html.escape(processor)}</li>
+                <li><strong>Date:</strong> {html.escape(date_str)}</li>
+                <li><strong>Quality Change:</strong> {html.escape(prev_quality)} → <span style="color: {curr_color};">{html.escape(curr_quality)}</span></li>
+            </ul>
+
+            <h3>Reason</h3>
+            <p>{html.escape(reason)}</p>
+
+            {fallback_html}
+
+            <h3>Impact</h3>
+            <p>{html.escape(impact)}</p>
+
+            <hr>
+            <p style="color: #666; font-size: 12px;">
+                This is an automated quality alert from the NBA Registry System.
+            </p>
+        </body>
+        </html>
+        """
+
+        return self._send_email(subject, html_body, self.alert_recipients, "WARNING")
+
+    def send_stale_data_warning(self, stale_data: Dict) -> bool:
+        """
+        Send warning when upstream data is stale.
+
+        Args:
+            stale_data: Dictionary containing:
+                - processor_name: Processor detecting the stale data
+                - upstream_table: Name of the stale table
+                - last_updated: When the table was last updated
+                - expected_freshness_hours: How fresh data should be
+                - actual_age_hours: How old the data actually is
+                - possible_causes: List of possible causes
+        """
+        processor = stale_data.get('processor_name', 'Unknown')
+        table = stale_data.get('upstream_table', 'Unknown')
+        age_hours = stale_data.get('actual_age_hours', 0)
+
+        subject = f"🕐 Stale Data Warning - {table} ({age_hours}h old)"
+
+        last_updated = stale_data.get('last_updated', 'Unknown')
+        expected = stale_data.get('expected_freshness_hours', 6)
+        causes = stale_data.get('possible_causes', [
+            'Scraper failure',
+            'Processor stuck or failed',
+            'GCS upload issue',
+            'Pub/Sub message lost'
+        ])
+
+        # Causes list
+        causes_html = "<ul>"
+        for cause in causes:
+            causes_html += f"<li>{html.escape(cause)}</li>"
+        causes_html += "</ul>"
+
+        html_body = f"""
+        <html>
+        <body>
+            <h2 style="color: #fd7e14;">🕐 Stale Data Warning</h2>
+            <p><strong>Time:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}</p>
+
+            <h3>Details</h3>
+            <ul>
+                <li><strong>Detected By:</strong> {html.escape(processor)}</li>
+                <li><strong>Stale Table:</strong> {html.escape(table)}</li>
+                <li><strong>Last Updated:</strong> {html.escape(str(last_updated))}</li>
+                <li><strong>Data Age:</strong> <span style="color: #d32f2f;">{age_hours} hours</span></li>
+                <li><strong>Expected Freshness:</strong> &lt;{expected} hours</li>
+            </ul>
+
+            <h3>Possible Causes</h3>
+            {causes_html}
+
+            <h3>Recommended Actions</h3>
+            <ul>
+                <li>Check Phase 1 scraper logs</li>
+                <li>Verify GCS bucket has recent files</li>
+                <li>Check processor run history for failures</li>
+                <li>Manually trigger upstream processor if needed</li>
+            </ul>
+
+            <hr>
+            <p style="color: #666; font-size: 12px;">
+                This is an automated stale data warning from the NBA Registry System.
+            </p>
+        </body>
+        </html>
+        """
+
+        return self._send_email(subject, html_body, self.alert_recipients, "WARNING")
 
     def should_send_unresolved_alert(self, unresolved_count: int, threshold: int = 50) -> bool:
         """Check if unresolved players alert should be sent."""
