@@ -524,7 +524,7 @@ Phase 3: Analytics Teams   | 0022400234  | 2            | Teams analyzed     | 2
    - Quality score too low to process
    - Dependency check failed
 
-**Reference:** `docs/architecture/08-cross-date-dependency-management.md`
+**Reference:** `docs/01-architecture/cross-date-dependencies.md`
 
 ---
 
@@ -736,7 +736,7 @@ LEFT JOIN predictions p ON pg.game_date = p.game_date;
 - `docs/monitoring/06-alerting-strategy-and-escalation.md` - Alert response
 
 **Architecture:**
-- `docs/architecture/08-cross-date-dependency-management.md` - Historical data requirements
+- `docs/01-architecture/cross-date-dependencies.md` - Historical data requirements
 
 **Processors:**
 - `docs/processors/01-phase2-operations-guide.md` - Phase 2 operations

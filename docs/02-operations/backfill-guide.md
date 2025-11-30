@@ -21,8 +21,8 @@
 - ✅ Example scenarios with complete commands
 
 **Related Documentation:**
-- `docs/architecture/08-cross-date-dependency-management.md` - Why backfill order matters
-- `docs/monitoring/05-data-completeness-validation.md` - Validation queries
+- `docs/01-architecture/cross-date-dependencies.md` - Why backfill order matters
+- `docs/07-monitoring/completeness-validation.md` - Validation queries
 
 ---
 
@@ -1299,8 +1299,8 @@ done
 ## 🔗 Related Documentation
 
 **Architecture:**
-- `docs/architecture/08-cross-date-dependency-management.md` - Why backfill order matters
-- `docs/architecture/01-phase-based-architecture.md` - Overview of 5-phase system
+- `docs/01-architecture/cross-date-dependencies.md` - Why backfill order matters
+- `docs/01-architecture/pipeline-design.md` - Overview of 5-phase system
 
 **Monitoring:**
 - `docs/monitoring/05-data-completeness-validation.md` - Validation queries

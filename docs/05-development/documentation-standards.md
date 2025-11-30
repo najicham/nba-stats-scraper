@@ -14,7 +14,7 @@
 
 This guide defines the **standard pattern** for organizing documentation directories across the NBA Stats Scraper project. Use this approach consistently in all doc directories for predictable, maintainable documentation structure.
 
-**Proven in:** `docs/architecture/` (reorganized 2025-11-15)
+**Proven in:** `docs/01-architecture/` (reorganized 2025-11-15, updated 2025-11-29)
 
 ---
 
@@ -369,16 +369,16 @@ YYYY-MM-DD HH:MM PST
 
 ## Directory-Specific Applications
 
-### docs/architecture/
-**Focus:** System design, architecture decisions, implementation roadmaps
-**Example docs:** Event-driven pipeline, integration plans, monitoring strategies
-**Status:** ✅ Organized (2025-11-15)
-**Reference:** `archive/2025-11-15/architecture-reorganization-handoff.md`
+### docs/01-architecture/
+**Focus:** System design, architecture decisions, v1.0 orchestration
+**Example docs:** Pipeline design, orchestrators, Pub/Sub topics
+**Status:** ✅ Organized (2025-11-29)
+**Subdirs:** `orchestration/`, `change-detection/`, `decisions/`, `diagrams/`
 
-### docs/orchestration/
-**Focus:** Operational guides, monitoring, phase-specific operations
-**Example docs:** Phase 1 operations, Phase 2 operations, Grafana monitoring
-**Status:** Partially organized
+### docs/02-operations/
+**Focus:** Operational guides, monitoring, orchestrator troubleshooting
+**Example docs:** Orchestrator monitoring, Pub/Sub operations, backfill guide
+**Status:** ✅ Organized (2025-11-29)
 **Next:** Apply same pattern as architecture/
 
 ### docs/specifications/
@@ -521,7 +521,7 @@ mkdir -p docs/new-category
 
 **Before starting:**
 - [ ] Read this guide completely
-- [ ] Review `docs/architecture/` as example
+- [ ] Review `docs/01-architecture/` as example
 - [ ] Check if category needs organization (3+ docs)
 
 **During organization:**
@@ -577,9 +577,9 @@ A: Archive v1 to `archive/old/`, create new doc with next number. Or use version
 
 ## See Also
 
-- **Architecture example:** `docs/architecture/README.md`
-- **Reorganization handoff:** `docs/architecture/archive/2025-11-15/architecture-reorganization-handoff.md`
-- **Future:** `docs/orchestration/README.md` (when organized)
+- **Architecture example:** `docs/01-architecture/README.md`
+- **Operations example:** `docs/02-operations/README.md`
+- **Phases example:** `docs/03-phases/README.md`
 
 ---
 

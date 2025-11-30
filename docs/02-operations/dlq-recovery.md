@@ -380,7 +380,7 @@ gs://nba-scraped-data/bdl/2024-25/2025-11-19/injuries.json
 - `docs/infrastructure/01-pubsub-integration-verification.md` - Pub/Sub health checks
 
 **Architecture:**
-- `docs/architecture/04-event-driven-pipeline-architecture.md` - Event-driven design
+- `docs/01-architecture/pipeline-design.md` - Event-driven design
 
 **Processors:**
 - `docs/processors/01-phase2-operations-guide.md` - Phase 2 operations

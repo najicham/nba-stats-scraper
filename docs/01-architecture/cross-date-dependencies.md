@@ -1,6 +1,6 @@
 # Cross-Date Dependency Management
 
-**File:** `docs/architecture/08-cross-date-dependency-management.md`
+**File:** `docs/01-architecture/cross-date-dependencies.md`
 **Created:** 2025-11-18 14:30 PST
 **Last Updated:** 2025-11-18 14:30 PST
 **Purpose:** Document how processors depend on historical data across multiple dates
@@ -997,8 +997,8 @@ gcloud run jobs execute phase4-player-shot-zone-analysis \
 - `docs/monitoring/04-observability-gaps-and-improvement-plan.md` - What's missing
 
 **Architecture:**
-- `docs/architecture/01-phase-based-architecture.md` - Overview of 5-phase system
-- `docs/architecture/07-change-detection-current-state-investigation.md` - Entity-level changes
+- `docs/01-architecture/pipeline-design.md` - Overview of 5-phase system
+- `docs/01-architecture/change-detection/` - Entity-level change detection
 
 ---
 

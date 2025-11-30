@@ -370,8 +370,8 @@ See `tutorials/02-understanding-prediction-systems.md` for detailed explanations
 - **Monitoring:** `docs/monitoring/01-grafana-monitoring-guide.md`
 
 ### Architecture
-- **Pipeline:** `docs/architecture/04-event-driven-pipeline-architecture.md`
-- **Roadmap:** `docs/architecture/05-implementation-status-and-roadmap.md`
+- **Pipeline:** `docs/01-architecture/pipeline-design.md`
+- **Orchestration:** `docs/01-architecture/orchestration/` - v1.0 Pub/Sub orchestration
 
 ---
 
@@ -465,7 +465,7 @@ When adding new Phase 5 documentation:
 ### For Architects
 1. `design/01-architectural-decisions.md` - Design rationale
 2. `architecture/01-parallelization-strategy.md` - Scaling patterns
-3. Study event-driven pipeline in `docs/architecture/`
+3. Study event-driven pipeline in `docs/01-architecture/`
 4. Understand cost trade-offs
 5. Plan future enhancements
 

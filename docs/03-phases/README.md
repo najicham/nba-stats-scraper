@@ -1,8 +1,29 @@
 # Processors Documentation
 
-**Last Updated:** 2025-11-25
+**Last Updated:** 2025-11-29 17:30 PST
 **Purpose:** Data processor operations for Phases 2-5
 **Audience:** Engineers operating and troubleshooting data processors
+
+---
+
+## 🎉 v1.0 Event-Driven Pipeline (NEW)
+
+**All phases are now connected via event-driven orchestration!**
+
+### Orchestrators
+
+Phase transitions are now coordinated by Cloud Function orchestrators:
+
+| Orchestrator | Tracks | Triggers |
+|--------------|--------|----------|
+| Phase 2→3 | 21 Phase 2 processors | Phase 3 when all complete |
+| Phase 3→4 | 5 Phase 3 processors | Phase 4 with aggregated entities |
+
+### Documentation
+
+- [Orchestrators Architecture](../01-architecture/orchestration/orchestrators.md) - How orchestrators work
+- [Pub/Sub Topics](../01-architecture/orchestration/pubsub-topics.md) - Message flow
+- [Orchestrator Monitoring](../02-operations/orchestrator-monitoring.md) - Operations guide
 
 ---
 
@@ -171,7 +192,8 @@
 - **Data Flow:** `docs/data-flow/` - Input/output schemas and transformations
 
 **Architecture:**
-- **Design:** `docs/architecture/` - Overall pipeline architecture
+- **Design:** `docs/01-architecture/` - Overall pipeline architecture
+- **Orchestration:** `docs/01-architecture/orchestration/` - v1.0 Pub/Sub orchestration
 
 ---
 

@@ -6,8 +6,8 @@
 > **📌 These are reference materials from research and planning.**
 >
 > **For actual implementation**, see:
-> - [Architecture Overview](../architecture/00-quick-reference.md) ⭐ **Start Here**
-> - [Quick Reference](00-phase2-phase3-quick-reference.md)
+> - [Architecture Overview](../01-architecture/quick-reference.md) ⭐ **Start Here**
+> - [Quick Reference](phase2-phase3-quick-ref.md)
 
 ## What's in This Folder
 
@@ -133,10 +133,10 @@ From the reference materials:
 ## Quick Navigation
 
 **Starting implementation?**
-→ [Architecture Overview](../architecture/00-quick-reference.md)
+→ [Architecture Overview](../01-architecture/quick-reference.md)
 
 **Need quick overview?**
-→ [Quick Reference](00-phase2-phase3-quick-reference.md)
+→ [Quick Reference](phase2-phase3-quick-ref.md)
 
 **Looking for a specific pattern?**
 → [Pattern Catalog](optimization-pattern-catalog.md) (check implementation status first)
@@ -231,4 +231,4 @@ As you implement:
 
 ---
 
-**Remember:** These are references, not instructions. Follow the [architecture docs](../architecture/00-quick-reference.md) for actual implementation.
+**Remember:** These are references, not instructions. Follow the [architecture docs](../01-architecture/quick-reference.md) for actual implementation.

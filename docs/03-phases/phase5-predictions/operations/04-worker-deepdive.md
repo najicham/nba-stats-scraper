@@ -1129,8 +1129,8 @@ Speedup: 3.1x faster (1.35min → 0.43min)
 - **Phase 3 Operations:** `02-phase3-operations-guide.md` - Upcoming player game context
 
 **Architecture:**
-- **Pipeline Overview:** `docs/architecture/04-event-driven-pipeline-architecture.md`
-- **Implementation Status:** `docs/architecture/05-implementation-status-and-roadmap.md`
+- **Pipeline Overview:** `docs/01-architecture/pipeline-design.md`
+- **v1.0 Orchestration:** `docs/01-architecture/orchestration/`
 
 ---
 

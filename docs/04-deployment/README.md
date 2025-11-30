@@ -1,22 +1,36 @@
 # Deployment Documentation
 
-**File:** `docs/deployment/README.md`
+**File:** `docs/04-deployment/README.md`
 **Created:** 2025-11-22
-**Last Updated:** 2025-11-25
+**Last Updated:** 2025-11-29 17:30 PST
 **Purpose:** All deployment-related documentation for NBA platform
-**Status:** Current
+**Status:** v1.0 Deployed
 
-> **Note:** This directory is for **deployment milestone documentation** (production changes).
-> For **session-to-session handoffs**, see [`handoff/`](../handoff/).
-> For **archived documents**, see [`ARCHIVE_INDEX.md`](../ARCHIVE_INDEX.md).
+---
+
+## 🎉 v1.0 Deployment (2025-11-29)
+
+**The complete event-driven pipeline is now deployed!**
+
+| Document | Description |
+|----------|-------------|
+| **[v1.0-deployment-guide.md](./v1.0-deployment-guide.md)** | Complete v1.0 deployment guide |
+
+### What's Deployed
+- 8 Pub/Sub topics for event-driven communication
+- 2 Cloud Function orchestrators (Phase 2→3, Phase 3→4)
+- Firestore for atomic state management
+- Phase 5 Prediction Coordinator on Cloud Run
 
 ---
 
 ## Quick Links
 
 **📊 Current Status:**
-- **Quick overview:** [`../SYSTEM_STATUS.md`](../SYSTEM_STATUS.md) - High-level system status
-- **Detailed status:** [`00-deployment-status.md`](00-deployment-status.md) - Complete deployment details
+- **System status:** [`../00-start-here/SYSTEM_STATUS.md`](../00-start-here/SYSTEM_STATUS.md) - v1.0 deployment status
+
+**🚀 v1.0 Deployment:**
+- **v1.0 guide:** [`v1.0-deployment-guide.md`](./v1.0-deployment-guide.md) - Complete v1.0 deployment
 
 **📜 History:**
 - **Deployment log:** [`01-deployment-history.md`](01-deployment-history.md) - Changelog of all deployments

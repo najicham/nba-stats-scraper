@@ -1075,7 +1075,7 @@ Week 4: Optimize concurrency, add Phase 4 parallelization if needed
 - **Worker Deep-Dive:** `docs/predictions/operations/04-worker-deepdive.md` - Concurrency patterns
 
 **Architecture:**
-- **Pipeline:** `docs/architecture/04-event-driven-pipeline-architecture.md` - Event-driven architecture
+- **Pipeline:** `docs/01-architecture/pipeline-design.md` - Event-driven architecture
 
 ---
 

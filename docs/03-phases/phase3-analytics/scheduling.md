@@ -66,7 +66,7 @@ Phase 3 uses a **hybrid scheduling strategy**:
 
 ### Topic Naming Convention
 
-**Note:** Following architecture pattern from `docs/architecture/04-event-driven-pipeline-architecture.md`
+**Note:** Following architecture pattern from `docs/01-architecture/pipeline-design.md`
 
 | Topic | Purpose | Publisher | Subscribers |
 |-------|---------|-----------|-------------|

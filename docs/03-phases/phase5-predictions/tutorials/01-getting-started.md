@@ -768,7 +768,7 @@ Alerts:
 
 - **Phase 4 Features:** `docs/processor-cards/phase4-ml-feature-store-v2.md` - Your input data
 - **Workflow:** `docs/processor-cards/workflow-realtime-prediction-flow.md` - End-to-end flow
-- **Architecture:** `docs/architecture/04-event-driven-pipeline-architecture.md` - System design
+- **Architecture:** `docs/01-architecture/pipeline-design.md` - System design
 
 ---
 

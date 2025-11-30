@@ -660,8 +660,8 @@ Multi mode: [4.0, 5.0, 6.0, 7.0, 8.0]
 - **Phase 2:** `01-phase2-operations-guide.md` - Prop lines from scrapers
 
 **Infrastructure:**
-- **Pub/Sub:** `docs/infrastructure/01-pubsub-integration-verification.md` - Event infrastructure
-- **Architecture:** `docs/architecture/04-event-driven-pipeline-architecture.md` - Overall pipeline
+- **Pub/Sub:** `docs/01-architecture/orchestration/pubsub-topics.md` - Event infrastructure
+- **Architecture:** `docs/01-architecture/pipeline-design.md` - Overall pipeline
 
 ---
 

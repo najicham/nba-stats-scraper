@@ -1,7 +1,7 @@
 # Operations Documentation
 
 **Created:** 2025-11-18 15:00 PST
-**Last Updated:** 2025-11-21 18:36 PST
+**Last Updated:** 2025-11-29 17:05 PST
 **Purpose:** Step-by-step operational procedures for backfills, maintenance, and data management
 **Audience:** Engineers running backfills, on-call engineers, operators
 **Focus:** How to execute operational tasks (backfills, validation, recovery)
@@ -11,6 +11,7 @@
 ## 🎯 Overview
 
 **This directory contains:**
+- ✅ **v1.0 Orchestration monitoring** (NEW - orchestrators and Pub/Sub)
 - ✅ Backfill procedures (historical data, gap filling, re-processing)
 - ✅ Data validation procedures (completeness checks, row count reconciliation)
 - ✅ Recovery operations (partial backfill recovery)
@@ -24,6 +25,45 @@
 ---
 
 ## 📖 Documents in This Directory
+
+### **orchestrator-monitoring.md** 🆕 v1.0 ORCHESTRATION (15 min read)
+**Created:** 2025-11-29 16:54 PST
+**Purpose:** Monitor and troubleshoot Phase 2→3 and Phase 3→4 orchestrators
+
+**What's Inside:**
+- ✅ Quick reference commands for orchestrator status
+- ✅ Health check procedures
+- ✅ Common issues and resolutions
+- ✅ Log analysis and filtering
+- ✅ Alerting setup
+- ✅ Manual intervention procedures
+
+**Read This:**
+- When orchestrators are not triggering
+- When checking Firestore state
+- For daily health checks
+- During incident response
+
+---
+
+### **pubsub-operations.md** 🆕 v1.0 PUB/SUB (15 min read)
+**Created:** 2025-11-29 16:55 PST
+**Purpose:** Monitor and manage Pub/Sub messaging infrastructure
+
+**What's Inside:**
+- ✅ Topic and subscription management
+- ✅ Message backlog monitoring
+- ✅ Manual message publishing for testing
+- ✅ Troubleshooting delivery issues
+- ✅ Emergency procedures (pause, purge)
+
+**Read This:**
+- When messages are not being delivered
+- When checking message backlog
+- For manual testing and debugging
+- During incident response
+
+---
 
 ### **01-backfill-operations-guide.md** ⭐ PRIMARY GUIDE (60+ min comprehensive read)
 **Created:** 2025-11-18 14:45 PST
@@ -112,7 +152,7 @@
 
 ### Prerequisites (Read First)
 **Before running backfills, understand:**
-- `../architecture/08-cross-date-dependency-management.md` - Why backfill order matters
+- `../01-architecture/cross-date-dependencies.md` - Why backfill order matters
   - Cross-date dependencies
   - Game-based vs calendar-based lookback
   - Early season handling
@@ -224,7 +264,7 @@ gcloud run jobs execute phase3-player-game-summary \
 → See `01-backfill-operations-guide.md` Example 1
 
 **"Why do I need to backfill Oct 9-31 when I only want Nov 8-14?"**
-→ See `../architecture/08-cross-date-dependency-management.md` (Lookback Windows)
+→ See `../01-architecture/cross-date-dependencies.md` (Lookback Windows)
 
 **"How do I validate backfill completion?"**
 → See `../monitoring/05-data-completeness-validation.md` (Validation Queries)
@@ -234,7 +274,7 @@ gcloud run jobs execute phase3-player-game-summary \
 
 **"What's the correct backfill order?"**
 → Phase-by-phase (2→3→4→5), NOT date-by-date
-→ See `../architecture/08-cross-date-dependency-management.md` (Backfill Orchestration Order)
+→ See `../01-architecture/cross-date-dependencies.md` (Backfill Orchestration Order)
 
 ---
 
@@ -242,7 +282,7 @@ gcloud run jobs execute phase3-player-game-summary \
 
 Before running any backfill:
 - [ ] Read `01-backfill-operations-guide.md` (at least the relevant scenario)
-- [ ] Understand cross-date dependencies (`../architecture/08-cross-date-dependency-management.md`)
+- [ ] Understand cross-date dependencies (`../01-architecture/cross-date-dependencies.md`)
 - [ ] Calculate date ranges (including lookback window)
 - [ ] Check what data already exists
 - [ ] Verify Cloud Run jobs are deployed
@@ -346,4 +386,4 @@ WHERE game_date BETWEEN '2024-10-09' AND '2024-11-14';
 
 ---
 
-*This directory focuses on HOW to run operations. For WHY things work the way they do, see `../architecture/`. For monitoring system health, see `../monitoring/`.*
+*This directory focuses on HOW to run operations. For WHY things work the way they do, see `../01-architecture/`. For monitoring system health, see `../07-monitoring/`.*

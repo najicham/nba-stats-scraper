@@ -1,18 +1,18 @@
 # Implementation Status & Roadmap
 
-**File:** `docs/architecture/05-implementation-status-and-roadmap.md`
+**File:** `docs/01-architecture/implementation-roadmap.md`
 **Created:** 2025-11-14 22:41 PST
-**Last Updated:** 2025-11-25
+**Last Updated:** 2025-11-29
 **Purpose:** Historical implementation roadmap from November 2025
-**Status:** Historical - Most sprints completed. See [SYSTEM_STATUS.md](../SYSTEM_STATUS.md) for current status.
-**Related:** [04-event-driven-pipeline-architecture.md](./04-event-driven-pipeline-architecture.md) (complete vision)
+**Status:** Historical - v1.0 deployed. See [SYSTEM_STATUS.md](../00-start-here/SYSTEM_STATUS.md) for current status.
+**Related:** [pipeline-design.md](./pipeline-design.md) (complete vision)
 
 > **⚠️ HISTORICAL DOCUMENT**
 >
 > This document was written on 2025-11-15 when the system was ~45% complete.
-> As of 2025-11-25, the system is **~70% complete** with Phases 1-3 in production.
+> As of 2025-11-29, **v1.0 is deployed** with Phases 1-5 in production.
 >
-> **For current status:** See [SYSTEM_STATUS.md](../SYSTEM_STATUS.md)
+> **For current status:** See [SYSTEM_STATUS.md](../00-start-here/SYSTEM_STATUS.md)
 >
 > This document is preserved for historical context on the original planning.
 

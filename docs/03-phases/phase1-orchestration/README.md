@@ -76,8 +76,8 @@ These docs were previously in `orchestration/` but have been moved to focused di
 - `docs/monitoring/02-grafana-daily-health-check.md` - Quick daily health check
 
 **System Design:**
-- `docs/architecture/` - Overall pipeline architecture
-- `docs/data-flow/` - Data transformation mappings (future)
+- `docs/01-architecture/` - Overall pipeline architecture
+- `docs/01-architecture/orchestration/` - v1.0 Pub/Sub orchestration
 
 ---
 

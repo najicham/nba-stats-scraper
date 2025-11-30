@@ -628,7 +628,7 @@ WHERE feature_quality_score < 85;  -- Show degraded quality
 - `docs/processors/07-phase4-troubleshooting.md` - Phase 4 failure scenarios
 
 **Architecture:**
-- `docs/architecture/03-pipeline-monitoring-and-error-handling.md` - Overall monitoring strategy
+- `docs/01-architecture/monitoring-error-handling-design.md` - Overall monitoring strategy
 
 ---
 

@@ -90,9 +90,9 @@ Phase 3 Analytics (⚠️ MANUAL TRIGGER ONLY)
 - Create subscription pointing to analytics service
 - Test end-to-end flow
 
-**Reference:** See `docs/architecture/implementation-status-and-roadmap.md` for complete plan.
+**Reference:** See `docs/01-architecture/implementation-roadmap.md` for complete plan.
 
-**Related:** See `docs/architecture/event-driven-pipeline-architecture.md` for full vision.
+**Related:** See `docs/01-architecture/pipeline-design.md` for full vision.
 
 ---
 
@@ -645,7 +645,7 @@ LIMIT 20;
 - Phase 3 processors trigger with dependency checking
 - End-to-end flow: Scraper → Phase 2 → Phase 3
 
-**Reference:** See `docs/architecture/implementation-status-and-roadmap.md` Sprint 1 for details.
+**Reference:** See `docs/01-architecture/implementation-roadmap.md` for historical planning details.
 
 ### Medium-Term (Sprints 2-4 - November-December)
 
@@ -682,7 +682,7 @@ Phase 1 (Scrapers) → Phase 2 (Raw) → Phase 3 (Analytics)
 
 **Timeline:** 8 sprints, ~73 hours total effort
 
-**Reference:** See `docs/architecture/event-driven-pipeline-architecture.md` for complete vision.
+**Reference:** See `docs/01-architecture/pipeline-design.md` for complete vision.
 
 ---
 
@@ -694,9 +694,9 @@ Phase 1 (Scrapers) → Phase 2 (Raw) → Phase 3 (Analytics)
 - **Grafana Monitoring:** `docs/orchestration/grafana-monitoring-guide.md`
 
 ### Architecture & Planning
-- **Event-Driven Architecture:** `docs/architecture/event-driven-pipeline-architecture.md`
-- **Implementation Roadmap:** `docs/architecture/implementation-status-and-roadmap.md`
-- **Integration Plan:** `docs/architecture/phase1-to-phase5-integration-plan.md`
+- **Event-Driven Architecture:** `docs/01-architecture/pipeline-design.md`
+- **v1.0 Orchestration:** `docs/01-architecture/orchestration/` - Pub/Sub and orchestrators
+- **Integration Plan:** `docs/01-architecture/integration-plan.md`
 
 ### Technical Specifications
 - **Message Formats:** `docs/specifications/pubsub-message-formats.md`

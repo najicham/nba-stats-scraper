@@ -1,6 +1,6 @@
 # Pipeline Monitoring & Error Handling
 
-**File:** `docs/architecture/03-pipeline-monitoring-and-error-handling.md`
+**File:** `docs/01-architecture/monitoring-error-handling-design.md`
 **Created:** 2025-11-14 22:22 PST
 **Last Updated:** 2025-11-27 (Added processor run history logging via RunHistoryMixin)
 **Purpose:** End-to-end monitoring, dependency failure handling, correlation ID tracking, DLQ handling, run history logging, and recovery procedures

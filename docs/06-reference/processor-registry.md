@@ -330,11 +330,11 @@ gcloud run services logs read nba-phase3-analytics-processors \
 
 ## Related Documentation
 
-- **Adding Processors:** `docs/guides/07-adding-processors-to-pubsub-registry.md`
-- **Deployment Status:** `docs/deployment/00-deployment-status.md`
-- **Phase 3 Operations:** `docs/processors/02-phase3-operations-guide.md`
-- **Phase 4 Operations:** `docs/processors/05-phase4-operations-guide.md`
-- **Pub/Sub Integration:** `docs/infrastructure/01-pubsub-integration-verification.md`
+- **Adding Processors:** `docs/05-development/guides/pubsub-registry.md`
+- **Deployment Status:** `docs/04-deployment/status.md`
+- **Orchestrators:** `docs/01-architecture/orchestration/orchestrators.md`
+- **Pub/Sub Topics:** `docs/01-architecture/orchestration/pubsub-topics.md`
+- **Operations Guide:** `docs/02-operations/orchestrator-monitoring.md`
 
 ---
 

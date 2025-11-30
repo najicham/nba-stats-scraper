@@ -1,11 +1,11 @@
 # Event-Driven Pipeline Architecture: Phase 1-6
 
-**File:** `docs/architecture/04-event-driven-pipeline-architecture.md`
+**File:** `docs/01-architecture/pipeline-design.md`
 **Created:** 2025-11-14 22:33 PST
-**Last Updated:** 2025-11-25
+**Last Updated:** 2025-11-29
 **Purpose:** ⭐ **START HERE** - Complete 6-phase event-driven architecture from scrapers to web app
-**Status:** ~70% Implemented - Phases 1-3 production, Phase 4 schemas deployed, Phase 5 partial
-**Current Status:** See [SYSTEM_STATUS.md](../SYSTEM_STATUS.md) for live deployment status
+**Status:** v1.0 Deployed - Phases 1-5 production ready, Phase 6 (web app) not started
+**Current Status:** See [SYSTEM_STATUS.md](../00-start-here/SYSTEM_STATUS.md) for live deployment status
 
 ---
 
@@ -1192,9 +1192,9 @@ The system is designed to be **efficient** (incremental updates), **reliable** (
 
 ---
 
-**Last Updated:** 2025-11-25
-**Status:** Architecture Complete - ~70% Implemented
+**Last Updated:** 2025-11-29
+**Status:** v1.0 Deployed - Phases 1-5 Production Ready
 **Related Documents:**
-- [SYSTEM_STATUS.md](../SYSTEM_STATUS.md) - Current deployment status
-- `02-phase1-to-phase5-granular-updates.md` - Incremental update design
-- `03-pipeline-monitoring-and-error-handling.md` - Monitoring deep dive
+- [SYSTEM_STATUS.md](../00-start-here/SYSTEM_STATUS.md) - Current deployment status
+- [Orchestrator docs](./orchestration/) - v1.0 Pub/Sub orchestration
+- `monitoring-error-handling-design.md` - Monitoring deep dive

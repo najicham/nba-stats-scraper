@@ -1,10 +1,56 @@
 # Architecture Documentation
 
-**File:** `docs/architecture/README.md`
-**Last Updated:** 2025-11-25
+**File:** `docs/01-architecture/README.md`
+**Last Updated:** 2025-11-29
 **Purpose:** Architecture, design decisions, and implementation roadmap for NBA data pipeline
-**Status:** Current
+**Status:** v1.0 Deployed and Production Ready
 **Audience:** Engineers building and understanding the system
+
+---
+
+## v1.0 Event-Driven Pipeline (NEW)
+
+**The complete 5-phase event-driven pipeline is now deployed and operational!**
+
+### Quick Start for v1.0
+
+| Document | Description |
+|----------|-------------|
+| [Pub/Sub Topics](./orchestration/pubsub-topics.md) | 8 topics for event-driven communication |
+| [Orchestrators](./orchestration/orchestrators.md) | Phase 2→3 and Phase 3→4 coordination |
+| [Firestore State Management](./orchestration/firestore-state-management.md) | Atomic state tracking |
+
+### Operations Guides
+
+| Document | Description |
+|----------|-------------|
+| [Orchestrator Monitoring](../02-operations/orchestrator-monitoring.md) | Monitor and troubleshoot orchestrators |
+| [Pub/Sub Operations](../02-operations/pubsub-operations.md) | Manage Pub/Sub infrastructure |
+| [v1.0 Deployment Guide](../04-deployment/v1.0-deployment-guide.md) | Deployment procedures |
+
+### Key Features
+
+- **Event-Driven:** All 5 phases connected via Pub/Sub
+- **Atomic Orchestration:** Firestore transactions prevent race conditions
+- **Correlation Tracking:** End-to-end request tracing
+- **Change Detection:** 99%+ efficiency with selective processing
+
+### Directory Structure
+
+```
+01-architecture/
+├── orchestration/              # v1.0 event-driven orchestration
+│   ├── pubsub-topics.md        # Pub/Sub topic reference
+│   ├── orchestrators.md        # Phase orchestrator design
+│   └── firestore-state-management.md  # State tracking
+├── change-detection/           # Change detection & optimization
+│   ├── change-detection-design.md
+│   ├── change-detection-investigation.md
+│   └── granular-updates.md
+├── decisions/                  # Architecture decision records
+├── diagrams/                   # Architecture diagrams
+└── [other docs]                # Pipeline, monitoring, etc.
+```
 
 ---
 
@@ -26,9 +72,9 @@
    - Addresses all architectural concerns with detailed explanations
    - **Read this to understand the complete vision**
 
-### 2. **[SYSTEM_STATUS.md](../SYSTEM_STATUS.md)** 📊 CURRENT STATUS (5 minutes)
+### 2. **[SYSTEM_STATUS.md](../00-start-here/SYSTEM_STATUS.md)** 📊 CURRENT STATUS (5 minutes)
    - **Single source of truth** for deployment status
-   - Current reality: ~70% complete
+   - v1.0 deployed and operational
    - Phase-by-phase status and next steps
    - **Read this to understand where we are today**
 
@@ -88,7 +134,7 @@
    - Defensive checks (upstream status, gap detection)
    - Backfill strategy for 4 seasons
    - **Read before doing historical backfills or investigating pipeline failures**
-   - Detailed docs: `docs/08-projects/current/pipeline-integrity/`
+   - Detailed docs: `docs/08-projects/completed/pipeline-integrity/`
 
 ---
 
@@ -111,27 +157,27 @@
 ### Directory Structure
 
 ```
-docs/architecture/
-├── README.md                                    (you are here)
-├── 00-quick-reference.md                        (2-page overview)
-├── 01-phase1-to-phase5-integration-plan.md     (historical - Phase 2→3 now implemented)
-├── 02-phase1-to-phase5-granular-updates.md     (entity-level design)
-├── 03-pipeline-monitoring-and-error-handling.md (observability design)
-├── 04-event-driven-pipeline-architecture.md     (⭐ COMPREHENSIVE - start here)
-├── 05-implementation-status-and-roadmap.md      (historical - original planning)
-├── 06-change-detection-and-event-granularity.md (future optimization)
-├── 07-change-detection-current-state-investigation.md (investigation)
-├── 08-cross-date-dependency-management.md       (critical for backfills)
+docs/01-architecture/
+├── README.md                           (you are here)
+├── quick-reference.md                  (2-page overview)
+├── integration-plan.md                 (historical - Phase integration)
+├── pipeline-design.md                  (⭐ COMPREHENSIVE - event-driven vision)
+├── implementation-roadmap.md           (historical - original planning)
+├── monitoring-error-handling-design.md (observability design)
+├── cross-date-dependencies.md          (critical for backfills)
 │
-└── archive/
-    ├── 2025-11-25/                              (archived implementation task docs)
-    │   ├── 09-phase2-phase3-implementation-roadmap.md
-    │   ├── 10-week1-schema-and-code-changes.md
-    │   ├── 11-phase3-phase4-implementation-plan.md
-    │   └── historical-dependency-checking-plan.md
-    ├── 2025-11-15/                              (reorganization artifacts)
-    ├── 2025-11-14/                              (session artifacts)
-    └── 2024-10-14/                              (old architecture)
+├── orchestration/                      # v1.0 ORCHESTRATION (NEW)
+│   ├── pubsub-topics.md                (8 Pub/Sub topics)
+│   ├── orchestrators.md                (Phase orchestrator design)
+│   └── firestore-state-management.md   (Atomic state tracking)
+│
+├── change-detection/                   # Change detection optimization
+│   ├── change-detection-design.md
+│   ├── change-detection-investigation.md
+│   └── granular-updates.md
+│
+├── decisions/                          # Architecture decision records
+└── diagrams/                           # Architecture diagrams
 ```
 
 ---
@@ -238,16 +284,20 @@ archive/
 
 ## 🎯 Quick Reference
 
-**Current Status:** ~70% Complete (as of 2025-11-25)
+**Current Status:** v1.0 Deployed and Production Ready (as of 2025-11-29)
 
 | Phase | Status |
 |-------|--------|
-| Phase 1-3 | ✅ Production |
-| Phase 4 | ⏳ Schemas deployed, code updates pending |
-| Phase 5 | ⏳ Partial implementation |
-| Phase 6 | ❌ Not started |
+| Phase 1 | ✅ Scrapers - Production |
+| Phase 2 | ✅ Raw Processors (21) - Production |
+| Phase 2→3 Orchestrator | ✅ Cloud Function - Production |
+| Phase 3 | ✅ Analytics (5) - Production |
+| Phase 3→4 Orchestrator | ✅ Cloud Function - Production |
+| Phase 4 | ✅ Precompute (5) - Production |
+| Phase 5 | ✅ Predictions - Production |
+| Phase 6 | ❌ Web App - Not started |
 
-**For detailed status:** See [SYSTEM_STATUS.md](../SYSTEM_STATUS.md)
+**For deployment details:** See [v1.0 Deployment Guide](../04-deployment/v1.0-deployment-guide.md)
 
 ---
 
@@ -312,14 +362,20 @@ archive/
 ---
 
 **Document Status:** Current and maintained
-**Last Updated:** 2025-11-25
+**Last Updated:** 2025-11-29
+**Changes (2025-11-29):**
+- v1.0 deployed to production
+- Added v1.0 documentation section with links to new architecture docs
+- Updated status table to reflect all phases complete
+- Added links to new operations guides
+
 **Changes (2025-11-25):**
 - Updated status to ~70% complete
 - Archived implementation task docs (09-11) to `archive/2025-11-25/`
 - Added historical banners to 01, 05
 - Simplified status table (now points to SYSTEM_STATUS.md)
 
-**Next Review:** After Phase 4 deployment
+**Next Review:** After backfill operations complete
 
 ---
 

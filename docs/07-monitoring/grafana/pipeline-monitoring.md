@@ -899,9 +899,9 @@ HAVING missing_count > 0
 ## Related Documentation
 
 **Phase-Based Pipeline:**
-- `docs/architecture/04-event-driven-pipeline-architecture.md` - Overall design
-- `docs/processors/01-phase2-operations-guide.md` - Phase 2 operations
-- `docs/processors/02-phase3-operations-guide.md` - Phase 3 operations
+- `docs/01-architecture/pipeline-design.md` - Overall design
+- `docs/01-architecture/orchestration/` - v1.0 Pub/Sub orchestration
+- `docs/02-operations/orchestrator-monitoring.md` - Orchestrator operations
 
 **Orchestration (Phase 1):**
 - `01-grafana-monitoring-guide.md` - Phase 1 workflow monitoring

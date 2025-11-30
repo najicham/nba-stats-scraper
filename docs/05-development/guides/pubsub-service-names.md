@@ -287,7 +287,7 @@ Matches the DLQ topic name exactly
 ## Related Documentation
 
 - **Topic Configuration:** `shared/config/pubsub_topics.py` (code constants)
-- **Architecture:** `docs/architecture/04-event-driven-pipeline-architecture.md`
+- **Architecture:** `docs/01-architecture/pipeline-design.md`
 - **Infrastructure:** `docs/INFRASTRUCTURE_DEPLOYMENT_SUMMARY.md`
 - **Migration Plan:** `docs/HANDOFF-2025-11-16-phase3-topics-deployed.md`
 

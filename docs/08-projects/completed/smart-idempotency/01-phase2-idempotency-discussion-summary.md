@@ -1,10 +1,12 @@
 # Phase 2 Smart Idempotency - Discussion Summary
 
-**File:** `docs/implementation/phase2-idempotency-discussion-summary.md`
+**File:** `docs/08-projects/completed/smart-idempotency/01-phase2-idempotency-discussion-summary.md`
 **Created:** 2025-11-21 09:45 AM PST
-**Last Updated:** 2025-11-21 09:45 AM PST
+**Last Updated:** 2025-11-29
 **Purpose:** Summary of design decisions from Phase 2 smart idempotency planning session
-**Status:** Current
+**Status:** ✅ COMPLETE - Deployed
+
+> **📚 Main Documentation:** [`docs/05-development/guides/processor-patterns/01-smart-idempotency.md`](../../../05-development/guides/processor-patterns/01-smart-idempotency.md)
 
 ---
 

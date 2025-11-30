@@ -66,7 +66,7 @@ This directory contains comprehensive dependency checking documentation for all 
 | 04-predictions-coordinator.md | ⏳ Partial | Coordinator deployed, workers partial |
 | 05-publishing-api.md | 🎯 Future | Placeholder for future phase |
 
-**Overall System Status**: ~70% complete - See [SYSTEM_STATUS.md](../SYSTEM_STATUS.md) for details
+**Overall System Status**: v1.0 Deployed - See [SYSTEM_STATUS.md](../../00-start-here/SYSTEM_STATUS.md) for details
 
 ---
 
@@ -166,16 +166,17 @@ A: See [`03-precompute-processors.md`](./03-precompute-processors.md) Section: "
 ## 🔗 Related Documentation
 
 ### Architecture & Design
-- [`docs/architecture/00-quick-reference.md`](../architecture/00-quick-reference.md) - Pipeline overview
-- [`docs/architecture/04-event-driven-pipeline-architecture.md`](../architecture/04-event-driven-pipeline-architecture.md) - Pub/Sub architecture
-- [`docs/data-flow/`](../data-flow/) - Detailed data transformations by phase
+- [`docs/01-architecture/quick-reference.md`](../../01-architecture/quick-reference.md) - Pipeline overview
+- [`docs/01-architecture/pipeline-design.md`](../../01-architecture/pipeline-design.md) - Event-driven architecture
+- [`docs/01-architecture/orchestration/`](../../01-architecture/orchestration/) - v1.0 Pub/Sub orchestration
+- [`docs/06-reference/data-flow/`](../data-flow/) - Detailed data transformations by phase
 
 ### Processor-Specific
-- [`docs/processor-cards/`](../processor-cards/) - Quick reference cards for each processor
-- [`docs/processors/`](../processors/) - Operations guides by phase
+- [`docs/06-reference/processor-cards/`](../processor-cards/) - Quick reference cards for each processor
+- [`docs/03-phases/`](../../03-phases/) - Phase-specific documentation
 
-### Implementation
-- [`docs/implementation/`](../implementation/) - Smart idempotency and other patterns
+### Operations
+- [`docs/02-operations/`](../../02-operations/) - Operations guides and runbooks
 
 ---
 
@@ -229,7 +230,7 @@ Update this documentation when:
 - Create troubleshooting decision trees
 - Add performance benchmarks per processor
 
-> **Note:** For current implementation status, see [SYSTEM_STATUS.md](../SYSTEM_STATUS.md)
+> **Note:** For current implementation status, see [SYSTEM_STATUS.md](../../00-start-here/SYSTEM_STATUS.md)
 
 ---
 

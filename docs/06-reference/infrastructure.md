@@ -68,7 +68,7 @@
 **Cross-Phase Concerns:**
 - **Monitoring:** `docs/monitoring/` - Grafana dashboards and health checks
 - **Data Flow:** `docs/data-flow/` - How data transforms between phases
-- **Architecture:** `docs/architecture/` - Overall system design
+- **Architecture:** `docs/01-architecture/` - Overall system design
 
 ---
 

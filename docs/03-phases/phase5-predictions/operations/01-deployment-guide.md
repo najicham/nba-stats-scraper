@@ -2085,9 +2085,9 @@ gcloud alpha monitoring policies create \
 - **Data Flow:** `docs/data-flow/` - Pipeline schemas and transformations
 
 **Architecture:**
-- **Event-Driven Pipeline:** `docs/architecture/04-event-driven-pipeline-architecture.md`
-- **Implementation Status:** `docs/architecture/05-implementation-status-and-roadmap.md`
-- **Integration Plan:** `docs/architecture/01-phase1-to-phase5-integration-plan.md`
+- **Event-Driven Pipeline:** `docs/01-architecture/pipeline-design.md`
+- **v1.0 Orchestration:** `docs/01-architecture/orchestration/`
+- **Integration Plan:** `docs/01-architecture/integration-plan.md`
 
 **Processor Cards (Quick Reference):**
 - **ML Feature Store:** `docs/processor-cards/phase4-ml-feature-store-v2.md` - Your input data

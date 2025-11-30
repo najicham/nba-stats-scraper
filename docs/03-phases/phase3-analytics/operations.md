@@ -10,7 +10,7 @@
 **Related Docs:**
 - **Scheduling:** See `03-phase3-scheduling-strategy.md` for Cloud Scheduler and Pub/Sub configuration
 - **Troubleshooting:** See `04-phase3-troubleshooting.md` for failure recovery and runbooks
-- **Architecture:** See `docs/architecture/04-event-driven-pipeline-architecture.md` for overall design
+- **Architecture:** See `docs/01-architecture/pipeline-design.md` for overall design
 
 ---
 
@@ -640,7 +640,7 @@ ORDER BY records DESC;
 - `docs/monitoring/01-grafana-monitoring-guide.md` - Grafana dashboards for Phase 3
 
 **Architecture:**
-- `docs/architecture/04-event-driven-pipeline-architecture.md` - Overall pipeline design
+- `docs/01-architecture/pipeline-design.md` - Overall pipeline design
 
 ---
 

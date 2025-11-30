@@ -63,15 +63,15 @@ Processors run with partial windows:
 **For now, see the detailed project documentation:**
 
 ### Primary Entry Points
-1. **Start Here:** [`docs/08-projects/current/bootstrap-period/README.md`](../08-projects/current/bootstrap-period/README.md)
+1. **Start Here:** [`docs/08-projects/completed/bootstrap-period/README.md`](../08-projects/completed/bootstrap-period/README.md)
    - Navigation index for all 20 docs
    - Links to implementation, testing, and design docs
 
-2. **Implementation Summary:** [`docs/08-projects/current/bootstrap-period/IMPLEMENTATION-COMPLETE.md`](../08-projects/current/bootstrap-period/IMPLEMENTATION-COMPLETE.md)
+2. **Implementation Summary:** [`docs/08-projects/completed/bootstrap-period/IMPLEMENTATION-COMPLETE.md`](../08-projects/completed/bootstrap-period/IMPLEMENTATION-COMPLETE.md)
    - What was built (5 min read)
    - Files modified, behavior changes
 
-3. **Testing Guide:** [`docs/08-projects/current/bootstrap-period/TESTING-GUIDE.md`](../08-projects/current/bootstrap-period/TESTING-GUIDE.md)
+3. **Testing Guide:** [`docs/08-projects/completed/bootstrap-period/TESTING-GUIDE.md`](../08-projects/completed/bootstrap-period/TESTING-GUIDE.md)
    - How to test the implementation
    - Test suite documentation
 
@@ -80,7 +80,7 @@ Processors run with partial windows:
 - **Completion Summary:** [`docs/09-handoff/2025-11-28-bootstrap-complete.md`](../09-handoff/2025-11-28-bootstrap-complete.md)
 
 ### All 20 Design Documents
-See: [`docs/08-projects/current/bootstrap-period/`](../08-projects/current/bootstrap-period/)
+See: [`docs/08-projects/completed/bootstrap-period/`](../08-projects/completed/bootstrap-period/)
 
 ---
 
@@ -214,8 +214,8 @@ PYTHONPATH=/home/naji/code/nba-stats-scraper \
 ## 📞 Quick Links
 
 **Documentation:**
-- [Project Documentation Index](../08-projects/current/bootstrap-period/README.md)
-- [Implementation Details](../08-projects/current/bootstrap-period/IMPLEMENTATION-COMPLETE.md)
+- [Project Documentation Index](../08-projects/completed/bootstrap-period/README.md)
+- [Implementation Details](../08-projects/completed/bootstrap-period/IMPLEMENTATION-COMPLETE.md)
 - [Deployment Checklist](../09-handoff/2025-11-28-bootstrap-deployment-checklist.md)
 
 **Testing:**
@@ -233,7 +233,7 @@ PYTHONPATH=/home/naji/code/nba-stats-scraper \
 
 **This is a temporary overview document.**
 
-**Current location of detailed docs:** `docs/08-projects/current/bootstrap-period/`
+**Current location of detailed docs:** `docs/08-projects/completed/bootstrap-period/`
 
 **Plan:**
 1. ✅ Implementation complete (Nov 2025)

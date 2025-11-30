@@ -244,14 +244,14 @@ if result['has_gaps']:
 ## Related Documentation
 
 ### Detailed Implementation Docs
-📁 **Primary Location:** `docs/08-projects/current/pipeline-integrity/`
+📁 **Primary Location:** `docs/08-projects/completed/pipeline-integrity/`
 
 | Document | Purpose |
 |----------|---------|
-| [README.md](../08-projects/current/pipeline-integrity/README.md) | Project overview & status |
-| [DESIGN.md](../08-projects/current/pipeline-integrity/DESIGN.md) | Technical design details |
-| [BACKFILL-STRATEGY.md](../08-projects/current/pipeline-integrity/BACKFILL-STRATEGY.md) | Complete backfill guide |
-| [PHASE1-IMPLEMENTATION-SUMMARY.md](../08-projects/current/pipeline-integrity/PHASE1-IMPLEMENTATION-SUMMARY.md) | Cascade control implementation |
+| [README.md](../08-projects/completed/pipeline-integrity/README.md) | Project overview & status |
+| [DESIGN.md](../08-projects/completed/pipeline-integrity/DESIGN.md) | Technical design details |
+| [BACKFILL-STRATEGY.md](../08-projects/completed/pipeline-integrity/BACKFILL-STRATEGY.md) | Complete backfill guide |
+| [PHASE1-IMPLEMENTATION-SUMMARY.md](../08-projects/completed/pipeline-integrity/PHASE1-IMPLEMENTATION-SUMMARY.md) | Cascade control implementation |
 
 ### Related Architecture
 - [Cross-Date Dependencies](./cross-date-dependencies.md) - Why this matters

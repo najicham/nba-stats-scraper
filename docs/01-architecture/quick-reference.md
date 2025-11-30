@@ -1,10 +1,10 @@
 # NBA Data Pipeline - Quick Reference
 
-**File:** `docs/architecture/00-quick-reference.md`
-**Created:** 2025-11-15
-**Last Updated:** 2025-11-15
+**File:** `docs/01-architecture/quick-reference.md`
+**Created:** 2025-11-15 10:00 PST
+**Last Updated:** 2025-11-29 17:00 PST
 **Purpose:** At-a-glance overview of the event-driven pipeline architecture
-**For detailed docs:** Start with [04-event-driven-pipeline-architecture.md](./04-event-driven-pipeline-architecture.md)
+**For detailed docs:** See v1.0 architecture docs: [Pub/Sub Topics](./orchestration/pubsub-topics.md), [Orchestrators](./orchestration/orchestrators.md), [Firestore State](./orchestration/firestore-state-management.md)
 
 ---
 
@@ -12,9 +12,9 @@
 
 **What:** Event-driven data pipeline from NBA API scraping → predictions → web app
 
-**How:** 6 phases connected via Pub/Sub, each phase triggers the next automatically
+**How:** 5 phases connected via Pub/Sub with atomic orchestrators coordinating transitions
 
-**Status:** ~70% complete (Phases 1-3 production, Phase 4 schemas deployed, Phase 5 partial)
+**Status:** v1.0 Deployed and Production Ready (2025-11-29)
 
 ---
 
@@ -22,26 +22,32 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    NBA DATA PIPELINE                         │
+│                NBA DATA PIPELINE v1.0                        │
 ├─────────────────────────────────────────────────────────────┤
 │                                                              │
 │  Phase 1: Scrapers (33) ✅ Production                       │
-│  └─► Pub/Sub: nba-scraper-complete ✅                      │
+│  └─► Pub/Sub: nba-phase1-scrapers-complete ✅               │
 │      ↓                                                       │
 │  Phase 2: Raw Processors (21) ✅ Production                 │
-│  └─► Pub/Sub: nba-raw-data-complete ✅                     │
+│  └─► Pub/Sub: nba-phase2-raw-complete ✅                   │
+│      ↓                                                       │
+│  Phase 2→3 Orchestrator ✅ Cloud Function (tracks 21)       │
+│  └─► Pub/Sub: nba-phase3-trigger ✅                        │
 │      ↓                                                       │
 │  Phase 3: Analytics Processors (5) ✅ Production            │
-│  └─► Pub/Sub: nba-analytics-complete ✅                    │
+│  └─► Pub/Sub: nba-phase3-analytics-complete ✅             │
 │      ↓                                                       │
-│  Phase 4: Precompute Processors (5) ⏳ Schemas deployed     │
-│  └─► Pub/Sub: nba-precompute-complete ⏳ Ready             │
+│  Phase 3→4 Orchestrator ✅ Cloud Function (tracks 5)        │
+│  └─► Pub/Sub: nba-phase4-trigger ✅ (+ entities_changed)   │
 │      ↓                                                       │
-│  Phase 5: Prediction Processors ⏳ Partial                  │
-│  └─► Pub/Sub: nba-predictions-complete ⏳ Ready            │
+│  Phase 4: Precompute Processors (5) ✅ Production           │
+│  └─► Pub/Sub: nba-phase4-precompute-complete ✅            │
 │      ↓                                                       │
-│  Phase 6: Publishing Service ❌ Not started                 │
-│  └─► Firestore + GCS → Web App                             │
+│  Phase 5: Predictions ✅ Production                         │
+│  └─► Pub/Sub: nba-phase5-predictions-complete ✅           │
+│      ↓                                                       │
+│  Phase 6: Web App ❌ Not started                            │
+│  └─► Firestore + GCS                                        │
 │                                                              │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -81,67 +87,61 @@
 
 ---
 
-## 📈 Current Status (2025-11-25)
+## 📈 Current Status (2025-11-29)
 
 ### What's Working ✅
 
-**Phase 1 → Phase 2 → Phase 3 (Production)**
+**Complete Event-Driven Pipeline (v1.0 Production)**
 - 33 scrapers collect data from NBA APIs
 - 21 raw processors load to BigQuery `nba_raw.*` tables
+- Phase 2→3 orchestrator coordinates 21 processor completions
 - 5 analytics processors create `nba_analytics.*` summaries
+- Phase 3→4 orchestrator coordinates 5 processor completions + entity aggregation
+- 5 precompute processors generate ML features
+- Prediction coordinator and workers operational
 - Full Pub/Sub event chain working end-to-end
-- Smart idempotency with hash tracking deployed
+- Atomic Firestore transactions prevent race conditions
+- End-to-end correlation ID tracking
 
-**Phase 4 Precompute (Schemas Ready)**
-- 5 precompute processors exist
-- BigQuery schemas deployed to `nba_precompute.*`
-- Awaiting code updates for historical dependency checking
-
-**Phase 5 Predictions (Partial)**
-- Coordinator and worker services exist
-- Mock models operational
-- Awaiting full integration
+**Key v1.0 Infrastructure:**
+- 8 Pub/Sub topics for event-driven communication
+- 2 Cloud Function orchestrators (Phase 2→3, Phase 3→4)
+- Firestore for atomic state management
+- Cloud Run for Phase 5 predictions
 
 ### Remaining Work ⏳
 
-1. **Phase 4 code updates** (~2-3 hours)
-   - Add historical dependency checking to processors
+1. **Phase 6 web app** (not started)
+   - Firestore + GCS for web app publishing
 
-2. **Phase 5 full integration** (~4-6 hours)
-   - Connect to Phase 4 completion events
-
-3. **Phase 6 publishing** (not started)
-   - Firestore + GCS for web app
+2. **Historical backfill** (optional)
+   - Load historical seasons for predictions
 
 ---
 
 ## 🚀 Next Steps
 
-### Immediate: Phase 4 Code Updates (~2-3 hours)
+### Immediate: Historical Backfill (Optional)
 
-**Goal:** Enable Phase 4 precompute processors
-
-**Tasks:**
-1. Add historical dependency checking to precompute processors
-2. Test with backfill scenarios
-3. Deploy updated processors
-
-**Impact:** Unlocks ML feature generation
-
-### Short-term: Phase 5 Integration (~4-6 hours)
-
-**Goal:** Connect predictions to Phase 4 completion
+**Goal:** Load historical seasons for predictions and analysis
 
 **Tasks:**
-1. Wire coordinator to receive Phase 4 events
-2. Test end-to-end prediction flow
-3. Deploy with real models
+1. Run backfill for 2021-22, 2022-23, 2023-24 seasons
+2. Validate data completeness
+3. Enable historical predictions
 
-**Impact:** Automated daily predictions
+**See:** [NEXT-SESSION-BACKFILL.md](../09-handoff/NEXT-SESSION-BACKFILL.md)
 
-### Future: Phase 6 Publishing
+### Future: Phase 6 Web App
 
-See [SYSTEM_STATUS.md](../SYSTEM_STATUS.md) for current roadmap.
+**Goal:** Publish predictions to web application
+
+**Tasks:**
+1. Design Firestore schema for web app
+2. Create publishing service
+3. Build web app UI
+
+**Impact:** User-facing predictions
 
 ---
 
@@ -258,13 +258,13 @@ See existing examples:
 
 ## 📞 Quick Links
 
-- **Architecture docs:** `docs/architecture/README.md`
-- **Operational guides:** `docs/orchestration/`
-- **Code examples:** `examples/`
-- **Sprint roadmap:** [05-implementation-status-and-roadmap.md](./05-implementation-status-and-roadmap.md)
-- **Pub/Sub status:** `docs/orchestration/pubsub-integration-status-2025-11-15.md`
+- **Architecture docs:** `docs/01-architecture/README.md`
+- **Orchestration guides:** `docs/01-architecture/orchestration/`
+- **Operations:** `docs/02-operations/`
+- **Deployment guide:** `docs/04-deployment/v1.0-deployment-guide.md`
+- **System status:** [SYSTEM_STATUS.md](../00-start-here/SYSTEM_STATUS.md)
 
 ---
 
-**Last Updated:** 2025-11-25
-**Next Review:** After Phase 4 deployment
+**Last Updated:** 2025-11-29 17:00 PST
+**Next Review:** After historical backfill complete

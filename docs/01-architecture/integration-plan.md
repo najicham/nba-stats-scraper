@@ -1,11 +1,11 @@
 # Phase 1-5 Event-Driven Integration Plan
 
-**File:** `docs/architecture/01-phase1-to-phase5-integration-plan.md`
+**File:** `docs/01-architecture/integration-plan.md`
 **Created:** 2025-11-14 22:03 PST
-**Last Updated:** 2025-11-25
+**Last Updated:** 2025-11-29
 **Purpose:** Detailed integration plan for Phase 2→3 connection with dependency coordination
-**Status:** Historical - Phase 2→3 now implemented. See [SYSTEM_STATUS.md](../SYSTEM_STATUS.md) for current status.
-**Related:** [04-event-driven-pipeline-architecture.md](./04-event-driven-pipeline-architecture.md) (comprehensive architecture)
+**Status:** Historical - v1.0 deployed. See [SYSTEM_STATUS.md](../00-start-here/SYSTEM_STATUS.md) for current status.
+**Related:** [pipeline-design.md](./pipeline-design.md) (comprehensive architecture)
 
 > **⚠️ HISTORICAL DOCUMENT**
 >

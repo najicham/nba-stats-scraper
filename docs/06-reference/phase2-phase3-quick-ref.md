@@ -1,9 +1,12 @@
 # Phase 2→3 Quick Reference
 
 **Created:** 2025-11-19 10:19 PM PST
-**Last Updated:** 2025-11-19 10:41 PM PST
-**Status:** Planning → Implementation
-**Main Plan:** docs/architecture/09-phase2-phase3-implementation-roadmap.md
+**Last Updated:** 2025-11-29
+**Status:** ⚠️ HISTORICAL - v1.0 is now deployed
+**Current Status:** See `docs/00-start-here/SYSTEM_STATUS.md`
+
+> **Note:** This was a planning document from November 2025. The Phase 2→3 integration
+> is now complete via v1.0 orchestration. See `docs/01-architecture/orchestration/` for current docs.
 
 ## The Strategy (One Sentence)
 
@@ -107,7 +110,7 @@ ELSE continue monitoring monthly
 
 ### **Will Create**
 - `bin/monitoring/weekly_decision_query.sql` - The decision query
-- `docs/architecture/change-detection-implementation.md` - How it works
+- `docs/01-architecture/change-detection/` - How it works
 - `docs/operations/weekly-decision-query.md` - How to use it
 
 ---
@@ -153,4 +156,4 @@ A: No - only add patterns for observed pain points.
 4. [ ] Add context tracking to analytics_base.py (1 hour)
 5. [ ] Implement change detection methods (4 hours)
 
-**Start Here:** docs/architecture/phase2-phase3-implementation-roadmap.md
+**Start Here:** docs/01-architecture/orchestration/ (v1.0 orchestration docs)

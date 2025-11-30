@@ -1,8 +1,31 @@
 # Monitoring Documentation
 
-**Last Updated:** 2025-11-18
+**Last Updated:** 2025-11-29 17:30 PST
 **Purpose:** Observability, monitoring, and health checks across all pipeline phases
 **Audience:** Engineers monitoring system health and investigating issues
+
+---
+
+## 🎉 v1.0 Orchestration Monitoring (NEW)
+
+For monitoring the event-driven orchestration infrastructure:
+
+| Document | Location | Purpose |
+|----------|----------|---------|
+| [Orchestrator Monitoring](../02-operations/orchestrator-monitoring.md) | 02-operations | Monitor Phase 2→3 and 3→4 orchestrators |
+| [Pub/Sub Operations](../02-operations/pubsub-operations.md) | 02-operations | Monitor Pub/Sub message flow |
+
+**Quick Commands:**
+```bash
+# Check orchestrator status
+gcloud functions describe phase2-to-phase3-orchestrator --region us-west2 --gen2
+
+# View orchestrator logs
+gcloud functions logs read phase2-to-phase3-orchestrator --region us-west2 --limit 50
+
+# Check Firestore state
+# Visit: https://console.firebase.google.com/project/nba-props-platform/firestore
+```
 
 ---
 
@@ -141,14 +164,15 @@
 - **Phase 1 Troubleshooting:** `docs/orchestration/04-troubleshooting.md`
 - **Phase 2 Operations:** `docs/processors/01-phase2-operations-guide.md`
 - **Backfill Operations:** `docs/operations/01-backfill-operations-guide.md`
-- **Cross-Date Dependencies:** `docs/architecture/08-cross-date-dependency-management.md`
+- **Cross-Date Dependencies:** `docs/01-architecture/cross-date-dependencies.md`
 
 **Infrastructure:**
-- **Pub/Sub Health:** `docs/infrastructure/` - Integration verification
+- **Orchestrator Monitoring:** `docs/02-operations/orchestrator-monitoring.md`
+- **Pub/Sub Operations:** `docs/02-operations/pubsub-operations.md`
 
 **System Design:**
-- **Architecture:** `docs/architecture/` - Overall system design
-- **Data Flow:** `docs/data-flow/` - Data transformation tracking
+- **Architecture:** `docs/01-architecture/` - Overall system design
+- **Orchestration:** `docs/01-architecture/orchestration/` - v1.0 Pub/Sub orchestration
 
 ---
 

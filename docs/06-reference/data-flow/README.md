@@ -502,7 +502,7 @@ Phase 4 processors track their sources:
 - **Monitoring:** `docs/monitoring/` - Data quality metrics
 
 **System Design:**
-- **Architecture:** `docs/architecture/` - Overall pipeline design
+- **Architecture:** `docs/01-architecture/` - Overall pipeline design
 - **Schemas:** `docs/orchestration/03-bigquery-schemas.md` - Phase 1 table schemas
 
 ---

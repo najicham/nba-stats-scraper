@@ -24,7 +24,7 @@ What do you need?
 │   ├─ Phase 1 → docs/orchestration/
 │   ├─ Phase 2-4 → docs/processors/
 │   ├─ Phase 5 → docs/predictions/
-│   └─ Architecture → docs/architecture/
+│   └─ Architecture → docs/01-architecture/
 │
 └─ Daily operations → Monitoring Docs (docs/monitoring/)
 ```
@@ -147,13 +147,13 @@ What do you need?
 **Start with:** `docs/predictions/tutorials/01-getting-started.md` ⭐
 
 #### Architecture & Design
-**Location:** `docs/architecture/`
+**Location:** `docs/01-architecture/`
 - System architecture overview
 - Event-driven pipeline design
+- v1.0 orchestration (Pub/Sub + Cloud Functions)
 - Implementation roadmap
-- Future planning
 
-**Start with:** `docs/architecture/00-quick-reference.md`
+**Start with:** `docs/01-architecture/quick-reference.md`
 
 ---
 
@@ -202,11 +202,11 @@ What do you need?
 **Path (4-6 hours total):**
 
 1. **Quick Overview (10 min)**
-   - Read: `docs/SYSTEM_STATUS.md`
-   - Read: `docs/architecture/00-quick-reference.md`
+   - Read: `docs/00-start-here/SYSTEM_STATUS.md`
+   - Read: `docs/01-architecture/quick-reference.md`
 
 2. **Complete Architecture (45 min)**
-   - Read: `docs/architecture/04-event-driven-pipeline-architecture.md`
+   - Read: `docs/01-architecture/pipeline-design.md`
 
 3. **Phase 1 Understanding (30 min)**
    - Read: `docs/orchestration/01-how-it-works.md`
@@ -293,8 +293,8 @@ What do you need?
    - Read: `docs/processors/03-phase3-scheduling-strategy.md`
 
 3. **Architecture Understanding (30 min)**
-   - Read: `docs/architecture/01-phase1-to-phase5-integration-plan.md`
-   - Understand Pub/Sub connection from Phase 2 → Phase 3
+   - Read: `docs/01-architecture/integration-plan.md`
+   - Understand Pub/Sub orchestration from Phase 2 → Phase 3 → Phase 4
 
 4. **Deployment (1-2 hours)**
    - Follow deployment steps from operations guide
@@ -348,12 +348,12 @@ What do you need?
    - Read: `docs/SYSTEM_STATUS.md` (roadmap section)
 
 2. **Detailed Roadmap (30 min)**
-   - Read: `docs/architecture/05-implementation-status-and-roadmap.md`
-   - Review 8-sprint plan (~73 hours total)
+   - Read: `docs/01-architecture/implementation-roadmap.md`
+   - Review implementation status
 
 3. **Specific Integration Plans (10 min)**
-   - Read: `docs/architecture/01-phase1-to-phase5-integration-plan.md`
-   - Focus on relevant sprint
+   - Read: `docs/01-architecture/integration-plan.md`
+   - Focus on orchestration architecture
 
 **Success criteria:** Sprint plan clear, dependencies understood
 
@@ -429,7 +429,7 @@ What do you need?
 → Operations guides in `docs/processors/` or `docs/predictions/operations/`
 
 ### "What's the roadmap?"
-→ `docs/architecture/05-implementation-status-and-roadmap.md`
+→ `docs/01-architecture/implementation-roadmap.md`
 
 ### "What tables does X read/write?"
 → Processor cards have dependencies section
@@ -508,21 +508,19 @@ docs/
 │   ├── 01-grafana-monitoring-guide.md
 │   └── 02-grafana-daily-health-check.md ⭐ DAILY START HERE
 │
-├── architecture/ 🏗️ DESIGN
-│   ├── 00-quick-reference.md ⭐
-│   ├── 01-phase1-to-phase5-integration-plan.md
-│   ├── 02-phase1-to-phase5-granular-updates.md
-│   ├── 03-pipeline-monitoring-and-error-handling.md
-│   ├── 04-event-driven-pipeline-architecture.md ⭐⭐ COMPLETE VISION
-│   ├── 05-implementation-status-and-roadmap.md
-│   └── 06-change-detection-and-event-granularity.md
+├── 01-architecture/ 🏗️ DESIGN
+│   ├── quick-reference.md ⭐
+│   ├── integration-plan.md
+│   ├── pipeline-design.md ⭐⭐ COMPLETE VISION
+│   ├── implementation-roadmap.md
+│   ├── monitoring-error-handling-design.md
+│   ├── orchestration/ 🔌 v1.0 ORCHESTRATION
+│   │   ├── pubsub-topics.md
+│   │   ├── orchestrators.md
+│   │   └── firestore-state-management.md
+│   └── change-detection/
 │
-├── infrastructure/ 🔌 PUB/SUB
-│   ├── 01-pubsub-integration-verification.md
-│   └── 02-pubsub-schema-management.md
-│
-└── data-flow/ 📈 TRANSFORMATIONS
-    ├── (10 detailed mapping docs)
+└── 06-reference/data-flow/ 📈 TRANSFORMATIONS
     └── README.md
 ```
 
@@ -558,11 +556,11 @@ Each directory has a README with:
 ## 🎓 Learning Paths by Role
 
 ### Data Engineer (Building Processors)
-1. System overview → `SYSTEM_STATUS.md`
-2. Architecture → `architecture/04-event-driven-pipeline-architecture.md`
-3. Phase operations → `processors/02-phase3-operations-guide.md`
-4. Processor cards → Browse relevant phase cards
-5. Data flow → `data-flow/` (field mappings)
+1. System overview → `docs/00-start-here/SYSTEM_STATUS.md`
+2. Architecture → `docs/01-architecture/pipeline-design.md`
+3. Orchestration → `docs/01-architecture/orchestration/orchestrators.md`
+4. Processor cards → `docs/06-reference/processor-cards/`
+5. Data flow → `docs/06-reference/data-flow/` (field mappings)
 
 ### SRE / Operations Engineer
 1. Daily health → `monitoring/02-grafana-daily-health-check.md`
@@ -579,16 +577,16 @@ Each directory has a README with:
 5. Source code → `predictions/worker/prediction_systems/`
 
 ### Product Manager / Leadership
-1. System status → `SYSTEM_STATUS.md`
-2. Quick overview → `architecture/00-quick-reference.md`
-3. Roadmap → `architecture/05-implementation-status-and-roadmap.md`
-4. Daily timeline → `processor-cards/workflow-daily-processing-timeline.md`
+1. System status → `docs/00-start-here/SYSTEM_STATUS.md`
+2. Quick overview → `docs/01-architecture/quick-reference.md`
+3. Roadmap → `docs/01-architecture/implementation-roadmap.md`
+4. Daily operations → `docs/02-operations/orchestrator-monitoring.md`
 
 ### New Team Member (Any Role)
-1. System status → `SYSTEM_STATUS.md` (10 min)
-2. Quick reference → `architecture/00-quick-reference.md` (5 min)
-3. Complete architecture → `architecture/04-event-driven-pipeline-architecture.md` (45 min)
-4. Daily operations → `orchestration/01-how-it-works.md` (10 min)
+1. System status → `docs/00-start-here/SYSTEM_STATUS.md` (10 min)
+2. Quick reference → `docs/01-architecture/quick-reference.md` (5 min)
+3. Complete architecture → `docs/01-architecture/pipeline-design.md` (45 min)
+4. Orchestration → `docs/01-architecture/orchestration/orchestrators.md` (10 min)
 5. Role-specific path → Follow relevant path above
 
 ---

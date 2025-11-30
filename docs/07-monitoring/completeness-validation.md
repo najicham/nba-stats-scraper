@@ -708,7 +708,7 @@ ORDER BY game_date, phase;
 
 **Backfill Operations:**
 - `docs/operations/01-backfill-operations-guide.md` - How to run backfills
-- `docs/architecture/08-cross-date-dependency-management.md` - Cross-date dependencies
+- `docs/01-architecture/cross-date-dependencies.md` - Cross-date dependencies
 
 **Monitoring:**
 - `docs/monitoring/01-grafana-monitoring-guide.md` - Comprehensive monitoring

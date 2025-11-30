@@ -568,7 +568,7 @@ When considering changes to Phase 5 architecture, ask:
 **Architecture Context:**
 
 - **Processor Cards:** `docs/processor-cards/phase5-prediction-coordinator.md` - System overview
-- **Event-Driven Pipeline:** `docs/architecture/04-event-driven-pipeline-architecture.md` - Overall pipeline design
+- **Event-Driven Pipeline:** `docs/01-architecture/pipeline-design.md` - Overall pipeline design
 
 ---
 

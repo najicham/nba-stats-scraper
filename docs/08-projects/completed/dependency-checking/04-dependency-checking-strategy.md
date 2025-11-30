@@ -1,10 +1,12 @@
 # Dependency Checking Strategy: Point-in-Time vs Historical Ranges
 
-**File:** `docs/implementation/04-dependency-checking-strategy.md`
+**File:** `docs/08-projects/completed/dependency-checking/04-dependency-checking-strategy.md`
 **Created:** 2025-11-21 12:00 PM PST
-**Last Updated:** 2025-11-21 12:00 PM PST
+**Last Updated:** 2025-11-29
 **Purpose:** Define how to check dependencies for point-in-time vs historical range data
-**Status:** Planning
+**Status:** ✅ COMPLETE - Deployed
+
+> **📚 Main Documentation:** [`docs/05-development/guides/processor-patterns/02-dependency-tracking.md`](../../../05-development/guides/processor-patterns/02-dependency-tracking.md)
 
 ---
 

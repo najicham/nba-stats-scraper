@@ -4,9 +4,10 @@
 **Last Updated:** 2025-11-19 10:41 PM PST
 
 > **📌 NOTE:** This is reference material from research and planning.
-> **For the actual implementation plan**, see [Phase 2→3 Implementation Roadmap](../architecture/09-phase2-phase3-implementation-roadmap.md).
+> **For current status**, see [SYSTEM_STATUS.md](../00-start-here/SYSTEM_STATUS.md) - v1.0 is deployed.
 >
-> This document represents proposed patterns and approaches. Our actual implementation adapts these concepts to fit our existing `analytics_base.py` architecture.
+> This document represents proposed patterns and approaches from November 2025.
+> v1.0 orchestration is now implemented. See `docs/01-architecture/orchestration/`.
 
 **Version:** 3.0 - Streamlined (Reference)
 **Purpose:** Reference material for entity-level processing patterns
@@ -497,7 +498,7 @@ if 'player_ids' in opts:
 2. **Processor Enhancement** - Add entity filtering capability
 3. **Gradual Rollout** - Enable one processor at a time
 
-👉 See detailed implementation: `docs/architecture/phase3-implementation-details.md` (create when needed)
+👉 See v1.0 orchestration: `docs/01-architecture/orchestration/` (implemented)
 
 ### Expected Improvements
 
@@ -644,7 +645,7 @@ A: Not recommended. You need Phase 1 metrics to know WHERE to optimize. Phase 1 
 - **Complete Base Processor:** `docs/reference/processor_base_complete.py`
 - **Pattern Catalog:** `docs/reference/optimization-pattern-catalog.md`
 - **Advanced Patterns:** `docs/reference/optimization-pattern-catalog-advanced.md`
-- **Actual Implementation Plan:** `docs/architecture/phase2-phase3-implementation-roadmap.md` ⭐
+- **Current Orchestration:** `docs/01-architecture/orchestration/` ⭐ (v1.0 deployed)
 
 ---
 
