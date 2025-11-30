@@ -787,6 +787,103 @@
       ],
       "title": "9. Reprocessing Attempt Patterns (By Attempt Number)",
       "type": "timeseries"
+    },
+    {
+      "datasource": "BigQuery",
+      "description": "Phase 5 Prediction Coordinator runs from unified processor_run_history",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "displayMode": "auto"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "status"
+            },
+            "properties": [
+              {
+                "id": "custom.displayMode",
+                "value": "color-background"
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "options": {
+                      "success": {
+                        "color": "green",
+                        "index": 0,
+                        "text": "SUCCESS"
+                      },
+                      "failed": {
+                        "color": "red",
+                        "index": 1,
+                        "text": "FAILED"
+                      },
+                      "partial": {
+                        "color": "yellow",
+                        "index": 2,
+                        "text": "PARTIAL"
+                      },
+                      "running": {
+                        "color": "blue",
+                        "index": 3,
+                        "text": "RUNNING"
+                      }
+                    },
+                    "type": "value"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 62
+      },
+      "id": 10,
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "started_at"
+          }
+        ]
+      },
+      "pluginVersion": "8.0.0",
+      "targets": [
+        {
+          "dataset": "nba-props-platform",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  started_at,\n  data_date as game_date,\n  status,\n  records_processed as predictions_generated,\n  ROUND(duration_seconds, 1) as duration_sec,\n  trigger_source,\n  JSON_VALUE(summary, '$.completed') as completed,\n  JSON_VALUE(summary, '$.failed') as failed,\n  JSON_VALUE(summary, '$.correlation_id') as correlation_id\nFROM `nba-props-platform.nba_reference.processor_run_history`\nWHERE phase = 'phase_5_predictions'\n  AND data_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 14 DAY)\nORDER BY started_at DESC\nLIMIT 15",
+          "refId": "A"
+        }
+      ],
+      "title": "10. Phase 5: Prediction Coordinator Runs (Last 14 Days)",
+      "type": "table"
     }
   ],
   "refresh": "5m",

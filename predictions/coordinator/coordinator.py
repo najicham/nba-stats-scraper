@@ -35,6 +35,7 @@ if TYPE_CHECKING:
 
 from player_loader import PlayerLoader
 from progress_tracker import ProgressTracker
+from run_history import CoordinatorRunHistory
 
 # Import unified publishing (lazy import to avoid cold start)
 import sys
@@ -60,11 +61,13 @@ BATCH_SUMMARY_TOPIC = os.environ.get('BATCH_SUMMARY_TOPIC', 'prediction-batch-co
 # Lazy-loaded components (initialized on first request to avoid cold start timeout)
 _player_loader: Optional[PlayerLoader] = None
 _pubsub_publisher: Optional['pubsub_v1.PublisherClient'] = None
+_run_history: Optional[CoordinatorRunHistory] = None
 
 # Global state (in production, use Firestore or Redis for multi-instance support)
 current_tracker: Optional[ProgressTracker] = None
 current_batch_id: Optional[str] = None
 current_correlation_id: Optional[str] = None  # Track correlation_id for this batch
+current_game_date: Optional[date] = None  # Track game_date for run history
 
 def get_player_loader() -> PlayerLoader:
     """Lazy-load PlayerLoader on first use"""
@@ -84,6 +87,17 @@ def get_pubsub_publisher() -> 'pubsub_v1.PublisherClient':
         _pubsub_publisher = pubsub_v1.PublisherClient()
         logger.info("Pub/Sub publisher initialized successfully")
     return _pubsub_publisher
+
+
+def get_run_history() -> CoordinatorRunHistory:
+    """Lazy-load run history logger on first use"""
+    global _run_history
+    if _run_history is None:
+        logger.info("Initializing CoordinatorRunHistory...")
+        _run_history = CoordinatorRunHistory(project_id=PROJECT_ID)
+        logger.info("CoordinatorRunHistory initialized successfully")
+    return _run_history
+
 
 logger.info("Coordinator initialized successfully (heavy clients will lazy-load on first request)")
 
@@ -125,8 +139,8 @@ def start_prediction_batch():
     Returns:
         202 Accepted with batch info
     """
-    global current_tracker, current_batch_id, current_correlation_id
-    
+    global current_tracker, current_batch_id, current_correlation_id, current_game_date
+
     try:
         # Parse request
         request_data = request.get_json() or {}
@@ -171,7 +185,8 @@ def start_prediction_batch():
         # Create batch ID
         batch_id = f"batch_{game_date.isoformat()}_{int(time.time())}"
         current_batch_id = batch_id
-        
+        current_game_date = game_date
+
         # Get summary stats first
         summary_stats = get_player_loader().get_summary_stats(game_date)
         logger.info(f"Game date summary: {summary_stats}")
@@ -182,7 +197,7 @@ def start_prediction_batch():
             min_minutes=min_minutes,
             use_multiple_lines=use_multiple_lines
         )
-        
+
         if not requests:
             logger.error(f"No prediction requests created for {game_date}")
             return jsonify({
@@ -190,9 +205,23 @@ def start_prediction_batch():
                 'message': f'No players found for {game_date}',
                 'summary': summary_stats
             }), 404
-        
+
         # Initialize progress tracker
         current_tracker = ProgressTracker(expected_players=len(requests))
+
+        # Log batch start to processor_run_history for unified monitoring
+        try:
+            get_run_history().start_batch(
+                batch_id=batch_id,
+                game_date=game_date,
+                correlation_id=correlation_id,
+                parent_processor=parent_processor,
+                trigger_source='api' if request_data else 'scheduler',
+                expected_players=len(requests)
+            )
+        except Exception as e:
+            # Don't fail the batch if run history logging fails
+            logger.warning(f"Failed to log batch start (non-fatal): {e}")
         
         # Publish all requests to Pub/Sub
         published_count = publish_prediction_requests(requests, batch_id)
@@ -373,24 +402,90 @@ def publish_prediction_requests(requests: List[Dict], batch_id: str) -> int:
     return published_count
 
 
+def send_prediction_completion_email(summary: Dict, game_date: str, batch_id: str):
+    """
+    Send prediction completion summary email via AWS SES.
+
+    Args:
+        summary: Summary dict from ProgressTracker.get_summary()
+        game_date: Date predictions were generated for
+        batch_id: Batch identifier
+    """
+    try:
+        from shared.utils.email_alerting_ses import EmailAlerterSES
+
+        # Get games count from BigQuery (or estimate from players)
+        # For now, estimate: ~15 players per game average
+        completed = summary.get('completed_players', 0)
+        expected = summary.get('expected_players', 0)
+        games_count = max(1, completed // 15) if completed > 0 else 0
+
+        # Build failed players list with reasons
+        failed_list = summary.get('failed_player_list', [])
+        failed_players = [
+            {'name': player, 'reason': 'Prediction generation failed'}
+            for player in failed_list
+        ]
+
+        # Calculate confidence distribution (placeholder - would need actual prediction data)
+        # In production, query nba_predictions.player_prop_predictions for this
+        total_predictions = summary.get('total_predictions', 0)
+        # Estimate distribution (would be replaced with actual query)
+        high_conf = int(total_predictions * 0.4)
+        med_conf = int(total_predictions * 0.45)
+        low_conf = total_predictions - high_conf - med_conf
+
+        # Build email data
+        prediction_data = {
+            'date': game_date,
+            'games_count': games_count,
+            'players_predicted': completed,
+            'players_total': expected,
+            'failed_players': failed_players,
+            'confidence_distribution': {
+                'high': high_conf,
+                'medium': med_conf,
+                'low': low_conf
+            },
+            'top_recommendations': [],  # Would need to query predictions table
+            'duration_minutes': int(summary.get('duration_seconds', 0) / 60)
+        }
+
+        # Send email
+        alerter = EmailAlerterSES()
+        success = alerter.send_prediction_completion_summary(prediction_data)
+
+        if success:
+            logger.info(f"📧 Prediction completion email sent for {game_date}")
+        else:
+            logger.warning(f"Failed to send prediction completion email for {game_date}")
+
+    except ImportError as e:
+        logger.warning(f"Email alerter not available (non-fatal): {e}")
+    except Exception as e:
+        logger.error(f"Error sending prediction completion email (non-fatal): {e}")
+
+
 def publish_batch_summary(tracker: ProgressTracker, batch_id: str):
     """
     Publish unified batch completion summary
 
     Uses UnifiedPubSubPublisher for consistency with Phases 1-4.
+    Also logs to processor_run_history for unified monitoring.
+    Sends prediction completion email notification.
 
     Args:
         tracker: Progress tracker with final stats
         batch_id: Batch identifier
     """
-    global current_correlation_id
+    global current_correlation_id, current_game_date
 
     try:
         # Use unified publisher
         unified_publisher = UnifiedPubSubPublisher(project_id=PROJECT_ID)
 
         summary = tracker.get_summary()
-        game_date = summary.get('game_date', date.today().isoformat())
+        game_date = current_game_date.isoformat() if current_game_date else date.today().isoformat()
 
         # Determine status based on completion
         if summary.get('completed', 0) == summary.get('expected', 0):
@@ -399,6 +494,19 @@ def publish_batch_summary(tracker: ProgressTracker, batch_id: str):
             status = 'partial'
         else:
             status = 'failed'
+
+        # Log batch completion to processor_run_history for unified monitoring
+        try:
+            get_run_history().complete_batch(
+                status=status,
+                records_processed=summary.get('completed', 0),
+                records_failed=summary.get('failed', 0),
+                duration_seconds=summary.get('duration_seconds', 0),
+                summary=summary
+            )
+        except Exception as e:
+            # Don't fail the batch if run history logging fails
+            logger.warning(f"Failed to log batch completion (non-fatal): {e}")
 
         # Publish unified message
         message_id = unified_publisher.publish_completion(
@@ -442,6 +550,9 @@ def publish_batch_summary(tracker: ProgressTracker, batch_id: str):
             logger.info(f"Summary: {json.dumps(summary, indent=2)}")
         else:
             logger.warning("Failed to publish batch summary")
+
+        # Send prediction completion email
+        send_prediction_completion_email(summary, game_date, batch_id)
 
     except Exception as e:
         logger.error(f"Error publishing batch summary: {e}", exc_info=True)

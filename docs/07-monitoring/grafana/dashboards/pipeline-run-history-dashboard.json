@@ -1,0 +1,1501 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": "-- Grafana --",
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "Pipeline Run History Dashboard - Monitor processor executions across all phases (2-5) using the unified processor_run_history table",
+  "editable": true,
+  "gnetId": null,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": "BigQuery",
+      "description": "Overall pipeline health status for today",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "options": {
+                "HEALTHY": {
+                  "color": "green",
+                  "index": 0,
+                  "text": "HEALTHY"
+                },
+                "DEGRADED": {
+                  "color": "yellow",
+                  "index": 1,
+                  "text": "DEGRADED"
+                },
+                "UNHEALTHY": {
+                  "color": "red",
+                  "index": 2,
+                  "text": "UNHEALTHY"
+                },
+                "NO DATA": {
+                  "color": "blue",
+                  "index": 3,
+                  "text": "NO DATA"
+                }
+              },
+              "type": "value"
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value"
+      },
+      "pluginVersion": "8.0.0",
+      "targets": [
+        {
+          "dataset": "nba-props-platform",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "WITH today_stats AS (\n  SELECT\n    COUNT(*) as total_runs,\n    COUNTIF(status = 'success') as success_count,\n    COUNTIF(status = 'failed') as failed_count,\n    COUNTIF(status = 'running') as running_count\n  FROM `nba-props-platform.nba_reference.processor_run_history`\n  WHERE data_date = CURRENT_DATE()\n)\nSELECT\n  CASE\n    WHEN total_runs = 0 THEN 'NO DATA'\n    WHEN failed_count = 0 AND success_count > 0 THEN 'HEALTHY'\n    WHEN success_count * 1.0 / NULLIF(success_count + failed_count, 0) >= 0.9 THEN 'HEALTHY'\n    WHEN success_count * 1.0 / NULLIF(success_count + failed_count, 0) >= 0.7 THEN 'DEGRADED'\n    ELSE 'UNHEALTHY'\n  END as health_status\nFROM today_stats",
+          "refId": "A"
+        }
+      ],
+      "title": "Pipeline Health",
+      "type": "stat"
+    },
+    {
+      "datasource": "BigQuery",
+      "description": "Success rate across all phases today",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "max": 100,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 80
+              },
+              {
+                "color": "green",
+                "value": 95
+              }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 0
+      },
+      "id": 2,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "8.0.0",
+      "targets": [
+        {
+          "dataset": "nba-props-platform",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  ROUND(COUNTIF(status = 'success') * 100.0 / NULLIF(COUNTIF(status IN ('success', 'failed')), 0), 1) as success_rate\nFROM `nba-props-platform.nba_reference.processor_run_history`\nWHERE data_date = CURRENT_DATE()",
+          "refId": "A"
+        }
+      ],
+      "title": "Success Rate (Today)",
+      "type": "stat"
+    },
+    {
+      "datasource": "BigQuery",
+      "description": "Total processor runs today",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 12,
+        "y": 0
+      },
+      "id": 3,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "8.0.0",
+      "targets": [
+        {
+          "dataset": "nba-props-platform",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT COUNT(*) as total_runs\nFROM `nba-props-platform.nba_reference.processor_run_history`\nWHERE data_date = CURRENT_DATE()",
+          "refId": "A"
+        }
+      ],
+      "title": "Total Runs (Today)",
+      "type": "stat"
+    },
+    {
+      "datasource": "BigQuery",
+      "description": "Failed processor runs today",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 5
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 16,
+        "y": 0
+      },
+      "id": 4,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "8.0.0",
+      "targets": [
+        {
+          "dataset": "nba-props-platform",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT COUNTIF(status = 'failed') as failed_runs\nFROM `nba-props-platform.nba_reference.processor_run_history`\nWHERE data_date = CURRENT_DATE()",
+          "refId": "A"
+        }
+      ],
+      "title": "Failed Runs (Today)",
+      "type": "stat"
+    },
+    {
+      "datasource": "BigQuery",
+      "description": "Currently running processors",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 0
+      },
+      "id": 5,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "8.0.0",
+      "targets": [
+        {
+          "dataset": "nba-props-platform",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT COUNTIF(status = 'running') as running_count\nFROM `nba-props-platform.nba_reference.processor_run_history`\nWHERE data_date = CURRENT_DATE()",
+          "refId": "A"
+        }
+      ],
+      "title": "Running Now",
+      "type": "stat"
+    },
+    {
+      "datasource": "BigQuery",
+      "description": "Processor runs by phase showing success/failure breakdown",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "displayMode": "auto"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "success_rate"
+            },
+            "properties": [
+              {
+                "id": "custom.displayMode",
+                "value": "color-background"
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 80
+                    },
+                    {
+                      "color": "green",
+                      "value": 95
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "unit",
+                "value": "percent"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 4
+      },
+      "id": 6,
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": false,
+            "displayName": "phase"
+          }
+        ]
+      },
+      "pluginVersion": "8.0.0",
+      "targets": [
+        {
+          "dataset": "nba-props-platform",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  COALESCE(phase, 'unknown') as phase,\n  COUNT(*) as total_runs,\n  COUNTIF(status = 'success') as success,\n  COUNTIF(status = 'failed') as failed,\n  COUNTIF(status = 'running') as running,\n  ROUND(COUNTIF(status = 'success') * 100.0 / NULLIF(COUNTIF(status IN ('success', 'failed')), 0), 1) as success_rate,\n  ROUND(AVG(duration_seconds), 1) as avg_duration_sec\nFROM `nba-props-platform.nba_reference.processor_run_history`\nWHERE data_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)\nGROUP BY phase\nORDER BY phase",
+          "refId": "A"
+        }
+      ],
+      "title": "1. Pipeline Health by Phase (Last 7 Days)",
+      "type": "table"
+    },
+    {
+      "datasource": "BigQuery",
+      "description": "Processor success rates ranked from worst to best",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "displayMode": "auto"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "success_rate"
+            },
+            "properties": [
+              {
+                "id": "custom.displayMode",
+                "value": "color-background"
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 80
+                    },
+                    {
+                      "color": "green",
+                      "value": 95
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "unit",
+                "value": "percent"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 4
+      },
+      "id": 7,
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": false,
+            "displayName": "success_rate"
+          }
+        ]
+      },
+      "pluginVersion": "8.0.0",
+      "targets": [
+        {
+          "dataset": "nba-props-platform",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  processor_name,\n  phase,\n  COUNT(*) as total_runs,\n  COUNTIF(status = 'success') as success,\n  COUNTIF(status = 'failed') as failed,\n  ROUND(COUNTIF(status = 'success') * 100.0 / NULLIF(COUNTIF(status IN ('success', 'failed')), 0), 1) as success_rate,\n  ROUND(AVG(duration_seconds), 1) as avg_duration_sec,\n  MAX(started_at) as last_run\nFROM `nba-props-platform.nba_reference.processor_run_history`\nWHERE data_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)\nGROUP BY processor_name, phase\nHAVING total_runs >= 3\nORDER BY success_rate ASC, total_runs DESC\nLIMIT 20",
+          "refId": "A"
+        }
+      ],
+      "title": "2. Processor Success Rates (Worst First)",
+      "type": "table"
+    },
+    {
+      "datasource": "BigQuery",
+      "description": "Daily success rate trend by phase",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "tooltip": false,
+              "viz": false,
+              "legend": false
+            },
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": true,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "mappings": [],
+          "max": 100,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 90
+              }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 12
+      },
+      "id": 8,
+      "options": {
+        "legend": {
+          "calcs": ["mean", "lastNotNull"],
+          "displayMode": "table",
+          "placement": "right"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "pluginVersion": "8.0.0",
+      "targets": [
+        {
+          "dataset": "nba-props-platform",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  TIMESTAMP(data_date) as time,\n  COALESCE(phase, 'unknown') as metric,\n  ROUND(COUNTIF(status = 'success') * 100.0 / NULLIF(COUNTIF(status IN ('success', 'failed')), 0), 1) as value\nFROM `nba-props-platform.nba_reference.processor_run_history`\nWHERE data_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)\nGROUP BY data_date, phase\nORDER BY time, phase",
+          "refId": "A"
+        }
+      ],
+      "title": "3. Success Rate Trend by Phase (Last 30 Days)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "BigQuery",
+      "description": "Recent failed processor runs with error details",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "displayMode": "auto"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "status"
+            },
+            "properties": [
+              {
+                "id": "custom.displayMode",
+                "value": "color-background"
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "options": {
+                      "failed": {
+                        "color": "red",
+                        "index": 0,
+                        "text": "FAILED"
+                      }
+                    },
+                    "type": "value"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 20
+      },
+      "id": 9,
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "started_at"
+          }
+        ]
+      },
+      "pluginVersion": "8.0.0",
+      "targets": [
+        {
+          "dataset": "nba-props-platform",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  started_at,\n  processor_name,\n  phase,\n  data_date,\n  status,\n  ROUND(duration_seconds, 1) as duration_sec,\n  trigger_source,\n  SUBSTR(COALESCE(JSON_VALUE(errors, '$[0].error_message'), errors, 'N/A'), 1, 100) as error_preview\nFROM `nba-props-platform.nba_reference.processor_run_history`\nWHERE status = 'failed'\n  AND data_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)\nORDER BY started_at DESC\nLIMIT 25",
+          "refId": "A"
+        }
+      ],
+      "title": "4. Recent Failed Runs (Last 7 Days)",
+      "type": "table"
+    },
+    {
+      "datasource": "BigQuery",
+      "description": "Average processing duration by processor",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {
+              "tooltip": false,
+              "viz": false,
+              "legend": false
+            },
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 28
+      },
+      "id": 10,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "single"
+        }
+      },
+      "pluginVersion": "8.0.0",
+      "targets": [
+        {
+          "dataset": "nba-props-platform",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  processor_name,\n  ROUND(AVG(duration_seconds), 1) as avg_duration,\n  ROUND(APPROX_QUANTILES(duration_seconds, 100)[OFFSET(95)], 1) as p95_duration\nFROM `nba-props-platform.nba_reference.processor_run_history`\nWHERE status = 'success'\n  AND data_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)\n  AND duration_seconds IS NOT NULL\nGROUP BY processor_name\nHAVING COUNT(*) >= 3\nORDER BY avg_duration DESC\nLIMIT 15",
+          "refId": "A"
+        }
+      ],
+      "title": "5. Processing Duration by Processor",
+      "type": "barchart"
+    },
+    {
+      "datasource": "BigQuery",
+      "description": "Phase 5 Prediction Coordinator runs",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "displayMode": "auto"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "status"
+            },
+            "properties": [
+              {
+                "id": "custom.displayMode",
+                "value": "color-background"
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "options": {
+                      "success": {
+                        "color": "green",
+                        "index": 0,
+                        "text": "SUCCESS"
+                      },
+                      "failed": {
+                        "color": "red",
+                        "index": 1,
+                        "text": "FAILED"
+                      },
+                      "partial": {
+                        "color": "yellow",
+                        "index": 2,
+                        "text": "PARTIAL"
+                      },
+                      "running": {
+                        "color": "blue",
+                        "index": 3,
+                        "text": "RUNNING"
+                      }
+                    },
+                    "type": "value"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 28
+      },
+      "id": 11,
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "started_at"
+          }
+        ]
+      },
+      "pluginVersion": "8.0.0",
+      "targets": [
+        {
+          "dataset": "nba-props-platform",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  started_at,\n  data_date as game_date,\n  status,\n  records_processed as predictions,\n  ROUND(duration_seconds, 1) as duration_sec,\n  trigger_source,\n  JSON_VALUE(summary, '$.correlation_id') as correlation_id\nFROM `nba-props-platform.nba_reference.processor_run_history`\nWHERE phase = 'phase_5_predictions'\n  AND data_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 14 DAY)\nORDER BY started_at DESC\nLIMIT 20",
+          "refId": "A"
+        }
+      ],
+      "title": "6. Phase 5: Prediction Coordinator Runs",
+      "type": "table"
+    },
+    {
+      "datasource": "BigQuery",
+      "description": "Daily run counts by phase",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {
+              "tooltip": false,
+              "viz": false,
+              "legend": false
+            },
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 36
+      },
+      "id": 12,
+      "options": {
+        "legend": {
+          "calcs": ["sum"],
+          "displayMode": "table",
+          "placement": "right"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "pluginVersion": "8.0.0",
+      "targets": [
+        {
+          "dataset": "nba-props-platform",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  TIMESTAMP(data_date) as time,\n  COALESCE(phase, 'unknown') as metric,\n  COUNT(*) as value\nFROM `nba-props-platform.nba_reference.processor_run_history`\nWHERE data_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)\nGROUP BY data_date, phase\nORDER BY time, phase",
+          "refId": "A"
+        }
+      ],
+      "title": "7. Daily Run Volume by Phase (Last 30 Days)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "BigQuery",
+      "description": "Today's processor runs in chronological order",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "displayMode": "auto"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "status"
+            },
+            "properties": [
+              {
+                "id": "custom.displayMode",
+                "value": "color-background"
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "options": {
+                      "success": {
+                        "color": "green",
+                        "index": 0,
+                        "text": "SUCCESS"
+                      },
+                      "failed": {
+                        "color": "red",
+                        "index": 1,
+                        "text": "FAILED"
+                      },
+                      "running": {
+                        "color": "blue",
+                        "index": 2,
+                        "text": "RUNNING"
+                      }
+                    },
+                    "type": "value"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 44
+      },
+      "id": 13,
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "started_at"
+          }
+        ]
+      },
+      "pluginVersion": "8.0.0",
+      "targets": [
+        {
+          "dataset": "nba-props-platform",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  started_at,\n  processor_name,\n  phase,\n  status,\n  records_processed,\n  ROUND(duration_seconds, 1) as duration_sec,\n  trigger_source,\n  parent_processor\nFROM `nba-props-platform.nba_reference.processor_run_history`\nWHERE data_date = CURRENT_DATE()\nORDER BY started_at DESC\nLIMIT 50",
+          "refId": "A"
+        }
+      ],
+      "title": "8. Today's Processor Runs (Latest First)",
+      "type": "table"
+    },
+    {
+      "datasource": "BigQuery",
+      "description": "Individual prediction worker runs showing per-player prediction performance",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "displayMode": "auto"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "success"
+            },
+            "properties": [
+              {
+                "id": "custom.displayMode",
+                "value": "color-background"
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "options": {
+                      "true": {
+                        "color": "green",
+                        "index": 0,
+                        "text": "SUCCESS"
+                      },
+                      "false": {
+                        "color": "red",
+                        "index": 1,
+                        "text": "FAILED"
+                      }
+                    },
+                    "type": "value"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 54
+      },
+      "id": 14,
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "run_date"
+          }
+        ]
+      },
+      "pluginVersion": "8.0.0",
+      "targets": [
+        {
+          "dataset": "nba-props-platform",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  run_date,\n  player_lookup,\n  game_date,\n  game_id,\n  success,\n  predictions_generated,\n  ROUND(duration_seconds, 2) as duration_sec,\n  worker_id,\n  SUBSTR(error_message, 1, 80) as error_preview\nFROM `nba-props-platform.nba_predictions.prediction_worker_runs`\nWHERE run_date >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAY)\nORDER BY run_date DESC\nLIMIT 100",
+          "refId": "A"
+        }
+      ],
+      "title": "9. Prediction Worker Runs (Individual Player Predictions)",
+      "type": "table"
+    },
+    {
+      "datasource": "BigQuery",
+      "description": "Prediction worker success rate and performance metrics",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "displayMode": "auto"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "success_rate"
+            },
+            "properties": [
+              {
+                "id": "custom.displayMode",
+                "value": "color-background"
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 90
+                    },
+                    {
+                      "color": "green",
+                      "value": 98
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "unit",
+                "value": "percent"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 64
+      },
+      "id": 15,
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "date"
+          }
+        ]
+      },
+      "pluginVersion": "8.0.0",
+      "targets": [
+        {
+          "dataset": "nba-props-platform",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  DATE(run_date) as date,\n  COUNT(*) as total_predictions,\n  COUNTIF(success = TRUE) as successful,\n  COUNTIF(success = FALSE) as failed,\n  ROUND(COUNTIF(success = TRUE) * 100.0 / COUNT(*), 1) as success_rate,\n  ROUND(AVG(duration_seconds), 2) as avg_duration_sec,\n  SUM(predictions_generated) as total_predictions_generated\nFROM `nba-props-platform.nba_predictions.prediction_worker_runs`\nWHERE run_date >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 14 DAY)\nGROUP BY DATE(run_date)\nORDER BY date DESC",
+          "refId": "A"
+        }
+      ],
+      "title": "10. Prediction Worker Daily Summary",
+      "type": "table"
+    },
+    {
+      "datasource": "BigQuery",
+      "description": "End-to-end pipeline latency from first Phase 2 processor to Phase 5 completion for each date",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "displayMode": "auto"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "pipeline_latency_min"
+            },
+            "properties": [
+              {
+                "id": "custom.displayMode",
+                "value": "color-background"
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 30
+                    },
+                    {
+                      "color": "red",
+                      "value": 60
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "phase5_status"
+            },
+            "properties": [
+              {
+                "id": "custom.displayMode",
+                "value": "color-background"
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "options": {
+                      "COMPLETE": {
+                        "color": "green",
+                        "index": 0,
+                        "text": "COMPLETE"
+                      },
+                      "PENDING": {
+                        "color": "yellow",
+                        "index": 1,
+                        "text": "PENDING"
+                      },
+                      "FAILED": {
+                        "color": "red",
+                        "index": 2,
+                        "text": "FAILED"
+                      }
+                    },
+                    "type": "value"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 72
+      },
+      "id": 16,
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "data_date"
+          }
+        ]
+      },
+      "pluginVersion": "8.0.0",
+      "targets": [
+        {
+          "dataset": "nba-props-platform",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "WITH phase_times AS (\n  SELECT\n    data_date,\n    phase,\n    MIN(started_at) as first_start,\n    MAX(processed_at) as last_complete,\n    COUNTIF(status = 'success') as success_count,\n    COUNTIF(status = 'failed') as failed_count\n  FROM `nba-props-platform.nba_reference.processor_run_history`\n  WHERE data_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 14 DAY)\n  GROUP BY data_date, phase\n),\nphase2 AS (\n  SELECT data_date, first_start as phase2_start, last_complete as phase2_complete\n  FROM phase_times WHERE phase = 'phase_2_raw'\n),\nphase5 AS (\n  SELECT data_date, first_start as phase5_start, last_complete as phase5_complete,\n         success_count, failed_count\n  FROM phase_times WHERE phase = 'phase_5_predictions'\n)\nSELECT\n  p2.data_date,\n  p2.phase2_start,\n  p2.phase2_complete,\n  p5.phase5_start,\n  p5.phase5_complete,\n  ROUND(TIMESTAMP_DIFF(COALESCE(p5.phase5_complete, CURRENT_TIMESTAMP()), p2.phase2_start, SECOND) / 60.0, 1) as pipeline_latency_min,\n  CASE\n    WHEN p5.success_count > 0 THEN 'COMPLETE'\n    WHEN p5.failed_count > 0 THEN 'FAILED'\n    ELSE 'PENDING'\n  END as phase5_status\nFROM phase2 p2\nLEFT JOIN phase5 p5 ON p2.data_date = p5.data_date\nORDER BY p2.data_date DESC",
+          "refId": "A"
+        }
+      ],
+      "title": "11. End-to-End Pipeline Latency (Phase 2 → Phase 5)",
+      "type": "table"
+    },
+    {
+      "datasource": "BigQuery",
+      "description": "Trace a pipeline execution across all phases using correlation_id from the summary field",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "displayMode": "auto"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "status"
+            },
+            "properties": [
+              {
+                "id": "custom.displayMode",
+                "value": "color-background"
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "options": {
+                      "success": {
+                        "color": "green",
+                        "index": 0,
+                        "text": "SUCCESS"
+                      },
+                      "failed": {
+                        "color": "red",
+                        "index": 1,
+                        "text": "FAILED"
+                      },
+                      "running": {
+                        "color": "blue",
+                        "index": 2,
+                        "text": "RUNNING"
+                      }
+                    },
+                    "type": "value"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "phase"
+            },
+            "properties": [
+              {
+                "id": "custom.displayMode",
+                "value": "color-text"
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "options": {
+                      "phase_2_raw": {
+                        "color": "blue",
+                        "index": 0
+                      },
+                      "phase_3": {
+                        "color": "purple",
+                        "index": 1
+                      },
+                      "phase_4_precompute": {
+                        "color": "orange",
+                        "index": 2
+                      },
+                      "phase_5_predictions": {
+                        "color": "green",
+                        "index": 3
+                      }
+                    },
+                    "type": "value"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 80
+      },
+      "id": 17,
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": false,
+            "displayName": "started_at"
+          }
+        ]
+      },
+      "pluginVersion": "8.0.0",
+      "targets": [
+        {
+          "dataset": "nba-props-platform",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "-- Correlation ID Tracing: Shows all processor runs for a specific date\n-- To trace by correlation_id, filter by the correlation_id in summary JSON\n-- This panel shows the pipeline flow for recent dates\nSELECT\n  started_at,\n  phase,\n  processor_name,\n  status,\n  records_processed,\n  ROUND(duration_seconds, 1) as duration_sec,\n  trigger_source,\n  parent_processor,\n  JSON_VALUE(summary, '$.correlation_id') as correlation_id\nFROM `nba-props-platform.nba_reference.processor_run_history`\nWHERE data_date = CURRENT_DATE()\nORDER BY started_at ASC\nLIMIT 100",
+          "refId": "A"
+        }
+      ],
+      "title": "12. Pipeline Flow Trace (Today - Chronological)",
+      "type": "table"
+    }
+  ],
+  "refresh": "5m",
+  "schemaVersion": 27,
+  "style": "dark",
+  "tags": [
+    "pipeline",
+    "processor",
+    "run-history",
+    "nba",
+    "phase2",
+    "phase3",
+    "phase4",
+    "phase5"
+  ],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "timepicker": {
+    "refresh_intervals": [
+      "5m",
+      "15m",
+      "30m",
+      "1h",
+      "2h",
+      "1d"
+    ]
+  },
+  "timezone": "browser",
+  "title": "NBA Pipeline Run History Dashboard",
+  "uid": "nba-pipeline-run-history",
+  "version": 1
+}

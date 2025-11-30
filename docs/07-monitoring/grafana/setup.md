@@ -321,14 +321,86 @@ SELECT * FROM scraper_execution_log  -- Expensive!
 - Real-time visibility into Phase 1 orchestration
 - Foundation for future phase dashboards
 
-🎯 **Next Steps:**
-1. Wait for system to run (generate data)
-2. Verify panels populate with real execution data
-3. Configure alerts (Week 2)
-4. Expand to Phase 2+ dashboards (Week 3+)
+---
+
+## Available Dashboards
+
+### Dashboard Inventory
+
+| Dashboard | File | Purpose | Key Tables |
+|-----------|------|---------|------------|
+| **Pipeline Run History** | `dashboards/pipeline-run-history-dashboard.json` | Phase 2-5 processor monitoring | `processor_run_history`, `prediction_worker_runs` |
+| **Data Quality** | `dashboards/data-quality-dashboard.json` | Name resolution & circuit breakers | `unresolved_player_names`, `circuit_breaker_state` |
+| **Completeness** | `dashboards/completeness-dashboard.json` | Data completeness & production readiness | `upcoming_player_game_context`, `ml_feature_store_v2` |
+
+### Import Instructions
+
+1. Open Grafana → Dashboards → Import
+2. Click "Upload JSON file"
+3. Select dashboard JSON from `docs/07-monitoring/grafana/dashboards/`
+4. Select your BigQuery data source
+5. Click Import
+
+### Dashboard Documentation
+
+| Dashboard | Guide | SQL Queries |
+|-----------|-------|-------------|
+| Pipeline Run History | `pipeline-monitoring.md` | `dashboards/pipeline-run-history-queries.sql` |
+| Data Quality | `data-quality-monitoring.md` | `dashboards/data-quality-queries.sql` |
+| Completeness | `monitoring-guide.md` | `dashboards/completeness-queries.sql` |
+| Daily Health Check | `daily-health-check.md` | (inline in guide) |
+
+### Quick Help
+
+**New to monitoring?** Start with `faq-troubleshooting.md` - answers common questions like:
+- "How do I check if the pipeline is healthy?"
+- "Why did a processor fail?"
+- "How do I trace a pipeline execution?"
+
+### Recommended Monitoring Workflow
+
+1. **Daily Health Check** (`daily-health-check.md`)
+   - Quick 30-second system health view
+   - Phase 1 orchestration status
+
+2. **Pipeline Run History** (`pipeline-run-history-dashboard.json`)
+   - Phase 2-5 processor health
+   - Processing success rates
+   - Prediction coordinator runs
+
+3. **Data Quality** (`data-quality-dashboard.json`)
+   - Unresolved player names
+   - Circuit breaker status
+   - Name resolution progress
+
+4. **Completeness** (`completeness-dashboard.json`)
+   - Data completeness checks
+   - Production readiness
+   - Circuit breaker triggers
 
 ---
 
-**Document Version:** 1.0  
-**Last Updated:** November 11, 2025  
+## File Structure
+
+```
+docs/07-monitoring/grafana/
+├── setup.md                          # This file - setup & index
+├── faq-troubleshooting.md            # FAQ & troubleshooting guide (START HERE)
+├── monitoring-guide.md               # Phase 1 orchestration queries
+├── pipeline-monitoring.md            # Phase 2-5 pipeline queries
+├── data-quality-monitoring.md        # Data quality monitoring guide
+├── daily-health-check.md             # Quick daily health check
+└── dashboards/
+    ├── pipeline-run-history-dashboard.json  (12 panels)
+    ├── pipeline-run-history-queries.sql     (16 queries)
+    ├── data-quality-dashboard.json          (13 panels)
+    ├── data-quality-queries.sql             (12 queries)
+    ├── completeness-dashboard.json          (10 panels)
+    └── completeness-queries.sql
+```
+
+---
+
+**Document Version:** 2.0
+**Last Updated:** 2025-11-30
 **Status:** Ready for Implementation
