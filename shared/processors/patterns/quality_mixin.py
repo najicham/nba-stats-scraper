@@ -41,6 +41,10 @@ from shared.config.source_coverage import (
     get_tier_from_score,
     format_quality_issue,
 )
+from shared.processors.patterns.quality_columns import (
+    build_standard_quality_columns,
+    build_quality_columns_with_legacy,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -561,20 +565,37 @@ class QualityMixin:
     # ==========================================================================
     # HELPER METHODS
     # ==========================================================================
-    def build_quality_columns(self, quality: Dict) -> Dict:
+    def build_quality_columns(self, quality: Dict, include_legacy: bool = True) -> Dict:
         """
         Build quality columns dict for inserting into BigQuery.
 
-        Use this when preparing rows for insertion.
+        Uses the centralized build_standard_quality_columns() helper to ensure
+        consistent column output across all processors.
+
+        Args:
+            quality: Quality assessment dict from assess_quality()
+            include_legacy: If True, include deprecated legacy columns for
+                           backward compatibility during migration
+
+        Returns:
+            Dict with standard quality columns (and legacy if requested)
         """
-        return {
-            'quality_tier': quality.get('tier'),
-            'quality_score': quality.get('score'),
-            'quality_issues': quality.get('issues', []),
-            'data_sources': quality.get('metadata', {}).get('sources_used', []),
-            'quality_sample_size': quality.get('metadata', {}).get('sample_size'),
-            'quality_used_fallback': 'backup_source_used' in quality.get('issues', []),
-            'quality_reconstructed': quality.get('metadata', {}).get('reconstruction_applied', False),
-            'quality_calculated_at': datetime.utcnow().isoformat(),
-            'quality_metadata': json.dumps(quality.get('metadata', {})),
-        }
+        tier = quality.get('tier')
+        score = quality.get('score', 0.0)
+        issues = quality.get('issues', [])
+        sources = quality.get('metadata', {}).get('sources_used', [])
+
+        if include_legacy:
+            return build_quality_columns_with_legacy(
+                tier=tier,
+                score=score,
+                issues=issues,
+                sources=sources,
+            )
+        else:
+            return build_standard_quality_columns(
+                tier=tier,
+                score=score,
+                issues=issues,
+                sources=sources,
+            )

@@ -1,0 +1,183 @@
+# Quality Columns Reference
+
+Quick reference for the standardized quality tracking columns across NBA Props Platform tables.
+
+## Standard Columns (All Phase 3+ Tables)
+
+| Column | Type | Required | Description |
+|--------|------|----------|-------------|
+| `quality_tier` | STRING | Yes | Quality tier: 'gold', 'silver', 'bronze', 'poor', 'unusable' |
+| `quality_score` | FLOAT64 | Yes | Numeric quality score 0-100 |
+| `quality_issues` | ARRAY<STRING> | Yes | List of issues detected during processing |
+| `is_production_ready` | BOOL | Yes | Whether data can be used for predictions |
+| `data_sources` | ARRAY<STRING> | Optional | List of data sources that contributed |
+
+## Completeness Columns (Phase 4 Precompute Only)
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `expected_games_count` | INT64 | Expected games in lookback window |
+| `actual_games_count` | INT64 | Actual games found |
+| `completeness_percentage` | FLOAT64 | Percentage complete (0-100) |
+| `missing_games_count` | INT64 | Number of missing games |
+
+## Quality Tiers
+
+| Tier | Score Range | Confidence Ceiling | Production Eligible |
+|------|-------------|-------------------|---------------------|
+| gold | 95-100 | 1.00 (100%) | Yes |
+| silver | 75-94 | 0.95 (95%) | Yes |
+| bronze | 50-74 | 0.80 (80%) | Yes |
+| poor | 25-49 | 0.60 (60%) | **No** |
+| unusable | 0-24 | 0.00 (0%) | **No** |
+
+## Standard Quality Issues
+
+### Blocking Issues (Prevent Production Readiness)
+
+| Issue | Description |
+|-------|-------------|
+| `all_sources_failed` | No data source returned valid data |
+| `missing_required` | Required fields are missing |
+| `placeholder_created` | Record is a placeholder, not real data |
+
+### Warning Issues (Don't Block Production)
+
+| Issue | Description |
+|-------|-------------|
+| `backup_source_used` | Fallback data source was used |
+| `reconstructed` | Data was reconstructed from other sources |
+| `thin_sample:N/M` | Sample size thin (N of M expected) |
+| `high_null_rate:X%` | High null rate in column |
+| `stale_data` | Data is older than ideal |
+| `early_season` | Early season, limited history |
+| `shot_zones_unavailable` | Optional shot zone data missing |
+| `missing_defensive_actions` | Optional defensive stats missing |
+
+## Production Ready Logic
+
+```
+is_production_ready = (
+    quality_tier IN ('gold', 'silver', 'bronze') AND
+    quality_score >= 50.0 AND
+    NOT ANY(issue IN ['all_sources_failed', 'missing_required', 'placeholder_created'])
+)
+```
+
+## Tables with Quality Columns
+
+### Phase 3 Analytics
+
+| Table | Has quality_tier | Has quality_score | Has is_production_ready |
+|-------|-----------------|-------------------|------------------------|
+| player_game_summary | Yes | Yes | Yes |
+| team_defense_game_summary | Yes | Yes | Yes |
+| team_offense_game_summary | Yes | Yes | Yes |
+| upcoming_player_game_context | Yes | Yes | Yes |
+| upcoming_team_game_context | Yes | Yes | Yes |
+
+### Phase 4 Precompute
+
+| Table | Has quality_tier | Has quality_score | Has completeness |
+|-------|-----------------|-------------------|------------------|
+| player_daily_cache | Yes | Yes | No |
+| player_shot_zone_analysis | Yes* | No | No |
+| team_defense_zone_analysis | Yes* | No | No |
+| ml_feature_store_v2 | Yes | Yes** | No |
+
+*Uses `data_quality_tier` (legacy)
+**Uses `feature_quality_score`
+
+### Phase 5 Predictions
+
+| Table | Has quality_tier | Has is_production_ready |
+|-------|-----------------|------------------------|
+| player_prop_predictions | No | Yes |
+| current_ml_predictions | Yes* | No |
+
+*Uses `data_quality_tier` (legacy)
+
+## Legacy Columns (Deprecated)
+
+These columns are still populated for backward compatibility but should not be used in new code:
+
+| Legacy Column | Use Instead |
+|--------------|-------------|
+| `data_quality_tier` | `quality_tier` |
+| `data_quality_issues` | `quality_issues` |
+
+## BigQuery Queries
+
+### Check Quality Distribution
+
+```sql
+SELECT
+  quality_tier,
+  COUNT(*) as record_count,
+  AVG(quality_score) as avg_score,
+  COUNTIF(is_production_ready) as production_ready
+FROM `nba-props-platform.nba_analytics.team_defense_game_summary`
+WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+GROUP BY quality_tier
+ORDER BY
+  CASE quality_tier
+    WHEN 'gold' THEN 1
+    WHEN 'silver' THEN 2
+    WHEN 'bronze' THEN 3
+    WHEN 'poor' THEN 4
+    WHEN 'unusable' THEN 5
+  END
+```
+
+### Find Non-Production-Ready Records
+
+```sql
+SELECT
+  game_date,
+  game_id,
+  quality_tier,
+  quality_score,
+  quality_issues,
+  is_production_ready
+FROM `nba-props-platform.nba_analytics.team_offense_game_summary`
+WHERE NOT is_production_ready
+  AND game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
+ORDER BY game_date DESC
+```
+
+### Check Issue Frequency
+
+```sql
+SELECT
+  issue,
+  COUNT(*) as occurrences
+FROM `nba-props-platform.nba_analytics.player_game_summary`,
+  UNNEST(quality_issues) as issue
+WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+GROUP BY issue
+ORDER BY occurrences DESC
+```
+
+## Code Reference
+
+```python
+# Import quality column helpers
+from shared.processors.patterns.quality_columns import (
+    build_standard_quality_columns,
+    build_quality_columns_with_legacy,
+    build_completeness_columns,
+    determine_production_ready,
+    ISSUE_BACKUP_SOURCE_USED,
+    ISSUE_RECONSTRUCTED,
+)
+
+# Build columns
+cols = build_quality_columns_with_legacy(
+    tier='silver',
+    score=85.0,
+    issues=['backup_source_used'],
+    sources=['bdl_player_boxscores'],
+)
+```
+
+See `docs/05-development/guides/quality-tracking-system.md` for detailed usage.
