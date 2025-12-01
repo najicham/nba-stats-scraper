@@ -42,6 +42,7 @@ from data_processors.precompute.precompute_base import PrecomputeProcessorBase
 
 # Pattern imports (Week 1 - Foundation Patterns)
 from shared.processors.patterns import SmartSkipMixin, EarlyExitMixin, CircuitBreakerMixin
+from shared.config.source_coverage import get_tier_from_score
 
 # Smart Idempotency (Pattern #1)
 from data_processors.raw.smart_idempotency_mixin import SmartIdempotencyMixin
@@ -998,6 +999,10 @@ class PlayerDailyCacheProcessor(
             'actual_games_count': completeness['actual_count'],
             'completeness_percentage': completeness['completeness_pct'],
             'missing_games_count': completeness['missing_count'],
+
+            # Quality tier based on completeness
+            'quality_tier': get_tier_from_score(completeness['completeness_pct']).value,
+            'quality_score': completeness['completeness_pct'],
 
             # Production Readiness
             'is_production_ready': all_windows_complete,

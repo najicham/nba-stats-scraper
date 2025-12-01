@@ -28,6 +28,7 @@ from shared.utils.player_registry import RegistryReader, PlayerNotFoundError
 # Pattern imports (Week 1 - Foundation Patterns)
 from shared.processors.patterns import SmartSkipMixin, EarlyExitMixin, CircuitBreakerMixin, QualityMixin
 from shared.config.source_coverage import SourceCoverageEventType, SourceCoverageSeverity
+from shared.processors.patterns.quality_columns import build_quality_columns_with_legacy
 
 # Change detection (v1.1 feature)
 from shared.change_detection.change_detector import PlayerChangeDetector
@@ -706,20 +707,21 @@ class PlayerGameSummaryProcessor(
                     'is_active': bool(row['player_status'] == 'active'),
                     'player_status': row['player_status'],
                     
-                    # SOURCE TRACKING: One-liner adds all 18 fields! ✨
+                    # SOURCE TRACKING: One-liner adds all 18 fields!
                     **self.build_source_tracking_fields(),
 
-                    # Quality (legacy fields - kept for backward compatibility)
-                    'data_quality_tier': 'high' if row['primary_source'] == 'nbac_gamebook' else 'medium',
+                    # Quality columns using centralized helper
+                    **build_quality_columns_with_legacy(
+                        tier='gold' if row['primary_source'] == 'nbac_gamebook' else 'silver',
+                        score=100.0 if row['primary_source'] == 'nbac_gamebook' else 85.0,
+                        issues=[] if row['primary_source'] == 'nbac_gamebook' else ['backup_source_used'],
+                        sources=[row['primary_source']] if row['primary_source'] else ['unknown'],
+                    ),
+
+                    # Additional tracking fields
                     'primary_source_used': row['primary_source'],
                     'processed_with_issues': False,
                     'shot_zones_estimated': None,
-
-                    # Source Coverage Quality (new system)
-                    'quality_tier': 'gold' if row['primary_source'] == 'nbac_gamebook' else 'silver',
-                    'quality_score': 100.0 if row['primary_source'] == 'nbac_gamebook' else 85.0,
-                    'quality_issues': [] if row['primary_source'] == 'nbac_gamebook' else ['backup_source_used'],
-                    'data_sources': [row['primary_source']] if row['primary_source'] else ['unknown'],
                     'quality_sample_size': None,  # Populated by Phase 4
                     'quality_used_fallback': row['primary_source'] != 'nbac_gamebook',
                     'quality_reconstructed': False,

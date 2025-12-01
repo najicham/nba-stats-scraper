@@ -35,6 +35,7 @@ from data_processors.precompute.precompute_base import PrecomputeProcessorBase
 
 # Pattern imports (Week 1 - Foundation Patterns)
 from shared.processors.patterns import SmartSkipMixin, EarlyExitMixin, CircuitBreakerMixin
+from shared.config.source_coverage import get_tier_from_score
 
 # Smart Idempotency (Pattern #1)
 from data_processors.raw.smart_idempotency_mixin import SmartIdempotencyMixin
@@ -880,7 +881,8 @@ class MLFeatureStoreProcessor(
             'is_home': player_row.get('is_home'),
             'days_rest': phase3_data.get('days_rest'),
             
-            # Quality
+            # Quality (quality_tier derived from feature_quality_score)
+            'quality_tier': get_tier_from_score(quality_score).value,
             'feature_quality_score': quality_score,
             'data_source': data_source,
             

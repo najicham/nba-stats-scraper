@@ -54,6 +54,7 @@ from data_processors.analytics.analytics_base import AnalyticsProcessorBase
 
 # Pattern imports (Week 1 - Foundation Patterns)
 from shared.processors.patterns import SmartSkipMixin, EarlyExitMixin, CircuitBreakerMixin
+from shared.processors.patterns.quality_columns import build_quality_columns_with_legacy
 
 # Completeness checking (Week 5 - Phase 3 Multi-Window)
 from shared.utils.completeness_checker import CompletenessChecker
@@ -1583,43 +1584,55 @@ class UpcomingPlayerGameContextProcessor(
             'fourth_quarter_production_last_7': None  # TODO: future
         }
     
-    def _calculate_data_quality(self, historical_data: pd.DataFrame, 
+    def _calculate_data_quality(self, historical_data: pd.DataFrame,
                                 game_lines_info: Dict) -> Dict:
         """
-        Calculate data quality metrics.
-        
+        Calculate data quality metrics using centralized helper.
+
         Args:
             historical_data: DataFrame of historical boxscores
             game_lines_info: Dict with game lines
-            
+
         Returns:
-            Dict with quality fields
+            Dict with quality fields (standard + legacy)
         """
-        # Sample size quality tier
+        # Sample size determines tier
         games_count = len(historical_data)
         if games_count >= self.min_games_for_high_quality:
-            tier = 'high'
+            tier = 'gold'
+            score = 95.0
         elif games_count >= self.min_games_for_medium_quality:
-            tier = 'medium'
+            tier = 'silver'
+            score = 75.0
         else:
-            tier = 'low'
-        
-        # Processing issues flag
-        has_issues = (
-            game_lines_info.get('game_spread') is None or
-            game_lines_info.get('game_total') is None or
-            games_count < 3
-        )
-        
+            tier = 'bronze'
+            score = 50.0
+
+        # Build quality issues list
+        issues = []
+        if game_lines_info.get('game_spread') is None:
+            issues.append('missing_game_spread')
+        if game_lines_info.get('game_total') is None:
+            issues.append('missing_game_total')
+        if games_count < 3:
+            issues.append(f'thin_sample:{games_count}/3')
+
         # Primary source used
-        # TODO: Track which boxscore source was actually used
-        primary_source = 'bdl_player_boxscores'  # Default for now
-        
-        return {
-            'data_quality_tier': tier,
-            'primary_source_used': primary_source,
-            'processed_with_issues': has_issues
-        }
+        primary_source = 'bdl_player_boxscores'
+
+        # Use centralized helper for standard quality columns
+        quality_cols = build_quality_columns_with_legacy(
+            tier=tier,
+            score=score,
+            issues=issues,
+            sources=[primary_source],
+        )
+
+        # Add additional tracking fields
+        quality_cols['primary_source_used'] = primary_source
+        quality_cols['processed_with_issues'] = len(issues) > 0
+
+        return quality_cols
     
     def _build_source_tracking_fields(self) -> Dict:
         """

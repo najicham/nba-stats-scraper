@@ -43,6 +43,7 @@ from data_processors.analytics.analytics_base import AnalyticsProcessorBase
 
 # Pattern imports (Week 1 - Foundation Patterns)
 from shared.processors.patterns import SmartSkipMixin, EarlyExitMixin, CircuitBreakerMixin
+from shared.processors.patterns.quality_columns import build_standard_quality_columns
 
 # Completeness checking (Week 7 - Phase 3 Multi-Window for Teams)
 from shared.utils.completeness_checker import CompletenessChecker
@@ -1165,12 +1166,48 @@ class UpcomingTeamGameContextProcessor(
             record['completeness_percentage'] = completeness_l14d['completeness_pct']
             record['missing_games_count'] = completeness_l14d['missing_count']
 
+            # Build quality columns using centralized helper
+            # Determine tier based on completeness
+            if completeness_l14d['completeness_pct'] >= 95:
+                tier = 'gold'
+                score = 95.0
+            elif completeness_l14d['completeness_pct'] >= 75:
+                tier = 'silver'
+                score = 75.0
+            elif completeness_l14d['completeness_pct'] >= 50:
+                tier = 'bronze'
+                score = 50.0
+            else:
+                tier = 'poor'
+                score = 25.0
+
+            # Build issues list
+            quality_issues = []
+            if not completeness_l7d['is_complete']:
+                quality_issues.append(f"l7d_incomplete:{completeness_l7d['completeness_pct']:.0f}%")
+            if not completeness_l14d['is_complete']:
+                quality_issues.append(f"l14d_incomplete:{completeness_l14d['completeness_pct']:.0f}%")
+            if is_season_boundary:
+                quality_issues.append('season_boundary')
+            if is_bootstrap:
+                quality_issues.append('bootstrap_mode')
+
             # Production Readiness (both windows must be ready)
-            record['is_production_ready'] = (
+            is_prod_ready = (
                 completeness_l7d['is_production_ready'] and
                 completeness_l14d['is_production_ready']
             )
-            record['data_quality_issues'] = []  # Populate if specific issues found
+
+            # Use centralized helper
+            quality_cols = build_standard_quality_columns(
+                tier=tier,
+                score=score,
+                issues=quality_issues,
+                sources=['nbac_schedule'],
+                is_production_ready=is_prod_ready,
+            )
+            record.update(quality_cols)
+            record['data_quality_issues'] = quality_issues  # Legacy field
 
             # Circuit Breaker
             record['last_reprocess_attempt_at'] = None  # Would need separate query
