@@ -428,6 +428,137 @@ class QualityMixin:
             )
 
     # ==========================================================================
+    # QUALITY DEGRADATION DETECTION
+    # ==========================================================================
+    def check_quality_degradation(
+        self,
+        current_quality: Dict,
+        game_date: date = None
+    ) -> bool:
+        """
+        Check if quality has degraded from previous runs and send alert if so.
+
+        Args:
+            current_quality: Current quality assessment dict
+            game_date: Date being processed
+
+        Returns:
+            True if degradation was detected and alert sent
+        """
+        try:
+            previous_quality = self._get_previous_quality(game_date)
+            if previous_quality is None:
+                return False
+
+            current_tier = current_quality.get('tier', 'UNKNOWN')
+            previous_tier = previous_quality.get('tier', 'UNKNOWN')
+
+            # Check if degraded
+            tier_order = ['UNUSABLE', 'BRONZE', 'SILVER', 'GOLD']
+            try:
+                curr_idx = tier_order.index(current_tier)
+                prev_idx = tier_order.index(previous_tier)
+            except ValueError:
+                return False
+
+            if curr_idx < prev_idx:  # Quality decreased
+                self._send_quality_degradation_alert(
+                    current_quality=current_quality,
+                    previous_quality=previous_quality,
+                    game_date=game_date
+                )
+                return True
+
+            return False
+
+        except Exception as e:
+            logger.warning(f"Error checking quality degradation: {e}")
+            return False
+
+    def _get_previous_quality(self, game_date: date = None) -> Optional[Dict]:
+        """Get previous quality tier for comparison."""
+        try:
+            bq_client = getattr(self, 'bq_client', None)
+            if bq_client is None:
+                bq_client = bigquery.Client()
+
+            # Query most recent quality for this processor
+            processor_name = self.__class__.__name__
+            date_filter = f"AND data_date = '{game_date}'" if game_date else ""
+
+            query = f"""
+                SELECT quality_tier, quality_score
+                FROM nba_reference.processor_run_history
+                WHERE processor_name = '{processor_name}'
+                  {date_filter}
+                  AND quality_tier IS NOT NULL
+                ORDER BY processed_at DESC
+                LIMIT 1
+            """
+
+            result = list(bq_client.query(query).result())
+            if result:
+                row = result[0]
+                return {
+                    'tier': row.quality_tier,
+                    'score': row.quality_score
+                }
+            return None
+
+        except Exception as e:
+            logger.debug(f"Could not get previous quality: {e}")
+            return None
+
+    def _send_quality_degradation_alert(
+        self,
+        current_quality: Dict,
+        previous_quality: Dict,
+        game_date: date = None
+    ):
+        """Send email alert for quality degradation."""
+        try:
+            from shared.utils.email_alerting_ses import EmailAlerterSES
+
+            # Determine reason for degradation
+            issues = current_quality.get('issues', [])
+            if 'reconstructed' in issues:
+                reason = "Reconstruction was applied due to missing primary source data"
+            elif 'backup_source_used' in issues:
+                reason = "Backup/fallback data source was used"
+            elif any('thin_sample' in str(i) for i in issues):
+                reason = "Insufficient sample size for reliable analysis"
+            else:
+                reason = f"Quality issues detected: {', '.join(issues[:3])}"
+
+            # Determine fallback sources
+            metadata = current_quality.get('metadata', {})
+            fallback_sources = metadata.get('sources_used', [])
+
+            # Build alert data
+            quality_data = {
+                'processor_name': self.__class__.__name__,
+                'date': str(game_date) if game_date else datetime.now().strftime('%Y-%m-%d'),
+                'previous_quality': previous_quality.get('tier', 'UNKNOWN'),
+                'current_quality': current_quality.get('tier', 'UNKNOWN'),
+                'reason': reason,
+                'fallback_sources': fallback_sources,
+                'impact': 'Prediction confidence may be reduced. Consider reviewing data sources.'
+            }
+
+            alerter = EmailAlerterSES()
+            success = alerter.send_data_quality_alert(quality_data)
+
+            if success:
+                logger.info(f"📉 Quality degradation alert sent for {self.__class__.__name__}")
+            else:
+                logger.warning("Failed to send quality degradation alert")
+
+        except ImportError as e:
+            logger.warning(f"Email alerter not available: {e}")
+        except Exception as e:
+            logger.error(f"Error sending quality degradation alert: {e}")
+
+    # ==========================================================================
     # HELPER METHODS
     # ==========================================================================
     def build_quality_columns(self, quality: Dict) -> Dict:

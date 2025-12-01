@@ -66,75 +66,6 @@ Implemented Python fallback (Option B) with these changes:
 
 ---
 
-### Original Problem (Resolved)
-
-The `upcoming_player_game_context` processor previously only queried Odds API:
-
-**File:** `data_processors/analytics/upcoming_player_game_context/upcoming_player_game_context_processor.py`
-
-**Current behavior (lines 335, 540, 554):**
-```sql
-FROM `nba_raw.odds_api_player_points_props`
-```
-
-**Coverage:**
-- Odds API: 271/675 dates (40%)
-- BettingPros: 673/675 dates (99.7%)
-
-Without this fix, `upcoming_player_game_context` will only have data for 40% of historical dates.
-
-### The Fix
-
-Modify the processor to use BettingPros as a fallback when Odds API data is missing.
-
-**Option A: UNION with deduplication**
-```sql
-WITH odds_api_props AS (
-    SELECT player_lookup, game_id, game_date, points_line, bookmaker, ...
-    FROM `nba_raw.odds_api_player_points_props`
-    WHERE game_date = '{target_date}'
-),
-bettingpros_props AS (
-    SELECT player_lookup, game_id, game_date, points_line, bookmaker, ...
-    FROM `nba_raw.bettingpros_player_points_props`
-    WHERE game_date = '{target_date}'
-      AND game_date NOT IN (SELECT DISTINCT game_date FROM odds_api_props)
-)
-SELECT * FROM odds_api_props
-UNION ALL
-SELECT * FROM bettingpros_props
-```
-
-**Option B: Fallback in Python**
-```python
-# Try Odds API first
-props_df = query_odds_api(target_date)
-
-# If empty, fall back to BettingPros
-if props_df.empty:
-    props_df = query_bettingpros(target_date)
-```
-
-### Locations to Modify
-
-Search for `odds_api_player_points_props` in the file:
-- Line 335: Driver query (determines which players to process)
-- Line 540: Props extraction
-- Line 554: Props extraction
-
-### Testing
-
-After fix:
-```bash
-# Dry run for a date with only BettingPros data
-python backfill_jobs/analytics/upcoming_player_game_context/upcoming_player_game_context_analytics_backfill.py \
-  --dry-run --start-date 2021-10-20 --end-date 2021-10-20
-
-# Should show players available (from BettingPros)
-```
-
----
-
 ## Verification Before Backfill
 
 After completing both tasks, verify:
@@ -181,5 +112,5 @@ Once both tasks are done, proceed to execute backfill following:
 
 ---
 
-**Document Version:** 1.0
-**Last Updated:** 2025-11-29 22:19 PST
+**Document Version:** 1.1
+**Last Updated:** 2025-11-30

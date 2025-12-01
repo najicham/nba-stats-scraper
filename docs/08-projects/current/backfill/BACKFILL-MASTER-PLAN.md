@@ -1,9 +1,20 @@
-# Backfill Master Plan: 4 Years of NBA Data
+# Backfill Master Plan: Historical NBA Data
 
 **Created:** 2025-11-29 20:30 PST
 **Last Updated:** 2025-11-30
 **Status:** Ready for Execution (Phase 4 backfill jobs complete)
-**Goal:** Backfill 675 game dates (2021-22 through 2024-25) across all phases
+
+## Scope
+
+| Season | Approximate Dates | Status |
+|--------|------------------|--------|
+| 2021-22 | Oct 2021 - Jun 2022 | Pending |
+| 2022-23 | Oct 2022 - Jun 2023 | Pending |
+| 2023-24 | Oct 2023 - Jun 2024 | Pending |
+| 2024-25 | Oct 2024 - Jun 2025 | Pending |
+| 2025-26 | Oct 2025 - Present | Current season (process as needed) |
+
+**Note:** Backfill may be re-run when data quality improvements are needed or issues arise.
 
 ---
 
@@ -154,7 +165,7 @@ All 5 Phase 4 backfill jobs have been created:
 │ 1. player_game_summary                                          │
 │ 2. team_defense_game_summary                                    │
 │ 3. team_offense_game_summary                                    │
-│ 4. upcoming_player_game_context (limited to dates with odds)    │
+│ 4. upcoming_player_game_context (99.7% with BettingPros fallback)│
 │ 5. upcoming_team_game_context                                   │
 │                                                                 │
 │ Flag: --skip-downstream-trigger                                 │
@@ -274,15 +285,23 @@ WHERE game_date BETWEEN '2021-10-01' AND '2024-11-29';
 
 ---
 
-#### Issue 1.3: Odds Data Limited Blocks upcoming_player_game_context
+#### ~~Issue 1.3: Odds Data Limited Blocks upcoming_player_game_context~~ - RESOLVED
 
-**Scenario:** Only 40% of dates have `odds_api_player_points_props`.
+**Status:** ✅ RESOLVED (2025-11-30) - BettingPros fallback implemented
 
-**What happens:**
-- `upcoming_player_game_context` runs
-- Checks for props data (DRIVER source)
-- No props → no players to process → empty output
-- For 60% of dates: produces 0 records
+**Previous Scenario:** Only 40% of dates had `odds_api_player_points_props`.
+
+**Solution:** BettingPros fallback now provides 99.7% coverage (673/675 dates).
+
+| Source | Dates | Coverage |
+|--------|-------|----------|
+| Odds API (primary) | 271 | 40% |
+| BettingPros (fallback) | 673 | 99.7% |
+
+**How it works:**
+- Processor first tries Odds API
+- If no data, falls back to BettingPros
+- Records track `current_points_line_source` field
 
 **Detection:**
 ```sql
@@ -293,10 +312,7 @@ SELECT
 FROM nba_analytics.upcoming_player_game_context;
 ```
 
-**Recovery Options:**
-1. **Accept limitation:** Only ~40% of historical dates will have player context
-2. **Modify processor:** Use all players from boxscores instead of props-driven
-3. **Investigate odds sources:** May be able to get more historical odds
+**Expected:** ~99.7% coverage after backfill.
 
 ---
 
@@ -815,19 +831,22 @@ FROM (
 
 ### Problem: upcoming_player_game_context has very few records
 
+**Note:** This issue should be RESOLVED after the BettingPros fallback implementation (2025-11-30).
+
 **Diagnosis:**
 ```sql
 SELECT
   (SELECT COUNT(DISTINCT game_date) FROM nba_analytics.upcoming_player_game_context) as actual,
-  (SELECT COUNT(DISTINCT game_date) FROM nba_raw.odds_api_player_points_props) as dates_with_odds,
+  (SELECT COUNT(DISTINCT game_date) FROM nba_raw.bettingpros_player_props) as dates_with_bettingpros,
   (SELECT COUNT(DISTINCT game_date) FROM nba_raw.nbac_schedule WHERE game_status = 3) as total_game_dates;
 ```
 
-**Expected:** `actual` should be close to `dates_with_odds`.
+**Expected:** `actual` should be close to `dates_with_bettingpros` (~99.7% = 673/675 dates).
 
-**Cause:** This processor uses odds data as DRIVER. Without odds, it doesn't know which players to process.
-
-**Resolution:** Accept limitation or modify processor logic.
+**If still low after backfill:**
+1. Check if BettingPros fallback is being triggered (look at `current_points_line_source` field)
+2. Verify the `bettingpros_player_props` table has data for the date range
+3. Check processor logs for fallback activation messages
 
 ---
 

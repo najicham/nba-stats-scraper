@@ -22,9 +22,21 @@
 
 ## Overview
 
-**Total Scope:** 675 game dates across 4 seasons (2021-22 through 2024-25)
-**Strategy:** Season-by-season with validation gates
+**Total Scope:** Season-by-season backfill (2021-22 through current)
+**Strategy:** Process each season fully (Phase 3 → Phase 4) before moving to next
 **Execution:** Run locally to capture output and errors, with Claude Code monitoring logs
+
+### Seasons to Process
+
+| Season | Date Range | Notes |
+|--------|-----------|-------|
+| 2021-22 | Oct 2021 - Jun 2022 | First backfill target |
+| 2022-23 | Oct 2022 - Jun 2023 | |
+| 2023-24 | Oct 2023 - Jun 2024 | |
+| 2024-25 | Oct 2024 - Jun 2025 | |
+| 2025-26 | Oct 2025 - Present | Current season, process as needed |
+
+**Note:** Backfill may be re-run when data quality improvements are needed or issues arise.
 
 | Phase | Processors | Parallelization | Estimated Time per Season |
 |-------|------------|-----------------|---------------------------|
@@ -680,16 +692,16 @@ All 5 Phase 4 backfill jobs have been created in `backfill_jobs/precompute/`:
 
 ## Expected Outcomes
 
-After successful backfill:
+After successful backfill (per season, ~170 game days):
 
-| Phase | Table | Expected Dates | Notes |
-|-------|-------|----------------|-------|
-| Phase 3 | player_game_summary | ~650 | All game dates |
-| Phase 3 | team_defense_game_summary | ~650 | All game dates |
-| Phase 3 | team_offense_game_summary | ~650 | All game dates |
-| Phase 3 | upcoming_player_game_context | ~650 | BettingPros provides 99.7% coverage |
-| Phase 3 | upcoming_team_game_context | ~650 | All game dates |
-| Phase 4 | All tables | ~620 | Minus ~28 bootstrap days (7 days × 4 seasons) |
+| Phase | Table | Expected Coverage | Notes |
+|-------|-------|-------------------|-------|
+| Phase 3 | player_game_summary | 100% | All game dates |
+| Phase 3 | team_defense_game_summary | 100% | All game dates |
+| Phase 3 | team_offense_game_summary | 100% | All game dates |
+| Phase 3 | upcoming_player_game_context | ~99.7% | BettingPros fallback implemented |
+| Phase 3 | upcoming_team_game_context | 100% | All game dates |
+| Phase 4 | All tables | ~96% | Bootstrap periods (7 days/season) skipped |
 
 **Quality expectations:**
 - First 2-3 weeks of each season: degraded quality (limited history)

@@ -297,7 +297,7 @@ def determine_overall_quality(phases: Dict) -> str:
 
 def send_health_email(health_data: Dict) -> bool:
     """
-    Send the health summary email via AWS SES.
+    Send the health summary email via AWS SES and Slack.
 
     Args:
         health_data: Health data dictionary
@@ -305,19 +305,29 @@ def send_health_email(health_data: Dict) -> bool:
     Returns:
         True if sent successfully, False otherwise
     """
+    email_success = False
+    slack_success = False
+
+    # Send email
     try:
-        # Import here to avoid loading at module level (for faster cold starts)
         from shared.utils.email_alerting_ses import EmailAlerterSES
-
         alerter = EmailAlerterSES()
-        return alerter.send_pipeline_health_summary(health_data)
-
+        email_success = alerter.send_pipeline_health_summary(health_data)
     except ImportError as e:
         logger.error(f"Failed to import EmailAlerterSES: {e}")
-        return False
     except Exception as e:
         logger.error(f"Failed to send health email: {e}")
-        return False
+
+    # Send to Slack #nba-pipeline-health channel
+    try:
+        from shared.utils.slack_channels import send_health_summary_to_slack
+        slack_success = send_health_summary_to_slack(health_data)
+        if slack_success:
+            logger.info("💬 Health summary sent to Slack")
+    except Exception as e:
+        logger.debug(f"Slack notification skipped: {e}")
+
+    return email_success or slack_success
 
 
 def query_prediction_stats(bq_client: bigquery.Client, date_str: str) -> Dict:

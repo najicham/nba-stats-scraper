@@ -460,6 +460,15 @@ def send_prediction_completion_email(summary: Dict, game_date: str, batch_id: st
         else:
             logger.warning(f"Failed to send prediction completion email for {game_date}")
 
+        # Send to Slack #nba-predictions channel
+        try:
+            from shared.utils.slack_channels import send_prediction_summary_to_slack
+            slack_success = send_prediction_summary_to_slack(prediction_data)
+            if slack_success:
+                logger.info(f"💬 Prediction completion sent to Slack for {game_date}")
+        except Exception as slack_err:
+            logger.debug(f"Slack notification skipped: {slack_err}")
+
     except ImportError as e:
         logger.warning(f"Email alerter not available (non-fatal): {e}")
     except Exception as e:

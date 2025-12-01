@@ -19,9 +19,9 @@ PROJECT_ID="${GCP_PROJECT:-nba-props-platform}"
 REGION="${GCP_REGION:-us-west2}"
 FUNCTION_NAME="pipeline-health-summary"
 RUNTIME="python311"
-MEMORY="256MB"
+MEMORY="512MB"
 TIMEOUT="120s"
-SERVICE_ACCOUNT="nba-cloud-functions@${PROJECT_ID}.iam.gserviceaccount.com"
+SERVICE_ACCOUNT="scheduler-orchestration@${PROJECT_ID}.iam.gserviceaccount.com"
 
 # Scheduler configuration
 SCHEDULER_NAME="daily-pipeline-health-summary"
@@ -50,7 +50,7 @@ if [ ! -f "monitoring/health_summary/main.py" ]; then
     exit 1
 fi
 
-# Check for required secrets (AWS SES credentials)
+# Check for required secrets
 echo -e "${YELLOW}Checking for required secrets...${NC}"
 
 check_secret() {
@@ -67,11 +67,11 @@ check_secret() {
 SECRETS_OK=true
 check_secret "aws-ses-access-key-id" || SECRETS_OK=false
 check_secret "aws-ses-secret-access-key" || SECRETS_OK=false
+check_secret "slack-webhook-url-info" || SECRETS_OK=false
 
 if [ "$SECRETS_OK" = false ]; then
     echo ""
     echo -e "${YELLOW}Creating missing secrets...${NC}"
-    echo "You'll need to provide the AWS SES credentials."
     echo ""
 
     if ! gcloud secrets describe "aws-ses-access-key-id" --project="${PROJECT_ID}" &>/dev/null; then
@@ -90,6 +90,14 @@ if [ "$SECRETS_OK" = false ]; then
             --data-file=- \
             --replication-policy="automatic"
     fi
+
+    if ! gcloud secrets describe "slack-webhook-url-info" --project="${PROJECT_ID}" &>/dev/null; then
+        read -p "Enter SLACK_WEBHOOK_URL_INFO: " SLACK_WEBHOOK
+        echo -n "${SLACK_WEBHOOK}" | gcloud secrets create "slack-webhook-url-info" \
+            --project="${PROJECT_ID}" \
+            --data-file=- \
+            --replication-policy="automatic"
+    fi
 fi
 
 # Deploy the Cloud Function
@@ -104,11 +112,12 @@ trap "rm -rf ${TEMP_DIR}" EXIT
 cp monitoring/health_summary/main.py "${TEMP_DIR}/"
 cp monitoring/health_summary/requirements.txt "${TEMP_DIR}/"
 
-# Copy shared modules needed by the function
+# Copy shared modules needed by the function (minimal set)
 mkdir -p "${TEMP_DIR}/shared/utils"
-cp shared/__init__.py "${TEMP_DIR}/shared/" 2>/dev/null || echo "" > "${TEMP_DIR}/shared/__init__.py"
-cp shared/utils/__init__.py "${TEMP_DIR}/shared/utils/" 2>/dev/null || echo "" > "${TEMP_DIR}/shared/utils/__init__.py"
+echo "" > "${TEMP_DIR}/shared/__init__.py"
+echo "" > "${TEMP_DIR}/shared/utils/__init__.py"
 cp shared/utils/email_alerting_ses.py "${TEMP_DIR}/shared/utils/"
+cp shared/utils/slack_channels.py "${TEMP_DIR}/shared/utils/"
 
 # Deploy from temp directory
 gcloud functions deploy "${FUNCTION_NAME}" \
@@ -119,12 +128,12 @@ gcloud functions deploy "${FUNCTION_NAME}" \
     --timeout="${TIMEOUT}" \
     --entry-point="pipeline_health_summary" \
     --trigger-http \
-    --allow-unauthenticated=false \
+    --no-allow-unauthenticated \
     --service-account="${SERVICE_ACCOUNT}" \
     --source="${TEMP_DIR}" \
-    --set-env-vars="GCP_PROJECT=${PROJECT_ID}" \
-    --set-secrets="AWS_SES_ACCESS_KEY_ID=aws-ses-access-key-id:latest,AWS_SES_SECRET_ACCESS_KEY=aws-ses-secret-access-key:latest" \
-    --set-env-vars="AWS_SES_REGION=us-west-2,AWS_SES_FROM_EMAIL=alert@989.ninja,EMAIL_ALERTS_TO=nchammas@gmail.com"
+    --gen2 \
+    --set-env-vars="GCP_PROJECT=${PROJECT_ID},AWS_SES_REGION=us-west-2,AWS_SES_FROM_EMAIL=alert@989.ninja,EMAIL_ALERTS_TO=nchammas@gmail.com,SLACK_ALERTS_ENABLED=true" \
+    --set-secrets="AWS_SES_ACCESS_KEY_ID=aws-ses-access-key-id:latest,AWS_SES_SECRET_ACCESS_KEY=aws-ses-secret-access-key:latest,SLACK_WEBHOOK_URL_INFO=slack-webhook-url-info:latest"
 
 echo ""
 echo -e "${GREEN}✓ Cloud Function deployed successfully${NC}"

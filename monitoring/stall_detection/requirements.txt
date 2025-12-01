@@ -1,0 +1,11 @@
+# Pipeline Stall Detection Cloud Function Dependencies
+
+# Google Cloud
+functions-framework==3.*
+google-cloud-firestore>=2.11.0
+
+# AWS SES (via shared module)
+boto3>=1.35.0
+botocore>=1.35.0
+
+# Note: shared/ modules are included via --source flag during deployment

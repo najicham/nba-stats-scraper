@@ -382,11 +382,12 @@ test_phase3_job() {
 
     print_info "Running dry-run for player_game_summary (this may take 10-20 seconds)..."
 
-    if timeout 30 python3 "$test_job" --dry-run --dates 2023-11-15 >/dev/null 2>&1; then
+    # Set PYTHONPATH to project root
+    if PYTHONPATH="$(pwd)" timeout 30 python3 "$test_job" --dry-run --dates 2023-11-15 >/dev/null 2>&1; then
         print_pass "Phase 3 dry-run successful"
     else
         print_fail "Phase 3 dry-run failed"
-        print_info "Try running manually: python3 $test_job --dry-run --dates 2023-11-15"
+        print_info "Try running manually: PYTHONPATH=\$(pwd) python3 $test_job --dry-run --dates 2023-11-15"
     fi
 }
 
@@ -408,11 +409,12 @@ test_phase4_job() {
 
     print_info "Running dry-run for player_shot_zone_analysis (this may take 10-20 seconds)..."
 
-    if timeout 30 python3 "$test_job" --dry-run --dates 2023-11-15 >/dev/null 2>&1; then
+    # Set PYTHONPATH to project root
+    if PYTHONPATH="$(pwd)" timeout 30 python3 "$test_job" --dry-run --dates 2023-11-15 >/dev/null 2>&1; then
         print_pass "Phase 4 dry-run successful"
     else
         print_warn "Phase 4 dry-run failed (may be normal if dependencies missing)"
-        print_info "Try running manually: python3 $test_job --dry-run --dates 2023-11-15"
+        print_info "Try running manually: PYTHONPATH=\$(pwd) python3 $test_job --dry-run --dates 2023-11-15"
     fi
 }
 

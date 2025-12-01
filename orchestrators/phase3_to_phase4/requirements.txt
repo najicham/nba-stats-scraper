@@ -1,9 +1,0 @@
-# Phase 3 → Phase 4 Orchestrator Requirements
-# Cloud Function dependencies
-
-# Cloud Functions framework
-functions-framework==3.*
-
-# Google Cloud libraries
-google-cloud-firestore==2.*
-google-cloud-pubsub==2.*

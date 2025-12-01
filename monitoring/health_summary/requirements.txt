@@ -4,8 +4,6 @@
 functions-framework==3.*
 google-cloud-bigquery>=3.13.0
 
-# AWS SES (via shared module)
+# AWS SES
 boto3>=1.35.0
 botocore>=1.35.0
-
-# Note: shared/ modules are included via --source flag during deployment
