@@ -93,6 +93,43 @@ db = firestore.Client()
 publisher = pubsub_v1.PublisherClient()
 
 
+def normalize_processor_name(raw_name: str, output_table: Optional[str] = None) -> str:
+    """
+    Normalize processor name to match config format.
+
+    Phase 2 processors may publish:
+    - Class names: BdlPlayerBoxscoresProcessor
+    - Table names: bdl_player_boxscores
+
+    This function normalizes to config format: bdl_player_boxscores
+
+    Args:
+        raw_name: Raw processor name from message
+        output_table: Optional output_table field from message
+
+    Returns:
+        Normalized processor name matching config
+    """
+    import re
+
+    # If raw_name is already in expected set, use it
+    if raw_name in EXPECTED_PROCESSOR_SET:
+        return raw_name
+
+    # If output_table matches expected, use it
+    if output_table and output_table in EXPECTED_PROCESSOR_SET:
+        return output_table
+
+    # Convert CamelCase to snake_case and strip "Processor" suffix
+    name = raw_name.replace('Processor', '')
+    # Insert underscore before capitals and lowercase
+    name = re.sub('(.)([A-Z][a-z]+)', r'\1_\2', name)
+    name = re.sub('([a-z0-9])([A-Z])', r'\1_\2', name).lower()
+
+    logger.debug(f"Normalized '{raw_name}' -> '{name}'")
+    return name
+
+
 @functions_framework.cloud_event
 def orchestrate_phase2_to_phase3(cloud_event):
     """
@@ -124,14 +161,19 @@ def orchestrate_phase2_to_phase3(cloud_event):
 
         # Extract key fields
         game_date = message_data.get('game_date')
-        processor_name = message_data.get('processor_name')
+        raw_processor_name = message_data.get('processor_name')
+        output_table = message_data.get('output_table')
         correlation_id = message_data.get('correlation_id')
         status = message_data.get('status')
 
         # Validate required fields
-        if not game_date or not processor_name:
+        if not game_date or not raw_processor_name:
             logger.error(f"Missing required fields in message: {message_data}")
             return
+
+        # Normalize processor name to match config format
+        # This handles class names like BdlPlayerBoxscoresProcessor -> bdl_player_boxscores
+        processor_name = normalize_processor_name(raw_processor_name, output_table)
 
         # Skip non-success statuses (only track successful completions)
         if status not in ('success', 'partial'):
@@ -139,7 +181,7 @@ def orchestrate_phase2_to_phase3(cloud_event):
             return
 
         logger.info(
-            f"Received completion from {processor_name} for {game_date} "
+            f"Received completion from {processor_name} (raw: {raw_processor_name}) for {game_date} "
             f"(status={status}, correlation_id={correlation_id})"
         )
 
