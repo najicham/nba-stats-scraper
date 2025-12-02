@@ -42,6 +42,7 @@ from shared.validation.config import PROJECT_ID
 from shared.validation.context.schedule_context import get_schedule_context, ScheduleContext
 from shared.validation.context.player_universe import get_player_universe, PlayerUniverse
 from shared.validation.validators import (
+    validate_phase1,
     validate_phase2,
     validate_phase3,
     validate_phase4,
@@ -103,7 +104,7 @@ def validate_date(
         client = bigquery.Client(project=PROJECT_ID)
 
     if phases is None:
-        phases = [2, 3, 4, 5]
+        phases = [1, 2, 3, 4, 5]
 
     logger.info(f"Validating pipeline for {game_date}")
     total_start = time_module.time()
@@ -139,11 +140,17 @@ def validate_date(
     # Run phase validators
     phase_results = []
 
+    if 1 in phases:
+        step_start = time_module.time()
+        result = validate_phase1(game_date, schedule_context)
+        phase_results.append(result)
+        logger.info(f"  ├─ Phase 1 (GCS): {result.status.value} ({time_module.time() - step_start:.1f}s)")
+
     if 2 in phases:
         step_start = time_module.time()
         result = validate_phase2(game_date, schedule_context, player_universe, client)
         phase_results.append(result)
-        logger.info(f"  ├─ Phase 2: {result.status.value} ({time_module.time() - step_start:.1f}s)")
+        logger.info(f"  ├─ Phase 2 (BQ): {result.status.value} ({time_module.time() - step_start:.1f}s)")
 
     if 3 in phases:
         step_start = time_module.time()
@@ -382,8 +389,8 @@ Examples:
     parser.add_argument(
         '--phase',
         type=int,
-        choices=[2, 3, 4, 5],
-        help='Validate specific phase only'
+        choices=[1, 2, 3, 4, 5],
+        help='Validate specific phase only (1=GCS, 2=BQ Raw, 3=Analytics, 4=Precompute, 5=Predictions)'
     )
     parser.add_argument(
         '--format',

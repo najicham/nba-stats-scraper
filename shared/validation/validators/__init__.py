@@ -2,7 +2,8 @@
 Phase Validators
 
 Validators for each phase of the pipeline:
-- Phase 2: Raw data validation
+- Phase 1: GCS raw JSON files (scraper output)
+- Phase 2: Raw data in BigQuery (processor output)
 - Phase 3: Analytics validation
 - Phase 4: Precompute validation
 - Phase 5: Predictions validation
@@ -13,6 +14,7 @@ from shared.validation.validators.base import (
     TableValidation,
     ValidationStatus,
 )
+from shared.validation.validators.phase1_validator import validate_phase1
 from shared.validation.validators.phase2_validator import validate_phase2
 from shared.validation.validators.phase3_validator import validate_phase3
 from shared.validation.validators.phase4_validator import validate_phase4
@@ -22,6 +24,7 @@ __all__ = [
     'PhaseValidationResult',
     'TableValidation',
     'ValidationStatus',
+    'validate_phase1',
     'validate_phase2',
     'validate_phase3',
     'validate_phase4',

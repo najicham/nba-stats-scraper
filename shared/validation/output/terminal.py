@@ -283,7 +283,27 @@ def _format_phase_result(result: PhaseValidationResult, use_color: bool, verbose
     lines.append("")
 
     # Table header
-    if result.phase in (2,):
+    if result.phase == 1:
+        # Phase 1 format (GCS files)
+        header = f"{'Source':<30s} {'JSON Files':>12s} {'Expected':>10s} {'Status':>12s}"
+        lines.append(header)
+        lines.append(SEPARATOR)
+
+        for table_name, table in result.tables.items():
+            json_count = table.metadata.get('json_files', table.record_count) if table.metadata else table.record_count
+            expected = table.expected_count
+            status_str = _format_status(table.status, use_color)
+
+            line = f"{table_name:<30s} {json_count:>12d} {expected:>10d} {status_str:>12s}"
+            lines.append(line)
+
+            # Show GCS path hint if missing
+            if table.status == ValidationStatus.MISSING and table.metadata:
+                gcs_path = table.metadata.get('gcs_path', '')
+                if gcs_path:
+                    lines.append(f"{'':>30s} └─ gs://nba-scraped-data/{gcs_path}")
+
+    elif result.phase == 2:
         # Phase 2 format
         header = f"{'Source':<40s} {'Records':>10s} {'Status':>10s}"
         lines.append(header)
@@ -472,10 +492,11 @@ def _format_progress_bar(report: ValidationReport, use_color: bool) -> str:
             phase_pcts[phase] = 0.0
 
     # Weights based on mode
+    # Phase 1 (GCS) is prerequisite for Phase 2, so lower weight
     if is_bootstrap:
-        weights = {2: 0.40, 3: 0.60, 4: 0.0, 5: 0.0}
+        weights = {1: 0.10, 2: 0.35, 3: 0.55, 4: 0.0, 5: 0.0}
     else:
-        weights = {2: 0.15, 3: 0.25, 4: 0.25, 5: 0.35}
+        weights = {1: 0.05, 2: 0.15, 3: 0.25, 4: 0.25, 5: 0.30}
 
     # Calculate weighted total
     total_pct = sum(phase_pcts.get(p, 0) * w for p, w in weights.items())
@@ -500,7 +521,7 @@ def _format_progress_bar(report: ValidationReport, use_color: bool) -> str:
 
     # Phase breakdown with mini indicators (match actual status, not just percentage)
     phase_indicators = []
-    for phase in [2, 3, 4, 5]:
+    for phase in [1, 2, 3, 4, 5]:
         phase_result = next((p for p in report.phase_results if p.phase == phase), None)
 
         if phase_result:
@@ -571,7 +592,8 @@ def _get_next_action(report: ValidationReport, phase_pcts: dict, is_bootstrap: b
 def _get_phase_name(phase: int) -> str:
     """Get human-readable phase name."""
     names = {
-        2: 'RAW DATA',
+        1: 'GCS JSON',
+        2: 'RAW DATA (BQ)',
         3: 'ANALYTICS',
         4: 'PRECOMPUTE',
         5: 'PREDICTIONS',
