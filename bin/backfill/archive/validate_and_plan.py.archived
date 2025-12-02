@@ -1,0 +1,515 @@
+#!/usr/bin/env python3
+"""
+Enhanced Backfill Validation & Planning Script
+
+Shows what data exists, checks run history, and tells you exactly what to run.
+Distinguishes between: never ran, ran but failed, ran but no data available.
+
+Usage:
+    python3 bin/backfill/validate_and_plan.py 2024-01-15
+    python3 bin/backfill/validate_and_plan.py 2024-01-15 2024-01-28 --plan
+"""
+
+import sys
+from datetime import datetime, date
+from google.cloud import bigquery
+
+PROJECT_ID = 'nba-props-platform'
+
+# Bootstrap periods (first 7 days of each season - Phase 4 skips these)
+BOOTSTRAP_PERIODS = [
+    (date(2021, 10, 15), date(2021, 10, 21)),  # 2021-22
+    (date(2022, 10, 18), date(2022, 10, 24)),  # 2022-23
+    (date(2023, 10, 24), date(2023, 10, 30)),  # 2023-24
+    (date(2024, 10, 22), date(2024, 10, 28)),  # 2024-25
+]
+
+# Processor name mappings (for run history lookup)
+PHASE2_PROCESSORS = {
+    'nbac_gamebook_player_stats': 'gamebook',
+    'nbac_team_boxscore': 'nbac_team_boxscore',
+    'bettingpros_player_points_props': 'bp_props',
+    'bigdataball_play_by_play': 'bdb_play_by_play',
+    'bdl_player_boxscores': 'bdl_player_boxscore',
+}
+
+PHASE3_PROCESSORS = {
+    'player_game_summary': 'PlayerGameSummaryProcessor',
+    'team_defense_game_summary': 'TeamDefenseGameSummaryProcessor',
+    'team_offense_game_summary': 'TeamOffenseGameSummaryProcessor',
+    'upcoming_player_game_context': 'UpcomingPlayerGameContextProcessor',
+    'upcoming_team_game_context': 'UpcomingTeamGameContextProcessor',
+}
+
+PHASE4_PROCESSORS = {
+    'team_defense_zone_analysis': 'TeamDefenseZoneAnalysisProcessor',
+    'player_shot_zone_analysis': 'PlayerShotZoneAnalysisProcessor',
+    'player_composite_factors': 'PlayerCompositeFactorsProcessor',
+    'player_daily_cache': 'PlayerDailyCacheProcessor',
+}
+
+
+def is_bootstrap_date(check_date: date) -> bool:
+    """Check if date falls within any bootstrap period."""
+    for start, end in BOOTSTRAP_PERIODS:
+        if start <= check_date <= end:
+            return True
+    return False
+
+
+def check_run_history(client, start_date: str, end_date: str):
+    """Check processor run history for date range."""
+    query = f"""
+    SELECT 
+        processor_name,
+        data_date,
+        status,
+        phase
+    FROM `{PROJECT_ID}.nba_reference.processor_run_history`
+    WHERE data_date BETWEEN '{start_date}' AND '{end_date}'
+    ORDER BY data_date, phase, processor_name
+    """
+    
+    try:
+        result = client.query(query).result()
+        
+        # Organize by date, phase, processor
+        run_history = {}
+        for row in result:
+            date_key = str(row.data_date)
+            if date_key not in run_history:
+                run_history[date_key] = {}
+            
+            phase = row.phase if row.phase else 'Unknown'
+            if phase not in run_history[date_key]:
+                run_history[date_key][phase] = {}
+            
+            run_history[date_key][phase][row.processor_name] = row.status
+        
+        return run_history
+    except Exception as e:
+        print(f"  Warning: Could not check run history: {e}")
+        return {}
+
+
+def get_run_status(run_history, date_str, phase, processor_name):
+    """Get run status for a specific processor/date/phase."""
+    if not run_history:
+        return None
+    
+    if date_str not in run_history:
+        return None
+    
+    if phase not in run_history[date_str]:
+        return None
+    
+    return run_history[date_str][phase].get(processor_name)
+
+
+def validate_date_range(start_date: str, end_date: str, show_plan: bool = False):
+    """Validate what exists and what needs to run."""
+    
+    client = bigquery.Client(project=PROJECT_ID)
+    
+    print("\n" + "="*80)
+    print(f"BACKFILL VALIDATION: {start_date} to {end_date}")
+    print("="*80 + "\n")
+    
+    # Calculate expected dates
+    start = datetime.strptime(start_date, '%Y-%m-%d').date()
+    end = datetime.strptime(end_date, '%Y-%m-%d').date()
+    expected_days = (end - start).days + 1
+    
+    print(f"Date Range: {expected_days} days\n")
+    
+    # Check run history
+    print("Checking processor run history...")
+    run_history = check_run_history(client, start_date, end_date)
+    print()
+    
+    # ========================================================================
+    # PHASE 2: RAW DATA (Scrapers)
+    # ========================================================================
+    print("="*80)
+    print("PHASE 2: RAW DATA (Scrapers)")
+    print("="*80 + "\n")
+    
+    phase2_sources = [
+        ('nbac_gamebook_player_stats', 'CRITICAL', 'Player boxscores'),
+        ('nbac_team_boxscore', 'CRITICAL', 'Team boxscores'),
+        ('bettingpros_player_points_props', 'CRITICAL', 'Player props'),
+        ('bigdataball_play_by_play', 'IMPORTANT', 'Shot zone data'),
+        ('bdl_player_boxscores', 'FALLBACK', 'Player stats fallback'),
+    ]
+    
+    phase2_status = {}
+    phase2_never_ran = []
+    phase2_ran_but_no_data = []
+    
+    for table, priority, description in phase2_sources:
+        query = f"""
+        SELECT COUNT(DISTINCT game_date) as dates
+        FROM `{PROJECT_ID}.nba_raw.{table}`
+        WHERE game_date BETWEEN '{start_date}' AND '{end_date}'
+        """
+        try:
+            result = client.query(query).result()
+            dates = next(result).dates
+            pct = (dates / expected_days) * 100
+            has_data = dates > 0
+            
+            # Check run history
+            processor_name = PHASE2_PROCESSORS.get(table, table)
+            run_status = get_run_status(run_history, start_date, 'Phase 2', processor_name)
+            
+            # Determine status indicator and reason
+            if pct == 100:
+                status = "✓"
+                reason = ""
+            elif has_data and run_status == 'success':
+                status = "⚠"
+                reason = " (ran, partial data)"
+            elif not has_data and run_status == 'success':
+                status = "○"
+                reason = " (ran, no data found)"
+                phase2_ran_but_no_data.append((table, processor_name))
+            elif not has_data and run_status == 'failed':
+                status = "✗"
+                reason = " (ran but FAILED)"
+            elif not has_data and run_status is None:
+                status = "○"
+                reason = " (NEVER RAN)"
+                phase2_never_ran.append((table, processor_name))
+            else:
+                status = "△"
+                reason = ""
+            
+            phase2_status[table] = {
+                'dates': dates,
+                'pct': pct,
+                'complete': pct == 100,
+                'run_status': run_status,
+                'never_ran': run_status is None and not has_data
+            }
+            
+            print(f"  {status} {table:40s} {dates:3d}/{expected_days} ({pct:5.1f}%) [{priority:9s}]{reason}")
+            
+        except Exception as e:
+            phase2_status[table] = {'dates': 0, 'pct': 0, 'complete': False, 'never_ran': True}
+            print(f"  ✗ {table:40s} ERROR: {str(e)[:40]}")
+    
+    # Summary with actionable insights
+    critical_phase2 = [phase2_status[t[0]] for t in phase2_sources if t[1] == 'CRITICAL']
+    all_critical_complete = all(s['complete'] for s in critical_phase2)
+    
+    if all_critical_complete:
+        print(f"\n  → Phase 2: ✓ All critical data present - READY for Phase 3\n")
+    else:
+        print(f"\n  → Phase 2: ⚠ Missing critical data")
+        if phase2_never_ran:
+            print(f"     • {len(phase2_never_ran)} scrapers NEVER RAN - need to run scraper backfill")
+            for table, proc in phase2_never_ran[:3]:
+                print(f"       - {proc}")
+        if phase2_ran_but_no_data:
+            print(f"     • {len(phase2_ran_but_no_data)} scrapers ran but found no data - source issue or use fallback")
+            for table, proc in phase2_ran_but_no_data[:3]:
+                print(f"       - {proc}")
+        print()
+    
+    # ========================================================================
+    # PHASE 3: ANALYTICS  
+    # ========================================================================
+    print("="*80)
+    print("PHASE 3: ANALYTICS")
+    print("="*80 + "\n")
+    
+    phase3_tables = [
+        ('player_game_summary', 'game_date'),
+        ('team_defense_game_summary', 'game_date'),
+        ('team_offense_game_summary', 'game_date'),
+        ('upcoming_player_game_context', 'game_date'),
+        ('upcoming_team_game_context', 'game_date'),
+    ]
+    
+    phase3_status = {}
+    phase3_never_ran = []
+    phase3_ran_but_no_data = []
+    
+    for table, date_field in phase3_tables:
+        query = f"""
+        SELECT COUNT(DISTINCT {date_field}) as dates
+        FROM `{PROJECT_ID}.nba_analytics.{table}`
+        WHERE {date_field} BETWEEN '{start_date}' AND '{end_date}'
+        """
+        try:
+            result = client.query(query).result()
+            dates = next(result).dates
+            pct = (dates / expected_days) * 100
+            has_data = dates > 0
+            
+            # Check run history
+            processor_name = PHASE3_PROCESSORS.get(table, table)
+            run_status = get_run_status(run_history, start_date, 'Phase 3', processor_name)
+            
+            # Determine status and reason
+            if pct == 100:
+                status = "✓"
+                reason = ""
+            elif has_data and run_status == 'success':
+                status = "⚠"
+                reason = " (ran, partial)"
+            elif not has_data and run_status == 'success':
+                status = "○"
+                reason = " (ran, no output)"
+                phase3_ran_but_no_data.append((table, processor_name))
+            elif not has_data and run_status == 'failed':
+                status = "✗"
+                reason = " (FAILED - check logs)"
+            elif not has_data and run_status is None:
+                status = "○"
+                reason = " (never ran)"
+                phase3_never_ran.append((table, processor_name))
+            else:
+                status = "△"
+                reason = ""
+            
+            phase3_status[table] = {
+                'dates': dates,
+                'pct': pct,
+                'complete': pct == 100,
+                'run_status': run_status,
+                'never_ran': run_status is None and not has_data
+            }
+            
+            print(f"  {status} {table:40s} {dates:3d}/{expected_days} ({pct:5.1f}%){reason}")
+            
+        except Exception as e:
+            phase3_status[table] = {'dates': 0, 'pct': 0, 'complete': False, 'never_ran': True}
+            print(f"  ✗ {table:40s} ERROR: {str(e)[:40]}")
+    
+    # Summary
+    all_phase3_complete = all(s['complete'] for s in phase3_status.values())
+    any_phase3_data = any(s['dates'] > 0 for s in phase3_status.values())
+    
+    if all_phase3_complete:
+        print(f"\n  → Phase 3: ✓ Complete - READY for Phase 4\n")
+    elif not any_phase3_data:
+        if phase3_never_ran:
+            print(f"\n  → Phase 3: ○ {len(phase3_never_ran)} processors never ran - NEED to run Phase 3 backfill\n")
+        else:
+            print(f"\n  → Phase 3: ○ No data - NEED to run Phase 3 backfill\n")
+    else:
+        print(f"\n  → Phase 3: △ Incomplete - NEED to run Phase 3 backfill\n")
+    
+    # ========================================================================
+    # PHASE 4: PRECOMPUTE
+    # ========================================================================
+    print("="*80)
+    print("PHASE 4: PRECOMPUTE")
+    print("="*80 + "\n")
+    
+    phase4_tables = {
+        'team_defense_zone_analysis': 'analysis_date',
+        'player_shot_zone_analysis': 'analysis_date',
+        'player_composite_factors': 'game_date',
+        'player_daily_cache': 'cache_date',
+    }
+    
+    # Check for bootstrap dates
+    bootstrap_count = sum(1 for d in range(expected_days) 
+                         if is_bootstrap_date((start + __import__('datetime').timedelta(days=d))))
+    expected_phase4 = expected_days - bootstrap_count
+    
+    phase4_status = {}
+    phase4_never_ran = []
+    
+    for table, date_field in phase4_tables.items():
+        query = f"""
+        SELECT COUNT(DISTINCT {date_field}) as dates
+        FROM `{PROJECT_ID}.nba_precompute.{table}`
+        WHERE {date_field} BETWEEN '{start_date}' AND '{end_date}'
+        """
+        try:
+            result = client.query(query).result()
+            dates = next(result).dates
+            pct = (dates / expected_phase4 * 100) if expected_phase4 > 0 else 0
+            has_data = dates > 0
+            
+            # Check run history
+            processor_name = PHASE4_PROCESSORS.get(table, table)
+            run_status = get_run_status(run_history, start_date, 'Phase 4', processor_name)
+            
+            # Determine status
+            if pct == 100:
+                status = "✓"
+                reason = ""
+            elif has_data and run_status == 'success':
+                status = "⚠"
+                reason = " (ran, partial)"
+            elif not has_data and run_status is None:
+                status = "○"
+                reason = " (never ran)"
+                phase4_never_ran.append((table, processor_name))
+            elif not has_data and run_status == 'failed':
+                status = "✗"
+                reason = " (FAILED)"
+            else:
+                status = "△"
+                reason = ""
+            
+            phase4_status[table] = {
+                'dates': dates,
+                'pct': pct,
+                'complete': pct == 100,
+                'run_status': run_status,
+                'never_ran': run_status is None and not has_data
+            }
+            
+            print(f"  {status} {table:40s} {dates:3d}/{expected_phase4} ({pct:5.1f}%){reason}")
+            
+        except Exception as e:
+            phase4_status[table] = {'dates': 0, 'pct': 0, 'complete': False, 'never_ran': True}
+            print(f"  ✗ {table:40s} ERROR: {str(e)[:40]}")
+    
+    if bootstrap_count > 0:
+        print(f"\n  Note: {bootstrap_count} bootstrap dates (Phase 4 skips these)")
+    
+    # Summary
+    all_phase4_complete = all(s['complete'] for s in phase4_status.values())
+    any_phase4_data = any(s['dates'] > 0 for s in phase4_status.values())
+    
+    if all_phase4_complete:
+        print(f"\n  → Phase 4: ✓ Complete - ALL DONE!\n")
+    elif not any_phase4_data:
+        if phase4_never_ran:
+            print(f"\n  → Phase 4: ○ {len(phase4_never_ran)} processors never ran - NEED to run Phase 4 backfill\n")
+        else:
+            print(f"\n  → Phase 4: ○ No data - NEED to run Phase 4 backfill\n")
+    else:
+        print(f"\n  → Phase 4: △ Incomplete - NEED to run Phase 4 backfill\n")
+    
+    # ========================================================================
+    # EXECUTION PLAN
+    # ========================================================================
+    if show_plan:
+        print("="*80)
+        print("EXECUTION PLAN")
+        print("="*80 + "\n")
+        
+        if all_phase3_complete and all_phase4_complete:
+            print("  ✓ All phases complete - nothing to run!\n")
+        else:
+            # Phase 2 recommendations
+            if phase2_never_ran:
+                print("  STEP 1: Run Scraper Backfills (NEVER RAN)")
+                print("  ──────────────────────────────────────────────")
+                for table, processor_name in phase2_never_ran:
+                    if 'gamebook' in processor_name:
+                        script_path = "backfill_jobs/scrapers/nbac_gamebook/nbac_gamebook_scraper_backfill.py"
+                    elif 'team_boxscore' in processor_name:
+                        script_path = "backfill_jobs/scrapers/nbac_team_boxscore/nbac_team_boxscore_scraper_backfill.py"
+                    elif 'bp_props' in processor_name:
+                        script_path = "backfill_jobs/scrapers/bp_props/bp_props_scraper_backfill.py"
+                    elif 'bdb_play_by_play' in processor_name:
+                        script_path = "backfill_jobs/scrapers/bdb_play_by_play/bdb_play_by_play_scraper_backfill.py"
+                    elif 'bdl' in processor_name:
+                        script_path = "backfill_jobs/scrapers/bdl_player_boxscore/bdl_player_boxscore_backfill.py"
+                    else:
+                        script_path = f"backfill_jobs/scrapers/{processor_name}/{processor_name}_backfill.py"
+                    
+                    print(f"\n  # {processor_name} - never ran")
+                    print(f"  PYTHONPATH=$(pwd) python3 {script_path} \\")
+                    print(f"    --start-date {start_date} --end-date {end_date}")
+                print()
+            
+            if not all_phase3_complete:
+                step_num = "2" if phase2_never_ran else "1"
+                print(f"  STEP {step_num}: Run Phase 3 Analytics Backfill")
+                print("  ──────────────────────────────────────────────")
+                print(f"  # Can run all 5 in parallel")
+                for table, _ in phase3_tables:
+                    if not phase3_status[table]['complete']:
+                        missing = expected_days - phase3_status[table]['dates']
+                        never_ran_note = " (NEVER RAN)" if phase3_status[table]['never_ran'] else ""
+                        print(f"\n  # {table} - missing {missing} dates{never_ran_note}")
+                        print(f"  PYTHONPATH=$(pwd) python3 backfill_jobs/analytics/{table}/{table}_analytics_backfill.py \\")
+                        print(f"    --start-date {start_date} --end-date {end_date}")
+                print()
+            
+            if not all_phase4_complete and all_phase3_complete:
+                step_num = "3" if phase2_never_ran or not all_phase3_complete else "1"
+                print(f"  STEP {step_num}: Run Phase 4 Precompute Backfill (SEQUENTIAL!)")
+                print("  ──────────────────────────────────────────────")
+                print(f"  # MUST run one at a time, wait for each to complete\n")
+                
+                phase4_order = [
+                    'team_defense_zone_analysis',
+                    'player_shot_zone_analysis',
+                    'player_composite_factors',
+                    'player_daily_cache',
+                ]
+                
+                for i, table in enumerate(phase4_order, 1):
+                    if table in phase4_status and not phase4_status[table]['complete']:
+                        missing = expected_phase4 - phase4_status[table]['dates']
+                        never_ran_note = " (NEVER RAN)" if phase4_status[table]['never_ran'] else ""
+                        print(f"  # {i}. {table} - missing {missing} dates{never_ran_note}")
+                        print(f"  PYTHONPATH=$(pwd) python3 backfill_jobs/precompute/{table}/{table}_precompute_backfill.py \\")
+                        print(f"    --start-date {start_date} --end-date {end_date}")
+                        print(f"  # Wait for completion before proceeding\n")
+            elif not all_phase4_complete:
+                print("  STEP: Complete Phase 3 first")
+                print("  ──────────────────────────────────────────────")
+                print("    Phase 4 requires complete Phase 3 data\n")
+    
+    # ========================================================================
+    # SUMMARY
+    # ========================================================================
+    print("="*80)
+    print("SUMMARY")
+    print("="*80 + "\n")
+    
+    phase2_status_str = '✓ Ready' if all_critical_complete else '✗ Need scrapers'
+    phase3_status_str = '✓ Complete' if all_phase3_complete else '△ Need backfill' if any_phase3_data else '○ Need backfill'
+    phase4_status_str = '✓ Complete' if all_phase4_complete else '△ Need backfill' if any_phase4_data else '○ Need backfill'
+    
+    print(f"  Phase 2 (Raw):        {phase2_status_str}")
+    if phase2_never_ran:
+        print(f"    └─ {len(phase2_never_ran)} scrapers never ran")
+    if phase2_ran_but_no_data:
+        print(f"    └─ {len(phase2_ran_but_no_data)} scrapers ran but found no data")
+    
+    print(f"  Phase 3 (Analytics):  {phase3_status_str}")
+    if phase3_never_ran:
+        print(f"    └─ {len(phase3_never_ran)} processors never ran")
+    
+    print(f"  Phase 4 (Precompute): {phase4_status_str}")
+    if phase4_never_ran:
+        print(f"    └─ {len(phase4_never_ran)} processors never ran")
+    
+    if all_phase3_complete and all_phase4_complete:
+        print(f"\n  Status: ✓ COMPLETE - All data exists for {start_date} to {end_date}\n")
+    elif not all_critical_complete and phase2_never_ran:
+        print(f"\n  Next Action: Run scraper backfills (they never ran)\n")
+    elif all_critical_complete and not all_phase3_complete:
+        print(f"\n  Next Action: Run Phase 3 backfill\n")
+    elif all_phase3_complete and not all_phase4_complete:
+        print(f"\n  Next Action: Run Phase 4 backfill (sequential)\n")
+    else:
+        print(f"\n  Next Action: Check execution plan above\n")
+    
+    print("="*80 + "\n")
+
+
+if __name__ == '__main__':
+    if len(sys.argv) < 2:
+        print("Usage: python3 validate_and_plan.py START_DATE [END_DATE] [--plan]")
+        print("Example: python3 validate_and_plan.py 2024-01-15")
+        print("Example: python3 validate_and_plan.py 2024-01-15 2024-01-28 --plan")
+        sys.exit(1)
+    
+    start_date = sys.argv[1]
+    end_date = sys.argv[2] if len(sys.argv) >= 3 and not sys.argv[2].startswith('--') else start_date
+    show_plan = '--plan' in sys.argv
+    
+    validate_date_range(start_date, end_date, show_plan)

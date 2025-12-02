@@ -119,7 +119,19 @@ def _validate_table(
         )
 
     # Non-bootstrap: determine expected count
-    if table_config.expected_scope == 'all_players':
+    # 'all_rostered' = all players on game-day rosters (active + DNP + inactive)
+    if table_config.expected_scope == 'all_rostered':
+        expected_count = player_universe.total_rostered
+        player_count = query_player_count(
+            client=client,
+            dataset=table_config.dataset,
+            table=table_config.table_name,
+            date_column=table_config.date_column,
+            game_date=game_date,
+        )
+        expected_players = player_universe.total_rostered
+    elif table_config.expected_scope == 'active_only':
+        # Only players who actually played
         expected_count = player_universe.total_active
         player_count = query_player_count(
             client=client,

@@ -128,7 +128,7 @@ class Phase3Table:
     dataset: str
     date_column: str
     processor_name: str
-    expected_scope: str  # 'all_players', 'prop_players', 'teams'
+    expected_scope: str  # 'all_rostered' (active+DNP+inactive), 'active_only', 'teams'
     has_quality_columns: bool = True
 
 PHASE3_TABLES = {
@@ -137,7 +137,7 @@ PHASE3_TABLES = {
         dataset='nba_analytics',
         date_column='game_date',
         processor_name='PlayerGameSummaryProcessor',
-        expected_scope='all_players',
+        expected_scope='all_rostered',  # All players on game-day rosters (active+DNP+inactive)
     ),
     'team_defense_game_summary': Phase3Table(
         table_name='team_defense_game_summary',
@@ -158,7 +158,7 @@ PHASE3_TABLES = {
         dataset='nba_analytics',
         date_column='game_date',
         processor_name='UpcomingPlayerGameContextProcessor',
-        expected_scope='all_players',  # TARGET STATE (currently prop_players)
+        expected_scope='all_rostered',  # All players on game-day rosters (active+DNP+inactive)
     ),
     'upcoming_team_game_context': Phase3Table(
         table_name='upcoming_team_game_context',
@@ -180,7 +180,7 @@ class Phase4Table:
     dataset: str
     date_column: str
     processor_name: str
-    expected_scope: str  # 'all_players', 'teams'
+    expected_scope: str  # 'all_rostered' (active+DNP+inactive), 'teams'
     skips_bootstrap: bool = True
 
 PHASE4_TABLES = {
@@ -196,28 +196,28 @@ PHASE4_TABLES = {
         dataset='nba_precompute',
         date_column='analysis_date',
         processor_name='PlayerShotZoneAnalysisProcessor',
-        expected_scope='all_players',
+        expected_scope='all_rostered',
     ),
     'player_composite_factors': Phase4Table(
         table_name='player_composite_factors',
         dataset='nba_precompute',
         date_column='game_date',
         processor_name='PlayerCompositeFactorsProcessor',
-        expected_scope='all_players',
+        expected_scope='all_rostered',
     ),
     'player_daily_cache': Phase4Table(
         table_name='player_daily_cache',
         dataset='nba_precompute',
         date_column='cache_date',
         processor_name='PlayerDailyCacheProcessor',
-        expected_scope='all_players',
+        expected_scope='all_rostered',
     ),
     'ml_feature_store_v2': Phase4Table(
         table_name='ml_feature_store_v2',
         dataset='nba_predictions',
         date_column='game_date',
         processor_name='MLFeatureStoreProcessor',
-        expected_scope='all_players',
+        expected_scope='all_rostered',
     ),
 }
 

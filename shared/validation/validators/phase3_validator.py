@@ -103,7 +103,19 @@ def _validate_table(
     )
 
     # Determine expected count based on scope
-    if table_config.expected_scope == 'all_players':
+    # 'all_rostered' = all players on game-day rosters (active + DNP + inactive)
+    if table_config.expected_scope == 'all_rostered':
+        expected_count = player_universe.total_rostered
+        player_count = query_player_count(
+            client=client,
+            dataset=table_config.dataset,
+            table=table_config.table_name,
+            date_column=table_config.date_column,
+            game_date=game_date,
+        )
+        expected_players = player_universe.total_rostered
+    elif table_config.expected_scope == 'active_only':
+        # Only players who actually played
         expected_count = player_universe.total_active
         player_count = query_player_count(
             client=client,
@@ -113,17 +125,6 @@ def _validate_table(
             game_date=game_date,
         )
         expected_players = player_universe.total_active
-    elif table_config.expected_scope == 'prop_players':
-        # Current limitation - only prop players
-        expected_count = player_universe.total_with_props
-        player_count = query_player_count(
-            client=client,
-            dataset=table_config.dataset,
-            table=table_config.table_name,
-            date_column=table_config.date_column,
-            game_date=game_date,
-        )
-        expected_players = player_universe.total_with_props
     elif table_config.expected_scope == 'teams':
         expected_count = len(schedule_context.teams_playing)
         player_count = 0
@@ -183,27 +184,62 @@ def _validate_table(
             f"{table_name}: {quality.poor + quality.unusable} records with poor/unusable quality"
         )
 
-    # Check for current system limitation (upcoming_player_game_context)
-    if table_name == 'upcoming_player_game_context':
-        # Check if it's limited to prop players instead of all players
-        actual_players = query_actual_players(
+    # For player tables, add prop line coverage breakdown
+    if table_config.expected_scope in ('all_rostered', 'active_only'):
+        prop_breakdown = _query_prop_line_breakdown(
             client=client,
             dataset=table_config.dataset,
             table=table_config.table_name,
             date_column=table_config.date_column,
             game_date=game_date,
         )
-
-        # If significantly fewer than active players, likely props-only limitation
-        if player_universe.total_active > 0:
-            coverage = len(actual_players) / player_universe.total_active
-            if coverage < 0.5:  # Less than 50% of active players
-                table_result.warnings.append(
-                    f"LIMITATION: Only {len(actual_players)}/{player_universe.total_active} "
-                    f"players ({coverage*100:.1f}%) - props-only mode active"
-                )
+        if prop_breakdown:
+            table_result.metadata['prop_breakdown'] = prop_breakdown
+            with_props = prop_breakdown.get('with_prop_line', 0)
+            without_props = prop_breakdown.get('without_prop_line', 0)
+            total = with_props + without_props
+            if total > 0:
+                prop_pct = (with_props / total) * 100
+                table_result.metadata['prop_coverage_pct'] = prop_pct
+                # Add info about prop coverage to metadata for display
+                table_result.metadata['prop_summary'] = f"{with_props} with props, {without_props} without ({prop_pct:.1f}% coverage)"
 
     return table_result
+
+
+def _query_prop_line_breakdown(
+    client: bigquery.Client,
+    dataset: str,
+    table: str,
+    date_column: str,
+    game_date: date,
+) -> dict:
+    """Query prop line breakdown for a table (if has_prop_line column exists)."""
+    query = f"""
+    SELECT
+        COUNTIF(has_prop_line = TRUE) as with_prop_line,
+        COUNTIF(has_prop_line = FALSE OR has_prop_line IS NULL) as without_prop_line
+    FROM `{PROJECT_ID}.{dataset}.{table}`
+    WHERE {date_column} = @game_date
+    """
+
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+        ]
+    )
+
+    try:
+        result = client.query(query, job_config=job_config).result()
+        row = next(iter(result))
+        return {
+            'with_prop_line': row.with_prop_line or 0,
+            'without_prop_line': row.without_prop_line or 0,
+        }
+    except Exception as e:
+        # Column may not exist (pre-v3.2 data)
+        logger.debug(f"Could not query prop breakdown for {dataset}.{table}: {e}")
+        return {}
 
 
 def _determine_phase_status(result: PhaseValidationResult) -> None:

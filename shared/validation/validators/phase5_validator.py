@@ -188,8 +188,8 @@ def _build_table_result(
     players_predicted = len(prediction_data['players_with_predictions'])
     total_predictions = prediction_data['total_predictions']
 
-    # Target state: all active players should have predictions
-    expected_players = player_universe.total_active
+    # Target state: all rostered players should have predictions (active + DNP + inactive)
+    expected_players = player_universe.total_rostered
     expected_predictions = expected_players * PREDICTIONS_PER_PLAYER
 
     # Determine status
@@ -222,17 +222,10 @@ def _build_table_result(
         table_result.issues.append(f"No predictions for {game_date}")
     elif players_predicted < expected_players:
         missing_count = expected_players - players_predicted
-        # Check if this is props-only limitation
-        if players_predicted <= player_universe.total_with_props:
-            table_result.warnings.append(
-                f"LIMITATION: Only {players_predicted}/{expected_players} players predicted "
-                f"({missing_count} missing) - props-only mode likely active"
-            )
-        else:
-            table_result.warnings.append(
-                f"{players_predicted}/{expected_players} players have predictions "
-                f"({missing_count} missing)"
-            )
+        table_result.warnings.append(
+            f"{players_predicted}/{expected_players} players have predictions "
+            f"({missing_count} missing)"
+        )
 
     # Check for incomplete prediction systems
     incomplete = prediction_data['players_with_incomplete_systems']
@@ -258,14 +251,25 @@ def _build_table_result(
             f"Expected prediction systems not found: {missing_systems}"
         )
 
-    # Report prop line coverage if available
+    # Report prop line coverage breakdown
     if prediction_data.get('has_prop_line_column'):
         with_prop = len(prediction_data['players_with_prop_line'])
         without_prop = len(prediction_data['players_without_prop_line'])
-        if with_prop + without_prop > 0:
+        total = with_prop + without_prop
+        if total > 0:
+            prop_pct = (with_prop / total) * 100
             table_result.metadata = {
                 'players_with_prop_line': with_prop,
                 'players_without_prop_line': without_prop,
+                'prop_coverage_pct': prop_pct,
+                'prop_summary': f"{with_prop} with props, {without_prop} without ({prop_pct:.1f}% coverage)",
             }
+    else:
+        # No has_prop_line column - compare against props universe
+        table_result.metadata = {
+            'players_with_prop_line': min(players_predicted, player_universe.total_with_props),
+            'players_without_prop_line': max(0, players_predicted - player_universe.total_with_props),
+            'prop_summary': f"~{player_universe.total_with_props} expected with props (column not available)",
+        }
 
     return table_result

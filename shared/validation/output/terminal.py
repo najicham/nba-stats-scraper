@@ -322,6 +322,10 @@ def _format_phase_result(result: PhaseValidationResult, use_color: bool, verbose
                 line = f"{table_name:<35s} {record_str:>10s} {expected_str:>10s} {status_str:>10s}"
             lines.append(line)
 
+            # Show prop breakdown if available (for player tables)
+            if table.metadata.get('prop_summary'):
+                lines.append(f"{'':>35s} └─ Props: {table.metadata['prop_summary']}")
+
     elif result.phase == 5:
         # Phase 5 format (predictions)
         header = f"{'Table':<35s} {'Predictions':>12s} {'Players':>12s} {'Expected':>12s} {'Status':>10s}"
@@ -336,6 +340,10 @@ def _format_phase_result(result: PhaseValidationResult, use_color: bool, verbose
 
             line = f"{table_name:<35s} {pred_str:>12s} {player_str:>12s} {expected_str:>12s} {status_str:>10s}"
             lines.append(line)
+
+            # Show prop breakdown if available
+            if table.metadata.get('prop_summary'):
+                lines.append(f"{'':>35s} └─ Props: {table.metadata['prop_summary']}")
 
     # Phase summary
     lines.append("")
