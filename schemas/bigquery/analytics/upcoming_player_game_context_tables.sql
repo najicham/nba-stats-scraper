@@ -8,28 +8,34 @@
 -- Data Sources: Phase 2 raw tables only (no Phase 3 dependencies)
 -- Processing: UpcomingPlayerGameContextProcessor (MERGE_UPDATE strategy)
 --
--- This table provides comprehensive pre-game context for every player with a
--- points prop bet available. It combines:
+-- This table provides comprehensive pre-game context for ALL players with games
+-- scheduled (not just those with prop lines). It combines:
 -- - Historical performance (last 30 days from boxscores)
 -- - Fatigue analysis (rest days, back-to-backs, minutes load)
--- - Prop betting context (current/opening lines, movement)
+-- - Prop betting context (current/opening lines, movement) - for players with props
 -- - Game situation (spreads, totals, pace expectations)
 -- - Injury status and team context
 --
+-- v3.2 CHANGE (All-Player Predictions):
+-- Now processes ~67 players/day (all active) vs ~22 (prop lines only).
+-- has_prop_line flag indicates which players have betting lines.
+--
 -- Key dependencies (all Phase 2 raw tables):
--- 1. nba_raw.odds_api_player_points_props - DRIVER (which players to process)
--- 2. nba_raw.bdl_player_boxscores - Historical performance (PRIMARY)
--- 3. nba_raw.nbac_schedule - Game timing and context
--- 4. nba_raw.odds_api_game_lines - Game spreads and totals
+-- 1. nba_raw.nbac_gamebook_player_stats - DRIVER (ALL players with games)
+-- 2. nba_raw.odds_api_player_points_props - Props info (LEFT JOIN)
+-- 3. nba_raw.bettingpros_player_points_props - Props fallback (LEFT JOIN)
+-- 4. nba_raw.bdl_player_boxscores - Historical performance (PRIMARY)
+-- 5. nba_raw.nbac_schedule - Game timing and context
+-- 6. nba_raw.odds_api_game_lines - Game spreads and totals
 --
 -- Optional sources (enhance quality if available):
--- 5. nba_raw.espn_team_rosters - Current team verification
--- 6. nba_raw.nbac_injury_report - Injury status
+-- 7. nba_raw.espn_team_rosters - Current team verification
+-- 8. nba_raw.nbac_injury_report - Injury status
 -- ============================================================================
 
 CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_analytics.upcoming_player_game_context` (
   -- ============================================================================
-  -- CORE IDENTIFIERS (6 fields)
+  -- CORE IDENTIFIERS (7 fields - added has_prop_line in v3.2)
   -- ============================================================================
   player_lookup STRING NOT NULL,                    -- Normalized player identifier (join key)
   universal_player_id STRING,                       -- Universal player ID from registry (e.g., lebronjames_001)
@@ -37,10 +43,11 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_analytics.upcoming_player_gam
   game_date DATE NOT NULL,                          -- Game date (partition key)
   team_abbr STRING NOT NULL,                        -- Player's team abbreviation
   opponent_team_abbr STRING NOT NULL,               -- Opposing team abbreviation
-  
+  has_prop_line BOOLEAN DEFAULT FALSE,              -- TRUE if player has betting prop line for this game (v3.2)
+
   -- ============================================================================
   -- PLAYER PROP BETTING CONTEXT (5 fields)
-  -- From nba_raw.odds_api_player_points_props
+  -- From nba_raw.odds_api_player_points_props (only populated if has_prop_line = TRUE)
   -- ============================================================================
   current_points_line NUMERIC(4,1),                 -- Most recent player points line
   opening_points_line NUMERIC(4,1),                 -- Opening player points line
@@ -751,14 +758,24 @@ ADD COLUMN IF NOT EXISTS all_windows_complete BOOLEAN
   OPTIONS (description='TRUE if ALL windows >= 90% complete');
 
 -- ============================================================================
+-- DEPLOYMENT: Add has_prop_line column (v3.2 - All-Player Predictions)
+-- ============================================================================
+
+ALTER TABLE `nba-props-platform.nba_analytics.upcoming_player_game_context`
+ADD COLUMN IF NOT EXISTS has_prop_line BOOLEAN
+  OPTIONS (description='TRUE if player has betting prop line for this game');
+
+-- ============================================================================
 -- VERSION HISTORY
 -- ============================================================================
 -- v1.0 (Initial):       Complete schema design with Phase 2 source tracking
 -- v1.1 (+source_track): Added 4 Phase 2 sources × 3 fields = 12 tracking fields
 -- v1.2 (+docs):         Added comprehensive documentation and example queries
 -- v1.3 (+completeness): Added 25 completeness checking columns (Week 5)
+-- v3.2 (+all_players):  Added has_prop_line column for all-player predictions
+--                       Changed DRIVER from props to gamebook
+--                       Now processes ALL active players, not just prop-line players
 --
--- Last Updated: November 2025
--- Status: Ready for Implementation
--- Next: Implement UpcomingPlayerGameContextProcessor
+-- Last Updated: December 2025
+-- Status: Production Ready
 -- ============================================================================

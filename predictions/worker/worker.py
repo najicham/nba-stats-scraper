@@ -264,6 +264,15 @@ def handle_prediction_request():
         game_id = request_data['game_id']
         line_values = request_data.get('line_values', [])
 
+        # v3.2: Extract line source tracking info
+        line_source_info = {
+            'has_prop_line': request_data.get('has_prop_line', True),  # Default True for backwards compat
+            'actual_prop_line': request_data.get('actual_prop_line'),
+            'line_source': request_data.get('line_source', 'ACTUAL_PROP'),  # Default to actual
+            'estimated_line_value': request_data.get('estimated_line_value'),
+            'estimation_method': request_data.get('estimation_method')
+        }
+
         # Convert date string to date object
         game_date = datetime.strptime(game_date_str, '%Y-%m-%d').date()
 
@@ -280,7 +289,8 @@ def handle_prediction_request():
             game_id=game_id,
             line_values=line_values,
             data_loader=data_loader,
-            circuit_breaker=circuit_breaker
+            circuit_breaker=circuit_breaker,
+            line_source_info=line_source_info  # v3.2: Pass line source tracking
         )
 
         predictions = result['predictions']
@@ -391,7 +401,8 @@ def process_player_predictions(
     game_id: str,
     line_values: List[float],
     data_loader: 'PredictionDataLoader',
-    circuit_breaker: 'SystemCircuitBreaker'
+    circuit_breaker: 'SystemCircuitBreaker',
+    line_source_info: Dict = None  # v3.2: Line source tracking
 ) -> Dict:
     """
     Generate predictions for one player across multiple lines
@@ -403,15 +414,27 @@ def process_player_predictions(
     4. Call each prediction system (with circuit breaker checks)
     5. Format predictions for BigQuery
 
+    v3.2 CHANGE: Added line_source_info for tracking estimated vs actual lines.
+
     Args:
         player_lookup: Player identifier (e.g., 'lebron-james')
         game_date: Game date (date object)
         game_id: Game identifier (e.g., '20251108_LAL_GSW')
         line_values: List of prop lines to test (e.g., [25.5])
+        line_source_info: Dict with has_prop_line, line_source, estimated_line_value, estimation_method
 
     Returns:
         Dict with 'predictions' and 'metadata' keys
     """
+    # Default line source info for backwards compatibility
+    if line_source_info is None:
+        line_source_info = {
+            'has_prop_line': True,
+            'line_source': 'ACTUAL_PROP',
+            'actual_prop_line': None,
+            'estimated_line_value': None,
+            'estimation_method': None
+        }
     # Lazy-load prediction systems
     moving_average, zone_matchup, similarity, xgboost, ensemble = get_prediction_systems()
 
@@ -461,6 +484,13 @@ def process_player_predictions(
 
     logger.info(f"Features validated for {player_lookup} (quality: {features['feature_quality_score']:.1f})")
     metadata['feature_quality_score'] = features['feature_quality_score']
+
+    # v3.2: Inject line source tracking info into features for format_prediction_for_bigquery
+    features['has_prop_line'] = line_source_info.get('has_prop_line', True)
+    features['line_source'] = line_source_info.get('line_source', 'ACTUAL_PROP')
+    features['actual_prop_line'] = line_source_info.get('actual_prop_line')
+    features['estimated_line_value'] = line_source_info.get('estimated_line_value')
+    features['estimation_method'] = line_source_info.get('estimation_method')
 
     # Step 2.5: Check feature completeness (Phase 5)
     completeness = features.get('completeness', {})
@@ -768,18 +798,23 @@ def format_prediction_for_bigquery(
 ) -> Dict:
     """
     Format prediction for BigQuery player_prop_predictions table
-    
+
     Handles different return formats from different systems
-    
+
+    v3.2 CHANGE (All-Player Predictions):
+    - For players WITHOUT prop lines, sets recommendation to 'NO_LINE'
+    - current_points_line and line_margin are NULL for NO_LINE players
+    - has_prop_line flag indicates whether player had a betting line
+
     Args:
         system_id: System identifier
         prediction: Prediction dict from system
         player_lookup: Player identifier
         game_id: Game identifier
         game_date: Game date
-        line_value: Prop line value
+        line_value: Prop line value (may be estimated for NO_LINE players)
         features: Feature dict (for quality score)
-    
+
     Returns:
         Dict formatted for BigQuery insertion
     """
@@ -793,14 +828,35 @@ def format_prediction_for_bigquery(
             player_lookup,
             required=False  # Graceful degradation
         )
-        
+
         if universal_player_id is None:
             logger.warning(f"No universal_player_id found for {player_lookup}")
             # Still proceed - universal_player_id is optional
     except Exception as e:
         logger.error(f"Error looking up universal_player_id for {player_lookup}: {e}")
         # Still proceed with None value
-    
+
+    # Check if player has a prop line (v3.2 - All-Player Predictions)
+    has_prop_line = features.get('has_prop_line', True)  # Default True for backwards compatibility
+
+    # Get line source tracking info (v3.2)
+    line_source = features.get('line_source', 'ACTUAL_PROP')
+    estimated_line_value = features.get('estimated_line_value')
+    estimation_method = features.get('estimation_method')
+    actual_prop_line = features.get('actual_prop_line')
+
+    # Determine recommendation and line values based on has_prop_line
+    if has_prop_line:
+        # Player has prop line - use normal recommendation
+        recommendation = prediction['recommendation']
+        current_points_line = round(actual_prop_line if actual_prop_line else line_value, 1)
+        line_margin = round(prediction['predicted_points'] - current_points_line, 2)
+    else:
+        # Player does NOT have prop line - set NO_LINE recommendation
+        recommendation = 'NO_LINE'
+        current_points_line = None  # No actual betting line
+        line_margin = None  # Can't calculate margin without line
+
     # Base record
     record = {
         'prediction_id': str(uuid.uuid4()),
@@ -810,16 +866,22 @@ def format_prediction_for_bigquery(
         'game_date': game_date.isoformat(),
         'game_id': game_id,
         'prediction_version': 1,
-        
-        # Core prediction
+
+        # Core prediction (v3.2: has_prop_line and NO_LINE handling)
         'predicted_points': round(prediction['predicted_points'], 1),
         'confidence_score': round(normalize_confidence(prediction['confidence'], system_id), 2),
-        'recommendation': prediction['recommendation'],
-        
-        # Context
-        'current_points_line': round(line_value, 1),
-        'line_margin': round(prediction['predicted_points'] - line_value, 2),
-        
+        'recommendation': recommendation,
+        'has_prop_line': has_prop_line,
+
+        # Context (v3.2: NULL for NO_LINE players)
+        'current_points_line': current_points_line,
+        'line_margin': line_margin,
+
+        # Line source tracking (v3.2: Track what line was used for prediction)
+        'line_source': line_source,  # 'ACTUAL_PROP' or 'ESTIMATED_AVG'
+        'estimated_line_value': round(estimated_line_value, 1) if estimated_line_value else None,
+        'estimation_method': estimation_method,  # 'points_avg_last_5', 'points_avg_last_10', 'default_15.5'
+
         # Status
         'is_active': True,
         'created_at': datetime.utcnow().isoformat(),

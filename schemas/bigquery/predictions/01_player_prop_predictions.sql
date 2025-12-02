@@ -14,10 +14,11 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.player_prop_predi
   game_id STRING NOT NULL,
   prediction_version INT64 NOT NULL DEFAULT 1,      -- Version (increments on updates)
   
-  -- Core Prediction (3 fields)
+  -- Core Prediction (4 fields - added has_prop_line in v3.2)
   predicted_points NUMERIC(5,1) NOT NULL,           -- Predicted points
   confidence_score NUMERIC(5,2) NOT NULL,           -- Confidence (0-100)
-  recommendation STRING NOT NULL,                   -- 'OVER', 'UNDER', 'PASS'
+  recommendation STRING NOT NULL,                   -- 'OVER', 'UNDER', 'PASS', 'NO_LINE' (v3.2)
+  has_prop_line BOOLEAN DEFAULT TRUE,               -- TRUE if player had betting line when prediction was made (v3.2)
   
   -- Prediction Components (9 fields)
   -- What went into this prediction
@@ -35,9 +36,15 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.player_prop_predi
   similar_games_count INT64,                        -- Sample size (rule-based only)
   avg_similarity_score NUMERIC(5,2),                -- Quality of matches (rule-based only)
   min_similarity_score NUMERIC(5,2),                -- Minimum match quality
-  current_points_line NUMERIC(4,1),                 -- Line at time of prediction
-  line_margin NUMERIC(5,2),                         -- predicted_points - current_points_line
+  current_points_line NUMERIC(4,1),                 -- Actual prop line at time of prediction (NULL if no prop)
+  line_margin NUMERIC(5,2),                         -- predicted_points - current_points_line (NULL if no prop)
   ml_model_id STRING,                               -- Model used (ML systems only)
+
+  -- Line Source Tracking (3 fields - v3.2 All-Player Predictions)
+  -- Tracks what line was used when making the prediction
+  line_source STRING,                               -- 'ACTUAL_PROP' or 'ESTIMATED_AVG'
+  estimated_line_value NUMERIC(4,1),                -- The estimated line used if no prop existed
+  estimation_method STRING,                         -- 'points_avg_last_5', 'points_avg_last_10', 'default_15.5'
   
   -- Multi-System Analysis (3 fields) - Added in migration
   prediction_variance NUMERIC(5,2),                 -- Variance across all active systems
@@ -127,7 +134,7 @@ OPTIONS(
 -- ORDER BY system_id;
 
 -- Get predictions with high system agreement
--- SELECT 
+-- SELECT
 --   player_lookup,
 --   COUNT(DISTINCT system_id) as system_count,
 --   AVG(predicted_points) as avg_prediction,
@@ -140,3 +147,31 @@ OPTIONS(
 -- HAVING system_count >= 4
 --   AND prediction_std <= 2.0  -- High agreement
 -- ORDER BY avg_agreement DESC;
+
+-- ============================================================================
+-- DEPLOYMENT: Add all-player prediction columns (v3.2)
+-- ============================================================================
+
+ALTER TABLE `nba-props-platform.nba_predictions.player_prop_predictions`
+ADD COLUMN IF NOT EXISTS has_prop_line BOOLEAN
+  OPTIONS (description='TRUE if player had betting line when prediction was made'),
+ADD COLUMN IF NOT EXISTS line_source STRING
+  OPTIONS (description='ACTUAL_PROP or ESTIMATED_AVG - indicates line source'),
+ADD COLUMN IF NOT EXISTS estimated_line_value NUMERIC(4,1)
+  OPTIONS (description='The estimated line used if no prop existed'),
+ADD COLUMN IF NOT EXISTS estimation_method STRING
+  OPTIONS (description='How line was estimated: points_avg_last_5, points_avg_last_10, default_15.5');
+
+-- ============================================================================
+-- VERSION HISTORY
+-- ============================================================================
+-- v1.0 (Initial):       Core prediction fields
+-- v3.2 (+all_players):  Added has_prop_line column for all-player predictions
+--                       Added NO_LINE recommendation type
+--                       Added line_source, estimated_line_value, estimation_method
+--                       for tracking what line was used when no prop existed
+--                       Now generates predictions for ALL players, not just prop-line players
+--
+-- Last Updated: December 2025
+-- Status: Production Ready
+-- ============================================================================

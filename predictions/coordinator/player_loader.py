@@ -22,7 +22,7 @@ Performance:
 Version: 1.1 (Merged - adds validation and debugging utilities)
 """
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple, Any
 from google.cloud import bigquery
 from datetime import date, datetime
 import logging
@@ -134,6 +134,7 @@ class PlayerLoader:
                 'players_by_position': {'PG': 90, 'SG': 90, ...}
             }
         """
+        # v3.2: Added has_prop_line stats for all-player predictions
         query = """
         SELECT
             COUNT(DISTINCT game_id) as total_games,
@@ -146,7 +147,11 @@ class PlayerLoader:
             -- Completeness tracking (Phase 5)
             COUNTIF(is_production_ready = TRUE) as production_ready_count,
             COUNTIF(is_production_ready = FALSE OR is_production_ready IS NULL) as not_ready_count,
-            AVG(completeness_percentage) as avg_completeness_pct
+            AVG(completeness_percentage) as avg_completeness_pct,
+
+            -- Prop line tracking (v3.2 - All-Player Predictions)
+            COUNTIF(has_prop_line = TRUE) as with_prop_line_count,
+            COUNTIF(has_prop_line = FALSE OR has_prop_line IS NULL) as without_prop_line_count
         FROM `{project}.nba_analytics.upcoming_player_game_context`
         WHERE game_date = @game_date
         """.format(project=self.project_id)
@@ -183,14 +188,20 @@ class PlayerLoader:
                     'production_ready_count': int(row.production_ready_count or 0),
                     'not_ready_count': int(row.not_ready_count or 0),
                     'avg_completeness_pct': round(float(row.avg_completeness_pct or 0), 2)
+                },
+                # v3.2: All-player predictions prop line coverage
+                'prop_line_coverage': {
+                    'with_prop_line': int(row.with_prop_line_count or 0),
+                    'without_prop_line': int(row.without_prop_line_count or 0)
                 }
             }
-            
+
             logger.info(
                 f"Summary for {game_date}: {summary['total_games']} games, "
                 f"{summary['total_players']} players "
                 f"({summary['completeness']['production_ready_count']} production ready, "
-                f"avg completeness: {summary['completeness']['avg_completeness_pct']}%)"
+                f"avg completeness: {summary['completeness']['avg_completeness_pct']}%, "
+                f"prop line: {summary['prop_line_coverage']['with_prop_line']}/{summary['total_players']})"
             )
             
             return summary
@@ -229,6 +240,7 @@ class PlayerLoader:
         Returns:
             List of player dicts with game context
         """
+        # v3.2 CHANGE: Added has_prop_line and current_points_line for all-player predictions
         query = """
         SELECT
             player_lookup,
@@ -241,7 +253,9 @@ class PlayerLoader:
             days_rest,
             back_to_back,
             avg_minutes_per_game_last_7 as projected_minutes,
-            player_status as injury_status
+            player_status as injury_status,
+            COALESCE(has_prop_line, FALSE) as has_prop_line,  -- v3.2: Track if player has betting line
+            current_points_line  -- v3.2: Pass through actual betting line if available
         FROM `{project}.nba_analytics.upcoming_player_game_context`
         WHERE game_date = @game_date
           AND avg_minutes_per_game_last_7 >= @min_minutes
@@ -273,7 +287,10 @@ class PlayerLoader:
                     'days_rest': row.days_rest,
                     'back_to_back': row.back_to_back,
                     'projected_minutes': float(row.projected_minutes),
-                    'injury_status': row.injury_status
+                    'injury_status': row.injury_status,
+                    # v3.2: All-player predictions support
+                    'has_prop_line': bool(row.has_prop_line) if row.has_prop_line is not None else False,
+                    'current_points_line': float(row.current_points_line) if row.current_points_line else None
                 }
                 players.append(player)
             
@@ -292,36 +309,45 @@ class PlayerLoader:
     ) -> Dict:
         """
         Create prediction request message for a single player
-        
+
+        v3.2 CHANGE: Now includes line source tracking for all-player predictions.
+
         Args:
             player: Player dict from query
             game_date: Game date
             use_multiple_lines: Whether to test multiple lines
-        
+
         Returns:
-            Prediction request dict
+            Prediction request dict with line source tracking
         """
-        # Get betting lines for this player
-        lines = self._get_betting_lines(
+        # Get betting lines for this player (now returns dict with source info)
+        line_info = self._get_betting_lines(
             player['player_lookup'],
             game_date,
             use_multiple_lines
         )
-        
-        # Create request message
+
+        # Create request message with line source tracking (v3.2)
         request = {
             'player_lookup': player['player_lookup'],
             'game_date': game_date.isoformat(),
             'game_id': player['game_id'],
-            'line_values': lines,
+            'line_values': line_info['line_values'],
 
             # Optional context (for debugging/monitoring)
             'team_abbr': player['team_abbr'],
             'opponent_team_abbr': player['opponent_team_abbr'],
             'is_home': player['is_home'],
-            'projected_minutes': player['projected_minutes']
+            'projected_minutes': player['projected_minutes'],
+
+            # v3.2: All-player predictions support with line source tracking
+            'has_prop_line': player.get('has_prop_line', True),  # Default True for backwards compat
+            'actual_prop_line': player.get('current_points_line'),  # The actual betting line (NULL if none)
+            'line_source': line_info['line_source'],  # 'ACTUAL_PROP' or 'ESTIMATED_AVG'
+            'estimated_line_value': line_info['base_line'] if line_info['line_source'] == 'ESTIMATED_AVG' else None,
+            'estimation_method': line_info['estimation_method']  # 'points_avg_last_5', 'points_avg_last_10', 'default_15.5'
         }
-        
+
         return request
     
     def _get_betting_lines(
@@ -329,34 +355,44 @@ class PlayerLoader:
         player_lookup: str,
         game_date: date,
         use_multiple_lines: bool
-    ) -> List[float]:
+    ) -> Dict[str, Any]:
         """
-        Get betting lines for player
-        
+        Get betting lines for player with source tracking (v3.2)
+
         Strategy:
         1. Try to query from odds_player_props table (Phase 2)
         2. If no odds available, use estimated line based on season average
         3. If use_multiple_lines=True, generate +/- 2 points from base line
-        
+
+        v3.2 CHANGE: Now returns dict with line source information for tracking
+        when predictions were made with estimated vs actual lines.
+
         Args:
             player_lookup: Player identifier
             game_date: Game date
             use_multiple_lines: Whether to generate multiple lines
-        
+
         Returns:
-            List of line values (e.g., [25.5] or [23.5, 24.5, 25.5, 26.5, 27.5])
+            Dict with:
+                'line_values': List of line values
+                'line_source': 'ACTUAL_PROP' or 'ESTIMATED_AVG'
+                'base_line': The base line used
+                'estimation_method': How line was estimated (if applicable)
         """
         # Try to get actual betting line from odds data
         actual_line = self._query_actual_betting_line(player_lookup, game_date)
-        
+
         if actual_line is not None:
             base_line = actual_line
+            line_source = 'ACTUAL_PROP'
+            estimation_method = None
             logger.debug(f"Using actual betting line {base_line} for {player_lookup}")
         else:
             # Fallback: Estimate from season average
-            base_line = self._estimate_betting_line(player_lookup)
-            logger.debug(f"Using estimated line {base_line} for {player_lookup}")
-        
+            base_line, estimation_method = self._estimate_betting_line_with_method(player_lookup)
+            line_source = 'ESTIMATED_AVG'
+            logger.debug(f"Using estimated line {base_line} ({estimation_method}) for {player_lookup}")
+
         # Generate multiple lines if requested
         if use_multiple_lines:
             # Generate 5 lines: base_line ± 2 in 1-point increments
@@ -369,8 +405,13 @@ class PlayerLoader:
             ]
         else:
             lines = [round(base_line, 1)]
-        
-        return lines
+
+        return {
+            'line_values': lines,
+            'line_source': line_source,
+            'base_line': round(base_line, 1),
+            'estimation_method': estimation_method
+        }
     
     def _query_actual_betting_line(
         self,
@@ -423,18 +464,34 @@ class PlayerLoader:
     
     def _estimate_betting_line(self, player_lookup: str) -> float:
         """
-        Estimate betting line from player's season average
-        
+        Estimate betting line from player's season average (legacy method)
+
         Uses most recent season average from player_game_summary
-        
+
         Args:
             player_lookup: Player identifier
-        
+
         Returns:
             float: Estimated line (defaults to 15.5 if no data)
         """
+        line, _ = self._estimate_betting_line_with_method(player_lookup)
+        return line
+
+    def _estimate_betting_line_with_method(self, player_lookup: str) -> Tuple[float, str]:
+        """
+        Estimate betting line with method tracking (v3.2)
+
+        Uses most recent season average from upcoming_player_game_context
+        Returns both the estimated line and the method used.
+
+        Args:
+            player_lookup: Player identifier
+
+        Returns:
+            Tuple of (estimated_line, estimation_method)
+            Methods: 'points_avg_last_5', 'points_avg_last_10', 'default_15.5'
+        """
         # Use upcoming_player_game_context which has the actual averages
-        # Fallback: use points_avg_last_5 (most recent 5-game average)
         query = """
         SELECT
             points_avg_last_5,
@@ -444,36 +501,34 @@ class PlayerLoader:
         ORDER BY game_date DESC
         LIMIT 1
         """.format(project=self.project_id)
-        
+
         job_config = bigquery.QueryJobConfig(
             query_parameters=[
                 bigquery.ScalarQueryParameter("player_lookup", "STRING", player_lookup)
             ]
         )
-        
+
         try:
             results = self.client.query(query, job_config=job_config).result()
             row = next(results, None)
-            
+
             if row is not None:
                 # Prefer L5 average, fallback to L10
-                avg = None
                 if row.points_avg_last_5 is not None:
                     avg = float(row.points_avg_last_5)
+                    # Round to nearest 0.5 (common for betting lines)
+                    return round(avg * 2) / 2.0, 'points_avg_last_5'
                 elif row.points_avg_last_10 is not None:
                     avg = float(row.points_avg_last_10)
-
-                if avg is not None:
-                    # Round to nearest 0.5 (common for betting lines)
-                    return round(avg * 2) / 2.0
+                    return round(avg * 2) / 2.0, 'points_avg_last_10'
 
             # Default fallback
             logger.warning(f"No recent average found for {player_lookup}, using default 15.5")
-            return 15.5
-            
+            return 15.5, 'default_15.5'
+
         except Exception as e:
             logger.error(f"Error estimating line for {player_lookup}: {e}")
-            return 15.5
+            return 15.5, 'default_15.5'
     
     # ========================================================================
     # VALIDATION & DEBUGGING UTILITIES

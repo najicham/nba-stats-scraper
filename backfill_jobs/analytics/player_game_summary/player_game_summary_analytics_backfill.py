@@ -156,7 +156,8 @@ class PlayerGameSummaryBackfill:
             'start_date': single_date.isoformat(),
             'end_date': single_date.isoformat(),  # Same day for single-day processing
             'project_id': 'nba-props-platform',
-            'backfill_mode': True  # Disables historical date check and suppresses alerts
+            'backfill_mode': True,  # Disables historical date check and suppresses alerts
+            'skip_downstream_trigger': True  # Prevent Phase 4 auto-trigger during backfill
         }
         
         try:

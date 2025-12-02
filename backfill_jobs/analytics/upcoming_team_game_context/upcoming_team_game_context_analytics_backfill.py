@@ -73,7 +73,9 @@ class UpcomingTeamGameContextBackfill:
         opts = {
             'start_date': start_date.isoformat(),
             'end_date': end_date.isoformat(),
-            'project_id': os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
+            'project_id': os.environ.get('GCP_PROJECT_ID', 'nba-props-platform'),
+            'backfill_mode': True,  # Disables historical date check and suppresses alerts
+            'skip_downstream_trigger': True  # Prevent Phase 4 auto-trigger during backfill
         }
         
         try:

@@ -41,12 +41,15 @@ class FeatureExtractor:
     def get_players_with_games(self, game_date: date) -> List[Dict[str, Any]]:
         """
         Get list of all players with games on game_date.
-        
+
+        v3.2 CHANGE (All-Player Predictions):
+        Now includes has_prop_line flag to indicate which players have betting lines.
+
         Args:
             game_date: Date to query
-            
+
         Returns:
-            List of dicts with player_lookup, game_id, opponent, etc.
+            List of dicts with player_lookup, game_id, opponent, has_prop_line, etc.
         """
         query = f"""
         SELECT
@@ -56,7 +59,9 @@ class FeatureExtractor:
             game_date,
             opponent_team_abbr,
             home_game AS is_home,
-            days_rest
+            days_rest,
+            COALESCE(has_prop_line, FALSE) AS has_prop_line,  -- v3.2: Track if player has betting line
+            current_points_line  -- v3.2: Pass through for estimated lines
         FROM `{self.project_id}.nba_analytics.upcoming_player_game_context`
         WHERE game_date = '{game_date}'
         ORDER BY player_lookup

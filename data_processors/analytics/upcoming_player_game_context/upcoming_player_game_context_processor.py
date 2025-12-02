@@ -4,7 +4,7 @@ Path: data_processors/analytics/upcoming_player_game_context/upcoming_player_gam
 
 Upcoming Player Game Context Processor - Phase 3 Analytics
 
-Generates comprehensive pre-game context for each player with a prop bet available.
+Generates comprehensive pre-game context for ALL players with games scheduled.
 Combines historical performance, fatigue metrics, prop betting context, and game
 situation factors.
 
@@ -19,8 +19,16 @@ v3.1 ENHANCEMENTS:
 - Increases historical coverage from 40% to 99.7%
 - Fallback logic in _extract_players_with_props() and _extract_prop_lines()
 
+v3.2 ENHANCEMENTS (All-Player Predictions):
+- Changed DRIVER query from props-based to gamebook-based
+- Now processes ALL active players with games (~67/day), not just those with props (~22/day)
+- Added has_prop_line flag to track which players have betting lines
+- Enables predictions for all players, improving ML model training coverage
+
 Input: Phase 2 raw tables only
-  - nba_raw.odds_api_player_points_props (DRIVER - which players to process)
+  - nba_raw.nbac_gamebook_player_stats (DRIVER - ALL players with games)
+  - nba_raw.odds_api_player_points_props (props info - LEFT JOIN)
+  - nba_raw.bettingpros_player_points_props (props fallback - LEFT JOIN)
   - nba_raw.bdl_player_boxscores (PRIMARY - historical performance)
   - nba_raw.nbac_schedule (game timing and context)
   - nba_raw.odds_api_game_lines (spreads, totals)
@@ -33,9 +41,11 @@ Strategy: MERGE_UPDATE (update existing or insert new)
 Frequency: Multiple times per day (morning, updates throughout day, pre-game)
 
 Key Features:
+- Processes ALL active players, not just those with prop lines
+- has_prop_line flag indicates which players have betting lines
 - Calculates rest days, back-to-backs, fatigue metrics from schedule
 - Aggregates historical performance (last 5, last 10, last 30 days)
-- Tracks prop line movement (opening vs current)
+- Tracks prop line movement (opening vs current) for players with props
 - Calculates game situation context (spreads, totals, competitiveness)
 - Handles rookies, limited history, missing data gracefully
 - Quality flags for data completeness and confidence
@@ -291,14 +301,15 @@ class UpcomingPlayerGameContextProcessor(
 
         logger.info(f"🔄 PROCESSING: {reason}")
 
-        # Step 1: Get players with props (DRIVER)
+        # Step 1: Get ALL players with games (DRIVER)
+        # Changed in v3.2: Now gets all players, not just those with props
         self._extract_players_with_props()
-        
+
         if not self.players_to_process:
-            logger.warning(f"No players with props found for {self.target_date}")
+            logger.warning(f"No players with games found for {self.target_date}")
             return
-        
-        logger.info(f"Found {len(self.players_to_process)} players with props")
+
+        logger.info(f"Found {len(self.players_to_process)} players with games")
         
         # Step 2: Get schedule data
         self._extract_schedule_data()
@@ -321,72 +332,103 @@ class UpcomingPlayerGameContextProcessor(
     
     def _extract_players_with_props(self) -> None:
         """
-        Extract all players who have prop bets for target date.
+        Extract ALL players who have games scheduled for target date.
 
         This is the DRIVER query - determines which players to process.
-        Uses the most recent prop snapshot for the target date.
 
-        FALLBACK LOGIC (v3.1):
-        - First tries Odds API (odds_api_player_points_props)
-        - If empty, falls back to BettingPros (bettingpros_player_points_props)
-        - BettingPros has 99.7% historical coverage vs 40% for Odds API
+        CHANGE (v3.2 - All-Player Predictions):
+        - Now queries nbac_gamebook_player_stats for ALL active players with games
+        - Previously only processed ~22 players with prop lines
+        - Now processes ~67 players (all active players per game day)
+        - Prop line info is LEFT JOINed to track has_prop_line flag
+
+        This enables predictions for all players, not just those with betting lines.
         """
         # Track which source we used
-        self._props_source = 'odds_api'  # Default
+        self._props_source = 'gamebook'  # Now using gamebook as primary driver
 
-        # Step 1: Try Odds API first
-        odds_api_query = f"""
-        WITH latest_props AS (
-            SELECT
+        # Query ALL players from gamebook, LEFT JOIN with props for has_prop_line
+        all_players_query = f"""
+        WITH players_with_games AS (
+            -- Get ALL active players from gamebook who have games on target date
+            SELECT DISTINCT
+                g.player_lookup,
+                g.game_id,
+                g.team_abbr,
+                -- Get home/away from schedule since gamebook may not have it
+                COALESCE(s.home_team_tricode, g.team_abbr) as home_team_abbr,
+                COALESCE(s.away_team_tricode, g.team_abbr) as away_team_abbr
+            FROM `{self.project_id}.nba_raw.nbac_gamebook_player_stats` g
+            LEFT JOIN `{self.project_id}.nba_raw.nbac_schedule` s
+                ON g.game_id = s.game_id
+            WHERE g.game_date = '{self.target_date}'
+              AND g.player_lookup IS NOT NULL
+              AND (g.player_status IS NULL OR g.player_status NOT IN ('DNP', 'DND', 'NWT'))
+        ),
+        props AS (
+            -- Check which players have prop lines (from either source)
+            SELECT DISTINCT
                 player_lookup,
-                game_id,
-                game_date,
-                home_team_abbr,
-                away_team_abbr,
-                ROW_NUMBER() OVER (
-                    PARTITION BY player_lookup, game_id
-                    ORDER BY snapshot_timestamp DESC
-                ) as rn
+                points_line,
+                'odds_api' as prop_source
             FROM `{self.project_id}.nba_raw.odds_api_player_points_props`
             WHERE game_date = '{self.target_date}'
               AND player_lookup IS NOT NULL
+            UNION DISTINCT
+            SELECT DISTINCT
+                player_lookup,
+                points_line,
+                'bettingpros' as prop_source
+            FROM `{self.project_id}.nba_raw.bettingpros_player_points_props`
+            WHERE game_date = '{self.target_date}'
+              AND is_active = TRUE
+              AND player_lookup IS NOT NULL
         )
-        SELECT DISTINCT
-            player_lookup,
-            game_id,
-            game_date,
-            home_team_abbr,
-            away_team_abbr
-        FROM latest_props
-        WHERE rn = 1
+        SELECT
+            p.player_lookup,
+            p.game_id,
+            p.team_abbr,
+            p.home_team_abbr,
+            p.away_team_abbr,
+            pr.points_line,
+            pr.prop_source,
+            CASE WHEN pr.player_lookup IS NOT NULL THEN TRUE ELSE FALSE END as has_prop_line
+        FROM players_with_games p
+        LEFT JOIN props pr ON p.player_lookup = pr.player_lookup
         """
 
         try:
-            df = self.bq_client.query(odds_api_query).to_dataframe()
+            df = self.bq_client.query(all_players_query).to_dataframe()
 
-            # Step 2: If Odds API is empty, fall back to BettingPros
-            if df.empty:
-                logger.info(f"No Odds API data for {self.target_date}, using BettingPros fallback")
-                self._props_source = 'bettingpros'
-                df = self._extract_players_from_bettingpros()
-
-            # Track source usage (FIX: use timezone-aware datetime)
+            # Track source usage
             self.source_tracking['props']['rows_found'] = len(df)
             self.source_tracking['props']['last_updated'] = datetime.now(timezone.utc)
 
-            # Store players to process
+            # Store players to process (now ALL players, not just those with props)
+            players_with_props = 0
             for _, row in df.iterrows():
+                has_prop = row.get('has_prop_line', False)
+                if has_prop:
+                    players_with_props += 1
+
                 self.players_to_process.append({
                     'player_lookup': row['player_lookup'],
                     'game_id': row['game_id'],
+                    'team_abbr': row.get('team_abbr'),
                     'home_team_abbr': row['home_team_abbr'],
-                    'away_team_abbr': row['away_team_abbr']
+                    'away_team_abbr': row['away_team_abbr'],
+                    'has_prop_line': has_prop,
+                    'current_points_line': row.get('points_line'),
+                    'prop_source': row.get('prop_source')
                 })
 
-            logger.info(f"Found {len(self.players_to_process)} players with props (source: {self._props_source})")
+            logger.info(
+                f"Found {len(self.players_to_process)} total players for {self.target_date} "
+                f"({players_with_props} with prop lines, {len(self.players_to_process) - players_with_props} without)"
+            )
 
         except Exception as e:
-            logger.error(f"Error extracting players with props: {e}")
+            logger.error(f"Error extracting players for games: {e}")
             self.source_tracking['props']['rows_found'] = 0
             raise
 
@@ -1272,6 +1314,9 @@ class UpcomingPlayerGameContextProcessor(
         # Calculate data quality
         data_quality = self._calculate_data_quality(historical_data, game_lines_info)
         
+        # Get has_prop_line from player_info (passed from extract)
+        has_prop_line = player_info.get('has_prop_line', False)
+
         # Build context record (FIX: use timezone-aware datetime)
         context = {
             # Core identifiers
@@ -1281,12 +1326,16 @@ class UpcomingPlayerGameContextProcessor(
             'game_date': self.target_date.isoformat(),
             'team_abbr': team_abbr,
             'opponent_team_abbr': opponent_team_abbr,
-            
+
+            # Has prop line flag (NEW - v3.2 All-Player Predictions)
+            'has_prop_line': has_prop_line,
+
             # Prop betting context
-            'current_points_line': prop_info.get('current_line'),
+            # Use prop_info if has_prop_line, otherwise use from player_info (passed from extract)
+            'current_points_line': prop_info.get('current_line') or player_info.get('current_points_line'),
             'opening_points_line': prop_info.get('opening_line'),
             'line_movement': prop_info.get('line_movement'),
-            'current_points_line_source': prop_info.get('current_source'),
+            'current_points_line_source': prop_info.get('current_source') or player_info.get('prop_source'),
             'opening_points_line_source': prop_info.get('opening_source'),
             
             # Game spread context
