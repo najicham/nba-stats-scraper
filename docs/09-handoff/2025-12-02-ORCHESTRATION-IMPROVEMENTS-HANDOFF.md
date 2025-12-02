@@ -214,14 +214,21 @@ print(f'Phase 2→3: {EXPECTED_PROCESSOR_COUNT} processors')
 
 **Deployment (when ready):**
 ```bash
+# NOTE: Listens to nba-phase4-precompute-complete (NOT nba-phase4-processor-complete)
+# Phase 4 processors publish to precompute-complete topic
 gcloud functions deploy phase4-to-phase5-orchestrator \
   --gen2 \
   --runtime=python311 \
   --region=us-west2 \
   --source=orchestration/cloud_functions/phase4_to_phase5 \
   --entry-point=orchestrate_phase4_to_phase5 \
-  --trigger-topic=nba-phase4-processor-complete
+  --trigger-topic=nba-phase4-precompute-complete
 ```
+
+**Processor Name Normalization:**
+The orchestrator normalizes processor names from Pub/Sub messages:
+- `MLFeatureStoreProcessor` → `ml_feature_store`
+- `ml_feature_store_v2` → `ml_feature_store`
 
 ### 12. Stuck Transition Monitor (Issue C) - IMPLEMENTED
 

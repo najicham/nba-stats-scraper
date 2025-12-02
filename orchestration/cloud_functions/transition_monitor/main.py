@@ -42,6 +42,10 @@ PHASE2_TIMEOUT_HOURS = float(os.environ.get('PHASE2_TIMEOUT_HOURS', '2'))
 PHASE3_TIMEOUT_HOURS = float(os.environ.get('PHASE3_TIMEOUT_HOURS', '1'))
 PHASE4_TIMEOUT_HOURS = float(os.environ.get('PHASE4_TIMEOUT_HOURS', '1'))
 
+# How many days back to check for stuck transitions (default: 7)
+# This catches weekend transitions that might be missed if only checking today/yesterday
+LOOKBACK_DAYS = int(os.environ.get('TRANSITION_LOOKBACK_DAYS', '7'))
+
 # Import expected processors from centralized config
 try:
     from shared.config.orchestration_config import get_orchestration_config
@@ -165,14 +169,14 @@ def check_phase_transition(
     cutoff_time = datetime.now(timezone.utc) - timedelta(hours=timeout_hours)
 
     # Query for recent documents that are NOT triggered
-    # Only check today's and yesterday's dates
+    # Check last N days to catch weekend/holiday stuck transitions
     today = datetime.now(timezone.utc).date()
-    yesterday = today - timedelta(days=1)
+    check_dates = [today - timedelta(days=i) for i in range(LOOKBACK_DAYS)]
 
     stuck_transitions = []
     healthy_count = 0
 
-    for check_date in [today, yesterday]:
+    for check_date in check_dates:
         date_str = check_date.isoformat()
         doc_ref = db.collection(collection).document(date_str)
         doc = doc_ref.get()

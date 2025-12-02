@@ -4,10 +4,13 @@ Phase 4 → Phase 5 Orchestrator
 Cloud Function that tracks Phase 4 processor completion and triggers Phase 5 (predictions) when all complete.
 
 Architecture:
-- Listens to: nba-phase4-processor-complete (Phase 4 processors publish here)
+- Listens to: nba-phase4-precompute-complete (Phase 4 processors publish here)
 - Tracks state in: Firestore collection 'phase4_completion/{game_date}'
-- Publishes to: nba-phase4-precompute-complete (triggers prediction coordinator)
-- Also calls: Prediction coordinator /start endpoint directly
+- Triggers: Prediction coordinator /start endpoint directly
+
+NOTE: Phase 4 processors publish to nba-phase4-precompute-complete (not nba-phase4-processor-complete).
+The processor_name field contains the class name (e.g., MLFeatureStoreProcessor) or output_table
+contains the table name (e.g., ml_feature_store_v2). We normalize both to match config.
 
 Critical Features:
 - Atomic Firestore transactions (prevent race conditions)
@@ -44,7 +47,25 @@ logger = logging.getLogger(__name__)
 
 # Constants
 PROJECT_ID = os.environ.get('GCP_PROJECT', 'nba-props-platform')
-PHASE5_TRIGGER_TOPIC = 'nba-phase4-precompute-complete'
+PHASE5_TRIGGER_TOPIC = 'nba-predictions-trigger'  # Downstream topic for predictions
+
+# Processor name normalization - maps various formats to config names
+# Phase 4 processors publish class names or table names, but config uses simple names
+PROCESSOR_NAME_MAPPING = {
+    # Class name -> config name
+    'TeamDefenseZoneAnalysisProcessor': 'team_defense_zone_analysis',
+    'PlayerShotZoneAnalysisProcessor': 'player_shot_zone_analysis',
+    'PlayerCompositeFactorsProcessor': 'player_composite_factors',
+    'PlayerDailyCacheProcessor': 'player_daily_cache',
+    'MLFeatureStoreProcessor': 'ml_feature_store',
+    # Table name variants -> config name
+    'team_defense_zone_analysis': 'team_defense_zone_analysis',
+    'player_shot_zone_analysis': 'player_shot_zone_analysis',
+    'player_composite_factors': 'player_composite_factors',
+    'player_daily_cache': 'player_daily_cache',
+    'ml_feature_store': 'ml_feature_store',
+    'ml_feature_store_v2': 'ml_feature_store',  # v2 suffix
+}
 PREDICTION_COORDINATOR_URL = os.environ.get(
     'PREDICTION_COORDINATOR_URL',
     'https://prediction-coordinator-756957797294.us-west2.run.app'
@@ -76,21 +97,57 @@ db = firestore.Client()
 publisher = pubsub_v1.PublisherClient()
 
 
+def normalize_processor_name(raw_name: str, output_table: Optional[str] = None) -> str:
+    """
+    Normalize processor name to match config format.
+
+    Phase 4 processors may publish:
+    - Class names: MLFeatureStoreProcessor
+    - Table names: ml_feature_store_v2
+
+    This function normalizes to config format: ml_feature_store
+
+    Args:
+        raw_name: Raw processor name from message
+        output_table: Optional output_table field from message
+
+    Returns:
+        Normalized processor name matching config
+    """
+    # Try direct mapping first
+    if raw_name in PROCESSOR_NAME_MAPPING:
+        return PROCESSOR_NAME_MAPPING[raw_name]
+
+    # Try output_table if provided
+    if output_table and output_table in PROCESSOR_NAME_MAPPING:
+        return PROCESSOR_NAME_MAPPING[output_table]
+
+    # Fallback: convert CamelCase to snake_case and strip "Processor" suffix
+    import re
+    name = raw_name.replace('Processor', '')
+    # Insert underscore before capitals and lowercase
+    name = re.sub('(.)([A-Z][a-z]+)', r'\1_\2', name)
+    name = re.sub('([a-z0-9])([A-Z])', r'\1_\2', name).lower()
+
+    logger.debug(f"Normalized '{raw_name}' -> '{name}'")
+    return name
+
+
 @functions_framework.cloud_event
 def orchestrate_phase4_to_phase5(cloud_event):
     """
     Handle Phase 4 completion events and trigger Phase 5 when all processors complete.
 
-    Triggered by: Pub/Sub messages to nba-phase4-processor-complete
+    Triggered by: Pub/Sub messages to nba-phase4-precompute-complete
 
     Message format:
     {
-        "processor_name": "ml_feature_store",
+        "processor_name": "MLFeatureStoreProcessor",  # Class name
         "phase": "phase_4_precompute",
         "execution_id": "def-456",
         "correlation_id": "abc-123",
         "game_date": "2025-11-29",
-        "output_table": "ml_feature_store",
+        "output_table": "ml_feature_store_v2",  # Table name
         "output_dataset": "nba_precompute",
         "status": "success",
         "record_count": 450,
@@ -106,14 +163,18 @@ def orchestrate_phase4_to_phase5(cloud_event):
 
         # Extract key fields
         game_date = message_data.get('game_date')
-        processor_name = message_data.get('processor_name')
+        raw_processor_name = message_data.get('processor_name')
+        output_table = message_data.get('output_table')
         correlation_id = message_data.get('correlation_id')
         status = message_data.get('status')
 
         # Validate required fields
-        if not game_date or not processor_name:
+        if not game_date or not raw_processor_name:
             logger.error(f"Missing required fields in message: {message_data}")
             return
+
+        # Normalize processor name to match config
+        processor_name = normalize_processor_name(raw_processor_name, output_table)
 
         # Skip non-success statuses (only track successful completions)
         if status not in ('success', 'partial'):
@@ -121,7 +182,7 @@ def orchestrate_phase4_to_phase5(cloud_event):
             return
 
         logger.info(
-            f"Received completion from {processor_name} for {game_date} "
+            f"Received completion from {processor_name} (raw: {raw_processor_name}) for {game_date} "
             f"(status={status}, correlation_id={correlation_id})"
         )
 
