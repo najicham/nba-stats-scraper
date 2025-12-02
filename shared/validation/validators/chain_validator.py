@@ -380,6 +380,8 @@ def count_bq_records(
     """
     Count records in a BigQuery table for a given date.
 
+    For reference tables (no date column), counts all records.
+
     Args:
         bq_client: BigQuery client
         dataset: Dataset name
@@ -393,16 +395,26 @@ def count_bq_records(
         # Determine the date column based on table name
         date_column = _get_date_column(table)
 
-        query = f"""
-            SELECT COUNT(*) as cnt
-            FROM `{PROJECT_ID}.{dataset}.{table}`
-            WHERE {date_column} = @game_date
-        """
-        job_config = bigquery.QueryJobConfig(
-            query_parameters=[
-                bigquery.ScalarQueryParameter('game_date', 'DATE', game_date)
-            ]
-        )
+        if date_column is None:
+            # Reference table - count all records (current snapshot)
+            query = f"""
+                SELECT COUNT(*) as cnt
+                FROM `{PROJECT_ID}.{dataset}.{table}`
+            """
+            job_config = bigquery.QueryJobConfig()
+        else:
+            # Date-partitioned table - filter by date
+            query = f"""
+                SELECT COUNT(*) as cnt
+                FROM `{PROJECT_ID}.{dataset}.{table}`
+                WHERE {date_column} = @game_date
+            """
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter('game_date', 'DATE', game_date)
+                ]
+            )
+
         result = bq_client.query(query, job_config=job_config).result()
         row = next(iter(result))
         return row.cnt
@@ -412,12 +424,28 @@ def count_bq_records(
         return 0
 
 
-def _get_date_column(table: str) -> str:
+def _get_date_column(table: str) -> Optional[str]:
     """
     Get the appropriate date column for a table.
 
     Most tables use 'game_date', but some tables use different columns.
+    Reference tables (current snapshots) return None - they have no date column.
+
+    Returns:
+        Column name or None for reference tables
     """
+    # Reference tables - current snapshots with no date column
+    # These are validated by count only, not filtered by date
+    REFERENCE_TABLES = {
+        'nbac_player_list_current',
+        'bdl_active_players_current',
+        'espn_team_rosters',  # Uses roster_date but validated differently
+        'nbac_team_list',
+        'br_rosters_current',  # Basketball Reference rosters
+    }
+    if table in REFERENCE_TABLES:
+        return None
+
     # Phase 4 tables with different date columns
     if table in ('player_shot_zone_analysis', 'team_defense_zone_analysis'):
         return 'analysis_date'
@@ -426,6 +454,9 @@ def _get_date_column(table: str) -> str:
     # BDL injuries uses scrape_date
     elif table == 'bdl_injuries':
         return 'scrape_date'
+    # Rosters use roster_date
+    elif table == 'espn_team_rosters':
+        return 'roster_date'
     # Default to game_date (works for nbac_injury_report, most raw tables)
     else:
         return 'game_date'
