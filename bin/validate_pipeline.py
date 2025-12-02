@@ -97,6 +97,8 @@ def validate_date(
     Returns:
         ValidationReport with all results
     """
+    import time as time_module
+
     if client is None:
         client = bigquery.Client(project=PROJECT_ID)
 
@@ -104,52 +106,64 @@ def validate_date(
         phases = [2, 3, 4, 5]
 
     logger.info(f"Validating pipeline for {game_date}")
+    total_start = time_module.time()
 
     # Get time context (for today/yesterday awareness)
+    step_start = time_module.time()
     time_context = get_time_context(game_date)
-    logger.debug(f"Time context: today={time_context.is_today}, yesterday={time_context.is_yesterday}")
+    logger.info(f"  ├─ Time context ({time_module.time() - step_start:.1f}s)")
 
     # Get context
+    step_start = time_module.time()
     schedule_context = get_schedule_context(game_date, client)
-    logger.debug(f"Schedule context: {schedule_context.game_count} games, bootstrap={schedule_context.is_bootstrap}")
+    logger.info(f"  ├─ Schedule: {schedule_context.game_count} games ({time_module.time() - step_start:.1f}s)")
 
+    step_start = time_module.time()
     player_universe = get_player_universe(game_date, client)
-    logger.debug(f"Player universe: {player_universe.total_active} active, {player_universe.total_with_props} with props")
+    logger.info(f"  ├─ Players: {player_universe.total_rostered} rostered ({time_module.time() - step_start:.1f}s)")
 
     # Get orchestration state from Firestore (for today/yesterday)
     orchestration_state = None
     if time_context.is_today or time_context.is_yesterday:
+        step_start = time_module.time()
         orchestration_state = get_orchestration_state(game_date)
-        logger.debug(f"Orchestration state: available={orchestration_state.firestore_available}")
+        logger.info(f"  ├─ Orchestration state ({time_module.time() - step_start:.1f}s)")
 
     # Get run history (for verbose mode or to check for errors)
     run_history = None
     if verbose or True:  # Always get run history for error detection
+        step_start = time_module.time()
         run_history = get_run_history(game_date, client)
-        logger.debug(f"Run history: {run_history.total_runs} runs, {run_history.failed_runs} failed")
+        logger.info(f"  ├─ Run history: {run_history.total_runs} runs ({time_module.time() - step_start:.1f}s)")
 
     # Run phase validators
     phase_results = []
 
     if 2 in phases:
+        step_start = time_module.time()
         result = validate_phase2(game_date, schedule_context, player_universe, client)
         phase_results.append(result)
-        logger.debug(f"Phase 2: {result.status.value}")
+        logger.info(f"  ├─ Phase 2: {result.status.value} ({time_module.time() - step_start:.1f}s)")
 
     if 3 in phases:
+        step_start = time_module.time()
         result = validate_phase3(game_date, schedule_context, player_universe, client)
         phase_results.append(result)
-        logger.debug(f"Phase 3: {result.status.value}")
+        logger.info(f"  ├─ Phase 3: {result.status.value} ({time_module.time() - step_start:.1f}s)")
 
     if 4 in phases:
+        step_start = time_module.time()
         result = validate_phase4(game_date, schedule_context, player_universe, client)
         phase_results.append(result)
-        logger.debug(f"Phase 4: {result.status.value}")
+        logger.info(f"  ├─ Phase 4: {result.status.value} ({time_module.time() - step_start:.1f}s)")
 
     if 5 in phases:
+        step_start = time_module.time()
         result = validate_phase5(game_date, schedule_context, player_universe, client)
         phase_results.append(result)
-        logger.debug(f"Phase 5: {result.status.value}")
+        logger.info(f"  └─ Phase 5: {result.status.value} ({time_module.time() - step_start:.1f}s)")
+
+    logger.info(f"  Total: {time_module.time() - total_start:.1f}s")
 
     # Collect all issues and warnings
     all_issues = []
