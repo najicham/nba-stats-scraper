@@ -19,6 +19,12 @@ from shared.validation.validators.base import (
     TableValidation,
     ValidationStatus,
 )
+from shared.validation.chain_config import (
+    ChainValidation,
+)
+from shared.validation.validators.maintenance_validator import (
+    MaintenanceValidation,
+)
 from shared.validation.run_history import (
     RunHistorySummary,
     format_run_history_verbose,
@@ -634,3 +640,412 @@ def _status_to_text(status: ValidationStatus) -> str:
         ValidationStatus.ERROR: 'Error during validation',
     }
     return mapping.get(status, status.value)
+
+
+# =============================================================================
+# CHAIN VIEW FORMATTING (V2)
+# =============================================================================
+
+# Chain status symbols
+CHAIN_STATUS_SYMBOLS = {
+    'complete': '✓',
+    'partial': '△',
+    'missing': '○',
+}
+
+# Source status symbols
+SOURCE_STATUS_SYMBOLS = {
+    'primary': '✓ Primary',
+    'fallback': '✓ Fallback',
+    'available': '✓ Available',
+    'missing': '○ Missing',
+    'virtual': '⊘ Virtual',
+}
+
+# Severity order for sorting (critical first)
+SEVERITY_ORDER = {'critical': 0, 'warning': 1, 'info': 2}
+
+
+def format_chain_section(
+    chain_validations: dict,
+    use_color: bool = True,
+) -> str:
+    """
+    Format all chains in a unified view for Phase 1-2 data sources.
+
+    Args:
+        chain_validations: Dict mapping chain_name -> ChainValidation
+        use_color: Whether to use ANSI color codes
+
+    Returns:
+        Formatted string for terminal output
+    """
+    from typing import Dict
+    lines = []
+
+    lines.append(DOUBLE_SEPARATOR)
+    lines.append("PHASE 1-2: DATA SOURCES BY CHAIN")
+    lines.append(DOUBLE_SEPARATOR)
+    lines.append("")
+
+    # Sort chains by severity (critical first), then by name
+    sorted_chains = sorted(
+        chain_validations.items(),
+        key=lambda x: (SEVERITY_ORDER.get(x[1].chain.severity, 3), x[0])
+    )
+
+    # Format each chain
+    for chain_name, chain_val in sorted_chains:
+        lines.extend(_format_single_chain(chain_val, use_color))
+        lines.append("")
+
+    # Summary
+    complete_count = sum(1 for _, cv in sorted_chains if cv.status == 'complete')
+    partial_count = sum(1 for _, cv in sorted_chains if cv.status == 'partial')
+    missing_count = sum(1 for _, cv in sorted_chains if cv.status == 'missing')
+    total = len(sorted_chains)
+
+    summary_parts = [f"{complete_count}/{total} chains complete"]
+    if partial_count > 0:
+        summary_parts.append(f"{partial_count} partial")
+    if missing_count > 0:
+        summary_parts.append(f"{missing_count} missing")
+
+    lines.append(f"→ Data Sources: {', '.join(summary_parts)}")
+
+    return '\n'.join(lines)
+
+
+def _format_single_chain(chain_val: ChainValidation, use_color: bool) -> list:
+    """
+    Format a single chain with its sources.
+
+    Args:
+        chain_val: ChainValidation result
+        use_color: Whether to use ANSI color codes
+
+    Returns:
+        List of formatted lines
+    """
+    lines = []
+
+    chain = chain_val.chain
+    status_symbol = CHAIN_STATUS_SYMBOLS.get(chain_val.status, '?')
+
+    # Status color
+    if use_color:
+        if chain_val.status == 'complete':
+            status_color = '\033[92m'  # Green
+        elif chain_val.status == 'partial':
+            status_color = '\033[93m'  # Yellow
+        else:  # missing
+            status_color = '\033[91m'  # Red
+        reset = RESET
+    else:
+        status_color = ''
+        reset = ''
+
+    # Chain header line
+    # Format: "Chain: player_boxscores (critical) ─────────── Status: ✓ Complete"
+    chain_header = f"Chain: {chain.name} ({chain.severity})"
+    padding_len = 55 - len(chain_header)
+    padding = '─' * max(padding_len, 3)
+    status_text = f"{status_color}{status_symbol} {chain_val.status.title()}{reset}"
+    lines.append(f"{chain_header} {padding} Status: {status_text}")
+
+    # Source table header
+    lines.append("  Source                          GCS JSON    BQ Records   Quality   Status")
+    lines.append("  " + "─" * 76)
+
+    # Format each source
+    for sv in chain_val.sources:
+        src = sv.source
+
+        # Primary indicator
+        if src.is_primary:
+            prefix = "  ★ "
+        else:
+            prefix = "    "
+
+        # Source name (truncate/pad to 28 chars)
+        name = src.name[:28].ljust(28)
+
+        # GCS column (8 chars, right-aligned)
+        if sv.gcs_file_count is not None:
+            gcs_str = str(sv.gcs_file_count).rjust(8)
+        else:
+            gcs_str = "-".rjust(8)
+
+        # BQ column (12 chars, right-aligned)
+        if src.is_virtual:
+            bq_str = "-".rjust(12)
+        else:
+            bq_str = str(sv.bq_record_count).rjust(12)
+
+        # Quality tier (8 chars, left-aligned)
+        quality_str = src.quality_tier.ljust(8)
+
+        # Status (with color if enabled)
+        status_text = SOURCE_STATUS_SYMBOLS.get(sv.status, sv.status)
+        if use_color:
+            if sv.status in ('primary', 'fallback', 'available'):
+                status_color = '\033[92m'  # Green
+            elif sv.status == 'virtual':
+                status_color = '\033[94m'  # Blue
+            else:  # missing
+                status_color = '\033[91m'  # Red
+            status_str = f"{status_color}{status_text}{RESET}"
+        else:
+            status_str = status_text
+
+        lines.append(f"{prefix}{name} {gcs_str} {bq_str}   {quality_str}  {status_str}")
+
+    # Impact message if present
+    if chain_val.impact_message:
+        lines.append(f"  └─ {chain_val.impact_message}")
+
+    return lines
+
+
+def format_chain_progress_bar(
+    chain_validations: dict,
+    report: 'ValidationReport',
+    use_color: bool = True,
+) -> str:
+    """
+    Format a progress bar that includes chain status.
+
+    Args:
+        chain_validations: Dict mapping chain_name -> ChainValidation
+        report: Full validation report (for other phase info)
+        use_color: Whether to use ANSI color codes
+
+    Returns:
+        Formatted progress bar string
+    """
+    lines = []
+
+    # Calculate chain completion
+    complete_chains = sum(1 for cv in chain_validations.values() if cv.status == 'complete')
+    total_chains = len(chain_validations)
+    chain_pct = (complete_chains / total_chains * 100) if total_chains > 0 else 0
+
+    # Get Phase 3-5 status from report
+    phase_pcts = {}
+    for phase_result in report.phase_results:
+        phase = phase_result.phase
+        if phase_result.status == ValidationStatus.COMPLETE:
+            phase_pcts[phase] = 100.0
+        elif phase_result.status == ValidationStatus.BOOTSTRAP_SKIP:
+            phase_pcts[phase] = 100.0
+        elif phase_result.status == ValidationStatus.NOT_APPLICABLE:
+            phase_pcts[phase] = 100.0
+        elif phase_result.status == ValidationStatus.PARTIAL:
+            phase_pcts[phase] = 50.0
+        else:
+            phase_pcts[phase] = 0.0
+
+    # Weighted total (chains replace P1-P2)
+    is_bootstrap = report.schedule_context.is_bootstrap
+    if is_bootstrap:
+        weights = {'chains': 0.45, 3: 0.55, 4: 0.0, 5: 0.0}
+    else:
+        weights = {'chains': 0.20, 3: 0.25, 4: 0.25, 5: 0.30}
+
+    total_pct = (
+        chain_pct * weights['chains'] +
+        phase_pcts.get(3, 0) * weights[3] +
+        phase_pcts.get(4, 0) * weights[4] +
+        phase_pcts.get(5, 0) * weights[5]
+    )
+
+    # Build progress bar
+    BAR_WIDTH = 50
+    filled = int(total_pct / 100 * BAR_WIDTH)
+    empty = BAR_WIDTH - filled
+
+    if use_color:
+        if total_pct >= 90:
+            bar_color = '\033[92m'  # Green
+        elif total_pct >= 50:
+            bar_color = '\033[93m'  # Yellow
+        else:
+            bar_color = '\033[91m'  # Red
+        reset = RESET
+    else:
+        bar_color = ''
+        reset = ''
+
+    bar = f"{bar_color}{'█' * filled}{reset}{'░' * empty}"
+    lines.append(f"Pipeline Progress: [{bar}] {total_pct:.0f}%")
+
+    # Phase indicators with chain summary
+    indicators = []
+
+    # P1-2 (chains)
+    if chain_pct >= 90:
+        sym, color = '✓', '\033[92m' if use_color else ''
+    elif chain_pct >= 50:
+        sym, color = '△', '\033[93m' if use_color else ''
+    else:
+        sym, color = '○', '\033[91m' if use_color else ''
+    indicators.append(f"{color}P1-2{sym}{reset}")
+
+    # P3-5
+    for phase in [3, 4, 5]:
+        phase_result = next((p for p in report.phase_results if p.phase == phase), None)
+        if phase_result:
+            status = phase_result.status
+            if status == ValidationStatus.COMPLETE:
+                sym, color = '✓', '\033[92m' if use_color else ''
+            elif status == ValidationStatus.BOOTSTRAP_SKIP:
+                sym, color = '⊘', '\033[94m' if use_color else ''
+            elif status == ValidationStatus.NOT_APPLICABLE:
+                sym, color = '─', '\033[90m' if use_color else ''
+            elif status == ValidationStatus.PARTIAL:
+                sym, color = '△', '\033[93m' if use_color else ''
+            else:
+                sym, color = '○', '\033[91m' if use_color else ''
+            indicators.append(f"{color}P{phase}{sym}{reset}")
+
+    chain_summary = f"({complete_chains}/{total_chains} chains complete)"
+    lines.append(f"                   {' '.join(indicators)}  {chain_summary}")
+
+    return '\n'.join(lines)
+
+
+# =============================================================================
+# MAINTENANCE SECTION FORMATTING
+# =============================================================================
+
+def format_maintenance_section(
+    maintenance: MaintenanceValidation,
+    use_color: bool = True,
+) -> str:
+    """
+    Format the daily maintenance section (roster & registry).
+
+    Args:
+        maintenance: MaintenanceValidation result
+        use_color: Whether to use ANSI color codes
+
+    Returns:
+        Formatted string for terminal output
+    """
+    if maintenance is None:
+        return ""
+
+    lines = []
+
+    lines.append(DOUBLE_SEPARATOR)
+    lines.append("DAILY MAINTENANCE (Roster & Registry)")
+    lines.append(DOUBLE_SEPARATOR)
+    lines.append("")
+
+    # Roster chain
+    if maintenance.roster_chain:
+        lines.extend(_format_roster_chain(maintenance.roster_chain, use_color))
+        lines.append("")
+
+    # Registry status
+    if maintenance.registry_status:
+        lines.extend(_format_registry_status(maintenance.registry_status, use_color))
+        lines.append("")
+
+    # Unresolved players warning
+    if maintenance.unresolved_players > 0:
+        lines.append(f"Unresolved Players: {maintenance.unresolved_players}")
+        if maintenance.unresolved_players > 100:
+            lines.append("  └─ Consider running player resolution job")
+        lines.append("")
+
+    # Overall status
+    if maintenance.is_current:
+        status = "✓ Current"
+        color = '\033[92m' if use_color else ''
+    else:
+        status = "△ Stale - needs refresh"
+        color = '\033[93m' if use_color else ''
+
+    reset = RESET if use_color else ''
+    lines.append(f"→ Maintenance Status: {color}{status}{reset}")
+
+    return '\n'.join(lines)
+
+
+def _format_roster_chain(roster_chain: ChainValidation, use_color: bool) -> list:
+    """Format the roster chain status."""
+    lines = []
+
+    status_symbol = CHAIN_STATUS_SYMBOLS.get(roster_chain.status, '?')
+    if use_color:
+        if roster_chain.status == 'complete':
+            color = '\033[92m'
+        elif roster_chain.status == 'partial':
+            color = '\033[93m'
+        else:
+            color = '\033[91m'
+        reset = RESET
+    else:
+        color = ''
+        reset = ''
+
+    lines.append(f"Chain: player_roster (critical) ─────────────────── Status: {color}{status_symbol} {roster_chain.status.title()}{reset}")
+
+    # Source table
+    lines.append("  Source                          Records    Quality   Status")
+    lines.append("  " + "─" * 60)
+
+    for sv in roster_chain.sources:
+        src = sv.source
+        prefix = "  ★ " if src.is_primary else "    "
+
+        name = src.name[:28].ljust(28)
+        records = str(sv.bq_record_count).rjust(8)
+        quality = src.quality_tier.ljust(8)
+
+        status_text = SOURCE_STATUS_SYMBOLS.get(sv.status, sv.status)
+        if use_color:
+            if sv.status in ('primary', 'fallback', 'available'):
+                status_color = '\033[92m'
+            else:
+                status_color = '\033[91m'
+            status_str = f"{status_color}{status_text}{RESET}"
+        else:
+            status_str = status_text
+
+        lines.append(f"{prefix}{name} {records}    {quality}  {status_str}")
+
+    return lines
+
+
+def _format_registry_status(registry, use_color: bool) -> list:
+    """Format registry status."""
+    lines = []
+
+    lines.append("Registry Status:")
+
+    # Total players
+    lines.append(f"  nba_players_registry          {registry.total_players:>8,} players")
+
+    # Last update
+    if registry.last_update:
+        update_str = registry.last_update.strftime('%Y-%m-%d %H:%M')
+        staleness = registry.staleness_days
+
+        if staleness <= 2:
+            status = "✓ Current"
+            color = '\033[92m' if use_color else ''
+        elif staleness <= 7:
+            status = f"△ {staleness} days old"
+            color = '\033[93m' if use_color else ''
+        else:
+            status = f"○ {staleness} days old (STALE)"
+            color = '\033[91m' if use_color else ''
+
+        reset = RESET if use_color else ''
+        lines.append(f"  Last update: {update_str}            {color}{status}{reset}")
+    else:
+        lines.append("  Last update: Unknown")
+
+    return lines

@@ -53,8 +53,12 @@ from shared.validation.validators import (
 from shared.validation.output.terminal import (
     ValidationReport,
     print_validation_result,
+    format_chain_section,
+    format_maintenance_section,
 )
 from shared.validation.output.json_output import print_validation_json
+from shared.validation.validators.chain_validator import validate_all_chains
+from shared.validation.validators.maintenance_validator import validate_maintenance
 from shared.validation.run_history import get_run_history, RunHistorySummary
 from shared.validation.context.player_universe import get_missing_players
 from shared.validation.firestore_state import get_orchestration_state, OrchestrationState
@@ -408,6 +412,11 @@ Examples:
         action='store_true',
         help='Enable debug logging'
     )
+    parser.add_argument(
+        '--legacy-view',
+        action='store_true',
+        help='Use legacy flat view instead of chain view for Phase 1-2'
+    )
 
     args = parser.parse_args()
 
@@ -477,12 +486,45 @@ Examples:
             # Output results
             if args.format == 'terminal':
                 use_color = not args.no_color
-                print_validation_result(
-                    report,
-                    use_color=use_color,
-                    verbose=args.verbose,
-                    show_missing=args.show_missing,
-                )
+
+                # Legacy view - flat Phase 1 and Phase 2 lists
+                if args.legacy_view:
+                    print_validation_result(
+                        report,
+                        use_color=use_color,
+                        verbose=args.verbose,
+                        show_missing=args.show_missing,
+                    )
+                else:
+                    # Chain view (V2, default) - shows Phase 1-2 as unified chain view
+                    # Run chain validation
+                    chain_validations = validate_all_chains(
+                        game_date=start_date,
+                        schedule_context=report.schedule_context,
+                    )
+
+                    # Print chain section
+                    print(format_chain_section(chain_validations, use_color=use_color))
+                    print()
+
+                    # Run maintenance validation (for today/yesterday)
+                    maintenance = validate_maintenance(
+                        game_date=start_date,
+                        time_context=report.time_context,
+                    )
+                    if maintenance:
+                        print(format_maintenance_section(maintenance, use_color=use_color))
+                        print()
+
+                    # Then print Phase 3-5 using standard output
+                    # Filter to only show Phase 3+ from the report
+                    report.phase_results = [p for p in report.phase_results if p.phase >= 3]
+                    print_validation_result(
+                        report,
+                        use_color=use_color,
+                        verbose=args.verbose,
+                        show_missing=args.show_missing,
+                    )
             else:
                 # JSON output
                 print_validation_json(report, pretty=True)
