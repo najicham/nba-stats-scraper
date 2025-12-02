@@ -29,7 +29,7 @@ from shared.validation.chain_config import (
     VIRTUAL_SOURCE_DEPENDENCIES,
     CHAIN_VALIDATION_ORDER,
 )
-from shared.validation.config import PROJECT_ID
+from shared.validation.config import PROJECT_ID, BQ_QUERY_TIMEOUT_SECONDS
 from shared.validation.context.schedule_context import ScheduleContext
 
 logger = logging.getLogger(__name__)
@@ -381,6 +381,7 @@ def count_bq_records(
     Count records in a BigQuery table for a given date.
 
     For reference tables (no date column), counts all records.
+    Uses BQ_QUERY_TIMEOUT_SECONDS to prevent hanging.
 
     Args:
         bq_client: BigQuery client
@@ -415,10 +416,16 @@ def count_bq_records(
                 ]
             )
 
-        result = bq_client.query(query, job_config=job_config).result()
+        # Execute with timeout
+        result = bq_client.query(query, job_config=job_config).result(
+            timeout=BQ_QUERY_TIMEOUT_SECONDS
+        )
         row = next(iter(result))
         return row.cnt
 
+    except TimeoutError:
+        logger.warning(f"Timeout counting BQ records for {dataset}.{table} (>{BQ_QUERY_TIMEOUT_SECONDS}s)")
+        return 0
     except Exception as e:
         logger.warning(f"Error counting BQ records for {dataset}.{table}: {e}")
         return 0

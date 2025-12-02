@@ -280,3 +280,49 @@ MIN_PRODUCTION_QUALITY_SCORE = 50.0
 
 # Maximum allowed stale hours for live monitoring
 MAX_STALE_HOURS = 24
+
+# =============================================================================
+# QUERY SETTINGS
+# =============================================================================
+
+# Timeout for BigQuery validation queries (seconds)
+# Prevents validation from hanging if BQ is slow
+BQ_QUERY_TIMEOUT_SECONDS = 30
+
+# =============================================================================
+# PROCESSING MODE
+# =============================================================================
+
+def get_processing_mode(game_date) -> str:
+    """
+    Determine processing mode based on date.
+
+    This is the SINGLE SOURCE OF TRUTH for mode detection.
+    Used by:
+    - upcoming_player_game_context_processor.py
+    - player_universe.py
+    - validate_pipeline.py
+
+    Modes:
+    - 'daily': Today or future dates - uses roster for player universe
+    - 'backfill': Historical dates - uses gamebook for player universe
+
+    Args:
+        game_date: date object to check
+
+    Returns:
+        'daily' or 'backfill'
+    """
+    import os
+    from datetime import date
+
+    # Check environment variable first (explicit override)
+    env_mode = os.environ.get('PROCESSING_MODE')
+    if env_mode in ('daily', 'backfill'):
+        return env_mode
+
+    # Auto-detect based on date
+    today = date.today()
+    if game_date >= today:
+        return 'daily'
+    return 'backfill'

@@ -68,22 +68,8 @@ from shared.validation.time_awareness import get_time_context, TimeContext, form
 logger = logging.getLogger(__name__)
 
 
-def get_validation_mode(game_date: date) -> str:
-    """
-    Determine validation mode based on date.
-
-    - 'daily': Today or future dates - uses roster for player universe
-    - 'backfill': Historical dates - uses gamebook for player universe
-
-    This affects:
-    - Whether roster chain is validated (daily: yes, backfill: no)
-    - Player universe source (daily: roster, backfill: gamebook)
-    - Roster staleness warnings (daily: yes, backfill: no)
-    """
-    today = date.today()
-    if game_date >= today:
-        return 'daily'
-    return 'backfill'
+# Import shared mode detection function
+from shared.validation.config import get_processing_mode as get_validation_mode
 
 
 def parse_date(date_str: str) -> date:

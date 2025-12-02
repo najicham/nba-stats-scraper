@@ -17,11 +17,10 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Set, Dict, Optional, List
 import logging
-import os
 
 from google.cloud import bigquery
 
-from shared.validation.config import PROJECT_ID
+from shared.validation.config import PROJECT_ID, get_processing_mode
 
 logger = logging.getLogger(__name__)
 
@@ -135,8 +134,9 @@ def get_player_universe(
     universe = PlayerUniverse(game_date=game_date)
 
     # Determine mode if not explicitly specified
+    # Uses shared get_processing_mode() from config.py for consistency
     if mode is None:
-        mode = _determine_mode(client, game_date)
+        mode = get_processing_mode(game_date)
 
     logger.debug(f"Using {mode} mode for player universe on {game_date}")
 
@@ -177,57 +177,6 @@ def get_player_universe(
     )
 
     return universe
-
-
-def _determine_mode(client: bigquery.Client, game_date: date) -> str:
-    """
-    Auto-detect whether to use daily or backfill mode.
-
-    Logic:
-    1. Check PROCESSING_MODE env var (explicit override)
-    2. Check if gamebook has data for the date
-    3. If gamebook empty AND date is today/future → daily mode
-    4. Otherwise → backfill mode
-    """
-    # Check environment variable first
-    env_mode = os.environ.get('PROCESSING_MODE')
-    if env_mode in ('daily', 'backfill'):
-        logger.debug(f"Processing mode from env var: {env_mode}")
-        return env_mode
-
-    # Check if gamebook has data
-    query = f"""
-    SELECT COUNT(*) as cnt
-    FROM `{PROJECT_ID}.nba_raw.nbac_gamebook_player_stats`
-    WHERE game_date = @game_date
-    """
-
-    job_config = bigquery.QueryJobConfig(
-        query_parameters=[
-            bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
-        ]
-    )
-
-    try:
-        result = client.query(query, job_config=job_config).result()
-        row = next(result, None)
-        gamebook_count = row.cnt if row else 0
-
-        if gamebook_count > 0:
-            return 'backfill'
-
-        # No gamebook data - check if date is today or future
-        today = date.today()
-        if game_date >= today:
-            return 'daily'
-        else:
-            # Historical date with no gamebook - might be a gap, use backfill
-            # (will fall through to BDL fallback)
-            return 'backfill'
-
-    except Exception as e:
-        logger.warning(f"Error checking gamebook availability: {e}")
-        return 'backfill'
 
 
 def _query_gamebook_players(
