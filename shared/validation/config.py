@@ -137,7 +137,7 @@ PHASE3_TABLES = {
         dataset='nba_analytics',
         date_column='game_date',
         processor_name='PlayerGameSummaryProcessor',
-        expected_scope='all_rostered',  # All players on game-day rosters (active+DNP+inactive)
+        expected_scope='active_only',  # Only players who actually played (have game stats)
     ),
     'team_defense_game_summary': Phase3Table(
         table_name='team_defense_game_summary',
@@ -196,7 +196,7 @@ PHASE4_TABLES = {
         dataset='nba_precompute',
         date_column='analysis_date',
         processor_name='PlayerShotZoneAnalysisProcessor',
-        expected_scope='all_rostered',
+        expected_scope='active_only',  # Only players with shot data
     ),
     'player_composite_factors': Phase4Table(
         table_name='player_composite_factors',
