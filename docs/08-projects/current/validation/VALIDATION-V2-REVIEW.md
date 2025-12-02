@@ -2,7 +2,20 @@
 
 **Date:** 2025-12-01
 **Reviewer:** Claude
-**Status:** Post-implementation analysis
+**Status:** Post-implementation analysis + fixes applied
+
+---
+
+## Fixes Applied (2025-12-01)
+
+| Issue | Fix | Status |
+|-------|-----|--------|
+| Virtual source status overwritten | Already fixed in code (has `not source_config.is_virtual` checks) | ✓ Fixed |
+| Duplicate BQ queries | Added `skip_phase1_phase2` param to `validate_date()` | ✓ Fixed |
+| Source name truncation | Widened from 28 to 32 chars | ✓ Fixed |
+| Progress bar shows P1? P2? | Now only shows validated phases | ✓ Fixed |
+| Missing quality tier colors | Added gold=green, silver=yellow, bronze=orange | ✓ Fixed |
+| Config mismatch (odds_api vs bettingpros) | Fixed config.py to align with YAML | ✓ Fixed |
 
 ---
 
@@ -165,5 +178,72 @@ Before deploying to production, verify:
 
 ---
 
-*Document version: 1.0*
-*Last updated: 2025-12-01*
+## Deep Review Findings (2025-12-01)
+
+### System Strengths
+
+1. **Good separation of concerns** - Config, validation, and output are cleanly separated
+2. **Single source of truth** - `fallback_config.yaml` defines all chains
+3. **Backwards compatibility** - Legacy view preserved with `--legacy-view`
+4. **Time-aware monitoring** - Understands orchestration timeline for today/yesterday
+5. **Quality tracking** - Gold/silver/bronze tiers with colors
+6. **Self-test modules** - Each new module has `if __name__ == '__main__'` tests
+
+### Remaining Improvements (Future)
+
+| Priority | Improvement | Effort |
+|----------|-------------|--------|
+| Medium | JSON output for chain view (`--format json`) | 2-3 hours |
+| Medium | Date range support for chain view | 2-3 hours |
+| Low | Add unit tests for validation modules | 4-6 hours |
+| Low | Track registry sync runs (not just `created_at`) | 1-2 hours |
+| Low | Verify GCS path mappings match actual structure | 1 hour |
+
+### Configuration Consistency
+
+The system now has two sources of Phase 2 config:
+- `config.py` - Used by legacy phase 2 validator
+- `fallback_config.yaml` - Used by chain validator (V2)
+
+**Recommendation:** Long-term, consolidate to YAML only and deprecate PHASE2_SOURCES in config.py.
+
+---
+
+---
+
+## Session 2 Review (2025-12-02)
+
+### Additional Fixes Applied
+
+| Issue | Fix | Status |
+|-------|-----|--------|
+| Hardcoded project IDs | Imported `PROJECT_ID` from config.py | ✓ Fixed |
+| Confusing comment in validate_pipeline.py | Clarified `if True:` comment about run history | ✓ Fixed |
+| Missing GCS path for espn_boxscores | Added to `GCS_PATH_MAPPING` | ✓ Fixed |
+| Insufficient test coverage | Added 8 new tests (24→32 total) | ✓ Fixed |
+
+### New Tests Added
+
+1. `test_impact_message_for_missing_chain` - Validates impact message generation for missing chains
+2. `test_impact_message_for_fallback_used` - Validates impact message when fallback used
+3. `test_impact_message_none_for_complete_primary` - Ensures no message when primary available
+4. `test_get_date_column_defaults_to_game_date` - Tests default date column behavior
+5. `test_get_date_column_special_cases` - Tests special date columns (analysis_date, cache_date, scrape_date)
+6. `test_chain_summary_calculation` - Tests `get_chain_summary()` helper
+7. `test_espn_boxscores_has_path` - Validates new GCS path mapping
+8. `test_all_chain_sources_have_paths_or_are_virtual` - Guard test for future sources
+
+### Files Modified
+
+| File | Changes |
+|------|---------|
+| `shared/validation/validators/chain_validator.py` | Import PROJECT_ID, use in queries |
+| `shared/validation/validators/maintenance_validator.py` | Import PROJECT_ID, use in all 7 queries |
+| `shared/validation/chain_config.py` | Added `espn_boxscores` to GCS_PATH_MAPPING |
+| `bin/validate_pipeline.py` | Clarified run history comment |
+| `tests/validation/test_validation_system.py` | Added 8 new tests |
+
+---
+
+*Document version: 2.1*
+*Last updated: 2025-12-02*

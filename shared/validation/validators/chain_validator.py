@@ -26,10 +26,64 @@ from shared.validation.chain_config import (
     GCS_PATH_MAPPING,
     SEASON_BASED_GCS_SOURCES,
     GCS_BUCKET,
+    VIRTUAL_SOURCE_DEPENDENCIES,
+    CHAIN_VALIDATION_ORDER,
 )
+from shared.validation.config import PROJECT_ID
 from shared.validation.context.schedule_context import ScheduleContext
 
 logger = logging.getLogger(__name__)
+
+
+def _check_virtual_source_available(
+    source_name: str,
+    validated_chains: Dict[str, 'ChainValidation'],
+) -> bool:
+    """
+    Check if a virtual source can provide data.
+
+    Virtual sources depend on other chains (e.g., reconstructed_team_from_players
+    depends on player_boxscores chain having data).
+
+    Args:
+        source_name: Name of the virtual source
+        validated_chains: Already-validated chains
+
+    Returns:
+        True if the virtual source's input chain is complete/partial
+    """
+    # Get the input chain for this virtual source
+    input_chain_name = VIRTUAL_SOURCE_DEPENDENCIES.get(source_name)
+
+    if input_chain_name is None:
+        # No dependency defined - assume virtual source is unavailable
+        # (safer default: don't count virtual without known dependency)
+        logger.debug(f"Virtual source {source_name} has no defined dependency")
+        return False
+
+    # Check if input chain has been validated
+    input_chain = validated_chains.get(input_chain_name)
+    if input_chain is None:
+        # Input chain not yet validated - can't determine
+        logger.warning(
+            f"Virtual source {source_name} depends on {input_chain_name} "
+            "which hasn't been validated yet. Check CHAIN_VALIDATION_ORDER."
+        )
+        return False
+
+    # Virtual source is available if input chain has data
+    if input_chain.status in ('complete', 'partial'):
+        logger.debug(
+            f"Virtual source {source_name} available "
+            f"(input chain {input_chain_name} is {input_chain.status})"
+        )
+        return True
+    else:
+        logger.debug(
+            f"Virtual source {source_name} unavailable "
+            f"(input chain {input_chain_name} is {input_chain.status})"
+        )
+        return False
 
 
 def validate_all_chains(
@@ -41,6 +95,9 @@ def validate_all_chains(
 ) -> Dict[str, ChainValidation]:
     """
     Validate all fallback chains for a given date.
+
+    Chains are validated in dependency order (CHAIN_VALIDATION_ORDER) so that
+    virtual sources can check if their input chain has data.
 
     Args:
         game_date: Date to validate
@@ -55,25 +112,41 @@ def validate_all_chains(
     start_time = time.time()
 
     if bq_client is None:
-        bq_client = bigquery.Client(project='nba-props-platform')
+        bq_client = bigquery.Client(project=PROJECT_ID)
     if gcs_client is None:
         gcs_client = storage.Client()
 
     chain_configs = get_chain_configs()
     results = {}
 
-    for chain_name, chain_config in chain_configs.items():
+    # Validate chains in dependency order
+    # This ensures input chains are validated before chains with virtual sources
+    ordered_chains = []
+    for chain_name in CHAIN_VALIDATION_ORDER:
+        if chain_name in chain_configs:
+            ordered_chains.append(chain_name)
+
+    # Add any chains not in the order list (safety fallback)
+    for chain_name in chain_configs:
+        if chain_name not in ordered_chains:
+            ordered_chains.append(chain_name)
+
+    for chain_name in ordered_chains:
         # Skip player_roster chain if requested (handled separately by maintenance)
         if skip_roster_chain and chain_name == 'player_roster':
             continue
 
+        chain_config = chain_configs[chain_name]
         chain_start = time.time()
+
+        # Pass already-validated chain results for virtual source dependency checking
         results[chain_name] = validate_chain(
             chain_config=chain_config,
             game_date=game_date,
             schedule_context=schedule_context,
             bq_client=bq_client,
             gcs_client=gcs_client,
+            validated_chains=results,  # Pass previous results
         )
         chain_duration = time.time() - chain_start
         logger.debug(f"Chain {chain_name} validated in {chain_duration:.2f}s")
@@ -90,6 +163,7 @@ def validate_chain(
     schedule_context: ScheduleContext,
     bq_client: bigquery.Client,
     gcs_client: storage.Client,
+    validated_chains: Optional[Dict[str, ChainValidation]] = None,
 ) -> ChainValidation:
     """
     Validate a single fallback chain.
@@ -97,16 +171,24 @@ def validate_chain(
     The chain is considered "complete" if ANY source has data (primary or fallback).
     We track which source will actually be used by the processor.
 
+    For virtual sources, we check if their input chain has data before considering
+    them as available. This prevents false "complete" status when virtual sources
+    can't actually provide data.
+
     Args:
         chain_config: Chain configuration
         game_date: Date to validate
         schedule_context: Schedule context
         bq_client: BigQuery client
         gcs_client: GCS client
+        validated_chains: Already-validated chains (for virtual source dependency checking)
 
     Returns:
         ChainValidation with status and source details
     """
+    if validated_chains is None:
+        validated_chains = {}
+
     source_validations = []
     primary_available = False
     fallback_used = False
@@ -122,23 +204,37 @@ def validate_chain(
         )
         source_validations.append(source_val)
 
+        # Determine if this source has usable data
+        if source_config.is_virtual:
+            # Virtual sources only "have data" if their input chain is complete
+            has_data = _check_virtual_source_available(
+                source_config.name,
+                validated_chains,
+            )
+            if not has_data:
+                # Update status to show why virtual source isn't available
+                source_val.status = 'virtual_unavailable'
+        else:
+            has_data = source_val.bq_record_count > 0
+
         # Track which source will be used (first one with data)
-        # Virtual sources can provide data but we don't overwrite their status
-        has_data = source_val.bq_record_count > 0 or source_config.is_virtual
         if has_data and first_available_source is None:
             first_available_source = source_config
             if source_config.is_primary:
                 primary_available = True
                 source_val.status = 'primary'
-            elif not source_config.is_virtual:
-                # Only mark non-virtual as fallback
+            elif source_config.is_virtual:
+                # Virtual source is being used as fallback
+                fallback_used = True
+                source_val.status = 'virtual_used'
+            else:
+                # Non-virtual fallback
                 fallback_used = True
                 source_val.status = 'fallback'
-            # Virtual sources keep their 'virtual' status
         elif has_data and not source_config.is_virtual:
             # Mark non-virtual as available (backup to the one being used)
             source_val.status = 'available'
-        # Virtual sources always keep their 'virtual' status
+        # Virtual sources keep their status (virtual, virtual_unavailable, or virtual_used)
 
     # Determine overall chain status
     if first_available_source is not None:
@@ -230,7 +326,7 @@ def count_gcs_files(
     source_name: str,
     gcs_path_template: str,
     game_date: date,
-) -> int:
+) -> Optional[int]:
     """
     Count JSON/CSV files in GCS for a source on a given date.
 
@@ -250,8 +346,8 @@ def count_gcs_files(
         # Handle season-based paths differently
         if source_name in SEASON_BASED_GCS_SOURCES:
             # For season-based sources, we can't easily count by date
-            # Return 0 to indicate "not applicable for date-based counting"
-            return 0
+            # Return None to indicate "not applicable for per-date counting"
+            return None
 
         # Build prefix
         prefix = f"{gcs_path_template}/{date_str}/"
@@ -299,7 +395,7 @@ def count_bq_records(
 
         query = f"""
             SELECT COUNT(*) as cnt
-            FROM `nba-props-platform.{dataset}.{table}`
+            FROM `{PROJECT_ID}.{dataset}.{table}`
             WHERE {date_column} = @game_date
         """
         job_config = bigquery.QueryJobConfig(

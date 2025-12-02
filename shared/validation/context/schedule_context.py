@@ -42,7 +42,7 @@ except ImportError:
         }
         return fallback.get(season_year, date(season_year, 10, 22))
 
-    def is_early_season(analysis_date: date, season_year: int, days_threshold: int = 7) -> bool:
+    def is_early_season(analysis_date: date, season_year: int, days_threshold: int = 14) -> bool:
         season_start = get_season_start_date(season_year)
         days_since_start = (analysis_date - season_start).days
         return 0 <= days_since_start < days_threshold
@@ -66,7 +66,7 @@ class ScheduleContext:
     season_year: int
     season_string: str  # e.g., "2021-22"
     season_day: int  # Days since season opener (0 = opening night)
-    is_bootstrap: bool  # Days 0-6
+    is_bootstrap: bool  # Days 0 to BOOTSTRAP_DAYS-1
     date_type: str  # 'regular', 'playoff', 'preseason', 'offseason', 'all_star', 'no_games'
 
     games: List[GameInfo] = field(default_factory=list)
@@ -269,7 +269,7 @@ def format_schedule_summary(context: ScheduleContext) -> str:
     lines.append(f"Season:             {context.season_string} (Day {context.season_day})")
 
     if context.is_bootstrap:
-        lines.append(f"Bootstrap:          Yes (Days 0-6 - Phase 4/5 skip)")
+        lines.append(f"Bootstrap:          Yes (Days 0-{BOOTSTRAP_DAYS-1} - Phase 4/5 skip)")
     else:
         lines.append(f"Bootstrap:          No")
 

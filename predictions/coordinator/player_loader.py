@@ -26,6 +26,12 @@ from typing import Dict, List, Optional, Tuple, Any
 from google.cloud import bigquery
 from datetime import date, datetime
 import logging
+import sys
+import os
+
+# Add parent path for shared imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
+from shared.config.orchestration_config import get_orchestration_config
 
 logger = logging.getLogger(__name__)
 
@@ -99,17 +105,26 @@ class PlayerLoader:
             return []
         
         logger.info(f"Found {len(players)} players for {game_date}")
-        
-        # Create prediction requests
+
+        # Create prediction requests, filtering out bootstrap players (Issue 3)
         requests = []
+        bootstrap_skipped = 0
         for player in players:
             request = self._create_request_for_player(
                 player,
                 game_date,
                 use_multiple_lines
             )
+            # Skip players who need bootstrap (no line values)
+            if request.get('needs_bootstrap', False):
+                bootstrap_skipped += 1
+                logger.debug(f"Skipping {player['player_lookup']} - needs bootstrap")
+                continue
             requests.append(request)
-        
+
+        if bootstrap_skipped > 0:
+            logger.info(f"Skipped {bootstrap_skipped} players needing bootstrap")
+
         return requests
     
     def get_summary_stats(self, game_date: date) -> Dict:
@@ -343,9 +358,12 @@ class PlayerLoader:
             # v3.2: All-player predictions support with line source tracking
             'has_prop_line': player.get('has_prop_line', True),  # Default True for backwards compat
             'actual_prop_line': player.get('current_points_line'),  # The actual betting line (NULL if none)
-            'line_source': line_info['line_source'],  # 'ACTUAL_PROP' or 'ESTIMATED_AVG'
+            'line_source': line_info['line_source'],  # 'ACTUAL_PROP', 'ESTIMATED_AVG', or 'NEEDS_BOOTSTRAP'
             'estimated_line_value': line_info['base_line'] if line_info['line_source'] == 'ESTIMATED_AVG' else None,
-            'estimation_method': line_info['estimation_method']  # 'points_avg_last_5', 'points_avg_last_10', 'default_15.5'
+            'estimation_method': line_info['estimation_method'],  # 'points_avg_last_5', 'points_avg_last_10', 'needs_bootstrap'
+
+            # Issue 3: New player handling
+            'needs_bootstrap': line_info.get('needs_bootstrap', False)
         }
 
         return request
@@ -390,19 +408,32 @@ class PlayerLoader:
         else:
             # Fallback: Estimate from season average
             base_line, estimation_method = self._estimate_betting_line_with_method(player_lookup)
+
+            # Issue 3: Handle new players who need bootstrap
+            if base_line is None:
+                logger.info(f"Player {player_lookup} needs bootstrap, skipping prediction")
+                return {
+                    'line_values': [],
+                    'line_source': 'NEEDS_BOOTSTRAP',
+                    'base_line': None,
+                    'estimation_method': estimation_method,
+                    'needs_bootstrap': True
+                }
+
             line_source = 'ESTIMATED_AVG'
             logger.debug(f"Using estimated line {base_line} ({estimation_method}) for {player_lookup}")
 
         # Generate multiple lines if requested
+        config = get_orchestration_config()
         if use_multiple_lines:
-            # Generate 5 lines: base_line ± 2 in 1-point increments
-            lines = [
-                round(base_line - 2.0, 1),
-                round(base_line - 1.0, 1),
-                round(base_line, 1),
-                round(base_line + 1.0, 1),
-                round(base_line + 2.0, 1)
-            ]
+            # Generate lines: base_line ± range in increments (from config)
+            line_range = config.prediction_mode.line_range_points
+            line_increment = config.prediction_mode.line_increment
+            lines = []
+            current = base_line - line_range
+            while current <= base_line + line_range:
+                lines.append(round(current, 1))
+                current += line_increment
         else:
             lines = [round(base_line, 1)]
 
@@ -410,7 +441,8 @@ class PlayerLoader:
             'line_values': lines,
             'line_source': line_source,
             'base_line': round(base_line, 1),
-            'estimation_method': estimation_method
+            'estimation_method': estimation_method,
+            'needs_bootstrap': False
         }
     
     def _query_actual_betting_line(
@@ -477,25 +509,33 @@ class PlayerLoader:
         line, _ = self._estimate_betting_line_with_method(player_lookup)
         return line
 
-    def _estimate_betting_line_with_method(self, player_lookup: str) -> Tuple[float, str]:
+    def _estimate_betting_line_with_method(self, player_lookup: str) -> Tuple[Optional[float], str]:
         """
         Estimate betting line with method tracking (v3.2)
 
         Uses most recent season average from upcoming_player_game_context
         Returns both the estimated line and the method used.
 
+        Issue 3 Enhancement: No longer uses default 15.5 for new players.
+        Returns None if player doesn't have sufficient history, marking them
+        as needs_bootstrap.
+
         Args:
             player_lookup: Player identifier
 
         Returns:
             Tuple of (estimated_line, estimation_method)
-            Methods: 'points_avg_last_5', 'points_avg_last_10', 'default_15.5'
+            Methods: 'points_avg_last_5', 'points_avg_last_10', 'needs_bootstrap', 'config_default'
+            Returns (None, 'needs_bootstrap') for new players without history
         """
+        config = get_orchestration_config()
+
         # Use upcoming_player_game_context which has the actual averages
         query = """
         SELECT
             points_avg_last_5,
-            points_avg_last_10
+            points_avg_last_10,
+            games_played_last_30
         FROM `{project}.nba_analytics.upcoming_player_game_context`
         WHERE player_lookup = @player_lookup
         ORDER BY game_date DESC
@@ -513,6 +553,18 @@ class PlayerLoader:
             row = next(results, None)
 
             if row is not None:
+                # Check if player has minimum games (Issue 3: new player handling)
+                games_played = row.games_played_last_30 or 0
+                if games_played < config.new_player.min_games_required:
+                    logger.info(
+                        f"Player {player_lookup} has only {games_played} games "
+                        f"(min required: {config.new_player.min_games_required}), "
+                        f"marking as needs_bootstrap"
+                    )
+                    if config.new_player.use_default_line:
+                        return config.new_player.default_line_value, 'config_default'
+                    return None, 'needs_bootstrap'
+
                 # Prefer L5 average, fallback to L10
                 if row.points_avg_last_5 is not None:
                     avg = float(row.points_avg_last_5)
@@ -522,13 +574,17 @@ class PlayerLoader:
                     avg = float(row.points_avg_last_10)
                     return round(avg * 2) / 2.0, 'points_avg_last_10'
 
-            # Default fallback
-            logger.warning(f"No recent average found for {player_lookup}, using default 15.5")
-            return 15.5, 'default_15.5'
+            # No data found - mark as needs_bootstrap (Issue 3)
+            logger.info(f"No historical data found for {player_lookup}, marking as needs_bootstrap")
+            if config.new_player.use_default_line:
+                return config.new_player.default_line_value, 'config_default'
+            return None, 'needs_bootstrap'
 
         except Exception as e:
             logger.error(f"Error estimating line for {player_lookup}: {e}")
-            return 15.5, 'default_15.5'
+            if config.new_player.use_default_line:
+                return config.new_player.default_line_value, 'config_default'
+            return None, 'needs_bootstrap'
     
     # ========================================================================
     # VALIDATION & DEBUGGING UTILITIES

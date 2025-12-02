@@ -1,9 +1,9 @@
 # Pipeline Validation Script - Comprehensive Design
 
 **Created:** 2025-12-01
-**Status:** IMPLEMENTED
+**Status:** ✓ IMPLEMENTED + V2 CHAIN VIEW DEFAULT
 **Author:** Claude + User collaboration
-**Updated:** 2025-12-01 - Implementation Complete
+**Updated:** 2025-12-02 - V2 refinements (32 tests, centralized PROJECT_ID)
 
 ---
 
@@ -880,11 +880,21 @@ python3 bin/validate_pipeline.py today
 - ✓ Complete validation data in structured format
 - ✓ Quality summary across all phases
 
+### ✓ Phase 5: V2 Refinements (COMPLETE - 2025-12-02)
+
+**Changes Made:**
+- Centralized PROJECT_ID (no more hardcoded strings)
+- Added missing GCS path for `espn_boxscores`
+- Improved test coverage: 24 → 32 tests
+- Tests for `_build_impact_message()`, `_get_date_column()`, `get_chain_summary()`
+- Guard test to catch missing GCS paths for future sources
+
 ### Remaining (Future)
 
-- Date range validation with summary
+- Date range validation with chain view summary
 - Alert integration (Slack/email on validation failures)
 - Phase 6 (Publishing) validation support
+- Consolidate PHASE2_SOURCES (config.py) to YAML only
 
 ---
 

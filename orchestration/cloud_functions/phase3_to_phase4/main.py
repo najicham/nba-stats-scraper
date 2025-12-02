@@ -4,9 +4,9 @@ Phase 3 → Phase 4 Orchestrator
 Cloud Function that tracks Phase 3 processor completion and triggers Phase 4 when all complete.
 
 Architecture:
-- Listens to: nba-phase3-analytics-complete (5 Phase 3 processors publish here)
+- Listens to: nba-phase3-analytics-complete (Phase 3 processors publish here)
 - Tracks state in: Firestore collection 'phase3_completion/{game_date}'
-- Publishes to: nba-phase4-trigger (when all 5 complete)
+- Publishes to: nba-phase4-trigger (when all expected processors complete)
 
 Critical Features:
 - Atomic Firestore transactions (prevent race conditions)
@@ -14,16 +14,18 @@ Critical Features:
 - Deduplication marker (_triggered flag prevents double-trigger)
 - Correlation ID preservation (traces back to original scraper run)
 - Entity change propagation (combines entities_changed from all processors)
+- Centralized config: Expected processors loaded from orchestration_config.py
 
-Phase 3 Processors (5 total):
-1. PlayerGameSummaryProcessor
-2. TeamDefenseGameSummaryProcessor
-3. TeamOffenseGameSummaryProcessor
-4. UpcomingPlayerGameContextProcessor
-5. UpcomingTeamGameContextProcessor
+Phase 3 Processors:
+- player_game_summary
+- team_defense_game_summary
+- team_offense_game_summary
+- upcoming_player_game_context
+- upcoming_team_game_context
 
-Version: 1.0
+Version: 1.1 - Now uses centralized orchestration config
 Created: 2025-11-29
+Updated: 2025-12-02
 """
 
 import base64
@@ -42,8 +44,30 @@ logger = logging.getLogger(__name__)
 
 # Constants
 PROJECT_ID = os.environ.get('GCP_PROJECT', 'nba-props-platform')
-EXPECTED_PROCESSORS = 5  # Phase 3 has 5 analytics processors
 PHASE4_TRIGGER_TOPIC = 'nba-phase4-trigger'
+
+# Import expected processors from centralized config
+# This ensures consistency across the codebase (Issue A fix)
+try:
+    from shared.config.orchestration_config import get_orchestration_config
+    _config = get_orchestration_config()
+    EXPECTED_PROCESSORS: List[str] = _config.phase_transitions.phase3_expected_processors
+    EXPECTED_PROCESSOR_COUNT: int = len(EXPECTED_PROCESSORS)
+    EXPECTED_PROCESSOR_SET: Set[str] = set(EXPECTED_PROCESSORS)
+    logger.info(f"Loaded {EXPECTED_PROCESSOR_COUNT} expected Phase 3 processors from config")
+except ImportError:
+    # Fallback for Cloud Functions where shared module may not be available
+    # This list should match orchestration_config.py
+    logger.warning("Could not import orchestration_config, using fallback list")
+    EXPECTED_PROCESSORS: List[str] = [
+        'player_game_summary',
+        'team_defense_game_summary',
+        'team_offense_game_summary',
+        'upcoming_player_game_context',
+        'upcoming_team_game_context',
+    ]
+    EXPECTED_PROCESSOR_COUNT: int = len(EXPECTED_PROCESSORS)
+    EXPECTED_PROCESSOR_SET: Set[str] = set(EXPECTED_PROCESSORS)
 
 # Initialize clients (reused across invocations)
 db = firestore.Client()
@@ -133,7 +157,7 @@ def orchestrate_phase3_to_phase4(cloud_event):
             # All processors complete - trigger Phase 4
             trigger_phase4(game_date, correlation_id, doc_ref, message_data)
             logger.info(
-                f"✅ All {EXPECTED_PROCESSORS} Phase 3 processors complete for {game_date}, "
+                f"✅ All {EXPECTED_PROCESSOR_COUNT} Phase 3 processors complete for {game_date}, "
                 f"triggered Phase 4 (correlation_id={correlation_id})"
             )
         else:
@@ -186,7 +210,7 @@ def update_completion_atomic(transaction: firestore.Transaction, doc_ref, proces
     completed_count = len([k for k in current.keys() if not k.startswith('_')])
 
     # Check if this completes the phase AND hasn't been triggered yet
-    if completed_count >= EXPECTED_PROCESSORS and not current.get('_triggered'):
+    if completed_count >= EXPECTED_PROCESSOR_COUNT and not current.get('_triggered'):
         # Mark as triggered to prevent duplicate triggers
         current['_triggered'] = True
         current['_triggered_at'] = firestore.SERVER_TIMESTAMP
@@ -273,7 +297,7 @@ def trigger_phase4(game_date: str, correlation_id: str, doc_ref, upstream_messag
             combined_entities['teams'] = list(all_team_changes)
 
         logger.info(
-            f"Combined entities from {EXPECTED_PROCESSORS} processors: "
+            f"Combined entities from {EXPECTED_PROCESSOR_COUNT} processors: "
             f"{len(all_player_changes)} players, {len(all_team_changes)} teams changed"
         )
 
@@ -285,7 +309,8 @@ def trigger_phase4(game_date: str, correlation_id: str, doc_ref, upstream_messag
             'correlation_id': correlation_id,
             'trigger_source': 'orchestrator',
             'triggered_by': 'phase3_to_phase4_orchestrator',
-            'upstream_processors_count': EXPECTED_PROCESSORS,
+            'upstream_processors_count': EXPECTED_PROCESSOR_COUNT,
+            'expected_processors': EXPECTED_PROCESSORS,  # Include list for debugging
             'timestamp': datetime.now(timezone.utc).isoformat(),
 
             # Selective processing metadata
@@ -369,11 +394,16 @@ def get_completion_status(game_date: str) -> Dict:
             'game_date': game_date,
             'status': 'not_started',
             'completed_count': 0,
-            'expected_count': EXPECTED_PROCESSORS
+            'expected_count': EXPECTED_PROCESSOR_COUNT,
+            'expected_processors': EXPECTED_PROCESSORS
         }
 
     data = doc.to_dict()
-    completed_count = len([k for k in data.keys() if not k.startswith('_')])
+    completed_processors = [k for k in data.keys() if not k.startswith('_')]
+    completed_count = len(completed_processors)
+
+    # Find missing processors
+    missing_processors = list(EXPECTED_PROCESSOR_SET - set(completed_processors))
 
     # Calculate combined entities_changed
     all_player_changes = set()
@@ -393,8 +423,9 @@ def get_completion_status(game_date: str) -> Dict:
         'game_date': game_date,
         'status': 'triggered' if data.get('_triggered') else 'in_progress',
         'completed_count': completed_count,
-        'expected_count': EXPECTED_PROCESSORS,
-        'completed_processors': [k for k in data.keys() if not k.startswith('_')],
+        'expected_count': EXPECTED_PROCESSOR_COUNT,
+        'completed_processors': completed_processors,
+        'missing_processors': missing_processors,
         'triggered_at': data.get('_triggered_at'),
         'combined_entities_changed': {
             'players': list(all_player_changes),

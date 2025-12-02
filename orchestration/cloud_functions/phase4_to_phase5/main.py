@@ -1,40 +1,37 @@
 """
-Phase 2 → Phase 3 Orchestrator
+Phase 4 → Phase 5 Orchestrator
 
-Cloud Function that tracks Phase 2 processor completion and triggers Phase 3 when all complete.
+Cloud Function that tracks Phase 4 processor completion and triggers Phase 5 (predictions) when all complete.
 
 Architecture:
-- Listens to: nba-phase2-raw-complete (Phase 2 processors publish here)
-- Tracks state in: Firestore collection 'phase2_completion/{game_date}'
-- Publishes to: nba-phase3-trigger (when all expected processors complete)
+- Listens to: nba-phase4-processor-complete (Phase 4 processors publish here)
+- Tracks state in: Firestore collection 'phase4_completion/{game_date}'
+- Publishes to: nba-phase4-precompute-complete (triggers prediction coordinator)
+- Also calls: Prediction coordinator /start endpoint directly
 
 Critical Features:
-- Atomic Firestore transactions (prevent race conditions when processors complete simultaneously)
+- Atomic Firestore transactions (prevent race conditions)
 - Idempotency (handles duplicate Pub/Sub messages)
 - Deduplication marker (_triggered flag prevents double-trigger)
 - Correlation ID preservation (traces back to original scraper run)
 - Centralized config: Expected processors loaded from orchestration_config.py
 
-Race Condition Prevention (Critical Fix 1.1):
-Without transactions:
-  - Processor A completes, reads Firestore (4/5 complete)
-  - Processor B completes, reads Firestore (4/5 complete)
-  - Both increment to 5/5 and trigger Phase 3 (DUPLICATE!)
+Phase 4 Processors:
+- team_defense_zone_analysis
+- player_shot_zone_analysis
+- player_composite_factors
+- player_daily_cache
+- ml_feature_store
 
-With transactions:
-  - Firestore transaction ensures atomic read-modify-write
-  - Only ONE processor successfully marks _triggered=True
-  - Safe even with simultaneous completions
-
-Version: 1.1 - Now uses centralized orchestration config
-Created: 2025-11-29
-Updated: 2025-12-02
+Version: 1.0
+Created: 2025-12-02
 """
 
 import base64
 import json
 import logging
 import os
+import requests
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Set
 
@@ -47,43 +44,29 @@ logger = logging.getLogger(__name__)
 
 # Constants
 PROJECT_ID = os.environ.get('GCP_PROJECT', 'nba-props-platform')
-PHASE3_TRIGGER_TOPIC = 'nba-phase3-trigger'
+PHASE5_TRIGGER_TOPIC = 'nba-phase4-precompute-complete'
+PREDICTION_COORDINATOR_URL = os.environ.get(
+    'PREDICTION_COORDINATOR_URL',
+    'https://prediction-coordinator-756957797294.us-west2.run.app'
+)
 
 # Import expected processors from centralized config
-# This ensures consistency across the codebase (Issue A fix)
 try:
     from shared.config.orchestration_config import get_orchestration_config
     _config = get_orchestration_config()
-    EXPECTED_PROCESSORS: List[str] = _config.phase_transitions.phase2_expected_processors
+    EXPECTED_PROCESSORS: List[str] = _config.phase_transitions.phase4_expected_processors
     EXPECTED_PROCESSOR_COUNT: int = len(EXPECTED_PROCESSORS)
     EXPECTED_PROCESSOR_SET: Set[str] = set(EXPECTED_PROCESSORS)
-    logger.info(f"Loaded {EXPECTED_PROCESSOR_COUNT} expected Phase 2 processors from config")
+    logger.info(f"Loaded {EXPECTED_PROCESSOR_COUNT} expected Phase 4 processors from config")
 except ImportError:
     # Fallback for Cloud Functions where shared module may not be available
-    # This list should match orchestration_config.py
     logger.warning("Could not import orchestration_config, using fallback list")
     EXPECTED_PROCESSORS: List[str] = [
-        'bdl_player_boxscores',
-        'bdl_injuries',
-        'nbac_gamebook_player_stats',
-        'nbac_team_boxscore',
-        'nbac_schedule',
-        'nbac_injury_report',
-        'nbac_play_by_play',
-        'espn_boxscores',
-        'espn_team_rosters',
-        'espn_scoreboard',
-        'odds_api_game_lines',
-        'odds_api_player_points_props',
-        'bettingpros_player_points_props',
-        'bigdataball_play_by_play',
-        'bigdataball_schedule',
-        'nbac_player_list_current',
-        'nbac_team_list',
-        'nbac_standings',
-        'nbac_active_players',
-        'nbac_referee_assignments',
-        'nbac_officials',
+        'team_defense_zone_analysis',
+        'player_shot_zone_analysis',
+        'player_composite_factors',
+        'player_daily_cache',
+        'ml_feature_store',
     ]
     EXPECTED_PROCESSOR_COUNT: int = len(EXPECTED_PROCESSORS)
     EXPECTED_PROCESSOR_SET: Set[str] = set(EXPECTED_PROCESSORS)
@@ -94,29 +77,28 @@ publisher = pubsub_v1.PublisherClient()
 
 
 @functions_framework.cloud_event
-def orchestrate_phase2_to_phase3(cloud_event):
+def orchestrate_phase4_to_phase5(cloud_event):
     """
-    Handle Phase 2 completion events and trigger Phase 3 when all processors complete.
+    Handle Phase 4 completion events and trigger Phase 5 when all processors complete.
 
-    Triggered by: Pub/Sub messages to nba-phase2-raw-complete
+    Triggered by: Pub/Sub messages to nba-phase4-processor-complete
 
-    Message format (unified):
+    Message format:
     {
-        "processor_name": "BdlGamesProcessor",
-        "phase": "phase_2_raw",
+        "processor_name": "ml_feature_store",
+        "phase": "phase_4_precompute",
         "execution_id": "def-456",
         "correlation_id": "abc-123",
         "game_date": "2025-11-29",
-        "output_table": "bdl_games",
-        "output_dataset": "nba_raw",
+        "output_table": "ml_feature_store",
+        "output_dataset": "nba_precompute",
         "status": "success",
-        "record_count": 150,
-        "timestamp": "2025-11-29T12:00:00Z",
+        "record_count": 450,
         ...
     }
 
     Args:
-        cloud_event: CloudEvent from Pub/Sub containing Phase 2 completion data
+        cloud_event: CloudEvent from Pub/Sub containing Phase 4 completion data
     """
     try:
         # Parse Pub/Sub message
@@ -144,7 +126,7 @@ def orchestrate_phase2_to_phase3(cloud_event):
         )
 
         # Update completion state with atomic transaction
-        doc_ref = db.collection('phase2_completion').document(game_date)
+        doc_ref = db.collection('phase4_completion').document(game_date)
 
         # Create transaction and execute atomic update
         transaction = db.transaction()
@@ -162,19 +144,18 @@ def orchestrate_phase2_to_phase3(cloud_event):
         )
 
         if should_trigger:
-            # All processors complete - trigger Phase 3
-            trigger_phase3(game_date, correlation_id, message_data)
+            # All processors complete - trigger Phase 5 (predictions)
+            trigger_phase5(game_date, correlation_id, message_data)
             logger.info(
-                f"✅ All {EXPECTED_PROCESSOR_COUNT} Phase 2 processors complete for {game_date}, "
-                f"triggered Phase 3 (correlation_id={correlation_id})"
+                f"✅ All {EXPECTED_PROCESSOR_COUNT} Phase 4 processors complete for {game_date}, "
+                f"triggered Phase 5 predictions (correlation_id={correlation_id})"
             )
         else:
             # Still waiting for more processors
             logger.info(f"Registered completion for {processor_name}, waiting for others")
 
     except Exception as e:
-        logger.error(f"Error in Phase 2→3 orchestrator: {e}", exc_info=True)
-        # Don't raise - let Pub/Sub retry if transient, or drop if permanent
+        logger.error(f"Error in Phase 4→5 orchestrator: {e}", exc_info=True)
 
 
 @firestore.transactional
@@ -183,37 +164,16 @@ def update_completion_atomic(transaction: firestore.Transaction, doc_ref, proces
     Atomically update processor completion and determine if should trigger next phase.
 
     This function uses Firestore transactions to prevent race conditions when multiple
-    processors complete simultaneously. The @firestore.transactional decorator ensures
-    atomic read-modify-write operations.
-
-    Transaction flow:
-    1. Read current state (locked)
-    2. Check if processor already registered (idempotency)
-    3. Add processor completion data
-    4. Count total completions
-    5. If all complete AND not yet triggered → mark triggered and return True
-    6. Write atomically (released lock)
+    processors complete simultaneously.
 
     Args:
         transaction: Firestore transaction object
         doc_ref: Firestore document reference for this game_date
-        processor_name: Name of completing processor (e.g., "BdlGamesProcessor")
-        completion_data: Completion metadata (timestamp, correlation_id, status, etc.)
+        processor_name: Name of completing processor
+        completion_data: Completion metadata
 
     Returns:
-        bool: True if this update completes the phase and should trigger Phase 3
-
-    Critical Fix 1.1: Race Condition Prevention
-    -----------------------------------------
-    Without transactions, this scenario breaks:
-        11:45 PM - Processor A reads (20/21 complete), increments to 21
-        11:45 PM - Processor B reads (20/21 complete), increments to 21
-        → Both trigger Phase 3 (duplicate)
-
-    With transactions:
-        11:45 PM - Processor A transaction locks doc, reads (20/21), writes (21/21, triggered=True)
-        11:45 PM - Processor B transaction waits, then reads (21/21, triggered=True), sees already triggered
-        → Only ONE trigger published
+        bool: True if this update completes the phase and should trigger Phase 5
     """
     # Read current state within transaction (locked)
     doc_snapshot = doc_ref.get(transaction=transaction)
@@ -232,7 +192,7 @@ def update_completion_atomic(transaction: firestore.Transaction, doc_ref, proces
 
     # Check if this completes the phase AND hasn't been triggered yet
     if completed_count >= EXPECTED_PROCESSOR_COUNT and not current.get('_triggered'):
-        # Mark as triggered to prevent duplicate triggers (double safety)
+        # Mark as triggered to prevent duplicate triggers
         current['_triggered'] = True
         current['_triggered_at'] = firestore.SERVER_TIMESTAMP
         current['_completed_count'] = completed_count
@@ -240,7 +200,7 @@ def update_completion_atomic(transaction: firestore.Transaction, doc_ref, proces
         # Write atomically
         transaction.set(doc_ref, current)
 
-        return True  # Trigger Phase 3
+        return True  # Trigger Phase 5
     else:
         # Not yet complete, or already triggered
         current['_completed_count'] = completed_count
@@ -251,46 +211,38 @@ def update_completion_atomic(transaction: firestore.Transaction, doc_ref, proces
         return False  # Don't trigger
 
 
-def trigger_phase3(game_date: str, correlation_id: str, upstream_message: Dict) -> Optional[str]:
+def trigger_phase5(game_date: str, correlation_id: str, upstream_message: Dict) -> Optional[str]:
     """
-    Publish message to trigger Phase 3 analytics processing.
+    Trigger Phase 5 predictions when Phase 4 is complete.
 
-    Message published to: nba-phase3-trigger
-
-    Message format:
-    {
-        "game_date": "2025-11-29",
-        "correlation_id": "abc-123",
-        "trigger_source": "orchestrator",
-        "triggered_by": "phase2_to_phase3_orchestrator",
-        "upstream_processors_count": 21,
-        "timestamp": "2025-11-29T12:30:00Z"
-    }
+    Does two things:
+    1. Publishes message to nba-phase4-precompute-complete topic
+    2. Calls prediction coordinator /start endpoint directly
 
     Args:
         game_date: Date that was processed
         correlation_id: Original correlation ID from scraper run
-        upstream_message: Original Phase 2 completion message (for metadata)
+        upstream_message: Original Phase 4 completion message
 
     Returns:
         Message ID if published successfully, None if failed
     """
     try:
-        topic_path = publisher.topic_path(PROJECT_ID, PHASE3_TRIGGER_TOPIC)
+        topic_path = publisher.topic_path(PROJECT_ID, PHASE5_TRIGGER_TOPIC)
 
         # Build trigger message
         message = {
             'game_date': game_date,
             'correlation_id': correlation_id,
             'trigger_source': 'orchestrator',
-            'triggered_by': 'phase2_to_phase3_orchestrator',
+            'triggered_by': 'phase4_to_phase5_orchestrator',
             'upstream_processors_count': EXPECTED_PROCESSOR_COUNT,
-            'expected_processors': EXPECTED_PROCESSORS,  # Include list for debugging
+            'expected_processors': EXPECTED_PROCESSORS,
             'timestamp': datetime.now(timezone.utc).isoformat(),
 
             # Optional metadata from upstream
             'parent_execution_id': upstream_message.get('execution_id'),
-            'parent_processor': 'Phase2Orchestrator'
+            'parent_processor': 'Phase4Orchestrator'
         }
 
         # Publish to Pub/Sub
@@ -298,23 +250,77 @@ def trigger_phase3(game_date: str, correlation_id: str, upstream_message: Dict) 
             topic_path,
             data=json.dumps(message).encode('utf-8')
         )
-        message_id = future.result(timeout=10.0)  # Wait up to 10 seconds
+        message_id = future.result(timeout=10.0)
 
-        logger.info(f"Published Phase 3 trigger: message_id={message_id}, game_date={game_date}")
+        logger.info(
+            f"Published Phase 5 trigger: message_id={message_id}, game_date={game_date}"
+        )
+
+        # Also call prediction coordinator directly (HTTP trigger)
+        try:
+            trigger_prediction_coordinator(game_date, correlation_id)
+        except Exception as e:
+            logger.warning(f"Failed to trigger prediction coordinator via HTTP: {e}")
+            # Don't fail - Pub/Sub message was sent, coordinator can pick it up
+
         return message_id
 
     except Exception as e:
-        logger.error(f"Failed to publish Phase 3 trigger for {game_date}: {e}", exc_info=True)
-        # This is critical - if we can't trigger Phase 3, alert
-        # (In production, would send alert here)
+        logger.error(f"Failed to publish Phase 5 trigger for {game_date}: {e}", exc_info=True)
         return None
+
+
+def trigger_prediction_coordinator(game_date: str, correlation_id: str) -> None:
+    """
+    Trigger the prediction coordinator via HTTP.
+
+    The coordinator has a /start endpoint that accepts game_date.
+
+    Args:
+        game_date: Date to generate predictions for
+        correlation_id: Correlation ID for tracing
+    """
+    try:
+        url = f"{PREDICTION_COORDINATOR_URL}/start"
+
+        payload = {
+            'game_date': game_date,
+            'correlation_id': correlation_id,
+            'trigger_source': 'phase4_orchestrator'
+        }
+
+        # Get identity token for Cloud Run authentication
+        try:
+            import google.auth.transport.requests
+            import google.oauth2.id_token
+
+            auth_req = google.auth.transport.requests.Request()
+            id_token = google.oauth2.id_token.fetch_id_token(auth_req, PREDICTION_COORDINATOR_URL)
+            headers = {
+                'Authorization': f'Bearer {id_token}',
+                'Content-Type': 'application/json'
+            }
+        except Exception as e:
+            logger.warning(f"Could not get ID token: {e}, trying without auth")
+            headers = {'Content-Type': 'application/json'}
+
+        response = requests.post(url, json=payload, headers=headers, timeout=30)
+
+        if response.status_code == 200:
+            logger.info(f"Successfully triggered prediction coordinator for {game_date}")
+        else:
+            logger.warning(
+                f"Prediction coordinator returned {response.status_code}: {response.text[:200]}"
+            )
+
+    except Exception as e:
+        logger.error(f"Error triggering prediction coordinator: {e}")
+        raise
 
 
 def parse_pubsub_message(cloud_event) -> Dict:
     """
     Parse Pub/Sub CloudEvent and extract message data.
-
-    Handles base64 decoding and JSON parsing.
 
     Args:
         cloud_event: CloudEvent from Pub/Sub
@@ -358,7 +364,7 @@ def get_completion_status(game_date: str) -> Dict:
     Returns:
         Dictionary with completion status
     """
-    doc_ref = db.collection('phase2_completion').document(game_date)
+    doc_ref = db.collection('phase4_completion').document(game_date)
     doc = doc_ref.get()
 
     if not doc.exists:
@@ -390,7 +396,6 @@ def get_completion_status(game_date: str) -> Dict:
 
 # For local testing
 if __name__ == '__main__':
-    # Example: Check status for a date
     import sys
     if len(sys.argv) > 1:
         game_date = sys.argv[1]

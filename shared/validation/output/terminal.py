@@ -68,6 +68,60 @@ SEPARATOR = '─' * LINE_WIDTH
 DOUBLE_SEPARATOR = '=' * LINE_WIDTH
 
 
+def _format_grouped_issues(issues: List[str], game_date: date) -> List[str]:
+    """
+    Group similar issues together for more concise display.
+
+    Example:
+        Before: 5 lines of "X has no data for 2021-10-19"
+        After: "✗ Missing data (5 tables): table1, table2, table3, table4, table5"
+    """
+    lines = []
+    date_str = str(game_date)
+
+    # Group by issue type
+    no_data_tables = []
+    missing_players_issues = []
+    processor_failures = []
+    other_issues = []
+
+    for issue in issues:
+        if f"has no data for {date_str}" in issue:
+            # Extract table name (e.g., "player_game_summary has no data for...")
+            table_name = issue.split(" has no data")[0]
+            no_data_tables.append(table_name)
+        elif "processor(s) failed" in issue:
+            processor_failures.append(issue)
+        elif "missing" in issue.lower() and "player" in issue.lower():
+            missing_players_issues.append(issue)
+        else:
+            other_issues.append(issue)
+
+    # Format grouped "no data" issues
+    if no_data_tables:
+        if len(no_data_tables) <= 3:
+            # Few tables - show full names
+            lines.append(f"  ✗ No data for {date_str}: {', '.join(no_data_tables)}")
+        else:
+            # Many tables - summarize
+            lines.append(f"  ✗ No data for {date_str} ({len(no_data_tables)} tables):")
+            lines.append(f"    {', '.join(no_data_tables)}")
+
+    # Format processor failures (keep as-is, usually just one)
+    for issue in processor_failures:
+        lines.append(f"  ✗ {issue}")
+
+    # Format missing players issues
+    for issue in missing_players_issues:
+        lines.append(f"  ✗ {issue}")
+
+    # Format other issues
+    for issue in other_issues:
+        lines.append(f"  ✗ {issue}")
+
+    return lines
+
+
 @dataclass
 class ValidationReport:
     """Complete validation report for formatting."""
@@ -168,11 +222,10 @@ def format_validation_result(
         if has_run_errors:
             lines.append(format_errors_section(report.run_history))
 
-        # Validation issues
+        # Validation issues (grouped by type)
         if report.issues:
             lines.append("VALIDATION ISSUES:")
-            for issue in report.issues:
-                lines.append(f"  ✗ {issue}")
+            lines.extend(_format_grouped_issues(report.issues, report.game_date))
             lines.append("")
 
         if report.warnings:
@@ -337,7 +390,10 @@ def _format_phase_result(result: PhaseValidationResult, use_color: bool, verbose
         for table_name, table in result.tables.items():
             record_str = str(table.record_count)
 
-            if table.expected_count > 0:
+            # Show "—" for expected during bootstrap (instead of confusing "0")
+            if table.status == ValidationStatus.BOOTSTRAP_SKIP:
+                expected_str = "—"
+            elif table.expected_count > 0:
                 expected_str = f"{table.record_count}/{table.expected_count}"
                 pct = table.completeness_pct
                 expected_str = f"{expected_str} ({pct:.0f}%)"
@@ -370,7 +426,11 @@ def _format_phase_result(result: PhaseValidationResult, use_color: bool, verbose
         for table_name, table in result.tables.items():
             pred_str = str(table.record_count)
             player_str = str(table.player_count)
-            expected_str = f"{table.player_count}/{table.expected_players}"
+            # Show "—" for expected during bootstrap (instead of confusing "0/0")
+            if table.status == ValidationStatus.BOOTSTRAP_SKIP:
+                expected_str = "—"
+            else:
+                expected_str = f"{table.player_count}/{table.expected_players}"
             status_str = _format_status(table.status, use_color)
 
             line = f"{table_name:<35s} {pred_str:>12s} {player_str:>12s} {expected_str:>12s} {status_str:>10s}"
@@ -497,15 +557,29 @@ def _format_progress_bar(report: ValidationReport, use_color: bool) -> str:
         else:  # MISSING or ERROR
             phase_pcts[phase] = 0.0
 
+    # Get set of validated phases
+    validated_phases = {p.phase for p in report.phase_results}
+
     # Weights based on mode
     # Phase 1 (GCS) is prerequisite for Phase 2, so lower weight
+    # Note: When chain view is used, P1/P2 are not in phase_results
     if is_bootstrap:
         weights = {1: 0.10, 2: 0.35, 3: 0.55, 4: 0.0, 5: 0.0}
     else:
         weights = {1: 0.05, 2: 0.15, 3: 0.25, 4: 0.25, 5: 0.30}
 
+    # Only use weights for validated phases, redistribute others
+    active_weights = {p: w for p, w in weights.items() if p in validated_phases}
+    if active_weights:
+        # Normalize weights to sum to 1
+        weight_sum = sum(active_weights.values())
+        if weight_sum > 0:
+            active_weights = {p: w / weight_sum for p, w in active_weights.items()}
+    else:
+        active_weights = weights  # Fallback
+
     # Calculate weighted total
-    total_pct = sum(phase_pcts.get(p, 0) * w for p, w in weights.items())
+    total_pct = sum(phase_pcts.get(p, 0) * w for p, w in active_weights.items())
 
     # Build progress bar (50 chars wide)
     BAR_WIDTH = 50
@@ -526,8 +600,14 @@ def _format_progress_bar(report: ValidationReport, use_color: bool) -> str:
     lines.append(f"Pipeline Progress: [{bar}] {total_pct:.0f}%")
 
     # Phase breakdown with mini indicators (match actual status, not just percentage)
+    # Only show phases that were actually validated (validated_phases defined above)
     phase_indicators = []
+
     for phase in [1, 2, 3, 4, 5]:
+        # Skip phases that weren't validated (e.g., P1/P2 when in chain view)
+        if phase not in validated_phases:
+            continue
+
         phase_result = next((p for p in report.phase_results if p.phase == phase), None)
 
         if phase_result:
@@ -547,11 +627,8 @@ def _format_progress_bar(report: ValidationReport, use_color: bool) -> str:
             else:  # MISSING or ERROR
                 sym = '○'
                 color = '\033[91m' if use_color else ''  # Red
-        else:
-            sym = '?'
-            color = '\033[90m' if use_color else ''  # Gray
 
-        phase_indicators.append(f"{color}P{phase}{sym}{reset}")
+            phase_indicators.append(f"{color}P{phase}{sym}{reset}")
 
     lines.append(f"                   {' '.join(phase_indicators)}")
 
@@ -665,6 +742,13 @@ SOURCE_STATUS_SYMBOLS = {
 # Severity order for sorting (critical first)
 SEVERITY_ORDER = {'critical': 0, 'warning': 1, 'info': 2}
 
+# Quality tier colors
+QUALITY_TIER_COLORS = {
+    'gold': '\033[92m',    # Green - highest quality
+    'silver': '\033[93m',  # Yellow - fallback quality
+    'bronze': '\033[33m',  # Orange/brown - lowest quality
+}
+
 
 def format_chain_section(
     chain_validations: dict,
@@ -703,9 +787,12 @@ def format_chain_section(
     complete_count = sum(1 for _, cv in sorted_chains if cv.status == 'complete')
     partial_count = sum(1 for _, cv in sorted_chains if cv.status == 'partial')
     missing_count = sum(1 for _, cv in sorted_chains if cv.status == 'missing')
+    fallback_count = sum(1 for _, cv in sorted_chains if cv.fallback_used)
     total = len(sorted_chains)
 
     summary_parts = [f"{complete_count}/{total} chains complete"]
+    if fallback_count > 0:
+        summary_parts.append(f"{fallback_count} using fallback")
     if partial_count > 0:
         summary_parts.append(f"{partial_count} partial")
     if missing_count > 0:
@@ -754,8 +841,8 @@ def _format_single_chain(chain_val: ChainValidation, use_color: bool) -> list:
     lines.append(f"{chain_header} {padding} Status: {status_text}")
 
     # Source table header
-    lines.append("  Source                          GCS JSON    BQ Records   Quality   Status")
-    lines.append("  " + "─" * 76)
+    lines.append("  Source                              GCS JSON    BQ Records   Quality   Status")
+    lines.append("  " + "─" * 80)
 
     # Format each source
     for sv in chain_val.sources:
@@ -767,8 +854,8 @@ def _format_single_chain(chain_val: ChainValidation, use_color: bool) -> list:
         else:
             prefix = "    "
 
-        # Source name (truncate/pad to 28 chars)
-        name = src.name[:28].ljust(28)
+        # Source name (truncate/pad to 32 chars)
+        name = src.name[:32].ljust(32)
 
         # GCS column (8 chars, right-aligned)
         if sv.gcs_file_count is not None:
@@ -782,8 +869,13 @@ def _format_single_chain(chain_val: ChainValidation, use_color: bool) -> list:
         else:
             bq_str = str(sv.bq_record_count).rjust(12)
 
-        # Quality tier (8 chars, left-aligned)
-        quality_str = src.quality_tier.ljust(8)
+        # Quality tier (8 chars, left-aligned) with color
+        quality_tier = src.quality_tier
+        if use_color:
+            quality_color = QUALITY_TIER_COLORS.get(quality_tier, '')
+            quality_str = f"{quality_color}{quality_tier.ljust(8)}{RESET}"
+        else:
+            quality_str = quality_tier.ljust(8)
 
         # Status (with color if enabled)
         status_text = SOURCE_STATUS_SYMBOLS.get(sv.status, sv.status)
@@ -993,16 +1085,23 @@ def _format_roster_chain(roster_chain: ChainValidation, use_color: bool) -> list
     lines.append(f"Chain: player_roster (critical) ─────────────────── Status: {color}{status_symbol} {roster_chain.status.title()}{reset}")
 
     # Source table
-    lines.append("  Source                          Records    Quality   Status")
-    lines.append("  " + "─" * 60)
+    lines.append("  Source                              Records    Quality   Status")
+    lines.append("  " + "─" * 64)
 
     for sv in roster_chain.sources:
         src = sv.source
         prefix = "  ★ " if src.is_primary else "    "
 
-        name = src.name[:28].ljust(28)
+        name = src.name[:32].ljust(32)
         records = str(sv.bq_record_count).rjust(8)
-        quality = src.quality_tier.ljust(8)
+
+        # Quality tier with color
+        quality_tier = src.quality_tier
+        if use_color:
+            quality_color = QUALITY_TIER_COLORS.get(quality_tier, '')
+            quality = f"{quality_color}{quality_tier.ljust(8)}{RESET}"
+        else:
+            quality = quality_tier.ljust(8)
 
         status_text = SOURCE_STATUS_SYMBOLS.get(sv.status, sv.status)
         if use_color:

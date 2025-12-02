@@ -21,6 +21,7 @@ from shared.validation.chain_config import (
     SourceValidation,
     get_chain_configs,
 )
+from shared.validation.config import PROJECT_ID
 from shared.validation.time_awareness import TimeContext
 
 logger = logging.getLogger(__name__)
@@ -70,7 +71,7 @@ def validate_maintenance(
         return None
 
     if bq_client is None:
-        bq_client = bigquery.Client(project='nba-props-platform')
+        bq_client = bigquery.Client(project=PROJECT_ID)
 
     # Validate player roster chain
     roster_chain = _validate_roster_chain(bq_client)
@@ -159,7 +160,7 @@ def _validate_roster_source(
         # Simple count query - these tables may be views or have different schemas
         query = f"""
             SELECT COUNT(*) as cnt
-            FROM `nba-props-platform.{source_config.dataset}.{source_config.table}`
+            FROM `{PROJECT_ID}.{source_config.dataset}.{source_config.table}`
         """
         result = bq_client.query(query).result()
         row = next(iter(result))
@@ -184,28 +185,45 @@ def _validate_roster_source(
 
 
 def _check_registry_status(bq_client: bigquery.Client) -> RegistryStatus:
-    """Check the player registry status."""
+    """Check the player registry status using processor run history."""
     try:
-        query = """
-            SELECT
-                COUNT(*) as total,
-                MAX(created_at) as last_update
-            FROM `nba-props-platform.nba_reference.nba_players_registry`
+        # First get total player count
+        count_query = f"""
+            SELECT COUNT(*) as total
+            FROM `{PROJECT_ID}.nba_reference.nba_players_registry`
         """
-        result = bq_client.query(query).result()
-        row = next(iter(result))
+        count_result = bq_client.query(count_query).result()
+        total = next(iter(count_result)).total or 0
 
-        total = row.total or 0
-        last_update = row.last_update
+        # Check last successful sync from processor_run_history
+        # This is more accurate than MAX(created_at) which only shows new records
+        sync_query = f"""
+            SELECT MAX(run_end_at) as last_sync
+            FROM `{PROJECT_ID}.nba_reference.processor_run_history`
+            WHERE processor_name LIKE '%RosterRegistry%'
+              AND status = 'success'
+        """
+        sync_result = bq_client.query(sync_query).result()
+        sync_row = next(iter(sync_result))
+        last_sync = sync_row.last_sync
+
+        # Fallback to created_at if no run history exists
+        if not last_sync:
+            fallback_query = f"""
+                SELECT MAX(created_at) as last_update
+                FROM `{PROJECT_ID}.nba_reference.nba_players_registry`
+            """
+            fallback_result = bq_client.query(fallback_query).result()
+            last_sync = next(iter(fallback_result)).last_update
 
         # Calculate staleness (handle timezone-aware datetimes)
-        if last_update:
+        if last_sync:
             # Convert to naive datetime for comparison
-            if hasattr(last_update, 'tzinfo') and last_update.tzinfo is not None:
-                last_update_naive = last_update.replace(tzinfo=None)
+            if hasattr(last_sync, 'tzinfo') and last_sync.tzinfo is not None:
+                last_sync_naive = last_sync.replace(tzinfo=None)
             else:
-                last_update_naive = last_update
-            staleness = (datetime.now() - last_update_naive).days
+                last_sync_naive = last_sync
+            staleness = (datetime.now() - last_sync_naive).days
             is_current = staleness <= STALE_THRESHOLD_DAYS
         else:
             staleness = 999
@@ -213,7 +231,7 @@ def _check_registry_status(bq_client: bigquery.Client) -> RegistryStatus:
 
         return RegistryStatus(
             total_players=total,
-            last_update=last_update,
+            last_update=last_sync,
             is_current=is_current,
             staleness_days=staleness,
         )
@@ -227,9 +245,9 @@ def _count_unresolved_players(bq_client: bigquery.Client) -> int:
     """Count unresolved player names."""
     try:
         # Just count total - this table contains unresolved names
-        query = """
+        query = f"""
             SELECT COUNT(*) as cnt
-            FROM `nba-props-platform.nba_reference.unresolved_player_names`
+            FROM `{PROJECT_ID}.nba_reference.unresolved_player_names`
         """
         result = bq_client.query(query).result()
         row = next(iter(result))

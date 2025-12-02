@@ -2,22 +2,46 @@
 
 **File:** `docs/monitoring/05-data-completeness-validation.md`
 **Created:** 2025-11-18
-**Last Updated:** 2025-11-18
+**Last Updated:** 2025-12-02
 **Purpose:** Validate data completeness for daily operations and backfills
-**Status:** Current
+**Status:** Current (Superseded by validation script for most use cases)
 **Audience:** Engineers running backfills, on-call engineers validating daily pipeline
+
+---
+
+## 🚀 Quick Start: Use the Validation Script
+
+**For most validation tasks, use the automated validation script instead of manual SQL queries:**
+
+```bash
+# Single date validation (shows all phases + quality)
+python3 bin/validate_pipeline.py 2021-10-19
+
+# Today's data with orchestration status
+python3 bin/validate_pipeline.py today
+
+# Verbose mode with run history
+python3 bin/validate_pipeline.py today --verbose
+
+# JSON output for scripting
+python3 bin/validate_pipeline.py 2021-10-19 --format json
+```
+
+**See:** `docs/08-projects/current/validation/VALIDATION-V2-DESIGN.md` for full documentation.
 
 ---
 
 ## 🎯 Overview
 
-**This document covers:**
+**This document covers manual SQL queries for:**
 - ✅ Daily completeness validation (is today's data complete?)
 - ✅ Backfill completeness validation (did historical backfill complete?)
 - ✅ Progressive validation (Phase 1→2→3→4→5 per date)
 - ✅ Partial backfill detection (Phase 1-3 done, Phase 4-5 missing)
 - ✅ Cross-phase reconciliation (row counts match?)
 - ✅ Recovery procedures
+
+> **Note:** The validation script (`bin/validate_pipeline.py`) automates most of these checks. Use these manual queries when you need more detailed investigation or custom analysis.
 
 ---
 

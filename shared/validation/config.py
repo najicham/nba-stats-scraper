@@ -55,8 +55,12 @@ WARN_QUALITY_TIERS = ['bronze']
 ERROR_QUALITY_TIERS = ['poor', 'unusable']
 
 # =============================================================================
-# PHASE 2: RAW DATA SOURCES
+# PHASE 2: RAW DATA SOURCES (LEGACY)
 # =============================================================================
+# NOTE: This config is used by the legacy phase2_validator.py for --legacy-view.
+# The chain_validator.py (default V2 view) reads from:
+#   shared/config/data_sources/fallback_config.yaml
+# Consider consolidating to YAML-only in a future refactor.
 
 @dataclass
 class Phase2Source:
@@ -88,19 +92,19 @@ PHASE2_SOURCES = {
         date_column='game_date',
         fallback_for='nbac_gamebook_player_stats',
     ),
-    'bettingpros_player_points_props': Phase2Source(
-        table_name='bettingpros_player_points_props',
+    'odds_api_player_points_props': Phase2Source(
+        table_name='odds_api_player_points_props',
         priority='important',
-        description='Player prop lines (primary)',
+        description='Player prop lines (primary, ~40% coverage)',
         date_column='game_date',
         has_game_id=False,
     ),
-    'odds_api_player_points_props': Phase2Source(
-        table_name='odds_api_player_points_props',
+    'bettingpros_player_points_props': Phase2Source(
+        table_name='bettingpros_player_points_props',
         priority='fallback',
-        description='Player prop lines (fallback)',
+        description='Player prop lines (fallback, ~99% coverage)',
         date_column='game_date',
-        fallback_for='bettingpros_player_points_props',
+        fallback_for='odds_api_player_points_props',
         has_game_id=False,
     ),
     'nbac_schedule': Phase2Source(
@@ -248,7 +252,7 @@ FIRESTORE_COLLECTIONS = {
 # BOOTSTRAP PERIOD
 # =============================================================================
 
-BOOTSTRAP_DAYS = 7  # Days 0-6 of each season are bootstrap period
+BOOTSTRAP_DAYS = 14  # Days 0-13 of each season are bootstrap period (~7 games per team for L5/L7d windows)
 
 # =============================================================================
 # TIME-AWARE MONITORING (All times in ET)

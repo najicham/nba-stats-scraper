@@ -50,6 +50,7 @@ from .batch_writer import BatchWriter
 
 # Bootstrap period support (Week 5 - Early Season Handling)
 from shared.config.nba_season_dates import is_early_season, get_season_year_from_date
+from shared.validation.config import BOOTSTRAP_DAYS
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -372,15 +373,15 @@ class MLFeatureStoreProcessor(
             season_year: Season year (e.g., 2024 for 2024-25 season)
 
         Returns:
-            True if within first 7 days of regular season, False otherwise
+            True if within first BOOTSTRAP_DAYS of regular season, False otherwise
         """
         # Use schedule service-based detection (Week 5 - Bootstrap period fix)
-        if is_early_season(analysis_date, season_year, days_threshold=7):
+        if is_early_season(analysis_date, season_year, days_threshold=BOOTSTRAP_DAYS):
             self.early_season_flag = True
-            self.insufficient_data_reason = 'early_season_skip_first_7_days'
+            self.insufficient_data_reason = f'early_season_skip_first_{BOOTSTRAP_DAYS}_days'
             logger.info(
                 f"Early season detected for {analysis_date} (season {season_year}): "
-                f"within first 7 days of regular season"
+                f"within first {BOOTSTRAP_DAYS} days of regular season"
             )
             return True
 

@@ -72,6 +72,9 @@ from shared.utils.completeness_checker import CompletenessChecker
 # Team mapping utility (handles abbreviation variants: BKN/BRK, CHA/CHO, etc.)
 from shared.utils.nba_team_mapper import get_nba_team_mapper, get_team_info
 
+# Orchestration config for processing mode (Issue 1 fix)
+from shared.config.orchestration_config import get_orchestration_config
+
 logger = logging.getLogger(__name__)
 
 
@@ -330,36 +333,268 @@ class UpcomingPlayerGameContextProcessor(
         
         logger.info("Data extraction complete")
     
+    def _determine_processing_mode(self) -> str:
+        """
+        Determine whether to use daily or backfill processing mode.
+
+        ISSUE 1 FIX: The processor needs different driver queries for:
+        - DAILY mode: Use schedule + roster (pre-game data available)
+        - BACKFILL mode: Use gamebook (post-game actual players)
+
+        Detection logic:
+        1. Check PROCESSING_MODE environment variable (explicit override only)
+        2. Check if gamebook has data for target date
+        3. If gamebook empty and date is today/future, use daily mode
+        4. Otherwise use backfill mode
+
+        Returns:
+            'daily' or 'backfill'
+        """
+        # Check environment variable first (explicit override only)
+        # Only use this if PROCESSING_MODE is explicitly set, not the config default
+        env_processing_mode = os.environ.get('PROCESSING_MODE')
+        if env_processing_mode in ('daily', 'backfill'):
+            logger.info(f"Processing mode from env var override: {env_processing_mode}")
+            return env_processing_mode
+
+        # Auto-detect based on gamebook data availability
+        gamebook_check_query = f"""
+        SELECT COUNT(*) as cnt
+        FROM `{self.project_id}.nba_raw.nbac_gamebook_player_stats`
+        WHERE game_date = '{self.target_date}'
+        """
+
+        try:
+            result = self.bq_client.query(gamebook_check_query).result()
+            row = next(result, None)
+            gamebook_count = row.cnt if row else 0
+
+            # If gamebook has data, use backfill mode (post-game data exists)
+            if gamebook_count > 0:
+                logger.info(f"Gamebook has {gamebook_count} records for {self.target_date} - using BACKFILL mode")
+                return 'backfill'
+
+            # If gamebook empty, check if date is today or future
+            today = date.today()
+            if self.target_date >= today:
+                logger.info(f"No gamebook data and date is {self.target_date} (today={today}) - using DAILY mode")
+                return 'daily'
+            else:
+                # Historical date with no gamebook - might be a gap, try daily
+                logger.warning(f"No gamebook data for historical date {self.target_date} - trying DAILY mode")
+                return 'daily'
+
+        except Exception as e:
+            logger.warning(f"Error checking gamebook availability: {e} - defaulting to DAILY mode")
+            return 'daily'
+
     def _extract_players_with_props(self) -> None:
         """
         Extract ALL players who have games scheduled for target date.
 
         This is the DRIVER query - determines which players to process.
 
-        CHANGE (v3.2 - All-Player Predictions):
-        - Now queries nbac_gamebook_player_stats for ALL active players with games
-        - Previously only processed ~22 players with prop lines
-        - Now processes ~67 players (all active players per game day)
-        - Prop line info is LEFT JOINed to track has_prop_line flag
+        ISSUE 1 FIX (v3.3):
+        - Detects processing mode (daily vs backfill)
+        - DAILY mode: Uses schedule + roster (pre-game data)
+        - BACKFILL mode: Uses gamebook (post-game actual players)
 
-        This enables predictions for all players, not just those with betting lines.
+        This fixes the critical issue where daily predictions couldn't work
+        because gamebook data doesn't exist until AFTER games finish.
         """
-        # Track which source we used
-        self._props_source = 'gamebook'  # Now using gamebook as primary driver
+        # Determine processing mode
+        processing_mode = self._determine_processing_mode()
+        self._processing_mode = processing_mode  # Store for later reference
 
-        # Query ALL players from gamebook, LEFT JOIN with props for has_prop_line
-        all_players_query = f"""
-        WITH players_with_games AS (
+        if processing_mode == 'daily':
+            self._extract_players_daily_mode()
+        else:
+            self._extract_players_backfill_mode()
+
+    def _extract_players_daily_mode(self) -> None:
+        """
+        Extract players using DAILY mode (pre-game data).
+
+        Uses schedule + roster to get players who will play today.
+        LEFT JOINs with injury report for player status.
+        LEFT JOINs with props for has_prop_line flag.
+
+        This is the FIX for Issue 1 - daily predictions now work because
+        we don't depend on gamebook (which only exists post-game).
+        """
+        self._props_source = 'roster'  # Track source used
+
+        # Calculate roster date range for partition filtering
+        # We use a wider window (90 days) to handle cases where roster scraping may be behind
+        # The query will find the latest roster within this range
+        roster_start = (self.target_date - timedelta(days=90)).isoformat()
+        roster_end = self.target_date.isoformat()
+
+        logger.info(f"Looking for roster data between {roster_start} and {roster_end}")
+
+        # DAILY MODE: Schedule + Roster + Injury
+        # Using date range for partition elimination
+        daily_query = f"""
+        WITH games_today AS (
+            -- Get all games scheduled for target date
+            SELECT
+                game_id,
+                game_date,
+                home_team_tricode as home_team_abbr,
+                away_team_tricode as away_team_abbr
+            FROM `{self.project_id}.nba_raw.nbac_schedule`
+            WHERE game_date = '{self.target_date}'
+        ),
+        teams_playing AS (
+            -- Get all teams playing today (both home and away)
+            SELECT DISTINCT home_team_abbr as team_abbr FROM games_today
+            UNION DISTINCT
+            SELECT DISTINCT away_team_abbr as team_abbr FROM games_today
+        ),
+        latest_roster AS (
+            -- Find the most recent roster within partition range
+            SELECT MAX(roster_date) as roster_date
+            FROM `{self.project_id}.nba_raw.espn_team_rosters`
+            WHERE roster_date >= '{roster_start}'
+              AND roster_date <= '{roster_end}'
+        ),
+        roster_players AS (
+            -- Get all players from rosters of teams playing today
+            -- Using date range for partition elimination, then filter to latest
+            SELECT DISTINCT
+                r.player_lookup,
+                r.team_abbr
+            FROM `{self.project_id}.nba_raw.espn_team_rosters` r
+            INNER JOIN latest_roster lr ON r.roster_date = lr.roster_date
+            WHERE r.roster_date >= '{roster_start}'
+              AND r.roster_date <= '{roster_end}'
+              AND r.team_abbr IN (SELECT team_abbr FROM teams_playing)
+              AND r.player_lookup IS NOT NULL
+        ),
+        players_with_games AS (
+            -- Join roster players with their game info
+            SELECT DISTINCT
+                rp.player_lookup,
+                g.game_id,
+                rp.team_abbr,
+                g.home_team_abbr,
+                g.away_team_abbr
+            FROM roster_players rp
+            INNER JOIN games_today g
+                ON rp.team_abbr = g.home_team_abbr
+                OR rp.team_abbr = g.away_team_abbr
+        ),
+        injuries AS (
+            -- Get latest injury report for target date
+            SELECT DISTINCT
+                player_lookup,
+                injury_status
+            FROM `{self.project_id}.nba_raw.nbac_injury_report`
+            WHERE report_date = '{self.target_date}'
+              AND player_lookup IS NOT NULL
+        ),
+        props AS (
+            -- Check which players have prop lines (from either source)
+            SELECT DISTINCT
+                player_lookup,
+                points_line,
+                'odds_api' as prop_source
+            FROM `{self.project_id}.nba_raw.odds_api_player_points_props`
+            WHERE game_date = '{self.target_date}'
+              AND player_lookup IS NOT NULL
+            UNION DISTINCT
+            SELECT DISTINCT
+                player_lookup,
+                points_line,
+                'bettingpros' as prop_source
+            FROM `{self.project_id}.nba_raw.bettingpros_player_points_props`
+            WHERE game_date = '{self.target_date}'
+              AND is_active = TRUE
+              AND player_lookup IS NOT NULL
+        )
+        SELECT
+            p.player_lookup,
+            p.game_id,
+            p.team_abbr,
+            p.home_team_abbr,
+            p.away_team_abbr,
+            i.injury_status,
+            pr.points_line,
+            pr.prop_source,
+            CASE WHEN pr.player_lookup IS NOT NULL THEN TRUE ELSE FALSE END as has_prop_line
+        FROM players_with_games p
+        LEFT JOIN injuries i ON p.player_lookup = i.player_lookup
+        LEFT JOIN props pr ON p.player_lookup = pr.player_lookup
+        -- Filter out players marked OUT or DOUBTFUL in injury report
+        WHERE i.injury_status IS NULL
+           OR i.injury_status NOT IN ('Out', 'OUT', 'Doubtful', 'DOUBTFUL')
+        """
+
+        try:
+            df = self.bq_client.query(daily_query).to_dataframe()
+
+            # Track source usage
+            self.source_tracking['props']['rows_found'] = len(df)
+            self.source_tracking['props']['last_updated'] = datetime.now(timezone.utc)
+
+            # Store players to process
+            players_with_props = 0
+            for _, row in df.iterrows():
+                has_prop = row.get('has_prop_line', False)
+                if has_prop:
+                    players_with_props += 1
+
+                self.players_to_process.append({
+                    'player_lookup': row['player_lookup'],
+                    'game_id': row['game_id'],
+                    'team_abbr': row.get('team_abbr'),
+                    'home_team_abbr': row['home_team_abbr'],
+                    'away_team_abbr': row['away_team_abbr'],
+                    'has_prop_line': has_prop,
+                    'current_points_line': row.get('points_line'),
+                    'prop_source': row.get('prop_source'),
+                    'injury_status': row.get('injury_status')  # Include injury info
+                })
+
+            logger.info(
+                f"[DAILY MODE] Found {len(self.players_to_process)} players for {self.target_date} "
+                f"({players_with_props} with prop lines, {len(self.players_to_process) - players_with_props} without)"
+            )
+
+        except Exception as e:
+            logger.error(f"Error extracting players (daily mode): {e}")
+            self.source_tracking['props']['rows_found'] = 0
+            raise
+
+    def _extract_players_backfill_mode(self) -> None:
+        """
+        Extract players using BACKFILL mode (post-game data).
+
+        Uses gamebook to get players who actually played.
+        This is the original query - gamebook has actual player data post-game.
+        """
+        self._props_source = 'gamebook'  # Track source used
+
+        # BACKFILL MODE: Gamebook (post-game actual players)
+        backfill_query = f"""
+        WITH schedule_data AS (
+            -- Get schedule data with partition filter
+            SELECT game_id, home_team_tricode, away_team_tricode
+            FROM `{self.project_id}.nba_raw.nbac_schedule`
+            WHERE game_date = '{self.target_date}'
+        ),
+        players_with_games AS (
             -- Get ALL active players from gamebook who have games on target date
             SELECT DISTINCT
                 g.player_lookup,
                 g.game_id,
                 g.team_abbr,
+                g.player_status,
                 -- Get home/away from schedule since gamebook may not have it
                 COALESCE(s.home_team_tricode, g.team_abbr) as home_team_abbr,
                 COALESCE(s.away_team_tricode, g.team_abbr) as away_team_abbr
             FROM `{self.project_id}.nba_raw.nbac_gamebook_player_stats` g
-            LEFT JOIN `{self.project_id}.nba_raw.nbac_schedule` s
+            LEFT JOIN schedule_data s
                 ON g.game_id = s.game_id
             WHERE g.game_date = '{self.target_date}'
               AND g.player_lookup IS NOT NULL
@@ -390,6 +625,7 @@ class UpcomingPlayerGameContextProcessor(
             p.team_abbr,
             p.home_team_abbr,
             p.away_team_abbr,
+            p.player_status,
             pr.points_line,
             pr.prop_source,
             CASE WHEN pr.player_lookup IS NOT NULL THEN TRUE ELSE FALSE END as has_prop_line
@@ -398,7 +634,7 @@ class UpcomingPlayerGameContextProcessor(
         """
 
         try:
-            df = self.bq_client.query(all_players_query).to_dataframe()
+            df = self.bq_client.query(backfill_query).to_dataframe()
 
             # Track source usage
             self.source_tracking['props']['rows_found'] = len(df)
@@ -419,16 +655,17 @@ class UpcomingPlayerGameContextProcessor(
                     'away_team_abbr': row['away_team_abbr'],
                     'has_prop_line': has_prop,
                     'current_points_line': row.get('points_line'),
-                    'prop_source': row.get('prop_source')
+                    'prop_source': row.get('prop_source'),
+                    'injury_status': row.get('player_status')  # From gamebook
                 })
 
             logger.info(
-                f"Found {len(self.players_to_process)} total players for {self.target_date} "
+                f"[BACKFILL MODE] Found {len(self.players_to_process)} players for {self.target_date} "
                 f"({players_with_props} with prop lines, {len(self.players_to_process) - players_with_props} without)"
             )
 
         except Exception as e:
-            logger.error(f"Error extracting players for games: {e}")
+            logger.error(f"Error extracting players (backfill mode): {e}")
             self.source_tracking['props']['rows_found'] = 0
             raise
 

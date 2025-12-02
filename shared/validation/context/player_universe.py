@@ -1,16 +1,23 @@
 """
 Player Universe
 
-Determines which players should be processed for a given date:
-- All rostered players (from gamebook)
-- Active players (who played)
-- Players with prop lines
+Single source of truth for determining which players should be processed for a given date.
+
+Supports multiple modes:
+- BACKFILL mode: Uses gamebook (post-game actual data) → BDL fallback
+- DAILY mode: Uses schedule + roster (pre-game data)
+
+All components (validation, predictions, processors) should use get_player_universe()
+to ensure consistent player sets across the system.
+
+Issue 5 Fix: This module is now the canonical source for player universe.
 """
 
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
 from typing import Set, Dict, Optional, List
 import logging
+import os
 
 from google.cloud import bigquery
 
@@ -54,6 +61,11 @@ class PlayerUniverse:
     # Teams
     teams: Set[str] = field(default_factory=set)
 
+    # Source tracking (for fallback awareness)
+    source: str = 'gamebook'  # 'gamebook', 'bdl_fallback', or 'roster'
+    has_dnp_tracking: bool = True  # False when using BDL fallback or roster
+    roster_date: Optional[date] = None  # Date of roster data used (for freshness tracking)
+
     def __post_init__(self):
         """Calculate counts from sets."""
         self._update_counts()
@@ -91,14 +103,28 @@ class PlayerUniverse:
 
 def get_player_universe(
     game_date: date,
-    client: Optional[bigquery.Client] = None
+    client: Optional[bigquery.Client] = None,
+    mode: Optional[str] = None
 ) -> PlayerUniverse:
     """
     Get complete player universe for a date.
 
+    This is the SINGLE SOURCE OF TRUTH for player universe across all components.
+    Use this function instead of querying player data directly.
+
+    Supports two modes:
+    - 'backfill' (default): Uses gamebook (post-game data) → BDL fallback
+    - 'daily': Uses schedule + roster (pre-game data, for today's games)
+
+    Mode is auto-detected if not specified:
+    - If gamebook has data → backfill mode
+    - If gamebook empty AND date is today/future → daily mode
+    - Explicit mode can be set via PROCESSING_MODE env var
+
     Args:
         game_date: Date to get players for
         client: Optional BigQuery client
+        mode: Optional mode override ('daily' or 'backfill')
 
     Returns:
         PlayerUniverse with all player sets
@@ -108,8 +134,33 @@ def get_player_universe(
 
     universe = PlayerUniverse(game_date=game_date)
 
-    # Get all players from gamebook
-    _query_gamebook_players(client, game_date, universe)
+    # Determine mode if not explicitly specified
+    if mode is None:
+        mode = _determine_mode(client, game_date)
+
+    logger.debug(f"Using {mode} mode for player universe on {game_date}")
+
+    if mode == 'daily':
+        # Daily mode: Use schedule + roster (pre-game data)
+        _query_roster_players(client, game_date, universe)
+        universe.source = 'roster'
+        universe.has_dnp_tracking = False
+    else:
+        # Backfill mode: Try gamebook first (gold source - has DNP/inactive tracking)
+        _query_gamebook_players(client, game_date, universe)
+
+        # Fallback to BDL if gamebook is empty
+        if len(universe.all_rostered) == 0:
+            logger.warning(
+                f"No gamebook data for {game_date}, falling back to BDL "
+                "(note: DNP/inactive players will not be tracked)"
+            )
+            _query_bdl_players(client, game_date, universe)
+            universe.source = 'bdl_fallback'
+            universe.has_dnp_tracking = False
+        else:
+            universe.source = 'gamebook'
+            universe.has_dnp_tracking = True
 
     # Get players with prop lines
     _query_prop_players(client, game_date, universe)
@@ -121,10 +172,62 @@ def get_player_universe(
         f"Player universe for {game_date}: "
         f"{universe.total_rostered} rostered, "
         f"{universe.total_active} active, "
-        f"{universe.total_with_props} with props"
+        f"{universe.total_with_props} with props "
+        f"(source: {universe.source})"
     )
 
     return universe
+
+
+def _determine_mode(client: bigquery.Client, game_date: date) -> str:
+    """
+    Auto-detect whether to use daily or backfill mode.
+
+    Logic:
+    1. Check PROCESSING_MODE env var (explicit override)
+    2. Check if gamebook has data for the date
+    3. If gamebook empty AND date is today/future → daily mode
+    4. Otherwise → backfill mode
+    """
+    # Check environment variable first
+    env_mode = os.environ.get('PROCESSING_MODE')
+    if env_mode in ('daily', 'backfill'):
+        logger.debug(f"Processing mode from env var: {env_mode}")
+        return env_mode
+
+    # Check if gamebook has data
+    query = f"""
+    SELECT COUNT(*) as cnt
+    FROM `{PROJECT_ID}.nba_raw.nbac_gamebook_player_stats`
+    WHERE game_date = @game_date
+    """
+
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+        ]
+    )
+
+    try:
+        result = client.query(query, job_config=job_config).result()
+        row = next(result, None)
+        gamebook_count = row.cnt if row else 0
+
+        if gamebook_count > 0:
+            return 'backfill'
+
+        # No gamebook data - check if date is today or future
+        today = date.today()
+        if game_date >= today:
+            return 'daily'
+        else:
+            # Historical date with no gamebook - might be a gap, use backfill
+            # (will fall through to BDL fallback)
+            return 'backfill'
+
+    except Exception as e:
+        logger.warning(f"Error checking gamebook availability: {e}")
+        return 'backfill'
 
 
 def _query_gamebook_players(
@@ -176,6 +279,157 @@ def _query_gamebook_players(
 
     except Exception as e:
         logger.error(f"Error querying gamebook for {game_date}: {e}")
+
+
+def _query_bdl_players(
+    client: bigquery.Client,
+    game_date: date,
+    universe: PlayerUniverse
+) -> None:
+    """
+    Query BDL boxscores for players on a date (fallback source).
+
+    Note: BDL only contains players who actually played - no DNP/inactive tracking.
+    All players from BDL are marked as 'active'.
+    """
+    query = f"""
+    SELECT DISTINCT
+        player_lookup,
+        team_abbr
+    FROM `{PROJECT_ID}.nba_raw.bdl_player_boxscores`
+    WHERE game_date = @game_date
+      AND player_lookup IS NOT NULL
+    """
+
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+        ]
+    )
+
+    try:
+        result = client.query(query, job_config=job_config).result()
+
+        for row in result:
+            player_lookup = row.player_lookup
+
+            # Add to sets - all BDL players are active (they played)
+            universe.all_rostered.add(player_lookup)
+            universe.active_players.add(player_lookup)
+            universe.teams.add(row.team_abbr)
+
+            # Store detailed info (no DNP/inactive info available)
+            universe.player_details[player_lookup] = PlayerInfo(
+                player_lookup=player_lookup,
+                team_abbr=row.team_abbr,
+                player_status='active',  # BDL only has players who played
+            )
+
+    except Exception as e:
+        logger.error(f"Error querying BDL boxscores for {game_date}: {e}")
+
+
+def _query_roster_players(
+    client: bigquery.Client,
+    game_date: date,
+    universe: PlayerUniverse
+) -> None:
+    """
+    Query roster for players on teams playing a given date (daily mode).
+
+    Uses schedule + roster to get players for pre-game predictions.
+    This is used when gamebook data doesn't exist yet (today's games).
+
+    Note: This won't include injury filtering as that's handled by
+    the calling processor. All rostered players are marked 'active'.
+    """
+    # Calculate roster date range (90 days to handle stale data)
+    roster_start = (game_date - timedelta(days=90)).isoformat()
+    roster_end = game_date.isoformat()
+
+    query = f"""
+    WITH games_on_date AS (
+        SELECT
+            game_id,
+            home_team_tricode as home_team,
+            away_team_tricode as away_team
+        FROM `{PROJECT_ID}.nba_raw.nbac_schedule`
+        WHERE game_date = @game_date
+    ),
+    teams_playing AS (
+        SELECT DISTINCT home_team as team_abbr FROM games_on_date
+        UNION DISTINCT
+        SELECT DISTINCT away_team as team_abbr FROM games_on_date
+    ),
+    latest_roster AS (
+        SELECT MAX(roster_date) as roster_date
+        FROM `{PROJECT_ID}.nba_raw.espn_team_rosters`
+        WHERE roster_date >= @roster_start
+          AND roster_date <= @roster_end
+    ),
+    roster_players AS (
+        SELECT DISTINCT
+            r.player_lookup,
+            r.team_abbr,
+            lr.roster_date
+        FROM `{PROJECT_ID}.nba_raw.espn_team_rosters` r
+        INNER JOIN latest_roster lr ON r.roster_date = lr.roster_date
+        WHERE r.roster_date >= @roster_start
+          AND r.roster_date <= @roster_end
+          AND r.team_abbr IN (SELECT team_abbr FROM teams_playing)
+          AND r.player_lookup IS NOT NULL
+    )
+    SELECT
+        player_lookup,
+        team_abbr,
+        roster_date
+    FROM roster_players
+    """
+
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+            bigquery.ScalarQueryParameter("roster_start", "STRING", roster_start),
+            bigquery.ScalarQueryParameter("roster_end", "STRING", roster_end),
+        ]
+    )
+
+    try:
+        result = client.query(query, job_config=job_config).result()
+        roster_date_used = None
+
+        for row in result:
+            player_lookup = row.player_lookup
+
+            # Add to sets - all roster players are considered 'active' (available)
+            universe.all_rostered.add(player_lookup)
+            universe.active_players.add(player_lookup)
+            universe.teams.add(row.team_abbr)
+
+            # Store detailed info
+            universe.player_details[player_lookup] = PlayerInfo(
+                player_lookup=player_lookup,
+                team_abbr=row.team_abbr,
+                player_status='active',  # Roster doesn't have DNP/inactive
+            )
+
+            # Track the roster date used
+            if roster_date_used is None:
+                roster_date_used = row.roster_date
+
+        # Store roster date for freshness tracking (Issue 6)
+        universe.roster_date = roster_date_used
+
+        if roster_date_used:
+            days_stale = (game_date - roster_date_used).days
+            if days_stale > 7:
+                logger.warning(
+                    f"Roster data is {days_stale} days stale "
+                    f"(roster from {roster_date_used}, game date {game_date})"
+                )
+
+    except Exception as e:
+        logger.error(f"Error querying roster for {game_date}: {e}")
 
 
 def _query_prop_players(
@@ -243,11 +497,32 @@ def _query_prop_players(
 
 def format_player_universe(universe: PlayerUniverse) -> str:
     """Format player universe for display."""
+    # Show source-specific info
+    if universe.source == 'bdl_fallback':
+        roster_line = f"Total Rostered:     {universe.total_rostered} players across {len(universe.teams)} teams  ⚠️ BDL fallback"
+        dnp_line = "  DNP:              — (unavailable)"
+        inactive_line = "  Inactive:         — (unavailable)"
+    elif universe.source == 'roster':
+        stale_info = ""
+        if universe.roster_date:
+            days_stale = (universe.game_date - universe.roster_date).days
+            if days_stale > 7:
+                stale_info = f"  ⚠️ {days_stale} days stale"
+            else:
+                stale_info = f" (roster: {universe.roster_date})"
+        roster_line = f"Total Rostered:     {universe.total_rostered} players across {len(universe.teams)} teams  📋 Roster mode{stale_info}"
+        dnp_line = "  DNP:              — (pre-game)"
+        inactive_line = "  Inactive:         — (pre-game)"
+    else:
+        roster_line = f"Total Rostered:     {universe.total_rostered} players across {len(universe.teams)} teams"
+        dnp_line = f"  DNP:              {universe.total_dnp}"
+        inactive_line = f"  Inactive:         {universe.total_inactive}"
+
     lines = [
-        f"Total Rostered:     {universe.total_rostered} players across {len(universe.teams)} teams",
+        roster_line,
         f"  Active (played):  {universe.total_active}",
-        f"  DNP:              {universe.total_dnp}",
-        f"  Inactive:         {universe.total_inactive}",
+        dnp_line,
+        inactive_line,
         f"With Prop Lines:    {universe.total_with_props}",
     ]
 

@@ -30,6 +30,7 @@ Examples:
 import sys
 import argparse
 import logging
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Optional, List
 
@@ -56,7 +57,7 @@ from shared.validation.output.terminal import (
     format_chain_section,
     format_maintenance_section,
 )
-from shared.validation.output.json_output import print_validation_json
+from shared.validation.output.json_output import print_validation_json, format_combined_json
 from shared.validation.validators.chain_validator import validate_all_chains
 from shared.validation.validators.maintenance_validator import validate_maintenance
 from shared.validation.run_history import get_run_history, RunHistorySummary
@@ -88,6 +89,7 @@ def validate_date(
     phases: Optional[List[int]] = None,
     verbose: bool = False,
     show_missing: bool = False,
+    skip_phase1_phase2: bool = False,
 ) -> ValidationReport:
     """
     Run full pipeline validation for a date.
@@ -98,6 +100,7 @@ def validate_date(
         phases: Specific phases to validate (None = all)
         verbose: Show detailed output
         show_missing: Show missing player details
+        skip_phase1_phase2: Skip Phase 1/2 validation (when using chain view)
 
     Returns:
         ValidationReport with all results
@@ -108,7 +111,10 @@ def validate_date(
         client = bigquery.Client(project=PROJECT_ID)
 
     if phases is None:
-        phases = [1, 2, 3, 4, 5]
+        if skip_phase1_phase2:
+            phases = [3, 4, 5]  # Chain view handles P1/P2
+        else:
+            phases = [1, 2, 3, 4, 5]
 
     logger.info(f"Validating pipeline for {game_date}")
     total_start = time_module.time()
@@ -134,9 +140,9 @@ def validate_date(
         orchestration_state = get_orchestration_state(game_date)
         logger.info(f"  ├─ Orchestration state ({time_module.time() - step_start:.1f}s)")
 
-    # Get run history (for verbose mode or to check for errors)
+    # Get run history - always fetch for error detection, verbose mode shows details
     run_history = None
-    if verbose or True:  # Always get run history for error detection
+    if True:  # Always needed for error detection (failures, alerts, dependencies)
         step_start = time_module.time()
         run_history = get_run_history(game_date, client)
         logger.info(f"  ├─ Run history: {run_history.total_runs} runs ({time_module.time() - step_start:.1f}s)")
@@ -356,6 +362,228 @@ def format_range_summary(reports: List[ValidationReport]) -> str:
     return '\n'.join(lines)
 
 
+@dataclass
+class ChainRangeResult:
+    """Result for chain validation over a date range."""
+    game_date: date
+    chain_validations: dict
+    chains_complete: int
+    chains_partial: int
+    chains_missing: int
+    total_chains: int
+
+
+def validate_date_range_chains(
+    start_date: date,
+    end_date: date,
+    client: Optional[bigquery.Client] = None,
+) -> List[ChainRangeResult]:
+    """
+    Validate chain data for a range of dates.
+
+    Args:
+        start_date: First date to validate
+        end_date: Last date to validate
+        client: Optional BigQuery client
+
+    Returns:
+        List of ChainRangeResult for each date
+    """
+    from google.cloud import storage
+
+    if client is None:
+        client = bigquery.Client(project=PROJECT_ID)
+    gcs_client = storage.Client()
+
+    results = []
+    current = start_date
+
+    while current <= end_date:
+        logger.info(f"Validating chains for {current}...")
+
+        # Get schedule context
+        schedule_context = get_schedule_context(current, client)
+
+        # Validate chains
+        chain_validations = validate_all_chains(
+            game_date=current,
+            schedule_context=schedule_context,
+            bq_client=client,
+            gcs_client=gcs_client,
+        )
+
+        # Count statuses
+        chains_complete = sum(1 for cv in chain_validations.values() if cv.status == 'complete')
+        chains_partial = sum(1 for cv in chain_validations.values() if cv.status == 'partial')
+        chains_missing = sum(1 for cv in chain_validations.values() if cv.status == 'missing')
+
+        results.append(ChainRangeResult(
+            game_date=current,
+            chain_validations=chain_validations,
+            chains_complete=chains_complete,
+            chains_partial=chains_partial,
+            chains_missing=chains_missing,
+            total_chains=len(chain_validations),
+        ))
+
+        current += timedelta(days=1)
+
+    return results
+
+
+def format_chain_range_summary(results: List[ChainRangeResult], use_color: bool = True) -> str:
+    """Format summary for chain date range validation."""
+    lines = []
+
+    lines.append("=" * 80)
+    lines.append("DATE RANGE CHAIN VALIDATION SUMMARY")
+    lines.append("=" * 80)
+    lines.append("")
+
+    # Overall stats
+    total_dates = len(results)
+    all_complete = sum(1 for r in results if r.chains_complete == r.total_chains)
+    some_partial = sum(1 for r in results if r.chains_partial > 0 and r.chains_missing == 0)
+    some_missing = sum(1 for r in results if r.chains_missing > 0)
+    complete_pct = (all_complete / total_dates * 100) if total_dates > 0 else 0
+
+    # Progress bar
+    bar_width = 40
+    filled = int(complete_pct / 100 * bar_width)
+    empty = bar_width - filled
+    if use_color:
+        if complete_pct >= 90:
+            bar_color = '\033[92m'  # Green
+        elif complete_pct >= 50:
+            bar_color = '\033[93m'  # Yellow
+        else:
+            bar_color = '\033[91m'  # Red
+        reset = '\033[0m'
+    else:
+        bar_color = ''
+        reset = ''
+
+    progress_bar = f"[{bar_color}{'█' * filled}{reset}{'░' * empty}] {complete_pct:.1f}%"
+    lines.append(f"Progress: {progress_bar}")
+    lines.append("")
+
+    lines.append(f"Dates: {total_dates} total")
+    lines.append(f"  ✓ Complete: {all_complete}")
+    if some_partial > 0:
+        lines.append(f"  △ Partial:  {some_partial}")
+    if some_missing > 0:
+        lines.append(f"  ○ Missing:  {some_missing}")
+    lines.append("")
+
+    # Visual sparkline - show each date as a single character
+    lines.append("VISUAL TIMELINE")
+    lines.append("-" * 80)
+
+    # Build sparkline with colors
+    sparkline_chars = []
+    for r in results:
+        if r.chains_complete == r.total_chains:
+            char = '✓'
+            color = '\033[92m' if use_color else ''
+        elif r.chains_missing > 0:
+            char = '○'
+            color = '\033[91m' if use_color else ''
+        else:
+            char = '△'
+            color = '\033[93m' if use_color else ''
+        sparkline_chars.append(f"{color}{char}{reset}")
+
+    # Group into weeks (7 chars) for readability
+    if total_dates <= 14:
+        # Short range - show all on one line with date markers
+        start_date = results[0].game_date.strftime('%m/%d')
+        end_date = results[-1].game_date.strftime('%m/%d')
+        sparkline = ''.join(sparkline_chars)
+        # Add spacing between chars for readability
+        spaced_sparkline = ' '.join([c for c in sparkline_chars])
+        lines.append(f"  {start_date}  {spaced_sparkline}  {end_date}")
+    else:
+        # Long range - show in weekly rows
+        week_num = 0
+        for i in range(0, total_dates, 7):
+            week_chars = sparkline_chars[i:i+7]
+            week_start = results[i].game_date.strftime('%m/%d')
+            week_end_idx = min(i + 6, total_dates - 1)
+            week_end = results[week_end_idx].game_date.strftime('%m/%d')
+
+            # Count statuses for this week
+            week_results = results[i:i+7]
+            week_complete = sum(1 for r in week_results if r.chains_complete == r.total_chains)
+            week_total = len(week_results)
+
+            week_line = ''.join(week_chars)
+            lines.append(f"  {week_start}-{week_end}: {week_line} ({week_complete}/{week_total})")
+            week_num += 1
+
+    lines.append("")
+    lines.append("  Legend: ✓=Complete  △=Partial  ○=Missing")
+    lines.append("")
+
+    # Per-date table (only for short ranges)
+    if total_dates <= 14:
+        lines.append("PER-DATE DETAILS")
+        lines.append("-" * 80)
+        lines.append(f"{'Date':<12} {'Complete':>10} {'Partial':>10} {'Missing':>10} {'Status':<20}")
+        lines.append("-" * 80)
+
+        for r in results:
+            date_str = r.game_date.strftime('%Y-%m-%d')
+
+            if r.chains_complete == r.total_chains:
+                status = "✓ All complete"
+                color = '\033[92m' if use_color else ''
+            elif r.chains_missing > 0:
+                status = f"○ {r.chains_missing} missing"
+                color = '\033[91m' if use_color else ''
+            else:
+                status = f"△ {r.chains_partial} partial"
+                color = '\033[93m' if use_color else ''
+
+            lines.append(
+                f"{date_str:<12} {r.chains_complete:>10} {r.chains_partial:>10} "
+                f"{r.chains_missing:>10} {color}{status}{reset}"
+            )
+
+        lines.append("")
+
+    # Chain-by-chain breakdown
+    if results:
+        lines.append("CHAIN COVERAGE ACROSS DATE RANGE")
+        lines.append("-" * 80)
+
+        # Collect chain names from first result
+        chain_names = list(results[0].chain_validations.keys())
+
+        for chain_name in sorted(chain_names):
+            complete_count = sum(
+                1 for r in results
+                if r.chain_validations.get(chain_name) and
+                   r.chain_validations[chain_name].status == 'complete'
+            )
+            pct = (complete_count / total_dates) * 100 if total_dates > 0 else 0
+
+            if pct >= 90:
+                color = '\033[92m' if use_color else ''
+            elif pct >= 50:
+                color = '\033[93m' if use_color else ''
+            else:
+                color = '\033[91m' if use_color else ''
+
+            reset = '\033[0m' if use_color else ''
+
+            lines.append(f"  {chain_name:<30} {color}{complete_count:>3}/{total_dates} ({pct:5.1f}%){reset}")
+
+    lines.append("")
+    lines.append("=" * 80)
+
+    return '\n'.join(lines)
+
+
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(
@@ -446,41 +674,67 @@ Examples:
                 print("Error: End date must be after start date", file=sys.stderr)
                 sys.exit(1)
 
-            reports = validate_date_range(
-                start_date=start_date,
-                end_date=end_date,
-                phases=phases,
-            )
+            use_color = not args.no_color
 
-            # Output results
-            if args.format == 'terminal':
-                print(format_range_summary(reports))
+            if args.legacy_view:
+                # Legacy view - validate phases 1-5
+                reports = validate_date_range(
+                    start_date=start_date,
+                    end_date=end_date,
+                    phases=phases,
+                )
+
+                # Output results
+                if args.format == 'terminal':
+                    print(format_range_summary(reports))
+                else:
+                    # JSON output for range
+                    import json
+                    output = {
+                        'range': {
+                            'start': start_date.isoformat(),
+                            'end': end_date.isoformat(),
+                            'total_dates': len(reports),
+                        },
+                        'dates': []
+                    }
+                    for report in reports:
+                        output['dates'].append({
+                            'date': report.game_date.isoformat(),
+                            'status': report.overall_status,
+                            'games': report.schedule_context.game_count,
+                            'players': report.player_universe.total_active,
+                        })
+                    print(json.dumps(output, indent=2))
             else:
-                # JSON output for range
-                import json
-                output = {
-                    'range': {
-                        'start': start_date.isoformat(),
-                        'end': end_date.isoformat(),
-                        'total_dates': len(reports),
-                    },
-                    'dates': []
-                }
-                for report in reports:
-                    output['dates'].append({
-                        'date': report.game_date.isoformat(),
-                        'status': report.overall_status,
-                        'games': report.schedule_context.game_count,
-                        'players': report.player_universe.total_active,
-                    })
-                print(json.dumps(output, indent=2))
+                # Chain view (V2) - validate chains
+                chain_results = validate_date_range_chains(
+                    start_date=start_date,
+                    end_date=end_date,
+                )
+
+                # Output results
+                if args.format == 'terminal':
+                    print(format_chain_range_summary(chain_results, use_color=use_color))
+                else:
+                    # JSON output for chain range with comprehensive summary
+                    from shared.validation.output.json_output import format_date_range_json
+                    print(format_date_range_json(
+                        chain_results=chain_results,
+                        start_date=start_date,
+                        end_date=end_date,
+                        pretty=True,
+                    ))
         else:
             # Single date validation
+            # For chain view (default), skip P1/P2 in validate_date since chain_validator handles them
+            use_chain_view = not args.legacy_view
             report = validate_date(
                 game_date=start_date,
                 phases=phases,
                 verbose=args.verbose,
                 show_missing=args.show_missing,
+                skip_phase1_phase2=use_chain_view,
             )
 
             # Output results
@@ -497,7 +751,7 @@ Examples:
                     )
                 else:
                     # Chain view (V2, default) - shows Phase 1-2 as unified chain view
-                    # Run chain validation
+                    # Run chain validation (this replaces P1/P2 validation)
                     chain_validations = validate_all_chains(
                         game_date=start_date,
                         schedule_context=report.schedule_context,
@@ -516,9 +770,7 @@ Examples:
                         print(format_maintenance_section(maintenance, use_color=use_color))
                         print()
 
-                    # Then print Phase 3-5 using standard output
-                    # Filter to only show Phase 3+ from the report
-                    report.phase_results = [p for p in report.phase_results if p.phase >= 3]
+                    # Print Phase 3-5 using standard output (P1/P2 already excluded)
                     print_validation_result(
                         report,
                         use_color=use_color,
@@ -527,7 +779,25 @@ Examples:
                     )
             else:
                 # JSON output
-                print_validation_json(report, pretty=True)
+                if args.legacy_view:
+                    # Legacy view - standard JSON
+                    print_validation_json(report, pretty=True)
+                else:
+                    # Chain view - combined JSON with chain data
+                    chain_validations = validate_all_chains(
+                        game_date=start_date,
+                        schedule_context=report.schedule_context,
+                    )
+                    maintenance = validate_maintenance(
+                        game_date=start_date,
+                        time_context=report.time_context,
+                    )
+                    print(format_combined_json(
+                        report=report,
+                        chain_validations=chain_validations,
+                        maintenance=maintenance,
+                        pretty=True,
+                    ))
 
     except Exception as e:
         logger.exception(f"Validation failed: {e}")

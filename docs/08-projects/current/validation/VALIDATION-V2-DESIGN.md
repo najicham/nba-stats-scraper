@@ -1,7 +1,7 @@
 # Validation Script V2 Design
 
 **Created:** 2025-12-01
-**Status:** READY FOR IMPLEMENTATION
+**Status:** ✓ IMPLEMENTED (2025-12-01) + REFINED (2025-12-02)
 **Author:** Claude + User collaboration
 
 ---
@@ -767,6 +767,115 @@ From `gcs_path_builder.py` - verified mapping:
 
 ---
 
-*Document version: 2.0*
-*Last updated: 2025-12-01*
-*Status: READY FOR IMPLEMENTATION*
+---
+
+## Implementation Notes (2025-12-02)
+
+### Changes Made During Implementation
+
+1. **Chain view is now the default** - No `--chain-view` flag needed; use `--legacy-view` for old format
+2. **GCS_PATH_MAPPING** - Added `espn_boxscores` path mapping
+3. **PROJECT_ID** - Centralized via `config.py` import (no more hardcoded `nba-props-platform`)
+4. **Test coverage** - 32 unit tests covering config loading, chain validation logic, and output formatting
+
+### Current CLI Interface
+
+```bash
+# Default: Chain view (V2)
+python3 bin/validate_pipeline.py 2021-10-19
+
+# Legacy view (V1)
+python3 bin/validate_pipeline.py 2021-10-19 --legacy-view
+
+# JSON output
+python3 bin/validate_pipeline.py 2021-10-19 --format json
+
+# Verbose with run history
+python3 bin/validate_pipeline.py today --verbose
+
+# No color (for piping)
+python3 bin/validate_pipeline.py 2021-10-19 --no-color
+```
+
+---
+
+## Implementation Notes (2025-12-02 Session 2)
+
+### Fixes and Improvements
+
+#### 1. Bootstrap Days Display Fix
+**Issue:** Display showed "Days 0-6" but `BOOTSTRAP_DAYS` was changed to 14.
+**Fix:** Updated `schedule_context.py` to use `BOOTSTRAP_DAYS-1` dynamically:
+```python
+lines.append(f"Bootstrap:          Yes (Days 0-{BOOTSTRAP_DAYS-1} - Phase 4/5 skip)")
+```
+
+#### 2. Player Universe BDL Fallback
+**Issue:** If `nbac_gamebook_player_stats` has no data for a date, player universe returns 0 players, causing false "complete" status (0/0 = 100%).
+
+**Fix:** Added fallback to `bdl_player_boxscores` in `player_universe.py`:
+- Primary: `nbac_gamebook_player_stats` (gold - has DNP/inactive tracking)
+- Fallback: `bdl_player_boxscores` (silver - active players only)
+
+**Display:**
+```
+PLAYER UNIVERSE
+────────────────────────────────────────────────────────────────────────────────
+Total Rostered:     68 players across 4 teams  ⚠️ BDL fallback
+  Active (played):  52
+  DNP:              — (unavailable)
+  Inactive:         — (unavailable)
+```
+
+**Key fields added to PlayerUniverse:**
+- `source: str` - "gamebook" or "bdl_fallback"
+- `has_dnp_tracking: bool` - False when using BDL fallback
+
+#### 3. Virtual Source Chain Dependencies
+**Issue:** Virtual sources like `reconstructed_team_from_players` were always marked as "available" even when their input chain was missing. This caused false "complete" status for chains.
+
+**Fix:** Added dependency checking in `chain_validator.py`:
+
+1. **New config in `chain_config.py`:**
+```python
+VIRTUAL_SOURCE_DEPENDENCIES = {
+    'reconstructed_team_from_players': 'player_boxscores',
+    'espn_team_boxscore': 'player_boxscores',
+}
+
+CHAIN_VALIDATION_ORDER = [
+    'game_schedule',
+    'player_boxscores',  # Validated first
+    'team_boxscores',    # Depends on player_boxscores
+    ...
+]
+```
+
+2. **New statuses for virtual sources:**
+- `virtual` - Defined but not used
+- `virtual_used` - Being used as fallback (input chain has data)
+- `virtual_unavailable` - Cannot be used (input chain missing)
+
+3. **Chains validated in dependency order** so input chains are available when checking virtual sources.
+
+### Files Modified
+
+| File | Changes |
+|------|---------|
+| `shared/validation/context/schedule_context.py` | Bootstrap days dynamic display |
+| `shared/validation/context/player_universe.py` | BDL fallback, source tracking |
+| `shared/validation/chain_config.py` | Virtual source dependencies, validation order |
+| `shared/validation/validators/chain_validator.py` | Virtual source dependency checking |
+
+### Testing
+
+All 32 existing tests pass. New behavior verified:
+- Bootstrap shows "Days 0-13"
+- BDL fallback triggers when gamebook empty
+- Virtual sources check input chain status
+
+---
+
+*Document version: 2.2*
+*Last updated: 2025-12-02*
+*Status: IMPLEMENTED*

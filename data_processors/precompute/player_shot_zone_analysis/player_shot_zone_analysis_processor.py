@@ -42,6 +42,7 @@ from shared.utils.completeness_checker import CompletenessChecker
 
 # Bootstrap period support (Week 5 - Early Season Handling)
 from shared.config.nba_season_dates import is_early_season, get_season_year_from_date
+from shared.validation.config import BOOTSTRAP_DAYS
 
 # Custom exceptions for dependency handling
 class DependencyError(Exception):
@@ -220,16 +221,16 @@ class PlayerShotZoneAnalysisProcessor(
             self.opts['season_year'] = season_year
             logger.debug(f"Determined season year: {season_year} for date {analysis_date}")
 
-        # BOOTSTRAP PERIOD: Skip early season (days 0-6)
+        # BOOTSTRAP PERIOD: Skip early season (days 0-13)
         # Uses schedule service to get accurate season start date
-        if is_early_season(analysis_date, season_year, days_threshold=7):
+        if is_early_season(analysis_date, season_year, days_threshold=BOOTSTRAP_DAYS):
             logger.info(
-                f"⏭️  Skipping {analysis_date}: early season period (day 0-6 of season {season_year}). "
-                f"Regular processing starts day 7."
+                f"⏭️  Skipping {analysis_date}: early season period (day 0-{BOOTSTRAP_DAYS-1} of season {season_year}). "
+                f"Regular processing starts day {BOOTSTRAP_DAYS}."
             )
             # Set flag for run history logging
             self.stats['processing_decision'] = 'skipped_early_season'
-            self.stats['processing_decision_reason'] = f'bootstrap_period_day_0_6_of_season_{season_year}'
+            self.stats['processing_decision_reason'] = f'bootstrap_period_day_0_{BOOTSTRAP_DAYS-1}_of_season_{season_year}'
 
             # Exit early - no data extraction, no records written
             self.raw_data = None

@@ -89,28 +89,28 @@ def get_season_start_date(season_year: int, use_schedule_service: bool = True) -
     return estimated_start
 
 
-def is_early_season(analysis_date: date, season_year: int, days_threshold: int = 7) -> bool:
+def is_early_season(analysis_date: date, season_year: int, days_threshold: int = 14) -> bool:
     """
     Check if analysis date is in early season period.
 
     Uses deterministic date-based check (first N days of regular season).
-    Changed from 14 days to 7 days based on bootstrap period investigation (2025-11-27).
+    Default 14 days provides ~7 games per team for L5/L7d windows.
 
     Args:
         analysis_date: Date being analyzed
         season_year: Season year
-        days_threshold: Days to consider "early" (default 7, was 14 before bootstrap fix)
+        days_threshold: Days to consider "early" (default 14, from BOOTSTRAP_DAYS)
 
     Returns:
         True if within first N days of season
 
     Example:
-        >>> is_early_season(date(2023, 10, 24), 2023, days_threshold=7)
+        >>> is_early_season(date(2023, 10, 24), 2023, days_threshold=14)
         True  # Day 0 (opening night)
-        >>> is_early_season(date(2023, 10, 31), 2023, days_threshold=7)
-        True  # Day 6
-        >>> is_early_season(date(2023, 11, 1), 2023, days_threshold=7)
-        False  # Day 7 - regular processing starts
+        >>> is_early_season(date(2023, 11, 6), 2023, days_threshold=14)
+        True  # Day 13
+        >>> is_early_season(date(2023, 11, 7), 2023, days_threshold=14)
+        False  # Day 14 - regular processing starts
     """
     season_start = get_season_start_date(season_year)
     days_since_start = (analysis_date - season_start).days

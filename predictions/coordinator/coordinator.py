@@ -41,6 +41,7 @@ from run_history import CoordinatorRunHistory
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 from shared.publishers.unified_pubsub_publisher import UnifiedPubSubPublisher
+from shared.config.orchestration_config import get_orchestration_config
 
 # Configure logging
 logging.basicConfig(
@@ -153,7 +154,12 @@ def start_prediction_batch():
             game_date = date.today()
 
         min_minutes = request_data.get('min_minutes', 15)
-        use_multiple_lines = request_data.get('use_multiple_lines', False)
+        # Use orchestration config for default (Issue 4: enable multiple lines by default)
+        orch_config = get_orchestration_config()
+        use_multiple_lines = request_data.get(
+            'use_multiple_lines',
+            orch_config.prediction_mode.use_multiple_lines_default
+        )
         force = request_data.get('force', False)
 
         # Extract correlation tracking (for pipeline tracing Phase 1→5)

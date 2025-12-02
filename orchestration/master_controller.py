@@ -24,6 +24,13 @@ from orchestration.config_loader import WorkflowConfig
 from shared.utils.schedule import NBAScheduleService, GameType
 from shared.utils.bigquery_utils import execute_bigquery, insert_bigquery_rows
 
+# Import orchestration config for schedule staleness settings
+try:
+    from shared.config.orchestration_config import get_orchestration_config
+    _orchestration_config = get_orchestration_config()
+except ImportError:
+    _orchestration_config = None
+
 logger = logging.getLogger(__name__)
 
 
@@ -207,12 +214,23 @@ class MasterWorkflowController:
     def _ensure_schedule_current(self, current_time: datetime) -> WorkflowDecision:
         """
         Ensure we have current schedule before evaluating game-aware workflows.
-        
+
+        Uses orchestration_config.py for staleness threshold and overrides.
+        This allows manual override when NBA.com is down.
+
         Returns:
             WorkflowDecision to run schedule scraper, skip, or abort
         """
         today = current_time.date().strftime('%Y-%m-%d')
-        
+
+        # Get effective max stale hours from config (includes override logic)
+        if _orchestration_config:
+            max_stale_hours = _orchestration_config.schedule_staleness.get_effective_max_hours()
+            logger.debug(f"Schedule staleness threshold: {max_stale_hours}h (from config)")
+        else:
+            max_stale_hours = 6  # Fallback default
+            logger.debug("Using fallback schedule staleness threshold: 6h")
+
         # Check when schedule was last scraped
         query = """
             SELECT MAX(triggered_at) as last_scrape
@@ -221,33 +239,33 @@ class MasterWorkflowController:
               AND status = 'success'
               AND DATE(triggered_at) = CURRENT_DATE()
         """
-        
+
         try:
             result = execute_bigquery(query)
             last_scrape = result[0]['last_scrape'] if result and result[0]['last_scrape'] else None
-            
+
             if last_scrape:
                 hours_since = (current_time - last_scrape).total_seconds() / 3600
-                
-                if hours_since < 6:
+
+                if hours_since < max_stale_hours:
                     # Schedule is fresh
                     return WorkflowDecision(
                         action=DecisionAction.SKIP,
-                        reason=f"Schedule current (scraped {hours_since:.1f}h ago)",
+                        reason=f"Schedule current (scraped {hours_since:.1f}h ago, threshold: {max_stale_hours}h)",
                         workflow_name="schedule_dependency",
                         priority="HIGH"
                     )
-            
+
             # Schedule stale or never scraped
             return WorkflowDecision(
                 action=DecisionAction.RUN,
-                reason="Schedule needs refresh (>6h old or never scraped)",
+                reason=f"Schedule needs refresh (>{max_stale_hours}h old or never scraped)",
                 workflow_name="schedule_dependency",
                 priority="CRITICAL",
                 scrapers=["nbac_schedule_api"],
                 alert_level=AlertLevel.INFO
             )
-            
+
         except Exception as e:
             logger.error(f"Failed to check schedule status: {e}")
             return WorkflowDecision(

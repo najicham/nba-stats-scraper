@@ -70,9 +70,9 @@ PHASE3_TABLES = {
 
 
 def is_bootstrap_date(check_date: date) -> bool:
-    """Check if date falls within bootstrap period (first 7 days of season)."""
+    """Check if date falls within bootstrap period (first 14 days of season)."""
     season_year = get_season_year_from_date(check_date)
-    return is_early_season(check_date, season_year, days_threshold=7)
+    return is_early_season(check_date, season_year)  # Uses default BOOTSTRAP_DAYS=14
 
 
 def get_dates_with_data(bq_client: bigquery.Client, table: str, date_field: str,
