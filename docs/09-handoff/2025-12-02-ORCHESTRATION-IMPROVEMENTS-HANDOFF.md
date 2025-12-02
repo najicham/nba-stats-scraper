@@ -313,6 +313,24 @@ export SCHEDULE_STALENESS_OVERRIDE_EXPIRES="2025-12-03T00:00:00"
 | `orchestration/cloud_functions/transition_monitor/main.py` | NEW - Issue C - Stuck transition monitor |
 | `orchestration/master_controller.py` | Issue D - Use config for schedule staleness |
 
+## TODO - Not Yet Completed
+
+### 1. Roster Scraper Freshness (HIGH PRIORITY)
+Roster data is 45 days stale (from 2025-10-18). Daily predictions use this roster.
+
+**Action needed:** Schedule `espn_team_rosters` scraper to run daily.
+
+### 2. Deploy New Cloud Functions
+```bash
+# Phase 4→5 orchestrator
+gcloud functions deploy phase4-to-phase5-orchestrator ...
+
+# Transition monitor
+gcloud functions deploy transition-monitor ...
+```
+
+---
+
 ## Testing
 
 ```bash
