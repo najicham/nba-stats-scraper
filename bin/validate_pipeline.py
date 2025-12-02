@@ -68,6 +68,24 @@ from shared.validation.time_awareness import get_time_context, TimeContext, form
 logger = logging.getLogger(__name__)
 
 
+def get_validation_mode(game_date: date) -> str:
+    """
+    Determine validation mode based on date.
+
+    - 'daily': Today or future dates - uses roster for player universe
+    - 'backfill': Historical dates - uses gamebook for player universe
+
+    This affects:
+    - Whether roster chain is validated (daily: yes, backfill: no)
+    - Player universe source (daily: roster, backfill: gamebook)
+    - Roster staleness warnings (daily: yes, backfill: no)
+    """
+    today = date.today()
+    if game_date >= today:
+        return 'daily'
+    return 'backfill'
+
+
 def parse_date(date_str: str) -> date:
     """Parse date string, handling special values like 'today' and 'yesterday'."""
     date_str = date_str.lower().strip()
@@ -116,7 +134,9 @@ def validate_date(
         else:
             phases = [1, 2, 3, 4, 5]
 
-    logger.info(f"Validating pipeline for {game_date}")
+    # Determine validation mode (daily vs backfill)
+    validation_mode = get_validation_mode(game_date)
+    logger.info(f"Validating pipeline for {game_date} (mode: {validation_mode})")
     total_start = time_module.time()
 
     # Get time context (for today/yesterday awareness)
@@ -129,9 +149,15 @@ def validate_date(
     schedule_context = get_schedule_context(game_date, client)
     logger.info(f"  ├─ Schedule: {schedule_context.game_count} games ({time_module.time() - step_start:.1f}s)")
 
+    # Get player universe with mode (daily uses roster, backfill uses gamebook)
     step_start = time_module.time()
-    player_universe = get_player_universe(game_date, client)
-    logger.info(f"  ├─ Players: {player_universe.total_rostered} rostered ({time_module.time() - step_start:.1f}s)")
+    player_universe = get_player_universe(game_date, client, mode=validation_mode)
+    roster_warning = ""
+    if validation_mode == 'daily' and player_universe.roster_date:
+        days_stale = (game_date - player_universe.roster_date).days
+        if days_stale > 7:
+            roster_warning = f" ⚠️ STALE ({days_stale}d old)"
+    logger.info(f"  ├─ Players: {player_universe.total_rostered} rostered ({player_universe.source}){roster_warning} ({time_module.time() - step_start:.1f}s)")
 
     # Get orchestration state from Firestore (for today/yesterday)
     orchestration_state = None
@@ -399,17 +425,21 @@ def validate_date_range_chains(
     current = start_date
 
     while current <= end_date:
-        logger.info(f"Validating chains for {current}...")
+        # Determine validation mode for this date
+        validation_mode = get_validation_mode(current)
+        logger.info(f"Validating chains for {current} (mode: {validation_mode})...")
 
         # Get schedule context
         schedule_context = get_schedule_context(current, client)
 
-        # Validate chains
+        # Validate chains - include roster chain for daily mode
+        skip_roster = (validation_mode == 'backfill')
         chain_validations = validate_all_chains(
             game_date=current,
             schedule_context=schedule_context,
             bq_client=client,
             gcs_client=gcs_client,
+            skip_roster_chain=skip_roster,
         )
 
         # Count statuses
@@ -752,9 +782,13 @@ Examples:
                 else:
                     # Chain view (V2, default) - shows Phase 1-2 as unified chain view
                     # Run chain validation (this replaces P1/P2 validation)
+                    # Include roster chain for daily mode (start_date >= today)
+                    validation_mode = get_validation_mode(start_date)
+                    skip_roster = (validation_mode == 'backfill')
                     chain_validations = validate_all_chains(
                         game_date=start_date,
                         schedule_context=report.schedule_context,
+                        skip_roster_chain=skip_roster,
                     )
 
                     # Print chain section
@@ -784,9 +818,13 @@ Examples:
                     print_validation_json(report, pretty=True)
                 else:
                     # Chain view - combined JSON with chain data
+                    # Include roster chain for daily mode
+                    validation_mode = get_validation_mode(start_date)
+                    skip_roster = (validation_mode == 'backfill')
                     chain_validations = validate_all_chains(
                         game_date=start_date,
                         schedule_context=report.schedule_context,
+                        skip_roster_chain=skip_roster,
                     )
                     maintenance = validate_maintenance(
                         game_date=start_date,
