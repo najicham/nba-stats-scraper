@@ -236,12 +236,21 @@ def _format_header(report: ValidationReport, use_color: bool) -> str:
     season_info = f"{report.schedule_context.season_string}, Day {report.schedule_context.season_day}"
 
     if report.schedule_context.is_bootstrap:
-        bootstrap_tag = " - Bootstrap"
+        bootstrap_tag = " [BOOTSTRAP]"
     else:
         bootstrap_tag = ""
 
     title = f"PIPELINE VALIDATION: {date_str} ({season_info}{bootstrap_tag})"
     lines.append(title)
+
+    # Season progress indicator
+    season_day = report.schedule_context.season_day
+    # Regular season is ~170 days (Oct 22 - Apr 13)
+    REGULAR_SEASON_DAYS = 170
+    season_pct = min(100, (season_day / REGULAR_SEASON_DAYS) * 100)
+    season_progress = f"Season Progress: {season_pct:.0f}% ({season_day} of ~{REGULAR_SEASON_DAYS} days)"
+    lines.append(season_progress)
+
     lines.append(DOUBLE_SEPARATOR)
     lines.append("")
 
@@ -410,9 +419,153 @@ def _format_summary(report: ValidationReport, use_color: bool) -> str:
         lines.append(f"Warnings:          {len(report.warnings)}")
 
     lines.append("")
+
+    # Progress bar
+    lines.append(_format_progress_bar(report, use_color))
+
     lines.append(DOUBLE_SEPARATOR)
 
     return '\n'.join(lines)
+
+
+def _format_progress_bar(report: ValidationReport, use_color: bool) -> str:
+    """
+    Format a visual progress bar showing pipeline completion.
+
+    Weights:
+    - Bootstrap mode: P2=40%, P3=60% (P4/P5 not expected)
+    - Regular mode: P2=15%, P3=25%, P4=25%, P5=35%
+
+    Colors:
+    - Green: 90-100% (complete)
+    - Yellow: 50-89% (partial)
+    - Red: 0-49% (needs work)
+    - Blue: Bootstrap skip (expected)
+    """
+    lines = []
+    is_bootstrap = report.schedule_context.is_bootstrap
+
+    # Calculate phase completion percentages
+    phase_pcts = {}
+    for phase_result in report.phase_results:
+        phase = phase_result.phase
+        status = phase_result.status
+
+        if status == ValidationStatus.COMPLETE:
+            phase_pcts[phase] = 100.0
+        elif status == ValidationStatus.BOOTSTRAP_SKIP:
+            phase_pcts[phase] = 100.0  # Expected empty = complete for this context
+        elif status == ValidationStatus.NOT_APPLICABLE:
+            phase_pcts[phase] = 100.0  # N/A = doesn't count against us
+        elif status == ValidationStatus.PARTIAL:
+            # Calculate actual completion from tables
+            if phase_result.tables:
+                total_expected = sum(t.expected_count for t in phase_result.tables.values() if t.expected_count > 0)
+                total_actual = sum(t.record_count for t in phase_result.tables.values())
+                if total_expected > 0:
+                    phase_pcts[phase] = (total_actual / total_expected) * 100
+                else:
+                    phase_pcts[phase] = 50.0  # Default for partial
+            else:
+                phase_pcts[phase] = 50.0
+        else:  # MISSING or ERROR
+            phase_pcts[phase] = 0.0
+
+    # Weights based on mode
+    if is_bootstrap:
+        weights = {2: 0.40, 3: 0.60, 4: 0.0, 5: 0.0}
+    else:
+        weights = {2: 0.15, 3: 0.25, 4: 0.25, 5: 0.35}
+
+    # Calculate weighted total
+    total_pct = sum(phase_pcts.get(p, 0) * w for p, w in weights.items())
+
+    # Build progress bar (50 chars wide)
+    BAR_WIDTH = 50
+    filled = int(total_pct / 100 * BAR_WIDTH)
+    empty = BAR_WIDTH - filled
+
+    # Color based on completion
+    if total_pct >= 90:
+        bar_color = '\033[92m' if use_color else ''  # Green
+    elif total_pct >= 50:
+        bar_color = '\033[93m' if use_color else ''  # Yellow
+    else:
+        bar_color = '\033[91m' if use_color else ''  # Red
+
+    reset = RESET if use_color else ''
+
+    bar = f"{bar_color}{'█' * filled}{reset}{'░' * empty}"
+    lines.append(f"Pipeline Progress: [{bar}] {total_pct:.0f}%")
+
+    # Phase breakdown with mini indicators (match actual status, not just percentage)
+    phase_indicators = []
+    for phase in [2, 3, 4, 5]:
+        phase_result = next((p for p in report.phase_results if p.phase == phase), None)
+
+        if phase_result:
+            status = phase_result.status
+            if status == ValidationStatus.COMPLETE:
+                sym = '✓'
+                color = '\033[92m' if use_color else ''  # Green
+            elif status == ValidationStatus.BOOTSTRAP_SKIP:
+                sym = '⊘'
+                color = '\033[94m' if use_color else ''  # Blue
+            elif status == ValidationStatus.NOT_APPLICABLE:
+                sym = '─'
+                color = '\033[90m' if use_color else ''  # Gray
+            elif status == ValidationStatus.PARTIAL:
+                sym = '△'
+                color = '\033[93m' if use_color else ''  # Yellow
+            else:  # MISSING or ERROR
+                sym = '○'
+                color = '\033[91m' if use_color else ''  # Red
+        else:
+            sym = '?'
+            color = '\033[90m' if use_color else ''  # Gray
+
+        phase_indicators.append(f"{color}P{phase}{sym}{reset}")
+
+    lines.append(f"                   {' '.join(phase_indicators)}")
+
+    # Next action suggestion
+    lines.append("")
+    next_action = _get_next_action(report, phase_pcts, is_bootstrap)
+    if next_action:
+        lines.append(f"Next Action: {next_action}")
+
+    return '\n'.join(lines)
+
+
+def _get_next_action(report: ValidationReport, phase_pcts: dict, is_bootstrap: bool) -> str:
+    """Determine the next action needed."""
+    # Check phases in order
+    for phase in [2, 3, 4, 5]:
+        phase_result = next((p for p in report.phase_results if p.phase == phase), None)
+        if not phase_result:
+            continue
+
+        if phase_result.status == ValidationStatus.NOT_APPLICABLE:
+            return "No games scheduled - nothing to do"
+
+        if phase_result.status == ValidationStatus.BOOTSTRAP_SKIP:
+            continue  # Expected, move on
+
+        if is_bootstrap and phase in [4, 5]:
+            continue  # Not expected during bootstrap
+
+        pct = phase_pcts.get(phase, 0)
+        if pct < 90:
+            phase_name = _get_phase_name(phase)
+            if pct == 0:
+                return f"Run {phase_name} backfill (0% complete)"
+            else:
+                return f"Complete {phase_name} backfill ({pct:.0f}% done)"
+
+    # All complete
+    if is_bootstrap:
+        return "Bootstrap complete - Phase 4/5 will run after bootstrap period"
+    return "All phases complete!"
 
 
 def _get_phase_name(phase: int) -> str:
