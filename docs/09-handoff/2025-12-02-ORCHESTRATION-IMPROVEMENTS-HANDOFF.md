@@ -183,6 +183,7 @@ universe = get_player_universe(game_date, mode='backfill')
 - Fallback list included for Cloud Function deployment (where imports may fail)
 - Added `missing_processors` field to status responses for debugging
 - Added `expected_processors` list to trigger messages
+- **Added `normalize_processor_name()` function** to convert class names (e.g., `BdlPlayerBoxscoresProcessor`) to config names (e.g., `bdl_player_boxscores`)
 
 **Verification:**
 ```bash
