@@ -195,11 +195,11 @@ class TeamOffenseGameSummaryProcessor(
         # SMART REPROCESSING: Check if we can skip processing
         skip, reason = self.should_skip_processing(start_date)
         if skip:
-            self.logger.info(f"✅ SMART REPROCESSING: Skipping processing - {reason}")
+            logger.info(f"✅ SMART REPROCESSING: Skipping processing - {reason}")
             self.raw_data = []
             return
 
-        self.logger.info(f"🔄 PROCESSING: {reason}")
+        logger.info(f"🔄 PROCESSING: {reason}")
 
         # Use fallback chain for team boxscore data
         fallback_result = self.try_fallback_chain(
