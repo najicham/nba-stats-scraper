@@ -1,21 +1,33 @@
 # Operations Documentation
 
 **Created:** 2025-11-18 15:00 PST
-**Last Updated:** 2025-11-29 17:05 PST
+**Last Updated:** 2025-12-02
 **Purpose:** Step-by-step operational procedures for backfills, maintenance, and data management
 **Audience:** Engineers running backfills, on-call engineers, operators
 **Focus:** How to execute operational tasks (backfills, validation, recovery)
 
 ---
 
+## Quick Start
+
+| Task | Document |
+|------|----------|
+| **Daily Operations** | [daily-operations-runbook.md](./daily-operations-runbook.md) |
+| **Incident Response** | [incident-response.md](./incident-response.md) |
+| **Orchestrator Issues** | [orchestrator-monitoring.md](./orchestrator-monitoring.md) |
+| **Pub/Sub Issues** | [pubsub-operations.md](./pubsub-operations.md) |
+
+---
+
 ## 🎯 Overview
 
 **This directory contains:**
-- ✅ **v1.0 Orchestration monitoring** (NEW - orchestrators and Pub/Sub)
+- ✅ **Daily Operations Runbook** (NEW - daily health checks, common operations)
+- ✅ **Incident Response Guide** (NEW - severity levels, troubleshooting)
+- ✅ **v1.0 Orchestration monitoring** (orchestrators and Pub/Sub)
 - ✅ Backfill procedures (historical data, gap filling, re-processing)
 - ✅ Data validation procedures (completeness checks, row count reconciliation)
 - ✅ Recovery operations (partial backfill recovery)
-- 🚧 Future: Maintenance procedures, data quality checks
 
 **Key Distinction:**
 - **Operations** (this directory) = Procedures for running tasks
