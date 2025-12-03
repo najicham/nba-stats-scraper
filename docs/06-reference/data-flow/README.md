@@ -1,9 +1,9 @@
 # Data Flow Documentation
 
-**Last Updated:** 2025-11-25
+**Last Updated:** 2025-12-02
 **Purpose:** Data lineage, field mappings, and transformations across pipeline phases
 **Audience:** Engineers understanding data flow and debugging data issues
-**Status:** ✅ Complete - All phases documented and deployed
+**Status:** All Phases Deployed - Backfill in Progress
 
 ---
 
@@ -119,21 +119,21 @@ This directory will contain documentation showing how data transforms as it move
 
 ### Quick Reference: All Docs
 
-| # | Document | Phase | Input | Output | Status | Blocker |
-|---|----------|-------|-------|--------|--------|---------|
-| **01** | Scraper Outputs | 1 | APIs | GCS JSON | ✅ | None |
-| **02** | Phase 1→2 Transform | 1→2 | GCS JSON | 21 raw tables | ✅ | None |
-| **03** | Team Offense | 2→3 | nbac_team_boxscore | team_offense_game_summary | ✅ | None |
-| **04** | Team Defense | 2→3 | nbac_team_boxscore | team_defense_game_summary | ✅ | None |
-| **05** | Upcoming Team Context | 2→3 | 5 raw tables | upcoming_team_game_context | ✅ | None |
-| **06** | Upcoming Player Context | 2→3 | 8 raw tables | upcoming_player_game_context | ✅ | None |
-| **07** | Player Game Summary | 2→3 | 6 raw tables | player_game_summary | ✅ | None |
-| **08** | Team Defense Zones | 3→4 | team_defense_game_summary | team_defense_zone_analysis | ✅ | None |
-| **09** | Player Shot Zones | 3→4 | player_game_summary | player_shot_zone_analysis | ✅ | None |
-| **10** | Player Daily Cache | 3→4 | 3 analytics + 1 phase4 | player_daily_cache | ✅ | None |
-| **11** | Composite Factors | 3→4 | 2 analytics + 2 phase4 | player_composite_factors | ✅ | None |
-| **12** | ML Feature Store | 3→4 | 3 analytics + 4 phase4 | ml_feature_store_v2 | ✅ | None |
-| **13** | Feature Consumption | 4→5 | ml_feature_store_v2 | player_prop_predictions | ✅ | None |
+| # | Document | Phase | Input | Output | Status |
+|---|----------|-------|-------|--------|--------|
+| **01** | Scraper Outputs | 1 | APIs | GCS JSON | Deployed |
+| **02** | Phase 1→2 Transform | 1→2 | GCS JSON | 21 raw tables | Deployed |
+| **03** | Team Offense | 2→3 | nbac_team_boxscore | team_offense_game_summary | Deployed |
+| **04** | Team Defense | 2→3 | nbac_team_boxscore | team_defense_game_summary | Deployed |
+| **05** | Upcoming Team Context | 2→3 | 5 raw tables | upcoming_team_game_context | Deployed |
+| **06** | Upcoming Player Context | 2→3 | 8 raw tables | upcoming_player_game_context | Deployed |
+| **07** | Player Game Summary | 2→3 | 6 raw tables | player_game_summary | Deployed |
+| **08** | Team Defense Zones | 3→4 | team_defense_game_summary | team_defense_zone_analysis | Deployed |
+| **09** | Player Shot Zones | 3→4 | player_game_summary | player_shot_zone_analysis | Deployed |
+| **10** | Player Daily Cache | 3→4 | 3 analytics + 1 phase4 | player_daily_cache | Deployed |
+| **11** | Composite Factors | 3→4 | 2 analytics + 2 phase4 | player_composite_factors | Deployed |
+| **12** | ML Feature Store | 3→4 | 3 analytics + 4 phase4 | ml_feature_store_v2 | Deployed |
+| **13** | Feature Consumption | 4→5 | ml_feature_store_v2 | player_prop_predictions | Deployed |
 
 **Legend:**
 - ✅ Deployed - All sources available, processor implemented, output table exists

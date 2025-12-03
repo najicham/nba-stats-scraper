@@ -1,8 +1,8 @@
 # Documentation Navigation Guide
 
-**File:** `docs/NAVIGATION_GUIDE.md`
+**File:** `docs/00-start-here/NAVIGATION_GUIDE.md`
 **Created:** 2025-11-15
-**Last Updated:** 2025-11-25
+**Last Updated:** 2025-12-02
 **Purpose:** How to navigate the NBA stats pipeline documentation system
 **Status:** Current
 **Audience:** Anyone asking "where do I find information about X?"
@@ -14,19 +14,19 @@
 ```
 What do you need?
 
-├─ System status / deployment status → docs/SYSTEM_STATUS.md (START HERE!)
+├─ System status / deployment status → docs/00-start-here/SYSTEM_STATUS.md (START HERE!)
 │
-├─ Quick lookup (1-5 min) → Processor Cards (docs/processor-cards/)
+├─ Quick lookup (1-5 min) → Processor Cards (docs/06-reference/processor-cards/)
 │
-├─ Production is broken → Cross-Phase Troubleshooting (docs/operations/)
+├─ Production is broken → Cross-Phase Troubleshooting (docs/02-operations/)
 │
 ├─ Deep understanding (30+ min) → Detailed Docs (by phase)
-│   ├─ Phase 1 → docs/orchestration/
-│   ├─ Phase 2-4 → docs/processors/
-│   ├─ Phase 5 → docs/predictions/
+│   ├─ Phase 1 → docs/03-phases/phase1-orchestration/
+│   ├─ Phase 2-4 → docs/03-phases/phase2-raw/, phase3-analytics/, phase4-precompute/
+│   ├─ Phase 5 → docs/03-phases/phase5-predictions/
 │   └─ Architecture → docs/01-architecture/
 │
-└─ Daily operations → Monitoring Docs (docs/monitoring/)
+└─ Daily operations → Monitoring Docs (docs/07-monitoring/)
 ```
 
 ---
@@ -34,7 +34,7 @@ What do you need?
 ## 📚 Documentation Types - When to Use What
 
 ### Type 1: System Status (Single Source of Truth)
-**File:** `docs/SYSTEM_STATUS.md`
+**File:** `docs/00-start-here/SYSTEM_STATUS.md`
 
 **Use when you need:**
 - Current deployment status (what's in production?)
@@ -53,7 +53,7 @@ What do you need?
 ---
 
 ### Type 2: Processor Cards (Quick Reference)
-**Location:** `docs/processor-cards/`
+**Location:** `docs/06-reference/processor-cards/`
 
 **Use when you need:**
 - Fast facts about a specific processor
@@ -74,12 +74,12 @@ What do you need?
 - "What's the expected duration for Phase 4?"
 - "Quick health check for all processors?"
 
-**Start here:** `docs/processor-cards/README.md`
+**Start here:** `docs/06-reference/processor-cards/README.md`
 
 ---
 
 ### Type 3: Troubleshooting Guides (When Things Break)
-**Location:** `docs/operations/`
+**Location:** `docs/02-operations/`
 
 **Use when:**
 - Production is broken
@@ -103,7 +103,7 @@ What do you need?
 - "Phase 4 has low row counts, what's wrong?"
 - "All predictions are PASS, is this normal?"
 
-**Start here:** `docs/operations/cross-phase-troubleshooting-matrix.md`
+**Start here:** `docs/02-operations/troubleshooting-matrix.md`
 
 ---
 
@@ -122,29 +122,29 @@ What do you need?
 **By Phase:**
 
 #### Phase 1: Orchestration
-**Location:** `docs/orchestration/`
+**Location:** `docs/03-phases/phase1-orchestration/`
 - How orchestration works (Cloud Scheduler, workflows)
 - BigQuery schemas
 - Troubleshooting
 
-**Start with:** `docs/orchestration/01-how-it-works.md`
+**Start with:** `docs/03-phases/phase1-orchestration/how-it-works.md`
 
 #### Phase 2-4: Processors
-**Location:** `docs/processors/`
+**Location:** `docs/03-phases/`
 - Operations guides for each phase
 - Scheduling strategies
 - Deployment procedures
 
-**Start with:** `docs/processors/01-phase2-operations-guide.md`
+**Start with:** `docs/03-phases/phase2-raw/operations.md`
 
 #### Phase 5: Predictions
-**Location:** `docs/predictions/`
+**Location:** `docs/03-phases/phase5-predictions/`
 - **Getting started guide** (comprehensive onboarding)
 - All 5 prediction models explained
 - Deployment guide
 - Worker internals
 
-**Start with:** `docs/predictions/tutorials/01-getting-started.md` ⭐
+**Start with:** `docs/03-phases/phase5-predictions/tutorials/01-getting-started.md`
 
 #### Architecture & Design
 **Location:** `docs/01-architecture/`
@@ -158,7 +158,7 @@ What do you need?
 ---
 
 ### Type 5: Monitoring & Operations
-**Location:** `docs/monitoring/`
+**Location:** `docs/07-monitoring/`
 
 **Use when:**
 - Daily health checks
@@ -172,12 +172,12 @@ What do you need?
 - Daily health check (quick dashboard)
 - Comprehensive monitoring guide
 
-**Start with:** `docs/monitoring/02-grafana-daily-health-check.md` (quick start)
+**Start with:** `docs/07-monitoring/grafana/daily-health-check.md` (quick start)
 
 ---
 
 ### Type 6: Infrastructure & Data Flow
-**Locations:** `docs/infrastructure/`, `docs/data-flow/`
+**Locations:** `docs/06-reference/infrastructure.md`, `docs/06-reference/data-flow/`
 
 **Use when:**
 - Setting up Pub/Sub
