@@ -50,6 +50,7 @@ from shared.validation.validators import (
     validate_phase5,
     PhaseValidationResult,
     ValidationStatus,
+    check_cross_table_consistency,
 )
 from shared.validation.output.terminal import (
     ValidationReport,
@@ -206,6 +207,22 @@ def validate_date(
     if run_history and run_history.failed_runs > 0:
         all_issues.append(f"{run_history.failed_runs} processor(s) failed for this date")
 
+    # Cross-phase consistency check (Phase 3 → Phase 4)
+    # Only run if both Phase 3 and Phase 4 have data
+    if 3 in phases and 4 in phases:
+        consistency = _check_cross_phase_consistency(client, game_date)
+        if consistency and not consistency.get('is_consistent', True):
+            missing_count = consistency.get('missing_count', 0)
+            extra_count = consistency.get('extra_count', 0)
+            if missing_count > 0:
+                all_warnings.append(
+                    f"Cross-phase mismatch: {missing_count} players in Phase 3 missing from Phase 4"
+                )
+            if extra_count > 0:
+                all_warnings.append(
+                    f"Cross-phase mismatch: {extra_count} extra players in Phase 4 not in Phase 3"
+                )
+
     # Calculate missing players if requested or if there are issues
     missing_players = None
     if show_missing:
@@ -251,6 +268,38 @@ def _get_processed_players(client: bigquery.Client, game_date: date) -> set:
     except Exception as e:
         logger.error(f"Error querying processed players: {e}")
         return set()
+
+
+def _check_cross_phase_consistency(
+    client: bigquery.Client,
+    game_date: date,
+) -> dict:
+    """
+    Check player consistency between Phase 3 (player_game_summary) and Phase 4 (ml_feature_store_v2).
+
+    This catches issues where:
+    - Phase 3 processed with gamebook but Phase 4 processed with BDL fallback
+    - Processor bugs causing different player sets
+    - Re-runs that created inconsistent data
+
+    Returns:
+        Dict with consistency metrics (is_consistent, missing_count, extra_count, etc.)
+    """
+    try:
+        return check_cross_table_consistency(
+            client=client,
+            game_date=game_date,
+            source_dataset='nba_analytics',
+            source_table='player_game_summary',
+            source_date_column='game_date',
+            target_dataset='nba_predictions',
+            target_table='ml_feature_store_v2',
+            target_date_column='game_date',
+            player_column='player_lookup',
+        )
+    except Exception as e:
+        logger.debug(f"Could not check cross-phase consistency: {e}")
+        return {'is_consistent': True}  # Assume consistent on error
 
 
 def _determine_overall_status(

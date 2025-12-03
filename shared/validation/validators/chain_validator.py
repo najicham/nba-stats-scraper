@@ -302,6 +302,7 @@ def validate_source(
 
     # Check BQ records
     bq_count = 0
+    bq_timeout = False
     if source_config.table:
         bq_count = count_bq_records(
             bq_client=bq_client,
@@ -309,9 +310,18 @@ def validate_source(
             table=source_config.table,
             game_date=game_date,
         )
+        # Handle timeout sentinel (-1)
+        if bq_count == -1:
+            bq_timeout = True
+            bq_count = 0  # Reset for downstream logic
 
     # Determine status (will be updated by validate_chain based on chain position)
-    status = 'missing' if bq_count == 0 else 'available'
+    if bq_timeout:
+        status = 'timeout'  # Distinct from 'missing' - query didn't complete
+    elif bq_count == 0:
+        status = 'missing'
+    else:
+        status = 'available'
 
     return SourceValidation(
         source=source_config,
@@ -425,7 +435,7 @@ def count_bq_records(
 
     except TimeoutError:
         logger.warning(f"Timeout counting BQ records for {dataset}.{table} (>{BQ_QUERY_TIMEOUT_SECONDS}s)")
-        return 0
+        return -1  # Sentinel value: timeout (distinct from 0 = no data)
     except Exception as e:
         logger.warning(f"Error counting BQ records for {dataset}.{table}: {e}")
         return 0

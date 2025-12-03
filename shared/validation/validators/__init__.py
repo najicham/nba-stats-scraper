@@ -13,6 +13,11 @@ from shared.validation.validators.base import (
     PhaseValidationResult,
     TableValidation,
     ValidationStatus,
+    DataIntegrityResult,
+    check_data_integrity,
+    check_cross_table_consistency,
+    query_duplicate_count,
+    query_null_critical_fields,
 )
 from shared.validation.validators.phase1_validator import validate_phase1
 from shared.validation.validators.phase2_validator import validate_phase2
@@ -24,6 +29,11 @@ __all__ = [
     'PhaseValidationResult',
     'TableValidation',
     'ValidationStatus',
+    'DataIntegrityResult',
+    'check_data_integrity',
+    'check_cross_table_consistency',
+    'query_duplicate_count',
+    'query_null_critical_fields',
     'validate_phase1',
     'validate_phase2',
     'validate_phase3',
