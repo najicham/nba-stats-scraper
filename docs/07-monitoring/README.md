@@ -1,12 +1,28 @@
 # Monitoring Documentation
 
-**Last Updated:** 2025-11-29 17:30 PST
+**Last Updated:** 2025-12-02
 **Purpose:** Observability, monitoring, and health checks across all pipeline phases
 **Audience:** Engineers monitoring system health and investigating issues
 
 ---
 
-## 🎉 v1.0 Orchestration Monitoring (NEW)
+## Pipeline Validation (NEW - 2025-12-02)
+
+| Document | Purpose |
+|----------|---------|
+| [**validation-system.md**](./validation-system.md) | Comprehensive pipeline validation tool |
+
+```bash
+# Quick validation
+python3 bin/validate_pipeline.py 2024-01-15
+
+# Date range
+python3 bin/validate_pipeline.py 2024-01-15 2024-01-28 --format json
+```
+
+---
+
+## v1.0 Orchestration Monitoring
 
 For monitoring the event-driven orchestration infrastructure:
 

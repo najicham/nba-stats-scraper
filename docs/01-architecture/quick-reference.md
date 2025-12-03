@@ -87,7 +87,7 @@
 
 ---
 
-## 📈 Current Status (2025-11-29)
+## 📈 Current Status (2025-12-02)
 
 ### What's Working ✅
 
@@ -149,19 +149,19 @@
 
 **New to the system? Read in this order:**
 
-1. **[04-event-driven-pipeline-architecture.md](./04-event-driven-pipeline-architecture.md)** ⭐ START HERE
+1. **[SYSTEM_STATUS.md](../00-start-here/SYSTEM_STATUS.md)** ⭐ START HERE
+   - Current deployment status
+   - Data coverage metrics
+   - Quick links
+
+2. **[pipeline-design.md](./pipeline-design.md)**
    - Complete 6-phase architecture
    - Design principles and patterns
-   - ~1,100 lines (comprehensive)
 
-2. **[05-implementation-status-and-roadmap.md](./05-implementation-status-and-roadmap.md)**
-   - What works vs what's missing
-   - Prioritized 8-sprint plan (~73 hours)
-   - Gap analysis and effort estimates
-
-3. **[01-phase1-to-phase5-integration-plan.md](./01-phase1-to-phase5-integration-plan.md)**
-   - Detailed Phase 2→3 integration plan
-   - Dependency coordination solutions
+3. **[Orchestration Docs](./orchestration/)**
+   - Pub/Sub topics and message formats
+   - Cloud Function orchestrators
+   - Firestore state management
    - Implementation specifics
 
 4. **[02-phase1-to-phase5-granular-updates.md](./02-phase1-to-phase5-granular-updates.md)**
@@ -184,27 +184,37 @@
 
 ## 🔍 Common Questions
 
-**"How do I check if Phase 1→2 is working?"**
+**"How do I check pipeline health?"**
 ```bash
-bin/orchestration/quick_health_check.sh
-bin/orchestration/check_pubsub_health.sh
+# Quick health check
+./bin/orchestration/quick_health_check.sh
+
+# Validate specific date
+python3 bin/validate_pipeline.py 2024-01-15
 ```
 
-**"What's the most critical gap?"**
-Phase 2→3 connection (Sprint 1: ~5 hours). Everything else depends on this.
+**"What's the current priority?"**
+Historical backfill - Phase 4 has 0 days of data, needs backfill from Nov 2021.
 
-**"When will predictions be automatic?"**
-After Sprint 6 (~40 hours of work across Sprints 1-6).
+**"Are predictions automatic?"**
+Yes - v1.0 pipeline is fully event-driven. Predictions run automatically after Phase 4 completes.
 
 **"How do I implement a new processor?"**
 See existing examples:
 - Phase 2: `data_processors/raw/processor_base.py`
-- Phase 3: `data_processors/analytics/player_game_summary_processor.py`
+- Phase 3: `data_processors/analytics/player_game_summary/`
+- Phase 4: `data_processors/precompute/ml_feature_store/`
 
-**"Where are the code examples?"**
-- `examples/pubsub_integration/` - Publishers and message formats
-- `examples/monitoring/` - BigQuery queries
-- `examples/recovery/` - DLQ replay scripts
+**"How do I validate data?"**
+```bash
+# Single date
+python3 bin/validate_pipeline.py 2024-01-15
+
+# Date range with JSON output
+python3 bin/validate_pipeline.py 2024-01-15 2024-01-28 --format json
+```
+
+See: [Validation System](../07-monitoring/validation-system.md)
 
 ---
 
@@ -215,18 +225,23 @@ See existing examples:
 
 **Phase 2 (Raw):**
 - `data_processors/raw/main_processor_service.py` - Event routing
-- `data_processors/raw/processor_base.py` - Base class (needs publishing added)
+- `data_processors/raw/processor_base.py` - Base class with run history
 
 **Phase 3 (Analytics):**
 - `data_processors/analytics/main_analytics_service.py` - Event routing
-- `data_processors/analytics/analytics_base.py` - Dependency checking
-- `data_processors/analytics/player_game_summary_processor.py` - Example processor
+- `data_processors/analytics/analytics_base.py` - Dependency checking + quality tracking
 
 **Phase 4 (Precompute):**
-- `data_processors/precompute/main_precompute_service.py` - Stub (needs completion)
+- `data_processors/precompute/main_precompute_service.py` - Event routing
+- `data_processors/precompute/precompute_base.py` - Base class with quality tracking
 
 **Phase 5 (Predictions):**
-- `predictions/coordinator.py` - Standalone (needs Pub/Sub integration)
+- `predictions/coordinator/coordinator.py` - Orchestrates prediction generation
+- `predictions/worker/` - Worker pool for parallel predictions
+
+**Validation:**
+- `bin/validate_pipeline.py` - Pipeline validation tool
+- `shared/validation/` - Validation framework
 
 **Monitoring:**
 - `bin/orchestration/quick_health_check.sh` - Phase 1 health
@@ -266,5 +281,5 @@ See existing examples:
 
 ---
 
-**Last Updated:** 2025-11-29 17:00 PST
-**Next Review:** After historical backfill complete
+**Last Updated:** 2025-12-02
+**Next Review:** After Phase 4 backfill complete

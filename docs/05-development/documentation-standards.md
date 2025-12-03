@@ -1,9 +1,9 @@
 # Documentation Organization Guide
 
-**Version:** 1.0
-**File:** `docs/DOCUMENTATION_GUIDE.md`
+**Version:** 1.1
+**File:** `docs/05-development/documentation-standards.md`
 **Created:** 2025-11-15
-**Last Updated:** 2025-11-25
+**Last Updated:** 2025-12-02
 **Purpose:** Standard approach for organizing documentation across all directories
 **Status:** Current
 **Audience:** Future AI assistants and engineers organizing documentation
@@ -124,6 +124,48 @@ archive/
 ```
 
 **Timezone:** Always use PST/PDT (Pacific Time) explicitly
+
+---
+
+## Status Legend (Standard Markers)
+
+Use these consistently across all documentation:
+
+### Deployment/Component Status
+
+| Marker | Text | Meaning |
+|--------|------|---------|
+| ✅ | `Deployed` / `Production` / `Complete` | Fully operational |
+| ⚠️ | `Partial` / `In Progress` | Partially complete or needs attention |
+| ❌ | `Missing` / `Not Started` / `Failed` | Not available or broken |
+| 🔄 | `Pending` / `Backfill Needed` | Waiting for action |
+
+### Data Status
+
+| Marker | Text | Meaning |
+|--------|------|---------|
+| `complete` | Full data coverage | All expected data present |
+| `partial` | Partial coverage | Some data missing |
+| `missing` | No data | No data for this period |
+| `timeout` | Query timeout | Check didn't complete |
+| `bootstrap_skip` | Bootstrap period | Expected empty (first 14 days) |
+
+### Document Status
+
+| Status | Meaning |
+|--------|---------|
+| `Current` | Active, up-to-date documentation |
+| `Draft` | Work in progress |
+| `Superseded` | Replaced by newer version |
+| `Archive` | Historical reference only |
+
+### Priority/Severity
+
+| Level | Use For |
+|-------|---------|
+| `HIGH` / `Critical` | Blocking issues, immediate action |
+| `MEDIUM` / `Warning` | Should be addressed soon |
+| `LOW` / `Info` | Nice to have, future work |
 
 **When to update "Last Updated":**
 - Significant content changes
