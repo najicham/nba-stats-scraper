@@ -328,14 +328,25 @@ Roster data is 45 days stale (from 2025-10-18). Daily predictions use this roste
 
 **Action needed:** Schedule `espn_team_rosters` scraper to run daily.
 
-### 2. Deploy New Cloud Functions
-```bash
-# Phase 4→5 orchestrator
-gcloud functions deploy phase4-to-phase5-orchestrator ...
+### ~~2. Deploy New Cloud Functions~~ ✅ COMPLETE
+All orchestration cloud functions deployed (2025-12-02):
+- `phase4-to-phase5-orchestrator` - listens to `nba-phase4-precompute-complete`
+- `transition-monitor` - HTTP trigger for detecting stuck transitions
+- `phase2-to-phase3-orchestrator` - updated with name normalization
+- `phase3-to-phase4-orchestrator` - updated with name normalization
 
-# Transition monitor
-gcloud functions deploy transition-monitor ...
-```
+---
+
+## Architecture Note
+
+**Why Cloud Functions for Orchestrators?**
+
+All processing services use Cloud Run directly, but orchestrators use Cloud Functions Gen2 because:
+1. **Native Pub/Sub triggers** - `--trigger-topic` flag vs manual subscription setup
+2. **Simpler code structure** - Just `main.py` + `requirements.txt`
+3. **Same infrastructure** - Gen2 deploys as Cloud Run under the hood
+
+This is intentional - Cloud Functions is the right tool for event-driven orchestration.
 
 ---
 
