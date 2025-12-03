@@ -1,0 +1,10 @@
+# Transition Monitor Requirements
+# Cloud Function dependencies
+
+# Cloud Functions framework
+functions-framework==3.*
+
+# Google Cloud libraries
+google-cloud-firestore==2.*
+
+# Note: google-cloud-logging is included automatically in Cloud Functions environment
