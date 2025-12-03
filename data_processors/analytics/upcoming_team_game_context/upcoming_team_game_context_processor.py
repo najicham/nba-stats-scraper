@@ -100,6 +100,9 @@ class UpcomingTeamGameContextProcessor(
         # Initialize completeness checker (Week 7 - Team Multi-Window)
         self.completeness_checker = CompletenessChecker(self.bq_client, self.project_id)
 
+        # Target date for processing (set from opts or by process_date())
+        self.target_date = None
+
         # Season start date (for completeness checking - Week 7)
         self.season_start_date = None
 
@@ -270,6 +273,16 @@ class UpcomingTeamGameContextProcessor(
         logger.info("PHASE 3: UPCOMING TEAM GAME CONTEXT - EXTRACTION STARTED")
         logger.info("=" * 80)
 
+        # Set target_date from opts if not already set (for run() vs process_date() compatibility)
+        if self.target_date is None:
+            end_date = self.opts.get('end_date')
+            if isinstance(end_date, str):
+                self.target_date = date.fromisoformat(end_date)
+            elif isinstance(end_date, date):
+                self.target_date = end_date
+            else:
+                raise ValueError("target_date not set and no valid end_date in opts")
+
         # Store season start date for completeness checking (Week 7)
         season_year = self.target_date.year if self.target_date.month >= 10 else self.target_date.year - 1
         self.season_start_date = date(season_year, 10, 1)
@@ -287,12 +300,23 @@ class UpcomingTeamGameContextProcessor(
         # STEP 1: Check Dependencies
         # ====================================================================
         logger.info("Step 1: Checking dependencies...")
-        
-        start_date = self.opts.get('start_date')
-        end_date = self.opts.get('end_date')
-        
-        if not start_date or not end_date:
+
+        start_date_str = self.opts.get('start_date')
+        end_date_str = self.opts.get('end_date')
+
+        if not start_date_str or not end_date_str:
             raise ValueError("start_date and end_date are required")
+
+        # Convert to date objects if they are strings
+        if isinstance(start_date_str, str):
+            start_date = date.fromisoformat(start_date_str)
+        else:
+            start_date = start_date_str
+
+        if isinstance(end_date_str, str):
+            end_date = date.fromisoformat(end_date_str)
+        else:
+            end_date = end_date_str
         
         # Check all dependencies
         dep_check = self.check_dependencies(
@@ -329,20 +353,23 @@ class UpcomingTeamGameContextProcessor(
             
             raise DependencyError(error_msg)
         
-        # Check critical staleness
-        if dep_check.get('has_stale_fail'):
+        # Check critical staleness (skip in backfill mode)
+        if dep_check.get('has_stale_fail') and not self.is_backfill_mode:
             stale = dep_check.get('stale_fail', [])
             error_msg = f"Critical dependencies too stale: {', '.join(stale)}"
             logger.error(error_msg)
-            
+
             self.log_quality_issue(
                 severity='CRITICAL',
                 category='STALE_DEPENDENCY',
                 message=error_msg,
                 details={'stale': stale}
             )
-            
+
             raise DataTooStaleError(error_msg)
+        elif dep_check.get('has_stale_fail') and self.is_backfill_mode:
+            stale = dep_check.get('stale_fail', [])
+            logger.info(f"BACKFILL_MODE: Skipping stale data check for {stale}")
         
         # ====================================================================
         # STEP 3: Track Source Usage
@@ -441,7 +468,13 @@ class UpcomingTeamGameContextProcessor(
         Returns:
             DataFrame with schedule data or None if extraction fails
         """
-        
+
+        # Ensure dates are date objects, not strings (defensive conversion)
+        if isinstance(start_date, str):
+            start_date = date.fromisoformat(start_date)
+        if isinstance(end_date, str):
+            end_date = date.fromisoformat(end_date)
+
         # Extended window for context calculations
         extended_start = start_date - timedelta(days=30)  # 30-day lookback
         extended_end = end_date + timedelta(days=7)       # 7-day lookahead
@@ -476,7 +509,11 @@ class UpcomingTeamGameContextProcessor(
                 return None
             
             logger.info(f"Primary source (nbac_schedule): {len(schedule_df)} games")
-            
+
+            # Ensure game_date is datetime type for .dt accessor
+            # Force conversion regardless of dtype (BQ can return various types)
+            schedule_df['game_date'] = pd.to_datetime(schedule_df['game_date'])
+
             # Check for gaps in target date range
             dates_found = set(schedule_df['game_date'].dt.date.unique())
             dates_needed = set(pd.date_range(start_date, end_date).date)
@@ -784,10 +821,16 @@ class UpcomingTeamGameContextProcessor(
         # VALIDATION 2: Date Range Coverage
         # ====================================================================
         logger.info("Validation 2: Checking date range coverage...")
-        
+
         start_date = self.opts['start_date']
         end_date = self.opts['end_date']
-        
+
+        # Convert to date objects if strings
+        if isinstance(start_date, str):
+            start_date = date.fromisoformat(start_date)
+        if isinstance(end_date, str):
+            end_date = date.fromisoformat(end_date)
+
         target_games = self.schedule_data[
             (self.schedule_data['game_date'].dt.date >= start_date) &
             (self.schedule_data['game_date'].dt.date <= end_date)
@@ -975,7 +1018,13 @@ class UpcomingTeamGameContextProcessor(
         # Get target games
         start_date = self.opts['start_date']
         end_date = self.opts['end_date']
-        
+
+        # Convert to date objects if strings
+        if isinstance(start_date, str):
+            start_date = date.fromisoformat(start_date)
+        if isinstance(end_date, str):
+            end_date = date.fromisoformat(end_date)
+
         target_games = self.schedule_data[
             (self.schedule_data['game_date'].dt.date >= start_date) &
             (self.schedule_data['game_date'].dt.date <= end_date)
@@ -997,7 +1046,7 @@ class UpcomingTeamGameContextProcessor(
             entity_type='team',
             analysis_date=end_date,  # Use end_date for consistency
             upstream_table='nba_raw.nbac_schedule',
-            upstream_entity_field='home_team_abbr',  # Schedule uses home/away, checker will handle
+            upstream_entity_field='home_team_tricode',  # Schedule uses home/away tricodes
             lookback_window=7,
             window_type='days',
             season_start_date=self.season_start_date
@@ -1009,7 +1058,7 @@ class UpcomingTeamGameContextProcessor(
             entity_type='team',
             analysis_date=end_date,
             upstream_table='nba_raw.nbac_schedule',
-            upstream_entity_field='home_team_abbr',
+            upstream_entity_field='home_team_tricode',
             lookback_window=14,
             window_type='days',
             season_start_date=self.season_start_date
@@ -1713,6 +1762,14 @@ class UpcomingTeamGameContextProcessor(
             # Get table schema for load job
             table = self.bq_client.get_table(table_id)
 
+            # Filter data to only include columns that exist in the schema
+            schema_fields = {field.name for field in table.schema}
+            filtered_data = [
+                {k: v for k, v in record.items() if k in schema_fields}
+                for record in self.transformed_data
+            ]
+            logger.info(f"Filtered {len(self.transformed_data)} records to schema fields: {len(schema_fields)} columns")
+
             # Configure batch load job
             job_config = bigquery.LoadJobConfig(
                 schema=table.schema,
@@ -1723,14 +1780,14 @@ class UpcomingTeamGameContextProcessor(
 
             # Load using batch job
             load_job = self.bq_client.load_table_from_json(
-                self.transformed_data,
+                filtered_data,
                 table_id,
                 job_config=job_config
             )
 
             # Wait for completion
             load_job.result()
-            logger.info(f"Successfully loaded {len(self.transformed_data)} records")
+            logger.info(f"Successfully loaded {len(filtered_data)} records")
             logger.info("=" * 80)
             return True
             

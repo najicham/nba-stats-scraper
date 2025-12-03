@@ -15,7 +15,7 @@ import sys
 import argparse
 import logging
 from datetime import datetime, date, timedelta
-from typing import Dict
+from typing import Dict, List
 
 # Add parent directories to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))))
@@ -38,78 +38,105 @@ class UpcomingTeamGameContextBackfill:
         
     def run_backfill(self, start_date: date, end_date: date, dry_run: bool = False) -> Dict:
         """
-        Run backfill for date range.
-        
+        Run backfill for date range by iterating through each date.
+
         Args:
             start_date: Start date (inclusive)
             end_date: End date (inclusive)
             dry_run: If True, just show what would be processed
-            
+
         Returns:
             Dict with processing results
         """
-        logger.info("="*60)
+        # Generate list of dates to process
+        dates_to_process: List[date] = []
+        current = start_date
+        while current <= end_date:
+            dates_to_process.append(current)
+            current += timedelta(days=1)
+
+        total_days = len(dates_to_process)
+
+        logger.info("=" * 60)
         logger.info(f"Upcoming Team Game Context Backfill")
         logger.info(f"Date Range: {start_date} to {end_date}")
+        logger.info(f"Total Days: {total_days}")
         logger.info(f"Mode: {'DRY RUN' if dry_run else 'PRODUCTION'}")
-        logger.info("="*60)
-        
+        logger.info("=" * 60)
+
         if dry_run:
             logger.info("DRY RUN MODE - No data will be processed")
-            logger.info(f"Would process team game context for:")
-            logger.info(f"  Start Date: {start_date}")
-            logger.info(f"  End Date: {end_date}")
-            logger.info(f"  Days: {(end_date - start_date).days + 1}")
+            logger.info(f"Would process team game context for {total_days} dates:")
+            for d in dates_to_process[:5]:
+                logger.info(f"  - {d}")
+            if total_days > 5:
+                logger.info(f"  ... and {total_days - 5} more dates")
             return {
                 'status': 'dry_run',
                 'start_date': str(start_date),
                 'end_date': str(end_date),
-                'days': (end_date - start_date).days + 1
+                'days': total_days
             }
-        
-        # Process date range
-        logger.info(f"Processing team game context for {start_date} to {end_date}")
-        
-        opts = {
-            'start_date': start_date.isoformat(),
-            'end_date': end_date.isoformat(),
-            'project_id': os.environ.get('GCP_PROJECT_ID', 'nba-props-platform'),
-            'backfill_mode': True,  # Disables historical date check and suppresses alerts
-            'skip_downstream_trigger': True  # Prevent Phase 4 auto-trigger during backfill
+
+        # Process each date using run() with single-day opts
+        total_teams = 0
+        total_games = 0
+        successful_dates = 0
+        failed_dates = 0
+
+        for i, target_date in enumerate(dates_to_process, 1):
+            logger.info(f"\n{'=' * 40}")
+            logger.info(f"Processing date {i}/{total_days}: {target_date}")
+            logger.info(f"{'=' * 40}")
+
+            try:
+                # Create fresh processor for each date
+                processor = UpcomingTeamGameContextProcessor()
+
+                opts = {
+                    'start_date': target_date.isoformat(),
+                    'end_date': target_date.isoformat(),
+                    'project_id': os.environ.get('GCP_PROJECT_ID', 'nba-props-platform'),
+                    'backfill_mode': True,
+                    'skip_downstream_trigger': True
+                }
+
+                success = processor.run(opts)
+
+                if success:
+                    successful_dates += 1
+                    stats = processor.get_analytics_stats()
+                    teams = stats.get('unique_teams', 0)
+                    games = stats.get('unique_games', 0)
+                    total_teams += teams
+                    total_games += games
+                    logger.info(f"✅ {target_date}: Processed {teams} teams, {games} games")
+                else:
+                    failed_dates += 1
+                    logger.warning(f"⚠️  {target_date}: Processing failed")
+
+            except Exception as e:
+                failed_dates += 1
+                logger.error(f"❌ {target_date}: Exception - {e}")
+
+        # Summary
+        logger.info("\n" + "=" * 60)
+        logger.info("BACKFILL COMPLETE")
+        logger.info("=" * 60)
+        logger.info(f"Date Range: {start_date} to {end_date}")
+        logger.info(f"Days Processed: {successful_dates}/{total_days}")
+        logger.info(f"Days Failed: {failed_dates}")
+        logger.info(f"Total Teams: {total_teams}")
+        logger.info(f"Total Games: {total_games}")
+        logger.info("=" * 60)
+
+        return {
+            'status': 'success' if failed_dates == 0 else 'partial',
+            'dates_processed': successful_dates,
+            'dates_failed': failed_dates,
+            'total_teams': total_teams,
+            'total_games': total_games
         }
-        
-        try:
-            success = self.processor.run(opts)
-            
-            if success:
-                stats = self.processor.get_analytics_stats()
-                logger.info("="*60)
-                logger.info("BACKFILL SUCCESSFUL")
-                logger.info(f"Records Processed: {stats.get('records_processed', 0)}")
-                logger.info(f"Date Range: {stats.get('date_range', 'unknown')}")
-                logger.info(f"Unique Teams: {stats.get('unique_teams', 0)}")
-                logger.info(f"Unique Games: {stats.get('unique_games', 0)}")
-                logger.info("="*60)
-                
-                return {
-                    'status': 'success',
-                    'records_processed': stats.get('records_processed', 0),
-                    'unique_teams': stats.get('unique_teams', 0),
-                    'unique_games': stats.get('unique_games', 0)
-                }
-            else:
-                logger.error("Processor returned False - check logs for errors")
-                return {
-                    'status': 'failed',
-                    'error': 'Processor returned False'
-                }
-                
-        except Exception as e:
-            logger.error(f"Backfill failed with exception: {e}", exc_info=True)
-            return {
-                'status': 'error',
-                'error': str(e)
-            }
 
 
 def main():
@@ -164,7 +191,7 @@ def main():
     result = backfiller.run_backfill(start_date, end_date, dry_run=args.dry_run)
     
     # Exit with appropriate code
-    if result['status'] in ['success', 'dry_run']:
+    if result['status'] in ['success', 'dry_run', 'partial']:
         sys.exit(0)
     else:
         sys.exit(1)

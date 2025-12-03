@@ -12,7 +12,34 @@ Quick reference for the standardized quality tracking columns across NBA Props P
 | `is_production_ready` | BOOL | Yes | Whether data can be used for predictions |
 | `data_sources` | ARRAY<STRING> | Optional | List of data sources that contributed |
 
-## Completeness Columns (Phase 4 Precompute Only)
+## Sample Size Columns (Phase 3 Analytics)
+
+These columns track how many games were actually used in rolling average calculations, enabling downstream processors to assess data reliability.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `l5_games_used` | INT64 | Number of games used in last-5 average (0-5) |
+| `l5_sample_quality` | STRING | Sample quality: 'excellent', 'good', 'limited', 'insufficient' |
+| `l10_games_used` | INT64 | Number of games used in last-10 average (0-10) |
+| `l10_sample_quality` | STRING | Sample quality assessment |
+
+### Sample Quality Thresholds
+
+| Quality | Threshold | Example (L5) | Example (L10) |
+|---------|-----------|--------------|---------------|
+| excellent | >= 100% of target | 5 games | 10 games |
+| good | >= 70% of target | 4 games | 7 games |
+| limited | >= 50% of target | 3 games | 5 games |
+| insufficient | < 50% of target | 0-2 games | 0-4 games |
+
+### Tables with Sample Size Columns
+
+| Table | Has sample size columns |
+|-------|------------------------|
+| upcoming_player_game_context | Yes |
+| player_shot_zone_analysis | Yes (games_in_sample_10, games_in_sample_20) |
+
+## Completeness Columns (Phase 3-4)
 
 | Column | Type | Description |
 |--------|------|-------------|
@@ -20,6 +47,10 @@ Quick reference for the standardized quality tracking columns across NBA Props P
 | `actual_games_count` | INT64 | Actual games found |
 | `completeness_percentage` | FLOAT64 | Percentage complete (0-100) |
 | `missing_games_count` | INT64 | Number of missing games |
+| `l5_completeness_pct` | FLOAT64 | Last 5 games completeness percentage |
+| `l5_is_complete` | BOOL | Whether L5 window is fully complete |
+| `l10_completeness_pct` | FLOAT64 | Last 10 games completeness percentage |
+| `l10_is_complete` | BOOL | Whether L10 window is fully complete |
 
 ## Quality Tiers
 

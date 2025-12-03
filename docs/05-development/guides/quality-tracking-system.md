@@ -227,9 +227,63 @@ from shared.processors.patterns.quality_columns import (
 )
 ```
 
-## Completeness Tracking (Phase 4 Only)
+## Sample Size Tracking (Phase 3 Analytics)
 
-Phase 4 precompute tables that aggregate multiple games should include completeness columns:
+When calculating rolling averages (e.g., `points_avg_last_5`, `points_avg_last_10`), track how many games were actually used. This enables downstream processors to filter or weight data based on sample reliability.
+
+### Implementation Pattern
+
+```python
+def _calculate_performance_metrics(self, historical_data: pd.DataFrame) -> Dict:
+    """Calculate rolling averages with sample size tracking."""
+    last_5 = historical_data.head(5)
+    last_10 = historical_data.head(10)
+
+    l5_games_used = len(last_5)
+    l10_games_used = len(last_10)
+
+    return {
+        'points_avg_last_5': round(last_5['points'].mean(), 1) if l5_games_used > 0 else None,
+        'points_avg_last_10': round(last_10['points'].mean(), 1) if l10_games_used > 0 else None,
+        'l5_games_used': l5_games_used,
+        'l5_sample_quality': self._determine_sample_quality(l5_games_used, 5),
+        'l10_games_used': l10_games_used,
+        'l10_sample_quality': self._determine_sample_quality(l10_games_used, 10),
+    }
+
+def _determine_sample_quality(self, games_count: int, target_window: int) -> str:
+    """
+    Assess sample quality relative to target window.
+
+    Returns: 'excellent', 'good', 'limited', or 'insufficient'
+    """
+    if games_count >= target_window:
+        return 'excellent'
+    elif games_count >= int(target_window * 0.7):
+        return 'good'
+    elif games_count >= int(target_window * 0.5):
+        return 'limited'
+    else:
+        return 'insufficient'
+```
+
+### Sample Quality Thresholds
+
+| Quality | Threshold | L5 Example | L10 Example |
+|---------|-----------|------------|-------------|
+| excellent | >= 100% | 5 games | 10 games |
+| good | >= 70% | 4 games | 7 games |
+| limited | >= 50% | 3 games | 5 games |
+| insufficient | < 50% | 0-2 games | 0-4 games |
+
+### Where Sample Size Tracking is Used
+
+- `upcoming_player_game_context`: `l5_games_used`, `l5_sample_quality`, `l10_games_used`, `l10_sample_quality`
+- `player_shot_zone_analysis`: `games_in_sample_10`, `sample_quality_10`, `games_in_sample_20`, `sample_quality_20`
+
+## Completeness Tracking (Phase 3-4)
+
+Phase 3-4 tables that aggregate multiple games should include completeness columns:
 
 ```python
 from shared.processors.patterns.quality_columns import build_completeness_columns

@@ -56,6 +56,7 @@ import os
 import re
 from datetime import datetime, date, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from google.cloud import bigquery
 import pandas as pd
 import numpy as np
@@ -74,6 +75,9 @@ from shared.utils.nba_team_mapper import get_nba_team_mapper, get_team_info
 
 # Orchestration config for processing mode (Issue 1 fix)
 from shared.config.orchestration_config import get_orchestration_config
+
+# Player registry for universal player ID lookup
+from shared.utils.player_registry import RegistryReader
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +112,16 @@ class UpcomingPlayerGameContextProcessor(
 
         # Initialize completeness checker (Week 5 - Phase 3 Multi-Window)
         self.completeness_checker = CompletenessChecker(self.bq_client, self.project_id)
+
+        # Initialize registry reader for universal player ID lookup
+        self.registry_reader = RegistryReader(
+            source_name='upcoming_player_game_context',
+            cache_ttl_seconds=300
+        )
+        self.registry_stats = {
+            'players_found': 0,
+            'players_not_found': 0
+        }
 
         # Configuration
         self.lookback_days = 30  # Historical data window
@@ -289,6 +303,16 @@ class UpcomingPlayerGameContextProcessor(
 
         NEW in v3.0: Smart reprocessing - skip processing if Phase 2 source unchanged.
         """
+        # Set target_date from opts if not already set (for run() vs process_date() compatibility)
+        if self.target_date is None:
+            end_date = self.opts.get('end_date')
+            if isinstance(end_date, str):
+                self.target_date = date.fromisoformat(end_date)
+            elif isinstance(end_date, date):
+                self.target_date = end_date
+            else:
+                raise ValueError("target_date not set and no valid end_date in opts")
+
         logger.info(f"Extracting raw data for {self.target_date}")
 
         # Store season start date for completeness checking (Week 5)
@@ -896,56 +920,89 @@ class UpcomingPlayerGameContextProcessor(
             self._extract_prop_lines_from_odds_api(player_game_pairs)
 
     def _extract_prop_lines_from_odds_api(self, player_game_pairs: List[Tuple[str, str]]) -> None:
-        """Extract prop lines from Odds API (original implementation)."""
-        for player_lookup, game_id in player_game_pairs:
-            # Get opening line (earliest snapshot)
-            opening_query = f"""
-            SELECT
-                points_line,
-                bookmaker,
-                snapshot_timestamp
-            FROM `{self.project_id}.nba_raw.odds_api_player_points_props`
-            WHERE player_lookup = '{player_lookup}'
-              AND game_id = '{game_id}'
-              AND game_date = '{self.target_date}'
-            ORDER BY snapshot_timestamp ASC
-            LIMIT 1
-            """
+        """Extract prop lines from Odds API using batch query for efficiency."""
+        # Build batch query - get opening and current lines for all players in one query
+        player_lookups = list(set([p[0] for p in player_game_pairs]))
+        player_lookups_str = "', '".join(player_lookups)
 
-            # Get current line (latest snapshot)
-            current_query = f"""
+        batch_query = f"""
+        WITH opening_lines AS (
             SELECT
-                points_line,
-                bookmaker,
-                snapshot_timestamp
+                player_lookup,
+                game_id,
+                points_line as opening_line,
+                bookmaker as opening_source,
+                ROW_NUMBER() OVER (
+                    PARTITION BY player_lookup, game_id
+                    ORDER BY snapshot_timestamp ASC
+                ) as rn
             FROM `{self.project_id}.nba_raw.odds_api_player_points_props`
-            WHERE player_lookup = '{player_lookup}'
-              AND game_id = '{game_id}'
+            WHERE player_lookup IN ('{player_lookups_str}')
               AND game_date = '{self.target_date}'
-            ORDER BY snapshot_timestamp DESC
-            LIMIT 1
-            """
+        ),
+        current_lines AS (
+            SELECT
+                player_lookup,
+                game_id,
+                points_line as current_line,
+                bookmaker as current_source,
+                ROW_NUMBER() OVER (
+                    PARTITION BY player_lookup, game_id
+                    ORDER BY snapshot_timestamp DESC
+                ) as rn
+            FROM `{self.project_id}.nba_raw.odds_api_player_points_props`
+            WHERE player_lookup IN ('{player_lookups_str}')
+              AND game_date = '{self.target_date}'
+        )
+        SELECT
+            COALESCE(o.player_lookup, c.player_lookup) as player_lookup,
+            COALESCE(o.game_id, c.game_id) as game_id,
+            o.opening_line,
+            o.opening_source,
+            c.current_line,
+            c.current_source
+        FROM opening_lines o
+        FULL OUTER JOIN current_lines c
+            ON o.player_lookup = c.player_lookup AND o.game_id = c.game_id
+        WHERE (o.rn = 1 OR o.rn IS NULL) AND (c.rn = 1 OR c.rn IS NULL)
+        """
 
-            try:
-                opening_df = self.bq_client.query(opening_query).to_dataframe()
-                current_df = self.bq_client.query(current_query).to_dataframe()
+        try:
+            df = self.bq_client.query(batch_query).to_dataframe()
+            logger.info(f"Odds API batch query returned {len(df)} prop line records")
+
+            # Create lookup dict keyed by (player_lookup, game_id)
+            props_lookup = {}
+            for _, row in df.iterrows():
+                key = (row['player_lookup'], row['game_id'])
+                props_lookup[key] = {
+                    'opening_line': row['opening_line'],
+                    'opening_source': row['opening_source'],
+                    'current_line': row['current_line'],
+                    'current_source': row['current_source'],
+                }
+
+            # Populate prop_lines for each player_game pair
+            for player_lookup, game_id in player_game_pairs:
+                props = props_lookup.get((player_lookup, game_id), {})
 
                 prop_info = {
-                    'opening_line': opening_df['points_line'].iloc[0] if not opening_df.empty else None,
-                    'opening_source': opening_df['bookmaker'].iloc[0] if not opening_df.empty else None,
-                    'current_line': current_df['points_line'].iloc[0] if not current_df.empty else None,
-                    'current_source': current_df['bookmaker'].iloc[0] if not current_df.empty else None,
+                    'opening_line': props.get('opening_line'),
+                    'opening_source': props.get('opening_source'),
+                    'current_line': props.get('current_line'),
+                    'current_source': props.get('current_source'),
+                    'line_movement': None
                 }
 
                 if prop_info['opening_line'] and prop_info['current_line']:
                     prop_info['line_movement'] = prop_info['current_line'] - prop_info['opening_line']
-                else:
-                    prop_info['line_movement'] = None
 
                 self.prop_lines[(player_lookup, game_id)] = prop_info
 
-            except Exception as e:
-                logger.warning(f"Error extracting prop lines for {player_lookup}/{game_id}: {e}")
+        except Exception as e:
+            logger.error(f"Error in batch prop lines query: {e}")
+            # Fallback: set empty prop info for all players
+            for player_lookup, game_id in player_game_pairs:
                 self.prop_lines[(player_lookup, game_id)] = {
                     'opening_line': None,
                     'opening_source': None,
@@ -1213,9 +1270,39 @@ class UpcomingPlayerGameContextProcessor(
         pass
     
     def _extract_registry(self) -> None:
-        """Extract universal player IDs from registry (optional)."""
-        # TODO: Implement registry lookup from nba_reference.nba_players_registry
-        pass
+        """
+        Extract universal player IDs from registry using batch lookup.
+
+        Populates self.registry dict with {player_lookup: universal_player_id}.
+        Uses RegistryReader for efficient batch lookups with caching.
+        """
+        if not self.players_to_process:
+            logger.info("No players to lookup in registry")
+            return
+
+        # Get unique player lookups
+        unique_players = list(set(p['player_lookup'] for p in self.players_to_process))
+        logger.info(f"Looking up {len(unique_players)} unique players in registry")
+
+        try:
+            # Batch lookup all players at once
+            uid_map = self.registry_reader.get_universal_ids_batch(unique_players)
+
+            # Store results in self.registry
+            self.registry = uid_map
+
+            # Track stats
+            self.registry_stats['players_found'] = len(uid_map)
+            self.registry_stats['players_not_found'] = len(unique_players) - len(uid_map)
+
+            logger.info(
+                f"Registry lookup complete: {self.registry_stats['players_found']} found, "
+                f"{self.registry_stats['players_not_found']} not found"
+            )
+
+        except Exception as e:
+            logger.warning(f"Registry lookup failed: {e}. Continuing without universal IDs.")
+            self.registry = {}
 
     # ========================================================================
     # CIRCUIT BREAKER METHODS (Week 5 - Completeness Checking)
@@ -1297,69 +1384,55 @@ class UpcomingPlayerGameContextProcessor(
         # ============================================================
         logger.info(f"Checking completeness for {len(all_players)} players across 5 windows...")
 
-        # TEMPORARY FIX: Skip completeness checking due to BigQuery location mismatch
-        # (datasets in different locations: nba_raw in us-west2, nba_analytics in US)
-        # TODO: Fix by migrating all datasets to same location or modifying completeness checker
+        # PERFORMANCE OPTIMIZATION: Run completeness checks in parallel (5x speedup)
+        # Each check takes ~30 sec due to BQ query overhead, running them concurrently
+        # reduces total time from ~2.5 min to ~30 sec
+        import time
+        completeness_start = time.time()
         try:
-            # Window 1: L5 games
-            comp_l5 = self.completeness_checker.check_completeness_batch(
-                entity_ids=list(all_players),
-                entity_type='player',
-                analysis_date=self.target_date,
-                upstream_table='nba_raw.bdl_player_boxscores',
-                upstream_entity_field='player_lookup',
-                lookback_window=5,
-                window_type='games',
-                season_start_date=self.season_start_date
-            )
+            # Define all completeness check configurations
+            completeness_windows = [
+                ('l5', 5, 'games'),      # Window 1: L5 games
+                ('l10', 10, 'games'),    # Window 2: L10 games
+                ('l7d', 7, 'days'),      # Window 3: L7 days
+                ('l14d', 14, 'days'),    # Window 4: L14 days
+                ('l30d', 30, 'days'),    # Window 5: L30 days
+            ]
 
-            # Window 2: L10 games
-            comp_l10 = self.completeness_checker.check_completeness_batch(
-                entity_ids=list(all_players),
-                entity_type='player',
-                analysis_date=self.target_date,
-                upstream_table='nba_raw.bdl_player_boxscores',
-                upstream_entity_field='player_lookup',
-                lookback_window=10,
-                window_type='games',
-                season_start_date=self.season_start_date
-            )
+            # Helper function to run single completeness check
+            def run_completeness_check(window_config):
+                name, lookback, window_type = window_config
+                return (name, self.completeness_checker.check_completeness_batch(
+                    entity_ids=list(all_players),
+                    entity_type='player',
+                    analysis_date=self.target_date,
+                    upstream_table='nba_raw.bdl_player_boxscores',
+                    upstream_entity_field='player_lookup',
+                    lookback_window=lookback,
+                    window_type=window_type,
+                    season_start_date=self.season_start_date
+                ))
 
-            # Window 3: L7 days
-            comp_l7d = self.completeness_checker.check_completeness_batch(
-                entity_ids=list(all_players),
-                entity_type='player',
-                analysis_date=self.target_date,
-                upstream_table='nba_raw.bdl_player_boxscores',
-                upstream_entity_field='player_lookup',
-                lookback_window=7,
-                window_type='days',
-                season_start_date=self.season_start_date
-            )
+            # Run all 5 completeness checks in parallel
+            completeness_results = {}
+            with ThreadPoolExecutor(max_workers=5) as executor:
+                futures = {executor.submit(run_completeness_check, config): config[0]
+                          for config in completeness_windows}
+                for future in as_completed(futures):
+                    window_name = futures[future]
+                    try:
+                        name, result = future.result()
+                        completeness_results[name] = result
+                    except Exception as e:
+                        logger.warning(f"Completeness check for {window_name} failed: {e}")
+                        completeness_results[window_name] = {}
 
-            # Window 4: L14 days
-            comp_l14d = self.completeness_checker.check_completeness_batch(
-                entity_ids=list(all_players),
-                entity_type='player',
-                analysis_date=self.target_date,
-                upstream_table='nba_raw.bdl_player_boxscores',
-                upstream_entity_field='player_lookup',
-                lookback_window=14,
-                window_type='days',
-                season_start_date=self.season_start_date
-            )
-
-            # Window 5: L30 days
-            comp_l30d = self.completeness_checker.check_completeness_batch(
-                entity_ids=list(all_players),
-                entity_type='player',
-                analysis_date=self.target_date,
-                upstream_table='nba_raw.bdl_player_boxscores',
-                upstream_entity_field='player_lookup',
-                lookback_window=30,
-                window_type='days',
-                season_start_date=self.season_start_date
-            )
+            # Extract results with defaults
+            comp_l5 = completeness_results.get('l5', {})
+            comp_l10 = completeness_results.get('l10', {})
+            comp_l7d = completeness_results.get('l7d', {})
+            comp_l14d = completeness_results.get('l14d', {})
+            comp_l30d = completeness_results.get('l30d', {})
 
             # Check bootstrap mode
             is_bootstrap = self.completeness_checker.is_bootstrap_mode(
@@ -1367,9 +1440,10 @@ class UpcomingPlayerGameContextProcessor(
             )
             is_season_boundary = self.completeness_checker.is_season_boundary(self.target_date)
 
+            completeness_elapsed = time.time() - completeness_start
             logger.info(
-                f"Completeness check complete. Bootstrap mode: {is_bootstrap}, "
-                f"Season boundary: {is_season_boundary}"
+                f"Completeness check complete in {completeness_elapsed:.1f}s (5 windows, parallel). "
+                f"Bootstrap mode: {is_bootstrap}, Season boundary: {is_season_boundary}"
             )
         except Exception as e:
             logger.warning(
@@ -1524,8 +1598,8 @@ class UpcomingPlayerGameContextProcessor(
             logger.warning(f"No schedule data for game {game_id}")
             return None
         
-        # Determine player's team
-        team_abbr = self._determine_player_team(player_lookup, game_info)
+        # Determine player's team (use player_info which has team_abbr from gamebook)
+        team_abbr = self._determine_player_team(player_lookup, player_info)
         if not team_abbr:
             logger.warning(f"Could not determine team for {player_lookup}")
             return None
@@ -1538,12 +1612,13 @@ class UpcomingPlayerGameContextProcessor(
         
         # Calculate fatigue metrics
         fatigue_metrics = self._calculate_fatigue_metrics(player_lookup, team_abbr, historical_data)
-        
-        # Calculate performance metrics
-        performance_metrics = self._calculate_performance_metrics(historical_data)
-        
-        # Get prop lines
+
+        # Get prop lines first (needed for performance metrics)
         prop_info = self.prop_lines.get((player_lookup, game_id), {})
+        current_points_line = prop_info.get('current_line') or player_info.get('current_points_line')
+
+        # Calculate performance metrics (with prop line for streak calculation)
+        performance_metrics = self._calculate_performance_metrics(historical_data, current_points_line)
         
         # Get game lines
         game_lines_info = self.game_lines.get(game_id, {})
@@ -1558,7 +1633,7 @@ class UpcomingPlayerGameContextProcessor(
         context = {
             # Core identifiers
             'player_lookup': player_lookup,
-            'universal_player_id': self.registry.get(player_lookup),  # TODO: implement
+            'universal_player_id': self.registry.get(player_lookup),
             'game_id': game_id,
             'game_date': self.target_date.isoformat(),
             'team_abbr': team_abbr,
@@ -1704,26 +1779,28 @@ class UpcomingPlayerGameContextProcessor(
     def _determine_player_team(self, player_lookup: str, game_info: Dict) -> Optional[str]:
         """
         Determine which team the player is on.
-        
+
         Strategy:
-        1. Check roster (TODO: not implemented yet)
-        2. Use most recent boxscore
-        
+        1. Check game_info (from gamebook query - already has team_abbr)
+        2. Use most recent boxscore (fallback for daily mode)
+
         Args:
             player_lookup: Player identifier
-            game_info: Game information dict
-            
+            game_info: Game information dict (contains team_abbr from gamebook)
+
         Returns:
             Team abbreviation or None
         """
-        # TODO: Check roster first when implemented
-        
-        # Use most recent boxscore
+        # First check game_info - gamebook already has team_abbr
+        if game_info.get('team_abbr'):
+            return game_info['team_abbr']
+
+        # Fallback: Use most recent boxscore (for daily mode without gamebook)
         historical_data = self.historical_boxscores.get(player_lookup, pd.DataFrame())
         if not historical_data.empty:
             most_recent = historical_data.iloc[0]  # Already sorted by date DESC
             return most_recent.get('team_abbr')
-        
+
         return None
     
     def _get_opponent_team(self, team_abbr: str, game_info: Dict) -> str:
@@ -1827,13 +1904,14 @@ class UpcomingPlayerGameContextProcessor(
             'back_to_back': back_to_back
         }
     
-    def _calculate_performance_metrics(self, historical_data: pd.DataFrame) -> Dict:
+    def _calculate_performance_metrics(self, historical_data: pd.DataFrame, current_points_line: Optional[float] = None) -> Dict:
         """
         Calculate recent performance metrics.
-        
+
         Args:
             historical_data: DataFrame of historical boxscores
-            
+            current_points_line: Current prop line for streak calculation (optional)
+
         Returns:
             Dict with performance metrics
         """
@@ -1841,35 +1919,113 @@ class UpcomingPlayerGameContextProcessor(
             return {
                 'points_avg_last_5': None,
                 'points_avg_last_10': None,
+                'l5_games_used': 0,
+                'l5_sample_quality': 'insufficient',
+                'l10_games_used': 0,
+                'l10_sample_quality': 'insufficient',
                 'prop_over_streak': 0,
                 'prop_under_streak': 0,
-                'star_teammates_out': None,  # TODO: future
-                'opponent_def_rating_last_10': None,  # TODO: future
-                'shooting_pct_decline_last_5': None,  # TODO: future
-                'fourth_quarter_production_last_7': None  # TODO: future
+                'star_teammates_out': None,
+                'opponent_def_rating_last_10': None,
+                'shooting_pct_decline_last_5': None,
+                'fourth_quarter_production_last_7': None
             }
-        
+
         # Points averages
         last_5 = historical_data.head(5)
         last_10 = historical_data.head(10)
-        
+
         points_avg_5 = last_5['points'].mean() if len(last_5) > 0 else None
         points_avg_10 = last_10['points'].mean() if len(last_10) > 0 else None
-        
-        # Prop streaks (TODO: need current prop line to calculate)
-        # For now, just return 0
-        
+
+        # Calculate prop streaks (consecutive games over/under the current line)
+        prop_over_streak, prop_under_streak = self._calculate_prop_streaks(
+            historical_data, current_points_line
+        )
+
+        # Track how many games were actually used for sample size transparency
+        l5_games_used = len(last_5)
+        l10_games_used = len(last_10)
+
         return {
             'points_avg_last_5': round(points_avg_5, 1) if points_avg_5 else None,
             'points_avg_last_10': round(points_avg_10, 1) if points_avg_10 else None,
-            'prop_over_streak': 0,  # TODO: calculate based on current_points_line
-            'prop_under_streak': 0,  # TODO: calculate based on current_points_line
-            'star_teammates_out': None,  # TODO: future
-            'opponent_def_rating_last_10': None,  # TODO: future
-            'shooting_pct_decline_last_5': None,  # TODO: future
-            'fourth_quarter_production_last_7': None  # TODO: future
+            'l5_games_used': l5_games_used,
+            'l5_sample_quality': self._determine_sample_quality(l5_games_used, 5),
+            'l10_games_used': l10_games_used,
+            'l10_sample_quality': self._determine_sample_quality(l10_games_used, 10),
+            'prop_over_streak': prop_over_streak,
+            'prop_under_streak': prop_under_streak,
+            'star_teammates_out': None,
+            'opponent_def_rating_last_10': None,
+            'shooting_pct_decline_last_5': None,
+            'fourth_quarter_production_last_7': None
         }
-    
+
+    def _determine_sample_quality(self, games_count: int, target_window: int) -> str:
+        """
+        Assess sample quality relative to target window.
+
+        Follows the same pattern as precompute/player_shot_zone_analysis.
+
+        Args:
+            games_count: Number of games in sample
+            target_window: Target number of games (5 or 10)
+
+        Returns:
+            str: 'excellent', 'good', 'limited', or 'insufficient'
+        """
+        if games_count >= target_window:
+            return 'excellent'
+        elif games_count >= int(target_window * 0.7):
+            return 'good'
+        elif games_count >= int(target_window * 0.5):
+            return 'limited'
+        else:
+            return 'insufficient'
+
+    def _calculate_prop_streaks(self, historical_data: pd.DataFrame,
+                                 current_points_line: Optional[float]) -> Tuple[int, int]:
+        """
+        Calculate consecutive games over/under the current prop line.
+
+        Args:
+            historical_data: DataFrame of historical boxscores (sorted by most recent first)
+            current_points_line: The current prop line to compare against
+
+        Returns:
+            Tuple of (over_streak, under_streak)
+            - over_streak: Consecutive games scoring OVER the line (ends when player goes under)
+            - under_streak: Consecutive games scoring UNDER the line (ends when player goes over)
+            Only one can be non-zero at a time; if 0, the streak is broken.
+        """
+        # No line or no data = no streak
+        if current_points_line is None or historical_data.empty:
+            return 0, 0
+
+        over_streak = 0
+        under_streak = 0
+
+        # Iterate through games (most recent first)
+        for _, row in historical_data.iterrows():
+            points = row.get('points')
+            if points is None or pd.isna(points):
+                break  # Can't compare, streak ends
+
+            if points > current_points_line:
+                if under_streak > 0:
+                    break  # Was on an under streak, now it's broken
+                over_streak += 1
+            elif points < current_points_line:
+                if over_streak > 0:
+                    break  # Was on an over streak, now it's broken
+                under_streak += 1
+            else:
+                # Exact match (push) - streak continues but doesn't increment
+                continue
+
+        return over_streak, under_streak
+
     def _calculate_data_quality(self, historical_data: pd.DataFrame,
                                 game_lines_info: Dict) -> Dict:
         """
@@ -2013,6 +2169,28 @@ class UpcomingPlayerGameContextProcessor(
             # Get table schema for load job
             table = self.bq_client.get_table(table_id)
 
+            # Filter data to only include columns that exist in the schema
+            schema_fields = {field.name for field in table.schema}
+
+            def sanitize_value(v):
+                """Convert non-JSON-serializable values to None."""
+                import math
+                if v is None:
+                    return None
+                if isinstance(v, float):
+                    if math.isnan(v) or math.isinf(v):
+                        return None
+                # Handle numpy types
+                if hasattr(v, 'item'):  # numpy scalar
+                    return v.item()
+                return v
+
+            filtered_data = [
+                {k: sanitize_value(v) for k, v in record.items() if k in schema_fields}
+                for record in self.transformed_data
+            ]
+            logger.info(f"Filtered {len(self.transformed_data)} records to schema fields: {len(schema_fields)} columns")
+
             # Configure batch load job
             job_config = bigquery.LoadJobConfig(
                 schema=table.schema,
@@ -2023,14 +2201,14 @@ class UpcomingPlayerGameContextProcessor(
 
             # Load using batch job
             load_job = self.bq_client.load_table_from_json(
-                self.transformed_data,
+                filtered_data,
                 table_id,
                 job_config=job_config
             )
 
             # Wait for completion
             load_job.result()
-            logger.info(f"Successfully loaded {len(self.transformed_data)} records")
+            logger.info(f"Successfully loaded {len(filtered_data)} records")
             return True
                 
         except Exception as e:

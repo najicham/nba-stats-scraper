@@ -209,23 +209,30 @@ class AnalyticsProcessorBase(RunHistoryMixin):
                 # Handle critical dependency failures
                 if not dep_check['all_critical_present']:
                     error_msg = f"Missing critical dependencies: {dep_check['missing']}"
-                    logger.error(error_msg)
-                    self._send_notification(
-                        notify_error,
-                        title=f"Analytics Processor: Missing Dependencies - {self.__class__.__name__}",
-                        message=error_msg,
-                        details={
-                            'processor': self.__class__.__name__,
-                            'run_id': self.run_id,
-                            'date_range': f"{self.opts['start_date']} to {self.opts['end_date']}",
-                            'missing': dep_check['missing'],
-                            'stale_fail': dep_check.get('stale_fail', []),
-                            'dependency_details': dep_check['details']
-                        },
-                        processor_name=self.__class__.__name__
-                    )
-                    self.set_alert_sent('error')
-                    raise ValueError(error_msg)
+
+                    # In backfill mode, warn but allow processing to continue
+                    # The processor can handle missing data gracefully in extract_raw_data()
+                    if self.is_backfill_mode:
+                        logger.warning(f"BACKFILL_MODE: {error_msg} - continuing anyway")
+                        logger.info("BACKFILL_MODE: Processor will handle missing data in extract_raw_data()")
+                    else:
+                        logger.error(error_msg)
+                        self._send_notification(
+                            notify_error,
+                            title=f"Analytics Processor: Missing Dependencies - {self.__class__.__name__}",
+                            message=error_msg,
+                            details={
+                                'processor': self.__class__.__name__,
+                                'run_id': self.run_id,
+                                'date_range': f"{self.opts['start_date']} to {self.opts['end_date']}",
+                                'missing': dep_check['missing'],
+                                'stale_fail': dep_check.get('stale_fail', []),
+                                'dependency_details': dep_check['details']
+                            },
+                            processor_name=self.__class__.__name__
+                        )
+                        self.set_alert_sent('error')
+                        raise ValueError(error_msg)
 
                 # Handle stale data FAIL threshold (skip in backfill mode)
                 if dep_check.get('has_stale_fail') and not self.is_backfill_mode:
@@ -735,6 +742,37 @@ class AnalyticsProcessorBase(RunHistoryMixin):
                 WHERE {date_field} BETWEEN '{start_date}' AND '{end_date}'
                 """
 
+            elif check_type == 'date_match':
+                # Check for records on exact date (end_date is the target date)
+                # Used for sources that should have data for the specific processing date
+                query = f"""
+                SELECT
+                    COUNT(*) as row_count,
+                    MAX(processed_at) as last_updated,
+                    ARRAY_AGG({hash_field} IGNORE NULLS ORDER BY processed_at DESC LIMIT 1)[SAFE_OFFSET(0)] as representative_hash
+                FROM `{self.project_id}.{table_name}`
+                WHERE {date_field} = '{end_date}'
+                """
+
+            elif check_type == 'lookback_days':
+                # Check for records in a lookback window from end_date
+                # Used for historical data sources (e.g., player boxscores for last 30 days)
+                lookback = config.get('lookback_days', 30)
+                # Calculate lookback start date (datetime/timedelta already imported at module level)
+                if isinstance(end_date, str):
+                    end_dt = datetime.strptime(end_date, '%Y-%m-%d').date()
+                else:
+                    end_dt = end_date
+                lookback_start = (end_dt - timedelta(days=lookback)).strftime('%Y-%m-%d')
+                query = f"""
+                SELECT
+                    COUNT(*) as row_count,
+                    MAX(processed_at) as last_updated,
+                    ARRAY_AGG({hash_field} IGNORE NULLS ORDER BY processed_at DESC LIMIT 1)[SAFE_OFFSET(0)] as representative_hash
+                FROM `{self.project_id}.{table_name}`
+                WHERE {date_field} BETWEEN '{lookback_start}' AND '{end_date}'
+                """
+
             elif check_type == 'existence':
                 # Just check if any data exists (for reference tables)
                 query = f"""
@@ -940,9 +978,15 @@ class AnalyticsProcessorBase(RunHistoryMixin):
         if not hash_fields:
             return {}
 
+        # Handle table_name that may already include dataset prefix (e.g., 'nba_analytics.table')
+        if '.' in self.table_name:
+            table_ref = f"{self.project_id}.{self.table_name}"
+        else:
+            table_ref = f"{self.project_id}.{self.dataset_id}.{self.table_name}"
+
         query = f"""
         SELECT {', '.join(hash_fields)}
-        FROM `{self.project_id}.{self.dataset_id}.{self.table_name}`
+        FROM `{table_ref}`
         WHERE {where_clause}
         ORDER BY processed_at DESC
         LIMIT 1
