@@ -186,25 +186,49 @@ class AnalyticsProcessorBase(RunHistoryMixin):
             )
 
             # Check dependencies BEFORE extracting (if processor defines them)
+            # In backfill mode, skip dependency checks entirely for performance
+            # Pre-flight checks already verify data exists before backfill starts
             if hasattr(self, 'get_dependencies') and callable(self.get_dependencies):
-                self.mark_time("dependency_check")
-                dep_check = self.check_dependencies(
-                    self.opts['start_date'],
-                    self.opts['end_date']
-                )
-                dep_check_results = dep_check
-                dep_check_seconds = self.get_elapsed_seconds("dependency_check")
-                self.stats["dependency_check_time"] = dep_check_seconds
+                if self.is_backfill_mode:
+                    # Skip expensive BQ queries - all failures are bypassed anyway
+                    logger.info("⏭️  BACKFILL MODE: Skipping dependency BQ checks (pre-flight already verified)")
+                    dep_check = {
+                        'all_critical_present': True,
+                        'all_fresh': True,
+                        'has_stale_fail': False,
+                        'has_stale_warn': False,
+                        'missing': [],
+                        'stale_fail': [],
+                        'stale_warn': [],
+                        'details': {}
+                    }
+                    dep_check_results = dep_check
+                    self.stats["dependency_check_time"] = 0
+                    self.set_dependency_results(
+                        dependencies=[],
+                        all_passed=True,
+                        missing=[],
+                        stale=[]
+                    )
+                else:
+                    self.mark_time("dependency_check")
+                    dep_check = self.check_dependencies(
+                        self.opts['start_date'],
+                        self.opts['end_date']
+                    )
+                    dep_check_results = dep_check
+                    dep_check_seconds = self.get_elapsed_seconds("dependency_check")
+                    self.stats["dependency_check_time"] = dep_check_seconds
 
-                # Record dependency results for run history
-                self.set_dependency_results(
-                    dependencies=[
-                        {'table': k, **v} for k, v in dep_check.get('details', {}).items()
-                    ],
-                    all_passed=dep_check['all_critical_present'],
-                    missing=dep_check.get('missing', []),
-                    stale=dep_check.get('stale_fail', []) + dep_check.get('stale_warn', [])
-                )
+                    # Record dependency results for run history
+                    self.set_dependency_results(
+                        dependencies=[
+                            {'table': k, **v} for k, v in dep_check.get('details', {}).items()
+                        ],
+                        all_passed=dep_check['all_critical_present'],
+                        missing=dep_check.get('missing', []),
+                        stale=dep_check.get('stale_fail', []) + dep_check.get('stale_warn', [])
+                    )
 
                 # Handle critical dependency failures
                 if not dep_check['all_critical_present']:
