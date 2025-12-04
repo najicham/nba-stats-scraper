@@ -507,8 +507,78 @@ class PlayerCompositeFactorsProcessor(
     # Completeness Checking Methods (Week 4 - Cascade Dependencies)
     # ============================================================
 
+    def _batch_check_circuit_breakers(self, all_players: List[str], analysis_date: date) -> Dict[str, dict]:
+        """
+        BATCH check circuit breakers for all players in ONE query.
+
+        This replaces per-player queries which caused N queries (one per player).
+        With 400 players, that was 400 queries taking 3-10 minutes.
+        Now it's 1 query taking ~2 seconds.
+        """
+        circuit_breaker_cache = {}
+
+        # Default for all players
+        for player in all_players:
+            circuit_breaker_cache[player] = {'active': False, 'attempts': 0, 'until': None}
+
+        try:
+            query = f"""
+            WITH latest_attempts AS (
+                SELECT
+                    entity_id,
+                    attempt_number,
+                    circuit_breaker_tripped,
+                    circuit_breaker_until,
+                    ROW_NUMBER() OVER (PARTITION BY entity_id ORDER BY attempt_number DESC) as rn
+                FROM `{self.project_id}.nba_orchestration.reprocess_attempts`
+                WHERE processor_name = '{self.table_name}'
+                  AND analysis_date = DATE('{analysis_date}')
+                  AND entity_id IN UNNEST(@players)
+            )
+            SELECT entity_id, attempt_number, circuit_breaker_tripped, circuit_breaker_until
+            FROM latest_attempts
+            WHERE rn = 1
+            """
+            result_df = self.bq_client.query(
+                query,
+                job_config=bigquery.QueryJobConfig(
+                    query_parameters=[bigquery.ArrayQueryParameter("players", "STRING", list(all_players))]
+                )
+            ).to_dataframe()
+
+            for _, row in result_df.iterrows():
+                entity_id = row['entity_id']
+                if row['circuit_breaker_tripped']:
+                    cb_until = row['circuit_breaker_until']
+                    if cb_until and datetime.now(timezone.utc) < cb_until:
+                        circuit_breaker_cache[entity_id] = {
+                            'active': True,
+                            'attempts': row['attempt_number'],
+                            'until': cb_until
+                        }
+                    else:
+                        circuit_breaker_cache[entity_id] = {
+                            'active': False,
+                            'attempts': row['attempt_number'],
+                            'until': None
+                        }
+                else:
+                    circuit_breaker_cache[entity_id] = {
+                        'active': False,
+                        'attempts': row['attempt_number'],
+                        'until': None
+                    }
+
+            logger.info(f"Batch circuit breaker check: {len(result_df)} players with history, "
+                       f"{sum(1 for v in circuit_breaker_cache.values() if v['active'])} active breakers")
+
+        except Exception as e:
+            logger.warning(f"Error in batch circuit breaker check: {e}")
+
+        return circuit_breaker_cache
+
     def _check_circuit_breaker(self, entity_id: str, analysis_date: date) -> dict:
-        """Check if circuit breaker is active for entity."""
+        """Check if circuit breaker is active for entity (LEGACY - use batch version)."""
         query = f"""
         SELECT attempt_number, attempted_at, circuit_breaker_tripped, circuit_breaker_until
         FROM `{self.project_id}.nba_orchestration.reprocess_attempts`
@@ -766,11 +836,23 @@ class PlayerCompositeFactorsProcessor(
         upstream_completeness = self._query_upstream_completeness(list(all_players), analysis_date)
         # ============================================================
 
-        logger.info(f"Calculating composite factors for {len(self.player_context_df)} players")
+        # ============================================================
+        # BATCH circuit breaker check (Session 9 fix - avoid N queries)
+        # ============================================================
+        circuit_breaker_cache = self._batch_check_circuit_breakers(list(all_players), analysis_date)
 
+        total_players = len(self.player_context_df)
+        logger.info(f"Calculating composite factors for {total_players} players")
+
+        processed_count = 0
         for idx, player_row in self.player_context_df.iterrows():
             try:
                 player_lookup = player_row.get('player_lookup', 'unknown')
+
+                # Progress logging every 50 players
+                processed_count += 1
+                if processed_count % 50 == 0 or processed_count == total_players:
+                    logger.info(f"Processing player {processed_count}/{total_players} ({100*processed_count/total_players:.1f}%)")
 
                 # ============================================================
                 # NEW (Week 4): Get completeness for this player
@@ -780,8 +862,8 @@ class PlayerCompositeFactorsProcessor(
                     'missing_count': 0, 'is_complete': False, 'is_production_ready': False
                 })
 
-                # Check circuit breaker
-                circuit_breaker_status = self._check_circuit_breaker(player_lookup, analysis_date)
+                # Check circuit breaker (from cache - no BQ query!)
+                circuit_breaker_status = circuit_breaker_cache.get(player_lookup, {'active': False, 'attempts': 0, 'until': None})
 
                 if circuit_breaker_status['active']:
                     logger.warning(
