@@ -303,7 +303,7 @@ class PlayerShotZoneAnalysisProcessor(
             WHERE game_date <= '{analysis_date}'
               AND game_date >= '{season_start_date}'
               AND is_active = TRUE
-              AND minutes_played > 0
+              AND (minutes_played > 0 OR fg_attempts > 0)  -- Fallback for historical data where minutes_played is NULL
         )
         SELECT * 
         FROM ranked_games
@@ -621,8 +621,11 @@ class PlayerShotZoneAnalysisProcessor(
                     'is_production_ready': False
                 })
 
-                # Check circuit breaker
-                circuit_breaker_status = self._check_circuit_breaker(player_lookup, analysis_date)
+                # Check circuit breaker (skip in bootstrap/season boundary mode for speed)
+                if not is_bootstrap and not is_season_boundary:
+                    circuit_breaker_status = self._check_circuit_breaker(player_lookup, analysis_date)
+                else:
+                    circuit_breaker_status = {'active': False, 'attempts': 0, 'until': None}
 
                 if circuit_breaker_status['active']:
                     logger.warning(
@@ -637,8 +640,9 @@ class PlayerShotZoneAnalysisProcessor(
                     })
                     continue
 
-                # Check production readiness (skip if incomplete, unless in bootstrap mode)
-                if not completeness['is_production_ready'] and not is_bootstrap:
+                # Check production readiness (skip if incomplete, unless in bootstrap/season boundary mode)
+                # Season boundary: first ~21 days of season when players don't have 10 games yet
+                if not completeness['is_production_ready'] and not is_bootstrap and not is_season_boundary:
                     logger.warning(
                         f"{player_lookup}: Completeness {completeness['completeness_pct']}% "
                         f"({completeness['actual_count']}/{completeness['expected_count']} games) "

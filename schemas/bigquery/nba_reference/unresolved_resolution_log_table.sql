@@ -29,8 +29,7 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_reference.unresolved_resoluti
 PARTITION BY DATE(timestamp)
 CLUSTER BY reviewed_by, action
 OPTIONS (
-  description = "Audit log of all unresolved player name resolution actions",
-  partition_expiration_days = 730  -- Keep 2 years of history
+  description = "Audit log of all unresolved player name resolution actions"
 );
 
 -- =============================================================================

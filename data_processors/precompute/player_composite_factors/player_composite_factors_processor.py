@@ -54,7 +54,7 @@ from data_processors.raw.smart_idempotency_mixin import SmartIdempotencyMixin
 from shared.utils.completeness_checker import CompletenessChecker
 
 # Bootstrap period support (Week 5 - Early Season Handling)
-from shared.config.nba_season_dates import is_early_season, get_season_year_from_date
+from shared.config.nba_season_dates import is_early_season, get_season_year_from_date, get_season_start_date
 from shared.validation.config import BOOTSTRAP_DAYS
 
 # Configure logging
@@ -94,6 +94,9 @@ class PlayerCompositeFactorsProcessor(
     upstream_processor_name = 'UpcomingPlayerGameContextProcessor'
     upstream_table = 'nba_analytics.upcoming_player_game_context'
     lookback_days = 14  # Check for upcoming games context
+
+    # Table schema uses game_date, not analysis_date
+    date_column: str = "game_date"
 
     # Smart Idempotency: Fields to hash (meaningful business fields only)
     HASH_FIELDS = [
@@ -279,7 +282,8 @@ class PlayerCompositeFactorsProcessor(
         logger.info(f"Extracting data for {analysis_date}")
 
         # Store season start date for completeness checking (Week 4)
-        self.season_start_date = date(season_year, 10, 1)
+        # BUG FIX: Use actual season start date, not hardcoded Oct 1
+        self.season_start_date = get_season_start_date(season_year)
         
         # Extract player context
         player_context_query = f"""
@@ -356,6 +360,9 @@ class PlayerCompositeFactorsProcessor(
         
         self.team_defense_df = self.bq_client.query(team_defense_query).to_dataframe()
         logger.info(f"Extracted {len(self.team_defense_df)} team defense zone records")
+
+        # Set raw_data to indicate successful extraction (required by base class validation)
+        self.raw_data = self.player_context_df
 
         # Extract source hashes from all 4 dependencies (Smart Reprocessing - Pattern #3)
         self._extract_source_hashes(analysis_date)
@@ -647,22 +654,26 @@ class PlayerCompositeFactorsProcessor(
                 opponent_row = opponent_teams[opponent_teams['player_lookup'] == player]
                 opponent_team = opponent_row['opponent_team_abbr'].iloc[0] if not opponent_row.empty else None
 
-                # Check each upstream
+                # Check each upstream (use safe bool conversion for NA values)
                 shot_zone_ready = False
                 if player in shot_zone_df['player_lookup'].values:
-                    shot_zone_ready = bool(shot_zone_df[shot_zone_df['player_lookup'] == player]['is_production_ready'].iloc[0])
+                    val = shot_zone_df[shot_zone_df['player_lookup'] == player]['is_production_ready'].iloc[0]
+                    shot_zone_ready = bool(val) if not pd.isna(val) else False
 
                 player_context_ready = False
                 if player in player_context_df['player_lookup'].values:
-                    player_context_ready = bool(player_context_df[player_context_df['player_lookup'] == player]['is_production_ready'].iloc[0])
+                    val = player_context_df[player_context_df['player_lookup'] == player]['is_production_ready'].iloc[0]
+                    player_context_ready = bool(val) if not pd.isna(val) else False
 
                 team_defense_ready = False
                 if opponent_team and opponent_team in team_defense_df['team_abbr'].values:
-                    team_defense_ready = bool(team_defense_df[team_defense_df['team_abbr'] == opponent_team]['is_production_ready'].iloc[0])
+                    val = team_defense_df[team_defense_df['team_abbr'] == opponent_team]['is_production_ready'].iloc[0]
+                    team_defense_ready = bool(val) if not pd.isna(val) else False
 
                 team_context_ready = False
                 if opponent_team and opponent_team in team_context_df['team_abbr'].values:
-                    team_context_ready = bool(team_context_df[team_context_df['team_abbr'] == opponent_team]['is_production_ready'].iloc[0])
+                    val = team_context_df[team_context_df['team_abbr'] == opponent_team]['is_production_ready'].iloc[0]
+                    team_context_ready = bool(val) if not pd.isna(val) else False
 
                 upstream_status[player] = {
                     'player_shot_zone_ready': shot_zone_ready,
@@ -936,16 +947,19 @@ class PlayerCompositeFactorsProcessor(
             'analysis_date': self.opts['analysis_date'],
             
             # Active factor scores (v1)
-            'fatigue_score': fatigue_score,
-            'shot_zone_mismatch_score': shot_zone_score,
-            'pace_score': pace_score,
-            'usage_spike_score': usage_spike_score,
-            
-            # Deferred factor scores (neutral for now)
-            'referee_favorability_score': referee_adj,
-            'look_ahead_pressure_score': look_ahead_adj,
-            'travel_impact_score': travel_adj,
-            'opponent_strength_score': opponent_strength_adj,
+            # Note: NUMERIC fields have limited scale in BigQuery schema
+            # shot_zone_mismatch_score: precision=4, scale=1 (XXX.X)
+            # pace_score, usage_spike_score: precision=3, scale=1 (XX.X)
+            'fatigue_score': fatigue_score,  # INTEGER
+            'shot_zone_mismatch_score': round(shot_zone_score, 1) if shot_zone_score is not None else None,
+            'pace_score': round(pace_score, 1) if pace_score is not None else None,
+            'usage_spike_score': round(usage_spike_score, 1) if usage_spike_score is not None else None,
+
+            # Deferred factor scores (neutral for now) - scale=1
+            'referee_favorability_score': round(referee_adj, 1) if referee_adj is not None else None,
+            'look_ahead_pressure_score': round(look_ahead_adj, 1) if look_ahead_adj is not None else None,
+            'travel_impact_score': round(travel_adj, 1) if travel_adj is not None else None,
+            'opponent_strength_score': round(opponent_strength_adj, 1) if opponent_strength_adj is not None else None,
             
             # Total composite adjustment
             'total_composite_adjustment': round(total_adjustment, 2),
@@ -1030,9 +1044,67 @@ class PlayerCompositeFactorsProcessor(
         return record
     
     # ========================================================================
+    # SAFE VALUE EXTRACTION HELPERS
+    # ========================================================================
+
+    def _safe_int(self, value, default: int = 0) -> int:
+        """
+        Safely convert a value to int, handling None and pandas NA.
+
+        The issue: player_row.get('field', default) returns the pandas NA value
+        (not the default) when the field exists but contains NA. Then int() fails.
+
+        Args:
+            value: The value to convert (may be int, float, None, or pandas NA)
+            default: Default value if conversion fails
+
+        Returns:
+            int: The converted value or default
+        """
+        if value is None or pd.isna(value):
+            return default
+        try:
+            return int(value)
+        except (ValueError, TypeError):
+            return default
+
+    def _safe_float(self, value, default: float = 0.0) -> float:
+        """
+        Safely convert a value to float, handling None and pandas NA.
+
+        Args:
+            value: The value to convert (may be int, float, None, or pandas NA)
+            default: Default value if conversion fails
+
+        Returns:
+            float: The converted value or default
+        """
+        if value is None or pd.isna(value):
+            return default
+        try:
+            return float(value)
+        except (ValueError, TypeError):
+            return default
+
+    def _safe_bool(self, value, default: bool = False) -> bool:
+        """
+        Safely convert a value to bool, handling None and pandas NA.
+
+        Args:
+            value: The value to convert
+            default: Default value if conversion fails
+
+        Returns:
+            bool: The converted value or default
+        """
+        if value is None or pd.isna(value):
+            return default
+        return bool(value)
+
+    # ========================================================================
     # FACTOR CALCULATIONS - ACTIVE FACTORS
     # ========================================================================
-    
+
     def _calculate_fatigue_score(self, player_row: pd.Series) -> int:
         """
         Calculate fatigue score (0-100).
@@ -1049,44 +1121,44 @@ class PlayerCompositeFactorsProcessor(
             int: Fatigue score (0-100), clamped to range
         """
         score = 100  # Start at baseline
-        
+
         # Days rest impact
-        days_rest = int(player_row.get('days_rest', 1))
-        back_to_back = bool(player_row.get('back_to_back', False))
-        
+        days_rest = self._safe_int(player_row.get('days_rest'), 1)
+        back_to_back = self._safe_bool(player_row.get('back_to_back'), False)
+
         if back_to_back:
             score -= 15  # Heavy penalty for B2B
         elif days_rest >= 3:
             score += 5  # Bonus for extra rest
-        
+
         # Recent workload
-        games_last_7 = int(player_row.get('games_in_last_7_days', 3))
-        minutes_last_7 = float(player_row.get('minutes_in_last_7_days', 200))
-        avg_mpg_last_7 = float(player_row.get('avg_minutes_per_game_last_7', 30))
-        
+        games_last_7 = self._safe_int(player_row.get('games_in_last_7_days'), 3)
+        minutes_last_7 = self._safe_float(player_row.get('minutes_in_last_7_days'), 200.0)
+        avg_mpg_last_7 = self._safe_float(player_row.get('avg_minutes_per_game_last_7'), 30.0)
+
         if games_last_7 >= 4:
             score -= 10  # Playing frequently
-        
+
         if minutes_last_7 > 240:
             score -= 10  # Heavy minutes load
-        
+
         if avg_mpg_last_7 > 35:
             score -= 8  # Playing long stretches
-        
+
         # Recent B2Bs
-        recent_b2bs = int(player_row.get('back_to_backs_last_14_days', 0))
+        recent_b2bs = self._safe_int(player_row.get('back_to_backs_last_14_days'), 0)
         if recent_b2bs >= 2:
             score -= 12  # Multiple recent B2Bs
         elif recent_b2bs == 1:
             score -= 5
-        
+
         # Age factor
-        age = int(player_row.get('player_age', 25))
+        age = self._safe_int(player_row.get('player_age'), 25)
         if age >= 35:
             score -= 10  # Veteran penalty
         elif age >= 30:
             score -= 5
-        
+
         # Clamp to 0-100
         return max(0, min(100, score))
     
@@ -1128,17 +1200,17 @@ class PlayerCompositeFactorsProcessor(
         }
         
         zone_rate_field = zone_rate_map.get(primary_zone, 'paint_rate_last_10')
-        zone_usage_pct = float(player_shot.get(zone_rate_field, 50.0))
-        
+        zone_usage_pct = self._safe_float(player_shot.get(zone_rate_field), 50.0)
+
         # Get opponent's defense rating in that zone
         defense_field_map = {
             'paint': 'paint_defense_vs_league_avg',
             'mid_range': 'mid_range_defense_vs_league_avg',
             'perimeter': 'three_pt_defense_vs_league_avg'
         }
-        
+
         defense_field = defense_field_map.get(primary_zone, 'paint_defense_vs_league_avg')
-        defense_rating = float(team_defense.get(defense_field, 0.0))
+        defense_rating = self._safe_float(team_defense.get(defense_field), 0.0)
         
         # Calculate mismatch
         # Positive defense rating = weak defense (good for offense)
@@ -1172,35 +1244,35 @@ class PlayerCompositeFactorsProcessor(
         Returns:
             float: Pace score (-3.0 to +3.0)
         """
-        pace_diff = float(player_row.get('pace_differential', 0.0))
-        
+        pace_diff = self._safe_float(player_row.get('pace_differential'), 0.0)
+
         # Simple scaling: divide by 2 to get reasonable adjustment range
         pace_score = pace_diff / 2.0
-        
+
         # Clamp to -3.0 to +3.0
         return max(-3.0, min(3.0, pace_score))
-    
+
     def _calculate_usage_spike_score(self, player_row: pd.Series) -> float:
         """
         Calculate usage spike score (-3.0 to +3.0).
-        
+
         Higher projected usage vs recent = more opportunities = positive
         Lower projected usage vs recent = fewer opportunities = negative
-        
+
         Star teammates out amplifies positive spikes:
         - 1 star out: +15% boost
         - 2+ stars out: +30% boost
-        
+
         Args:
             player_row: Player context data
-        
+
         Returns:
             float: Usage spike score (-3.0 to +3.0)
         """
-        projected_usage = float(player_row.get('projected_usage_rate', 25.0))
-        baseline_usage = float(player_row.get('avg_usage_rate_last_7_games', 25.0))
-        stars_out = int(player_row.get('star_teammates_out', 0))
-        
+        projected_usage = self._safe_float(player_row.get('projected_usage_rate'), 25.0)
+        baseline_usage = self._safe_float(player_row.get('avg_usage_rate_last_7_games'), 25.0)
+        stars_out = self._safe_int(player_row.get('star_teammates_out'), 0)
+
         # Avoid division by zero
         if baseline_usage == 0:
             return 0.0
@@ -1245,35 +1317,35 @@ class PlayerCompositeFactorsProcessor(
     
     def _build_fatigue_context(self, player_row: pd.Series, fatigue_score: float) -> dict:
         """Build fatigue factor context for debugging."""
-        days_rest = int(player_row.get('days_rest', 0))
-        back_to_back = bool(player_row.get('back_to_back', False))
-        
+        days_rest = self._safe_int(player_row.get('days_rest'), 0)
+        back_to_back = self._safe_bool(player_row.get('back_to_back'), False)
+
         penalties = []
         bonuses = []
-        
+
         if back_to_back:
             penalties.append("back_to_back: -15")
-        if int(player_row.get('games_in_last_7_days', 0)) >= 4:
+        if self._safe_int(player_row.get('games_in_last_7_days'), 0) >= 4:
             penalties.append("frequent_games: -10")
-        if float(player_row.get('minutes_in_last_7_days', 0)) > 240:
+        if self._safe_float(player_row.get('minutes_in_last_7_days'), 0.0) > 240:
             penalties.append("heavy_minutes: -10")
-        if int(player_row.get('player_age', 0)) >= 35:
+        if self._safe_int(player_row.get('player_age'), 0) >= 35:
             penalties.append("veteran_age: -10")
-        
+
         if days_rest >= 3:
             bonuses.append("extra_rest: +5")
-        
+
         return {
             'days_rest': days_rest,
             'back_to_back': back_to_back,
-            'games_last_7': int(player_row.get('games_in_last_7_days', 0)),
-            'minutes_last_7': float(player_row.get('minutes_in_last_7_days', 0)),
-            'avg_minutes_pg_last_7': float(player_row.get('avg_minutes_per_game_last_7', 0)),
-            'back_to_backs_last_14': int(player_row.get('back_to_backs_last_14_days', 0)),
-            'player_age': int(player_row.get('player_age', 25)),
+            'games_last_7': self._safe_int(player_row.get('games_in_last_7_days'), 0),
+            'minutes_last_7': self._safe_float(player_row.get('minutes_in_last_7_days'), 0.0),
+            'avg_minutes_pg_last_7': self._safe_float(player_row.get('avg_minutes_per_game_last_7'), 0.0),
+            'back_to_backs_last_14': self._safe_int(player_row.get('back_to_backs_last_14_days'), 0),
+            'player_age': self._safe_int(player_row.get('player_age'), 25),
             'penalties_applied': penalties,
             'bonuses_applied': bonuses,
-            'final_score': int(fatigue_score)
+            'final_score': self._safe_int(fatigue_score, 0)
         }
     
     def _build_shot_zone_context(
@@ -1285,82 +1357,86 @@ class PlayerCompositeFactorsProcessor(
         """Build shot zone mismatch context for debugging."""
         if player_shot is None or team_defense is None:
             return {'missing_data': True}
-        
-        primary_zone = str(player_shot.get('primary_scoring_zone', 'unknown'))
-        
+
+        primary_zone_raw = player_shot.get('primary_scoring_zone')
+        primary_zone = str(primary_zone_raw) if primary_zone_raw is not None and not pd.isna(primary_zone_raw) else 'unknown'
+
         zone_rate_map = {
             'paint': 'paint_rate_last_10',
             'mid_range': 'mid_range_rate_last_10',
             'perimeter': 'three_pt_rate_last_10'
         }
-        
+
         rate_field = zone_rate_map.get(primary_zone, 'paint_rate_last_10')
-        zone_freq = float(player_shot.get(rate_field, 0))
-        
+        zone_freq = self._safe_float(player_shot.get(rate_field), 0.0)
+
         defense_field_map = {
             'paint': 'paint_defense_vs_league_avg',
             'mid_range': 'mid_range_defense_vs_league_avg',
             'perimeter': 'three_pt_defense_vs_league_avg'
         }
-        
+
         defense_field = defense_field_map.get(primary_zone, 'paint_defense_vs_league_avg')
-        defense_rating = float(team_defense.get(defense_field, 0))
-        
+        defense_rating = self._safe_float(team_defense.get(defense_field), 0.0)
+
         mismatch_type = 'neutral'
         if score > 2.0:
             mismatch_type = 'favorable'
         elif score < -2.0:
             mismatch_type = 'unfavorable'
-        
+
+        weakest_zone_raw = team_defense.get('weakest_zone')
+        weakest_zone = str(weakest_zone_raw) if weakest_zone_raw is not None and not pd.isna(weakest_zone_raw) else 'unknown'
+
         return {
             'player_primary_zone': primary_zone,
             'primary_zone_frequency': zone_freq,
-            'opponent_weak_zone': str(team_defense.get('weakest_zone', 'unknown')),
+            'opponent_weak_zone': weakest_zone,
             'opponent_defense_vs_league': defense_rating,
             'mismatch_type': mismatch_type,
-            'final_score': float(score)
+            'final_score': self._safe_float(score, 0.0)
         }
     
     def _build_pace_context(self, player_row: pd.Series, score: float) -> dict:
         """Build pace context for debugging."""
-        pace_diff = float(player_row.get('pace_differential', 0))
-        opponent_pace = float(player_row.get('opponent_pace_last_10', self.league_avg_pace))
-        
+        pace_diff = self._safe_float(player_row.get('pace_differential'), 0.0)
+        opponent_pace = self._safe_float(player_row.get('opponent_pace_last_10'), self.league_avg_pace)
+
         pace_env = 'normal'
         if pace_diff > 2.0:
             pace_env = 'fast'
         elif pace_diff < -2.0:
             pace_env = 'slow'
-        
+
         return {
             'pace_differential': pace_diff,
             'opponent_pace_last_10': opponent_pace,
             'league_avg_pace': self.league_avg_pace,
             'pace_environment': pace_env,
-            'final_score': float(score)
+            'final_score': self._safe_float(score, 0.0)
         }
-    
+
     def _build_usage_context(self, player_row: pd.Series, score: float) -> dict:
         """Build usage spike context for debugging."""
-        projected = float(player_row.get('projected_usage_rate', 0))
-        baseline = float(player_row.get('avg_usage_rate_last_7_games', 0))
-        stars_out = int(player_row.get('star_teammates_out', 0))
-        
+        projected = self._safe_float(player_row.get('projected_usage_rate'), 0.0)
+        baseline = self._safe_float(player_row.get('avg_usage_rate_last_7_games'), 0.0)
+        stars_out = self._safe_int(player_row.get('star_teammates_out'), 0)
+
         usage_diff = projected - baseline
-        
+
         trend = 'stable'
         if usage_diff > 2.0:
             trend = 'spike'
         elif usage_diff < -2.0:
             trend = 'drop'
-        
+
         return {
             'projected_usage_rate': projected,
             'avg_usage_last_7': baseline,
             'usage_differential': usage_diff,
             'star_teammates_out': stars_out,
             'usage_trend': trend,
-            'final_score': float(score)
+            'final_score': self._safe_float(score, 0.0)
         }
     
     # ========================================================================

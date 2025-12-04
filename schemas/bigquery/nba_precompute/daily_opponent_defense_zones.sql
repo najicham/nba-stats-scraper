@@ -26,5 +26,4 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_precompute.daily_opponent_def
   processed_at TIMESTAMP
 )
 PARTITION BY DAY(game_date)
-OPTIONS(partition_expiration_days=90)
 CLUSTER BY opponent_team_abbr, game_date;

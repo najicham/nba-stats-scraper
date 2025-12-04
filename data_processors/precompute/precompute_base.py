@@ -79,6 +79,7 @@ class PrecomputeProcessorBase(RunHistoryMixin):
     # BigQuery settings
     dataset_id: str = "nba_precompute"
     table_name: str = ""  # Child classes must set
+    date_column: str = "analysis_date"  # Column name for date partitioning (can override in child)
     processing_strategy: str = "MERGE_UPDATE"  # Default for precompute
 
     # Time tracking
@@ -111,8 +112,9 @@ class PrecomputeProcessorBase(RunHistoryMixin):
         self.run_id = str(uuid.uuid4())[:8]
         self.stats["run_id"] = self.run_id
 
-        # GCP clients
-        self.bq_client = bigquery.Client()
+        # GCP clients - specify location for regional dataset consistency
+        bq_location = os.environ.get('BQ_LOCATION', 'us-west2')
+        self.bq_client = bigquery.Client(location=bq_location)
         self.project_id = os.environ.get('GCP_PROJECT_ID', self.bq_client.project)
 
         # Correlation tracking (for tracing through pipeline)
@@ -498,11 +500,26 @@ class PrecomputeProcessorBase(RunHistoryMixin):
             elif check_type == 'existence':
                 # Just check if any data exists
                 query = f"""
-                SELECT 
+                SELECT
                     COUNT(*) as row_count,
                     MAX(processed_at) as last_updated
                 FROM `{self.project_id}.{table_name}`
                 LIMIT 1
+                """
+            elif check_type == 'per_player_game_count':
+                # Check for player-level game counts (used by player_shot_zone_analysis)
+                # Simplified check: just verify data exists for the date range
+                entity_field = config.get('entity_field', 'player_lookup')
+                min_games = config.get('min_games_required', 10)
+                lookback_days = min_games * 2  # Approximate days for min_games
+                query = f"""
+                SELECT
+                    COUNT(*) as row_count,
+                    COUNT(DISTINCT {entity_field}) as players_found,
+                    MAX(processed_at) as last_updated
+                FROM `{self.project_id}.{table_name}`
+                WHERE {date_field} >= DATE_SUB('{analysis_date}', INTERVAL {lookback_days} DAY)
+                  AND {date_field} <= '{analysis_date}'
                 """
             else:
                 raise ValueError(f"Unknown check_type: {check_type}")
@@ -522,7 +539,11 @@ class PrecomputeProcessorBase(RunHistoryMixin):
             row = result[0]
             row_count = row.row_count
             last_updated = row.last_updated
-            
+
+            # Strip timezone info if present (BQ returns tz-aware, datetime.utcnow() is naive)
+            if last_updated and last_updated.tzinfo:
+                last_updated = last_updated.replace(tzinfo=None)
+
             # Calculate age
             if last_updated:
                 age_hours = (datetime.utcnow() - last_updated).total_seconds() / 3600
@@ -971,8 +992,43 @@ class PrecomputeProcessorBase(RunHistoryMixin):
                 logger.warning(f"Could not get table schema: {schema_e}")
                 table_schema = None
             
+            # Sanitize rows for JSON serialization
+            import math
+            def sanitize_row(row):
+                """Convert date objects to strings, sanitize problematic characters, and handle NaN/Infinity."""
+                sanitized = {}
+                for k, v in row.items():
+                    if v is None:
+                        sanitized[k] = None
+                    elif isinstance(v, (date, datetime)):
+                        sanitized[k] = v.isoformat() if isinstance(v, datetime) else str(v)
+                    elif isinstance(v, float):
+                        # Handle NaN and Infinity - convert to None (null in JSON)
+                        if math.isnan(v) or math.isinf(v):
+                            sanitized[k] = None
+                        else:
+                            sanitized[k] = v
+                    elif isinstance(v, str):
+                        # Remove/replace problematic characters for JSON
+                        sanitized[k] = v.replace('\n', ' ').replace('\r', '').replace('\x00', '')
+                    else:
+                        sanitized[k] = v
+                return sanitized
+
+            sanitized_rows = [sanitize_row(row) for row in rows]
+
+            # Filter rows to only include fields that exist in the table schema
+            if table_schema:
+                schema_fields = {field.name for field in table_schema}
+                filtered_rows = []
+                for row in sanitized_rows:
+                    filtered_row = {k: v for k, v in row.items() if k in schema_fields}
+                    filtered_rows.append(filtered_row)
+                sanitized_rows = filtered_rows
+                logger.info(f"Filtered rows to {len(schema_fields)} schema fields")
+
             # Convert to NDJSON
-            ndjson_data = "\n".join(json.dumps(row) for row in rows)
+            ndjson_data = "\n".join(json.dumps(row) for row in sanitized_rows)
             ndjson_bytes = ndjson_data.encode('utf-8')
             
             # Configure load job
@@ -1040,9 +1096,10 @@ class PrecomputeProcessorBase(RunHistoryMixin):
         analysis_date = self.opts.get('analysis_date')
         
         if analysis_date:
+            # Use configurable date column (defaults to analysis_date, can be cache_date, etc.)
             delete_query = f"""
             DELETE FROM `{table_id}`
-            WHERE analysis_date = '{analysis_date}'
+            WHERE {self.date_column} = '{analysis_date}'
             """
             
             logger.info(f"Deleting existing data for {analysis_date}")

@@ -241,8 +241,7 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_precompute.player_composite_f
 PARTITION BY game_date
 CLUSTER BY player_lookup, universal_player_id, game_date
 OPTIONS(
-  description="Pre-calculated composite scores and point adjustments. CRITICAL TABLE. Week 1-4: 4 active factors (fatigue, shot_zone, pace, usage_spike), 4 deferred (set to 0). Source data from nba_analytics and nba_precompute tables. Updated nightly at 11:30 PM and on-demand at 6 AM + line changes. v4.0 dependency tracking (4 sources × 3 fields = 12 tracking fields). SCHEMA MATCHES: PlayerCompositeFactorsProcessor v1.0 (54/54 tests passing).",
-  partition_expiration_days=90
+  description="Pre-calculated composite scores and point adjustments. CRITICAL TABLE. Week 1-4: 4 active factors (fatigue, shot_zone, pace, usage_spike), 4 deferred (set to 0). Source data from nba_analytics and nba_precompute tables. Updated nightly at 11:30 PM and on-demand at 6 AM + line changes. v4.0 dependency tracking (4 sources × 3 fields = 12 tracking fields). SCHEMA MATCHES: PlayerCompositeFactorsProcessor v1.0 (54/54 tests passing)."
 );
 
 -- ============================================================================
@@ -781,7 +780,7 @@ ORDER BY game_date DESC;
 -- ============================================================================
 -- [ ] Create table in nba_precompute dataset
 -- [ ] Verify schema matches processor output (v1.0)
--- [ ] Set partition expiration (90 days)
+-- [ ] Verify no partition expiration (data kept indefinitely)
 -- [ ] Configure clustering for query performance
 -- [ ] Test with sample data
 -- [ ] Validate all tracking fields populate correctly

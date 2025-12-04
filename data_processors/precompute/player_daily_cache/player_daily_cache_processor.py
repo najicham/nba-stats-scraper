@@ -106,6 +106,9 @@ class PlayerDailyCacheProcessor(
         'cache_version'
     ]
 
+    # Override date column from base class (player_daily_cache uses cache_date, not analysis_date)
+    date_column: str = "cache_date"
+
     # Defensive check configuration (upstream Phase 3 dependency)
     upstream_processor_name = 'PlayerGameSummaryProcessor'
     upstream_table = 'nba_analytics.player_game_summary'
@@ -203,7 +206,7 @@ class PlayerDailyCacheProcessor(
             'nba_analytics.player_game_summary': {
                 'field_prefix': 'source_player_game',
                 'description': 'Player performance stats (season to date)',
-                'check_type': 'lookback_days',
+                'check_type': 'lookback',
                 'lookback_days': 180,  # Full season
                 'expected_count_min': 1000,  # ~450 players × 5+ games
                 'max_age_hours_warn': 24,
@@ -215,7 +218,7 @@ class PlayerDailyCacheProcessor(
             'nba_analytics.team_offense_game_summary': {
                 'field_prefix': 'source_team_offense',
                 'description': 'Team offensive stats (last 10 games)',
-                'check_type': 'lookback_days',
+                'check_type': 'lookback',
                 'lookback_days': 30,
                 'expected_count_min': 300,  # ~30 teams × 10 games
                 'max_age_hours_warn': 24,
@@ -226,7 +229,7 @@ class PlayerDailyCacheProcessor(
                 'field_prefix': 'source_upcoming_context',
                 'description': 'Pre-calculated fatigue metrics and context',
                 'check_type': 'date_match',
-                'expected_count_min': 100,  # Players with games today
+                'expected_count_min': 30,  # Lowered for early season (was 100)
                 'max_age_hours_warn': 12,
                 'max_age_hours_fail': 48,
                 'critical': True
@@ -235,7 +238,8 @@ class PlayerDailyCacheProcessor(
                 'field_prefix': 'source_shot_zone',
                 'description': 'Shot zone tendencies (must complete first)',
                 'check_type': 'date_match',
-                'expected_count_min': 100,  # Players with games today
+                'date_field': 'analysis_date',  # This table uses analysis_date, not game_date
+                'expected_count_min': 30,  # Lowered for early season (was 100)
                 'max_age_hours_warn': 6,
                 'max_age_hours_fail': 24,
                 'critical': True
@@ -393,7 +397,7 @@ class PlayerDailyCacheProcessor(
             WHERE game_date <= '{analysis_date.isoformat()}'
               AND season_year = {season_year}
               AND is_active = TRUE
-              AND minutes_played > 0
+              AND (minutes_played > 0 OR points > 0)  -- Fallback for historical data with NULL minutes
         )
         SELECT *
         FROM ranked_games
@@ -471,6 +475,22 @@ class PlayerDailyCacheProcessor(
         
         self.shot_zone_data = self.bq_client.query(query).to_dataframe()
         logger.info(f"Extracted {len(self.shot_zone_data)} shot zone analyses")
+
+    def validate_extracted_data(self) -> None:
+        """
+        Validate that we have extracted data to process.
+
+        Overrides base class to check upcoming_context_data instead of raw_data.
+        """
+        if self.upcoming_context_data is None or self.upcoming_context_data.empty:
+            raise ValueError("No upcoming player context data extracted")
+
+        # Log extraction summary
+        logger.info(
+            f"Data validation passed: {len(self.upcoming_context_data)} players, "
+            f"{len(self.player_game_data) if self.player_game_data is not None else 0} game records, "
+            f"{len(self.shot_zone_data) if self.shot_zone_data is not None else 0} shot zone records"
+        )
 
     def _extract_source_hashes(self, analysis_date: date) -> None:
         """
@@ -776,8 +796,8 @@ class PlayerDailyCacheProcessor(
                     })
                     continue
 
-                # Check production readiness (skip if any window incomplete, unless in bootstrap mode)
-                if not all_windows_complete and not is_bootstrap:
+                # Check production readiness (skip if any window incomplete, unless in bootstrap mode or season boundary)
+                if not all_windows_complete and not is_bootstrap and not is_season_boundary:
                     logger.warning(
                         f"{player_lookup}: Not all windows complete - "
                         f"L5={comp_l5['completeness_pct']:.1f}%, L10={comp_l10['completeness_pct']:.1f}%, "
@@ -855,7 +875,17 @@ class PlayerDailyCacheProcessor(
                     team_games=team_games,
                     shot_zone_row=shot_zone_row,
                     analysis_date=analysis_date,
-                    is_early_season=is_early_season
+                    is_early_season=is_early_season,
+                    completeness_data={
+                        'comp_l5': comp_l5,
+                        'comp_l10': comp_l10,
+                        'comp_l7d': comp_l7d,
+                        'comp_l14d': comp_l14d,
+                        'all_windows_complete': all_windows_complete,
+                        'is_bootstrap': is_bootstrap,
+                        'is_season_boundary': is_season_boundary,
+                        'circuit_breaker_status': circuit_breaker_status,
+                    }
                 )
                 
                 successful.append(cache_record)
@@ -882,7 +912,8 @@ class PlayerDailyCacheProcessor(
         team_games: pd.DataFrame,
         shot_zone_row: pd.Series,
         analysis_date: date,
-        is_early_season: bool
+        is_early_season: bool,
+        completeness_data: Dict = None
     ) -> Dict:
         """
         Calculate complete cache record for a single player.
@@ -899,25 +930,47 @@ class PlayerDailyCacheProcessor(
         Returns:
             Dict: Complete cache record ready for BigQuery
         """
+        # Extract completeness data
+        if completeness_data:
+            comp_l5 = completeness_data.get('comp_l5', {'expected_count': 0, 'actual_count': 0, 'completeness_pct': 0.0, 'missing_count': 0, 'is_production_ready': False})
+            comp_l10 = completeness_data.get('comp_l10', {'expected_count': 0, 'actual_count': 0, 'completeness_pct': 0.0, 'missing_count': 0, 'is_production_ready': False})
+            comp_l7d = completeness_data.get('comp_l7d', {'expected_count': 0, 'actual_count': 0, 'completeness_pct': 0.0, 'missing_count': 0, 'is_production_ready': False})
+            comp_l14d = completeness_data.get('comp_l14d', {'expected_count': 0, 'actual_count': 0, 'completeness_pct': 0.0, 'missing_count': 0, 'is_production_ready': False})
+            all_windows_complete = completeness_data.get('all_windows_complete', False)
+            is_bootstrap = completeness_data.get('is_bootstrap', False)
+            is_season_boundary = completeness_data.get('is_season_boundary', False)
+            circuit_breaker_status = completeness_data.get('circuit_breaker_status', {'active': False, 'until': None, 'attempts': 0})
+        else:
+            # Default values for backwards compatibility
+            comp_l5 = {'expected_count': 0, 'actual_count': 0, 'completeness_pct': 0.0, 'missing_count': 0, 'is_production_ready': False}
+            comp_l10 = {'expected_count': 0, 'actual_count': 0, 'completeness_pct': 0.0, 'missing_count': 0, 'is_production_ready': False}
+            comp_l7d = {'expected_count': 0, 'actual_count': 0, 'completeness_pct': 0.0, 'missing_count': 0, 'is_production_ready': False}
+            comp_l14d = {'expected_count': 0, 'actual_count': 0, 'completeness_pct': 0.0, 'missing_count': 0, 'is_production_ready': False}
+            all_windows_complete = False
+            is_bootstrap = False
+            is_season_boundary = False
+            circuit_breaker_status = {'active': False, 'until': None, 'attempts': 0}
+
         # Recent performance (last 5, last 10, season)
         last_5_games = player_games.head(5)
         last_10_games = player_games.head(10)
         
-        points_avg_last_5 = float(last_5_games['points'].mean()) if len(last_5_games) > 0 else None
-        points_avg_last_10 = float(last_10_games['points'].mean()) if len(last_10_games) > 0 else None
-        points_avg_season = float(player_games['points'].mean())
-        points_std_last_10 = float(last_10_games['points'].std()) if len(last_10_games) > 1 else None
-        
-        minutes_avg_last_10 = float(last_10_games['minutes_played'].mean()) if len(last_10_games) > 0 else None
-        usage_rate_last_10 = float(last_10_games['usage_rate'].mean()) if len(last_10_games) > 0 else None
-        ts_pct_last_10 = float(last_10_games['ts_pct'].mean()) if len(last_10_games) > 0 else None
-        
+        # Round all floats to 4 decimal places for BigQuery NUMERIC compatibility
+        points_avg_last_5 = round(float(last_5_games['points'].mean()), 4) if len(last_5_games) > 0 else None
+        points_avg_last_10 = round(float(last_10_games['points'].mean()), 4) if len(last_10_games) > 0 else None
+        points_avg_season = round(float(player_games['points'].mean()), 4)
+        points_std_last_10 = round(float(last_10_games['points'].std()), 4) if len(last_10_games) > 1 else None
+
+        minutes_avg_last_10 = round(float(last_10_games['minutes_played'].mean()), 4) if len(last_10_games) > 0 else None
+        usage_rate_last_10 = round(float(last_10_games['usage_rate'].mean()), 4) if len(last_10_games) > 0 else None
+        ts_pct_last_10 = round(float(last_10_games['ts_pct'].mean()), 4) if len(last_10_games) > 0 else None
+
         games_played_season = int(len(player_games))
-        player_usage_rate_season = float(player_games['usage_rate'].mean())
-        
+        player_usage_rate_season = round(float(player_games['usage_rate'].mean()), 4)
+
         # Team context (last 10 games)
-        team_pace_last_10 = float(team_games['pace'].mean()) if len(team_games) > 0 else None
-        team_off_rating_last_10 = float(team_games['offensive_rating'].mean()) if len(team_games) > 0 else None
+        team_pace_last_10 = round(float(team_games['pace'].mean()), 4) if len(team_games) > 0 else None
+        team_off_rating_last_10 = round(float(team_games['offensive_rating'].mean()), 4) if len(team_games) > 0 else None
         
         # Fatigue metrics (direct copy from context)
         games_in_last_7_days = int(context_row['games_in_last_7_days']) if pd.notna(context_row['games_in_last_7_days']) else None
@@ -925,7 +978,7 @@ class PlayerDailyCacheProcessor(
         minutes_in_last_7_days = int(context_row['minutes_in_last_7_days']) if pd.notna(context_row['minutes_in_last_7_days']) else None
         minutes_in_last_14_days = int(context_row['minutes_in_last_14_days']) if pd.notna(context_row['minutes_in_last_14_days']) else None
         back_to_backs_last_14_days = int(context_row['back_to_backs_last_14_days']) if pd.notna(context_row['back_to_backs_last_14_days']) else None
-        avg_minutes_per_game_last_7 = float(context_row['avg_minutes_per_game_last_7']) if pd.notna(context_row['avg_minutes_per_game_last_7']) else None
+        avg_minutes_per_game_last_7 = round(float(context_row['avg_minutes_per_game_last_7']), 4) if pd.notna(context_row['avg_minutes_per_game_last_7']) else None
         fourth_quarter_minutes_last_7 = int(context_row['fourth_quarter_minutes_last_7']) if pd.notna(context_row['fourth_quarter_minutes_last_7']) else None
         
         # Player demographics
@@ -994,15 +1047,15 @@ class PlayerDailyCacheProcessor(
             # ============================================================
             # NEW (Week 3): Completeness Checking Metadata (23 fields)
             # ============================================================
-            # Standard Completeness Metrics (14 fields)
-            'expected_games_count': completeness['expected_count'],
-            'actual_games_count': completeness['actual_count'],
-            'completeness_percentage': completeness['completeness_pct'],
-            'missing_games_count': completeness['missing_count'],
+            # Standard Completeness Metrics (14 fields) - using L5 as primary
+            'expected_games_count': comp_l5['expected_count'],
+            'actual_games_count': comp_l5['actual_count'],
+            'completeness_percentage': comp_l5['completeness_pct'],
+            'missing_games_count': comp_l5['missing_count'],
 
-            # Quality tier based on completeness
-            'quality_tier': get_tier_from_score(completeness['completeness_pct']).value,
-            'quality_score': completeness['completeness_pct'],
+            # Quality tier based on completeness (L5 window)
+            'quality_tier': get_tier_from_score(comp_l5['completeness_pct']).value,
+            'cache_quality_score': comp_l5['completeness_pct'],  # Named to match hash_fields
 
             # Production Readiness
             'is_production_ready': all_windows_complete,
