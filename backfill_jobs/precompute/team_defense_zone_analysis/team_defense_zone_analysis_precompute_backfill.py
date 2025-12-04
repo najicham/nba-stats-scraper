@@ -46,6 +46,10 @@ from shared.config.nba_season_dates import is_early_season, get_season_year_from
 from shared.backfill import BackfillCheckpoint
 from google.cloud import bigquery
 
+# Import pre-flight check
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))), 'bin', 'backfill'))
+from verify_phase3_for_phase4 import verify_phase3_readiness
+
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -374,6 +378,7 @@ IMPORTANT: This processor must run FIRST in Phase 4 (no Phase 4 dependencies).
     parser.add_argument('--dry-run', action='store_true', help='Check Phase 3 availability without processing')
     parser.add_argument('--no-resume', action='store_true', help='Ignore checkpoint and start from beginning')
     parser.add_argument('--status', action='store_true', help='Show checkpoint status and exit')
+    parser.add_argument('--skip-preflight', action='store_true', help='Skip Phase 3 pre-flight check (not recommended)')
 
     args = parser.parse_args()
 
@@ -431,6 +436,33 @@ IMPORTANT: This processor must run FIRST in Phase 4 (no Phase 4 dependencies).
     if args.no_resume and checkpoint.exists():
         logger.info("--no-resume specified, clearing existing checkpoint")
         checkpoint.clear()
+
+    # Pre-flight check: Verify Phase 3 data is ready
+    if not args.skip_preflight and not args.dry_run:
+        logger.info("=" * 70)
+        logger.info("PHASE 3 PRE-FLIGHT CHECK")
+        logger.info("=" * 70)
+        logger.info(f"Verifying Phase 3 data exists for {start_date} to {end_date}...")
+
+        preflight_result = verify_phase3_readiness(start_date, end_date, verbose=False)
+
+        if not preflight_result['all_ready']:
+            logger.error("=" * 70)
+            logger.error("❌ PRE-FLIGHT CHECK FAILED: Phase 3 data is incomplete!")
+            logger.error("=" * 70)
+            logger.error("Cannot proceed with Phase 4 backfill until Phase 3 is complete.")
+            logger.error("")
+            logger.error("Options:")
+            logger.error("  1. Run Phase 3 backfill first to fill gaps")
+            logger.error("  2. Use --skip-preflight to bypass (NOT RECOMMENDED)")
+            logger.error("")
+            logger.error("To see details, run:")
+            logger.error(f"  python bin/backfill/verify_phase3_for_phase4.py --start-date {start_date} --end-date {end_date} --verbose")
+            sys.exit(1)
+        else:
+            logger.info("✅ Pre-flight check passed: Phase 3 data is ready")
+    elif args.skip_preflight:
+        logger.warning("⚠️  Pre-flight check SKIPPED (--skip-preflight flag used)")
 
     logger.info(f"Phase 4 precompute backfill configuration:")
     logger.info(f"  Processor: TeamDefenseZoneAnalysisProcessor")

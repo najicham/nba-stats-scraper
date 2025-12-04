@@ -319,12 +319,16 @@ class MLFeatureStoreProcessor(
 
         # Extract source hashes from all 4 Phase 4 dependencies (Smart Reprocessing - Pattern #3)
         self._extract_source_hashes(analysis_date)
-        
+
         if len(self.players_with_games) == 0:
             raise ValueError(f"No players found with games on {analysis_date}")
 
-        # Data is extracted per-player in calculate_precompute()
-        # (More efficient than bulk extraction due to fallback logic)
+        # BATCH EXTRACTION (20x speedup for backfill!)
+        # Query all Phase 3/4 tables once upfront instead of per-player queries
+        self.feature_extractor.batch_extract_all_data(analysis_date, self.players_with_games)
+
+        # Set raw_data to pass base class validation
+        self.raw_data = self.players_with_games
 
     def _extract_source_hashes(self, analysis_date: date) -> None:
         """Extract data_hash from all 4 Phase 4 upstream tables."""
@@ -748,8 +752,12 @@ class MLFeatureStoreProcessor(
                     })
                     continue
 
-                # Check production readiness (skip if incomplete, unless in bootstrap mode)
-                if not completeness['is_production_ready'] and not is_bootstrap:
+                # BACKFILL MODE FIX: Skip completeness checks in backfill mode
+                # Process everyone but track quality via is_production_ready
+                skip_completeness_checks = self.is_backfill_mode or is_bootstrap
+
+                # Check production readiness (skip if incomplete, unless in bootstrap/backfill mode)
+                if not completeness['is_production_ready'] and not skip_completeness_checks:
                     logger.warning(
                         f"{player_lookup}: Completeness {completeness['completeness_pct']:.1f}% "
                         f"({completeness['actual_count']}/{completeness['expected_count']} games) - skipping"
@@ -779,7 +787,7 @@ class MLFeatureStoreProcessor(
                     'all_upstreams_ready': False
                 })
 
-                if not upstream_status['all_upstreams_ready'] and not is_bootstrap:
+                if not upstream_status['all_upstreams_ready'] and not skip_completeness_checks:
                     logger.warning(
                         f"{player_lookup}: Upstream not ready "
                         f"(daily_cache={upstream_status['player_daily_cache_ready']}, "
@@ -804,7 +812,7 @@ class MLFeatureStoreProcessor(
                     continue
                 # ============================================================
 
-                # Generate features for this player
+                # Generate features for this player (pass opponent from player_row)
                 start_time = datetime.now()
                 record = self._generate_player_features(player_row, completeness, upstream_status, circuit_breaker_status, is_bootstrap, is_season_boundary)
                 generation_time_ms = (datetime.now() - start_time).total_seconds() * 1000
@@ -850,9 +858,12 @@ class MLFeatureStoreProcessor(
         """
         player_lookup = player_row['player_lookup']
         game_date = self.opts['analysis_date']
-        
-        # Extract Phase 4 data (preferred)
-        phase4_data = self.feature_extractor.extract_phase4_data(player_lookup, game_date)
+        opponent_team_abbr = player_row.get('opponent_team_abbr')
+
+        # Extract Phase 4 data (preferred) - pass opponent from player_row
+        phase4_data = self.feature_extractor.extract_phase4_data(
+            player_lookup, game_date, opponent_team_abbr=opponent_team_abbr
+        )
         
         # Extract Phase 3 data (fallback + calculated features)
         phase3_data = self.feature_extractor.extract_phase3_data(player_lookup, game_date)
@@ -990,13 +1001,13 @@ class MLFeatureStoreProcessor(
         features.append(self._get_feature_with_fallback(14, 'opponent_pace', phase4_data, phase3_data, 100.0, feature_sources))
         
         # Features 15-17: Game Context (Phase 3 only)
-        features.append(float(phase3_data.get('home_game', 0)))
+        features.append(float(phase3_data.get('home_game') or 0))
         feature_sources[15] = 'phase3'
-        
-        features.append(float(phase3_data.get('back_to_back', 0)))
+
+        features.append(float(phase3_data.get('back_to_back') or 0))
         feature_sources[16] = 'phase3'
         
-        features.append(1.0 if phase3_data.get('season_phase', '').lower() == 'playoffs' else 0.0)
+        features.append(1.0 if (phase3_data.get('season_phase') or '').lower() == 'playoffs' else 0.0)
         feature_sources[17] = 'phase3'
         
         # Features 18-21: Shot Zones

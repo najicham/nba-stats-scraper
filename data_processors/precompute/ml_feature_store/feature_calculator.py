@@ -80,7 +80,7 @@ class FeatureCalculator:
         Returns:
             float: Injury risk score [0.0, 3.0]
         """
-        player_status = phase3_data.get('player_status', '').lower()
+        player_status = (phase3_data.get('player_status') or '').lower()
         
         # Status to risk mapping
         status_map = {
@@ -126,11 +126,11 @@ class FeatureCalculator:
         
         # Take first 5 games (most recent)
         last_5_games = last_10_games[:5]
-        
-        # Split into windows
-        first_3_points = [g['points'] for g in last_5_games[0:3]]
-        last_2_points = [g['points'] for g in last_5_games[3:5]]
-        
+
+        # Split into windows (handle None values)
+        first_3_points = [g.get('points') or 0 for g in last_5_games[0:3]]
+        last_2_points = [g.get('points') or 0 for g in last_5_games[3:5]]
+
         # Calculate averages
         avg_first_3 = sum(first_3_points) / 3.0
         avg_last_2 = sum(last_2_points) / 2.0
@@ -178,12 +178,12 @@ class FeatureCalculator:
             # Fallback: calculate from Phase 3
             last_10_games = phase3_data.get('last_10_games', [])
             if last_10_games:
-                minutes_recent = sum(g.get('minutes_played', 0) for g in last_10_games) / len(last_10_games)
+                minutes_recent = sum(g.get('minutes_played') or 0 for g in last_10_games) / len(last_10_games)
             else:
                 minutes_recent = 0.0
-        
+
         # Get season average (Phase 3)
-        minutes_season = phase3_data.get('minutes_avg_season', 0.0)
+        minutes_season = phase3_data.get('minutes_avg_season') or 0.0
         
         # Handle edge cases
         if minutes_season == 0 or minutes_recent == 0:
@@ -234,9 +234,9 @@ class FeatureCalculator:
             logger.debug(f"Insufficient games for pct_free_throw: {len(last_10_games)}/5")
             return 0.15  # League average
         
-        # Sum free throws and points
-        total_ft_makes = sum(g.get('ft_makes', 0) for g in last_10_games)
-        total_points = sum(g.get('points', 0) for g in last_10_games)
+        # Sum free throws and points (handle None values)
+        total_ft_makes = sum(g.get('ft_makes') or 0 for g in last_10_games)
+        total_points = sum(g.get('points') or 0 for g in last_10_games)
         
         # Avoid division by zero
         if total_points == 0:
@@ -280,8 +280,8 @@ class FeatureCalculator:
             logger.debug(f"Insufficient games for win_pct: {len(season_games)}/5")
             return 0.500  # Default to 50%
         
-        # Count wins
-        wins = sum(1 for g in season_games if g.get('win_flag', False))
+        # Count wins (handle None values)
+        wins = sum(1 for g in season_games if g.get('win_flag'))
         total_games = len(season_games)
         
         # Calculate percentage
