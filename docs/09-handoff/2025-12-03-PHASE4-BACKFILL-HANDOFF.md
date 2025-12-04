@@ -1,242 +1,175 @@
-# Session Handoff - December 3, 2025 (Phase 4 Backfill) - Session 9
+# Session Handoff - December 3, 2025 (Phase 4 Backfill) - Session 10 Complete
 
-**Date:** 2025-12-03 (Session 9 Update)
-**Status:** PARTITION EXPIRATION REMOVED - Ready for full historical backfill
-**Priority:** HIGH - All blockers resolved, proceed with backfill
-
----
-
-## EXECUTIVE SUMMARY
-
-### What Was Accomplished This Session (Session 9)
-
-1. **Removed partition expiration from 6 tables** - All tables now keep data indefinitely:
-   - `nba_precompute.player_composite_factors` (was 90 days)
-   - `nba_precompute.daily_game_context` (was 90 days)
-   - `nba_precompute.daily_opponent_defense_zones` (was 90 days)
-   - `nba_predictions.ml_feature_store_v2` (was 365 days)
-   - `nba_predictions.prediction_worker_runs` (was 365 days)
-   - `nba_reference.unresolved_resolution_log` (was 730 days)
-
-2. **Updated 6 schema files** - Removed `partition_expiration_days` from:
-   - `schemas/bigquery/precompute/player_composite_factors.sql`
-   - `schemas/bigquery/nba_precompute/daily_game_context.sql`
-   - `schemas/bigquery/nba_precompute/daily_opponent_defense_zones.sql`
-   - `schemas/bigquery/predictions/04_ml_feature_store_v2.sql`
-   - `schemas/bigquery/predictions/prediction_worker_runs.sql`
-   - `schemas/bigquery/nba_reference/unresolved_resolution_log_table.sql`
-
-3. **Verified historical data now persists** - `player_composite_factors` now has 2021-11-15 data
-
-### Previous Session (Session 8) Fixes
-
-1. **Fixed bootstrap mode bug** - `season_start_date` was hardcoded to Oct 1 instead of using actual season start
-2. **Fixed NAType conversion bug** - Added safe conversion helpers for int/float/bool to handle pandas NA values
-3. **Fixed date_column mismatch** - Added `date_column = "game_date"` to processor
-4. **Fixed NUMERIC precision** - Added rounding for score fields to match table schema
-
-### Current Phase 4 Status
-| Table | Date Range | Row Count | Status |
-|-------|------------|-----------|--------|
-| team_defense_zone_analysis | Nov 2-15, 2021 | 420 | ✅ COMPLETE (test range) |
-| player_shot_zone_analysis | Nov 5-15, 2021 | 1,987 | ✅ COMPLETE (test range) |
-| player_daily_cache | Nov 5-15, 2021 | 1,128 | ✅ COMPLETE (test range) |
-| player_composite_factors | Nov 15, 2021 - Dec 3, 2025 | 3 | ✅ READY (partition fix verified) |
-| ml_feature_store_v2 | - | 0 | ⏸️ PENDING |
+**Date:** 2025-12-03 (Session 10 Final)
+**Status:** BACKFILLS RUNNING - 4 upstream backfills in progress, monitor and continue
+**Priority:** HIGH - Monitor backfills, then run player_composite_factors and ml_feature_store_v2
 
 ---
 
-## BUGS FIXED THIS SESSION
+## IMMEDIATE ACTION FOR NEXT SESSION
 
-### Bug #1: Season Start Date (Bootstrap Mode)
-
-**Problem:** Line 282 hardcoded `date(season_year, 10, 1)` instead of actual season start.
-
-**Fix Applied:**
-```python
-from shared.config.nba_season_dates import get_season_start_date
-# ...
-self.season_start_date = get_season_start_date(season_year)  # Uses actual season start
-```
-
-### Bug #2: NAType Conversion Errors
-
-**Problem:** `int(player_row.get('days_rest', 1))` fails when field contains pandas NA.
-
-**Fix Applied:** Added three safe conversion helpers:
-```python
-def _safe_int(self, value, default: int = 0) -> int:
-    if value is None or pd.isna(value):
-        return default
-    try:
-        return int(value)
-    except (ValueError, TypeError):
-        return default
-
-def _safe_float(self, value, default: float = 0.0) -> float:
-    # Similar pattern
-
-def _safe_bool(self, value, default: bool = False) -> bool:
-    # Similar pattern
-```
-
-Updated ~30+ locations to use these safe methods.
-
-### Bug #3: date_column Mismatch
-
-**Problem:** Base class uses `date_column = "analysis_date"` but table has `game_date`.
-
-**Fix Applied:**
-```python
-# Line 98 in player_composite_factors_processor.py
-date_column: str = "game_date"
-```
-
-### Bug #4: NUMERIC Precision Overflow
-
-**Problem:** Score fields like `0.4550561797752817` exceed the `NUMERIC(4,1)` scale limit.
-
-**Fix Applied:**
-```python
-'shot_zone_mismatch_score': round(shot_zone_score, 1) if shot_zone_score is not None else None,
-'pace_score': round(pace_score, 1) if pace_score is not None else None,
-'usage_spike_score': round(usage_spike_score, 1) if usage_spike_score is not None else None,
-# etc.
-```
-
----
-
-## OPTIONS FOR BACKFILLING HISTORICAL DATA
-
-### Option 1: Remove Partition Expiration (Recommended for full backfill)
-
-```sql
-ALTER TABLE `nba-props-platform.nba_precompute.player_composite_factors`
-SET OPTIONS (partition_expiration_days=NULL);
-```
-
-Then run the backfill, then optionally restore expiration:
-```sql
-ALTER TABLE `nba-props-platform.nba_precompute.player_composite_factors`
-SET OPTIONS (partition_expiration_days=90);
-```
-
-### Option 2: Accept Table Design (Skip historical backfill for this table)
-
-This table is designed for recent predictions only. Backfilling 2021 data to it may not be necessary since:
-- The data would expire anyway
-- Phase 5 predictions only need recent composite factors
-- Other Phase 4 tables (team_defense_zone, player_shot_zone, player_daily_cache) successfully hold historical data
-
-### Option 3: Verify Other Phase 4 Tables
-
-Check if other Phase 4 tables also have partition expiration:
-```sql
-SELECT table_name, option_name, option_value
-FROM `nba-props-platform.nba_precompute.INFORMATION_SCHEMA.TABLE_OPTIONS`
-WHERE option_name = 'partition_expiration_days';
-```
-
----
-
-## FILES MODIFIED THIS SESSION
-
-| File | Line(s) | Changes |
-|------|---------|---------|
-| `player_composite_factors_processor.py` | 57 | Added `get_season_start_date` import |
-| `player_composite_factors_processor.py` | 282-283 | Fixed season start date calculation |
-| `player_composite_factors_processor.py` | 98 | Added `date_column = "game_date"` |
-| `player_composite_factors_processor.py` | 1036-1092 | Added `_safe_int`, `_safe_float`, `_safe_bool` helpers |
-| `player_composite_factors_processor.py` | 949-962 | Added rounding for NUMERIC fields |
-| (multiple other locations) | - | Updated to use safe methods |
-
-**Previously modified (not yet committed):**
-- `data_processors/precompute/precompute_base.py`
-- `data_processors/precompute/player_daily_cache/player_daily_cache_processor.py`
-- `data_processors/precompute/player_shot_zone_analysis/player_shot_zone_analysis_processor.py`
-- `data_processors/analytics/upcoming_team_game_context/upcoming_team_game_context_processor.py`
-
----
-
-## QUICK START FOR NEXT SESSION
+### Step 1: Check if backfills are still running
 
 ```bash
-# Step 1: Decide on backfill strategy for player_composite_factors
+# Check for running backfill processes
+ps aux | grep backfill | grep -v grep
 
-# Option A: Remove partition expiration for backfill
-bq query --nouse_legacy_sql "ALTER TABLE \`nba-props-platform.nba_precompute.player_composite_factors\` SET OPTIONS (partition_expiration_days=NULL)"
+# If processes are done, check the log files for results
+```
 
-# Option B: Skip this table's historical backfill, verify it works for recent dates
-PYTHONPATH=/home/naji/code/nba-stats-scraper .venv/bin/python \
-  backfill_jobs/precompute/player_composite_factors/player_composite_factors_precompute_backfill.py \
-  --start-date 2025-09-01 --end-date 2025-09-15 --no-resume
+### Step 2: Monitor running backfills (if still active)
 
-# Step 2: Check other Phase 4 tables for partition expiration
+```bash
+# View live progress
+tail -f /tmp/upgc_backfill.log  # upcoming_player_game_context (Phase 3)
+tail -f /tmp/utgc_backfill.log  # upcoming_team_game_context (Phase 3)
+tail -f /tmp/tdza_backfill.log  # team_defense_zone_analysis (Phase 4)
+tail -f /tmp/psza_backfill.log  # player_shot_zone_analysis (Phase 4)
+```
+
+### Step 3: Check data availability after backfills complete
+
+```bash
 bq query --nouse_legacy_sql "
-SELECT table_name, option_name, option_value
-FROM \`nba-props-platform.nba_precompute.INFORMATION_SCHEMA.TABLE_OPTIONS\`
-WHERE option_name = 'partition_expiration_days'"
+SELECT
+  'upcoming_player_game_context' as tbl,
+  MIN(game_date) as min_date,
+  MAX(game_date) as max_date,
+  COUNT(*) as row_count
+FROM \`nba-props-platform.nba_analytics.upcoming_player_game_context\`
+UNION ALL
+SELECT
+  'upcoming_team_game_context',
+  MIN(game_date), MAX(game_date), COUNT(*)
+FROM \`nba-props-platform.nba_analytics.upcoming_team_game_context\`
+UNION ALL
+SELECT
+  'player_shot_zone_analysis',
+  MIN(analysis_date), MAX(analysis_date), COUNT(*)
+FROM \`nba-props-platform.nba_precompute.player_shot_zone_analysis\`
+UNION ALL
+SELECT
+  'team_defense_zone_analysis',
+  MIN(analysis_date), MAX(analysis_date), COUNT(*)
+FROM \`nba-props-platform.nba_precompute.team_defense_zone_analysis\`"
+```
 
-# Step 3: Commit code fixes
-git add data_processors/precompute/player_composite_factors/
-git diff --cached
+### Step 4: Run player_composite_factors backfill (after upstreams complete)
 
-# Step 4: Move to ml_feature_store if needed
+```bash
+cd /home/naji/code/nba-stats-scraper
+
+# Run for the date range where ALL upstream tables have data
+PYTHONPATH=. .venv/bin/python \
+  backfill_jobs/precompute/player_composite_factors/player_composite_factors_precompute_backfill.py \
+  --start-date 2021-11-16 --end-date 2021-11-30 --no-resume 2>&1 | tee /tmp/pcf_backfill.log
+```
+
+### Step 5: Run ml_feature_store_v2 backfill (after player_composite_factors)
+
+```bash
+PYTHONPATH=. .venv/bin/python \
+  backfill_jobs/precompute/ml_feature_store/ml_feature_store_precompute_backfill.py \
+  --start-date 2021-11-16 --end-date 2021-11-30 --no-resume 2>&1 | tee /tmp/mlfs_backfill.log
 ```
 
 ---
 
-## VERIFICATION: CODE FIXES WORKING
+## SESSION 10 STATUS
 
-The processor successfully:
-1. ✅ Processes 389 players without NAType errors
-2. ✅ Uses correct bootstrap mode (True for early season)
-3. ✅ Deletes using correct `game_date` column
-4. ✅ Rounds NUMERIC fields to match table schema
-5. ✅ Loads data successfully (verified with recent date)
+### Backfills Currently Running
 
-Test output:
-```
-INFO:...player_composite_factors_processor:Successfully processed 389 players
-INFO:precompute_base:✅ Deleted 0 existing rows
-INFO:precompute_base:✅ Successfully loaded 389 rows
-```
+| Backfill | Phase | Date Range | Log File | Shell ID |
+|----------|-------|------------|----------|----------|
+| upcoming_player_game_context | Phase 3 | Nov 16-30 | /tmp/upgc_backfill.log | 4bfa60 |
+| upcoming_team_game_context | Phase 3 | Nov 16-30 | /tmp/utgc_backfill.log | be6b44 |
+| team_defense_zone_analysis | Phase 4 | Nov 16-30 | /tmp/tdza_backfill.log | 84da9c |
+| player_shot_zone_analysis | Phase 4 | Nov 16-30 | /tmp/psza_backfill.log | d875e6 |
 
-(Data persists only for dates within 90-day partition window)
+### Why player_composite_factors failed earlier
 
----
+The backfill for `player_composite_factors` Nov 16-21 failed because `upcoming_player_game_context` (Phase 3) was missing data for those dates. We discovered:
 
-## UNCOMMITTED CHANGES
-
-Remember to commit these files:
-- `data_processors/precompute/precompute_base.py`
-- `data_processors/precompute/player_daily_cache/player_daily_cache_processor.py`
-- `data_processors/precompute/player_composite_factors/player_composite_factors_processor.py`
-- `data_processors/precompute/player_shot_zone_analysis/player_shot_zone_analysis_processor.py`
-- `data_processors/analytics/upcoming_team_game_context/upcoming_team_game_context_processor.py`
-- `docs/09-handoff/2025-12-03-PHASE4-BACKFILL-HANDOFF.md`
+- `upcoming_player_game_context` only had data through Nov 16, 2021 (not Nov 17+)
+- All 4 upstream tables must have data for a date before `player_composite_factors` can process it
 
 ---
 
-## PHASE 4 DEPENDENCY CHAIN
+## COMPLETE DEPENDENCY CHAIN
 
 ```
-Phase 4 Execution Order:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-1. team_defense_zone_analysis    ← ✅ COMPLETE (420 rows)
-2. player_shot_zone_analysis     ← ✅ COMPLETE (1,987 rows)
-3. player_daily_cache            ← ✅ COMPLETE (1,128 rows)
-4. player_composite_factors      ← ⚠️ CODE FIXED (partition expiration limits historical)
-5. ml_feature_store_v2           ← ⏸️ PENDING
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Phase 3 Analytics (run in parallel):
+├── upcoming_player_game_context ← REQUIRED for player_composite_factors
+└── upcoming_team_game_context   ← REQUIRED for player_composite_factors
+
+Phase 4 Precompute (can run in parallel with Phase 3):
+├── team_defense_zone_analysis   ← REQUIRED for player_composite_factors
+└── player_shot_zone_analysis    ← REQUIRED for player_composite_factors
+
+Phase 4 Precompute (depends on ALL 4 above):
+└── player_composite_factors
+
+Phase 4 Precompute (depends on player_composite_factors):
+└── ml_feature_store_v2
 ```
 
 ---
 
-## NEXT STEPS
+## DATA STATUS (as of end of Session 10)
 
-1. **Decide on partition expiration strategy** for historical backfill
-2. **Commit code fixes** - The processor is now working correctly
-3. **Run backfill with valid date range** (within 90 days or after removing expiration)
-4. **Check ml_feature_store_v2** - Table doesn't exist yet, may need to create
-5. **Run ml_feature_store backfill** if applicable
+### Verified working (Nov 10-15, 2021)
+
+| Table | Rows | Status |
+|-------|------|--------|
+| player_composite_factors | 1,712 | ✅ Complete |
+| team_defense_zone_analysis | 420 | ✅ Complete |
+| player_shot_zone_analysis | 1,987 | ✅ Complete |
+| player_daily_cache | 1,128 | ✅ Complete |
+
+### Pending (after backfills complete)
+
+| Table | Status |
+|-------|--------|
+| player_composite_factors | ⏸️ Run after Phase 3 backfills complete |
+| ml_feature_store_v2 | ⏸️ Run after player_composite_factors |
+
+---
+
+## SESSION 9 & 10 COMMITS (already pushed)
+
+```
+7ea43e9 perf: Add batch circuit breaker check to avoid N BigQuery queries
+c73a7de fix: Remove partition expiration and fix Phase 4 processor bugs
+```
+
+---
+
+## KEY FIXES APPLIED
+
+### 1. Removed partition expiration from 6 tables
+All tables now keep data indefinitely for 4-season historical analysis.
+
+### 2. Fixed N+1 BigQuery query bug
+`player_composite_factors` processor was making one BQ query per player for circuit breaker checks. Fixed with batch query - processing time reduced from 5+ minutes to 37 seconds per day.
+
+### 3. Added progress logging
+Now shows `Processing player 50/389 (12.9%)` during processing.
+
+---
+
+## KNOWN ISSUES (non-blocking)
+
+1. **Schema mismatch warning** - `precompute_processor_runs` table has schema drift
+2. **data_hash query error** - Some upstream tables don't have `data_hash` column yet
+3. **AWS SES token expired** - Email alerts failing, Slack alerts working
+
+---
+
+## GOAL: First 14 Days of 2021 Season
+
+The initial backfill target is the first 14 days of the 2021-22 season. Once that's verified working, extend to full 4-season backfill.
+
+Season start: Oct 19, 2021
+First 14 days: Oct 19 - Nov 1, 2021
+
+Current data starts Nov 5+ due to bootstrap period handling.
