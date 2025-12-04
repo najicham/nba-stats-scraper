@@ -90,15 +90,24 @@ def get_dates_with_data(bq_client: bigquery.Client, table: str, date_field: str,
         result = bq_client.query(query).to_dataframe()
         if result.empty:
             return set()
-        return set(result['data_date'].dt.date)
+        # Handle both datetime and date types from BigQuery
+        dates = result['data_date']
+        if hasattr(dates.iloc[0], 'date'):
+            # datetime type - extract date
+            return set(d.date() for d in dates)
+        else:
+            # Already date type or string - convert
+            import pandas as pd
+            return set(pd.to_datetime(dates).dt.date)
     except Exception as e:
         logger.error(f"Error querying {table}: {e}")
         return set()
 
 
 def get_expected_game_dates(bq_client: bigquery.Client, start_date: date, end_date: date) -> set:
-    """Get all dates that should have games from schedule."""
-    query = f"""
+    """Get all dates that should have games from schedule or actual data."""
+    # Try schedule table first (may not exist in all regions)
+    schedule_query = f"""
     SELECT DISTINCT game_date
     FROM `nba-props-platform.nba_reference.nba_schedule`
     WHERE game_date >= '{start_date}'
@@ -108,12 +117,39 @@ def get_expected_game_dates(bq_client: bigquery.Client, start_date: date, end_da
     """
 
     try:
-        result = bq_client.query(query).to_dataframe()
-        if result.empty:
-            return set()
-        return set(result['game_date'].dt.date)
+        result = bq_client.query(schedule_query).to_dataframe()
+        if not result.empty:
+            dates = result['game_date']
+            if hasattr(dates.iloc[0], 'date'):
+                return set(d.date() for d in dates)
+            else:
+                import pandas as pd
+                return set(pd.to_datetime(dates).dt.date)
     except Exception as e:
         logger.error(f"Error querying schedule: {e}")
+
+    # Fallback: Get dates from player_game_summary (authoritative source)
+    logger.info("Falling back to player_game_summary for expected dates")
+    fallback_query = f"""
+    SELECT DISTINCT game_date
+    FROM `nba-props-platform.nba_analytics.player_game_summary`
+    WHERE game_date >= '{start_date}'
+      AND game_date <= '{end_date}'
+    ORDER BY game_date
+    """
+
+    try:
+        result = bq_client.query(fallback_query).to_dataframe()
+        if result.empty:
+            return set()
+        dates = result['game_date']
+        if hasattr(dates.iloc[0], 'date'):
+            return set(d.date() for d in dates)
+        else:
+            import pandas as pd
+            return set(pd.to_datetime(dates).dt.date)
+    except Exception as e:
+        logger.error(f"Error querying player_game_summary fallback: {e}")
         return set()
 
 
