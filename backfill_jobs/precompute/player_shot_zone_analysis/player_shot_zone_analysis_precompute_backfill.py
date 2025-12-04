@@ -43,7 +43,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirna
 
 from data_processors.precompute.player_shot_zone_analysis.player_shot_zone_analysis_processor import PlayerShotZoneAnalysisProcessor
 from shared.config.nba_season_dates import is_early_season, get_season_year_from_date
-from shared.backfill import BackfillCheckpoint
+from shared.backfill import BackfillCheckpoint, get_game_dates_for_range
 from google.cloud import bigquery
 
 # Import pre-flight check
@@ -151,29 +151,42 @@ class PlayerShotZoneAnalysisBackfill:
         if not self.validate_date_range(start_date, end_date):
             return
 
+        # Get schedule-aware game dates (skips days with no games)
+        logger.info("Fetching NBA schedule to find game dates...")
+        game_dates = get_game_dates_for_range(start_date, end_date)
+
+        if not game_dates:
+            logger.warning("No game dates found in the specified range!")
+            return
+
         # Handle checkpoint resume
-        actual_start = start_date
+        actual_start_idx = 0
         if checkpoint and not dry_run:
             resume_date = checkpoint.get_resume_date()
             if resume_date and resume_date > start_date:
-                actual_start = resume_date
-                logger.info(f"RESUMING from checkpoint: {actual_start}")
+                for i, gd in enumerate(game_dates):
+                    if gd >= resume_date:
+                        actual_start_idx = i
+                        break
+                logger.info(f"RESUMING from checkpoint: {game_dates[actual_start_idx]}")
                 checkpoint.print_status()
 
-        total_days = (end_date - start_date).days + 1
-        remaining_days = (end_date - actual_start).days + 1
-        current_date = actual_start
+        dates_to_process = game_dates[actual_start_idx:]
+        total_game_dates = len(game_dates)
+        remaining_dates = len(dates_to_process)
         processed_days = 0
         successful_days = 0
         skipped_days = 0
         failed_days = []
         total_players = 0
 
-        logger.info(f"Processing {remaining_days} days (of {total_days} total)")
+        total_calendar_days = (end_date - start_date).days + 1
+        logger.info(f"Processing {remaining_dates} game dates (of {total_game_dates} total game dates)")
+        logger.info(f"  (Skipping {total_calendar_days - total_game_dates} off-days in the calendar range)")
 
-        while current_date <= end_date:
-            day_number = processed_days + 1
-            logger.info(f"Processing day {day_number}/{remaining_days}: {current_date}")
+        for current_date in dates_to_process:
+            day_number = actual_start_idx + processed_days + 1
+            logger.info(f"Processing game date {day_number}/{total_game_dates}: {current_date}")
 
             try:
                 result = self.run_precompute_processing(current_date, dry_run)
@@ -207,7 +220,7 @@ class PlayerShotZoneAnalysisBackfill:
 
                 if processed_days % 10 == 0 and not dry_run:
                     success_rate = successful_days / max(processed_days - skipped_days, 1) * 100
-                    logger.info(f"Progress: {processed_days}/{remaining_days} days ({success_rate:.1f}% success)")
+                    logger.info(f"Progress: {processed_days}/{remaining_dates} game dates ({success_rate:.1f}% success)")
 
             except Exception as e:
                 logger.error(f"Unexpected exception: {e}", exc_info=True)
@@ -216,12 +229,11 @@ class PlayerShotZoneAnalysisBackfill:
                     checkpoint.mark_date_failed(current_date, error=str(e))
                 processed_days += 1
 
-            current_date += timedelta(days=1)
-
         # Summary
         logger.info("=" * 80)
         logger.info(f"PHASE 4 BACKFILL SUMMARY - {self.processor_name}:")
         logger.info(f"  Date range: {start_date} to {end_date}")
+        logger.info(f"  Game dates processed: {processed_days} (skipped {total_calendar_days - total_game_dates} off-days)")
         logger.info(f"  Successful: {successful_days}, Skipped: {skipped_days}, Failed: {len(failed_days)}")
         if not dry_run and successful_days > 0:
             logger.info(f"  Total players processed: {total_players}")
