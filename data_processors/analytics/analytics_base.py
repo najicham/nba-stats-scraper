@@ -203,6 +203,7 @@ class AnalyticsProcessorBase(RunHistoryMixin):
                         'details': {}
                     }
                     dep_check_results = dep_check
+                    dep_check_seconds = 0  # Used in logging below
                     self.stats["dependency_check_time"] = 0
                     self.set_dependency_results(
                         dependencies=[],
