@@ -259,6 +259,103 @@ Opportunity: Reuse BQ client, schedule service, team mapper
 
 ---
 
+## ✅ Phase 4 Enhancement: "Process Everyone, Mark Quality" (December 4, 2025)
+
+### Problem Discovered
+
+During backfill of `player_composite_factors` for Nov 16-30, 2021:
+
+| Before Fix | Result |
+|------------|--------|
+| Nov 18: 212 players | Only 11 processed (5%)! |
+| Processing time | 663 seconds (11 minutes) |
+| Root cause | 201 players SKIPPED due to `team_context=False` |
+
+**Why `team_context=False`?**
+- Early in season (Nov 18 = day 30), teams hadn't played enough games
+- `upcoming_team_game_context.is_production_ready=TRUE` requires L7D AND L14D = 100%
+- Most teams only had 33-80% completeness early season
+- Result: Cascade pattern blocked most players
+
+**Why so slow?**
+- Each failed player called `_increment_reprocess_count()` → 2 BigQuery queries
+- 201 failed players × 2 queries = 400+ queries at ~1.4s each = 559 seconds!
+
+### Solution: "Process Everyone, Mark Quality"
+
+Changed from **skip** to **process with quality flags** (matching Phase 3 pattern):
+
+**Code Changes in `player_composite_factors_processor.py`:**
+
+| Lines | Before | After |
+|-------|--------|-------|
+| 882-901 | `continue` (skip player) | Log info, continue processing |
+| 912-934 | `continue` (skip player) | Log info, continue processing |
+| 1064-1069 | N/A | Added 5 upstream readiness fields |
+| 1071 | N/A | Added `own_data_incomplete` to quality issues |
+
+**New Schema Fields Added:**
+```sql
+upstream_player_shot_ready BOOLEAN,    -- TRUE if player_shot_zone_analysis ready
+upstream_team_defense_ready BOOLEAN,   -- TRUE if team_defense_zone_analysis ready
+upstream_player_context_ready BOOLEAN, -- TRUE if upcoming_player_game_context ready
+upstream_team_context_ready BOOLEAN,   -- TRUE if upcoming_team_game_context ready
+all_upstreams_ready BOOLEAN,           -- TRUE if ALL upstream sources ready
+```
+
+### Results After Fix
+
+| Metric | Before | After | Improvement |
+|--------|--------|-------|-------------|
+| Players processed | 11/212 (5%) | 212/212 (100%) | 20x coverage |
+| Processing time | 663 seconds | 37.8 seconds | 17x faster |
+| Circuit breaker queries | 400+ | 0 | Eliminated |
+
+### Quality Tracking for Phase 5
+
+Phase 5 now has everything needed to make informed decisions:
+
+| Field | Type | Use Case |
+|-------|------|----------|
+| `is_production_ready` | Boolean | Filter: only high-confidence predictions |
+| `all_upstreams_ready` | Boolean | Quick upstream check |
+| `data_completeness_pct` | Float | Weight prediction confidence |
+| `upstream_*_ready` (5) | Booleans | Diagnose which source incomplete |
+| `data_quality_issues` | Array | Detailed issue list |
+
+**Example Phase 5 Usage:**
+```sql
+-- High confidence predictions only
+SELECT * FROM player_composite_factors
+WHERE is_production_ready = TRUE;
+
+-- All players with confidence weighting
+SELECT
+  player_lookup,
+  predicted_points,
+  data_completeness_pct / 100.0 AS confidence_weight
+FROM player_composite_factors;
+```
+
+### Why This Is Better Than Skipping
+
+| Approach | Skip Players | Process Everyone |
+|----------|-------------|------------------|
+| Early season player | No record at all | Record with quality flags |
+| Phase 5 can use? | No - missing input | Yes - can filter or weight |
+| Backfill coverage | 25% of players | 100% of players |
+| Decision maker | Phase 4 | Phase 5 (better separation) |
+
+### Files Changed
+
+- `data_processors/precompute/player_composite_factors/player_composite_factors_processor.py`
+  - Lines 881-921: Removed skip logic, added quality logging
+  - Lines 1064-1073: Added upstream readiness fields to record
+- `schemas/bigquery/precompute/player_composite_factors.sql`
+  - Lines 222-227: Added 5 upstream readiness columns
+
+---
+
 ## Related Files
 
 - Processor: `data_processors/analytics/upcoming_player_game_context/upcoming_player_game_context_processor.py`

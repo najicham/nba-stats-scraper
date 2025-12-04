@@ -878,29 +878,19 @@ class PlayerCompositeFactorsProcessor(
                     })
                     continue
 
-                # Check production readiness (skip if incomplete, unless in bootstrap mode)
-                if not completeness['is_production_ready'] and not is_bootstrap:
-                    logger.warning(
+                # Check production readiness - LOG but DO NOT SKIP
+                # Process everyone, mark quality issues (like Phase 3 does)
+                is_backfill = self.opts.get('backfill_mode', False) or self.is_backfill_mode
+
+                if not completeness['is_production_ready']:
+                    logger.info(
                         f"{player_lookup}: Completeness {completeness['completeness_pct']:.1f}% "
-                        f"({completeness['actual_count']}/{completeness['expected_count']} games) - skipping"
+                        f"({completeness['actual_count']}/{completeness['expected_count']} games) - processing with reduced quality"
                     )
+                    # NOTE: Quality issues are tracked in _calculate_player_composite()
+                    # DO NOT skip - continue to process
 
-                    # Track reprocessing attempt
-                    self._increment_reprocess_count(
-                        player_lookup, analysis_date,
-                        completeness['completeness_pct'],
-                        'incomplete_own_data'
-                    )
-
-                    self.failed_entities.append({
-                        'entity_id': player_lookup,
-                        'entity_type': 'player',
-                        'reason': f"Incomplete own data: {completeness['completeness_pct']:.1f}%",
-                        'category': 'INCOMPLETE_DATA'
-                    })
-                    continue
-
-                # Check upstream completeness (CASCADE PATTERN)
+                # Check upstream completeness (CASCADE PATTERN) - LOG but DO NOT SKIP
                 upstream_status = upstream_completeness.get(player_lookup, {
                     'player_shot_zone_ready': False,
                     'team_defense_zone_ready': False,
@@ -909,29 +899,16 @@ class PlayerCompositeFactorsProcessor(
                     'all_upstreams_ready': False
                 })
 
-                if not upstream_status['all_upstreams_ready'] and not is_bootstrap:
-                    logger.warning(
-                        f"{player_lookup}: Upstream not ready "
+                if not upstream_status['all_upstreams_ready']:
+                    logger.info(
+                        f"{player_lookup}: Upstream not fully ready "
                         f"(shot_zone={upstream_status['player_shot_zone_ready']}, "
                         f"team_defense={upstream_status['team_defense_zone_ready']}, "
                         f"player_context={upstream_status['upcoming_player_context_ready']}, "
-                        f"team_context={upstream_status['upcoming_team_context_ready']}) - skipping"
+                        f"team_context={upstream_status['upcoming_team_context_ready']}) - processing with reduced quality"
                     )
-
-                    # Track reprocessing attempt
-                    self._increment_reprocess_count(
-                        player_lookup, analysis_date,
-                        completeness['completeness_pct'],
-                        'incomplete_upstream_dependencies'
-                    )
-
-                    self.failed_entities.append({
-                        'entity_id': player_lookup,
-                        'entity_type': 'player',
-                        'reason': f"Upstream dependencies not ready",
-                        'category': 'UPSTREAM_INCOMPLETE'
-                    })
-                    continue
+                    # NOTE: Quality issues are tracked in _calculate_player_composite()
+                    # DO NOT skip - continue to process
                 # ============================================================
 
                 # Calculate composite factors (pass completeness + upstream metadata)
@@ -1083,7 +1060,16 @@ class PlayerCompositeFactorsProcessor(
                 completeness['is_production_ready'] and
                 upstream_status['all_upstreams_ready']
             ),
+
+            # Upstream Readiness Flags (5 fields for Phase 5 visibility)
+            'upstream_player_shot_ready': upstream_status['player_shot_zone_ready'],
+            'upstream_team_defense_ready': upstream_status['team_defense_zone_ready'],
+            'upstream_player_context_ready': upstream_status['upcoming_player_context_ready'],
+            'upstream_team_context_ready': upstream_status['upcoming_team_context_ready'],
+            'all_upstreams_ready': upstream_status['all_upstreams_ready'],
+
             'data_quality_issues': [issue for issue in [
+                "own_data_incomplete" if not completeness['is_production_ready'] else None,
                 "upstream_player_shot_zone_incomplete" if not upstream_status['player_shot_zone_ready'] else None,
                 "upstream_team_defense_zone_incomplete" if not upstream_status['team_defense_zone_ready'] else None,
                 "upstream_player_context_incomplete" if not upstream_status['upcoming_player_context_ready'] else None,

@@ -219,6 +219,13 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_precompute.player_composite_f
   is_production_ready BOOLEAN,                      -- TRUE if completeness >= 90% AND upstream complete
   data_quality_issues ARRAY<STRING>,                -- Specific quality issues found
 
+  -- Upstream Readiness Flags (5 fields for Phase 5 visibility)
+  upstream_player_shot_ready BOOLEAN,               -- TRUE if player_shot_zone_analysis is_production_ready
+  upstream_team_defense_ready BOOLEAN,              -- TRUE if team_defense_zone_analysis is_production_ready
+  upstream_player_context_ready BOOLEAN,            -- TRUE if upcoming_player_game_context is_production_ready
+  upstream_team_context_ready BOOLEAN,              -- TRUE if upcoming_team_game_context is_production_ready
+  all_upstreams_ready BOOLEAN,                      -- TRUE if ALL upstream sources are production ready
+
   -- Circuit Breaker (4 fields)
   last_reprocess_attempt_at TIMESTAMP,              -- When reprocessing was last attempted
   reprocess_attempt_count INT64,                    -- Number of reprocess attempts
