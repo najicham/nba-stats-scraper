@@ -32,6 +32,7 @@ Date: October 30, 2025
 
 import logging
 import os
+import time
 from datetime import datetime, date, timedelta, timezone
 from typing import Dict, List, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -747,10 +748,295 @@ class PlayerDailyCacheProcessor(
         )
         # ============================================================
 
+        # ============================================================
+        # Feature flag for parallelization
+        # ============================================================
+        ENABLE_PARALLELIZATION = os.environ.get('ENABLE_PLAYER_PARALLELIZATION', 'true').lower() == 'true'
+
+        if ENABLE_PARALLELIZATION:
+            successful, failed = self._process_players_parallel(
+                all_players, completeness_l5, completeness_l10, completeness_l7d, completeness_l14d,
+                is_bootstrap, is_season_boundary, analysis_date
+            )
+        else:
+            successful, failed = self._process_players_serial(
+                all_players, completeness_l5, completeness_l10, completeness_l7d, completeness_l14d,
+                is_bootstrap, is_season_boundary, analysis_date
+            )
+
+        self.transformed_data = successful
+        self.failed_entities = failed
+
+        logger.info(f"Cache calculation complete: {len(successful)} successful, {len(failed)} failed")
+
+    def _process_players_parallel(
+        self,
+        all_players: List[str],
+        completeness_l5: dict,
+        completeness_l10: dict,
+        completeness_l7d: dict,
+        completeness_l14d: dict,
+        is_bootstrap: bool,
+        is_season_boundary: bool,
+        analysis_date: date
+    ) -> tuple:
+        """Process all players using ThreadPoolExecutor for parallelization."""
+        # Determine worker count
+        max_workers = min(8, os.cpu_count() or 1)
+        logger.info(f"Processing {len(all_players)} players with {max_workers} workers (parallel mode)")
+
+        # Performance timing
+        loop_start = time.time()
+        processed_count = 0
+
+        # Thread-safe result collection
+        successful = []
+        failed = []
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all player tasks
+            futures = {
+                executor.submit(
+                    self._process_single_player,
+                    player_lookup,
+                    completeness_l5,
+                    completeness_l10,
+                    completeness_l7d,
+                    completeness_l14d,
+                    is_bootstrap,
+                    is_season_boundary,
+                    analysis_date
+                ): player_lookup
+                for player_lookup in all_players
+            }
+
+            # Collect results as they complete
+            for future in as_completed(futures):
+                player_lookup = futures[future]
+                processed_count += 1
+
+                try:
+                    success, data = future.result()
+                    if success:
+                        successful.append(data)
+                    else:
+                        failed.append(data)
+
+                    # Progress logging every 50 players
+                    if processed_count % 50 == 0:
+                        elapsed = time.time() - loop_start
+                        rate = processed_count / elapsed
+                        remaining = len(all_players) - processed_count
+                        eta = remaining / rate if rate > 0 else 0
+                        logger.info(
+                            f"Player cache progress: {processed_count}/{len(all_players)} "
+                            f"| Rate: {rate:.1f} players/sec | ETA: {eta/60:.1f}min"
+                        )
+                except Exception as e:
+                    logger.error(f"Error processing {player_lookup}: {e}")
+                    failed.append({
+                        'entity_id': player_lookup,
+                        'reason': str(e),
+                        'category': 'PROCESSING_ERROR',
+                        'can_retry': False
+                    })
+
+        # Final timing summary
+        total_time = time.time() - loop_start
+        logger.info(
+            f"Completed {len(successful)} players in {total_time:.1f}s "
+            f"(avg {total_time/len(successful) if successful else 0:.2f}s/player) "
+            f"| {len(failed)} failed"
+        )
+
+        return successful, failed
+
+    def _process_single_player(
+        self,
+        player_lookup: str,
+        completeness_l5: dict,
+        completeness_l10: dict,
+        completeness_l7d: dict,
+        completeness_l14d: dict,
+        is_bootstrap: bool,
+        is_season_boundary: bool,
+        analysis_date: date
+    ) -> tuple:
+        """Process one player (thread-safe). Returns (success: bool, data: dict)."""
+        try:
+            # ============================================================
+            # Get completeness for all windows
+            # ============================================================
+            comp_l5 = completeness_l5.get(player_lookup, {
+                'expected_count': 0, 'actual_count': 0, 'completeness_pct': 0.0,
+                'missing_count': 0, 'is_complete': False, 'is_production_ready': False
+            })
+            comp_l10 = completeness_l10.get(player_lookup, {
+                'expected_count': 0, 'actual_count': 0, 'completeness_pct': 0.0,
+                'missing_count': 0, 'is_complete': False, 'is_production_ready': False
+            })
+            comp_l7d = completeness_l7d.get(player_lookup, {
+                'expected_count': 0, 'actual_count': 0, 'completeness_pct': 0.0,
+                'missing_count': 0, 'is_complete': False, 'is_production_ready': False
+            })
+            comp_l14d = completeness_l14d.get(player_lookup, {
+                'expected_count': 0, 'actual_count': 0, 'completeness_pct': 0.0,
+                'missing_count': 0, 'is_complete': False, 'is_production_ready': False
+            })
+
+            # ALL windows must be production-ready for overall production readiness
+            all_windows_complete = (
+                comp_l5['is_production_ready'] and
+                comp_l10['is_production_ready'] and
+                comp_l7d['is_production_ready'] and
+                comp_l14d['is_production_ready']
+            )
+
+            # Use L10 as primary completeness metric
+            completeness = comp_l10
+
+            # Check circuit breaker
+            circuit_breaker_status = self._check_circuit_breaker(player_lookup, analysis_date)
+
+            if circuit_breaker_status['active']:
+                logger.warning(
+                    f"{player_lookup}: Circuit breaker active until "
+                    f"{circuit_breaker_status['until']} - skipping"
+                )
+                return (False, {
+                    'entity_id': player_lookup,
+                    'reason': f"Circuit breaker active until {circuit_breaker_status['until']}",
+                    'category': 'CIRCUIT_BREAKER_ACTIVE',
+                    'can_retry': False
+                })
+
+            # Check production readiness (skip if any window incomplete, unless in bootstrap mode or season boundary)
+            if not all_windows_complete and not is_bootstrap and not is_season_boundary:
+                logger.warning(
+                    f"{player_lookup}: Not all windows complete - "
+                    f"L5={comp_l5['completeness_pct']:.1f}%, L10={comp_l10['completeness_pct']:.1f}%, "
+                    f"L7d={comp_l7d['completeness_pct']:.1f}%, L14d={comp_l14d['completeness_pct']:.1f}% - skipping"
+                )
+
+                # Track reprocessing attempt
+                self._increment_reprocess_count(
+                    player_lookup, analysis_date,
+                    completeness['completeness_pct'],
+                    'incomplete_upstream_data_multi_window'
+                )
+
+                return (False, {
+                    'entity_id': player_lookup,
+                    'reason': f"Incomplete data across windows",
+                    'category': 'INCOMPLETE_DATA',
+                    'can_retry': True
+                })
+            # ============================================================
+
+            # Get player's context data
+            context_row = self.upcoming_context_data[
+                self.upcoming_context_data['player_lookup'] == player_lookup
+            ].iloc[0]
+
+            # Get player's game history
+            player_games = self.player_game_data[
+                self.player_game_data['player_lookup'] == player_lookup
+            ].copy()
+
+            # Check minimum games requirement
+            games_count = len(player_games)
+            if games_count < self.absolute_min_games:
+                return (False, {
+                    'entity_id': player_lookup,
+                    'reason': f"Only {games_count} games played, need {self.absolute_min_games} minimum",
+                    'category': 'INSUFFICIENT_DATA',
+                    'can_retry': True
+                })
+
+            # Flag if below preferred minimum
+            is_early_season = games_count < self.min_games_required
+
+            # Get team context
+            current_team = context_row['team_abbr']
+            team_games = self.team_offense_data[
+                self.team_offense_data['team_abbr'] == current_team
+            ].copy()
+
+            # Get shot zone data
+            shot_zone_row = self.shot_zone_data[
+                self.shot_zone_data['player_lookup'] == player_lookup
+            ]
+
+            # Check if shot zones available
+            if shot_zone_row.empty:
+                return (False, {
+                    'entity_id': player_lookup,
+                    'reason': "No shot zone analysis available",
+                    'category': 'MISSING_DEPENDENCY',
+                    'can_retry': True
+                })
+
+            shot_zone_row = shot_zone_row.iloc[0]
+
+            # Calculate all metrics
+            cache_record = self._calculate_player_cache(
+                player_lookup=player_lookup,
+                context_row=context_row,
+                player_games=player_games,
+                team_games=team_games,
+                shot_zone_row=shot_zone_row,
+                analysis_date=analysis_date,
+                is_early_season=is_early_season,
+                completeness_data={
+                    'comp_l5': comp_l5,
+                    'comp_l10': comp_l10,
+                    'comp_l7d': comp_l7d,
+                    'comp_l14d': comp_l14d,
+                    'all_windows_complete': all_windows_complete,
+                    'is_bootstrap': is_bootstrap,
+                    'is_season_boundary': is_season_boundary,
+                    'circuit_breaker_status': circuit_breaker_status,
+                }
+            )
+
+            return (True, cache_record)
+
+        except Exception as e:
+            logger.error(f"Failed to process {player_lookup}: {e}", exc_info=True)
+            return (False, {
+                'entity_id': player_lookup,
+                'reason': str(e),
+                'category': 'PROCESSING_ERROR',
+                'can_retry': False
+            })
+
+    def _process_players_serial(
+        self,
+        all_players: List[str],
+        completeness_l5: dict,
+        completeness_l10: dict,
+        completeness_l7d: dict,
+        completeness_l14d: dict,
+        is_bootstrap: bool,
+        is_season_boundary: bool,
+        analysis_date: date
+    ) -> tuple:
+        """Original serial processing (kept for fallback)."""
+        logger.info(f"Processing {len(all_players)} players (serial mode)")
+
+        successful = []
+        failed = []
+        processed_count = 0
+
         for player_lookup in all_players:
             try:
+                # Progress logging every 50 players
+                processed_count += 1
+                if processed_count % 50 == 0 or processed_count == len(all_players):
+                    logger.info(f"Processing player {processed_count}/{len(all_players)} ({100*processed_count/len(all_players):.1f}%)")
+
                 # ============================================================
-                # NEW (Week 3): Get completeness for all windows
+                # Get completeness for all windows
                 # ============================================================
                 comp_l5 = completeness_l5.get(player_lookup, {
                     'expected_count': 0, 'actual_count': 0, 'completeness_pct': 0.0,
@@ -887,9 +1173,9 @@ class PlayerDailyCacheProcessor(
                         'circuit_breaker_status': circuit_breaker_status,
                     }
                 )
-                
+
                 successful.append(cache_record)
-                
+
             except Exception as e:
                 logger.error(f"Failed to process {player_lookup}: {e}", exc_info=True)
                 failed.append({
@@ -898,11 +1184,8 @@ class PlayerDailyCacheProcessor(
                     'category': 'PROCESSING_ERROR',
                     'can_retry': False
                 })
-        
-        self.transformed_data = successful
-        self.failed_entities = failed
-        
-        logger.info(f"Cache calculation complete: {len(successful)} successful, {len(failed)} failed")
+
+        return successful, failed
     
     def _calculate_player_cache(
         self,
