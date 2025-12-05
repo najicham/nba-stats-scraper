@@ -1464,14 +1464,194 @@ class UpcomingPlayerGameContextProcessor(
             is_season_boundary = False
         # ============================================================
 
+        # Feature flag for player-level parallelization
+        ENABLE_PARALLELIZATION = os.environ.get('ENABLE_PLAYER_PARALLELIZATION', 'true').lower() == 'true'
+
+        if ENABLE_PARALLELIZATION:
+            self._process_players_parallel(
+                comp_l5, comp_l10, comp_l7d, comp_l14d, comp_l30d,
+                is_bootstrap, is_season_boundary
+            )
+        else:
+            self._process_players_serial(
+                comp_l5, comp_l10, comp_l7d, comp_l14d, comp_l30d,
+                is_bootstrap, is_season_boundary
+            )
+
+        logger.info(f"Successfully calculated context for {len(self.transformed_data)} players")
+
+    def _process_players_parallel(self, comp_l5: Dict, comp_l10: Dict, comp_l7d: Dict,
+                                   comp_l14d: Dict, comp_l30d: Dict,
+                                   is_bootstrap: bool, is_season_boundary: bool) -> None:
+        """Process all players using ThreadPoolExecutor for parallelization."""
+        import time
+
+        # Determine worker count
+        max_workers = min(10, os.cpu_count() or 1)
+        logger.info(f"Processing {len(self.players_to_process)} players with {max_workers} workers (parallel mode)")
+
+        # Performance timing
+        loop_start = time.time()
+        processed_count = 0
+
+        # Thread-safe result collection
+        results = []
+        failures = []
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all player tasks
+            futures = {
+                executor.submit(
+                    self._process_single_player,
+                    player_info, comp_l5, comp_l10, comp_l7d, comp_l14d, comp_l30d,
+                    is_bootstrap, is_season_boundary
+                ): player_info
+                for player_info in self.players_to_process
+            }
+
+            # Collect results as they complete
+            for future in as_completed(futures):
+                player_info = futures[future]
+                processed_count += 1
+
+                try:
+                    success, data = future.result()
+                    if success:
+                        results.append(data)
+                    else:
+                        failures.append(data)
+
+                    # Progress logging every 50 players
+                    if processed_count % 50 == 0:
+                        elapsed = time.time() - loop_start
+                        rate = processed_count / elapsed
+                        remaining = len(self.players_to_process) - processed_count
+                        eta = remaining / rate
+                        logger.info(
+                            f"Player processing progress: {processed_count}/{len(self.players_to_process)} "
+                            f"| Rate: {rate:.1f} players/sec | ETA: {eta/60:.1f}min"
+                        )
+                except Exception as e:
+                    logger.error(f"Error processing {player_info['player_lookup']}: {e}")
+                    failures.append({
+                        'player_lookup': player_info['player_lookup'],
+                        'game_id': player_info['game_id'],
+                        'reason': str(e),
+                        'category': 'PROCESSING_ERROR'
+                    })
+
+        # Store results (main thread only - thread-safe)
+        self.transformed_data = results
+        self.failed_entities = failures
+
+        # Final timing summary
+        total_time = time.time() - loop_start
+        logger.info(
+            f"Completed {len(results)} players in {total_time:.1f}s "
+            f"(avg {total_time/len(results) if results else 0:.2f}s/player) "
+            f"| {len(failures)} failed"
+        )
+
+    def _process_single_player(self, player_info: Dict, comp_l5: Dict, comp_l10: Dict,
+                               comp_l7d: Dict, comp_l14d: Dict, comp_l30d: Dict,
+                               is_bootstrap: bool, is_season_boundary: bool) -> Tuple[bool, Dict]:
+        """Process one player (thread-safe). Returns (success: bool, data: dict)."""
+        player_lookup = player_info['player_lookup']
+        game_id = player_info['game_id']
+
+        try:
+            # Get default completeness
+            default_comp = {
+                'expected_count': 0, 'actual_count': 0, 'completeness_pct': 0.0,
+                'missing_count': 0, 'is_complete': False, 'is_production_ready': False
+            }
+
+            completeness_l5 = comp_l5.get(player_lookup, default_comp)
+            completeness_l10 = comp_l10.get(player_lookup, default_comp)
+            completeness_l7d = comp_l7d.get(player_lookup, default_comp)
+            completeness_l14d = comp_l14d.get(player_lookup, default_comp)
+            completeness_l30d = comp_l30d.get(player_lookup, default_comp)
+
+            # Check circuit breaker
+            circuit_breaker_status = self._check_circuit_breaker(player_lookup, self.target_date)
+
+            if circuit_breaker_status['active']:
+                return (False, {
+                    'player_lookup': player_lookup,
+                    'game_id': game_id,
+                    'reason': f"Circuit breaker active until {circuit_breaker_status['until']}",
+                    'category': 'CIRCUIT_BREAKER_ACTIVE'
+                })
+
+            # Check if ALL windows are production-ready (skip if not, unless in bootstrap mode)
+            all_windows_ready = (
+                completeness_l5['is_production_ready'] and
+                completeness_l10['is_production_ready'] and
+                completeness_l7d['is_production_ready'] and
+                completeness_l14d['is_production_ready'] and
+                completeness_l30d['is_production_ready']
+            )
+
+            # Allow processing during bootstrap mode OR season boundary (early season dates)
+            if not all_windows_ready and not is_bootstrap and not is_season_boundary:
+                # Calculate average completeness across all windows
+                avg_completeness = (
+                    completeness_l5['completeness_pct'] +
+                    completeness_l10['completeness_pct'] +
+                    completeness_l7d['completeness_pct'] +
+                    completeness_l14d['completeness_pct'] +
+                    completeness_l30d['completeness_pct']
+                ) / 5.0
+
+                # Track reprocessing attempt
+                self._increment_reprocess_count(
+                    player_lookup, self.target_date,
+                    avg_completeness, 'incomplete_multi_window_data'
+                )
+
+                return (False, {
+                    'player_lookup': player_lookup,
+                    'game_id': game_id,
+                    'reason': f"Multi-window completeness {avg_completeness:.1f}%",
+                    'category': 'INCOMPLETE_DATA_SKIPPED'
+                })
+
+            # Calculate context (existing function - thread-safe)
+            context = self._calculate_player_context(
+                player_info,
+                completeness_l5, completeness_l10, completeness_l7d, completeness_l14d, completeness_l30d,
+                circuit_breaker_status, is_bootstrap, is_season_boundary
+            )
+
+            if context:
+                return (True, context)
+            else:
+                return (False, {
+                    'player_lookup': player_lookup,
+                    'game_id': game_id,
+                    'reason': 'Failed to calculate context',
+                    'category': 'CALCULATION_ERROR'
+                })
+
+        except Exception as e:
+            return (False, {
+                'player_lookup': player_lookup,
+                'game_id': game_id,
+                'reason': str(e),
+                'category': 'PROCESSING_ERROR'
+            })
+
+    def _process_players_serial(self, comp_l5: Dict, comp_l10: Dict, comp_l7d: Dict,
+                                comp_l14d: Dict, comp_l30d: Dict,
+                                is_bootstrap: bool, is_season_boundary: bool) -> None:
+        """Original serial processing (kept for fallback)."""
+        logger.info(f"Processing {len(self.players_to_process)} players (serial mode)")
+
         for player_info in self.players_to_process:
             try:
                 player_lookup = player_info['player_lookup']
                 game_id = player_info['game_id']
 
-                # ============================================================
-                # NEW (Week 5): Get completeness for this player (all windows)
-                # ============================================================
                 # Get default empty completeness results
                 default_comp = {
                     'expected_count': 0, 'actual_count': 0, 'completeness_pct': 0.0,
@@ -1538,7 +1718,6 @@ class UpcomingPlayerGameContextProcessor(
                         'category': 'INCOMPLETE_DATA_SKIPPED'
                     })
                     continue
-                # ============================================================
 
                 # Calculate context (pass completeness data)
                 context = self._calculate_player_context(
@@ -1546,7 +1725,7 @@ class UpcomingPlayerGameContextProcessor(
                     completeness_l5, completeness_l10, completeness_l7d, completeness_l14d, completeness_l30d,
                     circuit_breaker_status, is_bootstrap, is_season_boundary
                 )
-                
+
                 if context:
                     self.transformed_data.append(context)
                 else:
@@ -1556,7 +1735,7 @@ class UpcomingPlayerGameContextProcessor(
                         'reason': 'Failed to calculate context',
                         'category': 'CALCULATION_ERROR'
                     })
-                    
+
             except Exception as e:
                 logger.error(f"Error calculating context for {player_lookup}: {e}")
                 self.failed_entities.append({
@@ -1565,9 +1744,7 @@ class UpcomingPlayerGameContextProcessor(
                     'reason': str(e),
                     'category': 'PROCESSING_ERROR'
                 })
-        
-        logger.info(f"Successfully calculated context for {len(self.transformed_data)} players")
-    
+
     def _calculate_player_context(self, player_info: Dict,
                                    completeness_l5: Dict, completeness_l10: Dict,
                                    completeness_l7d: Dict, completeness_l14d: Dict, completeness_l30d: Dict,
