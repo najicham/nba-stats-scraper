@@ -109,9 +109,9 @@ class EarlyExitMixin:
 
         query = f"""
         SELECT COUNT(*) as cnt
-        FROM `{self.project_id}.nba_raw.game_schedule`
+        FROM `{self.project_id}.nba_raw.nbac_schedule`
         WHERE game_date = '{game_date}'
-          AND game_status NOT IN ('CANCELLED', 'POSTPONED')
+          AND game_status IN (1, 3)
         """
 
         try:
