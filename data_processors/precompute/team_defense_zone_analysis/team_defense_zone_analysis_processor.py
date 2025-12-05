@@ -19,8 +19,11 @@ Key Features:
 """
 
 import logging
+import os
+import time
 from datetime import datetime, date, timedelta, UTC
 from typing import Dict, List, Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import pandas as pd
 from google.cloud import bigquery
 
@@ -52,6 +55,9 @@ from shared.utils.notification_system import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Feature flag for team-level parallelization
+ENABLE_TEAM_PARALLELIZATION = os.environ.get('ENABLE_TEAM_PARALLELIZATION', 'true').lower() == 'true'
 
 
 class TeamDefenseZoneAnalysisProcessor(
@@ -684,9 +690,6 @@ class TeamDefenseZoneAnalysisProcessor(
         """
         logger.info("Calculating team defense zone metrics")
 
-        successful = []
-        failed = []
-
         # Get all unique teams
         all_teams = self.raw_data['defending_team_abbr'].unique()
         analysis_date = self.opts['analysis_date']
@@ -720,188 +723,25 @@ class TeamDefenseZoneAnalysisProcessor(
         )
         # ============================================================
 
-        for team_abbr in all_teams:
-            try:
-                # ============================================================
-                # NEW (Week 1): Get completeness for this team
-                # ============================================================
-                completeness = completeness_results.get(team_abbr, {
-                    'expected_count': 0,
-                    'actual_count': 0,
-                    'completeness_pct': 0.0,
-                    'missing_count': 0,
-                    'is_complete': False,
-                    'is_production_ready': False
-                })
+        # ============================================================
+        # Parallelization: Process teams in parallel or serial mode
+        # ============================================================
+        if ENABLE_TEAM_PARALLELIZATION:
+            successful, failed = self._process_teams_parallel(
+                all_teams, completeness_results, is_bootstrap, is_season_boundary, analysis_date
+            )
+        else:
+            successful, failed = self._process_teams_serial(
+                all_teams, completeness_results, is_bootstrap, is_season_boundary, analysis_date
+            )
 
-                # Check circuit breaker
-                circuit_breaker_status = self._check_circuit_breaker(team_abbr, analysis_date)
-
-                if circuit_breaker_status['active']:
-                    logger.warning(
-                        f"{team_abbr}: Circuit breaker active until "
-                        f"{circuit_breaker_status['until']} - skipping"
-                    )
-                    failed.append({
-                        'entity_id': team_abbr,
-                        'reason': f"Circuit breaker active until {circuit_breaker_status['until']}",
-                        'category': 'CIRCUIT_BREAKER_ACTIVE',
-                        'can_retry': False
-                    })
-                    continue
-
-                # Check production readiness (skip if incomplete, unless in bootstrap mode)
-                if not completeness['is_production_ready'] and not is_bootstrap:
-                    logger.warning(
-                        f"{team_abbr}: Completeness {completeness['completeness_pct']}% "
-                        f"({completeness['actual_count']}/{completeness['expected_count']} games) "
-                        f"- below 90% threshold, skipping"
-                    )
-
-                    # Track reprocessing attempt
-                    self._increment_reprocess_count(
-                        team_abbr, analysis_date,
-                        completeness['completeness_pct'],
-                        'incomplete_upstream_data'
-                    )
-
-                    failed.append({
-                        'entity_id': team_abbr,
-                        'reason': (
-                            f"Incomplete data: {completeness['completeness_pct']}% "
-                            f"({completeness['actual_count']}/{completeness['expected_count']} games)"
-                        ),
-                        'category': 'INCOMPLETE_DATA',
-                        'can_retry': True
-                    })
-                    continue
-                # ============================================================
-
-                # Get team's games
-                team_data = self.raw_data[
-                    self.raw_data['defending_team_abbr'] == team_abbr
-                ].copy()
-
-                games_count = len(team_data)
-
-                # Validate sufficient games
-                if games_count < self.min_games_required:
-                    failed.append({
-                        'entity_id': team_abbr,
-                        'reason': f"Only {games_count} games, need {self.min_games_required}",
-                        'category': 'INSUFFICIENT_DATA',
-                        'can_retry': True
-                    })
-                    logger.warning(
-                        f"{team_abbr}: Only {games_count}/{self.min_games_required} games"
-                    )
-                    continue
-                
-                # Calculate zone defense metrics
-                zone_metrics = self._calculate_zone_defense(team_data, games_count)
-                
-                # Identify strengths/weaknesses
-                strengths = self._identify_strengths_weaknesses(zone_metrics)
-                
-                # Build output record with source tracking
-                record = {
-                    # Identifiers
-                    'team_abbr': team_abbr,
-                    'analysis_date': self.opts['analysis_date'].isoformat(),
-                    
-                    # Paint defense
-                    'paint_pct_allowed_last_15': zone_metrics['paint_pct'],
-                    'paint_attempts_allowed_per_game': zone_metrics['paint_attempts_pg'],
-                    'paint_points_allowed_per_game': zone_metrics['paint_points_pg'],
-                    'paint_blocks_per_game': zone_metrics['paint_blocks_pg'],
-                    'paint_defense_vs_league_avg': zone_metrics['paint_vs_league'],
-                    
-                    # Mid-range defense
-                    'mid_range_pct_allowed_last_15': zone_metrics['mid_range_pct'],
-                    'mid_range_attempts_allowed_per_game': zone_metrics['mid_range_attempts_pg'],
-                    'mid_range_blocks_per_game': zone_metrics['mid_range_blocks_pg'],
-                    'mid_range_defense_vs_league_avg': zone_metrics['mid_range_vs_league'],
-                    
-                    # Three-point defense
-                    'three_pt_pct_allowed_last_15': zone_metrics['three_pt_pct'],
-                    'three_pt_attempts_allowed_per_game': zone_metrics['three_pt_attempts_pg'],
-                    'three_pt_blocks_per_game': zone_metrics['three_pt_blocks_pg'],
-                    'three_pt_defense_vs_league_avg': zone_metrics['three_pt_vs_league'],
-                    
-                    # Overall metrics
-                    'defensive_rating_last_15': zone_metrics['defensive_rating'],
-                    'opponent_points_per_game': zone_metrics['opp_points_pg'],
-                    'opponent_pace': zone_metrics['opponent_pace'],
-                    'games_in_sample': games_count,
-                    
-                    # Strengths/weaknesses
-                    'strongest_zone': strengths['strongest'],
-                    'weakest_zone': strengths['weakest'],
-                    
-                    # Data quality
-                    'data_quality_tier': self._determine_quality_tier(games_count),
-                    'calculation_notes': zone_metrics.get('notes'),
-
-                    # Source tracking (v4.0 - one line via base class method!)
-                    **self.build_source_tracking_fields(),
-
-                    # ============================================================
-                    # NEW (Week 1): Completeness Checking Metadata (14 fields)
-                    # ============================================================
-                    # Completeness Metrics
-                    'expected_games_count': completeness['expected_count'],
-                    'actual_games_count': completeness['actual_count'],
-                    'completeness_percentage': completeness['completeness_pct'],
-                    'missing_games_count': completeness['missing_count'],
-
-                    # Production Readiness
-                    'is_production_ready': completeness['is_production_ready'],
-                    'data_quality_issues': [],  # Populate if specific issues found
-
-                    # Circuit Breaker (queried per entity)
-                    'last_reprocess_attempt_at': None,  # Would need separate query
-                    'reprocess_attempt_count': circuit_breaker_status['attempts'],
-                    'circuit_breaker_active': circuit_breaker_status['active'],
-                    'circuit_breaker_until': (
-                        circuit_breaker_status['until'].isoformat()
-                        if circuit_breaker_status['until'] else None
-                    ),
-
-                    # Bootstrap/Override
-                    'manual_override_required': False,
-                    'season_boundary_detected': is_season_boundary,
-                    'backfill_bootstrap_mode': is_bootstrap,
-                    'processing_decision_reason': 'processed_successfully',
-                    # ============================================================
-
-                    # Processing metadata
-                    'processed_at': datetime.now(UTC).isoformat()
-                }
-
-                # Add source hash (Smart Reprocessing - Pattern #3)
-                record['source_team_defense_hash'] = self.source_hash
-
-                # Compute and add data hash (Smart Idempotency - Pattern #1)
-                record['data_hash'] = self.compute_data_hash(record)
-                
-                successful.append(record)
-                
-            except Exception as e:
-                logger.error(f"Failed to process {team_abbr}: {e}", exc_info=True)
-                failed.append({
-                    'entity_id': team_abbr,
-                    'reason': str(e),
-                    'category': 'PROCESSING_ERROR',
-                    'can_retry': False
-                })
-        
         self.transformed_data = successful
         self.failed_entities = failed
-        
+
         logger.info(
             f"Processed {len(successful)}/{len(all_teams)} teams successfully"
         )
-        
+
         # Alert if too many failures
         if len(failed) > 5:
             try:
@@ -920,6 +760,295 @@ class TeamDefenseZoneAnalysisProcessor(
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
+
+    def _process_teams_parallel(
+        self,
+        all_teams: List[str],
+        completeness_results: dict,
+        is_bootstrap: bool,
+        is_season_boundary: bool,
+        analysis_date: date
+    ) -> tuple:
+        """Process all teams using ThreadPoolExecutor for parallelization."""
+        # Use 4 workers for team-level parallelization (fewer entities than players)
+        max_workers = 4
+        logger.info(f"Processing {len(all_teams)} teams with {max_workers} workers (parallel mode)")
+
+        # Performance timing
+        loop_start = time.time()
+        processed_count = 0
+
+        # Thread-safe result collection
+        successful = []
+        failed = []
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all team tasks
+            futures = {
+                executor.submit(
+                    self._process_single_team,
+                    team_abbr,
+                    completeness_results,
+                    is_bootstrap,
+                    is_season_boundary,
+                    analysis_date
+                ): team_abbr
+                for team_abbr in all_teams
+            }
+
+            # Collect results as they complete
+            for future in as_completed(futures):
+                team_abbr = futures[future]
+                processed_count += 1
+
+                try:
+                    success, data = future.result()
+                    if success:
+                        successful.append(data)
+                    else:
+                        failed.append(data)
+
+                    # Progress logging every 10 teams (smaller batches)
+                    if processed_count % 10 == 0:
+                        elapsed = time.time() - loop_start
+                        rate = processed_count / elapsed
+                        remaining = len(all_teams) - processed_count
+                        eta = remaining / rate if rate > 0 else 0
+                        logger.info(
+                            f"Team processing progress: {processed_count}/{len(all_teams)} "
+                            f"| Rate: {rate:.1f} teams/sec | ETA: {eta/60:.1f}min"
+                        )
+                except Exception as e:
+                    logger.error(f"Error processing {team_abbr}: {e}")
+                    failed.append({
+                        'entity_id': team_abbr,
+                        'reason': str(e),
+                        'category': 'PROCESSING_ERROR',
+                        'can_retry': False
+                    })
+
+        # Final timing summary
+        total_time = time.time() - loop_start
+        avg_time = total_time / len(successful) if successful else 0
+        logger.info(
+            f"Completed {len(successful)} teams in {total_time:.1f}s "
+            f"(avg {avg_time:.2f}s/team) "
+            f"| {len(failed)} failed"
+        )
+
+        return successful, failed
+
+    def _process_single_team(
+        self,
+        team_abbr: str,
+        completeness_results: dict,
+        is_bootstrap: bool,
+        is_season_boundary: bool,
+        analysis_date: date
+    ) -> tuple:
+        """Process one team (thread-safe). Returns (success: bool, data: dict)."""
+        try:
+            # ============================================================
+            # Get completeness for this team
+            # ============================================================
+            completeness = completeness_results.get(team_abbr, {
+                'expected_count': 0,
+                'actual_count': 0,
+                'completeness_pct': 0.0,
+                'missing_count': 0,
+                'is_complete': False,
+                'is_production_ready': False
+            })
+
+            # Check circuit breaker
+            circuit_breaker_status = self._check_circuit_breaker(team_abbr, analysis_date)
+
+            if circuit_breaker_status['active']:
+                logger.warning(
+                    f"{team_abbr}: Circuit breaker active until "
+                    f"{circuit_breaker_status['until']} - skipping"
+                )
+                return (False, {
+                    'entity_id': team_abbr,
+                    'reason': f"Circuit breaker active until {circuit_breaker_status['until']}",
+                    'category': 'CIRCUIT_BREAKER_ACTIVE',
+                    'can_retry': False
+                })
+
+            # Check production readiness (skip if incomplete, unless in bootstrap mode)
+            if not completeness['is_production_ready'] and not is_bootstrap:
+                logger.warning(
+                    f"{team_abbr}: Completeness {completeness['completeness_pct']}% "
+                    f"({completeness['actual_count']}/{completeness['expected_count']} games) "
+                    f"- below 90% threshold, skipping"
+                )
+
+                # Track reprocessing attempt
+                self._increment_reprocess_count(
+                    team_abbr, analysis_date,
+                    completeness['completeness_pct'],
+                    'incomplete_upstream_data'
+                )
+
+                return (False, {
+                    'entity_id': team_abbr,
+                    'reason': (
+                        f"Incomplete data: {completeness['completeness_pct']}% "
+                        f"({completeness['actual_count']}/{completeness['expected_count']} games)"
+                    ),
+                    'category': 'INCOMPLETE_DATA',
+                    'can_retry': True
+                })
+            # ============================================================
+
+            # Get team's games
+            team_data = self.raw_data[
+                self.raw_data['defending_team_abbr'] == team_abbr
+            ].copy()
+
+            games_count = len(team_data)
+
+            # Validate sufficient games
+            if games_count < self.min_games_required:
+                return (False, {
+                    'entity_id': team_abbr,
+                    'reason': f"Only {games_count} games, need {self.min_games_required}",
+                    'category': 'INSUFFICIENT_DATA',
+                    'can_retry': True
+                })
+
+            # Calculate zone defense metrics
+            zone_metrics = self._calculate_zone_defense(team_data, games_count)
+
+            # Identify strengths/weaknesses
+            strengths = self._identify_strengths_weaknesses(zone_metrics)
+
+            # Build output record with source tracking
+            record = {
+                # Identifiers
+                'team_abbr': team_abbr,
+                'analysis_date': self.opts['analysis_date'].isoformat(),
+
+                # Paint defense
+                'paint_pct_allowed_last_15': zone_metrics['paint_pct'],
+                'paint_attempts_allowed_per_game': zone_metrics['paint_attempts_pg'],
+                'paint_points_allowed_per_game': zone_metrics['paint_points_pg'],
+                'paint_blocks_per_game': zone_metrics['paint_blocks_pg'],
+                'paint_defense_vs_league_avg': zone_metrics['paint_vs_league'],
+
+                # Mid-range defense
+                'mid_range_pct_allowed_last_15': zone_metrics['mid_range_pct'],
+                'mid_range_attempts_allowed_per_game': zone_metrics['mid_range_attempts_pg'],
+                'mid_range_blocks_per_game': zone_metrics['mid_range_blocks_pg'],
+                'mid_range_defense_vs_league_avg': zone_metrics['mid_range_vs_league'],
+
+                # Three-point defense
+                'three_pt_pct_allowed_last_15': zone_metrics['three_pt_pct'],
+                'three_pt_attempts_allowed_per_game': zone_metrics['three_pt_attempts_pg'],
+                'three_pt_blocks_per_game': zone_metrics['three_pt_blocks_pg'],
+                'three_pt_defense_vs_league_avg': zone_metrics['three_pt_vs_league'],
+
+                # Overall metrics
+                'defensive_rating_last_15': zone_metrics['defensive_rating'],
+                'opponent_points_per_game': zone_metrics['opp_points_pg'],
+                'opponent_pace': zone_metrics['opponent_pace'],
+                'games_in_sample': games_count,
+
+                # Strengths/weaknesses
+                'strongest_zone': strengths['strongest'],
+                'weakest_zone': strengths['weakest'],
+
+                # Data quality
+                'data_quality_tier': self._determine_quality_tier(games_count),
+                'calculation_notes': zone_metrics.get('notes'),
+
+                # Source tracking (v4.0 - one line via base class method!)
+                **self.build_source_tracking_fields(),
+
+                # ============================================================
+                # Completeness Checking Metadata (14 fields)
+                # ============================================================
+                # Completeness Metrics
+                'expected_games_count': completeness['expected_count'],
+                'actual_games_count': completeness['actual_count'],
+                'completeness_percentage': completeness['completeness_pct'],
+                'missing_games_count': completeness['missing_count'],
+
+                # Production Readiness
+                'is_production_ready': completeness['is_production_ready'],
+                'data_quality_issues': [],  # Populate if specific issues found
+
+                # Circuit Breaker (queried per entity)
+                'last_reprocess_attempt_at': None,  # Would need separate query
+                'reprocess_attempt_count': circuit_breaker_status['attempts'],
+                'circuit_breaker_active': circuit_breaker_status['active'],
+                'circuit_breaker_until': (
+                    circuit_breaker_status['until'].isoformat()
+                    if circuit_breaker_status['until'] else None
+                ),
+
+                # Bootstrap/Override
+                'manual_override_required': False,
+                'season_boundary_detected': is_season_boundary,
+                'backfill_bootstrap_mode': is_bootstrap,
+                'processing_decision_reason': 'processed_successfully',
+                # ============================================================
+
+                # Processing metadata
+                'processed_at': datetime.now(UTC).isoformat()
+            }
+
+            # Add source hash (Smart Reprocessing - Pattern #3)
+            record['source_team_defense_hash'] = self.source_hash
+
+            # Compute and add data hash (Smart Idempotency - Pattern #1)
+            record['data_hash'] = self.compute_data_hash(record)
+
+            return (True, record)
+
+        except Exception as e:
+            logger.error(f"Failed to process {team_abbr}: {e}", exc_info=True)
+            return (False, {
+                'entity_id': team_abbr,
+                'reason': str(e),
+                'category': 'PROCESSING_ERROR',
+                'can_retry': False
+            })
+
+    def _process_teams_serial(
+        self,
+        all_teams: List[str],
+        completeness_results: dict,
+        is_bootstrap: bool,
+        is_season_boundary: bool,
+        analysis_date: date
+    ) -> tuple:
+        """Original serial processing (kept for fallback)."""
+        logger.info(f"Processing {len(all_teams)} teams (serial mode)")
+
+        successful = []
+        failed = []
+
+        for team_abbr in all_teams:
+            try:
+                success, data = self._process_single_team(
+                    team_abbr, completeness_results, is_bootstrap, is_season_boundary, analysis_date
+                )
+                if success:
+                    successful.append(data)
+                else:
+                    failed.append(data)
+
+            except Exception as e:
+                logger.error(f"Failed to process {team_abbr}: {e}", exc_info=True)
+                failed.append({
+                    'entity_id': team_abbr,
+                    'reason': str(e),
+                    'category': 'PROCESSING_ERROR',
+                    'can_retry': False
+                })
+
+        return successful, failed
     
     def _calculate_zone_defense(
         self, 
