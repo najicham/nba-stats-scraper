@@ -18,7 +18,10 @@ Status: Production Ready
 """
 
 import logging
+import os
+import time
 import pandas as pd
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional
 from data_processors.analytics.analytics_base import AnalyticsProcessorBase
@@ -596,148 +599,15 @@ class PlayerGameSummaryProcessor(
         )
         
         # =====================================================================
-        # Process records
+        # Process records - PARALLEL OR SERIAL based on environment variable
         # =====================================================================
-        records = []
-        
-        for _, row in self.raw_data.iterrows():
-            try:
-                player_lookup = row['player_lookup']
-                universal_player_id = uid_map.get(player_lookup)
-                
-                if universal_player_id is None:
-                    self.registry_stats['records_skipped'] += 1
-                    continue
-                
-                # Parse minutes
-                minutes_decimal = self._parse_minutes_to_decimal(row['minutes'])
-                minutes_int = int(round(minutes_decimal)) if minutes_decimal else None
-                
-                # Parse plus/minus
-                plus_minus_int = self._parse_plus_minus(row['plus_minus'])
-                
-                # Calculate prop outcome
-                over_under_result = None
-                margin = None
-                if pd.notna(row['points']) and pd.notna(row['points_line']):
-                    over_under_result = 'OVER' if row['points'] >= row['points_line'] else 'UNDER'
-                    margin = float(row['points']) - float(row['points_line'])
-                
-                # Calculate efficiency
-                ts_pct = None
-                efg_pct = None
-                
-                if (pd.notna(row['field_goals_attempted']) and 
-                    row['field_goals_attempted'] > 0):
-                    
-                    fga = row['field_goals_attempted']
-                    three_makes = row['three_pointers_made'] or 0
-                    
-                    efg_pct = (row['field_goals_made'] + 0.5 * three_makes) / fga
-                    
-                    if pd.notna(row['free_throws_attempted']):
-                        fta = row['free_throws_attempted']
-                        total_shots = fga + 0.44 * fta
-                        if total_shots > 0:
-                            ts_pct = row['points'] / (2 * total_shots)
-                
-                # Build record with source tracking
-                record = {
-                    # Core identifiers
-                    'player_lookup': player_lookup,
-                    'universal_player_id': universal_player_id,
-                    'player_full_name': row['player_full_name'],
-                    'game_id': row['game_id'],
-                    'game_date': row['game_date'].isoformat() if pd.notna(row['game_date']) else None,
-                    'team_abbr': row['team_abbr'],
-                    'opponent_team_abbr': row['opponent_team_abbr'],
-                    'season_year': int(row['season_year']) if pd.notna(row['season_year']) else None,
-                    
-                    # Basic stats
-                    'points': int(row['points']) if pd.notna(row['points']) else None,
-                    'minutes_played': minutes_int,
-                    'assists': int(row['assists']) if pd.notna(row['assists']) else None,
-                    'offensive_rebounds': int(row['offensive_rebounds']) if pd.notna(row['offensive_rebounds']) else None,
-                    'defensive_rebounds': int(row['defensive_rebounds']) if pd.notna(row['defensive_rebounds']) else None,
-                    'steals': int(row['steals']) if pd.notna(row['steals']) else None,
-                    'blocks': int(row['blocks']) if pd.notna(row['blocks']) else None,
-                    'turnovers': int(row['turnovers']) if pd.notna(row['turnovers']) else None,
-                    'personal_fouls': int(row['personal_fouls']) if pd.notna(row['personal_fouls']) else None,
-                    'plus_minus': plus_minus_int,
-                    
-                    # Shooting
-                    'fg_attempts': int(row['field_goals_attempted']) if pd.notna(row['field_goals_attempted']) else None,
-                    'fg_makes': int(row['field_goals_made']) if pd.notna(row['field_goals_made']) else None,
-                    'three_pt_attempts': int(row['three_pointers_attempted']) if pd.notna(row['three_pointers_attempted']) else None,
-                    'three_pt_makes': int(row['three_pointers_made']) if pd.notna(row['three_pointers_made']) else None,
-                    'ft_attempts': int(row['free_throws_attempted']) if pd.notna(row['free_throws_attempted']) else None,
-                    'ft_makes': int(row['free_throws_made']) if pd.notna(row['free_throws_made']) else None,
-                    
-                    # Shot zones (Pass 2 implementation - future)
-                    'paint_attempts': None,
-                    'paint_makes': None,
-                    'mid_range_attempts': None,
-                    'mid_range_makes': None,
-                    'paint_blocks': None,
-                    'mid_range_blocks': None,
-                    'three_pt_blocks': None,
-                    'and1_count': None,
-                    
-                    # Shot creation (Pass 2 implementation - future)
-                    'assisted_fg_makes': None,
-                    'unassisted_fg_makes': None,
-                    
-                    # Efficiency
-                    'usage_rate': None,  # Requires team stats
-                    'ts_pct': round(ts_pct, 3) if ts_pct else None,
-                    'efg_pct': round(efg_pct, 3) if efg_pct else None,
-                    'starter_flag': bool(minutes_decimal and minutes_decimal > 20) if minutes_decimal else False,
-                    'win_flag': False,
-                    
-                    # Prop betting
-                    'points_line': float(row['points_line']) if pd.notna(row['points_line']) else None,
-                    'over_under_result': over_under_result,
-                    'margin': round(margin, 2) if margin is not None else None,
-                    'opening_line': None,  # Pass 3 enhancement
-                    'line_movement': None,
-                    'points_line_source': row.get('points_line_source'),
-                    'opening_line_source': None,
-                    
-                    # Availability
-                    'is_active': bool(row['player_status'] == 'active'),
-                    'player_status': row['player_status'],
-                    
-                    # SOURCE TRACKING: One-liner adds all 18 fields!
-                    **self.build_source_tracking_fields(),
+        ENABLE_PARALLELIZATION = os.environ.get('ENABLE_PLAYER_PARALLELIZATION', 'true').lower() == 'true'
 
-                    # Quality columns using centralized helper
-                    **build_quality_columns_with_legacy(
-                        tier='gold' if row['primary_source'] == 'nbac_gamebook' else 'silver',
-                        score=100.0 if row['primary_source'] == 'nbac_gamebook' else 85.0,
-                        issues=[] if row['primary_source'] == 'nbac_gamebook' else ['backup_source_used'],
-                        sources=[row['primary_source']] if row['primary_source'] else ['unknown'],
-                    ),
+        if ENABLE_PARALLELIZATION:
+            records = self._process_player_games_parallel(uid_map)
+        else:
+            records = self._process_player_games_serial(uid_map)
 
-                    # Additional tracking fields
-                    'primary_source_used': row['primary_source'],
-                    'processed_with_issues': False,
-                    'shot_zones_estimated': None,
-                    'quality_sample_size': None,  # Populated by Phase 4
-                    'quality_used_fallback': row['primary_source'] != 'nbac_gamebook',
-                    'quality_reconstructed': False,
-                    'quality_calculated_at': datetime.now(timezone.utc).isoformat(),
-                    'quality_metadata': {'sources_used': [row['primary_source']], 'early_season': False},
-
-                    # Metadata
-                    'processed_at': datetime.now(timezone.utc).isoformat()
-                }
-                
-                records.append(record)
-                
-            except Exception as e:
-                logger.error(f"Error processing {row['game_id']}_{row['player_lookup']}: {e}")
-                continue
-        
         self.transformed_data = records
         
         logger.info(f"✅ Processed {len(records)} records")
@@ -811,13 +681,350 @@ class PlayerGameSummaryProcessor(
     def finalize(self) -> None:
         """Cleanup - flush unresolved players."""
         logger.info("Flushing unresolved players...")
-        
+
         try:
             self.registry.flush_unresolved_players()
             cache_stats = self.registry.get_cache_stats()
             logger.info(f"Registry cache: {cache_stats['hit_rate']:.1%} hit rate")
         except Exception as e:
             logger.error(f"Failed to flush registry: {e}")
+
+    # =========================================================================
+    # Parallelization Methods
+    # =========================================================================
+
+    def _process_player_games_parallel(self, uid_map: dict) -> List[Dict]:
+        """Process all player-game records using ThreadPoolExecutor."""
+        max_workers = min(10, os.cpu_count() or 1)
+        total_records = len(self.raw_data)
+        logger.info(f"Processing {total_records} player-game records with {max_workers} workers (parallel mode)")
+
+        loop_start = time.time()
+        processed_count = 0
+        records = []
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all rows
+            futures = {
+                executor.submit(self._process_single_player_game, idx, row, uid_map): idx
+                for idx, row in self.raw_data.iterrows()
+            }
+
+            for future in as_completed(futures):
+                idx = futures[future]
+                processed_count += 1
+
+                try:
+                    record = future.result()
+                    if record is not None:
+                        records.append(record)
+
+                    # Progress logging every 50 records
+                    if processed_count % 50 == 0:
+                        elapsed = time.time() - loop_start
+                        rate = processed_count / elapsed
+                        remaining = total_records - processed_count
+                        eta = remaining / rate if rate > 0 else 0
+                        logger.info(
+                            f"Player-game processing progress: {processed_count}/{total_records} "
+                            f"| Rate: {rate:.1f} records/sec | ETA: {eta/60:.1f}min"
+                        )
+                except Exception as e:
+                    logger.error(f"Error processing record {idx}: {e}")
+                    continue
+
+        total_time = time.time() - loop_start
+        logger.info(
+            f"Completed {len(records)} records in {total_time:.1f}s "
+            f"(avg {total_time/len(records) if records else 0:.2f}s/record)"
+        )
+
+        return records
+
+    def _process_single_player_game(self, idx: int, row: pd.Series, uid_map: dict) -> Optional[Dict]:
+        """Process one player-game record (thread-safe). Returns record dict or None."""
+        try:
+            player_lookup = row['player_lookup']
+            universal_player_id = uid_map.get(player_lookup)
+
+            if universal_player_id is None:
+                self.registry_stats['records_skipped'] += 1
+                return None
+
+            # Parse minutes
+            minutes_decimal = self._parse_minutes_to_decimal(row['minutes'])
+            minutes_int = int(round(minutes_decimal)) if minutes_decimal else None
+
+            # Parse plus/minus
+            plus_minus_int = self._parse_plus_minus(row['plus_minus'])
+
+            # Calculate prop outcome
+            over_under_result = None
+            margin = None
+            if pd.notna(row['points']) and pd.notna(row['points_line']):
+                over_under_result = 'OVER' if row['points'] >= row['points_line'] else 'UNDER'
+                margin = float(row['points']) - float(row['points_line'])
+
+            # Calculate efficiency
+            ts_pct = None
+            efg_pct = None
+
+            if (pd.notna(row['field_goals_attempted']) and
+                row['field_goals_attempted'] > 0):
+
+                fga = row['field_goals_attempted']
+                three_makes = row['three_pointers_made'] or 0
+
+                efg_pct = (row['field_goals_made'] + 0.5 * three_makes) / fga
+
+                if pd.notna(row['free_throws_attempted']):
+                    fta = row['free_throws_attempted']
+                    total_shots = fga + 0.44 * fta
+                    if total_shots > 0:
+                        ts_pct = row['points'] / (2 * total_shots)
+
+            # Build record with source tracking
+            record = {
+                # Core identifiers
+                'player_lookup': player_lookup,
+                'universal_player_id': universal_player_id,
+                'player_full_name': row['player_full_name'],
+                'game_id': row['game_id'],
+                'game_date': row['game_date'].isoformat() if pd.notna(row['game_date']) else None,
+                'team_abbr': row['team_abbr'],
+                'opponent_team_abbr': row['opponent_team_abbr'],
+                'season_year': int(row['season_year']) if pd.notna(row['season_year']) else None,
+
+                # Basic stats
+                'points': int(row['points']) if pd.notna(row['points']) else None,
+                'minutes_played': minutes_int,
+                'assists': int(row['assists']) if pd.notna(row['assists']) else None,
+                'offensive_rebounds': int(row['offensive_rebounds']) if pd.notna(row['offensive_rebounds']) else None,
+                'defensive_rebounds': int(row['defensive_rebounds']) if pd.notna(row['defensive_rebounds']) else None,
+                'steals': int(row['steals']) if pd.notna(row['steals']) else None,
+                'blocks': int(row['blocks']) if pd.notna(row['blocks']) else None,
+                'turnovers': int(row['turnovers']) if pd.notna(row['turnovers']) else None,
+                'personal_fouls': int(row['personal_fouls']) if pd.notna(row['personal_fouls']) else None,
+                'plus_minus': plus_minus_int,
+
+                # Shooting
+                'fg_attempts': int(row['field_goals_attempted']) if pd.notna(row['field_goals_attempted']) else None,
+                'fg_makes': int(row['field_goals_made']) if pd.notna(row['field_goals_made']) else None,
+                'three_pt_attempts': int(row['three_pointers_attempted']) if pd.notna(row['three_pointers_attempted']) else None,
+                'three_pt_makes': int(row['three_pointers_made']) if pd.notna(row['three_pointers_made']) else None,
+                'ft_attempts': int(row['free_throws_attempted']) if pd.notna(row['free_throws_attempted']) else None,
+                'ft_makes': int(row['free_throws_made']) if pd.notna(row['free_throws_made']) else None,
+
+                # Shot zones (Pass 2 implementation - future)
+                'paint_attempts': None,
+                'paint_makes': None,
+                'mid_range_attempts': None,
+                'mid_range_makes': None,
+                'paint_blocks': None,
+                'mid_range_blocks': None,
+                'three_pt_blocks': None,
+                'and1_count': None,
+
+                # Shot creation (Pass 2 implementation - future)
+                'assisted_fg_makes': None,
+                'unassisted_fg_makes': None,
+
+                # Efficiency
+                'usage_rate': None,  # Requires team stats
+                'ts_pct': round(ts_pct, 3) if ts_pct else None,
+                'efg_pct': round(efg_pct, 3) if efg_pct else None,
+                'starter_flag': bool(minutes_decimal and minutes_decimal > 20) if minutes_decimal else False,
+                'win_flag': False,
+
+                # Prop betting
+                'points_line': float(row['points_line']) if pd.notna(row['points_line']) else None,
+                'over_under_result': over_under_result,
+                'margin': round(margin, 2) if margin is not None else None,
+                'opening_line': None,  # Pass 3 enhancement
+                'line_movement': None,
+                'points_line_source': row.get('points_line_source'),
+                'opening_line_source': None,
+
+                # Availability
+                'is_active': bool(row['player_status'] == 'active'),
+                'player_status': row['player_status'],
+
+                # SOURCE TRACKING: One-liner adds all 18 fields!
+                **self.build_source_tracking_fields(),
+
+                # Quality columns using centralized helper
+                **build_quality_columns_with_legacy(
+                    tier='gold' if row['primary_source'] == 'nbac_gamebook' else 'silver',
+                    score=100.0 if row['primary_source'] == 'nbac_gamebook' else 85.0,
+                    issues=[] if row['primary_source'] == 'nbac_gamebook' else ['backup_source_used'],
+                    sources=[row['primary_source']] if row['primary_source'] else ['unknown'],
+                ),
+
+                # Additional tracking fields
+                'primary_source_used': row['primary_source'],
+                'processed_with_issues': False,
+                'shot_zones_estimated': None,
+                'quality_sample_size': None,  # Populated by Phase 4
+                'quality_used_fallback': row['primary_source'] != 'nbac_gamebook',
+                'quality_reconstructed': False,
+                'quality_calculated_at': datetime.now(timezone.utc).isoformat(),
+                'quality_metadata': {'sources_used': [row['primary_source']], 'early_season': False},
+
+                # Metadata
+                'processed_at': datetime.now(timezone.utc).isoformat()
+            }
+
+            return record
+
+        except Exception as e:
+            logger.error(f"Failed to process record {idx} ({row.get('game_id', 'unknown')}_{row.get('player_lookup', 'unknown')}): {e}")
+            return None
+
+    def _process_player_games_serial(self, uid_map: dict) -> List[Dict]:
+        """Original serial processing (kept for fallback)."""
+        logger.info(f"Processing {len(self.raw_data)} player-game records (serial mode)")
+
+        records = []
+
+        for _, row in self.raw_data.iterrows():
+            try:
+                player_lookup = row['player_lookup']
+                universal_player_id = uid_map.get(player_lookup)
+
+                if universal_player_id is None:
+                    self.registry_stats['records_skipped'] += 1
+                    continue
+
+                # Parse minutes
+                minutes_decimal = self._parse_minutes_to_decimal(row['minutes'])
+                minutes_int = int(round(minutes_decimal)) if minutes_decimal else None
+
+                # Parse plus/minus
+                plus_minus_int = self._parse_plus_minus(row['plus_minus'])
+
+                # Calculate prop outcome
+                over_under_result = None
+                margin = None
+                if pd.notna(row['points']) and pd.notna(row['points_line']):
+                    over_under_result = 'OVER' if row['points'] >= row['points_line'] else 'UNDER'
+                    margin = float(row['points']) - float(row['points_line'])
+
+                # Calculate efficiency
+                ts_pct = None
+                efg_pct = None
+
+                if (pd.notna(row['field_goals_attempted']) and
+                    row['field_goals_attempted'] > 0):
+
+                    fga = row['field_goals_attempted']
+                    three_makes = row['three_pointers_made'] or 0
+
+                    efg_pct = (row['field_goals_made'] + 0.5 * three_makes) / fga
+
+                    if pd.notna(row['free_throws_attempted']):
+                        fta = row['free_throws_attempted']
+                        total_shots = fga + 0.44 * fta
+                        if total_shots > 0:
+                            ts_pct = row['points'] / (2 * total_shots)
+
+                # Build record with source tracking
+                record = {
+                    # Core identifiers
+                    'player_lookup': player_lookup,
+                    'universal_player_id': universal_player_id,
+                    'player_full_name': row['player_full_name'],
+                    'game_id': row['game_id'],
+                    'game_date': row['game_date'].isoformat() if pd.notna(row['game_date']) else None,
+                    'team_abbr': row['team_abbr'],
+                    'opponent_team_abbr': row['opponent_team_abbr'],
+                    'season_year': int(row['season_year']) if pd.notna(row['season_year']) else None,
+
+                    # Basic stats
+                    'points': int(row['points']) if pd.notna(row['points']) else None,
+                    'minutes_played': minutes_int,
+                    'assists': int(row['assists']) if pd.notna(row['assists']) else None,
+                    'offensive_rebounds': int(row['offensive_rebounds']) if pd.notna(row['offensive_rebounds']) else None,
+                    'defensive_rebounds': int(row['defensive_rebounds']) if pd.notna(row['defensive_rebounds']) else None,
+                    'steals': int(row['steals']) if pd.notna(row['steals']) else None,
+                    'blocks': int(row['blocks']) if pd.notna(row['blocks']) else None,
+                    'turnovers': int(row['turnovers']) if pd.notna(row['turnovers']) else None,
+                    'personal_fouls': int(row['personal_fouls']) if pd.notna(row['personal_fouls']) else None,
+                    'plus_minus': plus_minus_int,
+
+                    # Shooting
+                    'fg_attempts': int(row['field_goals_attempted']) if pd.notna(row['field_goals_attempted']) else None,
+                    'fg_makes': int(row['field_goals_made']) if pd.notna(row['field_goals_made']) else None,
+                    'three_pt_attempts': int(row['three_pointers_attempted']) if pd.notna(row['three_pointers_attempted']) else None,
+                    'three_pt_makes': int(row['three_pointers_made']) if pd.notna(row['three_pointers_made']) else None,
+                    'ft_attempts': int(row['free_throws_attempted']) if pd.notna(row['free_throws_attempted']) else None,
+                    'ft_makes': int(row['free_throws_made']) if pd.notna(row['free_throws_made']) else None,
+
+                    # Shot zones (Pass 2 implementation - future)
+                    'paint_attempts': None,
+                    'paint_makes': None,
+                    'mid_range_attempts': None,
+                    'mid_range_makes': None,
+                    'paint_blocks': None,
+                    'mid_range_blocks': None,
+                    'three_pt_blocks': None,
+                    'and1_count': None,
+
+                    # Shot creation (Pass 2 implementation - future)
+                    'assisted_fg_makes': None,
+                    'unassisted_fg_makes': None,
+
+                    # Efficiency
+                    'usage_rate': None,  # Requires team stats
+                    'ts_pct': round(ts_pct, 3) if ts_pct else None,
+                    'efg_pct': round(efg_pct, 3) if efg_pct else None,
+                    'starter_flag': bool(minutes_decimal and minutes_decimal > 20) if minutes_decimal else False,
+                    'win_flag': False,
+
+                    # Prop betting
+                    'points_line': float(row['points_line']) if pd.notna(row['points_line']) else None,
+                    'over_under_result': over_under_result,
+                    'margin': round(margin, 2) if margin is not None else None,
+                    'opening_line': None,  # Pass 3 enhancement
+                    'line_movement': None,
+                    'points_line_source': row.get('points_line_source'),
+                    'opening_line_source': None,
+
+                    # Availability
+                    'is_active': bool(row['player_status'] == 'active'),
+                    'player_status': row['player_status'],
+
+                    # SOURCE TRACKING: One-liner adds all 18 fields!
+                    **self.build_source_tracking_fields(),
+
+                    # Quality columns using centralized helper
+                    **build_quality_columns_with_legacy(
+                        tier='gold' if row['primary_source'] == 'nbac_gamebook' else 'silver',
+                        score=100.0 if row['primary_source'] == 'nbac_gamebook' else 85.0,
+                        issues=[] if row['primary_source'] == 'nbac_gamebook' else ['backup_source_used'],
+                        sources=[row['primary_source']] if row['primary_source'] else ['unknown'],
+                    ),
+
+                    # Additional tracking fields
+                    'primary_source_used': row['primary_source'],
+                    'processed_with_issues': False,
+                    'shot_zones_estimated': None,
+                    'quality_sample_size': None,  # Populated by Phase 4
+                    'quality_used_fallback': row['primary_source'] != 'nbac_gamebook',
+                    'quality_reconstructed': False,
+                    'quality_calculated_at': datetime.now(timezone.utc).isoformat(),
+                    'quality_metadata': {'sources_used': [row['primary_source']], 'early_season': False},
+
+                    # Metadata
+                    'processed_at': datetime.now(timezone.utc).isoformat()
+                }
+
+                records.append(record)
+
+            except Exception as e:
+                logger.error(f"Error processing {row['game_id']}_{row['player_lookup']}: {e}")
+                continue
+
+        return records
 
 
 if __name__ == "__main__":

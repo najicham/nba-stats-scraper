@@ -37,6 +37,9 @@ Updated: November 1, 2025
 
 import logging
 import json
+import os
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, date, timezone, timedelta
 from typing import Dict, List, Optional
 import pandas as pd
@@ -841,10 +844,222 @@ class PlayerCompositeFactorsProcessor(
         # ============================================================
         circuit_breaker_cache = self._batch_check_circuit_breakers(list(all_players), analysis_date)
 
-        total_players = len(self.player_context_df)
-        logger.info(f"Calculating composite factors for {total_players} players")
+        # ============================================================
+        # Feature flag for parallelization
+        # ============================================================
+        ENABLE_PARALLELIZATION = os.environ.get('ENABLE_PLAYER_PARALLELIZATION', 'true').lower() == 'true'
 
+        if ENABLE_PARALLELIZATION:
+            successful, failed = self._process_players_parallel(
+                all_players, completeness_results, upstream_completeness,
+                circuit_breaker_cache, is_bootstrap, is_season_boundary, analysis_date
+            )
+        else:
+            successful, failed = self._process_players_serial(
+                all_players, completeness_results, upstream_completeness,
+                circuit_breaker_cache, is_bootstrap, is_season_boundary, analysis_date
+            )
+
+        self.transformed_data = successful
+        self.failed_entities = failed
+
+        logger.info(f"Successfully processed {len(self.transformed_data)} players")
+        if self.failed_entities:
+            logger.warning(f"Failed to process {len(self.failed_entities)} players")
+
+    def _process_players_parallel(
+        self,
+        all_players: List[str],
+        completeness_results: dict,
+        upstream_completeness: dict,
+        circuit_breaker_cache: dict,
+        is_bootstrap: bool,
+        is_season_boundary: bool,
+        analysis_date: date
+    ) -> tuple:
+        """Process all players using ThreadPoolExecutor for parallelization."""
+        # Determine worker count
+        max_workers = min(10, os.cpu_count() or 1)
+        logger.info(f"Processing {len(all_players)} players with {max_workers} workers (parallel mode)")
+
+        # Performance timing
+        loop_start = time.time()
         processed_count = 0
+
+        # Thread-safe result collection
+        successful = []
+        failed = []
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all player tasks
+            futures = {
+                executor.submit(
+                    self._process_single_player,
+                    player_lookup,
+                    completeness_results,
+                    upstream_completeness,
+                    circuit_breaker_cache,
+                    is_bootstrap,
+                    is_season_boundary,
+                    analysis_date
+                ): player_lookup
+                for player_lookup in all_players
+            }
+
+            # Collect results as they complete
+            for future in as_completed(futures):
+                player_lookup = futures[future]
+                processed_count += 1
+
+                try:
+                    success, data = future.result()
+                    if success:
+                        successful.append(data)
+                    else:
+                        failed.append(data)
+
+                    # Progress logging every 50 players
+                    if processed_count % 50 == 0:
+                        elapsed = time.time() - loop_start
+                        rate = processed_count / elapsed
+                        remaining = len(all_players) - processed_count
+                        eta = remaining / rate if rate > 0 else 0
+                        logger.info(
+                            f"Player processing progress: {processed_count}/{len(all_players)} "
+                            f"| Rate: {rate:.1f} players/sec | ETA: {eta/60:.1f}min"
+                        )
+                except Exception as e:
+                    logger.error(f"Error processing {player_lookup}: {e}")
+                    failed.append({
+                        'entity_id': player_lookup,
+                        'entity_type': 'player',
+                        'reason': str(e),
+                        'category': 'PROCESSING_ERROR',
+                        'can_retry': False
+                    })
+
+        # Final timing summary
+        total_time = time.time() - loop_start
+        logger.info(
+            f"Completed {len(successful)} players in {total_time:.1f}s "
+            f"(avg {total_time/len(successful) if successful else 0:.2f}s/player) "
+            f"| {len(failed)} failed"
+        )
+
+        return successful, failed
+
+    def _process_single_player(
+        self,
+        player_lookup: str,
+        completeness_results: dict,
+        upstream_completeness: dict,
+        circuit_breaker_cache: dict,
+        is_bootstrap: bool,
+        is_season_boundary: bool,
+        analysis_date: date
+    ) -> tuple:
+        """Process one player (thread-safe). Returns (success: bool, data: dict)."""
+        try:
+            # Get player row from DataFrame
+            player_row = self.player_context_df[
+                self.player_context_df['player_lookup'] == player_lookup
+            ]
+
+            if player_row.empty:
+                return (False, {
+                    'entity_id': player_lookup,
+                    'entity_type': 'player',
+                    'reason': 'Player not found in context data',
+                    'category': 'MISSING_DATA'
+                })
+
+            player_row = player_row.iloc[0]
+
+            # Get completeness for this player
+            completeness = completeness_results.get(player_lookup, {
+                'expected_count': 0, 'actual_count': 0, 'completeness_pct': 0.0,
+                'missing_count': 0, 'is_complete': False, 'is_production_ready': False
+            })
+
+            # Check circuit breaker (from cache - no BQ query!)
+            circuit_breaker_status = circuit_breaker_cache.get(
+                player_lookup,
+                {'active': False, 'attempts': 0, 'until': None}
+            )
+
+            if circuit_breaker_status['active']:
+                logger.warning(
+                    f"{player_lookup}: Circuit breaker active until "
+                    f"{circuit_breaker_status['until']} - skipping"
+                )
+                return (False, {
+                    'entity_id': player_lookup,
+                    'entity_type': 'player',
+                    'reason': f"Circuit breaker active until {circuit_breaker_status['until']}",
+                    'category': 'CIRCUIT_BREAKER_ACTIVE'
+                })
+
+            # Check production readiness - LOG but DO NOT SKIP
+            if not completeness['is_production_ready']:
+                logger.info(
+                    f"{player_lookup}: Completeness {completeness['completeness_pct']:.1f}% "
+                    f"({completeness['actual_count']}/{completeness['expected_count']} games) - processing with reduced quality"
+                )
+
+            # Check upstream completeness (CASCADE PATTERN) - LOG but DO NOT SKIP
+            upstream_status = upstream_completeness.get(player_lookup, {
+                'player_shot_zone_ready': False,
+                'team_defense_zone_ready': False,
+                'upcoming_player_context_ready': False,
+                'upcoming_team_context_ready': False,
+                'all_upstreams_ready': False
+            })
+
+            if not upstream_status['all_upstreams_ready']:
+                logger.info(
+                    f"{player_lookup}: Upstream not fully ready "
+                    f"(shot_zone={upstream_status['player_shot_zone_ready']}, "
+                    f"team_defense={upstream_status['team_defense_zone_ready']}, "
+                    f"player_context={upstream_status['upcoming_player_context_ready']}, "
+                    f"team_context={upstream_status['upcoming_team_context_ready']}) - processing with reduced quality"
+                )
+
+            # Calculate composite factors
+            record = self._calculate_player_composite(
+                player_row, completeness, upstream_status, circuit_breaker_status,
+                is_bootstrap, is_season_boundary
+            )
+
+            return (True, record)
+
+        except Exception as e:
+            logger.error(f"Failed to process {player_lookup}: {e}")
+            return (False, {
+                'entity_id': player_lookup,
+                'entity_type': 'player',
+                'reason': str(e),
+                'category': 'calculation_error'
+            })
+
+    def _process_players_serial(
+        self,
+        all_players: List[str],
+        completeness_results: dict,
+        upstream_completeness: dict,
+        circuit_breaker_cache: dict,
+        is_bootstrap: bool,
+        is_season_boundary: bool,
+        analysis_date: date
+    ) -> tuple:
+        """Original serial processing (kept for fallback)."""
+        logger.info(f"Processing {len(all_players)} players (serial mode)")
+
+        successful = []
+        failed = []
+
+        total_players = len(self.player_context_df)
+        processed_count = 0
+
         for idx, player_row in self.player_context_df.iterrows():
             try:
                 player_lookup = player_row.get('player_lookup', 'unknown')
@@ -854,9 +1069,7 @@ class PlayerCompositeFactorsProcessor(
                 if processed_count % 50 == 0 or processed_count == total_players:
                     logger.info(f"Processing player {processed_count}/{total_players} ({100*processed_count/total_players:.1f}%)")
 
-                # ============================================================
-                # NEW (Week 4): Get completeness for this player
-                # ============================================================
+                # Get completeness for this player
                 completeness = completeness_results.get(player_lookup, {
                     'expected_count': 0, 'actual_count': 0, 'completeness_pct': 0.0,
                     'missing_count': 0, 'is_complete': False, 'is_production_ready': False
@@ -870,7 +1083,7 @@ class PlayerCompositeFactorsProcessor(
                         f"{player_lookup}: Circuit breaker active until "
                         f"{circuit_breaker_status['until']} - skipping"
                     )
-                    self.failed_entities.append({
+                    failed.append({
                         'entity_id': player_lookup,
                         'entity_type': 'player',
                         'reason': f"Circuit breaker active until {circuit_breaker_status['until']}",
@@ -879,16 +1092,11 @@ class PlayerCompositeFactorsProcessor(
                     continue
 
                 # Check production readiness - LOG but DO NOT SKIP
-                # Process everyone, mark quality issues (like Phase 3 does)
-                is_backfill = self.opts.get('backfill_mode', False) or self.is_backfill_mode
-
                 if not completeness['is_production_ready']:
                     logger.info(
                         f"{player_lookup}: Completeness {completeness['completeness_pct']:.1f}% "
                         f"({completeness['actual_count']}/{completeness['expected_count']} games) - processing with reduced quality"
                     )
-                    # NOTE: Quality issues are tracked in _calculate_player_composite()
-                    # DO NOT skip - continue to process
 
                 # Check upstream completeness (CASCADE PATTERN) - LOG but DO NOT SKIP
                 upstream_status = upstream_completeness.get(player_lookup, {
@@ -907,32 +1115,27 @@ class PlayerCompositeFactorsProcessor(
                         f"player_context={upstream_status['upcoming_player_context_ready']}, "
                         f"team_context={upstream_status['upcoming_team_context_ready']}) - processing with reduced quality"
                     )
-                    # NOTE: Quality issues are tracked in _calculate_player_composite()
-                    # DO NOT skip - continue to process
-                # ============================================================
 
-                # Calculate composite factors (pass completeness + upstream metadata)
+                # Calculate composite factors
                 record = self._calculate_player_composite(
                     player_row, completeness, upstream_status, circuit_breaker_status,
                     is_bootstrap, is_season_boundary
                 )
-                self.transformed_data.append(record)
+                successful.append(record)
 
             except Exception as e:
                 player_lookup = player_row.get('player_lookup', 'unknown')
                 logger.error(f"Failed to process {player_lookup}: {e}")
 
-                self.failed_entities.append({
+                failed.append({
                     'entity_id': player_lookup,
                     'entity_type': 'player',
                     'reason': str(e),
                     'category': 'calculation_error'
                 })
-        
-        logger.info(f"Successfully processed {len(self.transformed_data)} players")
-        if self.failed_entities:
-            logger.warning(f"Failed to process {len(self.failed_entities)} players")
-    
+
+        return successful, failed
+
     def _calculate_player_composite(
         self,
         player_row: pd.Series,

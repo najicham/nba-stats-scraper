@@ -26,6 +26,9 @@ Date: November 6, 2025
 
 import logging
 import json
+import os
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, date, timezone, timedelta
 from typing import Dict, List, Optional
 import pandas as pd
@@ -722,123 +725,29 @@ class MLFeatureStoreProcessor(
         upstream_completeness = self._query_upstream_completeness(list(all_players), analysis_date)
         # ============================================================
 
-        logger.info(f"Calculating features for {len(self.players_with_games)} players")
+        # ============================================================
+        # PARALLELIZATION: Replace serial loop with parallel/serial dispatcher
+        # ============================================================
+        ENABLE_PARALLELIZATION = os.environ.get('ENABLE_PLAYER_PARALLELIZATION', 'true').lower() == 'true'
 
-        for idx, player_row in enumerate(self.players_with_games):
-            try:
-                player_lookup = player_row.get('player_lookup', 'unknown')
+        if ENABLE_PARALLELIZATION:
+            successful, failed = self._process_players_parallel(
+                self.players_with_games, completeness_results, upstream_completeness,
+                is_bootstrap, is_season_boundary, analysis_date
+            )
+        else:
+            successful, failed = self._process_players_serial(
+                self.players_with_games, completeness_results, upstream_completeness,
+                is_bootstrap, is_season_boundary, analysis_date
+            )
 
-                # ============================================================
-                # NEW (Week 4): Get completeness for this player
-                # ============================================================
-                completeness = completeness_results.get(player_lookup, {
-                    'expected_count': 0, 'actual_count': 0, 'completeness_pct': 0.0,
-                    'missing_count': 0, 'is_complete': False, 'is_production_ready': False
-                })
+        self.transformed_data = successful
+        self.failed_entities = failed
 
-                # Check circuit breaker
-                circuit_breaker_status = self._check_circuit_breaker(player_lookup, analysis_date)
-
-                if circuit_breaker_status['active']:
-                    logger.warning(
-                        f"{player_lookup}: Circuit breaker active until "
-                        f"{circuit_breaker_status['until']} - skipping"
-                    )
-                    self.failed_entities.append({
-                        'entity_id': player_lookup,
-                        'entity_type': 'player',
-                        'reason': f"Circuit breaker active until {circuit_breaker_status['until']}",
-                        'category': 'CIRCUIT_BREAKER_ACTIVE'
-                    })
-                    continue
-
-                # BACKFILL MODE FIX: Skip completeness checks in backfill mode
-                # Process everyone but track quality via is_production_ready
-                skip_completeness_checks = self.is_backfill_mode or is_bootstrap
-
-                # Check production readiness (skip if incomplete, unless in bootstrap/backfill mode)
-                if not completeness['is_production_ready'] and not skip_completeness_checks:
-                    logger.warning(
-                        f"{player_lookup}: Completeness {completeness['completeness_pct']:.1f}% "
-                        f"({completeness['actual_count']}/{completeness['expected_count']} games) - skipping"
-                    )
-
-                    # Track reprocessing attempt
-                    self._increment_reprocess_count(
-                        player_lookup, analysis_date,
-                        completeness['completeness_pct'],
-                        'incomplete_own_data'
-                    )
-
-                    self.failed_entities.append({
-                        'entity_id': player_lookup,
-                        'entity_type': 'player',
-                        'reason': f"Incomplete own data: {completeness['completeness_pct']:.1f}%",
-                        'category': 'INCOMPLETE_DATA_SKIPPED'
-                    })
-                    continue
-
-                # Check upstream completeness (CASCADE PATTERN)
-                upstream_status = upstream_completeness.get(player_lookup, {
-                    'player_daily_cache_ready': False,
-                    'player_composite_factors_ready': False,
-                    'player_shot_zone_ready': False,
-                    'team_defense_zone_ready': False,
-                    'all_upstreams_ready': False
-                })
-
-                if not upstream_status['all_upstreams_ready'] and not skip_completeness_checks:
-                    logger.warning(
-                        f"{player_lookup}: Upstream not ready "
-                        f"(daily_cache={upstream_status['player_daily_cache_ready']}, "
-                        f"composite={upstream_status['player_composite_factors_ready']}, "
-                        f"shot_zone={upstream_status['player_shot_zone_ready']}, "
-                        f"team_defense={upstream_status['team_defense_zone_ready']}) - skipping"
-                    )
-
-                    # Track reprocessing attempt
-                    self._increment_reprocess_count(
-                        player_lookup, analysis_date,
-                        completeness['completeness_pct'],
-                        'incomplete_upstream_dependencies'
-                    )
-
-                    self.failed_entities.append({
-                        'entity_id': player_lookup,
-                        'entity_type': 'player',
-                        'reason': f"Upstream Phase 4 dependencies not ready",
-                        'category': 'UPSTREAM_INCOMPLETE'
-                    })
-                    continue
-                # ============================================================
-
-                # Generate features for this player (pass opponent from player_row)
-                start_time = datetime.now()
-                record = self._generate_player_features(player_row, completeness, upstream_status, circuit_breaker_status, is_bootstrap, is_season_boundary)
-                generation_time_ms = (datetime.now() - start_time).total_seconds() * 1000
-
-                record['feature_generation_time_ms'] = int(generation_time_ms)
-
-                self.transformed_data.append(record)
-
-                if (idx + 1) % 50 == 0:
-                    logger.info(f"Processed {idx + 1}/{len(self.players_with_games)} players")
-
-            except Exception as e:
-                player_lookup = player_row.get('player_lookup', 'unknown')
-                logger.error(f"Failed to process {player_lookup}: {e}")
-
-                self.failed_entities.append({
-                    'entity_id': player_lookup,
-                    'entity_type': 'player',
-                    'reason': str(e),
-                    'category': 'calculation_error'
-                })
-        
         success_count = len(self.transformed_data)
         fail_count = len(self.failed_entities)
         success_rate = (success_count / (success_count + fail_count) * 100) if (success_count + fail_count) > 0 else 0
-        
+
         logger.info(f"Feature generation complete: {success_count} success, {fail_count} failed ({success_rate:.1f}% success rate)")
     
     def _generate_player_features(self, player_row: Dict, completeness: Dict, upstream_status: Dict, circuit_breaker_status: Dict, is_bootstrap: bool, is_season_boundary: bool) -> Dict:
@@ -1123,7 +1032,316 @@ class MLFeatureStoreProcessor(
         
         logger.info(f"Write complete: {write_stats['rows_processed']}/{len(self.transformed_data)} rows "
                    f"({write_stats['batches_written']} batches)")
-    
+
+    # ========================================================================
+    # PARALLELIZATION METHODS
+    # ========================================================================
+
+    def _process_players_parallel(
+        self,
+        players_with_games: List[Dict],
+        completeness_results: dict,
+        upstream_completeness: dict,
+        is_bootstrap: bool,
+        is_season_boundary: bool,
+        analysis_date: date
+    ) -> tuple:
+        """Process all players using ThreadPoolExecutor."""
+        max_workers = min(10, os.cpu_count() or 1)
+        logger.info(f"Processing {len(players_with_games)} players with {max_workers} workers (parallel mode)")
+
+        loop_start = time.time()
+        processed_count = 0
+        successful = []
+        failed = []
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(
+                    self._process_single_player,
+                    player_row,
+                    completeness_results,
+                    upstream_completeness,
+                    is_bootstrap,
+                    is_season_boundary,
+                    analysis_date
+                ): player_row.get('player_lookup', 'unknown')
+                for player_row in players_with_games
+            }
+
+            for future in as_completed(futures):
+                player_lookup = futures[future]
+                processed_count += 1
+
+                try:
+                    success, data = future.result()
+                    if success:
+                        successful.append(data)
+                    else:
+                        failed.append(data)
+
+                    # Progress logging every 50 players
+                    if processed_count % 50 == 0:
+                        elapsed = time.time() - loop_start
+                        rate = processed_count / elapsed
+                        remaining = len(players_with_games) - processed_count
+                        eta = remaining / rate if rate > 0 else 0
+                        logger.info(
+                            f"Player processing progress: {processed_count}/{len(players_with_games)} "
+                            f"| Rate: {rate:.1f} players/sec | ETA: {eta/60:.1f}min"
+                        )
+                except Exception as e:
+                    logger.error(f"Error processing {player_lookup}: {e}")
+                    failed.append({
+                        'entity_id': player_lookup,
+                        'entity_type': 'player',
+                        'reason': str(e),
+                        'category': 'PROCESSING_ERROR',
+                        'can_retry': False
+                    })
+
+        total_time = time.time() - loop_start
+        logger.info(
+            f"Completed {len(successful)} players in {total_time:.1f}s "
+            f"(avg {total_time/len(successful) if successful else 0:.2f}s/player) "
+            f"| {len(failed)} failed"
+        )
+
+        return successful, failed
+
+    def _process_single_player(
+        self,
+        player_row: Dict,
+        completeness_results: dict,
+        upstream_completeness: dict,
+        is_bootstrap: bool,
+        is_season_boundary: bool,
+        analysis_date: date
+    ) -> tuple:
+        """Process one player (thread-safe). Returns (success: bool, data: dict)."""
+        try:
+            player_lookup = player_row.get('player_lookup', 'unknown')
+
+            # Get completeness for this player
+            completeness = completeness_results.get(player_lookup, {
+                'expected_count': 0, 'actual_count': 0, 'completeness_pct': 0.0,
+                'missing_count': 0, 'is_complete': False, 'is_production_ready': False
+            })
+
+            # Check circuit breaker
+            circuit_breaker_status = self._check_circuit_breaker(player_lookup, analysis_date)
+
+            if circuit_breaker_status['active']:
+                logger.warning(
+                    f"{player_lookup}: Circuit breaker active until "
+                    f"{circuit_breaker_status['until']} - skipping"
+                )
+                return (False, {
+                    'entity_id': player_lookup,
+                    'entity_type': 'player',
+                    'reason': f"Circuit breaker active until {circuit_breaker_status['until']}",
+                    'category': 'CIRCUIT_BREAKER_ACTIVE'
+                })
+
+            # BACKFILL MODE FIX: Skip completeness checks in backfill mode
+            skip_completeness_checks = self.is_backfill_mode or is_bootstrap
+
+            # Check production readiness (skip if incomplete, unless in bootstrap/backfill mode)
+            if not completeness['is_production_ready'] and not skip_completeness_checks:
+                logger.warning(
+                    f"{player_lookup}: Completeness {completeness['completeness_pct']:.1f}% "
+                    f"({completeness['actual_count']}/{completeness['expected_count']} games) - skipping"
+                )
+
+                # Track reprocessing attempt
+                self._increment_reprocess_count(
+                    player_lookup, analysis_date,
+                    completeness['completeness_pct'],
+                    'incomplete_own_data'
+                )
+
+                return (False, {
+                    'entity_id': player_lookup,
+                    'entity_type': 'player',
+                    'reason': f"Incomplete own data: {completeness['completeness_pct']:.1f}%",
+                    'category': 'INCOMPLETE_DATA_SKIPPED'
+                })
+
+            # Check upstream completeness (CASCADE PATTERN)
+            upstream_status = upstream_completeness.get(player_lookup, {
+                'player_daily_cache_ready': False,
+                'player_composite_factors_ready': False,
+                'player_shot_zone_ready': False,
+                'team_defense_zone_ready': False,
+                'all_upstreams_ready': False
+            })
+
+            if not upstream_status['all_upstreams_ready'] and not skip_completeness_checks:
+                logger.warning(
+                    f"{player_lookup}: Upstream not ready "
+                    f"(daily_cache={upstream_status['player_daily_cache_ready']}, "
+                    f"composite={upstream_status['player_composite_factors_ready']}, "
+                    f"shot_zone={upstream_status['player_shot_zone_ready']}, "
+                    f"team_defense={upstream_status['team_defense_zone_ready']}) - skipping"
+                )
+
+                # Track reprocessing attempt
+                self._increment_reprocess_count(
+                    player_lookup, analysis_date,
+                    completeness['completeness_pct'],
+                    'incomplete_upstream_dependencies'
+                )
+
+                return (False, {
+                    'entity_id': player_lookup,
+                    'entity_type': 'player',
+                    'reason': f"Upstream Phase 4 dependencies not ready",
+                    'category': 'UPSTREAM_INCOMPLETE'
+                })
+
+            # Generate features for this player
+            start_time = datetime.now()
+            record = self._generate_player_features(player_row, completeness, upstream_status, circuit_breaker_status, is_bootstrap, is_season_boundary)
+            generation_time_ms = (datetime.now() - start_time).total_seconds() * 1000
+
+            record['feature_generation_time_ms'] = int(generation_time_ms)
+
+            return (True, record)
+
+        except Exception as e:
+            player_lookup = player_row.get('player_lookup', 'unknown')
+            logger.error(f"Failed to process {player_lookup}: {e}")
+            return (False, {
+                'entity_id': player_lookup,
+                'entity_type': 'player',
+                'reason': str(e),
+                'category': 'calculation_error'
+            })
+
+    def _process_players_serial(
+        self,
+        players_with_games: List[Dict],
+        completeness_results: dict,
+        upstream_completeness: dict,
+        is_bootstrap: bool,
+        is_season_boundary: bool,
+        analysis_date: date
+    ) -> tuple:
+        """Original serial processing (kept for fallback)."""
+        logger.info(f"Calculating features for {len(players_with_games)} players (serial mode)")
+
+        successful = []
+        failed = []
+
+        for idx, player_row in enumerate(players_with_games):
+            try:
+                player_lookup = player_row.get('player_lookup', 'unknown')
+
+                # Get completeness for this player
+                completeness = completeness_results.get(player_lookup, {
+                    'expected_count': 0, 'actual_count': 0, 'completeness_pct': 0.0,
+                    'missing_count': 0, 'is_complete': False, 'is_production_ready': False
+                })
+
+                # Check circuit breaker
+                circuit_breaker_status = self._check_circuit_breaker(player_lookup, analysis_date)
+
+                if circuit_breaker_status['active']:
+                    logger.warning(
+                        f"{player_lookup}: Circuit breaker active until "
+                        f"{circuit_breaker_status['until']} - skipping"
+                    )
+                    failed.append({
+                        'entity_id': player_lookup,
+                        'entity_type': 'player',
+                        'reason': f"Circuit breaker active until {circuit_breaker_status['until']}",
+                        'category': 'CIRCUIT_BREAKER_ACTIVE'
+                    })
+                    continue
+
+                # BACKFILL MODE FIX: Skip completeness checks in backfill mode
+                skip_completeness_checks = self.is_backfill_mode or is_bootstrap
+
+                # Check production readiness (skip if incomplete, unless in bootstrap/backfill mode)
+                if not completeness['is_production_ready'] and not skip_completeness_checks:
+                    logger.warning(
+                        f"{player_lookup}: Completeness {completeness['completeness_pct']:.1f}% "
+                        f"({completeness['actual_count']}/{completeness['expected_count']} games) - skipping"
+                    )
+
+                    # Track reprocessing attempt
+                    self._increment_reprocess_count(
+                        player_lookup, analysis_date,
+                        completeness['completeness_pct'],
+                        'incomplete_own_data'
+                    )
+
+                    failed.append({
+                        'entity_id': player_lookup,
+                        'entity_type': 'player',
+                        'reason': f"Incomplete own data: {completeness['completeness_pct']:.1f}%",
+                        'category': 'INCOMPLETE_DATA_SKIPPED'
+                    })
+                    continue
+
+                # Check upstream completeness (CASCADE PATTERN)
+                upstream_status = upstream_completeness.get(player_lookup, {
+                    'player_daily_cache_ready': False,
+                    'player_composite_factors_ready': False,
+                    'player_shot_zone_ready': False,
+                    'team_defense_zone_ready': False,
+                    'all_upstreams_ready': False
+                })
+
+                if not upstream_status['all_upstreams_ready'] and not skip_completeness_checks:
+                    logger.warning(
+                        f"{player_lookup}: Upstream not ready "
+                        f"(daily_cache={upstream_status['player_daily_cache_ready']}, "
+                        f"composite={upstream_status['player_composite_factors_ready']}, "
+                        f"shot_zone={upstream_status['player_shot_zone_ready']}, "
+                        f"team_defense={upstream_status['team_defense_zone_ready']}) - skipping"
+                    )
+
+                    # Track reprocessing attempt
+                    self._increment_reprocess_count(
+                        player_lookup, analysis_date,
+                        completeness['completeness_pct'],
+                        'incomplete_upstream_dependencies'
+                    )
+
+                    failed.append({
+                        'entity_id': player_lookup,
+                        'entity_type': 'player',
+                        'reason': f"Upstream Phase 4 dependencies not ready",
+                        'category': 'UPSTREAM_INCOMPLETE'
+                    })
+                    continue
+
+                # Generate features for this player
+                start_time = datetime.now()
+                record = self._generate_player_features(player_row, completeness, upstream_status, circuit_breaker_status, is_bootstrap, is_season_boundary)
+                generation_time_ms = (datetime.now() - start_time).total_seconds() * 1000
+
+                record['feature_generation_time_ms'] = int(generation_time_ms)
+
+                successful.append(record)
+
+                if (idx + 1) % 50 == 0:
+                    logger.info(f"Processed {idx + 1}/{len(players_with_games)} players")
+
+            except Exception as e:
+                player_lookup = player_row.get('player_lookup', 'unknown')
+                logger.error(f"Failed to process {player_lookup}: {e}")
+
+                failed.append({
+                    'entity_id': player_lookup,
+                    'entity_type': 'player',
+                    'reason': str(e),
+                    'category': 'calculation_error'
+                })
+
+        return successful, failed
+
     # ========================================================================
     # STATS & REPORTING
     # ========================================================================
