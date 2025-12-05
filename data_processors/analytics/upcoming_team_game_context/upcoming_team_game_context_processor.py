@@ -31,6 +31,8 @@ Version: 2.0 - Added dependency tracking, enhanced validation, quality tracking
 Last Updated: November 2, 2025
 """
 
+import hashlib
+import json
 import logging
 import os
 from datetime import datetime, timedelta, date, timezone
@@ -52,6 +54,9 @@ from shared.utils.completeness_checker import CompletenessChecker
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 logger = logging.getLogger(__name__)
+
+# Feature flag for team-game-level parallelization
+ENABLE_TEAM_PARALLELIZATION = os.environ.get('ENABLE_TEAM_PARALLELIZATION', 'true').lower() == 'true'
 
 
 # ============================================================================
@@ -89,7 +94,54 @@ class UpcomingTeamGameContextProcessor(
     - Extended lookback windows for context calculations
     - Quality issue logging throughout
     """
-    
+
+    # ============================================================
+    # Pattern #3: Smart Reprocessing - Data Hash Fields
+    # ============================================================
+    HASH_FIELDS = [
+        # Business Keys (4 fields)
+        'team_abbr',
+        'game_id',
+        'game_date',
+        'season_year',
+
+        # Game Context (5 fields)
+        'opponent_team_abbr',
+        'home_game',
+        'is_back_to_back',
+        'days_since_last_game',
+        'game_number_in_season',
+
+        # Fatigue Metrics (4 fields)
+        'team_days_rest',
+        'team_back_to_back',
+        'games_in_last_7_days',
+        'games_in_last_14_days',
+
+        # Betting Context (7 fields)
+        'game_spread',
+        'game_total',
+        'game_spread_source',
+        'game_total_source',
+        'spread_movement',
+        'total_movement',
+        'betting_lines_updated_at',
+
+        # Personnel Context (2 fields)
+        'starters_out_count',
+        'questionable_players_count',
+
+        # Recent Performance / Momentum (4 fields)
+        'team_win_streak_entering',
+        'team_loss_streak_entering',
+        'last_game_margin',
+        'last_game_result',
+
+        # Travel Context (1 field)
+        'travel_miles',
+    ]
+    # Total: 27 meaningful analytics fields
+
     def __init__(self):
         super().__init__()
         self.table_name = 'nba_analytics.upcoming_team_game_context'
@@ -1115,7 +1167,187 @@ class UpcomingTeamGameContextProcessor(
             is_season_boundary = False
         # ============================================================
 
-        # Process each game
+        # ============================================================
+        # Parallelization: Process games in parallel or serial mode
+        # ============================================================
+        if ENABLE_TEAM_PARALLELIZATION:
+            successful_records, failed_count = self._process_games_parallel(
+                target_games, comp_l7d, comp_l14d, is_bootstrap, is_season_boundary
+            )
+        else:
+            successful_records, failed_count = self._process_games_serial(
+                target_games, comp_l7d, comp_l14d, is_bootstrap, is_season_boundary
+            )
+
+        self.transformed_data = successful_records
+        
+        logger.info("=" * 80)
+        logger.info(f"CALCULATION COMPLETE:")
+        logger.info(f"  ✓ Successful: {len(successful_records)} team-game records")
+        logger.info(f"  ✗ Failed: {failed_count} team-game records")
+        logger.info("=" * 80)
+
+    def _process_games_parallel(
+        self,
+        target_games: pd.DataFrame,
+        comp_l7d: Dict,
+        comp_l14d: Dict,
+        is_bootstrap: bool,
+        is_season_boundary: bool
+    ) -> tuple:
+        """Process all games using ThreadPoolExecutor for parallelization."""
+        import time
+
+        # Determine worker count
+        DEFAULT_WORKERS = 4
+        max_workers = int(os.environ.get(
+            'UTGC_WORKERS',
+            os.environ.get('PARALLELIZATION_WORKERS', DEFAULT_WORKERS)
+        ))
+        max_workers = min(max_workers, os.cpu_count() or 1)
+        logger.info(f"Processing {len(target_games)} games with {max_workers} workers (parallel mode)")
+
+        # Performance timing
+        loop_start = time.time()
+        processed_count = 0
+
+        # Thread-safe result collection
+        successful_records = []
+        failed_count = 0
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all game tasks
+            futures = {
+                executor.submit(
+                    self._process_single_game,
+                    game,
+                    comp_l7d,
+                    comp_l14d,
+                    is_bootstrap,
+                    is_season_boundary
+                ): idx
+                for idx, game in target_games.iterrows()
+            }
+
+            # Collect results as they complete
+            for future in as_completed(futures):
+                idx = futures[future]
+                processed_count += 1
+
+                try:
+                    success, data = future.result()
+                    if success:
+                        # data is a list of [home_record, away_record]
+                        successful_records.extend(data)
+                    else:
+                        # data is error dict
+                        failed_count += 2  # Both home and away failed
+                        logger.error(f"Failed to process game: {data.get('error')}")
+
+                except Exception as e:
+                    failed_count += 2
+                    logger.error(f"Exception processing game: {e}")
+
+                # Progress logging every 10 games
+                if processed_count % 10 == 0 or processed_count == len(target_games):
+                    elapsed = time.time() - loop_start
+                    rate = processed_count / elapsed if elapsed > 0 else 0
+                    eta = (len(target_games) - processed_count) / rate if rate > 0 else 0
+                    logger.info(
+                        f"Progress: {processed_count}/{len(target_games)} games | "
+                        f"Rate: {rate:.1f} games/sec | "
+                        f"ETA: {eta:.1f}s | "
+                        f"Success: {len(successful_records)} records | "
+                        f"Failed: {failed_count} records"
+                    )
+
+        elapsed_total = time.time() - loop_start
+        rate_final = len(target_games) / elapsed_total if elapsed_total > 0 else 0
+        logger.info(
+            f"Parallel processing complete: {len(target_games)} games in {elapsed_total:.1f}s "
+            f"({rate_final:.1f} games/sec, {max_workers} workers)"
+        )
+
+        return successful_records, failed_count
+
+    def _process_single_game(
+        self,
+        game: pd.Series,
+        comp_l7d: Dict,
+        comp_l14d: Dict,
+        is_bootstrap: bool,
+        is_season_boundary: bool
+    ) -> tuple:
+        """
+        Process a single game (creates 2 records: home + away).
+
+        Returns:
+            (True, [home_record, away_record]) on success
+            (False, error_dict) on failure
+        """
+        try:
+            records = []
+
+            # Create home team record
+            home_record = self._calculate_team_game_context(
+                game=game,
+                team_abbr=game['home_team_abbr'],
+                opponent_abbr=game['away_team_abbr'],
+                home_game=True,
+                comp_l7d=comp_l7d,
+                comp_l14d=comp_l14d,
+                is_bootstrap=is_bootstrap,
+                is_season_boundary=is_season_boundary
+            )
+
+            if home_record:
+                records.append(home_record)
+
+            # Create away team record
+            away_record = self._calculate_team_game_context(
+                game=game,
+                team_abbr=game['away_team_abbr'],
+                opponent_abbr=game['home_team_abbr'],
+                home_game=False,
+                comp_l7d=comp_l7d,
+                comp_l14d=comp_l14d,
+                is_bootstrap=is_bootstrap,
+                is_season_boundary=is_season_boundary
+            )
+
+            if away_record:
+                records.append(away_record)
+
+            if len(records) == 2:
+                return (True, records)
+            else:
+                return (False, {
+                    'game_id': game.get('game_id'),
+                    'error': 'Failed to create home or away record',
+                    'records_created': len(records)
+                })
+
+        except Exception as e:
+            return (False, {
+                'game_id': game.get('game_id'),
+                'error': str(e),
+                'error_type': type(e).__name__
+            })
+
+    def _process_games_serial(
+        self,
+        target_games: pd.DataFrame,
+        comp_l7d: Dict,
+        comp_l14d: Dict,
+        is_bootstrap: bool,
+        is_season_boundary: bool
+    ) -> tuple:
+        """Process all games in serial mode (original logic)."""
+        logger.info(f"Processing {len(target_games)} games in serial mode")
+
+        successful_records = []
+        failed_count = 0
+
         for idx, game in target_games.iterrows():
             try:
                 # Create home team record
@@ -1146,12 +1378,12 @@ class UpcomingTeamGameContextProcessor(
                     is_bootstrap=is_bootstrap,
                     is_season_boundary=is_season_boundary
                 )
-                
+
                 if away_record:
                     successful_records.append(away_record)
                 else:
                     failed_count += 1
-                    
+
             except Exception as e:
                 logger.error(f"Error processing game {game.get('game_id')}: {e}")
                 self.log_quality_issue(
@@ -1165,15 +1397,9 @@ class UpcomingTeamGameContextProcessor(
                 )
                 failed_count += 2  # Both home and away failed
                 continue
-        
-        self.transformed_data = successful_records
-        
-        logger.info("=" * 80)
-        logger.info(f"CALCULATION COMPLETE:")
-        logger.info(f"  ✓ Successful: {len(successful_records)} team-game records")
-        logger.info(f"  ✗ Failed: {failed_count} team-game records")
-        logger.info("=" * 80)
-    
+
+        return successful_records, failed_count
+
     def _calculate_team_game_context(
         self,
         game: pd.Series,
@@ -1322,6 +1548,13 @@ class UpcomingTeamGameContextProcessor(
                 completeness_l14d['is_complete']
             )
             # ============================================================
+
+            # ============================================================
+            # Pattern #3: Smart Reprocessing - Calculate Data Hash
+            # ============================================================
+            # IMPORTANT: Calculate hash AFTER all analytics fields are populated
+            # but BEFORE metadata fields (processed_at, created_at)
+            record['data_hash'] = self._calculate_data_hash(record)
 
             # Add processing metadata
             record['processed_at'] = datetime.now(timezone.utc).isoformat()
@@ -1720,7 +1953,7 @@ class UpcomingTeamGameContextProcessor(
     # ========================================================================
     # HELPER METHODS
     # ========================================================================
-    
+
     def log_quality_issue(
         self,
         severity: str,
@@ -1730,14 +1963,14 @@ class UpcomingTeamGameContextProcessor(
     ) -> None:
         """
         Log a data quality issue for monitoring.
-        
+
         Args:
             severity: 'CRITICAL', 'ERROR', 'WARNING', 'INFO'
             category: Issue category
             message: Human-readable description
             details: Additional context
         """
-        
+
         issue = {
             'timestamp': datetime.now(timezone.utc).isoformat(),
             'severity': severity,
@@ -1745,9 +1978,9 @@ class UpcomingTeamGameContextProcessor(
             'message': message,
             'details': details or {}
         }
-        
+
         self.quality_issues.append(issue)
-        
+
         # Also log to standard logger
         log_method = {
             'CRITICAL': logger.critical,
@@ -1755,8 +1988,27 @@ class UpcomingTeamGameContextProcessor(
             'WARNING': logger.warning,
             'INFO': logger.info
         }.get(severity, logger.info)
-        
+
         log_method(f"[{category}] {message}")
+
+    def _calculate_data_hash(self, record: Dict) -> str:
+        """
+        Calculate SHA256 hash of meaningful analytics fields.
+
+        Pattern #3: Smart Reprocessing
+        - Phase 4 processors extract this hash to detect changes
+        - Comparison with previous hash detects meaningful changes
+        - Unchanged hashes allow Phase 4 to skip expensive reprocessing
+
+        Args:
+            record: Dictionary containing analytics fields
+
+        Returns:
+            First 16 characters of SHA256 hash (sufficient for uniqueness)
+        """
+        hash_data = {field: record.get(field) for field in self.HASH_FIELDS}
+        sorted_data = json.dumps(hash_data, sort_keys=True, default=str)
+        return hashlib.sha256(sorted_data.encode()).hexdigest()[:16]
     
     # ========================================================================
     # SAVE LOGIC

@@ -54,6 +54,8 @@ Key Features:
 import logging
 import os
 import re
+import hashlib
+import json
 from datetime import datetime, date, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -154,6 +156,135 @@ class UpcomingPlayerGameContextProcessor(
         # Processing results
         self.transformed_data = []
         self.failed_entities = []
+
+    # ============================================================
+    # Pattern #3: Smart Reprocessing - Data Hash Fields
+    # ============================================================
+    # Fields included in data_hash calculation (meaningful analytics output only)
+    # EXCLUDES: metadata (created_at, processed_at, etc.), source tracking, data quality
+    HASH_FIELDS = [
+        # Core identifiers
+        'player_lookup',
+        'universal_player_id',
+        'game_id',
+        'game_date',
+        'team_abbr',
+        'opponent_team_abbr',
+        'has_prop_line',
+
+        # Player prop betting context
+        'current_points_line',
+        'opening_points_line',
+        'line_movement',
+        'current_points_line_source',
+        'opening_points_line_source',
+
+        # Game spread context
+        'game_spread',
+        'opening_spread',
+        'spread_movement',
+        'game_spread_source',
+        'spread_public_betting_pct',
+
+        # Game total context
+        'game_total',
+        'opening_total',
+        'total_movement',
+        'game_total_source',
+        'total_public_betting_pct',
+
+        # Pre-game context
+        'pace_differential',
+        'opponent_pace_last_10',
+        'game_start_time_local',
+        'opponent_ft_rate_allowed',
+        'home_game',
+        'back_to_back',
+        'season_phase',
+        'projected_usage_rate',
+
+        # Player fatigue analysis
+        'days_rest',
+        'days_rest_before_last_game',
+        'days_since_2_plus_days_rest',
+        'games_in_last_7_days',
+        'games_in_last_14_days',
+        'minutes_in_last_7_days',
+        'minutes_in_last_14_days',
+        'avg_minutes_per_game_last_7',
+        'back_to_backs_last_14_days',
+        'avg_usage_rate_last_7_games',
+        'fourth_quarter_minutes_last_7',
+        'clutch_minutes_last_7_games',
+
+        # Travel context
+        'travel_miles',
+        'time_zone_changes',
+        'consecutive_road_games',
+        'miles_traveled_last_14_days',
+        'time_zones_crossed_last_14_days',
+
+        # Player characteristics
+        'player_age',
+
+        # Recent performance context
+        'points_avg_last_5',
+        'points_avg_last_10',
+        'prop_over_streak',
+        'prop_under_streak',
+        'star_teammates_out',
+        'opponent_def_rating_last_10',
+        'shooting_pct_decline_last_5',
+        'fourth_quarter_production_last_7',
+
+        # Forward-looking schedule context
+        'next_game_days_rest',
+        'games_in_next_7_days',
+        'next_opponent_win_pct',
+        'next_game_is_primetime',
+
+        # Opponent asymmetry context
+        'opponent_days_rest',
+        'opponent_games_in_next_7_days',
+        'opponent_next_game_days_rest',
+
+        # Real-time updates
+        'player_status',
+        'injury_report',
+        'questionable_teammates',
+        'probable_teammates',
+
+        # Completeness metrics
+        'expected_games_count',
+        'actual_games_count',
+        'completeness_percentage',
+        'missing_games_count',
+        'is_production_ready',
+        'manual_override_required',
+        'season_boundary_detected',
+        'backfill_bootstrap_mode',
+        'processing_decision_reason',
+
+        # Multi-window completeness
+        'l5_completeness_pct',
+        'l5_is_complete',
+        'l10_completeness_pct',
+        'l10_is_complete',
+        'l7d_completeness_pct',
+        'l7d_is_complete',
+        'l14d_completeness_pct',
+        'l14d_is_complete',
+        'l30d_completeness_pct',
+        'l30d_is_complete',
+        'all_windows_complete',
+
+        # Update tracking (context_version only - not timestamps)
+        'context_version',
+    ]
+    # Total: 102 fields
+    # EXCLUDED: created_at, processed_at, updated_at, source_* fields (16 fields),
+    #           data_quality_tier, primary_source_used, processed_with_issues,
+    #           data_quality_issues, circuit_breaker fields, data_hash itself
 
     # ============================================================
     # Pattern #1: Smart Skip Configuration
@@ -1486,8 +1617,13 @@ class UpcomingPlayerGameContextProcessor(
         """Process all players using ThreadPoolExecutor for parallelization."""
         import time
 
-        # Determine worker count
-        max_workers = min(10, os.cpu_count() or 1)
+        # Determine worker count with environment variable support
+        DEFAULT_WORKERS = 10
+        max_workers = int(os.environ.get(
+            'UPGC_WORKERS',
+            os.environ.get('PARALLELIZATION_WORKERS', DEFAULT_WORKERS)
+        ))
+        max_workers = min(max_workers, os.cpu_count() or 1)
         logger.info(f"Processing {len(self.players_to_process)} players with {max_workers} workers (parallel mode)")
 
         # Performance timing
@@ -1950,7 +2086,10 @@ class UpcomingPlayerGameContextProcessor(
             'created_at': datetime.now(timezone.utc).isoformat(),
             'processed_at': datetime.now(timezone.utc).isoformat()
         }
-        
+
+        # Calculate data_hash AFTER all fields are populated (Pattern #3: Smart Reprocessing)
+        context['data_hash'] = self._calculate_data_hash(context)
+
         return context
     
     def _determine_player_team(self, player_lookup: str, game_info: Dict) -> Optional[str]:
@@ -2252,7 +2391,26 @@ class UpcomingPlayerGameContextProcessor(
         quality_cols['processed_with_issues'] = len(issues) > 0
 
         return quality_cols
-    
+
+    def _calculate_data_hash(self, record: Dict) -> str:
+        """
+        Calculate SHA256 hash of meaningful analytics fields.
+
+        Pattern #3: Smart Reprocessing
+        - Phase 4 processors extract this hash to detect changes
+        - Comparison with previous hash detects meaningful changes
+        - Unchanged hashes allow Phase 4 to skip expensive reprocessing
+
+        Args:
+            record: Dictionary containing analytics fields
+
+        Returns:
+            First 16 characters of SHA256 hash (sufficient for uniqueness)
+        """
+        hash_data = {field: record.get(field) for field in self.HASH_FIELDS}
+        sorted_data = json.dumps(hash_data, sort_keys=True, default=str)
+        return hashlib.sha256(sorted_data.encode()).hexdigest()[:16]
+
     def _build_source_tracking_fields(self) -> Dict:
         """
         Build source tracking fields for output record.

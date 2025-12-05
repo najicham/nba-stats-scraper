@@ -17,6 +17,8 @@ Last Updated: November 2025
 Status: Production Ready
 """
 
+import hashlib
+import json
 import logging
 import os
 import time
@@ -112,7 +114,42 @@ class PlayerGameSummaryProcessor(
     # =========================================================================
     CIRCUIT_BREAKER_THRESHOLD = 5  # Open after 5 consecutive failures
     CIRCUIT_BREAKER_TIMEOUT = timedelta(minutes=30)  # Stay open 30 minutes
-    
+
+    # =========================================================================
+    # Pattern #3: Smart Reprocessing - Data Hash Fields
+    # =========================================================================
+    # Fields included in data_hash calculation (48 fields total)
+    # INCLUDE: All meaningful analytics output (identifiers, stats, metrics, props)
+    # EXCLUDE: Metadata (created_at, processed_at), source_* fields, quality fields
+    HASH_FIELDS = [
+        # Core identifiers (8)
+        'player_lookup', 'universal_player_id', 'player_full_name', 'game_id',
+        'game_date', 'team_abbr', 'opponent_team_abbr', 'season_year',
+
+        # Basic performance stats (16)
+        'points', 'minutes_played', 'assists', 'offensive_rebounds', 'defensive_rebounds',
+        'steals', 'blocks', 'turnovers', 'fg_attempts', 'fg_makes',
+        'three_pt_attempts', 'three_pt_makes', 'ft_attempts', 'ft_makes',
+        'plus_minus', 'personal_fouls',
+
+        # Shot zone performance (8)
+        'paint_attempts', 'paint_makes', 'mid_range_attempts', 'mid_range_makes',
+        'paint_blocks', 'mid_range_blocks', 'three_pt_blocks', 'and1_count',
+
+        # Shot creation analysis (2)
+        'assisted_fg_makes', 'unassisted_fg_makes',
+
+        # Advanced efficiency (5)
+        'usage_rate', 'ts_pct', 'efg_pct', 'starter_flag', 'win_flag',
+
+        # Prop betting results (7)
+        'points_line', 'over_under_result', 'margin', 'opening_line',
+        'line_movement', 'points_line_source', 'opening_line_source',
+
+        # Player availability (2)
+        'is_active', 'player_status'
+    ]
+
     def __init__(self):
         super().__init__()
         self.table_name = 'player_game_summary'
@@ -221,6 +258,25 @@ class PlayerGameSummaryProcessor(
             PlayerChangeDetector configured for player stats
         """
         return PlayerChangeDetector(project_id=self.project_id)
+
+    def _calculate_data_hash(self, record: Dict) -> str:
+        """
+        Calculate SHA256 hash of meaningful analytics fields.
+
+        Pattern #3: Smart Reprocessing
+        - Phase 4 processors extract this hash to detect changes
+        - Comparison with previous hash detects meaningful changes
+        - Unchanged hashes allow Phase 4 to skip expensive reprocessing
+
+        Args:
+            record: Dictionary containing analytics fields
+
+        Returns:
+            First 16 characters of SHA256 hash (sufficient for uniqueness)
+        """
+        hash_data = {field: record.get(field) for field in self.HASH_FIELDS}
+        sorted_data = json.dumps(hash_data, sort_keys=True, default=str)
+        return hashlib.sha256(sorted_data.encode()).hexdigest()[:16]
 
     def extract_raw_data(self) -> None:
         """
@@ -695,7 +751,13 @@ class PlayerGameSummaryProcessor(
 
     def _process_player_games_parallel(self, uid_map: dict) -> List[Dict]:
         """Process all player-game records using ThreadPoolExecutor."""
-        max_workers = min(10, os.cpu_count() or 1)
+        # Determine worker count with environment variable support
+        DEFAULT_WORKERS = 10
+        max_workers = int(os.environ.get(
+            'PGS_WORKERS',
+            os.environ.get('PARALLELIZATION_WORKERS', DEFAULT_WORKERS)
+        ))
+        max_workers = min(max_workers, os.cpu_count() or 1)
         total_records = len(self.raw_data)
         logger.info(f"Processing {total_records} player-game records with {max_workers} workers (parallel mode)")
 
@@ -874,6 +936,9 @@ class PlayerGameSummaryProcessor(
                 'processed_at': datetime.now(timezone.utc).isoformat()
             }
 
+            # Pattern #3: Smart Reprocessing - Calculate data hash
+            record['data_hash'] = self._calculate_data_hash(record)
+
             return record
 
         except Exception as e:
@@ -1017,6 +1082,9 @@ class PlayerGameSummaryProcessor(
                     # Metadata
                     'processed_at': datetime.now(timezone.utc).isoformat()
                 }
+
+                # Pattern #3: Smart Reprocessing - Calculate data hash
+                record['data_hash'] = self._calculate_data_hash(record)
 
                 records.append(record)
 

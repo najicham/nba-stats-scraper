@@ -31,9 +31,14 @@ Updated: November 2025
 """
 
 import logging
+import os
+import time
+import hashlib
+import json
 import pandas as pd
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from data_processors.analytics.analytics_base import AnalyticsProcessorBase
 from shared.utils.notification_system import (
     notify_error,
@@ -51,6 +56,9 @@ from shared.processors.patterns.quality_columns import build_quality_columns_wit
 
 logger = logging.getLogger(__name__)
 
+# Feature flag for team-level parallelization
+ENABLE_TEAM_PARALLELIZATION = os.environ.get('ENABLE_TEAM_PARALLELIZATION', 'true').lower() == 'true'
+
 
 class TeamDefenseGameSummaryProcessor(
     FallbackSourceMixin,
@@ -66,7 +74,71 @@ class TeamDefenseGameSummaryProcessor(
     Reads opponent offensive performance and defensive actions from raw tables.
     Handles multi-source fallback logic for data completeness.
     """
-    
+
+    # ============================================================
+    # Pattern #3: Smart Reprocessing - Data Hash Fields
+    # ============================================================
+    HASH_FIELDS = [
+        # Core identifiers
+        'game_id',
+        'game_date',
+        'defending_team_abbr',
+        'opponent_team_abbr',
+        'season_year',
+
+        # Defensive stats - opponent performance allowed (11 fields)
+        'points_allowed',
+        'opp_fg_attempts',
+        'opp_fg_makes',
+        'opp_three_pt_attempts',
+        'opp_three_pt_makes',
+        'opp_ft_attempts',
+        'opp_ft_makes',
+        'opp_rebounds',
+        'opp_assists',
+        'turnovers_forced',
+        'fouls_committed',
+
+        # Defensive shot zone performance (9 fields)
+        'opp_paint_attempts',
+        'opp_paint_makes',
+        'opp_mid_range_attempts',
+        'opp_mid_range_makes',
+        'points_in_paint_allowed',
+        'mid_range_points_allowed',
+        'three_pt_points_allowed',
+        'second_chance_points_allowed',
+        'fast_break_points_allowed',
+
+        # Defensive actions (5 fields)
+        'blocks_paint',
+        'blocks_mid_range',
+        'blocks_three_pt',
+        'steals',
+        'defensive_rebounds',
+
+        # Advanced defensive metrics (3 fields)
+        'defensive_rating',
+        'opponent_pace',
+        'opponent_ts_pct',
+
+        # Game context (4 fields)
+        'home_game',
+        'win_flag',
+        'margin_of_victory',
+        'overtime_periods',
+
+        # Team situation context (2 fields)
+        'players_inactive',
+        'starters_inactive',
+
+        # Referee integration (1 field)
+        'referee_crew_id',
+    ]
+    # Total: 45 meaningful analytics fields
+    # Excluded: data_quality_tier, primary_source_used, processed_with_issues,
+    #           all source_* fields, data_hash itself, processed_at, created_at
+
     def __init__(self):
         super().__init__()
         self.table_name = 'team_defense_game_summary'
@@ -800,9 +872,28 @@ class TeamDefenseGameSummaryProcessor(
         merged_df['defensive_actions_source'] = merged_df['data_source_defensive'].fillna('none')
         
         logger.info(f"Merged {len(merged_df)} complete defensive records")
-        
+
         return merged_df
-    
+
+    def _calculate_data_hash(self, record: Dict) -> str:
+        """
+        Calculate SHA256 hash of meaningful analytics fields.
+
+        Pattern #3: Smart Reprocessing
+        - Phase 4 processors extract this hash to detect changes
+        - Comparison with previous hash detects meaningful changes
+        - Unchanged hashes allow Phase 4 to skip expensive reprocessing
+
+        Args:
+            record: Dictionary containing analytics fields
+
+        Returns:
+            First 16 characters of SHA256 hash (sufficient for uniqueness)
+        """
+        hash_data = {field: record.get(field) for field in self.HASH_FIELDS}
+        sorted_data = json.dumps(hash_data, sort_keys=True, default=str)
+        return hashlib.sha256(sorted_data.encode()).hexdigest()[:16]
+
     def calculate_analytics(self) -> None:
         """
         Transform raw defensive data to final analytics format.
@@ -827,125 +918,18 @@ class TeamDefenseGameSummaryProcessor(
         fallback_issues = getattr(self, '_fallback_quality_issues', [])
         source_used = getattr(self, '_source_used', None)
 
-        for _, row in self.raw_data.iterrows():
-            try:
-                # Determine data completeness
-                has_defensive_actions = (
-                    pd.notna(row.get('steals')) or 
-                    pd.notna(row.get('blocks_total')) or
-                    pd.notna(row.get('defensive_rebounds'))
-                )
-                
-                defensive_actions_source = row.get('defensive_actions_source', 'none')
-                
-                # Determine primary source used
-                if defensive_actions_source != 'none':
-                    primary_source = f"nbac_team_boxscore+{defensive_actions_source}"
-                else:
-                    primary_source = "nbac_team_boxscore"
-                
-                # Build quality columns using centralized helper
-                # Combine fallback-level issues with row-level issues
-                row_issues = list(fallback_issues)
-                if not has_defensive_actions:
-                    row_issues.append('missing_defensive_actions')
-                if defensive_actions_source == 'bdl_player_boxscores':
-                    row_issues.append('backup_source_used')
+        # ============================================================
+        # Parallelization: Process teams in parallel or serial mode
+        # ============================================================
+        if ENABLE_TEAM_PARALLELIZATION:
+            records, processing_errors = self._process_teams_parallel(
+                fallback_tier, fallback_score, fallback_issues, source_used
+            )
+        else:
+            records, processing_errors = self._process_teams_serial(
+                fallback_tier, fallback_score, fallback_issues, source_used
+            )
 
-                # Build standard quality columns (includes legacy for backward compat)
-                quality_columns = build_quality_columns_with_legacy(
-                    tier=fallback_tier,
-                    score=fallback_score,
-                    issues=row_issues,
-                    sources=[source_used] if source_used else [],
-                )
-
-                record = {
-                    # Core identifiers
-                    'game_id': row['game_id'],
-                    'game_date': row['game_date'].isoformat() if pd.notna(row['game_date']) else None,
-                    'defending_team_abbr': row['defending_team_abbr'],
-                    'opponent_team_abbr': row['opponent_team_abbr'],
-                    'season_year': int(row['season_year']) if pd.notna(row['season_year']) else None,
-                    
-                    # Defensive stats (opponent performance allowed)
-                    'points_allowed': int(row['points_allowed']) if pd.notna(row['points_allowed']) else None,
-                    'opp_fg_attempts': int(row['opp_fg_attempts']) if pd.notna(row['opp_fg_attempts']) else None,
-                    'opp_fg_makes': int(row['opp_fg_makes']) if pd.notna(row['opp_fg_makes']) else None,
-                    'opp_three_pt_attempts': int(row['opp_three_pt_attempts']) if pd.notna(row['opp_three_pt_attempts']) else None,
-                    'opp_three_pt_makes': int(row['opp_three_pt_makes']) if pd.notna(row['opp_three_pt_makes']) else None,
-                    'opp_ft_attempts': int(row['opp_ft_attempts']) if pd.notna(row['opp_ft_attempts']) else None,
-                    'opp_ft_makes': int(row['opp_ft_makes']) if pd.notna(row['opp_ft_makes']) else None,
-                    'opp_rebounds': int(row['opp_rebounds']) if pd.notna(row['opp_rebounds']) else None,
-                    'opp_assists': int(row['opp_assists']) if pd.notna(row['opp_assists']) else None,
-                    'turnovers_forced': int(row['turnovers_forced']) if pd.notna(row['turnovers_forced']) else None,
-                    'fouls_committed': int(row['fouls_committed']) if pd.notna(row['fouls_committed']) else None,
-                    
-                    # Defensive shot zone performance (deferred - need play-by-play)
-                    'opp_paint_attempts': None,
-                    'opp_paint_makes': None,
-                    'opp_mid_range_attempts': None,
-                    'opp_mid_range_makes': None,
-                    'points_in_paint_allowed': None,
-                    'mid_range_points_allowed': None,
-                    'three_pt_points_allowed': int(row['opp_three_pt_makes'] * 3) if pd.notna(row['opp_three_pt_makes']) else None,
-                    'second_chance_points_allowed': None,
-                    'fast_break_points_allowed': None,
-                    
-                    # Defensive actions (from player boxscores)
-                    'blocks_paint': None,  # Need play-by-play for zone breakdown
-                    'blocks_mid_range': None,
-                    'blocks_three_pt': None,
-                    'steals': int(row['steals']) if pd.notna(row['steals']) else 0,
-                    'defensive_rebounds': int(row['defensive_rebounds']) if pd.notna(row['defensive_rebounds']) else 0,
-                    
-                    # Advanced defensive metrics
-                    'defensive_rating': float(row['defensive_rating']) if pd.notna(row['defensive_rating']) else None,
-                    'opponent_pace': float(row['opponent_pace']) if pd.notna(row['opponent_pace']) else None,
-                    'opponent_ts_pct': float(row['opponent_ts_pct']) if pd.notna(row['opponent_ts_pct']) else None,
-                    
-                    # Game context
-                    'home_game': bool(row['home_game']) if pd.notna(row['home_game']) else False,
-                    'win_flag': bool(row['win_flag']) if pd.notna(row['win_flag']) else None,
-                    'margin_of_victory': int(row['margin_of_victory']) if pd.notna(row['margin_of_victory']) else None,
-                    'overtime_periods': 0,  # TODO: Calculate from minutes played
-                    
-                    # Team situation context (deferred - need injury/roster data)
-                    'players_inactive': None,
-                    'starters_inactive': None,
-                    
-                    # Referee integration (deferred)
-                    'referee_crew_id': None,
-
-                    # Standard quality columns (from centralized helper)
-                    **quality_columns,
-
-                    # Additional source tracking
-                    'primary_source_used': primary_source,
-                    'processed_with_issues': not has_defensive_actions,
-
-                    # Dependency tracking v4.0 (added by base class)
-                    **self.build_source_tracking_fields(),
-
-                    # Processing metadata
-                    'processed_at': datetime.now(timezone.utc).isoformat(),
-                    'created_at': datetime.now(timezone.utc).isoformat()
-                }
-                
-                records.append(record)
-                
-            except Exception as e:
-                error_info = {
-                    'game_id': row.get('game_id'),
-                    'defending_team': row.get('defending_team_abbr'),
-                    'error': str(e),
-                    'error_type': type(e).__name__
-                }
-                processing_errors.append(error_info)
-                
-                logger.error(f"Error processing record {row.get('game_id')}_{row.get('defending_team_abbr')}: {e}")
-                continue
-        
         self.transformed_data = records
         logger.info(f"Calculated team defensive analytics for {len(records)} team-game records")
         
@@ -969,7 +953,247 @@ class TeamDefenseGameSummaryProcessor(
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
-    
+
+    def _process_teams_parallel(
+        self,
+        fallback_tier: str,
+        fallback_score: float,
+        fallback_issues: List,
+        source_used: str
+    ) -> tuple:
+        """Process all team defensive records using ThreadPoolExecutor."""
+        # Determine worker count
+        DEFAULT_WORKERS = 4
+        max_workers = int(os.environ.get(
+            'TDGS_WORKERS',
+            os.environ.get('PARALLELIZATION_WORKERS', DEFAULT_WORKERS)
+        ))
+        max_workers = min(max_workers, os.cpu_count() or 1)
+        logger.info(f"Processing {len(self.raw_data)} team-game records with {max_workers} workers (parallel mode)")
+
+        # Performance timing
+        loop_start = time.time()
+        processed_count = 0
+
+        # Thread-safe result collection
+        records = []
+        processing_errors = []
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all team tasks
+            futures = {
+                executor.submit(
+                    self._process_single_team_defense,
+                    row,
+                    fallback_tier,
+                    fallback_score,
+                    fallback_issues,
+                    source_used
+                ): idx
+                for idx, row in self.raw_data.iterrows()
+            }
+
+            # Collect results as they complete
+            for future in as_completed(futures):
+                idx = futures[future]
+                processed_count += 1
+
+                try:
+                    success, data = future.result()
+                    if success:
+                        records.append(data)
+                    else:
+                        processing_errors.append(data)
+
+                except Exception as e:
+                    processing_errors.append({
+                        'index': idx,
+                        'error': str(e),
+                        'error_type': type(e).__name__
+                    })
+                    logger.error(f"Exception processing team defense record: {e}")
+
+                # Progress logging every 10 records
+                if processed_count % 10 == 0 or processed_count == len(self.raw_data):
+                    elapsed = time.time() - loop_start
+                    rate = processed_count / elapsed if elapsed > 0 else 0
+                    eta = (len(self.raw_data) - processed_count) / rate if rate > 0 else 0
+                    logger.info(
+                        f"Progress: {processed_count}/{len(self.raw_data)} records | "
+                        f"Rate: {rate:.1f} records/sec | "
+                        f"ETA: {eta:.1f}s | "
+                        f"Success: {len(records)} | "
+                        f"Errors: {len(processing_errors)}"
+                    )
+
+        elapsed_total = time.time() - loop_start
+        rate_final = len(self.raw_data) / elapsed_total if elapsed_total > 0 else 0
+        logger.info(
+            f"Parallel processing complete: {len(self.raw_data)} records in {elapsed_total:.1f}s "
+            f"({rate_final:.1f} records/sec, {max_workers} workers)"
+        )
+
+        return records, processing_errors
+
+    def _process_single_team_defense(
+        self,
+        row: pd.Series,
+        fallback_tier: str,
+        fallback_score: float,
+        fallback_issues: List,
+        source_used: str
+    ) -> tuple:
+        """
+        Process a single team defensive record.
+
+        Returns:
+            (True, record_dict) on success
+            (False, error_dict) on failure
+        """
+        try:
+            # Determine data completeness
+            has_defensive_actions = (
+                pd.notna(row.get('steals')) or
+                pd.notna(row.get('blocks_total')) or
+                pd.notna(row.get('defensive_rebounds'))
+            )
+
+            defensive_actions_source = row.get('defensive_actions_source', 'none')
+
+            # Determine primary source used
+            if defensive_actions_source != 'none':
+                primary_source = f"nbac_team_boxscore+{defensive_actions_source}"
+            else:
+                primary_source = "nbac_team_boxscore"
+
+            # Build quality columns using centralized helper
+            # Combine fallback-level issues with row-level issues
+            row_issues = list(fallback_issues)
+            if not has_defensive_actions:
+                row_issues.append('missing_defensive_actions')
+            if defensive_actions_source == 'bdl_player_boxscores':
+                row_issues.append('backup_source_used')
+
+            # Build standard quality columns (includes legacy for backward compat)
+            quality_columns = build_quality_columns_with_legacy(
+                tier=fallback_tier,
+                score=fallback_score,
+                issues=row_issues,
+                sources=[source_used] if source_used else [],
+            )
+
+            record = {
+                # Core identifiers
+                'game_id': row['game_id'],
+                'game_date': row['game_date'].isoformat() if pd.notna(row['game_date']) else None,
+                'defending_team_abbr': row['defending_team_abbr'],
+                'opponent_team_abbr': row['opponent_team_abbr'],
+                'season_year': int(row['season_year']) if pd.notna(row['season_year']) else None,
+
+                # Defensive stats (opponent performance allowed)
+                'points_allowed': int(row['points_allowed']) if pd.notna(row['points_allowed']) else None,
+                'opp_fg_attempts': int(row['opp_fg_attempts']) if pd.notna(row['opp_fg_attempts']) else None,
+                'opp_fg_makes': int(row['opp_fg_makes']) if pd.notna(row['opp_fg_makes']) else None,
+                'opp_three_pt_attempts': int(row['opp_three_pt_attempts']) if pd.notna(row['opp_three_pt_attempts']) else None,
+                'opp_three_pt_makes': int(row['opp_three_pt_makes']) if pd.notna(row['opp_three_pt_makes']) else None,
+                'opp_ft_attempts': int(row['opp_ft_attempts']) if pd.notna(row['opp_ft_attempts']) else None,
+                'opp_ft_makes': int(row['opp_ft_makes']) if pd.notna(row['opp_ft_makes']) else None,
+                'opp_rebounds': int(row['opp_rebounds']) if pd.notna(row['opp_rebounds']) else None,
+                'opp_assists': int(row['opp_assists']) if pd.notna(row['opp_assists']) else None,
+                'turnovers_forced': int(row['turnovers_forced']) if pd.notna(row['turnovers_forced']) else None,
+                'fouls_committed': int(row['fouls_committed']) if pd.notna(row['fouls_committed']) else None,
+
+                # Defensive shot zone performance (deferred - need play-by-play)
+                'opp_paint_attempts': None,
+                'opp_paint_makes': None,
+                'opp_mid_range_attempts': None,
+                'opp_mid_range_makes': None,
+                'points_in_paint_allowed': None,
+                'mid_range_points_allowed': None,
+                'three_pt_points_allowed': int(row['opp_three_pt_makes'] * 3) if pd.notna(row['opp_three_pt_makes']) else None,
+                'second_chance_points_allowed': None,
+                'fast_break_points_allowed': None,
+
+                # Defensive actions (from player boxscores)
+                'blocks_paint': None,  # Need play-by-play for zone breakdown
+                'blocks_mid_range': None,
+                'blocks_three_pt': None,
+                'steals': int(row['steals']) if pd.notna(row['steals']) else 0,
+                'defensive_rebounds': int(row['defensive_rebounds']) if pd.notna(row['defensive_rebounds']) else 0,
+
+                # Advanced defensive metrics
+                'defensive_rating': float(row['defensive_rating']) if pd.notna(row['defensive_rating']) else None,
+                'opponent_pace': float(row['opponent_pace']) if pd.notna(row['opponent_pace']) else None,
+                'opponent_ts_pct': float(row['opponent_ts_pct']) if pd.notna(row['opponent_ts_pct']) else None,
+
+                # Game context
+                'home_game': bool(row['home_game']) if pd.notna(row['home_game']) else False,
+                'win_flag': bool(row['win_flag']) if pd.notna(row['win_flag']) else None,
+                'margin_of_victory': int(row['margin_of_victory']) if pd.notna(row['margin_of_victory']) else None,
+                'overtime_periods': 0,  # TODO: Calculate from minutes played
+
+                # Team situation context (deferred - need injury/roster data)
+                'players_inactive': None,
+                'starters_inactive': None,
+
+                # Referee integration (deferred)
+                'referee_crew_id': None,
+
+                # Standard quality columns (from centralized helper)
+                **quality_columns,
+
+                # Additional source tracking
+                'primary_source_used': primary_source,
+                'processed_with_issues': not has_defensive_actions,
+
+                # Dependency tracking v4.0 (added by base class)
+                **self.build_source_tracking_fields(),
+
+                # Processing metadata
+                'processed_at': datetime.now(timezone.utc).isoformat(),
+                'created_at': datetime.now(timezone.utc).isoformat()
+            }
+
+            # Pattern #3: Calculate data_hash for smart reprocessing
+            # Must be done AFTER all analytics fields are populated
+            record['data_hash'] = self._calculate_data_hash(record)
+
+            return (True, record)
+
+        except Exception as e:
+            return (False, {
+                'game_id': row.get('game_id'),
+                'defending_team': row.get('defending_team_abbr'),
+                'error': str(e),
+                'error_type': type(e).__name__
+            })
+
+    def _process_teams_serial(
+        self,
+        fallback_tier: str,
+        fallback_score: float,
+        fallback_issues: List,
+        source_used: str
+    ) -> tuple:
+        """Process all team defensive records in serial mode (original logic)."""
+        logger.info(f"Processing {len(self.raw_data)} team-game records in serial mode")
+
+        records = []
+        processing_errors = []
+
+        for _, row in self.raw_data.iterrows():
+            success, data = self._process_single_team_defense(
+                row, fallback_tier, fallback_score, fallback_issues, source_used
+            )
+
+            if success:
+                records.append(data)
+            else:
+                processing_errors.append(data)
+                logger.error(f"Error processing record {data.get('game_id')}_{data.get('defending_team')}: {data.get('error')}")
+
+        return records, processing_errors
+
     def get_analytics_stats(self) -> Dict:
         """Return team defensive analytics stats."""
         if not self.transformed_data:
