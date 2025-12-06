@@ -878,8 +878,13 @@ class PlayerCompositeFactorsProcessor(
         analysis_date: date
     ) -> tuple:
         """Process all players using ThreadPoolExecutor for parallelization."""
-        # Determine worker count
-        max_workers = min(10, os.cpu_count() or 1)
+        # Determine worker count with environment variable support
+        DEFAULT_WORKERS = 10
+        max_workers = int(os.environ.get(
+            'PCF_WORKERS',
+            os.environ.get('PARALLELIZATION_WORKERS', DEFAULT_WORKERS)
+        ))
+        max_workers = min(max_workers, os.cpu_count() or 1)
         logger.info(f"Processing {len(all_players)} players with {max_workers} workers (parallel mode)")
 
         # Performance timing

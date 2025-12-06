@@ -240,6 +240,12 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_analytics.upcoming_player_gam
   all_windows_complete BOOLEAN,                     -- TRUE if ALL windows >= 90% complete
 
   -- ============================================================================
+  -- SMART REPROCESSING (1 field)
+  -- Pattern #3: Phase 4 processors compare this hash to detect meaningful changes
+  -- ============================================================================
+  data_hash STRING,                                 -- SHA256 hash (16 chars) of meaningful analytics output fields
+
+  -- ============================================================================
   -- UPDATE TRACKING (3 fields)
   -- ============================================================================
   context_version INT64,                            -- Update counter (for intraday updates)

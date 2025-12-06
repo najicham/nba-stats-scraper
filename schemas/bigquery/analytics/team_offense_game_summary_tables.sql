@@ -110,6 +110,12 @@ CREATE TABLE IF NOT EXISTS `nba_analytics.team_offense_game_summary` (
   processed_with_issues BOOLEAN,          -- TRUE if validation issues logged
   
   -- ============================================================================
+  -- SMART REPROCESSING (1 field)
+  -- Pattern #3: Phase 4 processors compare this hash to detect meaningful changes
+  -- ============================================================================
+  data_hash            STRING,                                 -- SHA256 hash (16 chars) of meaningful analytics output fields
+
+  -- ============================================================================
   -- PROCESSING METADATA (2 fields)
   -- ============================================================================
   created_at           TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),  -- When record first created

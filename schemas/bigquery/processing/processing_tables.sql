@@ -101,7 +101,7 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_processing.precompute_process
   run_date TIMESTAMP NOT NULL,                      -- When the processor was executed
 
   -- Execution results
-  success BOOLEAN NOT NULL,                         -- TRUE if processor completed successfully
+  success BOOLEAN,                                  -- TRUE if processor completed successfully (NULLABLE - fixed in Session 37)
   duration_seconds FLOAT64,                         -- Total execution time
 
   -- Data processing scope (Phase 4 uses single analysis_date)
@@ -138,6 +138,54 @@ CLUSTER BY processor_name, success, run_date
 OPTIONS (
   description = "Precompute processor execution logs and performance tracking (Phase 4)",
   partition_expiration_days = 365  -- 1 year retention for processing logs
+);
+
+-- Track individual entity failures during Phase 4 precompute processing
+CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_processing.precompute_failures` (
+  processor_name STRING NOT NULL,
+  run_id STRING NOT NULL,
+  analysis_date DATE NOT NULL,
+  entity_id STRING NOT NULL,
+  failure_category STRING NOT NULL,
+  failure_reason STRING NOT NULL,
+  can_retry BOOLEAN NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
+)
+PARTITION BY analysis_date
+CLUSTER BY processor_name, failure_category, can_retry
+OPTIONS (
+  description = "Track individual entity failures during Phase 4 precompute processing for debugging and retry logic"
+);
+
+-- Data quality issues tracked during Phase 4 precompute processing
+CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_processing.precompute_data_issues` (
+  issue_id STRING NOT NULL,
+  processor_name STRING NOT NULL,
+  run_id STRING NOT NULL,
+  issue_type STRING NOT NULL,
+  severity STRING NOT NULL,
+  category STRING,
+  identifier STRING NOT NULL,
+  table_name STRING,
+  field_name STRING,
+  issue_description STRING NOT NULL,
+  expected_value STRING,
+  actual_value STRING,
+  analysis_date DATE,
+  game_date DATE,
+  season_year INT64,
+  team_abbr STRING,
+  player_lookup STRING,
+  resolved BOOLEAN DEFAULT FALSE,
+  resolution_notes STRING,
+  auto_resolved BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
+  resolved_at TIMESTAMP
+)
+PARTITION BY DATE(created_at)
+CLUSTER BY processor_name, resolved, severity, created_at
+OPTIONS (
+  description = "Data quality issues tracked during Phase 4 precompute processing for debugging and improvement"
 );
 
 -- Analytics data source freshness tracking

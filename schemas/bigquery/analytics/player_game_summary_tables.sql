@@ -167,6 +167,12 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_analytics.player_game_summary
   shot_zones_estimated BOOLEAN,                     -- TRUE if shot zones estimated (no play-by-play data)
   
   -- ============================================================================
+  -- SMART REPROCESSING (1 field)
+  -- Pattern #3: Phase 4 processors compare this hash to detect meaningful changes
+  -- ============================================================================
+  data_hash STRING,                                 -- SHA256 hash (16 chars) of meaningful analytics output fields
+
+  -- ============================================================================
   -- PROCESSING METADATA (2 fields)
   -- ============================================================================
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP(), -- When record first created (Pass 1)
@@ -190,9 +196,10 @@ OPTIONS(
 -- Player availability:        2 fields
 -- Source tracking:           24 fields (6 sources × 4 fields - includes smart idempotency hashes)
 -- Data quality:               4 fields
+-- Smart reprocessing:         1 field  (data_hash for Phase 4 optimization)
 -- Processing metadata:        2 fields
 -- -------------------------
--- TOTAL:                     78 fields
+-- TOTAL:                     79 fields
 
 -- ============================================================================
 -- SOURCE TRACKING FIELD SEMANTICS

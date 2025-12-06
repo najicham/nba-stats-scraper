@@ -120,6 +120,12 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_analytics.team_defense_game_s
   source_bdl_players_hash STRING,                   -- Smart Idempotency: data_hash from bdl_player_boxscores
   
   -- ============================================================================
+  -- SMART REPROCESSING (1 field)
+  -- Pattern #3: Phase 4 processors compare this hash to detect meaningful changes
+  -- ============================================================================
+  data_hash STRING,                                 -- SHA256 hash (16 chars) of meaningful analytics output fields
+
+  -- ============================================================================
   -- PROCESSING METADATA (2 fields)
   -- ============================================================================
   processed_at TIMESTAMP NOT NULL,                  -- When this defensive record was created

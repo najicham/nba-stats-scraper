@@ -770,8 +770,14 @@ class TeamDefenseZoneAnalysisProcessor(
         analysis_date: date
     ) -> tuple:
         """Process all teams using ThreadPoolExecutor for parallelization."""
-        # Use 4 workers for team-level parallelization (fewer entities than players)
-        max_workers = 4
+        # Determine worker count with environment variable support
+        # Use 4 workers default for team-level parallelization (fewer entities than players)
+        DEFAULT_WORKERS = 4
+        max_workers = int(os.environ.get(
+            'TDZA_WORKERS',
+            os.environ.get('PARALLELIZATION_WORKERS', DEFAULT_WORKERS)
+        ))
+        max_workers = min(max_workers, os.cpu_count() or 1)
         logger.info(f"Processing {len(all_teams)} teams with {max_workers} workers (parallel mode)")
 
         # Performance timing
