@@ -191,19 +191,27 @@ class PlayerCompositeFactorsProcessor(
     def get_dependencies(self) -> dict:
         """
         Define upstream data dependencies.
-        
+
         Returns 4 critical sources needed for composite factor calculation:
         - Player game context (fatigue, usage, pace info)
         - Team game context (betting lines, opponent info)
         - Player shot zone analysis (scoring patterns)
         - Team defense zone analysis (defensive weaknesses)
+
+        Thresholds are lowered in backfill mode to accommodate early season
+        where fewer players have enough games for rolling calculations.
         """
+        # Lower thresholds for backfill mode (early season has fewer players with history)
+        # Production: 100 players expected, Backfill: 20 (minimum viable)
+        player_threshold = 20 if self.is_backfill_mode else 100
+        team_threshold = 5 if self.is_backfill_mode else 10
+
         return {
             'nba_analytics.upcoming_player_game_context': {
                 'description': 'Player context for upcoming games',
                 'date_field': 'game_date',
                 'check_type': 'date_match',
-                'expected_count_min': 100,
+                'expected_count_min': player_threshold,
                 'max_age_hours': 12,
                 'critical': True,
                 'field_prefix': 'source_player_context'
@@ -212,7 +220,7 @@ class PlayerCompositeFactorsProcessor(
                 'description': 'Team context for upcoming games',
                 'date_field': 'game_date',
                 'check_type': 'date_match',
-                'expected_count_min': 10,
+                'expected_count_min': team_threshold,
                 'max_age_hours': 12,
                 'critical': True,
                 'field_prefix': 'source_team_context'
@@ -221,7 +229,7 @@ class PlayerCompositeFactorsProcessor(
                 'description': 'Player shot zone patterns',
                 'date_field': 'analysis_date',
                 'check_type': 'date_match',
-                'expected_count_min': 100,
+                'expected_count_min': player_threshold,
                 'max_age_hours': 24,
                 'critical': True,
                 'field_prefix': 'source_player_shot'
@@ -230,7 +238,7 @@ class PlayerCompositeFactorsProcessor(
                 'description': 'Team defensive zone weaknesses',
                 'date_field': 'analysis_date',
                 'check_type': 'date_match',
-                'expected_count_min': 30,
+                'expected_count_min': team_threshold,
                 'max_age_hours': 24,
                 'critical': True,
                 'field_prefix': 'source_team_defense'
