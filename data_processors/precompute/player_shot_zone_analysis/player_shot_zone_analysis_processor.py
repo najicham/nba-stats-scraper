@@ -28,7 +28,7 @@ import pandas as pd
 from datetime import datetime, date, timedelta, timezone
 from typing import Dict, List, Optional
 from google.cloud import bigquery
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 import time
 
 from data_processors.precompute.precompute_base import PrecomputeProcessorBase
@@ -56,6 +56,300 @@ class DataTooStaleError(Exception):
     pass
 
 logger = logging.getLogger(__name__)
+
+
+# ============================================================
+# MODULE-LEVEL FUNCTIONS FOR ProcessPoolExecutor
+# ============================================================
+# ProcessPoolExecutor requires picklable functions. Module-level functions
+# are picklable, instance methods are not (they reference self with BQ client).
+
+import hashlib
+
+def _compute_hash_static(record: dict, hash_fields: list) -> str:
+    """
+    Compute SHA256 hash (16 chars) from meaningful fields only.
+    Static version for ProcessPool workers.
+    """
+    hash_values = []
+    for field in hash_fields:
+        value = record.get(field)
+        # Normalize value to string representation
+        if value is None:
+            normalized = "NULL"
+        elif isinstance(value, (int, float)):
+            normalized = str(value)
+        elif isinstance(value, str):
+            normalized = value.strip()
+        else:
+            normalized = str(value)
+        hash_values.append(f"{field}:{normalized}")
+
+    # Create canonical string (sorted for consistency)
+    canonical_string = "|".join(sorted(hash_values))
+
+    # Compute SHA256 hash
+    hash_bytes = canonical_string.encode('utf-8')
+    sha256_hash = hashlib.sha256(hash_bytes).hexdigest()
+
+    # Return first 16 characters
+    return sha256_hash[:16]
+
+
+def _calculate_zone_metrics_static(games_df: pd.DataFrame) -> dict:
+    """Calculate shot zone metrics (static version for worker processes)."""
+    paint_att = games_df['paint_attempts'].sum()
+    paint_makes = games_df['paint_makes'].sum()
+    mid_att = games_df['mid_range_attempts'].sum()
+    mid_makes = games_df['mid_range_makes'].sum()
+    three_att = games_df['three_pt_attempts'].sum()
+    three_makes = games_df['three_pt_makes'].sum()
+
+    total_att = paint_att + mid_att + three_att
+    total_makes = games_df['fg_makes'].sum()
+    assisted_makes = games_df['assisted_fg_makes'].sum()
+    unassisted_makes = games_df['unassisted_fg_makes'].sum()
+
+    games_count = len(games_df)
+
+    paint_rate = (paint_att / total_att * 100) if total_att > 0 else None
+    mid_rate = (mid_att / total_att * 100) if total_att > 0 else None
+    three_rate = (three_att / total_att * 100) if total_att > 0 else None
+
+    paint_pct = (paint_makes / paint_att) if paint_att > 0 else None
+    mid_pct = (mid_makes / mid_att) if mid_att > 0 else None
+    three_pct = (three_makes / three_att) if three_att > 0 else None
+
+    paint_pg = paint_att / games_count if games_count > 0 else None
+    mid_pg = mid_att / games_count if games_count > 0 else None
+    three_pg = three_att / games_count if games_count > 0 else None
+
+    assisted_rate = (assisted_makes / total_makes * 100) if total_att > 0 and total_makes > 0 else None
+    unassisted_rate = (unassisted_makes / total_makes * 100) if total_att > 0 and total_makes > 0 else None
+
+    return {
+        'paint_rate': round(paint_rate, 2) if paint_rate is not None else None,
+        'mid_range_rate': round(mid_rate, 2) if mid_rate is not None else None,
+        'three_pt_rate': round(three_rate, 2) if three_rate is not None else None,
+        'paint_pct': round(paint_pct, 3) if paint_pct is not None else None,
+        'mid_range_pct': round(mid_pct, 3) if mid_pct is not None else None,
+        'three_pt_pct': round(three_pct, 3) if three_pct is not None else None,
+        'paint_attempts_pg': round(paint_pg, 1) if paint_pg is not None else None,
+        'mid_range_attempts_pg': round(mid_pg, 1) if mid_pg is not None else None,
+        'three_pt_attempts_pg': round(three_pg, 1) if three_pg is not None else None,
+        'assisted_rate': round(assisted_rate, 2) if assisted_rate is not None else None,
+        'unassisted_rate': round(unassisted_rate, 2) if unassisted_rate is not None else None,
+        'total_shots': int(total_att) if total_att > 0 else None
+    }
+
+
+def _determine_primary_zone_static(metrics: dict) -> Optional[str]:
+    """Determine primary scoring zone (static version for worker processes)."""
+    paint_rate = metrics.get('paint_rate', 0) or 0
+    mid_rate = metrics.get('mid_range_rate', 0) or 0
+    three_rate = metrics.get('three_pt_rate', 0) or 0
+
+    if paint_rate == 0 and mid_rate == 0 and three_rate == 0:
+        return None
+
+    if paint_rate >= 40:
+        return 'paint'
+    elif three_rate >= 40:
+        return 'perimeter'
+    elif mid_rate >= 35:
+        return 'mid_range'
+    else:
+        return 'balanced'
+
+
+def _determine_quality_tier_static(games_count: int, min_games_required: int) -> str:
+    """Assess data quality (static version for worker processes)."""
+    if games_count >= min_games_required:
+        return 'high'
+    elif games_count >= 7:
+        return 'medium'
+    else:
+        return 'low'
+
+
+def _determine_sample_quality_static(games_count: int, target_window: int) -> str:
+    """Assess sample quality (static version for worker processes)."""
+    if games_count >= target_window:
+        return 'excellent'
+    elif games_count >= int(target_window * 0.7):
+        return 'good'
+    elif games_count >= int(target_window * 0.5):
+        return 'limited'
+    else:
+        return 'insufficient'
+
+
+def _process_single_player_worker(
+    player_lookup: str,
+    completeness: dict,
+    circuit_breaker_status: dict,
+    is_bootstrap: bool,
+    is_season_boundary: bool,
+    analysis_date: date,
+    player_games_data: List[dict],
+    sample_window: int,
+    trend_window: int,
+    min_games_required: int,
+    source_hash: Optional[str],
+    opts: dict,
+    hash_fields: List[str]
+) -> tuple:
+    """
+    Process one player in a separate process.
+
+    This is a module-level function that can be pickled by ProcessPoolExecutor.
+    All data must be passed as arguments (no access to class instance).
+
+    Returns:
+        tuple: (success: bool, data: dict, needs_reprocess_increment: bool)
+    """
+    try:
+        # Check circuit breaker (pre-fetched status)
+        if circuit_breaker_status['active']:
+            return (False, {
+                'entity_id': player_lookup,
+                'reason': f"Circuit breaker active until {circuit_breaker_status['until']}",
+                'category': 'CIRCUIT_BREAKER_ACTIVE',
+                'can_retry': False
+            }, False)
+
+        # Check production readiness
+        if not completeness['is_production_ready'] and not is_bootstrap and not is_season_boundary:
+            return (False, {
+                'entity_id': player_lookup,
+                'reason': (
+                    f"Incomplete data: {completeness['completeness_pct']}% "
+                    f"({completeness['actual_count']}/{completeness['expected_count']} games)"
+                ),
+                'category': 'INCOMPLETE_DATA',
+                'can_retry': True
+            }, True)  # needs_reprocess_increment = True
+
+        # Convert to DataFrame
+        if not player_games_data:
+            return (False, {
+                'entity_id': player_lookup,
+                'reason': "No game data available",
+                'category': 'INSUFFICIENT_DATA',
+                'can_retry': True
+            }, False)
+
+        player_data = pd.DataFrame(player_games_data)
+
+        # Separate windows
+        games_10 = player_data[player_data['game_rank'] <= sample_window]
+        games_20 = player_data[player_data['game_rank'] <= trend_window]
+
+        # Check sufficient games
+        if len(games_10) < min_games_required:
+            actual_games = len(games_10)
+            expected_games = completeness.get('expected_count', 0)
+
+            if actual_games < min_games_required and expected_games < min_games_required:
+                category = 'EXPECTED_INCOMPLETE'
+                can_retry = False
+                reason = f"Season bootstrap: {actual_games}/{expected_games} games (need {min_games_required})"
+            else:
+                category = 'INCOMPLETE_UPSTREAM'
+                can_retry = True
+                reason = f"Missing upstream data: {actual_games}/{expected_games} games (need {min_games_required})"
+
+            return (False, {
+                'entity_id': player_lookup,
+                'reason': reason,
+                'category': category,
+                'can_retry': can_retry
+            }, False)
+
+        # Calculate metrics
+        metrics_10 = _calculate_zone_metrics_static(games_10)
+        metrics_20 = _calculate_zone_metrics_static(games_20) if len(games_20) >= 15 else {}
+
+        primary_zone = _determine_primary_zone_static(metrics_10)
+        quality_tier = _determine_quality_tier_static(len(games_10), min_games_required)
+        sample_quality_10 = _determine_sample_quality_static(len(games_10), sample_window)
+        sample_quality_20 = _determine_sample_quality_static(len(games_20), trend_window)
+
+        # Build record
+        record = {
+            'player_lookup': player_lookup,
+            'universal_player_id': player_data.iloc[0].get('universal_player_id'),
+            'analysis_date': analysis_date.isoformat() if hasattr(analysis_date, 'isoformat') else str(analysis_date),
+
+            'paint_rate_last_10': metrics_10.get('paint_rate'),
+            'mid_range_rate_last_10': metrics_10.get('mid_range_rate'),
+            'three_pt_rate_last_10': metrics_10.get('three_pt_rate'),
+            'total_shots_last_10': metrics_10.get('total_shots'),
+            'games_in_sample_10': int(len(games_10)),
+            'sample_quality_10': sample_quality_10,
+
+            'paint_pct_last_10': metrics_10.get('paint_pct'),
+            'mid_range_pct_last_10': metrics_10.get('mid_range_pct'),
+            'three_pt_pct_last_10': metrics_10.get('three_pt_pct'),
+
+            'paint_attempts_per_game': metrics_10.get('paint_attempts_pg'),
+            'mid_range_attempts_per_game': metrics_10.get('mid_range_attempts_pg'),
+            'three_pt_attempts_per_game': metrics_10.get('three_pt_attempts_pg'),
+
+            'paint_rate_last_20': metrics_20.get('paint_rate'),
+            'paint_pct_last_20': metrics_20.get('paint_pct'),
+            'games_in_sample_20': int(len(games_20)),
+            'sample_quality_20': sample_quality_20,
+
+            'assisted_rate_last_10': metrics_10.get('assisted_rate'),
+            'unassisted_rate_last_10': metrics_10.get('unassisted_rate'),
+
+            'player_position': None,
+            'primary_scoring_zone': primary_zone,
+            'data_quality_tier': quality_tier,
+            'calculation_notes': None,
+
+            'source_player_game_timestamp': opts.get('analysis_date').isoformat() if opts.get('analysis_date') else None,
+            'source_player_game_hash': source_hash,
+
+            'early_season_flag': False,
+            'insufficient_data_reason': None,
+
+            'expected_games_count': completeness['expected_count'],
+            'actual_games_count': completeness['actual_count'],
+            'completeness_percentage': completeness['completeness_pct'],
+            'missing_games_count': completeness['missing_count'],
+            'is_production_ready': completeness['is_production_ready'],
+            'data_quality_issues': [],
+            'last_reprocess_attempt_at': None,
+            'reprocess_attempt_count': circuit_breaker_status['attempts'],
+            'circuit_breaker_active': circuit_breaker_status['active'],
+            'circuit_breaker_until': (
+                circuit_breaker_status['until'].isoformat()
+                if circuit_breaker_status.get('until') and hasattr(circuit_breaker_status['until'], 'isoformat')
+                else str(circuit_breaker_status['until']) if circuit_breaker_status.get('until') else None
+            ),
+            'manual_override_required': False,
+            'season_boundary_detected': is_season_boundary,
+            'backfill_bootstrap_mode': is_bootstrap,
+            'processing_decision_reason': 'processed_successfully',
+
+            'created_at': datetime.now(timezone.utc).isoformat(),
+            'processed_at': datetime.now(timezone.utc).isoformat()
+        }
+
+        # Compute hash (use module-level static function for ProcessPool compatibility)
+        record['data_hash'] = _compute_hash_static(record, hash_fields)
+
+        return (True, record, False)
+
+    except Exception as e:
+        return (False, {
+            'entity_id': player_lookup,
+            'reason': str(e),
+            'category': 'PROCESSING_ERROR',
+            'can_retry': False
+        }, False)
 
 
 class PlayerShotZoneAnalysisProcessor(
@@ -579,12 +873,16 @@ class PlayerShotZoneAnalysisProcessor(
         # Backfill already has preflight checks at date-level; player-level is redundant
         if self.is_backfill_mode:
             logger.info(f"⏭️ BACKFILL MODE: Skipping completeness check for {len(all_players)} players")
+            # Use actual game counts from already-loaded raw_data
+            # In backfill mode, we trust upstream is complete, so expected = actual
+            # This makes failure classification accurate without additional BQ queries
+            games_per_player = self.raw_data.groupby('player_lookup').size().to_dict()
             completeness_results = {
                 player: {
                     'is_production_ready': True,
                     'completeness_pct': 100.0,
-                    'expected_count': 0,
-                    'actual_count': 0,
+                    'expected_count': games_per_player.get(player, 0),  # Actual games = expected in backfill
+                    'actual_count': games_per_player.get(player, 0),
                     'missing_count': 0,
                     'is_complete': True
                 }
@@ -646,18 +944,29 @@ class PlayerShotZoneAnalysisProcessor(
 
         if failed:
             # Show breakdown with clear labeling of what needs investigation
-            expected_skips = category_counts.get('INSUFFICIENT_DATA', 0) + category_counts.get('INCOMPLETE_DATA', 0)
+            expected_skips = (
+                category_counts.get('EXPECTED_INCOMPLETE', 0) +
+                category_counts.get('INCOMPLETE_DATA', 0) +
+                category_counts.get('INSUFFICIENT_DATA', 0)  # Legacy category, being phased out
+            )
+            needs_backfill = category_counts.get('INCOMPLETE_UPSTREAM', 0)
             errors_to_investigate = category_counts.get('PROCESSING_ERROR', 0) + category_counts.get('UNKNOWN', 0)
 
             logger.info(f"📊 Failure breakdown by category:")
             for cat, count in sorted(category_counts.items()):
-                if cat in ('INSUFFICIENT_DATA', 'INCOMPLETE_DATA', 'CIRCUIT_BREAKER_ACTIVE'):
+                if cat == 'EXPECTED_INCOMPLETE':
+                    logger.info(f"   {cat}: {count} (expected - season bootstrap)")
+                elif cat == 'INCOMPLETE_UPSTREAM':
+                    logger.warning(f"   {cat}: {count} (needs upstream backfill)")
+                elif cat in ('INCOMPLETE_DATA', 'INSUFFICIENT_DATA', 'CIRCUIT_BREAKER_ACTIVE'):
                     logger.info(f"   {cat}: {count} (expected - data quality)")
                 else:
                     logger.warning(f"   {cat}: {count} ⚠️ INVESTIGATE")
 
-            if errors_to_investigate == 0:
+            if errors_to_investigate == 0 and needs_backfill == 0:
                 logger.info(f"✅ No errors to investigate - all {expected_skips} skips are expected (data quality)")
+            elif errors_to_investigate == 0:
+                logger.info(f"✅ No errors to investigate - {expected_skips} expected skips, {needs_backfill} need backfill")
 
         # Store category breakdown in stats for backfill summary
         self.stats['failure_categories'] = category_counts
@@ -665,45 +974,92 @@ class PlayerShotZoneAnalysisProcessor(
 
     def _process_players_parallel(self, all_players, completeness_results,
                                    is_bootstrap, is_season_boundary, analysis_date):
-        """Process all players using ThreadPoolExecutor for parallelization."""
-        # Determine worker count with environment variable support
-        DEFAULT_WORKERS = 10
+        """Process all players using ProcessPoolExecutor for 4-5x speedup."""
+        # Determine worker count - ProcessPool can handle more than ThreadPool
+        DEFAULT_WORKERS = min(32, os.cpu_count() or 10)
         max_workers = int(os.environ.get(
             'PSZA_WORKERS',
             os.environ.get('PARALLELIZATION_WORKERS', DEFAULT_WORKERS)
         ))
-        max_workers = min(max_workers, os.cpu_count() or 1)
-        logger.info(f"Processing {len(all_players)} players with {max_workers} workers (parallel mode)")
+
+        if self.is_backfill_mode:
+            max_workers = min(max_workers, 32)
+        else:
+            max_workers = min(max_workers, os.cpu_count() or 10)
+
+        logger.info(f"Processing {len(all_players)} players with {max_workers} workers (ProcessPool mode)")
+
+        # ============================================================
+        # PRE-FETCH CIRCUIT BREAKER DATA (BQ client not picklable)
+        # ============================================================
+        circuit_breaker_statuses = {}
+
+        # Skip circuit breaker checks in backfill mode (historical data doesn't need this)
+        if self.is_backfill_mode or is_bootstrap or is_season_boundary:
+            logger.info(f"⏭️  Skipping circuit breaker checks (backfill/bootstrap mode)")
+            for player_lookup in all_players:
+                circuit_breaker_statuses[player_lookup] = {
+                    'active': False, 'attempts': 0, 'until': None
+                }
+        else:
+            logger.info(f"Pre-fetching circuit breaker statuses for {len(all_players)} players...")
+            for player_lookup in all_players:
+                circuit_breaker_statuses[player_lookup] = self._check_circuit_breaker(
+                    player_lookup, analysis_date
+                )
+            logger.info(f"Circuit breaker pre-fetch complete")
 
         # Performance timing
         loop_start = time.time()
         processed_count = 0
 
-        # Thread-safe result collection
         successful = []
         failed = []
+        reprocess_increments = []  # Track BQ writes needed
 
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
             # Submit all player tasks
             futures = {
                 executor.submit(
-                    self._process_single_player,
-                    player_lookup, completeness_results, is_bootstrap, is_season_boundary, analysis_date
+                    _process_single_player_worker,
+                    player_lookup,
+                    completeness_results.get(player_lookup, {
+                        'expected_count': 0,
+                        'actual_count': 0,
+                        'completeness_pct': 0.0,
+                        'missing_count': 0,
+                        'is_complete': False,
+                        'is_production_ready': False
+                    }),
+                    circuit_breaker_statuses[player_lookup],
+                    is_bootstrap,
+                    is_season_boundary,
+                    analysis_date,
+                    self.raw_data[self.raw_data['player_lookup'] == player_lookup].to_dict('records'),
+                    self.sample_window,
+                    self.trend_window,
+                    self.min_games_required,
+                    self.source_hash,
+                    self.opts,
+                    self.HASH_FIELDS
                 ): player_lookup
                 for player_lookup in all_players
             }
 
-            # Collect results as they complete
+            # Collect results
             for future in as_completed(futures):
                 player_lookup = futures[future]
                 processed_count += 1
 
                 try:
-                    success, data = future.result()
+                    success, data, needs_reprocess_increment = future.result()
                     if success:
                         successful.append(data)
                     else:
                         failed.append(data)
+
+                    if needs_reprocess_increment:
+                        reprocess_increments.append(data)
 
                     # Progress logging every 50 players
                     if processed_count % 50 == 0:
@@ -724,7 +1080,28 @@ class PlayerShotZoneAnalysisProcessor(
                         'can_retry': False
                     })
 
-        # Final timing summary
+        # ============================================================
+        # POST-PROCESSING: BQ writes in main thread
+        # ============================================================
+        if reprocess_increments:
+            logger.info(f"Incrementing reprocess count for {len(reprocess_increments)} players...")
+            for failure_data in reprocess_increments:
+                entity_id = failure_data['entity_id']
+                reason = failure_data['reason']
+                if 'Incomplete data:' in reason:
+                    completeness_str = reason.split('Incomplete data:')[1].split('%')[0].strip()
+                    try:
+                        completeness_pct = float(completeness_str)
+                    except ValueError:
+                        completeness_pct = 0.0
+                else:
+                    completeness_pct = 0.0
+
+                self._increment_reprocess_count(
+                    entity_id, analysis_date, completeness_pct, 'incomplete_upstream_data'
+                )
+
+        # Final timing
         total_time = time.time() - loop_start
         logger.info(
             f"Completed {len(successful)} players in {total_time:.1f}s "
@@ -792,11 +1169,37 @@ class PlayerShotZoneAnalysisProcessor(
 
             # Check sufficient games for 10-game analysis
             if len(games_10) < self.min_games_required:
+                # Determine failure category based on expected vs actual game counts
+                actual_games = len(games_10)
+                expected_games = completeness.get('expected_count', 0)
+
+                # Classification logic:
+                # - EXPECTED_INCOMPLETE: Both actual and expected < 10 (early season/bootstrap)
+                # - INCOMPLETE_UPSTREAM: Actual < 10 but expected >= 10 (missing upstream data)
+                if actual_games < self.min_games_required and expected_games < self.min_games_required:
+                    # Early season - not enough games played yet
+                    category = 'EXPECTED_INCOMPLETE'
+                    can_retry = False
+                    reason = (
+                        f"Season bootstrap: {actual_games}/{expected_games} games "
+                        f"(need {self.min_games_required})"
+                    )
+                    logger.debug(f"{player_lookup}: {reason}")
+                else:
+                    # Missing upstream data - games were played but not in our data
+                    category = 'INCOMPLETE_UPSTREAM'
+                    can_retry = True
+                    reason = (
+                        f"Missing upstream data: {actual_games}/{expected_games} games "
+                        f"(need {self.min_games_required})"
+                    )
+                    logger.warning(f"{player_lookup}: {reason}")
+
                 return (False, {
                     'entity_id': player_lookup,
-                    'reason': f"Only {len(games_10)} games, need {self.min_games_required}",
-                    'category': 'INSUFFICIENT_DATA',
-                    'can_retry': True
+                    'reason': reason,
+                    'category': category,
+                    'can_retry': can_retry
                 })
 
             # Calculate metrics for 10-game window
@@ -979,11 +1382,37 @@ class PlayerShotZoneAnalysisProcessor(
 
                 # Check sufficient games for 10-game analysis
                 if len(games_10) < self.min_games_required:
+                    # Determine failure category based on expected vs actual game counts
+                    actual_games = len(games_10)
+                    expected_games = completeness.get('expected_count', 0)
+
+                    # Classification logic:
+                    # - EXPECTED_INCOMPLETE: Both actual and expected < 10 (early season/bootstrap)
+                    # - INCOMPLETE_UPSTREAM: Actual < 10 but expected >= 10 (missing upstream data)
+                    if actual_games < self.min_games_required and expected_games < self.min_games_required:
+                        # Early season - not enough games played yet
+                        category = 'EXPECTED_INCOMPLETE'
+                        can_retry = False
+                        reason = (
+                            f"Season bootstrap: {actual_games}/{expected_games} games "
+                            f"(need {self.min_games_required})"
+                        )
+                        logger.debug(f"{player_lookup}: {reason}")
+                    else:
+                        # Missing upstream data - games were played but not in our data
+                        category = 'INCOMPLETE_UPSTREAM'
+                        can_retry = True
+                        reason = (
+                            f"Missing upstream data: {actual_games}/{expected_games} games "
+                            f"(need {self.min_games_required})"
+                        )
+                        logger.warning(f"{player_lookup}: {reason}")
+
                     failed.append({
                         'entity_id': player_lookup,
-                        'reason': f"Only {len(games_10)} games, need {self.min_games_required}",
-                        'category': 'INSUFFICIENT_DATA',
-                        'can_retry': True
+                        'reason': reason,
+                        'category': category,
+                        'can_retry': can_retry
                     })
                     continue
 

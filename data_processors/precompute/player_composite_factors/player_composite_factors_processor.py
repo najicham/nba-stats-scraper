@@ -39,7 +39,7 @@ import logging
 import json
 import os
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from datetime import datetime, date, timezone, timedelta
 from typing import Dict, List, Optional
 import pandas as pd
@@ -62,6 +62,354 @@ from shared.validation.config import BOOTSTRAP_DAYS
 
 # Configure logging
 logger = logging.getLogger(__name__)
+
+
+# ============================================================
+# MODULE-LEVEL WORKER FUNCTION (ProcessPoolExecutor)
+# ============================================================
+def _process_single_player_worker(
+    player_lookup: str,
+    player_row_dict: dict,
+    player_shot_dict: Optional[dict],
+    team_defense_dict: Optional[dict],
+    completeness: dict,
+    upstream_status: dict,
+    circuit_breaker_status: dict,
+    is_bootstrap: bool,
+    is_season_boundary: bool,
+    analysis_date: date,
+    calculation_version: str,
+    source_hashes: dict,
+    source_tracking: dict,
+    hash_fields: list
+) -> tuple:
+    """
+    Process one player (multiprocessing-safe worker).
+
+    This function is picklable (no self references) for ProcessPoolExecutor.
+    All data is passed as plain dicts/primitives.
+
+    Args:
+        player_lookup: Player ID
+        player_row_dict: Player context data as dict
+        player_shot_dict: Player shot zone data as dict (or None)
+        team_defense_dict: Team defense zone data as dict (or None)
+        completeness: Completeness check results
+        upstream_status: Upstream completeness status
+        circuit_breaker_status: Circuit breaker status
+        is_bootstrap: Bootstrap mode flag
+        is_season_boundary: Season boundary flag
+        analysis_date: Analysis date
+        calculation_version: Calculation version string
+        source_hashes: Source hash dict
+        source_tracking: Source tracking fields
+        hash_fields: Fields to hash for data_hash
+
+    Returns:
+        tuple: (success: bool, data: dict)
+    """
+    try:
+        # Import here to avoid pickling issues
+        from shared.utils.hash_utils import compute_hash_from_dict
+
+        # Helper functions (local copies - no self reference)
+        def _safe_int(value, default: int = 0) -> int:
+            if value is None or pd.isna(value):
+                return default
+            try:
+                return int(value)
+            except (ValueError, TypeError):
+                return default
+
+        def _safe_float(value, default: float = 0.0) -> float:
+            if value is None or pd.isna(value):
+                return default
+            try:
+                return float(value)
+            except (ValueError, TypeError):
+                return default
+
+        def _safe_bool(value, default: bool = False) -> bool:
+            if value is None or pd.isna(value):
+                return default
+            return bool(value)
+
+        # Calculate 4 active factor scores
+        # 1. Fatigue Score
+        score = 100
+        days_rest = _safe_int(player_row_dict.get('days_rest'), 1)
+        back_to_back = _safe_bool(player_row_dict.get('back_to_back'), False)
+        if back_to_back:
+            score -= 15
+        elif days_rest >= 3:
+            score += 5
+        games_last_7 = _safe_int(player_row_dict.get('games_in_last_7_days'), 3)
+        minutes_last_7 = _safe_float(player_row_dict.get('minutes_in_last_7_days'), 200.0)
+        avg_mpg_last_7 = _safe_float(player_row_dict.get('avg_minutes_per_game_last_7'), 30.0)
+        if games_last_7 >= 4:
+            score -= 10
+        if minutes_last_7 > 240:
+            score -= 10
+        if avg_mpg_last_7 > 35:
+            score -= 8
+        recent_b2bs = _safe_int(player_row_dict.get('back_to_backs_last_14_days'), 0)
+        if recent_b2bs >= 2:
+            score -= 12
+        elif recent_b2bs == 1:
+            score -= 5
+        age = _safe_int(player_row_dict.get('player_age'), 25)
+        if age >= 35:
+            score -= 10
+        elif age >= 30:
+            score -= 5
+        fatigue_score = max(0, min(100, score))
+        fatigue_adj = (fatigue_score - 100) / 20.0
+
+        # 2. Shot Zone Mismatch Score
+        shot_zone_score = 0.0
+        if player_shot_dict is not None and team_defense_dict is not None:
+            primary_zone = player_shot_dict.get('primary_scoring_zone', 'paint')
+            zone_rate_map = {
+                'paint': 'paint_rate_last_10',
+                'mid_range': 'mid_range_rate_last_10',
+                'perimeter': 'three_pt_rate_last_10'
+            }
+            zone_rate_field = zone_rate_map.get(primary_zone, 'paint_rate_last_10')
+            zone_usage_pct = _safe_float(player_shot_dict.get(zone_rate_field), 50.0)
+
+            defense_field_map = {
+                'paint': 'paint_defense_vs_league_avg',
+                'mid_range': 'mid_range_defense_vs_league_avg',
+                'perimeter': 'three_pt_defense_vs_league_avg'
+            }
+            defense_field = defense_field_map.get(primary_zone, 'paint_defense_vs_league_avg')
+            defense_rating = _safe_float(team_defense_dict.get(defense_field), 0.0)
+
+            base_mismatch = defense_rating
+            usage_weight = min(zone_usage_pct / 50.0, 1.0)
+            weighted_mismatch = base_mismatch * usage_weight
+            if abs(weighted_mismatch) > 5.0:
+                weighted_mismatch *= 1.2
+            shot_zone_score = max(-10.0, min(10.0, weighted_mismatch))
+        shot_zone_adj = shot_zone_score
+
+        # 3. Pace Score
+        pace_diff = _safe_float(player_row_dict.get('pace_differential'), 0.0)
+        pace_score = pace_diff / 2.0
+        pace_score = max(-3.0, min(3.0, pace_score))
+        pace_adj = pace_score
+
+        # 4. Usage Spike Score
+        projected_usage = _safe_float(player_row_dict.get('projected_usage_rate'), 25.0)
+        baseline_usage = _safe_float(player_row_dict.get('avg_usage_rate_last_7_games'), 25.0)
+        stars_out = _safe_int(player_row_dict.get('star_teammates_out'), 0)
+        usage_diff = projected_usage - baseline_usage if baseline_usage != 0 else 0.0
+        base_score = usage_diff * 0.3
+        if stars_out > 0 and base_score > 0:
+            if stars_out >= 2:
+                base_score *= 1.30
+            else:
+                base_score *= 1.15
+        usage_spike_score = max(-3.0, min(3.0, base_score))
+        usage_spike_adj = usage_spike_score
+
+        # Deferred factors (set to 0)
+        referee_adj = 0.0
+        look_ahead_adj = 0.0
+        travel_adj = 0.0
+        opponent_strength_adj = 0.0
+
+        # Sum all adjustments
+        total_adjustment = (
+            fatigue_adj + shot_zone_adj + pace_adj + usage_spike_adj +
+            referee_adj + look_ahead_adj + travel_adj + opponent_strength_adj
+        )
+
+        # Calculate data completeness
+        required_fields_present = 0
+        total_checks = 5
+        if pd.notna(player_row_dict.get('days_rest')):
+            required_fields_present += 1
+        if pd.notna(player_row_dict.get('projected_usage_rate')):
+            required_fields_present += 1
+        if pd.notna(player_row_dict.get('pace_differential')):
+            required_fields_present += 1
+        if player_shot_dict is not None:
+            required_fields_present += 1
+        if team_defense_dict is not None:
+            required_fields_present += 1
+        completeness_pct = (required_fields_present / total_checks) * 100
+
+        missing = []
+        if not pd.notna(player_row_dict.get('days_rest')):
+            missing.append('days_rest')
+        if not pd.notna(player_row_dict.get('projected_usage_rate')):
+            missing.append('projected_usage_rate')
+        if not pd.notna(player_row_dict.get('pace_differential')):
+            missing.append('pace_differential')
+        if player_shot_dict is None:
+            missing.append('player_shot_zone')
+        if team_defense_dict is None:
+            missing.append('team_defense_zone')
+        missing_str = ', '.join(missing) if missing else None
+
+        # Check for warnings
+        warnings = []
+        if fatigue_score < 50:
+            warnings.append("EXTREME_FATIGUE: Player showing severe fatigue")
+        if abs(shot_zone_score) > 8.0:
+            warnings.append("EXTREME_MATCHUP: Unusual zone mismatch")
+        if abs(total_adjustment) > 12.0:
+            warnings.append("EXTREME_ADJUSTMENT: Very large composite adjustment")
+        has_warnings = len(warnings) > 0
+        warning_details = '; '.join(warnings) if warnings else None
+
+        # Build context JSONs
+        fatigue_context = {
+            'days_rest': days_rest,
+            'back_to_back': back_to_back,
+            'games_last_7': games_last_7,
+            'minutes_last_7': minutes_last_7,
+            'avg_minutes_pg_last_7': avg_mpg_last_7,
+            'back_to_backs_last_14': recent_b2bs,
+            'player_age': age,
+            'final_score': fatigue_score
+        }
+
+        shot_zone_context = {'missing_data': True}
+        if player_shot_dict is not None and team_defense_dict is not None:
+            primary_zone_raw = player_shot_dict.get('primary_scoring_zone')
+            primary_zone = str(primary_zone_raw) if primary_zone_raw is not None and not pd.isna(primary_zone_raw) else 'unknown'
+            weakest_zone_raw = team_defense_dict.get('weakest_zone')
+            weakest_zone = str(weakest_zone_raw) if weakest_zone_raw is not None and not pd.isna(weakest_zone_raw) else 'unknown'
+            shot_zone_context = {
+                'player_primary_zone': primary_zone,
+                'opponent_weak_zone': weakest_zone,
+                'final_score': shot_zone_score
+            }
+
+        pace_context = {
+            'pace_differential': pace_diff,
+            'final_score': pace_score
+        }
+
+        usage_context = {
+            'projected_usage_rate': projected_usage,
+            'avg_usage_last_7': baseline_usage,
+            'usage_differential': usage_diff,
+            'star_teammates_out': stars_out,
+            'final_score': usage_spike_score
+        }
+
+        # Build output record
+        record = {
+            # Identifiers
+            'player_lookup': player_lookup,
+            'universal_player_id': player_row_dict['universal_player_id'],
+            'game_date': player_row_dict['game_date'],
+            'game_id': player_row_dict['game_id'],
+            'analysis_date': analysis_date,
+
+            # Active factor scores
+            'fatigue_score': fatigue_score,
+            'shot_zone_mismatch_score': round(shot_zone_score, 1) if shot_zone_score is not None else None,
+            'pace_score': round(pace_score, 1) if pace_score is not None else None,
+            'usage_spike_score': round(usage_spike_score, 1) if usage_spike_score is not None else None,
+
+            # Deferred factor scores
+            'referee_favorability_score': round(referee_adj, 1) if referee_adj is not None else None,
+            'look_ahead_pressure_score': round(look_ahead_adj, 1) if look_ahead_adj is not None else None,
+            'travel_impact_score': round(travel_adj, 1) if travel_adj is not None else None,
+            'opponent_strength_score': round(opponent_strength_adj, 1) if opponent_strength_adj is not None else None,
+
+            # Total composite adjustment
+            'total_composite_adjustment': round(total_adjustment, 2),
+
+            # Context JSONs
+            'fatigue_context_json': json.dumps(fatigue_context),
+            'shot_zone_context_json': json.dumps(shot_zone_context),
+            'pace_context_json': json.dumps(pace_context),
+            'usage_context_json': json.dumps(usage_context),
+
+            # Metadata
+            'calculation_version': calculation_version,
+            'early_season_flag': False,
+            'insufficient_data_reason': None,
+            'data_completeness_pct': completeness_pct,
+            'missing_data_fields': missing_str,
+            'has_warnings': has_warnings,
+            'warning_details': warning_details,
+
+            # Completeness Checking Metadata
+            'expected_games_count': completeness['expected_count'],
+            'actual_games_count': completeness['actual_count'],
+            'completeness_percentage': completeness['completeness_pct'],
+            'missing_games_count': completeness['missing_count'],
+
+            # Production Readiness
+            'is_production_ready': (
+                completeness['is_production_ready'] and
+                upstream_status['all_upstreams_ready']
+            ),
+
+            # Upstream Readiness Flags
+            'upstream_player_shot_ready': upstream_status['player_shot_zone_ready'],
+            'upstream_team_defense_ready': upstream_status['team_defense_zone_ready'],
+            'upstream_player_context_ready': upstream_status['upcoming_player_context_ready'],
+            'upstream_team_context_ready': upstream_status['upcoming_team_context_ready'],
+            'all_upstreams_ready': upstream_status['all_upstreams_ready'],
+
+            'data_quality_issues': [issue for issue in [
+                "own_data_incomplete" if not completeness['is_production_ready'] else None,
+                "upstream_player_shot_zone_incomplete" if not upstream_status['player_shot_zone_ready'] else None,
+                "upstream_team_defense_zone_incomplete" if not upstream_status['team_defense_zone_ready'] else None,
+                "upstream_player_context_incomplete" if not upstream_status['upcoming_player_context_ready'] else None,
+                "upstream_team_context_incomplete" if not upstream_status['upcoming_team_context_ready'] else None,
+            ] if issue is not None],
+
+            # Circuit Breaker
+            'last_reprocess_attempt_at': None,
+            'reprocess_attempt_count': circuit_breaker_status['attempts'],
+            'circuit_breaker_active': circuit_breaker_status['active'],
+            'circuit_breaker_until': (
+                circuit_breaker_status['until'].isoformat()
+                if circuit_breaker_status['until'] else None
+            ),
+
+            # Bootstrap/Override
+            'manual_override_required': False,
+            'season_boundary_detected': is_season_boundary,
+            'backfill_bootstrap_mode': is_bootstrap,
+            'processing_decision_reason': 'processed_successfully',
+
+            # Timestamps
+            'created_at': datetime.now(timezone.utc).isoformat(),
+            'processed_at': datetime.now(timezone.utc).isoformat()
+        }
+
+        # Add source tracking fields
+        record.update(source_tracking)
+
+        # Add source hashes
+        record['source_player_context_hash'] = source_hashes.get('player_context')
+        record['source_team_context_hash'] = source_hashes.get('team_context')
+        record['source_player_shot_hash'] = source_hashes.get('player_shot')
+        record['source_team_defense_hash'] = source_hashes.get('team_defense')
+
+        # Compute data hash
+        hash_data = {k: record.get(k) for k in hash_fields if k in record}
+        record['data_hash'] = compute_hash_from_dict(hash_data)
+
+        return (True, record)
+
+    except Exception as e:
+        logger.error(f"Failed to process {player_lookup}: {e}")
+        return (False, {
+            'entity_id': player_lookup,
+            'entity_type': 'player',
+            'reason': str(e),
+            'category': 'calculation_error'
+        })
 
 
 class PlayerCompositeFactorsProcessor(
@@ -931,39 +1279,143 @@ class PlayerCompositeFactorsProcessor(
         is_season_boundary: bool,
         analysis_date: date
     ) -> tuple:
-        """Process all players using ThreadPoolExecutor for parallelization."""
+        """Process all players using ProcessPoolExecutor for parallelization."""
         # Determine worker count with environment variable support
-        DEFAULT_WORKERS = 10
+        DEFAULT_WORKERS = 32  # Increased from 10 for ProcessPoolExecutor
         max_workers = int(os.environ.get(
             'PCF_WORKERS',
             os.environ.get('PARALLELIZATION_WORKERS', DEFAULT_WORKERS)
         ))
         max_workers = min(max_workers, os.cpu_count() or 1)
-        logger.info(f"Processing {len(all_players)} players with {max_workers} workers (parallel mode)")
+        logger.info(f"Processing {len(all_players)} players with {max_workers} workers (ProcessPoolExecutor)")
 
         # Performance timing
         loop_start = time.time()
         processed_count = 0
 
-        # Thread-safe result collection
+        # Process-safe result collection
         successful = []
         failed = []
 
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # ============================================================
+        # PRE-FETCH: Prepare all data BEFORE workers (no BQ in workers)
+        # ============================================================
+
+        # Convert DataFrames to dicts for pickling
+        player_rows = {}
+        player_shots = {}
+        team_defenses = {}
+
+        for player_lookup in all_players:
+            # Get player row
+            player_row = self.player_context_df[
+                self.player_context_df['player_lookup'] == player_lookup
+            ]
+            if not player_row.empty:
+                player_rows[player_lookup] = player_row.iloc[0].to_dict()
+            else:
+                player_rows[player_lookup] = None
+
+            # Get player shot data
+            if self.player_shot_df is not None and not self.player_shot_df.empty:
+                match = self.player_shot_df[
+                    self.player_shot_df['player_lookup'] == player_lookup
+                ]
+                player_shots[player_lookup] = match.iloc[0].to_dict() if not match.empty else None
+            else:
+                player_shots[player_lookup] = None
+
+            # Get team defense data (by opponent)
+            if player_rows[player_lookup]:
+                opponent_abbr = player_rows[player_lookup].get('opponent_team_abbr')
+                if opponent_abbr and self.team_defense_df is not None and not self.team_defense_df.empty:
+                    match = self.team_defense_df[
+                        self.team_defense_df['team_abbr'] == opponent_abbr
+                    ]
+                    team_defenses[player_lookup] = match.iloc[0].to_dict() if not match.empty else None
+                else:
+                    team_defenses[player_lookup] = None
+            else:
+                team_defenses[player_lookup] = None
+
+        # Prepare source hashes
+        source_hashes = {
+            'player_context': self.source_player_context_hash,
+            'team_context': self.source_team_context_hash,
+            'player_shot': self.source_player_shot_hash,
+            'team_defense': self.source_team_defense_hash
+        }
+
+        # Prepare source tracking
+        source_tracking = self.build_source_tracking_fields()
+
+        # ============================================================
+        # WORKERS: Process players in parallel
+        # ============================================================
+
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
             # Submit all player tasks
-            futures = {
-                executor.submit(
-                    self._process_single_player,
+            futures = {}
+            for player_lookup in all_players:
+                # Skip if no player row
+                if player_rows[player_lookup] is None:
+                    failed.append({
+                        'entity_id': player_lookup,
+                        'entity_type': 'player',
+                        'reason': 'Player not found in context data',
+                        'category': 'MISSING_DATA'
+                    })
+                    continue
+
+                # Check circuit breaker BEFORE submitting to worker
+                circuit_breaker_status = circuit_breaker_cache.get(
                     player_lookup,
-                    completeness_results,
-                    upstream_completeness,
-                    circuit_breaker_cache,
+                    {'active': False, 'attempts': 0, 'until': None}
+                )
+
+                if circuit_breaker_status['active']:
+                    failed.append({
+                        'entity_id': player_lookup,
+                        'entity_type': 'player',
+                        'reason': f"Circuit breaker active until {circuit_breaker_status['until']}",
+                        'category': 'CIRCUIT_BREAKER_ACTIVE'
+                    })
+                    continue
+
+                # Get completeness for this player
+                completeness = completeness_results.get(player_lookup, {
+                    'expected_count': 0, 'actual_count': 0, 'completeness_pct': 0.0,
+                    'missing_count': 0, 'is_complete': False, 'is_production_ready': False
+                })
+
+                # Get upstream status
+                upstream_status = upstream_completeness.get(player_lookup, {
+                    'player_shot_zone_ready': False,
+                    'team_defense_zone_ready': False,
+                    'upcoming_player_context_ready': False,
+                    'upcoming_team_context_ready': False,
+                    'all_upstreams_ready': False
+                })
+
+                # Submit to worker
+                future = executor.submit(
+                    _process_single_player_worker,
+                    player_lookup,
+                    player_rows[player_lookup],
+                    player_shots[player_lookup],
+                    team_defenses[player_lookup],
+                    completeness,
+                    upstream_status,
+                    circuit_breaker_status,
                     is_bootstrap,
                     is_season_boundary,
-                    analysis_date
-                ): player_lookup
-                for player_lookup in all_players
-            }
+                    analysis_date,
+                    self.calculation_version,
+                    source_hashes,
+                    source_tracking,
+                    self.HASH_FIELDS
+                )
+                futures[future] = player_lookup
 
             # Collect results as they complete
             for future in as_completed(futures):

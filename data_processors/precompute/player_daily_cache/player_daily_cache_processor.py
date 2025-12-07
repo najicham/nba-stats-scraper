@@ -35,7 +35,7 @@ import os
 import time
 from datetime import datetime, date, timedelta, timezone
 from typing import Dict, List, Optional
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 import pandas as pd
 import numpy as np
 from google.cloud import bigquery
@@ -62,6 +62,391 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+
+# ============================================================
+# Module-level worker function for ProcessPoolExecutor
+# ============================================================
+def _process_single_player_worker(
+    player_lookup: str,
+    upcoming_context_data: pd.DataFrame,
+    player_game_data: pd.DataFrame,
+    team_offense_data: pd.DataFrame,
+    shot_zone_data: pd.DataFrame,
+    completeness_l5: dict,
+    completeness_l10: dict,
+    completeness_l7d: dict,
+    completeness_l14d: dict,
+    is_bootstrap: bool,
+    is_season_boundary: bool,
+    analysis_date: date,
+    circuit_breaker_status: dict,
+    min_games_required: int,
+    absolute_min_games: int,
+    cache_version: str,
+    source_tracking_fields: Dict,
+    source_hashes: Dict
+) -> tuple:
+    """
+    Module-level worker function for ProcessPoolExecutor.
+
+    Must be at module level (not instance method) to be picklable.
+    All required data passed as parameters (no self references).
+
+    Returns (success: bool, data: dict).
+    """
+    try:
+        # ============================================================
+        # Get completeness for all windows
+        # ============================================================
+        comp_l5 = completeness_l5.get(player_lookup, {
+            'expected_count': 0, 'actual_count': 0, 'completeness_pct': 0.0,
+            'missing_count': 0, 'is_complete': False, 'is_production_ready': False
+        })
+        comp_l10 = completeness_l10.get(player_lookup, {
+            'expected_count': 0, 'actual_count': 0, 'completeness_pct': 0.0,
+            'missing_count': 0, 'is_complete': False, 'is_production_ready': False
+        })
+        comp_l7d = completeness_l7d.get(player_lookup, {
+            'expected_count': 0, 'actual_count': 0, 'completeness_pct': 0.0,
+            'missing_count': 0, 'is_complete': False, 'is_production_ready': False
+        })
+        comp_l14d = completeness_l14d.get(player_lookup, {
+            'expected_count': 0, 'actual_count': 0, 'completeness_pct': 0.0,
+            'missing_count': 0, 'is_complete': False, 'is_production_ready': False
+        })
+
+        # ALL windows must be production-ready for overall production readiness
+        all_windows_complete = (
+            comp_l5['is_production_ready'] and
+            comp_l10['is_production_ready'] and
+            comp_l7d['is_production_ready'] and
+            comp_l14d['is_production_ready']
+        )
+
+        # Use L10 as primary completeness metric
+        completeness = comp_l10
+
+        # Check circuit breaker (already fetched, passed as parameter)
+        if circuit_breaker_status['active']:
+            return (False, {
+                'entity_id': player_lookup,
+                'reason': f"Circuit breaker active until {circuit_breaker_status['until']}",
+                'category': 'CIRCUIT_BREAKER_ACTIVE',
+                'can_retry': False
+            })
+
+        # Check production readiness (skip if any window incomplete, unless in bootstrap mode or season boundary)
+        if not all_windows_complete and not is_bootstrap and not is_season_boundary:
+            # DON'T increment reprocess count here (requires BQ client)
+            # Main thread will handle this after collecting all results
+            return (False, {
+                'entity_id': player_lookup,
+                'reason': f"Incomplete data across windows",
+                'category': 'INCOMPLETE_DATA',
+                'can_retry': True,
+                'completeness_pct': completeness['completeness_pct']  # Include for main thread
+            })
+
+        # Get player's context data
+        context_rows = upcoming_context_data[
+            upcoming_context_data['player_lookup'] == player_lookup
+        ]
+        if context_rows.empty:
+            return (False, {
+                'entity_id': player_lookup,
+                'reason': 'No upcoming context data found',
+                'category': 'PROCESSING_ERROR',
+                'can_retry': False
+            })
+        context_row = context_rows.iloc[0]
+
+        # Get player's game history
+        player_games = player_game_data[
+            player_game_data['player_lookup'] == player_lookup
+        ].copy()
+
+        # Check minimum games requirement
+        games_count = len(player_games)
+        if games_count < absolute_min_games:
+            return (False, {
+                'entity_id': player_lookup,
+                'reason': f"Only {games_count} games played, need {absolute_min_games} minimum",
+                'category': 'INSUFFICIENT_DATA',
+                'can_retry': True
+            })
+
+        # Flag if below preferred minimum
+        is_early_season = games_count < min_games_required
+
+        # Get team context
+        current_team = context_row['team_abbr']
+        team_games = team_offense_data[
+            team_offense_data['team_abbr'] == current_team
+        ].copy()
+
+        # Get shot zone data (optional - proceeds with nulls if missing)
+        shot_zone_rows = shot_zone_data[
+            shot_zone_data['player_lookup'] == player_lookup
+        ]
+
+        # Track shot zone availability for state tracking
+        shot_zone_available = not shot_zone_rows.empty
+        if shot_zone_rows.empty:
+            # Create placeholder with null values - shot zone is optional enrichment
+            shot_zone_row = pd.Series({
+                'primary_scoring_zone': None,
+                'paint_rate_last_10': None,
+                'three_pt_rate_last_10': None
+            })
+        else:
+            shot_zone_row = shot_zone_rows.iloc[0]
+
+        # Calculate all metrics (using helper function defined below)
+        cache_record = _calculate_player_cache_worker(
+            player_lookup=player_lookup,
+            context_row=context_row,
+            player_games=player_games,
+            team_games=team_games,
+            shot_zone_row=shot_zone_row,
+            analysis_date=analysis_date,
+            is_early_season=is_early_season,
+            completeness_data={
+                'comp_l5': comp_l5,
+                'comp_l10': comp_l10,
+                'comp_l7d': comp_l7d,
+                'comp_l14d': comp_l14d,
+                'all_windows_complete': all_windows_complete,
+                'is_bootstrap': is_bootstrap,
+                'is_season_boundary': is_season_boundary,
+                'circuit_breaker_status': circuit_breaker_status,
+            },
+            shot_zone_available=shot_zone_available,
+            min_games_required=min_games_required,
+            cache_version=cache_version,
+            source_tracking_fields=source_tracking_fields,
+            source_hashes=source_hashes
+        )
+
+        return (True, cache_record)
+
+    except Exception as e:
+        logger.error(f"Failed to process {player_lookup}: {e}", exc_info=True)
+        return (False, {
+            'entity_id': player_lookup,
+            'reason': str(e),
+            'category': 'PROCESSING_ERROR',
+            'can_retry': False
+        })
+
+
+def _calculate_player_cache_worker(
+    player_lookup: str,
+    context_row: pd.Series,
+    player_games: pd.DataFrame,
+    team_games: pd.DataFrame,
+    shot_zone_row: pd.Series,
+    analysis_date: date,
+    is_early_season: bool,
+    completeness_data: Dict,
+    shot_zone_available: bool,
+    min_games_required: int,
+    cache_version: str,
+    source_tracking_fields: Dict,
+    source_hashes: Dict
+) -> Dict:
+    """
+    Calculate complete cache record for a single player (module-level helper).
+
+    This is a copy of the instance method _calculate_player_cache but as a
+    module-level function for use by ProcessPoolExecutor workers.
+    """
+    from shared.config.source_coverage import get_tier_from_score
+
+    # Extract completeness data
+    comp_l5 = completeness_data.get('comp_l5', {'expected_count': 0, 'actual_count': 0, 'completeness_pct': 0.0, 'missing_count': 0, 'is_production_ready': False})
+    comp_l10 = completeness_data.get('comp_l10', {'expected_count': 0, 'actual_count': 0, 'completeness_pct': 0.0, 'missing_count': 0, 'is_production_ready': False})
+    comp_l7d = completeness_data.get('comp_l7d', {'expected_count': 0, 'actual_count': 0, 'completeness_pct': 0.0, 'missing_count': 0, 'is_production_ready': False})
+    comp_l14d = completeness_data.get('comp_l14d', {'expected_count': 0, 'actual_count': 0, 'completeness_pct': 0.0, 'missing_count': 0, 'is_production_ready': False})
+    all_windows_complete = completeness_data.get('all_windows_complete', False)
+    is_bootstrap = completeness_data.get('is_bootstrap', False)
+    is_season_boundary = completeness_data.get('is_season_boundary', False)
+    circuit_breaker_status = completeness_data.get('circuit_breaker_status', {'active': False, 'until': None, 'attempts': 0})
+
+    # Recent performance (last 5, last 10, season)
+    last_5_games = player_games.head(5)
+    last_10_games = player_games.head(10)
+
+    # Round all floats to 4 decimal places for BigQuery NUMERIC compatibility
+    points_avg_last_5 = round(float(last_5_games['points'].mean()), 4) if len(last_5_games) > 0 else None
+    points_avg_last_10 = round(float(last_10_games['points'].mean()), 4) if len(last_10_games) > 0 else None
+    points_avg_season = round(float(player_games['points'].mean()), 4)
+    points_std_last_10 = round(float(last_10_games['points'].std()), 4) if len(last_10_games) > 1 else None
+
+    minutes_avg_last_10 = round(float(last_10_games['minutes_played'].mean()), 4) if len(last_10_games) > 0 else None
+    usage_rate_last_10 = round(float(last_10_games['usage_rate'].mean()), 4) if len(last_10_games) > 0 else None
+    ts_pct_last_10 = round(float(last_10_games['ts_pct'].mean()), 4) if len(last_10_games) > 0 else None
+
+    games_played_season = int(len(player_games))
+    player_usage_rate_season = round(float(player_games['usage_rate'].mean()), 4)
+
+    # Team context (last 10 games)
+    team_pace_last_10 = round(float(team_games['pace'].mean()), 4) if len(team_games) > 0 else None
+    team_off_rating_last_10 = round(float(team_games['offensive_rating'].mean()), 4) if len(team_games) > 0 else None
+
+    # Fatigue metrics (direct copy from context)
+    games_in_last_7_days = int(context_row['games_in_last_7_days']) if pd.notna(context_row['games_in_last_7_days']) else None
+    games_in_last_14_days = int(context_row['games_in_last_14_days']) if pd.notna(context_row['games_in_last_14_days']) else None
+    minutes_in_last_7_days = int(context_row['minutes_in_last_7_days']) if pd.notna(context_row['minutes_in_last_7_days']) else None
+    minutes_in_last_14_days = int(context_row['minutes_in_last_14_days']) if pd.notna(context_row['minutes_in_last_14_days']) else None
+    back_to_backs_last_14_days = int(context_row['back_to_backs_last_14_days']) if pd.notna(context_row['back_to_backs_last_14_days']) else None
+    avg_minutes_per_game_last_7 = round(float(context_row['avg_minutes_per_game_last_7']), 4) if pd.notna(context_row['avg_minutes_per_game_last_7']) else None
+    fourth_quarter_minutes_last_7 = int(context_row['fourth_quarter_minutes_last_7']) if pd.notna(context_row['fourth_quarter_minutes_last_7']) else None
+
+    # Player demographics
+    player_age = int(context_row['player_age']) if pd.notna(context_row['player_age']) else None
+
+    # Shot zone tendencies (direct copy from shot_zone_analysis)
+    primary_scoring_zone = str(shot_zone_row['primary_scoring_zone']) if pd.notna(shot_zone_row['primary_scoring_zone']) else None
+    paint_rate_last_10 = float(shot_zone_row['paint_rate_last_10']) if pd.notna(shot_zone_row['paint_rate_last_10']) else None
+    three_pt_rate_last_10 = float(shot_zone_row['three_pt_rate_last_10']) if pd.notna(shot_zone_row['three_pt_rate_last_10']) else None
+
+    # Calculate assisted rate (from last 10 games)
+    assisted_rate_last_10 = None
+    if len(last_10_games) > 0:
+        total_fg_makes = last_10_games['fg_makes'].sum()
+        total_assisted = last_10_games['assisted_fg_makes'].sum()
+        if total_fg_makes > 0:
+            assisted_rate_last_10 = float(total_assisted / total_fg_makes)
+
+    # Build complete record
+    record = {
+        # Identifiers
+        'player_lookup': player_lookup,
+        'universal_player_id': str(context_row['universal_player_id']) if pd.notna(context_row['universal_player_id']) else None,
+        'cache_date': analysis_date.isoformat(),
+
+        # Recent performance
+        'points_avg_last_5': points_avg_last_5,
+        'points_avg_last_10': points_avg_last_10,
+        'points_avg_season': points_avg_season,
+        'points_std_last_10': points_std_last_10,
+        'minutes_avg_last_10': minutes_avg_last_10,
+        'usage_rate_last_10': usage_rate_last_10,
+        'ts_pct_last_10': ts_pct_last_10,
+        'games_played_season': games_played_season,
+
+        # Team context
+        'team_pace_last_10': team_pace_last_10,
+        'team_off_rating_last_10': team_off_rating_last_10,
+        'player_usage_rate_season': player_usage_rate_season,
+
+        # Fatigue metrics
+        'games_in_last_7_days': games_in_last_7_days,
+        'games_in_last_14_days': games_in_last_14_days,
+        'minutes_in_last_7_days': minutes_in_last_7_days,
+        'minutes_in_last_14_days': minutes_in_last_14_days,
+        'back_to_backs_last_14_days': back_to_backs_last_14_days,
+        'avg_minutes_per_game_last_7': avg_minutes_per_game_last_7,
+        'fourth_quarter_minutes_last_7': fourth_quarter_minutes_last_7,
+
+        # Shot zone tendencies
+        'primary_scoring_zone': primary_scoring_zone,
+        'paint_rate_last_10': paint_rate_last_10,
+        'three_pt_rate_last_10': three_pt_rate_last_10,
+        'assisted_rate_last_10': assisted_rate_last_10,
+
+        # Demographics
+        'player_age': player_age,
+
+        # Source tracking (passed as parameter)
+        **source_tracking_fields,
+
+        # Early season flag
+        'early_season_flag': is_early_season,
+        'insufficient_data_reason': f"Only {games_played_season} games played, need {min_games_required} minimum" if is_early_season else None,
+
+        # Shot zone availability tracking (for re-run when data becomes available)
+        'shot_zone_data_available': shot_zone_available,
+
+        # Completeness Checking Metadata (23 fields)
+        'expected_games_count': comp_l5['expected_count'],
+        'actual_games_count': comp_l5['actual_count'],
+        'completeness_percentage': comp_l5['completeness_pct'],
+        'missing_games_count': comp_l5['missing_count'],
+
+        # Quality tier based on completeness (L5 window)
+        'quality_tier': get_tier_from_score(comp_l5['completeness_pct']).value,
+        'cache_quality_score': comp_l5['completeness_pct'],
+
+        # Production Readiness
+        'is_production_ready': all_windows_complete,
+        'data_quality_issues': [],
+
+        # Circuit Breaker (queried per entity)
+        'last_reprocess_attempt_at': None,
+        'reprocess_attempt_count': circuit_breaker_status['attempts'],
+        'circuit_breaker_active': circuit_breaker_status['active'],
+        'circuit_breaker_until': (
+            circuit_breaker_status['until'].isoformat()
+            if circuit_breaker_status['until'] else None
+        ),
+
+        # Bootstrap/Override
+        'manual_override_required': False,
+        'season_boundary_detected': is_season_boundary,
+        'backfill_bootstrap_mode': is_bootstrap,
+        'processing_decision_reason': 'processed_successfully',
+
+        # Multi-Window Completeness (9 fields)
+        'l5_completeness_pct': comp_l5['completeness_pct'],
+        'l5_is_complete': comp_l5['is_production_ready'],
+        'l10_completeness_pct': comp_l10['completeness_pct'],
+        'l10_is_complete': comp_l10['is_production_ready'],
+        'l7d_completeness_pct': comp_l7d['completeness_pct'],
+        'l7d_is_complete': comp_l7d['is_production_ready'],
+        'l14d_completeness_pct': comp_l14d['completeness_pct'],
+        'l14d_is_complete': comp_l14d['is_production_ready'],
+        'all_windows_complete': all_windows_complete,
+
+        # Metadata
+        'cache_version': cache_version,
+        'created_at': datetime.now(timezone.utc).isoformat(),
+        'processed_at': datetime.now(timezone.utc).isoformat()
+    }
+
+    # Add source hashes (passed as parameter)
+    record['source_player_game_hash'] = source_hashes.get('player_game')
+    record['source_team_offense_hash'] = source_hashes.get('team_offense')
+    record['source_upcoming_context_hash'] = source_hashes.get('upcoming_context')
+    record['source_shot_zone_hash'] = source_hashes.get('shot_zone')
+
+    # Compute data hash (need to import SmartIdempotencyMixin.compute_data_hash logic)
+    from data_processors.raw.smart_idempotency_mixin import SmartIdempotencyMixin
+    # Create a temporary instance just to use the hash computation
+    hash_fields = [
+        'player_lookup', 'universal_player_id', 'cache_date',
+        'points_avg_last_5', 'points_avg_last_10', 'points_avg_season',
+        'points_std_last_10', 'minutes_avg_last_10', 'usage_rate_last_10',
+        'ts_pct_last_10', 'games_played_season',
+        'team_pace_last_10', 'team_off_rating_last_10', 'player_usage_rate_season',
+        'games_in_last_7_days', 'games_in_last_14_days',
+        'minutes_in_last_7_days', 'minutes_in_last_14_days',
+        'back_to_backs_last_14_days', 'avg_minutes_per_game_last_7',
+        'fourth_quarter_minutes_last_7',
+        'primary_scoring_zone', 'paint_rate_last_10', 'three_pt_rate_last_10',
+        'assisted_rate_last_10', 'player_age', 'cache_quality_score',
+        'cache_version'
+    ]
+
+    # Simple hash computation (mimics SmartIdempotencyMixin logic)
+    import hashlib
+    import json
+    hash_data = {k: record.get(k) for k in hash_fields if k in record}
+    hash_str = json.dumps(hash_data, sort_keys=True, default=str)
+    record['data_hash'] = hashlib.sha256(hash_str.encode()).hexdigest()
+
+    return record
 
 
 class PlayerDailyCacheProcessor(
@@ -596,6 +981,99 @@ class PlayerDailyCacheProcessor(
             logger.warning(f"Error checking circuit breaker for {entity_id}: {e}")
             return {'active': False, 'attempts': 0, 'until': None}
 
+    def _check_circuit_breakers_batch(self, entity_ids: List[str], analysis_date: date) -> Dict[str, dict]:
+        """
+        Check circuit breaker status for multiple entities in one query.
+
+        Returns dict mapping entity_id to status dict with:
+            - active: bool (True if circuit breaker active)
+            - attempts: int (number of attempts so far)
+            - until: datetime (when circuit breaker expires)
+        """
+        if not entity_ids:
+            return {}
+
+        # Build IN clause for query
+        entity_ids_str = "', '".join(entity_ids)
+
+        query = f"""
+        WITH latest_attempts AS (
+            SELECT
+                entity_id,
+                attempt_number,
+                attempted_at,
+                circuit_breaker_tripped,
+                circuit_breaker_until,
+                ROW_NUMBER() OVER (
+                    PARTITION BY entity_id
+                    ORDER BY attempt_number DESC
+                ) as rn
+            FROM `{self.project_id}.nba_orchestration.reprocess_attempts`
+            WHERE processor_name = '{self.table_name}'
+              AND entity_id IN ('{entity_ids_str}')
+              AND analysis_date = DATE('{analysis_date}')
+        )
+        SELECT
+            entity_id,
+            attempt_number,
+            circuit_breaker_tripped,
+            circuit_breaker_until
+        FROM latest_attempts
+        WHERE rn = 1
+        """
+
+        try:
+            result = self.bq_client.query(query).to_dataframe()
+
+            # Build status dict for each entity
+            status_map = {}
+            now = datetime.now(timezone.utc)
+
+            for _, row in result.iterrows():
+                entity_id = row['entity_id']
+
+                if row['circuit_breaker_tripped']:
+                    # Check if circuit breaker still active
+                    if pd.notna(row['circuit_breaker_until']):
+                        cb_until = row['circuit_breaker_until']
+                        # Handle timezone-aware comparison
+                        if cb_until.tzinfo is None:
+                            cb_until = cb_until.replace(tzinfo=timezone.utc)
+
+                        if now < cb_until:
+                            status_map[entity_id] = {
+                                'active': True,
+                                'attempts': int(row['attempt_number']),
+                                'until': cb_until
+                            }
+                            continue
+
+                # Circuit breaker not active or expired
+                status_map[entity_id] = {
+                    'active': False,
+                    'attempts': int(row['attempt_number']),
+                    'until': None
+                }
+
+            # Add default status for entities not in results
+            for entity_id in entity_ids:
+                if entity_id not in status_map:
+                    status_map[entity_id] = {
+                        'active': False,
+                        'attempts': 0,
+                        'until': None
+                    }
+
+            return status_map
+
+        except Exception as e:
+            logger.warning(f"Error checking circuit breakers in batch: {e}")
+            # Return default status for all entities
+            return {
+                entity_id: {'active': False, 'attempts': 0, 'until': None}
+                for entity_id in entity_ids
+            }
+
     def _increment_reprocess_count(self, entity_id: str, analysis_date: date, completeness_pct: float, skip_reason: str) -> None:
         """
         Track reprocessing attempt and trip circuit breaker if needed.
@@ -740,6 +1218,25 @@ class PlayerDailyCacheProcessor(
         # ============================================================
 
         # ============================================================
+        # PRE-FETCH CIRCUIT BREAKER STATUS (for ProcessPoolExecutor compatibility)
+        # Skip in bootstrap/season boundary mode for speed
+        # ============================================================
+        circuit_breaker_map = {}
+        if not is_bootstrap and not is_season_boundary:
+            logger.info(f"Checking circuit breakers for {len(all_players)} players...")
+            cb_start = time.time()
+            circuit_breaker_map = self._check_circuit_breakers_batch(list(all_players), analysis_date)
+            cb_elapsed = time.time() - cb_start
+            logger.info(f"Circuit breaker check complete in {cb_elapsed:.1f}s")
+        else:
+            # Default status for all players in bootstrap/boundary mode
+            circuit_breaker_map = {
+                player: {'active': False, 'attempts': 0, 'until': None}
+                for player in all_players
+            }
+        # ============================================================
+
+        # ============================================================
         # Feature flag for parallelization
         # ============================================================
         ENABLE_PARALLELIZATION = os.environ.get('ENABLE_PLAYER_PARALLELIZATION', 'true').lower() == 'true'
@@ -747,7 +1244,7 @@ class PlayerDailyCacheProcessor(
         if ENABLE_PARALLELIZATION:
             successful, failed = self._process_players_parallel(
                 all_players, completeness_l5, completeness_l10, completeness_l7d, completeness_l14d,
-                is_bootstrap, is_season_boundary, analysis_date
+                is_bootstrap, is_season_boundary, analysis_date, circuit_breaker_map
             )
         else:
             successful, failed = self._process_players_serial(
@@ -797,39 +1294,71 @@ class PlayerDailyCacheProcessor(
         completeness_l14d: dict,
         is_bootstrap: bool,
         is_season_boundary: bool,
-        analysis_date: date
+        analysis_date: date,
+        circuit_breaker_map: Dict[str, dict]
     ) -> tuple:
-        """Process all players using ThreadPoolExecutor for parallelization."""
+        """
+        Process all players using ProcessPoolExecutor for parallelization.
+
+        ProcessPoolExecutor provides better performance for CPU-bound tasks (pandas calculations)
+        compared to ThreadPoolExecutor (limited by Python GIL).
+
+        Key differences from ThreadPoolExecutor:
+        - Uses separate processes instead of threads (bypasses GIL)
+        - Requires all data to be picklable (no BigQuery client access in workers)
+        - Circuit breaker status pre-fetched before parallelization
+        - Reprocess count increments handled in main thread after workers complete
+        """
         # Determine worker count with environment variable support
-        DEFAULT_WORKERS = 8
+        DEFAULT_WORKERS = 32  # Higher default for ProcessPool (vs 8 for ThreadPool)
         max_workers = int(os.environ.get(
             'PDC_WORKERS',
             os.environ.get('PARALLELIZATION_WORKERS', DEFAULT_WORKERS)
         ))
         max_workers = min(max_workers, os.cpu_count() or 1)
-        logger.info(f"Processing {len(all_players)} players with {max_workers} workers (parallel mode)")
+        logger.info(f"Processing {len(all_players)} players with {max_workers} workers (ProcessPool mode)")
 
         # Performance timing
         loop_start = time.time()
         processed_count = 0
 
-        # Thread-safe result collection
+        # Process-safe result collection
         successful = []
         failed = []
+        needs_reprocess_increment = []  # Track entities needing reprocess count increment
 
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            # Submit all player tasks
+        # Prepare data for worker functions (must be picklable)
+        source_tracking_fields = self.build_source_tracking_fields()
+        source_hashes = {
+            'player_game': self.source_player_game_hash,
+            'team_offense': self.source_team_offense_hash,
+            'upcoming_context': self.source_upcoming_context_hash,
+            'shot_zone': self.source_shot_zone_hash
+        }
+
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all player tasks using module-level worker function
             futures = {
                 executor.submit(
-                    self._process_single_player,
+                    _process_single_player_worker,  # Module-level function (picklable)
                     player_lookup,
+                    self.upcoming_context_data,     # DataFrames are picklable
+                    self.player_game_data,
+                    self.team_offense_data,
+                    self.shot_zone_data,
                     completeness_l5,
                     completeness_l10,
                     completeness_l7d,
                     completeness_l14d,
                     is_bootstrap,
                     is_season_boundary,
-                    analysis_date
+                    analysis_date,
+                    circuit_breaker_map.get(player_lookup, {'active': False, 'attempts': 0, 'until': None}),
+                    self.min_games_required,
+                    self.absolute_min_games,
+                    self.cache_version,
+                    source_tracking_fields,
+                    source_hashes
                 ): player_lookup
                 for player_lookup in all_players
             }
@@ -845,6 +1374,13 @@ class PlayerDailyCacheProcessor(
                         successful.append(data)
                     else:
                         failed.append(data)
+                        # Track incomplete data failures for reprocess count increment
+                        if data.get('category') == 'INCOMPLETE_DATA' and data.get('can_retry'):
+                            needs_reprocess_increment.append({
+                                'entity_id': player_lookup,
+                                'completeness_pct': data.get('completeness_pct', 0.0),
+                                'skip_reason': 'incomplete_upstream_data_multi_window'
+                            })
 
                     # Progress logging every 50 players
                     if processed_count % 50 == 0:
@@ -873,6 +1409,17 @@ class PlayerDailyCacheProcessor(
             f"| {len(failed)} failed"
         )
 
+        # Handle reprocess count increments in main thread (requires BQ client)
+        if needs_reprocess_increment:
+            logger.info(f"Recording {len(needs_reprocess_increment)} reprocess attempts...")
+            for item in needs_reprocess_increment:
+                self._increment_reprocess_count(
+                    item['entity_id'],
+                    analysis_date,
+                    item['completeness_pct'],
+                    item['skip_reason']
+                )
+
         return successful, failed
 
     def _process_single_player(
@@ -884,9 +1431,18 @@ class PlayerDailyCacheProcessor(
         completeness_l14d: dict,
         is_bootstrap: bool,
         is_season_boundary: bool,
-        analysis_date: date
+        analysis_date: date,
+        circuit_breaker_map: Dict[str, dict] = None
     ) -> tuple:
-        """Process one player (thread-safe). Returns (success: bool, data: dict)."""
+        """
+        Process one player (process-safe for ProcessPoolExecutor).
+
+        Returns (success: bool, data: dict).
+
+        Note: This method must be picklable for ProcessPoolExecutor, so it cannot
+        access self.bq_client or any other non-picklable attributes. All BQ-dependent
+        data (circuit breaker status) must be pre-fetched and passed as parameters.
+        """
         try:
             # ============================================================
             # Get completeness for all windows
@@ -919,8 +1475,13 @@ class PlayerDailyCacheProcessor(
             # Use L10 as primary completeness metric
             completeness = comp_l10
 
-            # Check circuit breaker
-            circuit_breaker_status = self._check_circuit_breaker(player_lookup, analysis_date)
+            # Get pre-fetched circuit breaker status (no BQ access in worker)
+            if circuit_breaker_map is None:
+                circuit_breaker_map = {}
+
+            circuit_breaker_status = circuit_breaker_map.get(player_lookup, {
+                'active': False, 'attempts': 0, 'until': None
+            })
 
             if circuit_breaker_status['active']:
                 logger.warning(
@@ -942,18 +1503,14 @@ class PlayerDailyCacheProcessor(
                     f"L7d={comp_l7d['completeness_pct']:.1f}%, L14d={comp_l14d['completeness_pct']:.1f}% - skipping"
                 )
 
-                # Track reprocessing attempt
-                self._increment_reprocess_count(
-                    player_lookup, analysis_date,
-                    completeness['completeness_pct'],
-                    'incomplete_upstream_data_multi_window'
-                )
-
+                # DON'T increment reprocess count here (requires BQ client)
+                # Main thread will handle this after collecting all results
                 return (False, {
                     'entity_id': player_lookup,
                     'reason': f"Incomplete data across windows",
                     'category': 'INCOMPLETE_DATA',
-                    'can_retry': True
+                    'can_retry': True,
+                    'completeness_pct': completeness['completeness_pct']  # Include for main thread
                 })
             # ============================================================
 

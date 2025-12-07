@@ -66,13 +66,21 @@ class BackfillValidator:
 
     # Categories that are expected (not errors)
     EXPECTED_SKIP_CATEGORIES = {
-        'INSUFFICIENT_DATA',      # Not enough game history
-        'INCOMPLETE_DATA',        # Upstream data incomplete
+        'INSUFFICIENT_DATA',      # Not enough game history (legacy - being phased out)
+        'EXPECTED_INCOMPLETE',    # Season bootstrap, player hasn't played enough games yet (NOT a failure)
+        'INCOMPLETE_DATA',        # Upstream data incomplete (legacy)
         'MISSING_UPSTREAM',       # Dependency not ready
         'MISSING_DEPENDENCIES',   # Date-level: upstream processors not ready
         'MINIMUM_THRESHOLD_NOT_MET',  # Date-level: not enough upstream records
         'NO_SHOT_ZONE',          # No shot data for player
         'CIRCUIT_BREAKER_ACTIVE'  # Player blocked due to repeated failures
+    }
+
+    # Categories that need investigation (problems that require backfill)
+    INVESTIGATE_CATEGORIES = {
+        'INCOMPLETE_UPSTREAM',    # Player has enough games but we're missing upstream data (needs backfill)
+        'PROCESSING_ERROR',       # Actual error during processing
+        'UNKNOWN',               # Unknown/uncategorized failures
     }
 
     def __init__(self):
@@ -235,9 +243,10 @@ class BackfillValidator:
                 f['unique_entities'] for cat, f in failures.items()
                 if cat in self.EXPECTED_SKIP_CATEGORIES
             )
+            # INCOMPLETE_UPSTREAM and other investigate categories are NOT expected
             errors_to_investigate = sum(
                 f['unique_entities'] for cat, f in failures.items()
-                if cat not in self.EXPECTED_SKIP_CATEGORIES
+                if cat in self.INVESTIGATE_CATEGORIES or cat not in self.EXPECTED_SKIP_CATEGORIES
             )
 
             # Check for date-level failures (entity_id = 'DATE_LEVEL')
@@ -299,9 +308,12 @@ class BackfillValidator:
         print("\n STATUS KEY:")
         print("  OK         = Records present")
         print("  Skipped    = No records - player-level issues (expected)")
+        print("               └─ EXPECTED_INCOMPLETE: Player hasn't played enough games (bootstrap/early season)")
+        print("               └─ INSUFFICIENT_DATA: Not enough game history (legacy)")
         print("  DepsMiss   = No records - upstream dependencies missing (expected during bootstrap)")
         print("  Untracked  = No records - NO failure tracking (needs investigation!)")
         print("  Investigate = Has processing errors (needs investigation!)")
+        print("               └─ INCOMPLETE_UPSTREAM: Player has games but missing upstream data (NEEDS BACKFILL)")
 
         print("\n SUMMARY BY PROCESSOR")
         print("-" * 90)
@@ -335,7 +347,17 @@ class BackfillValidator:
 
                     if data['failures'] and (show_details or data['errors_to_investigate'] > 0):
                         for cat, counts in data['failures'].items():
-                            flag = "⚠️ INVESTIGATE" if cat not in self.EXPECTED_SKIP_CATEGORIES else "(expected)"
+                            # Explicitly mark INCOMPLETE_UPSTREAM as needs backfill
+                            if cat == 'INCOMPLETE_UPSTREAM':
+                                flag = "⚠️ NEEDS BACKFILL"
+                            elif cat == 'EXPECTED_INCOMPLETE':
+                                flag = "(expected - bootstrap/early season)"
+                            elif cat in self.INVESTIGATE_CATEGORIES:
+                                flag = "⚠️ INVESTIGATE"
+                            elif cat in self.EXPECTED_SKIP_CATEGORIES:
+                                flag = "(expected)"
+                            else:
+                                flag = "⚠️ INVESTIGATE"
                             print(f"           → {cat}: {counts['unique_entities']} {flag}")
 
         # Print errors that need investigation
