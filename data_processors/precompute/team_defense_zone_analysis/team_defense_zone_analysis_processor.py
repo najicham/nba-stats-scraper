@@ -375,60 +375,18 @@ class TeamDefenseZoneAnalysisProcessor(
             return
 
         logger.info(f"Extracting team defense data for {analysis_date}")
-        
-        # Check dependencies
-        dep_check = self.check_dependencies(self.opts['analysis_date'])
-        
-        # Track source usage (v4.0 - populates source_* attributes)
-        self.track_source_usage(dep_check)
-        
+
+        # Use cached dependency check from precompute_base.run()
+        # (already checked and validated, track_source_usage already called)
+        dep_check = self.dep_check
+
         # Check for early season
-        if dep_check.get('is_early_season'):
+        if dep_check and dep_check.get('is_early_season'):
             logger.warning("Early season detected - writing placeholder rows")
             self._write_placeholder_rows(dep_check)
             return
-        
-        # Handle dependency failures
-        if not dep_check['all_critical_present']:
-            missing = ', '.join(dep_check['missing'])
-            error_msg = f"Missing critical dependencies: {missing}"
-            logger.error(error_msg)
-            
-            try:
-                notify_error(
-                    title=f"Team Defense Zone Analysis: Missing Dependencies",
-                    message=error_msg,
-                    details={
-                        'processor': self.__class__.__name__,
-                        'run_id': self.run_id,
-                        'analysis_date': str(self.opts['analysis_date']),
-                        'missing': dep_check['missing'],
-                        'dependency_details': dep_check['details']
-                    },
-                    processor_name=self.__class__.__name__
-                )
-            except Exception as notify_ex:
-                logger.warning(f"Failed to send notification: {notify_ex}")
-            
-            raise ValueError(error_msg)
-        
-        # Warn about stale data
-        if not dep_check['all_fresh']:
-            logger.warning(f"Stale upstream data detected: {dep_check['stale']}")
-            
-            try:
-                notify_warning(
-                    title=f"Team Defense Zone Analysis: Stale Data",
-                    message=f"Upstream data is stale: {dep_check['stale']}",
-                    details={
-                        'processor': self.__class__.__name__,
-                        'run_id': self.run_id,
-                        'analysis_date': str(self.opts['analysis_date']),
-                        'stale_sources': dep_check['stale']
-                    }
-                )
-            except Exception as notify_ex:
-                logger.warning(f"Failed to send notification: {notify_ex}")
+
+        # Note: critical dependency, stale checks, and notifications already done in precompute_base.run()
         
         # Extract last 15 games per team
         query = f"""

@@ -128,7 +128,10 @@ class PrecomputeProcessorBase(RunHistoryMixin):
         # Selective processing (v1.1 feature - inherited from Phase 3)
         self.entities_changed = []  # List of entity IDs that changed
         self.is_incremental_run = False  # True if processing only changed entities
-        
+
+        # Cached dependency check result (set in run(), used by extract_raw_data())
+        self.dep_check = None
+
     def run(self, opts: Optional[Dict] = None) -> bool:
         """
         Main entry point - matches AnalyticsProcessorBase.run() pattern.
@@ -194,8 +197,10 @@ class PrecomputeProcessorBase(RunHistoryMixin):
             self._run_defensive_checks(analysis_date, strict_mode)
 
             # Check dependencies BEFORE extracting
+            # Cache result as self.dep_check for use in extract_raw_data()
             self.mark_time("dependency_check")
-            dep_check = self.check_dependencies(self.opts['analysis_date'])
+            self.dep_check = self.check_dependencies(self.opts['analysis_date'])
+            dep_check = self.dep_check  # Local reference for backward compatibility
             dep_check_seconds = self.get_elapsed_seconds("dependency_check")
             self.stats["dependency_check_time"] = dep_check_seconds
 

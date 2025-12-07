@@ -334,27 +334,18 @@ class PlayerDailyCacheProcessor(
         self.season_start_date = date(season_year, 10, 1)
 
         logger.info(f"Extracting data for cache_date: {analysis_date}")
-        
-        # Check dependencies
-        dep_check = self.check_dependencies(analysis_date)
-        
-        # Track source usage (populates source_* attributes)
-        self.track_source_usage(dep_check)
-        
+
+        # Use cached dependency check from precompute_base.run()
+        # (already checked and validated, track_source_usage already called)
+        dep_check = self.dep_check
+
         # Handle early season
-        if dep_check.get('is_early_season'):
+        if dep_check and dep_check.get('is_early_season'):
             logger.warning("Early season detected - will write partial cache records")
             self.early_season_flag = True
             self.insufficient_data_reason = "Season just started, using available games"
-        
-        # Handle failures
-        if not dep_check['all_critical_present']:
-            missing = ', '.join(dep_check['missing'])
-            raise DependencyError(f"Missing critical dependencies: {missing}")
-        
-        if dep_check.get('has_stale_fail'):
-            stale = ', '.join(dep_check['stale_fail'])
-            raise DataTooStaleError(f"Stale dependencies: {stale}")
+
+        # Note: critical dependency and stale checks already done in precompute_base.run()
         
         # Extract from each source
         logger.info("Extracting player game summary data...")
