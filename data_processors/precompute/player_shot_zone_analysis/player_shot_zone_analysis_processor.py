@@ -626,8 +626,34 @@ class PlayerShotZoneAnalysisProcessor(
         self.transformed_data = successful
         self.failed_entities = failed
 
+        # Count failures by category for clear visibility
+        category_counts = {}
+        for f in failed:
+            cat = f.get('category', 'UNKNOWN')
+            category_counts[cat] = category_counts.get(cat, 0) + 1
+
+        # Log clear breakdown - distinguish expected skips from errors
         logger.info(f"Calculated metrics for {len(successful)} players, "
                    f"{len(failed)} failures")
+
+        if failed:
+            # Show breakdown with clear labeling of what needs investigation
+            expected_skips = category_counts.get('INSUFFICIENT_DATA', 0) + category_counts.get('INCOMPLETE_DATA', 0)
+            errors_to_investigate = category_counts.get('PROCESSING_ERROR', 0) + category_counts.get('UNKNOWN', 0)
+
+            logger.info(f"📊 Failure breakdown by category:")
+            for cat, count in sorted(category_counts.items()):
+                if cat in ('INSUFFICIENT_DATA', 'INCOMPLETE_DATA', 'CIRCUIT_BREAKER_ACTIVE'):
+                    logger.info(f"   {cat}: {count} (expected - data quality)")
+                else:
+                    logger.warning(f"   {cat}: {count} ⚠️ INVESTIGATE")
+
+            if errors_to_investigate == 0:
+                logger.info(f"✅ No errors to investigate - all {expected_skips} skips are expected (data quality)")
+
+        # Store category breakdown in stats for backfill summary
+        self.stats['failure_categories'] = category_counts
+        self.stats['errors_to_investigate'] = category_counts.get('PROCESSING_ERROR', 0) + category_counts.get('UNKNOWN', 0)
 
     def _process_players_parallel(self, all_players, completeness_results,
                                    is_bootstrap, is_season_boundary, analysis_date):

@@ -296,13 +296,9 @@ class MLFeatureStoreProcessor(
         # Store season start date for completeness checking (Week 4)
         self.season_start_date = date(season_year, 10, 1)
 
-        # Check dependencies FIRST (v4.0 pattern)
-        step_start = time.time()
-        dep_check = self.check_dependencies(analysis_date)
-        self._timing['check_dependencies'] = time.time() - step_start
-
-        # Track source usage (populates source_* attributes for v4.0 tracking)
-        self.track_source_usage(dep_check)
+        # NOTE: Dependency check was already performed by base class run() method.
+        # We reuse the results stored in self.dependency_check_passed and self.source_metadata.
+        # This avoids duplicate BQ queries that were causing performance issues.
 
         # BOOTSTRAP PERIOD: Check for early season BEFORE failing on missing dependencies
         # If early season (days 0-6), CREATE PLACEHOLDERS instead of failing
@@ -316,13 +312,9 @@ class MLFeatureStoreProcessor(
             return
 
         # Normal season: Phase 4 dependencies MUST be present
-        if not dep_check['all_critical_present']:
-            missing = ', '.join(dep_check['missing'])
-            raise ValueError(f"Missing critical Phase 4 dependencies: {missing}")
-
-        # Warn about stale data (but continue)
-        if not dep_check['all_fresh']:
-            logger.warning(f"Stale Phase 4 data detected: {dep_check['stale']}")
+        # (Already checked by base class, but we log stale data warning here for MLFS-specific context)
+        if self.missing_dependencies_list:
+            logger.warning(f"Stale Phase 4 data detected (from base class check)")
 
         # Get players with games today
         step_start = time.time()
@@ -819,7 +811,37 @@ class MLFeatureStoreProcessor(
             f"Feature generation complete: {success_count} success, {fail_count} failed "
             f"({success_rate:.1f}% success rate) in {self._timing['calculate_precompute']:.2f}s"
         )
-    
+
+        # Count failures by category for clear visibility
+        if self.failed_entities:
+            category_counts = {}
+            for f in self.failed_entities:
+                cat = f.get('category', 'UNKNOWN')
+                category_counts[cat] = category_counts.get(cat, 0) + 1
+
+            # Show breakdown with clear labeling
+            expected_skips = (category_counts.get('INSUFFICIENT_DATA', 0) +
+                            category_counts.get('INCOMPLETE_DATA', 0) +
+                            category_counts.get('MISSING_UPSTREAM', 0))
+            errors_to_investigate = category_counts.get('PROCESSING_ERROR', 0) + category_counts.get('UNKNOWN', 0)
+
+            logger.info(f"📊 Failure breakdown ({fail_count} total):")
+            for cat, count in sorted(category_counts.items()):
+                if cat in ('INSUFFICIENT_DATA', 'INCOMPLETE_DATA', 'MISSING_UPSTREAM', 'CIRCUIT_BREAKER_ACTIVE'):
+                    logger.info(f"   {cat}: {count} (expected - data quality)")
+                else:
+                    logger.warning(f"   {cat}: {count} ⚠️ INVESTIGATE")
+
+            if errors_to_investigate == 0:
+                logger.info(f"✅ No errors to investigate - all {expected_skips} skips are expected (data quality)")
+
+            # Store category breakdown in stats
+            self.stats['failure_categories'] = category_counts
+            self.stats['errors_to_investigate'] = errors_to_investigate
+
+            # Save failures to BigQuery for auditing
+            self.save_failures_to_bq()
+
     def _generate_player_features(self, player_row: Dict, completeness: Dict, upstream_status: Dict, circuit_breaker_status: Dict, is_bootstrap: bool, is_season_boundary: bool) -> Dict:
         """
         Generate complete feature vector for one player.

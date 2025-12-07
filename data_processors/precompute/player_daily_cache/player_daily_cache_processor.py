@@ -769,6 +769,34 @@ class PlayerDailyCacheProcessor(
 
         logger.info(f"Cache calculation complete: {len(successful)} successful, {len(failed)} failed")
 
+        # Count failures by category for clear visibility
+        if failed:
+            category_counts = {}
+            for f in failed:
+                cat = f.get('category', 'UNKNOWN')
+                category_counts[cat] = category_counts.get(cat, 0) + 1
+
+            # Show breakdown with clear labeling
+            expected_skips = category_counts.get('INSUFFICIENT_DATA', 0) + category_counts.get('INCOMPLETE_DATA', 0) + category_counts.get('NO_SHOT_ZONE', 0)
+            errors_to_investigate = category_counts.get('PROCESSING_ERROR', 0) + category_counts.get('UNKNOWN', 0)
+
+            logger.info(f"📊 Failure breakdown by category:")
+            for cat, count in sorted(category_counts.items()):
+                if cat in ('INSUFFICIENT_DATA', 'INCOMPLETE_DATA', 'NO_SHOT_ZONE', 'CIRCUIT_BREAKER_ACTIVE'):
+                    logger.info(f"   {cat}: {count} (expected - data quality)")
+                else:
+                    logger.warning(f"   {cat}: {count} ⚠️ INVESTIGATE")
+
+            if errors_to_investigate == 0:
+                logger.info(f"✅ No errors to investigate - all {expected_skips} skips are expected (data quality)")
+
+            # Store category breakdown in stats for backfill summary
+            self.stats['failure_categories'] = category_counts
+            self.stats['errors_to_investigate'] = errors_to_investigate
+
+            # Save failures to BigQuery for auditing
+            self.save_failures_to_bq()
+
     def _process_players_parallel(
         self,
         all_players: List[str],

@@ -761,6 +761,22 @@ class TeamDefenseZoneAnalysisProcessor(
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
 
+        # Save failures to BigQuery for auditing
+        if failed:
+            # Log failure category breakdown
+            category_counts = {}
+            for f in failed:
+                cat = f.get('category', 'UNKNOWN')
+                category_counts[cat] = category_counts.get(cat, 0) + 1
+
+            logger.info(f"Failure breakdown: {category_counts}")
+
+            # Store category breakdown in stats
+            self.stats['failure_categories'] = category_counts
+
+            # Save failures to BigQuery
+            self.save_failures_to_bq()
+
     def _process_teams_parallel(
         self,
         all_teams: List[str],

@@ -108,6 +108,9 @@ class PrecomputeProcessorBase(RunHistoryMixin):
         # Quality issue tracking
         self.quality_issues = []
 
+        # Failed entities tracking (for auditing why players are missing)
+        self.failed_entities = []
+
         # Generate run_id
         self.run_id = str(uuid.uuid4())[:8]
         self.stats["run_id"] = self.run_id
@@ -148,6 +151,7 @@ class PrecomputeProcessorBase(RunHistoryMixin):
             # Setup
             self.set_opts(opts)
             self.validate_opts()
+            self._validate_and_normalize_backfill_flags()  # Validate backfill flags early
             self.set_additional_opts()
             self.validate_additional_opts()
             self.init_clients()
@@ -208,35 +212,50 @@ class PrecomputeProcessorBase(RunHistoryMixin):
             if not dep_check['all_critical_present']:
                 error_msg = f"Missing critical dependencies: {dep_check['missing']}"
                 logger.error(error_msg)
-                notify_error(
-                    title=f"Precompute Processor: Missing Dependencies - {self.__class__.__name__}",
-                    message=error_msg,
-                    details={
-                        'processor': self.__class__.__name__,
-                        'run_id': self.run_id,
-                        'analysis_date': str(self.opts['analysis_date']),
-                        'missing': dep_check['missing'],
-                        'stale': dep_check['stale'],
-                        'dependency_details': dep_check['details']
-                    },
-                    processor_name=self.__class__.__name__
+
+                # Record date-level failure for observability
+                # This allows validation to see WHY no records exist for this date
+                self._record_date_level_failure(
+                    category='MISSING_DEPENDENCIES',
+                    reason=f"Missing: {', '.join(dep_check['missing'])}",
+                    can_retry=True  # Can retry once dependencies are populated
                 )
-                self.set_alert_sent('error')
+
+                # Skip notifications in backfill mode to avoid spamming
+                if not self.is_backfill_mode:
+                    notify_error(
+                        title=f"Precompute Processor: Missing Dependencies - {self.__class__.__name__}",
+                        message=error_msg,
+                        details={
+                            'processor': self.__class__.__name__,
+                            'run_id': self.run_id,
+                            'analysis_date': str(self.opts['analysis_date']),
+                            'missing': dep_check['missing'],
+                            'stale': dep_check['stale'],
+                            'dependency_details': dep_check['details']
+                        },
+                        processor_name=self.__class__.__name__
+                    )
+                    self.set_alert_sent('error')
+                else:
+                    logger.info(f"⏭️  BACKFILL MODE: Skipping notification for missing dependencies")
                 raise ValueError(error_msg)
 
             if not dep_check['all_fresh']:
                 logger.warning(f"Stale upstream data detected: {dep_check['stale']}")
-                notify_warning(
-                    title=f"Precompute Processor: Stale Data - {self.__class__.__name__}",
-                    message=f"Upstream data is stale: {dep_check['stale']}",
-                    details={
-                        'processor': self.__class__.__name__,
-                        'run_id': self.run_id,
-                        'analysis_date': str(self.opts['analysis_date']),
-                        'stale_sources': dep_check['stale']
-                    }
-                )
-                self.set_alert_sent('warning')
+                # Skip stale data warnings in backfill mode (expected during historical processing)
+                if not self.is_backfill_mode:
+                    notify_warning(
+                        title=f"Precompute Processor: Stale Data - {self.__class__.__name__}",
+                        message=f"Upstream data is stale: {dep_check['stale']}",
+                        details={
+                            'processor': self.__class__.__name__,
+                            'run_id': self.run_id,
+                            'analysis_date': str(self.opts['analysis_date']),
+                            'stale_sources': dep_check['stale']
+                        }
+                    )
+                    self.set_alert_sent('warning')
 
             # Track source metadata from dependency check
             self.track_source_usage(dep_check)
@@ -291,25 +310,26 @@ class PrecomputeProcessorBase(RunHistoryMixin):
             logger.error("PrecomputeProcessorBase Error: %s", e, exc_info=True)
             sentry_sdk.capture_exception(e)
 
-            # Send notification for failure
-            try:
-                notify_error(
-                    title=f"Precompute Processor Failed: {self.__class__.__name__}",
-                    message=f"Precompute calculation failed: {str(e)}",
-                    details={
-                        'processor': self.__class__.__name__,
-                        'run_id': self.run_id,
-                        'error_type': type(e).__name__,
-                        'step': self._get_current_step(),
-                        'analysis_date': str(opts.get('analysis_date')),
-                        'table': self.table_name,
-                        'stats': self.stats
-                    },
-                    processor_name=self.__class__.__name__
-                )
-                self.set_alert_sent('error')
-            except Exception as notify_ex:
-                logger.warning(f"Failed to send notification: {notify_ex}")
+            # Send notification for failure (skip in backfill mode to avoid spam)
+            if not self.is_backfill_mode:
+                try:
+                    notify_error(
+                        title=f"Precompute Processor Failed: {self.__class__.__name__}",
+                        message=f"Precompute calculation failed: {str(e)}",
+                        details={
+                            'processor': self.__class__.__name__,
+                            'run_id': self.run_id,
+                            'error_type': type(e).__name__,
+                            'step': self._get_current_step(),
+                            'analysis_date': str(opts.get('analysis_date')),
+                            'table': self.table_name,
+                            'stats': self.stats
+                        },
+                        processor_name=self.__class__.__name__
+                    )
+                    self.set_alert_sent('error')
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
 
             # Log failed processing run
             self.log_processing_run(success=False, error=str(e))
@@ -523,9 +543,12 @@ class PrecomputeProcessorBase(RunHistoryMixin):
                 """
             else:
                 raise ValueError(f"Unknown check_type: {check_type}")
-            
-            # Execute query
-            result = list(self.bq_client.query(query).result())
+
+            # Execute query with timeout
+            # Use shorter timeout in backfill mode to fail fast on connectivity issues
+            query_timeout = 60 if self.is_backfill_mode else 300  # 60s for backfill, 5min otherwise
+            query_job = self.bq_client.query(query)
+            result = list(query_job.result(timeout=query_timeout))
             
             if not result:
                 return False, {
@@ -643,8 +666,9 @@ class PrecomputeProcessorBase(RunHistoryMixin):
         """
         Detect if we're in backfill mode.
 
-        Backfill mode indicators:
-        - backfill_mode=True in opts
+        Backfill mode indicators (in order of preference):
+        - backfill_mode=True in opts (preferred)
+        - is_backfill=True in opts (legacy alias - supported but logs warning)
         - skip_downstream_trigger=True (implies backfill)
 
         Returns:
@@ -652,8 +676,61 @@ class PrecomputeProcessorBase(RunHistoryMixin):
         """
         return (
             self.opts.get('backfill_mode', False) or
+            self.opts.get('is_backfill', False) or  # Legacy alias for backwards compatibility
             self.opts.get('skip_downstream_trigger', False)
         )
+
+    def _validate_and_normalize_backfill_flags(self) -> None:
+        """
+        Validate backfill-related flags and normalize to canonical form.
+
+        This method:
+        1. Detects incorrect/legacy flag names and logs warnings
+        2. Normalizes flags to the canonical 'backfill_mode' key
+        3. Logs clearly when backfill mode is active
+
+        Called early in run() to catch configuration issues.
+        """
+        # Check for legacy 'is_backfill' flag (common mistake)
+        if self.opts.get('is_backfill', False) and not self.opts.get('backfill_mode', False):
+            logger.warning(
+                "⚠️  DEPRECATION: Using 'is_backfill=True' - please use 'backfill_mode=True' instead. "
+                "Backfill mode will still be activated for backwards compatibility."
+            )
+            # Normalize to canonical form
+            self.opts['backfill_mode'] = True
+
+        # Check for common typos/mistakes
+        suspicious_keys = ['backfill', 'isBackfill', 'is_back_fill', 'backfillMode']
+        for key in suspicious_keys:
+            if key in self.opts:
+                logger.error(
+                    f"❌ INVALID FLAG: '{key}' is not a valid backfill flag. "
+                    f"Use 'backfill_mode=True' instead. Current value: {self.opts[key]}"
+                )
+                raise ValueError(
+                    f"Invalid backfill flag '{key}'. Use 'backfill_mode=True' for backfill processing."
+                )
+
+        # Log backfill mode status clearly
+        if self.is_backfill_mode:
+            active_flags = []
+            if self.opts.get('backfill_mode'):
+                active_flags.append('backfill_mode=True')
+            if self.opts.get('is_backfill'):
+                active_flags.append('is_backfill=True (legacy)')
+            if self.opts.get('skip_downstream_trigger'):
+                active_flags.append('skip_downstream_trigger=True')
+
+            logger.info(
+                f"🔄 BACKFILL MODE ACTIVE: Completeness checks will be SKIPPED. "
+                f"Active flags: {', '.join(active_flags)}"
+            )
+        else:
+            logger.info(
+                "📋 PRODUCTION MODE: Completeness checks will be ENFORCED. "
+                "Use backfill_mode=True to skip checks for historical processing."
+            )
 
     def _run_defensive_checks(self, analysis_date: date, strict_mode: bool) -> None:
         """
@@ -1402,7 +1479,110 @@ class PrecomputeProcessorBase(RunHistoryMixin):
             logger.info(f"Saved debug data to {debug_file}")
         except Exception as save_exc:
             logger.warning(f"Failed to save debug data: {save_exc}")
-    
+
+    def save_failures_to_bq(self) -> None:
+        """
+        Save failed entity records to BigQuery for auditing.
+
+        This enables visibility into WHY records are missing:
+        - INSUFFICIENT_DATA: Player doesn't have enough game history (expected in early season)
+        - INCOMPLETE_DATA: Upstream data incomplete (expected during bootstrap)
+        - MISSING_UPSTREAM: Required upstream processor hasn't run (expected order issue)
+        - PROCESSING_ERROR: Actual error during processing (needs investigation)
+        - UNKNOWN: Uncategorized failure (needs investigation)
+
+        Each child processor should populate self.failed_entities with dicts containing:
+        - entity_id: player_lookup or other identifier
+        - category: failure category (see above)
+        - reason: detailed reason string
+        - can_retry: bool indicating if reprocessing might succeed
+        """
+        if not self.failed_entities:
+            return
+
+        try:
+            table_id = f"{self.project_id}.nba_processing.precompute_failures"
+            analysis_date = self.opts.get('analysis_date')
+
+            # Convert date to string if needed
+            if hasattr(analysis_date, 'isoformat'):
+                date_str = analysis_date.isoformat()
+            else:
+                date_str = str(analysis_date)
+
+            failure_records = []
+            for failure in self.failed_entities:
+                failure_records.append({
+                    'processor_name': self.__class__.__name__,
+                    'run_id': self.run_id,
+                    'analysis_date': date_str,
+                    'entity_id': failure.get('entity_id', 'unknown'),
+                    'failure_category': failure.get('category', 'UNKNOWN'),
+                    'failure_reason': str(failure.get('reason', ''))[:1000],  # Truncate long reasons
+                    'can_retry': failure.get('can_retry', False),
+                    'created_at': datetime.now(timezone.utc).isoformat()
+                })
+
+            # Insert in batches of 500 to avoid hitting limits
+            batch_size = 500
+            for i in range(0, len(failure_records), batch_size):
+                batch = failure_records[i:i + batch_size]
+                errors = self.bq_client.insert_rows_json(table_id, batch)
+                if errors:
+                    logger.warning(f"Errors inserting failure records: {errors[:3]}")
+
+            logger.info(f"Saved {len(failure_records)} failure records to precompute_failures")
+
+        except Exception as e:
+            logger.warning(f"Failed to save failure records: {e}")
+
+    def _record_date_level_failure(self, category: str, reason: str, can_retry: bool = True) -> None:
+        """
+        Record a date-level failure to the precompute_failures table.
+
+        Use this when an entire date fails (e.g., missing dependencies),
+        rather than individual player failures.
+
+        This enables visibility into WHY no records exist for a date:
+        - MISSING_DEPENDENCIES: Upstream data not available (expected during bootstrap)
+        - MINIMUM_THRESHOLD_NOT_MET: Too few upstream records (expected during early season)
+        - PROCESSING_ERROR: Actual error during processing (needs investigation)
+
+        Args:
+            category: Failure category (MISSING_DEPENDENCIES, MINIMUM_THRESHOLD_NOT_MET, etc.)
+            reason: Detailed reason string
+            can_retry: Whether reprocessing might succeed (True if deps will be populated)
+        """
+        try:
+            table_id = f"{self.project_id}.nba_processing.precompute_failures"
+            analysis_date = self.opts.get('analysis_date')
+
+            # Convert date to string for BQ DATE type
+            if hasattr(analysis_date, 'isoformat'):
+                date_str = analysis_date.isoformat()
+            else:
+                date_str = str(analysis_date)
+
+            failure_record = {
+                'processor_name': self.__class__.__name__,
+                'run_id': self.run_id,
+                'analysis_date': date_str,
+                'entity_id': 'DATE_LEVEL',  # Special marker for date-level failures
+                'failure_category': category,
+                'failure_reason': str(reason)[:1000],
+                'can_retry': can_retry,
+                'created_at': datetime.now(timezone.utc).isoformat()
+            }
+
+            errors = self.bq_client.insert_rows_json(table_id, [failure_record])
+            if errors:
+                logger.warning(f"Error recording date-level failure: {errors}")
+            else:
+                logger.info(f"Recorded date-level failure: {category} - {reason[:50]}...")
+
+        except Exception as e:
+            logger.warning(f"Failed to record date-level failure: {e}")
+
     def build_source_tracking_fields(self) -> dict:
         """
         Build dict of all source tracking fields for output records.
