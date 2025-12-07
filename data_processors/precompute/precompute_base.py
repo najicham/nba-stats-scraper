@@ -41,6 +41,9 @@ from shared.utils.completeness_checker import CompletenessChecker, DependencyErr
 # Import unified publishing
 from shared.publishers.unified_pubsub_publisher import UnifiedPubSubPublisher
 
+# Import season date utilities for early season detection
+from shared.config.nba_season_dates import is_early_season, get_season_year_from_date
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -215,6 +218,19 @@ class PrecomputeProcessorBase(RunHistoryMixin):
             )
 
             if not dep_check['all_critical_present']:
+                # Check if this is early season - if so, return success instead of failing
+                if dep_check.get('is_early_season'):
+                    logger.info(f"⏭️  Early season detected with missing dependencies - returning success (no data expected)")
+                    self.stats['processing_decision'] = 'skipped_early_season'
+                    self.stats['processing_decision_reason'] = dep_check.get('early_season_reason', 'early_season_missing_deps')
+                    self.record_run_complete(
+                        status='success',
+                        records_processed=0,
+                        records_created=0,
+                        summary=self.stats
+                    )
+                    return True
+
                 error_msg = f"Missing critical dependencies: {dep_check['missing']}"
                 logger.error(error_msg)
 
@@ -274,6 +290,17 @@ class PrecomputeProcessorBase(RunHistoryMixin):
             extract_seconds = self.get_elapsed_seconds("extract")
             self.stats["extract_time"] = extract_seconds
             self.step_info("extract_complete", f"Data extracted in {extract_seconds:.1f}s")
+
+            # Check if early season skip was triggered - return success without further processing
+            if self.stats.get('processing_decision') == 'skipped_early_season':
+                logger.info(f"⏭️  Early season period - skipping validate/calculate/save steps")
+                self.record_run_complete(
+                    status='success',
+                    records_processed=0,
+                    records_created=0,
+                    summary=self.stats
+                )
+                return True
 
             # Validate
             if self.validate_on_extract:
@@ -473,11 +500,22 @@ class PrecomputeProcessorBase(RunHistoryMixin):
                     logger.warning(f"Stale dependency: {stale_msg}")
             
             results['details'][table_name] = details
-        
+
+        # Check if this is early season (first 14 days) - processors may skip during this period
+        # This flag helps run() return success instead of failing on missing deps during bootstrap
+        try:
+            season_year = get_season_year_from_date(analysis_date)
+            early_season = is_early_season(analysis_date, season_year, days_threshold=14)
+            if early_season:
+                results['is_early_season'] = True
+                results['early_season_reason'] = f'bootstrap_period_first_14_days_of_season_{season_year}'
+        except Exception as e:
+            logger.debug(f"Could not determine early season status: {e}")
+
         logger.info(f"Dependency check complete: "
                    f"critical_present={results['all_critical_present']}, "
                    f"fresh={results['all_fresh']}")
-        
+
         return results
     
     def _check_table_data(self, table_name: str, analysis_date: date, 
