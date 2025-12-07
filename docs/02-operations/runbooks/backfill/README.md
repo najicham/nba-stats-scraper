@@ -92,6 +92,29 @@ Safe schema change management that includes backfill procedures:
 | **Upcoming Player Context** | 🚧 N/A | Real-time data | No backfill needed |
 | **Upcoming Team Context** | 🚧 N/A | Real-time data | No backfill needed |
 
+### Phase 4: Precompute (BigQuery → BigQuery)
+
+#### [Phase 4 Precompute Backfill Guide](phase4-precompute-backfill.md) ⭐ NEW
+**Status:** ✅ Active
+**Created:** 2025-12-07
+
+Complete guide for Phase 4 backfills including:
+- Processor ordering (TDZA+PSZA parallel → PCF → PDC → ML sequential)
+- Expected failure rates by season week
+- Backfill mode optimizations (100x speedup)
+- Failure triage (when to investigate vs ignore)
+- Validation queries
+
+| Processor | Status | Depends On | Notes |
+|-----------|--------|------------|-------|
+| **TDZA** | ✅ Complete | Phase 3 | Team defense zone analysis |
+| **PSZA** | ✅ Complete | Phase 3 | Player shot zone analysis |
+| **PCF** | ✅ Complete | TDZA, PSZA | Player composite factors |
+| **PDC** | ✅ Complete | TDZA, PSZA, PCF | Player daily cache |
+| **ML** | ✅ Complete | All above | ML feature store |
+
+**Use this when:** Running Phase 4 precompute backfills, analyzing failure patterns, or validating completeness.
+
 ### Automated Backfill Detection
 
 **Phase 3 Backfill Detection Tool:** `bin/maintenance/phase3_backfill_check.py`

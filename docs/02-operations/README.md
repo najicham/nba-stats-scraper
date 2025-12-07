@@ -77,7 +77,7 @@
 
 ---
 
-### **01-backfill-operations-guide.md** ⭐ PRIMARY GUIDE (60+ min comprehensive read)
+### **backfill-guide.md** ⭐ PRIMARY GUIDE (60+ min comprehensive read)
 **Created:** 2025-11-18 14:45 PST
 **Purpose:** Complete step-by-step guide for running backfills safely
 
@@ -90,7 +90,25 @@
 - ✅ Early season handling (degraded quality scores)
 - ✅ Complete worked examples with commands
 
-**Scenarios Covered:**
+### **runbooks/backfill/phase4-precompute-backfill.md** 🆕 PHASE 4 SPECIFIC (20 min read)
+**Created:** 2025-12-07
+**Purpose:** Phase 4 precompute backfill with expected failure analysis
+
+**What's Inside:**
+- ✅ Phase 4 processor chain (TDZA+PSZA parallel → PCF → PDC → ML)
+- ✅ Expected failure rates by season week (early season = high failures)
+- ✅ Backfill mode optimizations (100x speedup from skipping checks)
+- ✅ Failure triage (INSUFFICIENT_DATA = expected, PROCESSING_ERROR = investigate)
+- ✅ Validation queries for each processor
+
+**Read This:**
+- Before running Phase 4 backfills
+- When analyzing why failures occurred
+- When validating backfill completion
+
+---
+
+**Scenarios Covered (in backfill-guide.md):**
 1. **Historical Data** (full season backfill)
 2. **Gap Filling** (missing days)
 3. **Re-Processing** (data fix)
