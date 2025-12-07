@@ -211,24 +211,31 @@ class MLFeatureStoreProcessor(
     def get_dependencies(self) -> dict:
         """
         Define upstream Phase 4 data dependencies.
-        
+
         Returns 4 critical sources with HARD requirements:
         - player_daily_cache (features 0-4, 18-20, 22-23)
         - player_composite_factors (features 5-8)
         - player_shot_zone_analysis (features 18-20)
         - team_defense_zone_analysis (features 13-14)
-        
+
         Note: These are HARD dependencies - processor fails if missing
         (except during early season when placeholders are written).
         Phase 3 tables are fallback only, not tracked as dependencies.
+
+        Thresholds are lowered in backfill mode to accommodate early season
+        where fewer players have enough games for rolling calculations.
         """
+        # Lower thresholds for backfill mode (early season has fewer players with history)
+        # Production: 100 players expected, Backfill: 20 (minimum viable)
+        player_threshold = 20 if self.is_backfill_mode else 100
+
         return {
             'nba_precompute.player_daily_cache': {
                 'field_prefix': 'source_daily_cache',
                 'description': 'Player performance cache (features 0-4, 18-20, 22-23)',
                 'check_type': 'date_match',
                 'date_field': 'cache_date',
-                'expected_count_min': 100,  # At least 100 players
+                'expected_count_min': player_threshold,
                 'max_age_hours': 2,  # Should be fresh (just ran at 11:45 PM)
                 'critical': True
             },
@@ -237,7 +244,7 @@ class MLFeatureStoreProcessor(
                 'description': 'Composite adjustment factors (features 5-8)',
                 'check_type': 'date_match',
                 'date_field': 'game_date',
-                'expected_count_min': 100,
+                'expected_count_min': player_threshold,
                 'max_age_hours': 2,  # Should be fresh (just ran at 11:30 PM)
                 'critical': True
             },
@@ -246,7 +253,7 @@ class MLFeatureStoreProcessor(
                 'description': 'Player shot distribution (features 18-20)',
                 'check_type': 'date_match',
                 'date_field': 'analysis_date',
-                'expected_count_min': 100,
+                'expected_count_min': player_threshold,
                 'max_age_hours': 2,  # Should be fresh (just ran at 11:15 PM)
                 'critical': True
             },
