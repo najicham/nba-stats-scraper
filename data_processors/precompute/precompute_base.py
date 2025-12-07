@@ -202,7 +202,21 @@ class PrecomputeProcessorBase(RunHistoryMixin):
             # Check dependencies BEFORE extracting
             # Cache result as self.dep_check for use in extract_raw_data()
             self.mark_time("dependency_check")
-            self.dep_check = self.check_dependencies(self.opts['analysis_date'])
+
+            # Skip dependency check in backfill mode - trust that historical data exists
+            if self.is_backfill_mode:
+                logger.info("⏭️  BACKFILL MODE: Skipping dependency check (trusting historical data)")
+                self.dep_check = {
+                    'all_critical_present': True,
+                    'all_fresh': True,  # Don't care about freshness for historical data
+                    'missing': [],
+                    'stale': [],
+                    'details': {},
+                    'skipped_in_backfill': True
+                }
+            else:
+                self.dep_check = self.check_dependencies(self.opts['analysis_date'])
+
             dep_check = self.dep_check  # Local reference for backward compatibility
             dep_check_seconds = self.get_elapsed_seconds("dependency_check")
             self.stats["dependency_check_time"] = dep_check_seconds
