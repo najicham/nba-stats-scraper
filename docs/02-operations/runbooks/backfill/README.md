@@ -20,6 +20,20 @@ This directory contains processor-specific backfill documentation that details:
 
 ## Available Backfill Guides
 
+### Cross-Phase Guides
+
+#### [Player Name Resolution](name-resolution.md)
+**Status:** Active
+
+How the name resolution system works during backfills:
+- Two-pass backfill to avoid timing issues
+- AI-powered resolution for edge cases
+- Alias management and validation
+
+**Use this when:** Running any backfill that involves player data.
+
+---
+
 ### Phase 2: Raw Data Backfills
 
 #### 1. [NBA.com Team Boxscore Backfill](01-nbac-team-boxscore-backfill.md)

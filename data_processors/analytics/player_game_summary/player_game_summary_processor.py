@@ -643,8 +643,13 @@ class PlayerGameSummaryProcessor(
         
         unique_players = self.raw_data['player_lookup'].dropna().unique().tolist()
         logger.info(f"Batch lookup for {len(unique_players)} players")
-        
-        uid_map = self.registry.get_universal_ids_batch(unique_players)
+
+        # Skip logging unresolved players here - we'll log them during game processing
+        # with full context (game_id, game_date, etc.)
+        uid_map = self.registry.get_universal_ids_batch(
+            unique_players,
+            skip_unresolved_logging=True
+        )
         
         self.registry_stats['players_found'] = len(uid_map)
         self.registry_stats['players_not_found'] = len(unique_players) - len(uid_map)
@@ -665,10 +670,14 @@ class PlayerGameSummaryProcessor(
             records = self._process_player_games_serial(uid_map)
 
         self.transformed_data = records
-        
+
         logger.info(f"✅ Processed {len(records)} records")
         logger.info(f"⚠️ Skipped {self.registry_stats['records_skipped']} (no registry match)")
-    
+
+        # Save failure records to BigQuery for observability (v2.1 feature)
+        if self.registry_failures:
+            self.save_registry_failures()
+
     def _parse_minutes_to_decimal(self, minutes_str: str) -> Optional[float]:
         """Parse minutes string to decimal format (40:11 → 40.18)."""
         if pd.isna(minutes_str) or not minutes_str or minutes_str == '-':
@@ -810,7 +819,25 @@ class PlayerGameSummaryProcessor(
             universal_player_id = uid_map.get(player_lookup)
 
             if universal_player_id is None:
+                # Log unresolved player with game context
+                game_context = {
+                    'game_id': row['game_id'],
+                    'game_date': row['game_date'].isoformat() if pd.notna(row['game_date']) else None,
+                    'season': f"{int(row['season_year'])}-{str(int(row['season_year']) + 1)[-2:]}" if pd.notna(row['season_year']) else None,
+                    'team_abbr': row['team_abbr'] if pd.notna(row['team_abbr']) else None,
+                    'source': 'player_game_summary'
+                }
+                self.registry._log_unresolved_player(player_lookup, game_context)
                 self.registry_stats['records_skipped'] += 1
+
+                # Track failure for observability (v2.1 feature)
+                self.registry_failures.append({
+                    'player_lookup': player_lookup,
+                    'game_date': row['game_date'],
+                    'team_abbr': row['team_abbr'] if pd.notna(row['team_abbr']) else None,
+                    'season': f"{int(row['season_year'])}-{str(int(row['season_year']) + 1)[-2:]}" if pd.notna(row['season_year']) else None,
+                    'game_id': row['game_id']
+                })
                 return None
 
             # Parse minutes
@@ -957,7 +984,25 @@ class PlayerGameSummaryProcessor(
                 universal_player_id = uid_map.get(player_lookup)
 
                 if universal_player_id is None:
+                    # Log unresolved player with game context
+                    game_context = {
+                        'game_id': row['game_id'],
+                        'game_date': row['game_date'].isoformat() if pd.notna(row['game_date']) else None,
+                        'season': f"{int(row['season_year'])}-{str(int(row['season_year']) + 1)[-2:]}" if pd.notna(row['season_year']) else None,
+                        'team_abbr': row['team_abbr'] if pd.notna(row['team_abbr']) else None,
+                        'source': 'player_game_summary'
+                    }
+                    self.registry._log_unresolved_player(player_lookup, game_context)
                     self.registry_stats['records_skipped'] += 1
+
+                    # Track failure for observability (v2.1 feature)
+                    self.registry_failures.append({
+                        'player_lookup': player_lookup,
+                        'game_date': row['game_date'],
+                        'team_abbr': row['team_abbr'] if pd.notna(row['team_abbr']) else None,
+                        'season': f"{int(row['season_year'])}-{str(int(row['season_year']) + 1)[-2:]}" if pd.notna(row['season_year']) else None,
+                        'game_id': row['game_id']
+                    })
                     continue
 
                 # Parse minutes

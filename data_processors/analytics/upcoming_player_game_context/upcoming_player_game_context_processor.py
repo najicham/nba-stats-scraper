@@ -1417,7 +1417,12 @@ class UpcomingPlayerGameContextProcessor(
 
         try:
             # Batch lookup all players at once
-            uid_map = self.registry_reader.get_universal_ids_batch(unique_players)
+            # Skip logging unresolved players here - we'll log them during game processing
+            # with full context (game_id, game_date, etc.)
+            uid_map = self.registry_reader.get_universal_ids_batch(
+                unique_players,
+                skip_unresolved_logging=True
+            )
 
             # Store results in self.registry
             self.registry = uid_map
@@ -1611,6 +1616,10 @@ class UpcomingPlayerGameContextProcessor(
 
         logger.info(f"Successfully calculated context for {len(self.transformed_data)} players")
 
+        # Save registry failure records to BigQuery for observability (v2.1 feature)
+        if self.registry_failures:
+            self.save_registry_failures()
+
     def _process_players_parallel(self, comp_l5: Dict, comp_l10: Dict, comp_l7d: Dict,
                                    comp_l14d: Dict, comp_l30d: Dict,
                                    is_bootstrap: bool, is_season_boundary: bool) -> None:
@@ -1679,6 +1688,20 @@ class UpcomingPlayerGameContextProcessor(
         # Store results (main thread only - thread-safe)
         self.transformed_data = results
         self.failed_entities = failures
+
+        # Track registry failures for observability (v2.1 feature)
+        # Records with NULL universal_player_id were created but need reprocessing after alias
+        for record in results:
+            if record.get('universal_player_id') is None:
+                self.registry_failures.append({
+                    'player_lookup': record.get('player_lookup'),
+                    'game_date': self.target_date,
+                    'team_abbr': record.get('team_abbr'),
+                    'season': f"{self.target_date.year}-{str(self.target_date.year + 1)[-2:]}" if self.target_date.month >= 10 else f"{self.target_date.year - 1}-{str(self.target_date.year)[-2:]}",
+                    'game_id': record.get('game_id')
+                })
+        if self.registry_failures:
+            logger.info(f"📊 Registry failures tracked: {len(self.registry_failures)} players with NULL universal_player_id")
 
         # Final timing summary
         total_time = time.time() - loop_start
@@ -1881,6 +1904,20 @@ class UpcomingPlayerGameContextProcessor(
                     'category': 'PROCESSING_ERROR'
                 })
 
+        # Track registry failures for observability (v2.1 feature)
+        # Records with NULL universal_player_id were created but need reprocessing after alias
+        for record in self.transformed_data:
+            if record.get('universal_player_id') is None:
+                self.registry_failures.append({
+                    'player_lookup': record.get('player_lookup'),
+                    'game_date': self.target_date,
+                    'team_abbr': record.get('team_abbr'),
+                    'season': f"{self.target_date.year}-{str(self.target_date.year + 1)[-2:]}" if self.target_date.month >= 10 else f"{self.target_date.year - 1}-{str(self.target_date.year)[-2:]}",
+                    'game_id': record.get('game_id')
+                })
+        if self.registry_failures:
+            logger.info(f"📊 Registry failures tracked: {len(self.registry_failures)} players with NULL universal_player_id")
+
     def _calculate_player_context(self, player_info: Dict,
                                    completeness_l5: Dict, completeness_l10: Dict,
                                    completeness_l7d: Dict, completeness_l14d: Dict, completeness_l30d: Dict,
@@ -1942,11 +1979,25 @@ class UpcomingPlayerGameContextProcessor(
         # Get has_prop_line from player_info (passed from extract)
         has_prop_line = player_info.get('has_prop_line', False)
 
+        # Get universal player ID
+        universal_player_id = self.registry.get(player_lookup)
+
+        # Log unresolved player with game context if not found
+        if universal_player_id is None:
+            game_context = {
+                'game_id': game_id,
+                'game_date': self.target_date.isoformat(),
+                'season': f"{self.target_date.year}-{str(self.target_date.year + 1)[-2:]}",
+                'team_abbr': team_abbr,
+                'source': 'upcoming_player_game_context'
+            }
+            self.registry_reader._log_unresolved_player(player_lookup, game_context)
+
         # Build context record (FIX: use timezone-aware datetime)
         context = {
             # Core identifiers
             'player_lookup': player_lookup,
-            'universal_player_id': self.registry.get(player_lookup),
+            'universal_player_id': universal_player_id,
             'game_id': game_id,
             'game_date': self.target_date.isoformat(),
             'team_abbr': team_abbr,

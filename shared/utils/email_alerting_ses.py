@@ -21,6 +21,10 @@ from datetime import datetime
 from typing import Dict, List
 import boto3
 from botocore.exceptions import ClientError
+from dotenv import load_dotenv
+
+# Load .env file for SES credentials (AWS_SES_ACCESS_KEY_ID, etc.)
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 

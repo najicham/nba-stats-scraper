@@ -97,9 +97,11 @@ class RegistryReader:
             timestamp_suffix = "FIXED2"
             self.registry_table = f'{self.project_id}.nba_reference.nba_players_registry_test_{timestamp_suffix}'
             self.unresolved_table = f'{self.project_id}.nba_reference.unresolved_player_names_test_{timestamp_suffix}'
+            self.aliases_table = f'{self.project_id}.nba_reference.player_aliases_test_{timestamp_suffix}'
         else:
             self.registry_table = f'{self.project_id}.nba_reference.nba_players_registry'
             self.unresolved_table = f'{self.project_id}.nba_reference.unresolved_player_names'
+            self.aliases_table = f'{self.project_id}.nba_reference.player_aliases'
         
         # Configuration
         self.source_name = source_name
@@ -253,25 +255,32 @@ class RegistryReader:
         
         try:
             results = self.bq_client.query(query, job_config=job_config).to_dataframe()
-            
+
             if results.empty:
-                # Player not found
+                # Player not found in registry - try alias lookup
+                alias_mappings = self._bulk_resolve_via_aliases([player_lookup])
+                if player_lookup in alias_mappings:
+                    universal_id = alias_mappings[player_lookup]
+                    self._put_in_cache(cache_key, universal_id)
+                    return universal_id
+
+                # Truly not found - log as unresolved
                 self._log_unresolved_player(player_lookup, context)
-                
+
                 if required:
                     raise PlayerNotFoundError(player_lookup)
                 return None
-            
+
             universal_id = results.iloc[0]['universal_player_id']
             self._put_in_cache(cache_key, universal_id)
             return universal_id
-            
+
         except PlayerNotFoundError:
             raise
         except Exception as e:
             logger.error(f"Error querying universal ID for {player_lookup}: {e}")
             raise RegistryConnectionError(e)
-    
+
     def get_player(self,
                   player_lookup: str,
                   season: str = None,
@@ -468,30 +477,95 @@ class RegistryReader:
             return False
     
     # =========================================================================
+    # ALIAS RESOLUTION
+    # =========================================================================
+
+    def _bulk_resolve_via_aliases(self, player_lookups: List[str]) -> Dict[str, str]:
+        """
+        Resolve player lookups via aliases table.
+
+        Checks if any of the given player_lookups have aliases pointing to
+        canonical names in the registry, and returns the universal_player_id
+        for those canonical names.
+
+        Args:
+            player_lookups: List of normalized player names to check
+
+        Returns:
+            Dictionary mapping original alias lookup → universal_player_id
+        """
+        if not player_lookups:
+            return {}
+
+        # Query aliases and join with registry to get universal_player_id
+        query = f"""
+        SELECT
+            a.alias_lookup,
+            a.nba_canonical_lookup,
+            r.universal_player_id
+        FROM `{self.aliases_table}` a
+        JOIN `{self.registry_table}` r
+            ON a.nba_canonical_lookup = r.player_lookup
+        WHERE a.alias_lookup IN UNNEST(@player_lookups)
+          AND a.is_active = TRUE
+        """
+
+        job_config = bigquery.QueryJobConfig(query_parameters=[
+            bigquery.ArrayQueryParameter("player_lookups", "STRING", player_lookups)
+        ])
+
+        try:
+            results = self.bq_client.query(query, job_config=job_config).to_dataframe()
+
+            # Build mapping: alias_lookup → universal_player_id
+            alias_mappings = {}
+            for _, row in results.iterrows():
+                alias_lookup = row['alias_lookup']
+                uid = row['universal_player_id']
+                if alias_lookup not in alias_mappings:  # Take first match
+                    alias_mappings[alias_lookup] = uid
+                    logger.debug(
+                        f"Resolved alias: {alias_lookup} → {row['nba_canonical_lookup']} "
+                        f"(uid: {uid})"
+                    )
+
+            if alias_mappings:
+                logger.info(f"Resolved {len(alias_mappings)} players via aliases")
+
+            return alias_mappings
+
+        except Exception as e:
+            logger.warning(f"Error resolving aliases: {e}")
+            return {}
+
+    # =========================================================================
     # BATCH OPERATIONS
     # =========================================================================
-    
+
     def get_universal_ids_batch(self,
                                 player_lookups: List[str],
-                                context: Dict = None) -> Dict[str, str]:
+                                context: Dict = None,
+                                skip_unresolved_logging: bool = False) -> Dict[str, str]:
         """
         Get universal IDs for multiple players in one query.
-        
+
         Large batches are automatically chunked to MAX_BATCH_SIZE.
-        
+
         Args:
             player_lookups: List of normalized player names
             context: Additional context for unresolved tracking
-            
+            skip_unresolved_logging: If True, don't log unresolved players
+                                    (useful when caller will log with better context)
+
         Returns:
             Dictionary mapping player_lookup → universal_player_id
             Only includes players found in registry (missing players logged as unresolved)
-            
+
         Example:
             players = ['lebronjames', 'stephencurry', 'kevindurant']
             ids = registry.get_universal_ids_batch(players)
             # Returns: {'lebronjames': 'lebronjames_001', ...}
-            
+
             # Check for missing
             for player in players:
                 if player not in ids:
@@ -534,24 +608,35 @@ class RegistryReader:
             
             try:
                 results = self.bq_client.query(query, job_config=job_config).to_dataframe()
-                
+
                 # Add found players to result
                 for _, row in results.iterrows():
                     lookup = row['player_lookup']
                     uid = row['universal_player_id']
                     result[lookup] = uid
                     self._put_in_cache(f"uid:{lookup}", uid)
-                
-                # Log missing players as unresolved
+
+                # Check for missing players
                 found_lookups = set(results['player_lookup'].tolist())
-                missing_lookups = set(chunk) - found_lookups
-                for lookup in missing_lookups:
-                    self._log_unresolved_player(lookup, context)
-                
+                missing_lookups = list(set(chunk) - found_lookups)
+
+                # Try to resolve missing players via aliases
+                if missing_lookups:
+                    alias_mappings = self._bulk_resolve_via_aliases(missing_lookups)
+                    for lookup, uid in alias_mappings.items():
+                        result[lookup] = uid
+                        self._put_in_cache(f"uid:{lookup}", uid)
+
+                    # Only log truly unresolved players (not found in registry or aliases)
+                    if not skip_unresolved_logging:
+                        still_missing = set(missing_lookups) - set(alias_mappings.keys())
+                        for lookup in still_missing:
+                            self._log_unresolved_player(lookup, context)
+
             except Exception as e:
                 logger.error(f"Error in batch universal ID query: {e}")
                 raise RegistryConnectionError(e)
-        
+
         return result
     
     def get_players_batch(self,

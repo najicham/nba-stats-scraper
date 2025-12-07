@@ -122,6 +122,11 @@ class AnalyticsProcessorBase(RunHistoryMixin):
         self.is_incremental_run = False  # True if processing only changed entities
         self.change_detector = None  # Initialized if child class provides get_change_detector()
 
+        # Registry failure tracking (v3.0 feature - for name resolution reprocessing)
+        # Child processors populate this list when registry lookup fails
+        # Each entry: {player_lookup, game_date, team_abbr, season, game_id}
+        self.registry_failures = []
+
     @property
     def is_backfill_mode(self) -> bool:
         """Check if running in backfill mode (alerts suppressed)."""
@@ -1678,6 +1683,78 @@ class AnalyticsProcessorBase(RunHistoryMixin):
     def get_analytics_stats(self) -> Dict:
         """Get analytics stats - child classes override."""
         return {}
+
+    def save_registry_failures(self) -> None:
+        """
+        Save registry failure records to BigQuery for reprocessing workflow.
+
+        This enables tracking of players who couldn't be found in the registry
+        during Phase 3 processing. The table supports a full lifecycle:
+        - PENDING: created_at set, waiting for alias
+        - RESOLVED: resolved_at set (by resolve_unresolved_batch.py)
+        - REPROCESSED: reprocessed_at set (by reprocess_resolved.py)
+
+        Each child processor should populate self.registry_failures with dicts containing:
+        - player_lookup: raw name that failed lookup
+        - game_date: when the player played
+        - team_abbr: team context (optional)
+        - season: season string (optional)
+        - game_id: specific game ID (optional)
+        """
+        if not self.registry_failures:
+            return
+
+        try:
+            table_id = f"{self.project_id}.nba_processing.registry_failures"
+
+            # Deduplicate by (player_lookup, game_date) - keep first occurrence
+            seen = set()
+            unique_failures = []
+            for failure in self.registry_failures:
+                key = (failure.get('player_lookup'), str(failure.get('game_date')))
+                if key not in seen:
+                    seen.add(key)
+                    unique_failures.append(failure)
+
+            failure_records = []
+            for failure in unique_failures:
+                # Convert game_date to string if needed
+                game_date = failure.get('game_date')
+                if hasattr(game_date, 'isoformat'):
+                    game_date_str = game_date.isoformat()
+                else:
+                    game_date_str = str(game_date)
+
+                failure_records.append({
+                    'player_lookup': failure.get('player_lookup', 'unknown'),
+                    'game_date': game_date_str,
+                    'processor_name': self.__class__.__name__,
+                    'team_abbr': failure.get('team_abbr'),
+                    'season': failure.get('season'),
+                    'game_id': failure.get('game_id'),
+                    'created_at': datetime.now(timezone.utc).isoformat(),
+                    'resolved_at': None,
+                    'reprocessed_at': None,
+                    'occurrence_count': 1,
+                    'run_id': self.run_id
+                })
+
+            # Insert in batches of 500 to avoid hitting limits
+            batch_size = 500
+            for i in range(0, len(failure_records), batch_size):
+                batch = failure_records[i:i + batch_size]
+                errors = self.bq_client.insert_rows_json(table_id, batch)
+                if errors:
+                    logger.warning(f"Errors inserting registry failure records: {errors[:3]}")
+
+            logger.info(f"📊 Saved {len(failure_records)} registry failures to registry_failures table")
+
+            # Store in stats for reporting
+            self.stats['registry_failures_count'] = len(failure_records)
+            self.stats['registry_failures_players'] = len(set(f.get('player_lookup') for f in unique_failures))
+
+        except Exception as e:
+            logger.warning(f"Failed to save registry failure records: {e}")
 
     def _publish_completion_message(self, success: bool, error: str = None) -> None:
         """
