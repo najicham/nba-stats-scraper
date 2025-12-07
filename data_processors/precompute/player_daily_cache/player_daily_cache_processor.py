@@ -237,13 +237,13 @@ class PlayerDailyCacheProcessor(
             },
             'nba_precompute.player_shot_zone_analysis': {
                 'field_prefix': 'source_shot_zone',
-                'description': 'Shot zone tendencies (must complete first)',
+                'description': 'Shot zone tendencies (optional - proceeds with nulls if missing)',
                 'check_type': 'date_match',
                 'date_field': 'analysis_date',  # This table uses analysis_date, not game_date
                 'expected_count_min': 30,  # Lowered for early season (was 100)
                 'max_age_hours_warn': 6,
                 'max_age_hours_fail': 24,
-                'critical': True
+                'critical': False  # Changed: shot zone is now optional enrichment
             }
         }
 
@@ -986,21 +986,22 @@ class PlayerDailyCacheProcessor(
                 self.team_offense_data['team_abbr'] == current_team
             ].copy()
 
-            # Get shot zone data
+            # Get shot zone data (optional - proceeds with nulls if missing)
             shot_zone_row = self.shot_zone_data[
                 self.shot_zone_data['player_lookup'] == player_lookup
             ]
 
-            # Check if shot zones available
+            # Track shot zone availability for state tracking
+            shot_zone_available = not shot_zone_row.empty
             if shot_zone_row.empty:
-                return (False, {
-                    'entity_id': player_lookup,
-                    'reason': "No shot zone analysis available",
-                    'category': 'MISSING_DEPENDENCY',
-                    'can_retry': True
+                # Create placeholder with null values - shot zone is optional enrichment
+                shot_zone_row = pd.Series({
+                    'primary_scoring_zone': None,
+                    'paint_rate_last_10': None,
+                    'three_pt_rate_last_10': None
                 })
-
-            shot_zone_row = shot_zone_row.iloc[0]
+            else:
+                shot_zone_row = shot_zone_row.iloc[0]
 
             # Calculate all metrics
             cache_record = self._calculate_player_cache(
@@ -1020,7 +1021,8 @@ class PlayerDailyCacheProcessor(
                     'is_bootstrap': is_bootstrap,
                     'is_season_boundary': is_season_boundary,
                     'circuit_breaker_status': circuit_breaker_status,
-                }
+                },
+                shot_zone_available=shot_zone_available
             )
 
             return (True, cache_record)
@@ -1160,22 +1162,22 @@ class PlayerDailyCacheProcessor(
                     self.team_offense_data['team_abbr'] == current_team
                 ].copy()
                 
-                # Get shot zone data
+                # Get shot zone data (optional - proceeds with nulls if missing)
                 shot_zone_row = self.shot_zone_data[
                     self.shot_zone_data['player_lookup'] == player_lookup
                 ]
-                
-                # Check if shot zones available
+
+                # Track shot zone availability for state tracking
+                shot_zone_available = not shot_zone_row.empty
                 if shot_zone_row.empty:
-                    failed.append({
-                        'entity_id': player_lookup,
-                        'reason': "No shot zone analysis available",
-                        'category': 'MISSING_DEPENDENCY',
-                        'can_retry': True
+                    # Create placeholder with null values - shot zone is optional enrichment
+                    shot_zone_row = pd.Series({
+                        'primary_scoring_zone': None,
+                        'paint_rate_last_10': None,
+                        'three_pt_rate_last_10': None
                     })
-                    continue
-                
-                shot_zone_row = shot_zone_row.iloc[0]
+                else:
+                    shot_zone_row = shot_zone_row.iloc[0]
                 
                 # Calculate all metrics
                 cache_record = self._calculate_player_cache(
@@ -1195,7 +1197,8 @@ class PlayerDailyCacheProcessor(
                         'is_bootstrap': is_bootstrap,
                         'is_season_boundary': is_season_boundary,
                         'circuit_breaker_status': circuit_breaker_status,
-                    }
+                    },
+                    shot_zone_available=shot_zone_available
                 )
 
                 successful.append(cache_record)
@@ -1220,11 +1223,12 @@ class PlayerDailyCacheProcessor(
         shot_zone_row: pd.Series,
         analysis_date: date,
         is_early_season: bool,
-        completeness_data: Dict = None
+        completeness_data: Dict = None,
+        shot_zone_available: bool = True
     ) -> Dict:
         """
         Calculate complete cache record for a single player.
-        
+
         Args:
             player_lookup: Player identifier
             context_row: Row from upcoming_player_game_context
@@ -1233,7 +1237,8 @@ class PlayerDailyCacheProcessor(
             shot_zone_row: Row from player_shot_zone_analysis
             analysis_date: Cache date
             is_early_season: Whether player has < min_games_required
-        
+            shot_zone_available: Whether shot zone data was available (for re-run tracking)
+
         Returns:
             Dict: Complete cache record ready for BigQuery
         """
@@ -1350,6 +1355,9 @@ class PlayerDailyCacheProcessor(
             # Early season flag
             'early_season_flag': is_early_season,
             'insufficient_data_reason': f"Only {games_played_season} games played, need {self.min_games_required} minimum" if is_early_season else None,
+
+            # Shot zone availability tracking (for re-run when data becomes available)
+            'shot_zone_data_available': shot_zone_available,
 
             # ============================================================
             # NEW (Week 3): Completeness Checking Metadata (23 fields)

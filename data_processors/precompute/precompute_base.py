@@ -1527,10 +1527,12 @@ class PrecomputeProcessorBase(RunHistoryMixin):
         """
         Save failed entity records to BigQuery for auditing.
 
+        Uses delete-then-insert pattern to prevent duplicate records on reruns.
+
         This enables visibility into WHY records are missing:
         - INSUFFICIENT_DATA: Player doesn't have enough game history (expected in early season)
         - INCOMPLETE_DATA: Upstream data incomplete (expected during bootstrap)
-        - MISSING_UPSTREAM: Required upstream processor hasn't run (expected order issue)
+        - MISSING_DEPENDENCY: Required upstream data not available (standardized singular form)
         - PROCESSING_ERROR: Actual error during processing (needs investigation)
         - UNKNOWN: Uncategorized failure (needs investigation)
 
@@ -1553,14 +1555,33 @@ class PrecomputeProcessorBase(RunHistoryMixin):
             else:
                 date_str = str(analysis_date)
 
+            # Delete existing failures for this processor/date to prevent duplicates
+            delete_query = f"""
+            DELETE FROM `{table_id}`
+            WHERE processor_name = '{self.__class__.__name__}'
+              AND analysis_date = '{date_str}'
+            """
+            try:
+                delete_job = self.bq_client.query(delete_query)
+                delete_job.result()
+                if delete_job.num_dml_affected_rows:
+                    logger.debug(f"Deleted {delete_job.num_dml_affected_rows} existing failure records")
+            except Exception as del_e:
+                logger.warning(f"Could not delete existing failures (may be in streaming buffer): {del_e}")
+
             failure_records = []
             for failure in self.failed_entities:
+                # Standardize category naming (singular form)
+                category = failure.get('category', 'UNKNOWN')
+                if category == 'MISSING_DEPENDENCIES':
+                    category = 'MISSING_DEPENDENCY'
+
                 failure_records.append({
                     'processor_name': self.__class__.__name__,
                     'run_id': self.run_id,
                     'analysis_date': date_str,
                     'entity_id': failure.get('entity_id', 'unknown'),
-                    'failure_category': failure.get('category', 'UNKNOWN'),
+                    'failure_category': category,
                     'failure_reason': str(failure.get('reason', ''))[:1000],  # Truncate long reasons
                     'can_retry': failure.get('can_retry', False),
                     'created_at': datetime.now(timezone.utc).isoformat()
@@ -1587,12 +1608,12 @@ class PrecomputeProcessorBase(RunHistoryMixin):
         rather than individual player failures.
 
         This enables visibility into WHY no records exist for a date:
-        - MISSING_DEPENDENCIES: Upstream data not available (expected during bootstrap)
+        - MISSING_DEPENDENCY: Upstream data not available (standardized singular form)
         - MINIMUM_THRESHOLD_NOT_MET: Too few upstream records (expected during early season)
         - PROCESSING_ERROR: Actual error during processing (needs investigation)
 
         Args:
-            category: Failure category (MISSING_DEPENDENCIES, MINIMUM_THRESHOLD_NOT_MET, etc.)
+            category: Failure category (MISSING_DEPENDENCY, MINIMUM_THRESHOLD_NOT_MET, etc.)
             reason: Detailed reason string
             can_retry: Whether reprocessing might succeed (True if deps will be populated)
         """
@@ -1605,6 +1626,10 @@ class PrecomputeProcessorBase(RunHistoryMixin):
                 date_str = analysis_date.isoformat()
             else:
                 date_str = str(analysis_date)
+
+            # Standardize category naming (singular form)
+            if category == 'MISSING_DEPENDENCIES':
+                category = 'MISSING_DEPENDENCY'
 
             failure_record = {
                 'processor_name': self.__class__.__name__,

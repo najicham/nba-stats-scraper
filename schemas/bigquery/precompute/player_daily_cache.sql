@@ -131,11 +131,12 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_precompute.player_daily_cache
                                                      -- NULL = pattern not yet implemented
 
   -- ============================================================================
-  -- SOURCE TRACKING: Optional fields (2 fields)
+  -- SOURCE TRACKING: Optional fields (3 fields)
   -- Used when data is insufficient (early season, injuries, etc.)
   -- ============================================================================
   early_season_flag BOOLEAN,                        -- TRUE if player has < 10 games
   insufficient_data_reason STRING,                  -- Why data was insufficient (if early_season_flag = TRUE)
+  shot_zone_data_available BOOLEAN,                 -- TRUE if shot zone analysis was available (for re-run tracking)
 
   -- ============================================================================
   -- HISTORICAL COMPLETENESS CHECKING (14 fields)
