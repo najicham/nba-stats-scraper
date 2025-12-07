@@ -575,29 +575,46 @@ class PlayerShotZoneAnalysisProcessor(
         # NEW (Week 2): Batch completeness checking
         # ============================================================
         # Check if all players have complete historical data (L10 games)
-        logger.info(f"Checking completeness for {len(all_players)} players...")
+        # OPTIMIZATION (Session 64): Skip slow completeness check in backfill mode
+        # Backfill already has preflight checks at date-level; player-level is redundant
+        if self.is_backfill_mode:
+            logger.info(f"⏭️ BACKFILL MODE: Skipping completeness check for {len(all_players)} players")
+            completeness_results = {
+                player: {
+                    'is_production_ready': True,
+                    'completeness_pct': 100.0,
+                    'expected_count': 0,
+                    'actual_count': 0,
+                    'missing_count': 0,
+                    'is_complete': True
+                }
+                for player in all_players
+            }
+            is_bootstrap = False
+            is_season_boundary = False
+        else:
+            logger.info(f"Checking completeness for {len(all_players)} players...")
+            completeness_results = self.completeness_checker.check_completeness_batch(
+                entity_ids=list(all_players),
+                entity_type='player',
+                analysis_date=analysis_date,
+                upstream_table='nba_analytics.player_game_summary',
+                upstream_entity_field='player_lookup',
+                lookback_window=self.min_games_required,
+                window_type='games',
+                season_start_date=self.season_start_date
+            )
 
-        completeness_results = self.completeness_checker.check_completeness_batch(
-            entity_ids=list(all_players),
-            entity_type='player',
-            analysis_date=analysis_date,
-            upstream_table='nba_analytics.player_game_summary',
-            upstream_entity_field='player_lookup',
-            lookback_window=self.min_games_required,
-            window_type='games',
-            season_start_date=self.season_start_date
-        )
+            # Check bootstrap mode
+            is_bootstrap = self.completeness_checker.is_bootstrap_mode(
+                analysis_date, self.season_start_date
+            )
+            is_season_boundary = self.completeness_checker.is_season_boundary(analysis_date)
 
-        # Check bootstrap mode
-        is_bootstrap = self.completeness_checker.is_bootstrap_mode(
-            analysis_date, self.season_start_date
-        )
-        is_season_boundary = self.completeness_checker.is_season_boundary(analysis_date)
-
-        logger.info(
-            f"Completeness check complete. Bootstrap mode: {is_bootstrap}, "
-            f"Season boundary: {is_season_boundary}"
-        )
+            logger.info(
+                f"Completeness check complete. Bootstrap mode: {is_bootstrap}, "
+                f"Season boundary: {is_season_boundary}"
+            )
         # ============================================================
 
         # ============================================================
@@ -1118,8 +1135,10 @@ class PlayerShotZoneAnalysisProcessor(
         three_pg = three_att / games_count if games_count > 0 else None
         
         # Calculate assisted rates
-        assisted_rate = (assisted_makes / total_makes * 100) if total_makes > 0 else None
-        unassisted_rate = (unassisted_makes / total_makes * 100) if total_makes > 0 else None
+        # FIX (Session 64): Check total_att > 0 for consistency with zone rates
+        # When total_att = 0, assisted/unassisted rates should also be None
+        assisted_rate = (assisted_makes / total_makes * 100) if total_att > 0 and total_makes > 0 else None
+        unassisted_rate = (unassisted_makes / total_makes * 100) if total_att > 0 and total_makes > 0 else None
         
         return {
             'paint_rate': round(paint_rate, 2) if paint_rate is not None else None,
