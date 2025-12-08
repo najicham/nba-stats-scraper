@@ -141,12 +141,47 @@ def sample_bdl_players():
          'steals': 3, 'blocks': 2, 'defensive_rebounds': 7},
         {'game_id': '20250115_LAL_BOS', 'team_abbr': 'LAL',
          'steals': 1, 'blocks': 1, 'defensive_rebounds': 6},
-        
+
         # BOS players
         {'game_id': '20250115_LAL_BOS', 'team_abbr': 'BOS',
          'steals': 2, 'blocks': 2, 'defensive_rebounds': 9},
         {'game_id': '20250115_LAL_BOS', 'team_abbr': 'BOS',
          'steals': 3, 'blocks': 1, 'defensive_rebounds': 8},
+    ])
+
+
+@pytest.fixture
+def sample_shot_zone_data():
+    """Create sample shot zone statistics (paint, mid-range, three-point)."""
+    return pd.DataFrame([
+        {
+            'game_date': date(2025, 1, 15),
+            'defending_team_abbr': 'LAL',
+            'opponent_team_abbr': 'BOS',
+            'opp_paint_attempts': 45,
+            'opp_paint_makes': 28,
+            'opp_mid_range_attempts': 18,
+            'opp_mid_range_makes': 7,
+            'opp_three_pt_attempts_pbp': 35,
+            'opp_three_pt_makes_pbp': 12,
+            'points_in_paint_allowed': 56,  # 28 * 2
+            'mid_range_points_allowed': 14,  # 7 * 2
+            'shot_zone_source': 'bigdataball_play_by_play'
+        },
+        {
+            'game_date': date(2025, 1, 15),
+            'defending_team_abbr': 'BOS',
+            'opponent_team_abbr': 'LAL',
+            'opp_paint_attempts': 38,
+            'opp_paint_makes': 22,
+            'opp_mid_range_attempts': 22,
+            'opp_mid_range_makes': 9,
+            'opp_three_pt_attempts_pbp': 28,
+            'opp_three_pt_makes_pbp': 9,
+            'points_in_paint_allowed': 44,  # 22 * 2
+            'mid_range_points_allowed': 18,  # 9 * 2
+            'shot_zone_source': 'bigdataball_play_by_play'
+        }
     ])
 
 
@@ -484,7 +519,191 @@ class TestBDLDefensiveActions:
 
 
 # =============================================================================
-# TEST CLASS 6: MERGE DEFENSE DATA
+# TEST CLASS 6: SHOT ZONE EXTRACTION
+# =============================================================================
+
+class TestShotZoneExtraction:
+    """Test _extract_shot_zone_stats() method."""
+
+    def test_shot_zone_extraction_basic(self, processor, sample_shot_zone_data):
+        """Test basic shot zone extraction returns expected columns."""
+        # Mock BigQuery to return shot zone data from bigdataball
+        processor.bq_client.query.return_value.to_dataframe.return_value = sample_shot_zone_data
+
+        result = processor._extract_shot_zone_stats('2025-01-15', '2025-01-15')
+
+        assert not result.empty
+        assert len(result) == 2
+
+        # Verify columns exist
+        required_cols = [
+            'game_date', 'defending_team_abbr', 'opponent_team_abbr',
+            'opp_paint_attempts', 'opp_paint_makes',
+            'opp_mid_range_attempts', 'opp_mid_range_makes',
+            'points_in_paint_allowed', 'mid_range_points_allowed',
+            'shot_zone_source'
+        ]
+        for col in required_cols:
+            assert col in result.columns
+
+        # Verify LAL defensive perspective
+        lal_row = result[result['defending_team_abbr'] == 'LAL'].iloc[0]
+        assert lal_row['opponent_team_abbr'] == 'BOS'
+        assert lal_row['opp_paint_attempts'] == 45
+        assert lal_row['opp_paint_makes'] == 28
+        assert lal_row['shot_zone_source'] == 'bigdataball_play_by_play'
+
+    def test_shot_zone_classification(self, processor):
+        """Test shot zone classification: paint <=8ft, mid-range >8ft, three_pt."""
+        # Mock query result with classified zones
+        processor.bq_client.query.return_value.to_dataframe.return_value = pd.DataFrame([
+            {
+                'game_date': date(2025, 1, 15),
+                'defending_team_abbr': 'LAL',
+                'opponent_team_abbr': 'BOS',
+                'opp_paint_attempts': 10,  # shots <= 8ft (2PT)
+                'opp_paint_makes': 7,
+                'opp_mid_range_attempts': 8,  # shots > 8ft (2PT)
+                'opp_mid_range_makes': 3,
+                'opp_three_pt_attempts_pbp': 12,  # 3PT shots
+                'opp_three_pt_makes_pbp': 5,
+                'points_in_paint_allowed': 14,  # 7 * 2
+                'mid_range_points_allowed': 6,  # 3 * 2
+                'shot_zone_source': 'bigdataball_play_by_play'
+            }
+        ])
+
+        result = processor._extract_shot_zone_stats('2025-01-15', '2025-01-15')
+
+        row = result.iloc[0]
+        # Paint: <=8ft, 2PT
+        assert row['opp_paint_attempts'] == 10
+        assert row['opp_paint_makes'] == 7
+        assert row['points_in_paint_allowed'] == 14
+
+        # Mid-range: >8ft, 2PT
+        assert row['opp_mid_range_attempts'] == 8
+        assert row['opp_mid_range_makes'] == 3
+        assert row['mid_range_points_allowed'] == 6
+
+        # Three-point
+        assert row['opp_three_pt_attempts_pbp'] == 12
+        assert row['opp_three_pt_makes_pbp'] == 5
+
+    def test_shot_zone_fallback_to_nbac(self, processor):
+        """Test fallback to nbac_play_by_play when bigdataball fails."""
+        # Mock bigdataball to raise exception (first call)
+        # Mock nbac to return data (second call)
+        call_count = [0]
+
+        def mock_query(query):
+            call_count[0] += 1
+            mock_result = Mock()
+            if call_count[0] == 1:
+                # First call (bigdataball) fails
+                raise Exception("BigDataBall table not found")
+            else:
+                # Second call (nbac) succeeds
+                mock_result.to_dataframe.return_value = pd.DataFrame([
+                    {
+                        'game_date': date(2025, 1, 15),
+                        'defending_team_abbr': 'LAL',
+                        'opponent_team_abbr': 'BOS',
+                        'opp_paint_attempts': 40,
+                        'opp_paint_makes': 25,
+                        'opp_mid_range_attempts': 15,
+                        'opp_mid_range_makes': 6,
+                        'opp_three_pt_attempts_pbp': 30,
+                        'opp_three_pt_makes_pbp': 10,
+                        'points_in_paint_allowed': 50,
+                        'mid_range_points_allowed': 12,
+                        'shot_zone_source': 'nbac_play_by_play'
+                    }
+                ])
+            return mock_result
+
+        processor.bq_client.query.side_effect = mock_query
+
+        result = processor._extract_shot_zone_stats('2025-01-15', '2025-01-15')
+
+        assert not result.empty
+        assert len(result) == 1
+        row = result.iloc[0]
+        assert row['shot_zone_source'] == 'nbac_play_by_play'
+        assert row['opp_paint_attempts'] == 40
+
+    def test_shot_zone_empty_result(self, processor):
+        """Test returns empty DataFrame when no shot data available."""
+        # Mock both queries to fail
+        processor.bq_client.query.side_effect = Exception("No play-by-play data available")
+
+        result = processor._extract_shot_zone_stats('2025-01-15', '2025-01-15')
+
+        assert result.empty
+        assert isinstance(result, pd.DataFrame)
+
+    def test_shot_zone_aggregate_by_team(self, processor):
+        """Test proper aggregation per defending team."""
+        # Mock result with multiple teams
+        processor.bq_client.query.return_value.to_dataframe.return_value = pd.DataFrame([
+            {
+                'game_date': date(2025, 1, 15),
+                'defending_team_abbr': 'LAL',
+                'opponent_team_abbr': 'BOS',
+                'opp_paint_attempts': 45,
+                'opp_paint_makes': 28,
+                'opp_mid_range_attempts': 18,
+                'opp_mid_range_makes': 7,
+                'opp_three_pt_attempts_pbp': 35,
+                'opp_three_pt_makes_pbp': 12,
+                'points_in_paint_allowed': 56,
+                'mid_range_points_allowed': 14,
+                'shot_zone_source': 'bigdataball_play_by_play'
+            },
+            {
+                'game_date': date(2025, 1, 15),
+                'defending_team_abbr': 'BOS',
+                'opponent_team_abbr': 'LAL',
+                'opp_paint_attempts': 38,
+                'opp_paint_makes': 22,
+                'opp_mid_range_attempts': 22,
+                'opp_mid_range_makes': 9,
+                'opp_three_pt_attempts_pbp': 28,
+                'opp_three_pt_makes_pbp': 9,
+                'points_in_paint_allowed': 44,
+                'mid_range_points_allowed': 18,
+                'shot_zone_source': 'bigdataball_play_by_play'
+            },
+            {
+                'game_date': date(2025, 1, 15),
+                'defending_team_abbr': 'GSW',
+                'opponent_team_abbr': 'PHX',
+                'opp_paint_attempts': 42,
+                'opp_paint_makes': 26,
+                'opp_mid_range_attempts': 20,
+                'opp_mid_range_makes': 8,
+                'opp_three_pt_attempts_pbp': 32,
+                'opp_three_pt_makes_pbp': 11,
+                'points_in_paint_allowed': 52,
+                'mid_range_points_allowed': 16,
+                'shot_zone_source': 'bigdataball_play_by_play'
+            }
+        ])
+
+        result = processor._extract_shot_zone_stats('2025-01-15', '2025-01-15')
+
+        # Should have 3 records, one per defending team
+        assert len(result) == 3
+        assert set(result['defending_team_abbr']) == {'LAL', 'BOS', 'GSW'}
+
+        # Each team should have unique opponent stats
+        lal_stats = result[result['defending_team_abbr'] == 'LAL'].iloc[0]
+        bos_stats = result[result['defending_team_abbr'] == 'BOS'].iloc[0]
+        assert lal_stats['opp_paint_makes'] != bos_stats['opp_paint_makes']
+
+
+# =============================================================================
+# TEST CLASS 7: MERGE DEFENSE DATA
 # =============================================================================
 
 class TestMergeDefenseData:
@@ -557,11 +776,11 @@ class TestMergeDefenseData:
                 'opponent_ts_pct': 0.588
             }
         ])
-        
+
         defensive_df = pd.DataFrame()  # Empty
-        
+
         result = processor._merge_defense_data(opponent_df, defensive_df)
-        
+
         assert len(result) == 1
         row = result.iloc[0]
         assert row['steals'] == 0
@@ -569,9 +788,204 @@ class TestMergeDefenseData:
         assert row['defensive_rebounds'] == 0
         assert pd.isna(row['defensive_actions_source'])
 
+    def test_merge_with_shot_zone_data(self, processor, sample_shot_zone_data):
+        """Test merge with shot zone data properly includes paint/mid-range stats."""
+        opponent_df = pd.DataFrame([
+            {
+                'game_id': '20250115_LAL_BOS',
+                'defending_team_abbr': 'LAL',
+                'opponent_team_abbr': 'BOS',
+                'points_allowed': 115,
+                'game_date': date(2025, 1, 15),
+                'season_year': 2024,
+                'home_game': False,
+                'win_flag': False,
+                'margin_of_victory': -7,
+                'opp_fg_makes': 42,
+                'opp_fg_attempts': 85,
+                'turnovers_forced': 12,
+                'fouls_committed': 18,
+                'defensive_rating': 112.5,
+                'opponent_pace': 98.2,
+                'opponent_ts_pct': 0.588,
+                'data_source': 'nbac_team_boxscore'
+            },
+            {
+                'game_id': '20250115_LAL_BOS',
+                'defending_team_abbr': 'BOS',
+                'opponent_team_abbr': 'LAL',
+                'points_allowed': 108,
+                'game_date': date(2025, 1, 15),
+                'season_year': 2024,
+                'home_game': True,
+                'win_flag': True,
+                'margin_of_victory': 7,
+                'opp_fg_makes': 40,
+                'opp_fg_attempts': 88,
+                'turnovers_forced': 14,
+                'fouls_committed': 20,
+                'defensive_rating': 105.2,
+                'opponent_pace': 96.5,
+                'opponent_ts_pct': 0.552,
+                'data_source': 'nbac_team_boxscore'
+            }
+        ])
+
+        defensive_df = pd.DataFrame([
+            {
+                'game_id': '20250115_LAL_BOS',
+                'defending_team_abbr': 'LAL',
+                'steals': 6,
+                'blocks_total': 4,
+                'defensive_rebounds': 21,
+                'data_source': 'nbac_gamebook'
+            },
+            {
+                'game_id': '20250115_LAL_BOS',
+                'defending_team_abbr': 'BOS',
+                'steals': 7,
+                'blocks_total': 6,
+                'defensive_rebounds': 24,
+                'data_source': 'nbac_gamebook'
+            }
+        ])
+
+        # Merge with shot zone data
+        result = processor._merge_defense_data(opponent_df, defensive_df, sample_shot_zone_data)
+
+        assert len(result) == 2
+
+        # Verify LAL has shot zone data merged
+        lal_row = result[result['defending_team_abbr'] == 'LAL'].iloc[0]
+        assert lal_row['opp_paint_attempts'] == 45
+        assert lal_row['opp_paint_makes'] == 28
+        assert lal_row['points_in_paint_allowed'] == 56
+        assert lal_row['opp_mid_range_attempts'] == 18
+        assert lal_row['opp_mid_range_makes'] == 7
+        assert lal_row['mid_range_points_allowed'] == 14
+        assert lal_row['shot_zone_source'] == 'bigdataball_play_by_play'
+
+        # Verify BOS has shot zone data merged
+        bos_row = result[result['defending_team_abbr'] == 'BOS'].iloc[0]
+        assert bos_row['opp_paint_attempts'] == 38
+        assert bos_row['opp_paint_makes'] == 22
+        assert bos_row['points_in_paint_allowed'] == 44
+
+    def test_merge_without_shot_zone_data(self, processor):
+        """Test merge without shot zone data properly sets NULL columns."""
+        opponent_df = pd.DataFrame([
+            {
+                'game_id': '20250115_LAL_BOS',
+                'defending_team_abbr': 'LAL',
+                'opponent_team_abbr': 'BOS',
+                'points_allowed': 115,
+                'game_date': date(2025, 1, 15),
+                'season_year': 2024,
+                'home_game': False,
+                'win_flag': False,
+                'margin_of_victory': -7,
+                'opp_fg_makes': 42,
+                'opp_fg_attempts': 85,
+                'turnovers_forced': 12,
+                'fouls_committed': 18,
+                'defensive_rating': 112.5,
+                'opponent_pace': 98.2,
+                'opponent_ts_pct': 0.588,
+                'data_source': 'nbac_team_boxscore'
+            }
+        ])
+
+        defensive_df = pd.DataFrame([
+            {
+                'game_id': '20250115_LAL_BOS',
+                'defending_team_abbr': 'LAL',
+                'steals': 6,
+                'blocks_total': 4,
+                'defensive_rebounds': 21,
+                'data_source': 'nbac_gamebook'
+            }
+        ])
+
+        # Merge without shot zone data (None)
+        result = processor._merge_defense_data(opponent_df, defensive_df, shot_zone_df=None)
+
+        assert len(result) == 1
+        row = result.iloc[0]
+
+        # Shot zone columns should be NULL
+        assert pd.isna(row['opp_paint_attempts'])
+        assert pd.isna(row['opp_paint_makes'])
+        assert pd.isna(row['opp_mid_range_attempts'])
+        assert pd.isna(row['opp_mid_range_makes'])
+        assert pd.isna(row['points_in_paint_allowed'])
+        assert pd.isna(row['mid_range_points_allowed'])
+        assert pd.isna(row['shot_zone_source'])
+
+        # Other data should still be present
+        assert row['steals'] == 6
+        assert row['blocks_total'] == 4
+        assert row['points_allowed'] == 115
+
+    def test_merge_partial_shot_zone_data(self, processor):
+        """Test merge when shot zone data only available for some teams."""
+        opponent_df = pd.DataFrame([
+            {
+                'game_id': '20250115_LAL_BOS',
+                'defending_team_abbr': 'LAL',
+                'opponent_team_abbr': 'BOS',
+                'points_allowed': 115,
+                'game_date': date(2025, 1, 15),
+                'season_year': 2024,
+                'home_game': False,
+                'data_source': 'nbac_team_boxscore'
+            },
+            {
+                'game_id': '20250115_GSW_PHX',
+                'defending_team_abbr': 'GSW',
+                'opponent_team_abbr': 'PHX',
+                'points_allowed': 110,
+                'game_date': date(2025, 1, 15),
+                'season_year': 2024,
+                'home_game': True,
+                'data_source': 'nbac_team_boxscore'
+            }
+        ])
+
+        defensive_df = pd.DataFrame()
+
+        # Shot zone data only for LAL
+        shot_zone_df = pd.DataFrame([
+            {
+                'game_date': date(2025, 1, 15),
+                'defending_team_abbr': 'LAL',
+                'opponent_team_abbr': 'BOS',
+                'opp_paint_attempts': 45,
+                'opp_paint_makes': 28,
+                'opp_mid_range_attempts': 18,
+                'opp_mid_range_makes': 7,
+                'points_in_paint_allowed': 56,
+                'mid_range_points_allowed': 14,
+                'shot_zone_source': 'bigdataball_play_by_play'
+            }
+        ])
+
+        result = processor._merge_defense_data(opponent_df, defensive_df, shot_zone_df)
+
+        assert len(result) == 2
+
+        # LAL should have shot zone data
+        lal_row = result[result['defending_team_abbr'] == 'LAL'].iloc[0]
+        assert lal_row['opp_paint_attempts'] == 45
+        assert lal_row['shot_zone_source'] == 'bigdataball_play_by_play'
+
+        # GSW should have NULL shot zone data
+        gsw_row = result[result['defending_team_abbr'] == 'GSW'].iloc[0]
+        assert pd.isna(gsw_row['opp_paint_attempts'])
+        assert pd.isna(gsw_row['shot_zone_source'])
+
 
 # =============================================================================
-# TEST CLASS 7: CALCULATE ANALYTICS
+# TEST CLASS 8: CALCULATE ANALYTICS
 # =============================================================================
 
 class TestCalculateAnalytics:
@@ -617,7 +1031,7 @@ class TestCalculateAnalytics:
         
         assert len(processor.transformed_data) == 1
         record = processor.transformed_data[0]
-        assert record['data_quality_tier'] == 'high'
+        assert record['quality_tier'] == 'bronze'  # Default fallback tier
         assert record['primary_source_used'] == 'nbac_team_boxscore+nbac_gamebook'
     
     def test_data_quality_tier_medium(self, processor):
@@ -658,7 +1072,7 @@ class TestCalculateAnalytics:
         processor.calculate_analytics()
         
         record = processor.transformed_data[0]
-        assert record['data_quality_tier'] == 'medium'
+        assert record['quality_tier'] == 'bronze'  # Default fallback tier
         assert record['primary_source_used'] == 'nbac_team_boxscore+bdl_player_boxscores'
     
     def test_data_quality_tier_low(self, processor):
@@ -699,7 +1113,7 @@ class TestCalculateAnalytics:
         processor.calculate_analytics()
         
         record = processor.transformed_data[0]
-        assert record['data_quality_tier'] == 'low'
+        assert record['quality_tier'] == 'bronze'  # Default fallback tier
         assert record['primary_source_used'] == 'nbac_team_boxscore'
         assert record['processed_with_issues'] is True
     
@@ -788,7 +1202,7 @@ class TestCalculateAnalytics:
 
 
 # =============================================================================
-# TEST CLASS 8: SOURCE TRACKING FIELDS
+# TEST CLASS 9: SOURCE TRACKING FIELDS
 # =============================================================================
 
 class TestSourceTrackingFields:
@@ -846,7 +1260,7 @@ class TestSourceTrackingFields:
 
 
 # =============================================================================
-# TEST CLASS 9: HELPER METHODS
+# TEST CLASS 10: HELPER METHODS
 # =============================================================================
 
 class TestHelperMethods:
@@ -868,7 +1282,7 @@ class TestHelperMethods:
 
 
 # =============================================================================
-# TEST CLASS 10: GET ANALYTICS STATS
+# TEST CLASS 11: GET ANALYTICS STATS
 # =============================================================================
 
 class TestGetAnalyticsStats:
@@ -882,33 +1296,34 @@ class TestGetAnalyticsStats:
                 'steals': 6,
                 'turnovers_forced': 12,
                 'home_game': False,
-                'data_quality_tier': 'high'
+                'quality_tier': 'gold'
             },
             {
                 'points_allowed': 108,
                 'steals': 7,
                 'turnovers_forced': 14,
                 'home_game': True,
-                'data_quality_tier': 'high'
+                'quality_tier': 'silver'
             },
             {
                 'points_allowed': 110,
-                'steals': 5,  # FIXED: Use actual value instead of None
+                'steals': 5,
                 'turnovers_forced': 10,
                 'home_game': False,
-                'data_quality_tier': 'low'
+                'quality_tier': 'bronze'
             }
         ]
-        
+
         stats = processor.get_analytics_stats()
-        
+
         assert stats['records_processed'] == 3
         assert stats['avg_points_allowed'] == pytest.approx(111.0, abs=0.1)
         assert stats['total_steals'] == 18  # 6 + 7 + 5
         assert stats['home_games'] == 1
         assert stats['road_games'] == 2
-        assert stats['high_quality_records'] == 2
-        assert stats['low_quality_records'] == 1
+        assert stats['gold_quality_records'] == 1
+        assert stats['silver_quality_records'] == 1
+        assert stats['bronze_quality_records'] == 1
     
     def test_empty_transformed_data(self, processor):
         """Test stats with empty transformed data."""

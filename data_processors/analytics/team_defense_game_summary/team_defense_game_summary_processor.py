@@ -307,15 +307,23 @@ class TeamDefenseGameSummaryProcessor(
         
         # Step 2: Get defensive actions with multi-source fallback
         defensive_actions_df = self._extract_defensive_actions(start_date, end_date)
-        
+
         if defensive_actions_df.empty:
             logger.warning("No defensive actions data found - will use basic defensive stats only")
         else:
             logger.info(f"Found {len(defensive_actions_df)} defensive action records")
-        
-        # Step 3: Merge opponent offense with defensive actions
-        self.raw_data = self._merge_defense_data(opponent_offense_df, defensive_actions_df)
-        
+
+        # Step 2.5: Get shot zone stats from play-by-play (NEW)
+        shot_zone_df = self._extract_shot_zone_stats(start_date, end_date)
+
+        if shot_zone_df.empty:
+            logger.warning("No shot zone data found - opp_paint_attempts/opp_mid_range_attempts will be NULL")
+        else:
+            logger.info(f"Found {len(shot_zone_df)} shot zone records from play-by-play")
+
+        # Step 3: Merge opponent offense with defensive actions and shot zones
+        self.raw_data = self._merge_defense_data(opponent_offense_df, defensive_actions_df, shot_zone_df)
+
         logger.info(f"Extracted {len(self.raw_data)} complete team defensive records")
     
     def _extract_opponent_offense(self, start_date: str, end_date: str) -> pd.DataFrame:
@@ -832,45 +840,237 @@ class TeamDefenseGameSummaryProcessor(
         except Exception as e:
             logger.warning(f"Failed to get all game IDs: {e}")
             return set()
-    
-    def _merge_defense_data(self, opponent_offense_df: pd.DataFrame, 
-                           defensive_actions_df: pd.DataFrame) -> pd.DataFrame:
+
+    def _extract_shot_zone_stats(self, start_date: str, end_date: str) -> pd.DataFrame:
         """
-        Merge opponent offensive stats with defensive actions.
-        
+        Extract opponent shot zone statistics from play-by-play data.
+
+        Classifies each shot into zones:
+        - Paint: shot_distance <= 8 feet AND shot_type = '2PT'
+        - Mid-range: shot_distance > 8 feet AND shot_type = '2PT'
+        - Three-point: shot_type = '3PT'
+
+        Returns aggregated stats per game per defending team (opponent's shots allowed).
+
+        Uses bigdataball_play_by_play as primary source with nbac_play_by_play fallback.
+
+        Returns:
+            DataFrame with columns:
+              - game_id
+              - defending_team_abbr (team that allowed these shots)
+              - opp_paint_attempts, opp_paint_makes
+              - opp_mid_range_attempts, opp_mid_range_makes
+              - points_in_paint_allowed (paint_makes * 2)
+              - mid_range_points_allowed (mid_makes * 2)
+        """
+        # Try bigdataball first (better shot_distance data)
+        query = f"""
+        WITH shot_events AS (
+            SELECT
+                game_id,
+                game_date,
+                -- The shooting team (their offense = defending team's defense allowed)
+                player_1_team_abbr as shooting_team,
+                shot_type,
+                shot_distance,
+                shot_made,
+                -- Classify zone
+                CASE
+                    WHEN shot_type = '3PT' THEN 'three_pt'
+                    WHEN shot_distance <= 8 THEN 'paint'
+                    ELSE 'mid_range'
+                END as shot_zone
+            FROM `{self.project_id}.nba_raw.bigdataball_play_by_play`
+            WHERE game_date BETWEEN '{start_date}' AND '{end_date}'
+              AND shot_type IN ('2PT', '3PT')
+              AND player_1_team_abbr IS NOT NULL
+        ),
+
+        -- Get both teams per game to determine defending team
+        game_teams AS (
+            SELECT DISTINCT game_id, game_date, home_team_abbr, away_team_abbr
+            FROM `{self.project_id}.nba_raw.bigdataball_play_by_play`
+            WHERE game_date BETWEEN '{start_date}' AND '{end_date}'
+        ),
+
+        -- Aggregate by game + shooting team (which is opponent from defensive perspective)
+        team_shots AS (
+            SELECT
+                s.game_id,
+                s.shooting_team as opponent_team_abbr,
+                -- Paint zone
+                SUM(CASE WHEN shot_zone = 'paint' THEN 1 ELSE 0 END) as opp_paint_attempts,
+                SUM(CASE WHEN shot_zone = 'paint' AND shot_made THEN 1 ELSE 0 END) as opp_paint_makes,
+                -- Mid-range zone
+                SUM(CASE WHEN shot_zone = 'mid_range' THEN 1 ELSE 0 END) as opp_mid_range_attempts,
+                SUM(CASE WHEN shot_zone = 'mid_range' AND shot_made THEN 1 ELSE 0 END) as opp_mid_range_makes,
+                -- Three-point (already have this from team boxscore, but calculate anyway for consistency)
+                SUM(CASE WHEN shot_zone = 'three_pt' THEN 1 ELSE 0 END) as opp_three_pt_attempts_pbp,
+                SUM(CASE WHEN shot_zone = 'three_pt' AND shot_made THEN 1 ELSE 0 END) as opp_three_pt_makes_pbp
+            FROM shot_events s
+            GROUP BY s.game_id, s.shooting_team
+        )
+
+        -- Flip perspective: shooting team's stats become defending team's "allowed" stats
+        SELECT
+            g.game_date,
+            -- The defending team is the OTHER team (not the shooting team)
+            CASE
+                WHEN t.opponent_team_abbr = g.home_team_abbr THEN g.away_team_abbr
+                ELSE g.home_team_abbr
+            END as defending_team_abbr,
+            t.opponent_team_abbr,
+            t.opp_paint_attempts,
+            t.opp_paint_makes,
+            t.opp_mid_range_attempts,
+            t.opp_mid_range_makes,
+            t.opp_three_pt_attempts_pbp,
+            t.opp_three_pt_makes_pbp,
+            -- Points allowed by zone
+            t.opp_paint_makes * 2 as points_in_paint_allowed,
+            t.opp_mid_range_makes * 2 as mid_range_points_allowed,
+            'bigdataball_play_by_play' as shot_zone_source
+        FROM team_shots t
+        INNER JOIN game_teams g ON t.game_id = g.game_id
+        """
+
+        try:
+            df = self.bq_client.query(query).to_dataframe()
+            if not df.empty:
+                logger.info(f"Extracted shot zone stats for {len(df)} team-game records from bigdataball")
+                return df
+        except Exception as e:
+            logger.warning(f"Failed to extract shot zones from bigdataball: {e}")
+
+        # Fallback to nbac_play_by_play if bigdataball fails
+        logger.info("Falling back to nbac_play_by_play for shot zone stats")
+        fallback_query = f"""
+        WITH shot_events AS (
+            SELECT
+                game_id,
+                game_date,
+                player_1_team_abbr as shooting_team,
+                shot_type,
+                shot_distance,
+                shot_made,
+                CASE
+                    WHEN shot_type = '3PT' THEN 'three_pt'
+                    WHEN shot_distance <= 8 THEN 'paint'
+                    ELSE 'mid_range'
+                END as shot_zone
+            FROM `{self.project_id}.nba_raw.nbac_play_by_play`
+            WHERE game_date BETWEEN '{start_date}' AND '{end_date}'
+              AND event_type IN ('shot', 'miss', 'made')
+              AND shot_type IN ('2PT', '3PT')
+              AND player_1_team_abbr IS NOT NULL
+        ),
+        game_teams AS (
+            SELECT DISTINCT game_id, game_date, home_team_abbr, away_team_abbr
+            FROM `{self.project_id}.nba_raw.nbac_play_by_play`
+            WHERE game_date BETWEEN '{start_date}' AND '{end_date}'
+        ),
+        team_shots AS (
+            SELECT
+                s.game_id,
+                s.shooting_team as opponent_team_abbr,
+                SUM(CASE WHEN shot_zone = 'paint' THEN 1 ELSE 0 END) as opp_paint_attempts,
+                SUM(CASE WHEN shot_zone = 'paint' AND shot_made THEN 1 ELSE 0 END) as opp_paint_makes,
+                SUM(CASE WHEN shot_zone = 'mid_range' THEN 1 ELSE 0 END) as opp_mid_range_attempts,
+                SUM(CASE WHEN shot_zone = 'mid_range' AND shot_made THEN 1 ELSE 0 END) as opp_mid_range_makes,
+                SUM(CASE WHEN shot_zone = 'three_pt' THEN 1 ELSE 0 END) as opp_three_pt_attempts_pbp,
+                SUM(CASE WHEN shot_zone = 'three_pt' AND shot_made THEN 1 ELSE 0 END) as opp_three_pt_makes_pbp
+            FROM shot_events s
+            GROUP BY s.game_id, s.shooting_team
+        )
+        SELECT
+            g.game_date,
+            CASE
+                WHEN t.opponent_team_abbr = g.home_team_abbr THEN g.away_team_abbr
+                ELSE g.home_team_abbr
+            END as defending_team_abbr,
+            t.opponent_team_abbr,
+            t.opp_paint_attempts,
+            t.opp_paint_makes,
+            t.opp_mid_range_attempts,
+            t.opp_mid_range_makes,
+            t.opp_three_pt_attempts_pbp,
+            t.opp_three_pt_makes_pbp,
+            t.opp_paint_makes * 2 as points_in_paint_allowed,
+            t.opp_mid_range_makes * 2 as mid_range_points_allowed,
+            'nbac_play_by_play' as shot_zone_source
+        FROM team_shots t
+        INNER JOIN game_teams g ON t.game_id = g.game_id
+        """
+
+        try:
+            df = self.bq_client.query(fallback_query).to_dataframe()
+            logger.info(f"Extracted shot zone stats for {len(df)} team-game records from nbac (fallback)")
+            return df
+        except Exception as e:
+            logger.warning(f"Failed to extract shot zones from nbac: {e}")
+            return pd.DataFrame()
+
+    def _merge_defense_data(self, opponent_offense_df: pd.DataFrame,
+                           defensive_actions_df: pd.DataFrame,
+                           shot_zone_df: pd.DataFrame = None) -> pd.DataFrame:
+        """
+        Merge opponent offensive stats with defensive actions and shot zone stats.
+
         Args:
             opponent_offense_df: Opponent offensive performance (perspective flipped)
             defensive_actions_df: Aggregated defensive actions (steals, blocks, etc.)
-            
+            shot_zone_df: Shot zone stats from play-by-play (paint, mid-range attempts/makes)
+
         Returns:
-            Combined DataFrame with complete defensive metrics
+            Combined DataFrame with complete defensive metrics including shot zones
         """
+        # Start with opponent offense
+        merged_df = opponent_offense_df.copy()
+
+        # Initialize defensive action columns
         if defensive_actions_df.empty:
             logger.warning("No defensive actions data - using opponent offense only")
-            # Set defensive actions to 0
-            opponent_offense_df['steals'] = 0
-            opponent_offense_df['blocks_total'] = 0
-            opponent_offense_df['defensive_rebounds'] = 0
-            opponent_offense_df['defensive_actions_source'] = None
-            opponent_offense_df['defensive_actions_processed_at'] = None
-            return opponent_offense_df
-        
-        # Merge on game_id + defending_team_abbr
-        merged_df = opponent_offense_df.merge(
-            defensive_actions_df,
-            on=['game_id', 'defending_team_abbr'],
-            how='left',
-            suffixes=('', '_defensive')
-        )
-        
-        # Fill missing defensive actions with 0
-        merged_df['steals'] = merged_df['steals'].fillna(0)
-        merged_df['blocks_total'] = merged_df['blocks_total'].fillna(0)
-        merged_df['defensive_rebounds'] = merged_df['defensive_rebounds'].fillna(0)
-        
-        # Track which source provided defensive actions
-        merged_df['defensive_actions_source'] = merged_df['data_source_defensive'].fillna('none')
-        
+            merged_df['steals'] = 0
+            merged_df['blocks_total'] = 0
+            merged_df['defensive_rebounds'] = 0
+            merged_df['defensive_actions_source'] = None
+            merged_df['defensive_actions_processed_at'] = None
+        else:
+            # Merge defensive actions on game_id + defending_team_abbr
+            merged_df = merged_df.merge(
+                defensive_actions_df,
+                on=['game_id', 'defending_team_abbr'],
+                how='left',
+                suffixes=('', '_defensive')
+            )
+            # Fill missing defensive actions with 0
+            merged_df['steals'] = merged_df['steals'].fillna(0)
+            merged_df['blocks_total'] = merged_df['blocks_total'].fillna(0)
+            merged_df['defensive_rebounds'] = merged_df['defensive_rebounds'].fillna(0)
+            # Track which source provided defensive actions
+            merged_df['defensive_actions_source'] = merged_df.get('data_source_defensive', pd.Series(['none'] * len(merged_df))).fillna('none')
+
+        # Merge shot zone data (NEW) - use game_date + defending_team_abbr for reliable matching
+        if shot_zone_df is not None and not shot_zone_df.empty:
+            merged_df = merged_df.merge(
+                shot_zone_df[['game_date', 'defending_team_abbr', 'opp_paint_attempts', 'opp_paint_makes',
+                             'opp_mid_range_attempts', 'opp_mid_range_makes',
+                             'points_in_paint_allowed', 'mid_range_points_allowed', 'shot_zone_source']],
+                on=['game_date', 'defending_team_abbr'],
+                how='left',
+                suffixes=('', '_pbp')
+            )
+            logger.info(f"Merged shot zone data - {merged_df['opp_paint_attempts'].notna().sum()} records have paint data")
+        else:
+            # No shot zone data - initialize columns as None
+            merged_df['opp_paint_attempts'] = None
+            merged_df['opp_paint_makes'] = None
+            merged_df['opp_mid_range_attempts'] = None
+            merged_df['opp_mid_range_makes'] = None
+            merged_df['points_in_paint_allowed'] = None
+            merged_df['mid_range_points_allowed'] = None
+            merged_df['shot_zone_source'] = None
+
         logger.info(f"Merged {len(merged_df)} complete defensive records")
 
         return merged_df
@@ -1103,16 +1303,16 @@ class TeamDefenseGameSummaryProcessor(
                 'turnovers_forced': int(row['turnovers_forced']) if pd.notna(row['turnovers_forced']) else None,
                 'fouls_committed': int(row['fouls_committed']) if pd.notna(row['fouls_committed']) else None,
 
-                # Defensive shot zone performance (deferred - need play-by-play)
-                'opp_paint_attempts': None,
-                'opp_paint_makes': None,
-                'opp_mid_range_attempts': None,
-                'opp_mid_range_makes': None,
-                'points_in_paint_allowed': None,
-                'mid_range_points_allowed': None,
+                # Defensive shot zone performance (from play-by-play data)
+                'opp_paint_attempts': int(row['opp_paint_attempts']) if pd.notna(row.get('opp_paint_attempts')) else None,
+                'opp_paint_makes': int(row['opp_paint_makes']) if pd.notna(row.get('opp_paint_makes')) else None,
+                'opp_mid_range_attempts': int(row['opp_mid_range_attempts']) if pd.notna(row.get('opp_mid_range_attempts')) else None,
+                'opp_mid_range_makes': int(row['opp_mid_range_makes']) if pd.notna(row.get('opp_mid_range_makes')) else None,
+                'points_in_paint_allowed': int(row['points_in_paint_allowed']) if pd.notna(row.get('points_in_paint_allowed')) else None,
+                'mid_range_points_allowed': int(row['mid_range_points_allowed']) if pd.notna(row.get('mid_range_points_allowed')) else None,
                 'three_pt_points_allowed': int(row['opp_three_pt_makes'] * 3) if pd.notna(row['opp_three_pt_makes']) else None,
-                'second_chance_points_allowed': None,
-                'fast_break_points_allowed': None,
+                'second_chance_points_allowed': None,  # TODO: Extract from play-by-play
+                'fast_break_points_allowed': None,  # TODO: Extract from play-by-play
 
                 # Defensive actions (from player boxscores)
                 'blocks_paint': None,  # Need play-by-play for zone breakdown
