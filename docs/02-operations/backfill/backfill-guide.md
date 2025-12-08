@@ -1,11 +1,17 @@
 # Backfill Operations Guide
 
-**File:** `docs/operations/01-backfill-operations-guide.md`
+**File:** `docs/02-operations/backfill/backfill-guide.md`
 **Created:** 2025-11-18 14:45 PST
-**Last Updated:** 2025-11-18 14:45 PST
+**Last Updated:** 2025-12-08 01:30 PM PST
 **Purpose:** Step-by-step guide for running backfills safely and effectively
 **Status:** Current
 **Audience:** Engineers running backfills, on-call engineers, operators
+
+---
+
+> **Important:** This guide contains conceptual information about backfill workflows.
+> For **working scripts and commands**, see [README.md](./README.md) which has the current
+> validation workflow and script references.
 
 ---
 
@@ -18,11 +24,13 @@
 - ✅ Validation before/after each phase
 - ✅ Partial backfill recovery
 - ✅ Early season special handling
-- ✅ Example scenarios with complete commands
+
+**For Working Scripts:** See [README.md - Validation Workflow](./README.md#validation-workflow)
 
 **Related Documentation:**
+- [README.md](./README.md) - Current scripts and validation workflow
+- [backfill-mode-reference.md](./backfill-mode-reference.md) - What changes in backfill mode
 - `docs/01-architecture/cross-date-dependencies.md` - Why backfill order matters
-- `docs/07-monitoring/completeness-validation.md` - Validation queries
 
 ---
 
@@ -305,6 +313,9 @@ export PHASE_45_END=2024-11-14
 
 ## ✅ Validation Before/After Each Phase
 
+> **Working Scripts:** The validation scripts below are the actual working tools.
+> See [README.md - Validation Workflow](./README.md#validation-workflow) for the complete workflow.
+
 ### Before Starting Phase N
 
 **Checklist:**
@@ -313,15 +324,15 @@ export PHASE_45_END=2024-11-14
 - [ ] Row counts meet minimum thresholds
 - [ ] Sample check: Pick 3 random dates, verify data quality
 
-**Query:**
+**Working Commands:**
 ```bash
-# Check Phase 2 complete before starting Phase 3
-./bin/backfill/validate_phase.sh --phase=2 --start=$PHASE_23_START --end=$PHASE_23_END
+# Pre-flight check - verify all phases have data
+.venv/bin/python bin/backfill/preflight_check.py \
+    --start-date 2024-11-08 --end-date 2024-11-14 --verbose
 
-# Script checks:
-# - All dates in range have Phase 2 data
-# - Row counts >= expected minimum
-# - No suspicious gaps
+# Verify Phase 3 is ready before running Phase 4
+.venv/bin/python bin/backfill/verify_phase3_for_phase4.py \
+    --start-date 2024-11-08 --end-date 2024-11-14
 ```
 
 ---
@@ -329,26 +340,44 @@ export PHASE_45_END=2024-11-14
 ### After Completing Phase N
 
 **Checklist:**
-- [ ] Run completeness validation (Query 2 from `05-data-completeness-validation.md`)
-- [ ] Check row counts match expectations
+- [ ] Run coverage validation
+- [ ] Check for cascade contamination (NULL/zero critical fields)
 - [ ] Verify no missing dates
-- [ ] Sample check: Pick 3 random dates, verify data quality
 - [ ] Check processed_at timestamps are recent
 
-**Query:**
+**Working Commands:**
 ```bash
-# Validate Phase 3 after completion
-./bin/backfill/validate_phase.sh --phase=3 --start=$PHASE_23_START --end=$PHASE_23_END
+# Check coverage and identify failures
+.venv/bin/python scripts/validate_backfill_coverage.py \
+    --start-date 2024-11-08 --end-date 2024-11-14 --details --reconcile
 
-# If validation fails:
-# - Find which dates are incomplete
-# - Re-run only failed dates
-# - Validate again
+# Check data quality (cascade contamination)
+.venv/bin/python scripts/validate_cascade_contamination.py \
+    --start-date 2024-11-08 --end-date 2024-11-14 --strict
+
+# Final verification
+.venv/bin/python bin/backfill/verify_backfill_range.py \
+    --start-date 2024-11-08 --end-date 2024-11-14
 ```
 
 ---
 
-### Validation Scripts
+### Validation Scripts Reference
+
+| Script | Purpose | Phase |
+|--------|---------|-------|
+| `bin/backfill/preflight_check.py` | Check data availability before backfill | All |
+| `bin/backfill/verify_phase3_for_phase4.py` | Verify Phase 3 ready for Phase 4 | 3→4 |
+| `bin/backfill/verify_backfill_range.py` | Full verification after backfill | 3-4 |
+| `scripts/validate_backfill_coverage.py` | Player-level coverage check | 4 |
+| `scripts/validate_cascade_contamination.py` | Critical field validation | 3-5 |
+
+---
+
+### Legacy Validation Scripts (Reference Only)
+
+> **Note:** The following embedded scripts are **design references** that were never implemented.
+> Use the working scripts above instead.
 
 #### Script 1: Validate Single Phase
 
