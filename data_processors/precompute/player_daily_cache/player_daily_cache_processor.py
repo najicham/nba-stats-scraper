@@ -1121,6 +1121,80 @@ class PlayerDailyCacheProcessor(
         except Exception as e:
             logger.warning(f"Failed to record reprocess attempt for {entity_id}: {e}")
 
+    def _batch_increment_reprocess_counts(self, items: list, analysis_date: date) -> None:
+        """
+        Batch insert reprocess attempts using a single multi-row INSERT query.
+
+        This is ~50x faster than individual inserts (1 query vs N queries).
+        Each BQ query has ~2-3s overhead, so batching 50 items saves ~100-150s.
+        """
+        if not items:
+            return
+
+        # First, batch check all circuit breakers
+        entity_ids = [item['entity_id'] for item in items]
+        circuit_status_map = self._check_circuit_breakers_batch(entity_ids, analysis_date)
+
+        # Build batch INSERT with UNION ALL
+        value_rows = []
+        tripped_count = 0
+
+        for item in items:
+            entity_id = item['entity_id']
+            completeness_pct = item.get('completeness_pct', 0.0)
+            skip_reason = item.get('skip_reason', 'unknown')
+
+            circuit_status = circuit_status_map.get(entity_id, {'active': False, 'attempts': 0, 'until': None})
+            next_attempt = circuit_status['attempts'] + 1
+
+            # Trip circuit breaker on 3rd attempt
+            circuit_breaker_tripped = next_attempt >= 3
+            circuit_breaker_until_sql = 'NULL'
+
+            if circuit_breaker_tripped:
+                tripped_count += 1
+                circuit_breaker_until = datetime.now(timezone.utc) + timedelta(days=7)
+                circuit_breaker_until_sql = f'TIMESTAMP("{circuit_breaker_until.isoformat()}")'
+
+            value_rows.append(f"""
+                SELECT
+                    '{self.table_name}' as processor_name,
+                    '{entity_id}' as entity_id,
+                    DATE('{analysis_date}') as analysis_date,
+                    {next_attempt} as attempt_number,
+                    CURRENT_TIMESTAMP() as attempted_at,
+                    {completeness_pct} as completeness_pct,
+                    '{skip_reason}' as skip_reason,
+                    {circuit_breaker_tripped} as circuit_breaker_tripped,
+                    {circuit_breaker_until_sql} as circuit_breaker_until,
+                    FALSE as manual_override_applied,
+                    'Attempt {next_attempt}: {completeness_pct:.1f}% complete' as notes
+            """)
+
+        # Combine into single INSERT with UNION ALL
+        batch_query = f"""
+        INSERT INTO `{self.project_id}.nba_orchestration.reprocess_attempts`
+        (processor_name, entity_id, analysis_date, attempt_number, attempted_at,
+         completeness_pct, skip_reason, circuit_breaker_tripped, circuit_breaker_until,
+         manual_override_applied, notes)
+        {' UNION ALL '.join(value_rows)}
+        """
+
+        try:
+            self.bq_client.query(batch_query).result()
+            logger.info(f"Batch recorded {len(items)} reprocess attempts ({tripped_count} circuit breakers tripped)")
+        except Exception as e:
+            logger.warning(f"Failed to batch record reprocess attempts: {e}")
+            # Fall back to individual inserts if batch fails
+            logger.info("Falling back to individual inserts...")
+            for item in items:
+                self._increment_reprocess_count(
+                    item['entity_id'],
+                    analysis_date,
+                    item.get('completeness_pct', 0.0),
+                    item.get('skip_reason', 'unknown')
+                )
+
     def calculate_precompute(self) -> None:
         """
         Calculate cache records for all players.
@@ -1410,15 +1484,15 @@ class PlayerDailyCacheProcessor(
         )
 
         # Handle reprocess count increments in main thread (requires BQ client)
+        # SKIP in backfill mode - saves ~2.5s per failure × 50 failures = 125s per date
+        # For 680 dates with 50 failures each, this saves ~24 hours of processing time
         if needs_reprocess_increment:
-            logger.info(f"Recording {len(needs_reprocess_increment)} reprocess attempts...")
-            for item in needs_reprocess_increment:
-                self._increment_reprocess_count(
-                    item['entity_id'],
-                    analysis_date,
-                    item['completeness_pct'],
-                    item['skip_reason']
-                )
+            if self.is_backfill_mode:
+                logger.info(f"⏭️  BACKFILL MODE: Skipping {len(needs_reprocess_increment)} reprocess attempt recordings")
+            else:
+                logger.info(f"Recording {len(needs_reprocess_increment)} reprocess attempts...")
+                # Batch the inserts instead of individual queries for better performance
+                self._batch_increment_reprocess_counts(needs_reprocess_increment, analysis_date)
 
         return successful, failed
 
