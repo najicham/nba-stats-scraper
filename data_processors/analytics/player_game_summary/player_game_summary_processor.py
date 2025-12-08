@@ -167,7 +167,15 @@ class PlayerGameSummaryProcessor(
             'players_not_found': 0,
             'records_skipped': 0
         }
-    
+
+        # Track registry failures for observability (v2.1 feature)
+        self.registry_failures = []
+
+        # Shot zone data from play-by-play (Pass 2 enrichment)
+        self.shot_zone_data: Dict = {}
+        self.shot_zones_available: bool = False
+        self.shot_zones_source: Optional[str] = None
+
     def get_dependencies(self) -> dict:
         """
         Define all 6 Phase 2 source requirements.
@@ -518,7 +526,107 @@ class PlayerGameSummaryProcessor(
         except Exception as e:
             logger.error(f"BigQuery extraction failed: {e}")
             raise
-    
+
+        # Extract shot zones from play-by-play (Pass 2 enrichment)
+        if not self.raw_data.empty:
+            self._extract_player_shot_zones(start_date, end_date)
+
+    def _extract_player_shot_zones(self, start_date: str, end_date: str) -> None:
+        """
+        Extract shot zone data from BigDataBall play-by-play (Pass 2 enrichment).
+
+        Extracts per-player shot attempts and makes by zone:
+        - Paint: shot_distance <= 8 feet
+        - Mid-range: shot_distance > 8 AND NOT 3pt
+        - Three-point: event_subtype contains '3pt' OR shot_distance >= 23.75
+
+        Gracefully handles missing play-by-play data.
+        """
+        try:
+            # Query BigDataBall play-by-play for player shot zones
+            query = f"""
+            WITH player_shots AS (
+                SELECT
+                    game_id,
+                    player_1_lookup as player_lookup,
+                    -- Classify shot zone
+                    CASE
+                        WHEN shot_distance <= 8.0 THEN 'paint'
+                        WHEN event_subtype LIKE '%3pt%' OR shot_distance >= 23.75 THEN 'three'
+                        ELSE 'mid_range'
+                    END as zone,
+                    shot_made
+                FROM `{self.project_id}.nba_raw.bigdataball_play_by_play`
+                WHERE event_type = 'shot'
+                    AND shot_made IS NOT NULL
+                    AND shot_distance IS NOT NULL
+                    AND player_1_lookup IS NOT NULL
+                    AND game_date BETWEEN '{start_date}' AND '{end_date}'
+            )
+            SELECT
+                game_id,
+                player_lookup,
+                -- Paint zone
+                COUNT(CASE WHEN zone = 'paint' THEN 1 END) as paint_attempts,
+                COUNT(CASE WHEN zone = 'paint' AND shot_made = TRUE THEN 1 END) as paint_makes,
+                -- Mid-range zone
+                COUNT(CASE WHEN zone = 'mid_range' THEN 1 END) as mid_range_attempts,
+                COUNT(CASE WHEN zone = 'mid_range' AND shot_made = TRUE THEN 1 END) as mid_range_makes,
+                -- Three-point (for validation against box score)
+                COUNT(CASE WHEN zone = 'three' THEN 1 END) as three_attempts_pbp,
+                COUNT(CASE WHEN zone = 'three' AND shot_made = TRUE THEN 1 END) as three_makes_pbp
+            FROM player_shots
+            GROUP BY game_id, player_lookup
+            """
+
+            shot_zones_df = self.bq_client.query(query).to_dataframe()
+
+            if not shot_zones_df.empty:
+                # Convert to dict keyed by (game_id, player_lookup)
+                for _, row in shot_zones_df.iterrows():
+                    key = (row['game_id'], row['player_lookup'])
+                    self.shot_zone_data[key] = {
+                        'paint_attempts': int(row['paint_attempts']) if pd.notna(row['paint_attempts']) else None,
+                        'paint_makes': int(row['paint_makes']) if pd.notna(row['paint_makes']) else None,
+                        'mid_range_attempts': int(row['mid_range_attempts']) if pd.notna(row['mid_range_attempts']) else None,
+                        'mid_range_makes': int(row['mid_range_makes']) if pd.notna(row['mid_range_makes']) else None,
+                    }
+
+                self.shot_zones_available = True
+                self.shot_zones_source = 'bigdataball_pbp'
+                logger.info(f"✅ Extracted shot zones for {len(self.shot_zone_data)} player-games from BigDataBall")
+            else:
+                logger.warning("⚠️ BigDataBall play-by-play query returned no shot zones")
+                self.shot_zones_available = False
+                self.shot_zones_source = None
+
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to extract shot zones (non-critical): {e}")
+            self.shot_zones_available = False
+            self.shot_zones_source = None
+
+    def _get_shot_zone_data(self, game_id: str, player_lookup: str) -> Dict:
+        """
+        Get shot zone data for a specific player-game.
+
+        Returns dict with all shot zone fields, using None for missing data.
+        This allows using **self._get_shot_zone_data() in record building.
+        """
+        key = (game_id, player_lookup)
+        zones = self.shot_zone_data.get(key, {})
+
+        return {
+            'paint_attempts': zones.get('paint_attempts'),
+            'paint_makes': zones.get('paint_makes'),
+            'mid_range_attempts': zones.get('mid_range_attempts'),
+            'mid_range_makes': zones.get('mid_range_makes'),
+            # These fields not yet extracted from play-by-play
+            'paint_blocks': None,
+            'mid_range_blocks': None,
+            'three_pt_blocks': None,
+            'and1_count': None,
+        }
+
     def validate_extracted_data(self) -> None:
         """Enhanced validation with cross-source quality checks."""
         super().validate_extracted_data()
@@ -904,15 +1012,8 @@ class PlayerGameSummaryProcessor(
                 'ft_attempts': int(row['free_throws_attempted']) if pd.notna(row['free_throws_attempted']) else None,
                 'ft_makes': int(row['free_throws_made']) if pd.notna(row['free_throws_made']) else None,
 
-                # Shot zones (Pass 2 implementation - future)
-                'paint_attempts': None,
-                'paint_makes': None,
-                'mid_range_attempts': None,
-                'mid_range_makes': None,
-                'paint_blocks': None,
-                'mid_range_blocks': None,
-                'three_pt_blocks': None,
-                'and1_count': None,
+                # Shot zones (Pass 2 enrichment from BigDataBall play-by-play)
+                **self._get_shot_zone_data(row['game_id'], player_lookup),
 
                 # Shot creation (Pass 2 implementation - future)
                 'assisted_fg_makes': None,
@@ -1069,15 +1170,8 @@ class PlayerGameSummaryProcessor(
                     'ft_attempts': int(row['free_throws_attempted']) if pd.notna(row['free_throws_attempted']) else None,
                     'ft_makes': int(row['free_throws_made']) if pd.notna(row['free_throws_made']) else None,
 
-                    # Shot zones (Pass 2 implementation - future)
-                    'paint_attempts': None,
-                    'paint_makes': None,
-                    'mid_range_attempts': None,
-                    'mid_range_makes': None,
-                    'paint_blocks': None,
-                    'mid_range_blocks': None,
-                    'three_pt_blocks': None,
-                    'and1_count': None,
+                    # Shot zones (Pass 2 enrichment from BigDataBall play-by-play)
+                    **self._get_shot_zone_data(row['game_id'], player_lookup),
 
                     # Shot creation (Pass 2 implementation - future)
                     'assisted_fg_makes': None,
