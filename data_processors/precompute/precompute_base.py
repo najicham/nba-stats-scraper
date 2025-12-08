@@ -1646,10 +1646,12 @@ class PrecomputeProcessorBase(RunHistoryMixin):
         missing_tables = []
 
         # Get Phase 4 dependencies from PHASE_4_SOURCES config
+        # Note: Not all processors have PHASE_4_SOURCES (e.g., TDZA/PSZA read from Phase 3)
         phase_4_deps = []
-        for source, is_relevant in self.PHASE_4_SOURCES.items():
-            if is_relevant and source in ['player_shot_zone_analysis', 'team_defense_zone_analysis']:
-                phase_4_deps.append(source)
+        if hasattr(self, 'PHASE_4_SOURCES'):
+            for source, is_relevant in self.PHASE_4_SOURCES.items():
+                if is_relevant and source in ['player_shot_zone_analysis', 'team_defense_zone_analysis']:
+                    phase_4_deps.append(source)
 
         if not phase_4_deps:
             # No Phase 4 deps to check (e.g., TDZA/PSZA don't depend on other Phase 4)

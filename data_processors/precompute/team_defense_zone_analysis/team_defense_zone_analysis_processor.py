@@ -592,6 +592,10 @@ class TeamDefenseZoneAnalysisProcessor(
 
         Circuit breaker trips on 3rd attempt.
         """
+        # Skip circuit breaker tracking in backfill mode - not relevant for historical data
+        if self.is_backfill_mode:
+            return
+
         circuit_status = self._check_circuit_breaker(entity_id, analysis_date)
         next_attempt = circuit_status['attempts'] + 1
 
@@ -840,20 +844,23 @@ class TeamDefenseZoneAnalysisProcessor(
                 'is_production_ready': False
             })
 
-            # Check circuit breaker
-            circuit_breaker_status = self._check_circuit_breaker(team_abbr, analysis_date)
+            # Check circuit breaker (skip in backfill mode - no point checking for historical data)
+            if self.is_backfill_mode:
+                circuit_breaker_status = {'active': False, 'attempts': 0, 'until': None}
+            else:
+                circuit_breaker_status = self._check_circuit_breaker(team_abbr, analysis_date)
 
-            if circuit_breaker_status['active']:
-                logger.warning(
-                    f"{team_abbr}: Circuit breaker active until "
-                    f"{circuit_breaker_status['until']} - skipping"
-                )
-                return (False, {
-                    'entity_id': team_abbr,
-                    'reason': f"Circuit breaker active until {circuit_breaker_status['until']}",
-                    'category': 'CIRCUIT_BREAKER_ACTIVE',
-                    'can_retry': False
-                })
+                if circuit_breaker_status['active']:
+                    logger.warning(
+                        f"{team_abbr}: Circuit breaker active until "
+                        f"{circuit_breaker_status['until']} - skipping"
+                    )
+                    return (False, {
+                        'entity_id': team_abbr,
+                        'reason': f"Circuit breaker active until {circuit_breaker_status['until']}",
+                        'category': 'CIRCUIT_BREAKER_ACTIVE',
+                        'can_retry': False
+                    })
 
             # Check production readiness (skip if incomplete, unless in bootstrap mode)
             if not completeness['is_production_ready'] and not is_bootstrap:
