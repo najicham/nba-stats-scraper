@@ -204,8 +204,23 @@ class PrecomputeProcessorBase(RunHistoryMixin):
             self.mark_time("dependency_check")
 
             # Skip dependency check in backfill mode - trust that historical data exists
+            # BUT do a quick existence check to catch completely missing upstream data
             if self.is_backfill_mode:
-                logger.info("⏭️  BACKFILL MODE: Skipping dependency check (trusting historical data)")
+                # SAFETY: Quick existence check for critical Phase 4 dependencies
+                # This catches cases like Dec 4, 2021 where TDZA was skipped between batches
+                missing_upstream = self._quick_upstream_existence_check(analysis_date)
+                if missing_upstream:
+                    error_msg = f"⛔ BACKFILL SAFETY: Critical upstream data missing for {analysis_date}: {missing_upstream}"
+                    logger.error(error_msg)
+                    # Record this as a proper failure so it shows in validation
+                    self._record_date_level_failure(
+                        category='MISSING_UPSTREAM_IN_BACKFILL',
+                        reason=f"Missing upstream tables: {', '.join(missing_upstream)}",
+                        can_retry=True
+                    )
+                    raise ValueError(error_msg)
+
+                logger.info("⏭️  BACKFILL MODE: Skipping full dependency check (quick existence check passed)")
                 self.dep_check = {
                     'all_critical_present': True,
                     'all_fresh': True,  # Don't care about freshness for historical data
@@ -1613,6 +1628,62 @@ class PrecomputeProcessorBase(RunHistoryMixin):
 
         except Exception as e:
             logger.warning(f"Failed to save failure records: {e}")
+
+    def _quick_upstream_existence_check(self, analysis_date: date) -> List[str]:
+        """
+        Quick existence check for critical Phase 4 upstream dependencies.
+
+        This is a SAFETY check that runs even in backfill mode to catch cases
+        where upstream data is completely missing (e.g., Dec 4, 2021 TDZA gap).
+
+        Unlike the full dependency check, this only verifies:
+        - At least 1 record exists in each critical Phase 4 upstream table
+        - Takes ~1 second instead of 60+ seconds
+
+        Returns:
+            List of missing table names (empty if all exist)
+        """
+        missing_tables = []
+
+        # Get Phase 4 dependencies from PHASE_4_SOURCES config
+        phase_4_deps = []
+        for source, is_relevant in self.PHASE_4_SOURCES.items():
+            if is_relevant and source in ['player_shot_zone_analysis', 'team_defense_zone_analysis']:
+                phase_4_deps.append(source)
+
+        if not phase_4_deps:
+            # No Phase 4 deps to check (e.g., TDZA/PSZA don't depend on other Phase 4)
+            return []
+
+        # Map table names to their date column
+        table_date_columns = {
+            'player_shot_zone_analysis': 'analysis_date',
+            'team_defense_zone_analysis': 'analysis_date',
+            'player_daily_cache': 'cache_date',
+        }
+
+        for table_name in phase_4_deps:
+            date_col = table_date_columns.get(table_name, 'analysis_date')
+            try:
+                query = f"""
+                SELECT COUNT(*) as cnt
+                FROM `{self.project_id}.nba_precompute.{table_name}`
+                WHERE {date_col} = '{analysis_date}'
+                """
+                result = self.bq_client.query(query).to_dataframe()
+                count = result['cnt'].iloc[0] if not result.empty else 0
+
+                if count == 0:
+                    missing_tables.append(table_name)
+                    logger.warning(f"⚠️  BACKFILL SAFETY: {table_name} has 0 records for {analysis_date}")
+                else:
+                    logger.debug(f"✓ {table_name} has {count} records for {analysis_date}")
+
+            except Exception as e:
+                logger.warning(f"Error checking {table_name}: {e}")
+                # Don't fail on error - just log it
+
+        return missing_tables
 
     def _record_date_level_failure(self, category: str, reason: str, can_retry: bool = True) -> None:
         """
