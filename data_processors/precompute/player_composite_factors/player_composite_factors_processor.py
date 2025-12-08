@@ -1011,6 +1011,20 @@ class PlayerCompositeFactorsProcessor(
         """
         upstream_status = {}
 
+        # OPTIMIZATION: Skip upstream queries in backfill mode
+        # Historical data is trusted, saves ~8s per date (92 min for 680 dates)
+        if self.is_backfill_mode:
+            logger.info(f"⏭️  BACKFILL MODE: Skipping upstream completeness check for {len(all_players)} players")
+            for player in all_players:
+                upstream_status[player] = {
+                    'player_shot_zone_ready': True,
+                    'team_defense_zone_ready': True,
+                    'upcoming_player_context_ready': True,
+                    'upcoming_team_context_ready': True,
+                    'all_upstreams_ready': True
+                }
+            return upstream_status
+
         try:
             # Query 1: player_shot_zone_analysis
             query = f"""
