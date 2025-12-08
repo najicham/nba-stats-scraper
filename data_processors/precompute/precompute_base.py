@@ -85,8 +85,9 @@ class PrecomputeProcessorBase(RunHistoryMixin):
     date_column: str = "analysis_date"  # Column name for date partitioning (can override in child)
     processing_strategy: str = "MERGE_UPDATE"  # Default for precompute
 
-    # Time tracking
-    time_markers: Dict = {}
+    # Time tracking - NOTE: Initialized in __init__ as instance variable to avoid
+    # shared state between processor instances (was causing cumulative timing bug)
+    # time_markers: Dict = {}  # REMOVED - see __init__
 
     # Run history settings (from RunHistoryMixin)
     PHASE: str = 'phase_4_precompute'
@@ -100,6 +101,10 @@ class PrecomputeProcessorBase(RunHistoryMixin):
         self.validated_data = {}
         self.transformed_data = {}
         self.stats = {}
+
+        # Time tracking - MUST be instance variable to avoid shared state between processors
+        # This was causing cumulative timing bug in backfills where times increased across dates
+        self.time_markers = {}
 
         # Source metadata tracking
         self.source_metadata = {}
