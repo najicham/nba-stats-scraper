@@ -247,7 +247,8 @@ docs/
 |--------------------|--------------|
 | Active project/task tracking | `08-projects/current/{project-name}/` |
 | Session handoff notes | `09-handoff/sessions/` |
-| Backfill runbooks | `02-operations/runbooks/backfill/` |
+| Backfill documentation | `02-operations/backfill/` |
+| Backfill runbooks | `02-operations/backfill/runbooks/` |
 | Operational procedures | `02-operations/` |
 | Phase-specific docs | `03-phases/phase{N}/` |
 | How-to guides | `05-development/guides/` |
@@ -298,9 +299,17 @@ docs/
 - `docs/03-phases/phase1-orchestration/troubleshooting.md` - Common issues & fixes
 
 **Operations:**
-- `docs/02-operations/backfill-guide.md` - Backfill procedures
 - `docs/02-operations/troubleshooting-matrix.md` - Cross-phase troubleshooting
 - `docs/02-operations/runbooks/` - Step-by-step runbooks
+
+**Backfill Operations:**
+- `docs/02-operations/backfill/README.md` - **START HERE** for backfill work
+- `docs/02-operations/backfill/backfill-guide.md` - Comprehensive backfill procedures
+- `docs/02-operations/backfill/data-gap-prevention-and-recovery.md` - Gap detection and recovery
+- `docs/02-operations/backfill/cascade-contamination-prevention.md` - Preventing cascade failures
+- `docs/02-operations/backfill/PHASE4-PERFORMANCE-ANALYSIS.md` - Performance benchmarks
+- `docs/02-operations/backfill/runbooks/` - Phase-specific runbooks
+- `docs/08-projects/current/backfill/` - Active project tracking (27+ files)
 
 **Phase 5 Predictions:**
 - `docs/03-phases/phase5-predictions/README.md` - Overview
@@ -322,8 +331,12 @@ docs/
 
 ---
 
-*Last Updated: 2025-11-25 08:45 PM PST*
+*Last Updated: 2025-12-08 11:50 AM PST*
 *Recent Changes:*
+- **2025-12-08**: Consolidated backfill documentation into `docs/02-operations/backfill/`
+  - Added backfill navigation hub with key references
+  - Moved data-gap-prevention, cascade-contamination, and performance analysis docs
+  - Added "Backfill Operations" section to project instructions
 - **2025-11-25**: Major documentation reorganization - 23 directories consolidated to 10 numbered directories
   - New structure: `00-start-here/` through `09-handoff/` + `archive/`
   - All phases consolidated in `03-phases/phase{1-6}/`
