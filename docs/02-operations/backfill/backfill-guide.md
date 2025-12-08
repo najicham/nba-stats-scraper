@@ -248,69 +248,6 @@ PHASE_45_END=$TARGET_END
 
 ---
 
-### Tool: Backfill Range Calculator
-
-```bash
-#!/bin/bash
-# bin/backfill/calculate_range.sh
-
-set -e
-
-TARGET_START=$1
-TARGET_END=$2
-LOOKBACK_DAYS=${3:-30}
-
-if [ -z "$TARGET_START" ] || [ -z "$TARGET_END" ]; then
-  echo "Usage: $0 <start_date> <end_date> [lookback_days]"
-  echo "Example: $0 2024-11-08 2024-11-14 30"
-  exit 1
-fi
-
-# Calculate Phase 2-3 range
-if [[ "$OSTYPE" == "darwin"* ]]; then
-  # macOS
-  PHASE_23_START=$(date -j -v-${LOOKBACK_DAYS}d -f "%Y-%m-%d" "$TARGET_START" "+%Y-%m-%d")
-else
-  # Linux
-  PHASE_23_START=$(date -d "$TARGET_START - $LOOKBACK_DAYS days" +%Y-%m-%d)
-fi
-
-PHASE_23_END=$TARGET_END
-PHASE_45_START=$TARGET_START
-PHASE_45_END=$TARGET_END
-
-echo "=============================================="
-echo "Backfill Range Calculator"
-echo "=============================================="
-echo "Target range:    $TARGET_START to $TARGET_END"
-echo ""
-echo "Phase 2-3 range: $PHASE_23_START to $PHASE_23_END"
-echo "  (includes $LOOKBACK_DAYS day lookback)"
-echo ""
-echo "Phase 4-5 range: $PHASE_45_START to $PHASE_45_END"
-echo "  (target range only)"
-echo "=============================================="
-echo ""
-echo "Export these variables:"
-echo "export PHASE_23_START=$PHASE_23_START"
-echo "export PHASE_23_END=$PHASE_23_END"
-echo "export PHASE_45_START=$PHASE_45_START"
-echo "export PHASE_45_END=$PHASE_45_END"
-```
-
-**Usage:**
-```bash
-./bin/backfill/calculate_range.sh 2024-11-08 2024-11-14
-
-# Output shows ranges, then copy exports:
-export PHASE_23_START=2024-10-09
-export PHASE_23_END=2024-11-14
-export PHASE_45_START=2024-11-08
-export PHASE_45_END=2024-11-14
-```
-
----
-
 ## ✅ Validation Before/After Each Phase
 
 > **Working Scripts:** The validation scripts below are the actual working tools.
@@ -374,162 +311,12 @@ export PHASE_45_END=2024-11-14
 
 ---
 
-### Legacy Validation Scripts (Reference Only)
-
-> **Note:** The following embedded scripts are **design references** that were never implemented.
-> Use the working scripts above instead.
-
-#### Script 1: Validate Single Phase
-
-```bash
-#!/bin/bash
-# bin/backfill/validate_phase.sh
-
-PHASE=$1
-START_DATE=$2
-END_DATE=$3
-
-case $PHASE in
-  2)
-    TABLE="nba_raw.nbac_gamebook_player_stats"
-    DATE_FIELD="game_date"
-    MIN_ROWS=400
-    ;;
-  3)
-    TABLE="nba_analytics.player_game_summary"
-    DATE_FIELD="game_date"
-    MIN_ROWS=400
-    ;;
-  4)
-    TABLE="nba_precompute.player_composite_factors"
-    DATE_FIELD="game_date"
-    MIN_ROWS=400
-    ;;
-  5)
-    TABLE="nba_predictions.ml_feature_store_v2"
-    DATE_FIELD="game_date"
-    MIN_ROWS=100
-    ;;
-  *)
-    echo "Unknown phase: $PHASE"
-    exit 1
-    ;;
-esac
-
-echo "Validating Phase $PHASE: $START_DATE to $END_DATE"
-
-bq query --use_legacy_sql=false --format=pretty "
-WITH date_range AS (
-  SELECT date
-  FROM UNNEST(GENERATE_DATE_ARRAY(DATE('$START_DATE'), DATE('$END_DATE'))) AS date
-),
-actual_data AS (
-  SELECT
-    $DATE_FIELD as date,
-    COUNT(*) as row_count
-  FROM \`nba-props-platform.$TABLE\`
-  WHERE $DATE_FIELD BETWEEN '$START_DATE' AND '$END_DATE'
-  GROUP BY $DATE_FIELD
-)
-
-SELECT
-  dr.date,
-  IFNULL(ad.row_count, 0) as row_count,
-  CASE
-    WHEN ad.row_count IS NULL THEN '❌ Missing'
-    WHEN ad.row_count < $MIN_ROWS THEN '⚠️ Low count'
-    ELSE '✅ OK'
-  END as status
-FROM date_range dr
-LEFT JOIN actual_data ad ON dr.date = ad.date
-ORDER BY dr.date;
-"
-
-# Check for failures
-FAILURES=$(bq query --use_legacy_sql=false --format=csv "..." | grep -c "❌")
-
-if [ $FAILURES -gt 0 ]; then
-  echo "❌ Validation FAILED: $FAILURES dates incomplete"
-  exit 1
-else
-  echo "✅ Validation PASSED: All dates complete"
-  exit 0
-fi
-```
-
----
-
-#### Script 2: Check Existing Data
-
-```bash
-#!/bin/bash
-# bin/backfill/check_existing.sh
-
-START_DATE=$1
-END_DATE=$2
-
-if [ -z "$START_DATE" ] || [ -z "$END_DATE" ]; then
-  echo "Usage: $0 <start_date> <end_date>"
-  exit 1
-fi
-
-echo "Checking existing data: $START_DATE to $END_DATE"
-echo ""
-
-bq query --use_legacy_sql=false --format=pretty "
-WITH date_range AS (
-  SELECT date
-  FROM UNNEST(GENERATE_DATE_ARRAY(DATE('$START_DATE'), DATE('$END_DATE'))) AS date
-),
-phase2_dates AS (
-  SELECT DISTINCT game_date FROM \`nba-props-platform.nba_raw.nbac_gamebook_player_stats\`
-  WHERE game_date BETWEEN '$START_DATE' AND '$END_DATE'
-),
-phase3_dates AS (
-  SELECT DISTINCT game_date FROM \`nba-props-platform.nba_analytics.player_game_summary\`
-  WHERE game_date BETWEEN '$START_DATE' AND '$END_DATE'
-),
-phase4_dates AS (
-  SELECT DISTINCT game_date FROM \`nba-props-platform.nba_precompute.player_composite_factors\`
-  WHERE game_date BETWEEN '$START_DATE' AND '$END_DATE'
-),
-phase5_dates AS (
-  SELECT DISTINCT game_date FROM \`nba-props-platform.nba_predictions.ml_feature_store_v2\`
-  WHERE game_date BETWEEN '$START_DATE' AND '$END_DATE'
-)
-
-SELECT
-  d.date,
-  CASE WHEN p2.game_date IS NOT NULL THEN '✅' ELSE '❌' END as phase2,
-  CASE WHEN p3.game_date IS NOT NULL THEN '✅' ELSE '❌' END as phase3,
-  CASE WHEN p4.game_date IS NOT NULL THEN '✅' ELSE '❌' END as phase4,
-  CASE WHEN p5.game_date IS NOT NULL THEN '✅' ELSE '❌' END as phase5,
-  CASE
-    WHEN p2.game_date IS NULL THEN '❌ Need Phase 2-5'
-    WHEN p3.game_date IS NULL THEN '⚠️ Need Phase 3-5'
-    WHEN p4.game_date IS NULL THEN '⚠️ Need Phase 4-5'
-    WHEN p5.game_date IS NULL THEN '⚠️ Need Phase 5 only'
-    ELSE '✅ Complete'
-  END as status
-FROM date_range d
-LEFT JOIN phase2_dates p2 ON d.date = p2.game_date
-LEFT JOIN phase3_dates p3 ON d.date = p3.game_date
-LEFT JOIN phase4_dates p4 ON d.date = p4.game_date
-LEFT JOIN phase5_dates p5 ON d.date = p5.game_date
-ORDER BY d.date;
-"
-```
-
-**Usage:**
-```bash
-./bin/backfill/check_existing.sh 2024-10-09 2024-11-14
-
-# Shows what exists and what's missing for each date
-```
-
----
-
 ## 🎯 Complete Backfill Examples
+
+> **Note:** These examples show the **workflow and concepts**. Some commands reference
+> scripts that are pseudocode for illustration. For actual working commands, see:
+> - [README.md - Validation Workflow](./README.md#validation-workflow)
+> - [Quick Reference](#common-commands-quick-reference) at the end of this doc
 
 ### Example 1: Backfill Nov 8-14 (Gap Fill)
 
@@ -1231,96 +1018,23 @@ done < failed_dates.txt
 
 ## 📊 Monitoring Backfill Progress
 
-### Real-Time Progress Tracking
+Use these tools to monitor backfill progress:
 
 ```bash
-#!/bin/bash
-# bin/backfill/monitor_progress.sh
+# Check coverage at any point
+.venv/bin/python scripts/validate_backfill_coverage.py \
+    --start-date 2024-11-08 --end-date 2024-11-14 --details
 
-START_DATE=$1
-END_DATE=$2
-CHECK_INTERVAL=${3:-60}  # Check every 60 seconds
-
-while true; do
-  clear
-  echo "====================================="
-  echo "Backfill Progress Monitor"
-  echo "====================================="
-  echo "Range: $START_DATE to $END_DATE"
-  echo "Time: $(date)"
-  echo ""
-
-  # Get counts
-  TOTAL_DAYS=$(( ( $(date -d $END_DATE +%s) - $(date -d $START_DATE +%s) ) / 86400 + 1 ))
-
-  PHASE2_COMPLETE=$(bq query --use_legacy_sql=false --format=csv "
-    SELECT COUNT(DISTINCT game_date)
-    FROM \`nba-props-platform.nba_raw.nbac_gamebook_player_stats\`
-    WHERE game_date BETWEEN '$START_DATE' AND '$END_DATE'
-  " | tail -n 1)
-
-  PHASE3_COMPLETE=$(bq query --use_legacy_sql=false --format=csv "
-    SELECT COUNT(DISTINCT game_date)
-    FROM \`nba-props-platform.nba_analytics.player_game_summary\`
-    WHERE game_date BETWEEN '$START_DATE' AND '$END_DATE'
-  " | tail -n 1)
-
-  PHASE4_COMPLETE=$(bq query --use_legacy_sql=false --format=csv "
-    SELECT COUNT(DISTINCT game_date)
-    FROM \`nba-props-platform.nba_precompute.player_composite_factors\`
-    WHERE game_date BETWEEN '$START_DATE' AND '$END_DATE'
-  " | tail -n 1)
-
-  # Calculate percentages
-  PHASE2_PCT=$(( PHASE2_COMPLETE * 100 / TOTAL_DAYS ))
-  PHASE3_PCT=$(( PHASE3_COMPLETE * 100 / TOTAL_DAYS ))
-  PHASE4_PCT=$(( PHASE4_COMPLETE * 100 / TOTAL_DAYS ))
-
-  echo "Phase 2: $PHASE2_COMPLETE / $TOTAL_DAYS ($PHASE2_PCT%)"
-  echo "Phase 3: $PHASE3_COMPLETE / $TOTAL_DAYS ($PHASE3_PCT%)"
-  echo "Phase 4: $PHASE4_COMPLETE / $TOTAL_DAYS ($PHASE4_PCT%)"
-  echo ""
-
-  # Progress bars
-  draw_progress_bar() {
-    local pct=$1
-    local width=50
-    local filled=$(( pct * width / 100 ))
-    printf "["
-    printf "%${filled}s" | tr ' ' '='
-    printf "%$(( width - filled ))s" | tr ' ' '-'
-    printf "] %3d%%\n" $pct
-  }
-
-  echo -n "Phase 2: "; draw_progress_bar $PHASE2_PCT
-  echo -n "Phase 3: "; draw_progress_bar $PHASE3_PCT
-  echo -n "Phase 4: "; draw_progress_bar $PHASE4_PCT
-
-  echo ""
-  echo "Next update in $CHECK_INTERVAL seconds... (Ctrl+C to stop)"
-
-  sleep $CHECK_INTERVAL
-done
-```
-
-**Usage:**
-```bash
-./bin/backfill/monitor_progress.sh 2024-10-09 2024-11-14 30
-
-# Output refreshes every 30 seconds:
-# =====================================
-# Backfill Progress Monitor
-# =====================================
-# Range: 2024-10-09 to 2024-11-14
-# Time: Mon Nov 18 10:45:32 UTC 2024
-#
-# Phase 2: 35 / 37 (94%)
-# Phase 3: 30 / 37 (81%)
-# Phase 4: 10 / 37 (27%)
-#
-# Phase 2: [===============================================---] 94%
-# Phase 3: [==========================================--------] 81%
-# Phase 4: [=============-------------------------------------] 27%
+# Quick phase coverage query
+bq query --use_legacy_sql=false '
+SELECT
+  "Phase3" as phase, COUNT(DISTINCT game_date) as dates
+FROM nba_analytics.player_game_summary
+WHERE game_date BETWEEN "2024-11-08" AND "2024-11-14"
+UNION ALL
+SELECT "Phase4", COUNT(DISTINCT game_date)
+FROM nba_precompute.player_composite_factors
+WHERE game_date BETWEEN "2024-11-08" AND "2024-11-14"'
 ```
 
 ---
@@ -1383,29 +1097,29 @@ After backfill:
 ### Common Commands Quick Reference
 
 ```bash
-# Calculate ranges
-./bin/backfill/calculate_range.sh <start> <end> [lookback_days]
+# Pre-flight check
+.venv/bin/python bin/backfill/preflight_check.py \
+    --start-date <start> --end-date <end>
 
-# Check existing data
-./bin/backfill/check_existing.sh <start> <end>
+# Verify Phase 3 ready for Phase 4
+.venv/bin/python bin/backfill/verify_phase3_for_phase4.py \
+    --start-date <start> --end-date <end>
 
-# Validate phase
-./bin/backfill/validate_phase.sh <phase_num> <start> <end>
+# Run Phase 4 backfill
+.venv/bin/python backfill_jobs/precompute/player_composite_factors/player_composite_factors_precompute_backfill.py \
+    --start-date <start> --end-date <end>
 
-# Monitor progress
-./bin/backfill/monitor_progress.sh <start> <end> [interval_sec]
+# Validate coverage after backfill
+.venv/bin/python scripts/validate_backfill_coverage.py \
+    --start-date <start> --end-date <end> --details
 
-# Run Cloud Run job
-gcloud run jobs execute <job-name> \
-  --region us-central1 \
-  --set-env-vars "START_DATE=<start>,END_DATE=<end>"
-
-# Check job logs
-gcloud run jobs logs read <job-name> --region us-central1 --limit=100
+# Check for cascade contamination
+.venv/bin/python scripts/validate_cascade_contamination.py \
+    --start-date <start> --end-date <end> --strict
 ```
 
 ---
 
 **Created:** 2025-11-18
-**Next Review:** After first major backfill operation
-**Status:** ✅ Ready to use
+**Last Updated:** 2025-12-08
+**Status:** Current

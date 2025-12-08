@@ -340,7 +340,8 @@ Verify these optimizations are active:
 
 ## Related Documentation
 
+- [quick-start.md](./quick-start.md) - Run your first backfill
 - [backfill-guide.md](./backfill-guide.md) - Overall backfill procedures
-- [data-gap-prevention-and-recovery.md](./data-gap-prevention-and-recovery.md) - Gap handling
-- [PHASE4-PERFORMANCE-ANALYSIS.md](./PHASE4-PERFORMANCE-ANALYSIS.md) - Performance benchmarks
+- [data-integrity-guide.md](./data-integrity-guide.md) - Gap handling and cascade prevention
+- [phase4-performance-analysis.md](./phase4-performance-analysis.md) - Performance benchmarks
 - [runbooks/phase4-precompute-backfill.md](./runbooks/phase4-precompute-backfill.md) - Phase 4 runbook

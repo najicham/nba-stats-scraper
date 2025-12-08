@@ -1,9 +1,10 @@
-# Phase 4 Backfill: Data Integrity & Prevention Guide
+# Phase 4 Dependencies & Architecture
 
-> **Created:** 2025-12-07 (Session 73)
-> **Updated:** 2025-12-08 - Added lightweight existence check implementation
-> **Purpose:** Comprehensive guide for preventing data integrity issues during Phase 4 backfills
-> **Status:** Active - Use this for all future backfill operations
+> **Created:** 2025-12-07 | **Updated:** 2025-12-08 | **Status:** Active
+>
+> **Purpose:** Visual dependency diagrams, issue categories, code change tracking for Phase 4
+>
+> **See Also:** [../data-integrity-guide.md](../data-integrity-guide.md) - General gap prevention and recovery
 >
 > **Implementation Status:**
 > - ✅ Lightweight existence check: Committed (21132a7)

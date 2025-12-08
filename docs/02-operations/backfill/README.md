@@ -1,16 +1,67 @@
 # Backfill Documentation Hub
 
-**File:** `docs/02-operations/backfill/README.md`
-**Created:** 2025-12-08 11:45 AM PST
-**Last Updated:** 2025-12-08 02:15 PM PST
-**Purpose:** Navigation hub for all backfill-related documentation
-**Status:** Current
+**Last Updated:** 2025-12-08 | **Status:** Current
+
+---
+
+## Contents
+
+1. [Current Backfill Strategy](#current-backfill-strategy) - Test small, validate, iterate
+2. [Quick Start](#quick-start) - Links to guides
+3. [Documentation Index](#documentation-index) - All backfill docs
+4. [Validation Workflow](#validation-workflow) - Pre/during/post validation
+5. [Gap Types & Failure Categories](#gap-types--failure-categories) - Understanding failures
+6. [Backfill Mode vs Daily Orchestration](#backfill-mode-vs-daily-orchestration) - Key differences
+7. [Key Concepts](#key-concepts) - Phase sequencing, abbreviations
+8. [Common Commands](#common-commands) - Copy-paste reference
+9. [Performance Expectations](#performance-expectations-phase-4) - Timing benchmarks
+10. [Troubleshooting](#troubleshooting) - Fixing gaps, common issues
+
+---
+
+## Current Backfill Strategy
+
+Our approach is **test small, validate, iterate**:
+
+1. **Test on 1-3 dates first** - Run a processor on a single date or small range
+2. **Validate efficiency** - Check it runs in expected time, no excessive queries
+3. **Check for errors** - Use preflight scripts, validation scripts, error tables
+4. **Verify no data loss** - Ensure all expected records are created
+5. **Iterate and optimize** - Fix issues, optimize queries, improve observability
+6. **Scale up carefully** - Only run larger batches after small tests pass
+
+### Error Detection Tools
+
+```bash
+# Pre-flight check before any backfill
+.venv/bin/python bin/backfill/preflight_check.py \
+    --start-date 2021-11-15 --end-date 2021-11-15 --verbose
+
+# Check name registry errors
+bq query --use_legacy_sql=false '
+SELECT * FROM nba_reference.registry_errors
+WHERE created_at > TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 1 DAY)
+ORDER BY created_at DESC LIMIT 20'
+
+# Check processor failures
+bq query --use_legacy_sql=false '
+SELECT processor_name, data_date, status, error_message
+FROM nba_reference.processor_run_history
+WHERE status = "failed" AND started_at > TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 1 DAY)
+ORDER BY started_at DESC'
+
+# Post-run validation
+.venv/bin/python scripts/validate_backfill_coverage.py \
+    --start-date 2021-11-15 --end-date 2021-11-15 --details
+```
 
 ---
 
 ## Quick Start
 
-**Planning a backfill?** Start with [backfill-guide.md](./backfill-guide.md)
+**First time running a backfill?** Start with [quick-start.md](./quick-start.md)
+
+**Planning a larger backfill?** See [backfill-guide.md](./backfill-guide.md)
 
 **Understanding backfill mode?** See [backfill-mode-reference.md](./backfill-mode-reference.md)
 
@@ -26,17 +77,18 @@
 
 | Document | Purpose | When to Use |
 |----------|---------|-------------|
+| [quick-start.md](./quick-start.md) | Run your first backfill in 10 minutes | New to backfills |
 | [backfill-guide.md](./backfill-guide.md) | Comprehensive backfill procedures | Planning any backfill operation |
 | [backfill-mode-reference.md](./backfill-mode-reference.md) | All backfill mode behaviors (13 optimizations) | Understanding what changes in backfill mode |
 | [data-integrity-guide.md](./data-integrity-guide.md) | Gap detection, prevention, cascade contamination, recovery | Investigating missing/bad data |
-| [PHASE4-PERFORMANCE-ANALYSIS.md](./PHASE4-PERFORMANCE-ANALYSIS.md) | Performance benchmarks, optimization details | Tuning backfill performance |
+| [phase4-performance-analysis.md](./phase4-performance-analysis.md) | Performance benchmarks, optimization details | Tuning backfill performance |
 
 ### Runbooks
 
 | Document | Purpose |
 |----------|---------|
 | [runbooks/phase4-precompute-backfill.md](./runbooks/phase4-precompute-backfill.md) | Step-by-step Phase 4 backfill execution |
-| [runbooks/phase4-data-integrity-guide.md](./runbooks/phase4-data-integrity-guide.md) | Phase 4 dependency chain, issue categories |
+| [runbooks/phase4-dependencies.md](./runbooks/phase4-dependencies.md) | Phase 4 dependency chain, issue categories |
 | [runbooks/name-resolution.md](./runbooks/name-resolution.md) | Player name resolution backfill |
 | [runbooks/nbac-team-boxscore.md](./runbooks/nbac-team-boxscore.md) | NBAC team boxscore backfill |
 
@@ -132,20 +184,49 @@ GROUP BY 1'
 
 ---
 
+## Backfill Mode vs Daily Orchestration
+
+Understanding the difference is critical - daily mode has safeguards that backfill mode skips for performance.
+
+### What Daily Orchestration Does (Extra Checks)
+
+Daily orchestration runs automatically via Cloud Scheduler and includes these safeguards:
+
+| Check | What It Does | Time Cost | Why It Matters |
+|-------|--------------|-----------|----------------|
+| **Full dependency validation** | Queries BQ to verify all upstream tables have fresh data for the date | 60-120s | Prevents processing with stale/missing upstream |
+| **Completeness per entity** | For each player, checks L5/L10/L7d/L14d windows are complete | 600s+ | Ensures rolling averages are accurate |
+| **Freshness validation** | Checks upstream data was processed within expected window | 10-30s | Catches stuck pipelines |
+| **Downstream auto-trigger** | Publishes Pub/Sub message to trigger next phase | N/A | Maintains pipeline flow |
+| **Alert on failure** | Sends Slack/email alerts for failures | N/A | Ensures visibility |
+| **Circuit breaker** | Tracks retry counts, stops runaway retries | 2-3s/entity | Prevents resource waste |
+
+### What Backfill Mode Skips
+
+Backfill mode (`backfill_mode=True`) is aggressive for throughput:
+
+```
+Daily:    Full validation → Process → Full validation → Alert → Trigger downstream
+Backfill: Quick check → Process → Done (no alerts, no triggers)
+```
+
+**Key implication:** In backfill mode, YOU are responsible for validation. The system trusts you.
+
+### When to Use Which
+
+| Scenario | Mode | Why |
+|----------|------|-----|
+| Today's data | Daily | Need full validation, alerts |
+| Yesterday's data (catch-up) | Daily | Still recent, alerts useful |
+| Historical (>7 days old) | Backfill | Performance matters, you'll validate manually |
+| Re-processing after fix | Backfill | Data already validated once |
+| Testing/development | Backfill | Don't want alerts |
+
+**Full technical details:** [backfill-mode-reference.md](./backfill-mode-reference.md)
+
+---
+
 ## Key Concepts
-
-### Backfill Mode vs Daily Mode
-
-| Aspect | Daily Mode | Backfill Mode |
-|--------|-----------|---------------|
-| Dependency checks | Full validation (60s+) | Quick existence check (1-2s) |
-| Completeness checks | Full per-entity (600s) | Skipped |
-| Notifications | Alerts sent | Suppressed |
-| Thresholds | Strict (100 players) | Relaxed (20 players) |
-| Downstream trigger | Auto-triggers next phase | Suppressed |
-| Performance | Prioritizes accuracy | Prioritizes throughput |
-
-**Full details:** [backfill-mode-reference.md](./backfill-mode-reference.md)
 
 ### Phase Sequencing (Critical!)
 
@@ -240,7 +321,9 @@ TDZA + PSZA (parallel) → PCF → PDC → MLFS
 
 ---
 
-## Troubleshooting Quick Reference
+## Troubleshooting
+
+### Quick Reference
 
 | Symptom | Likely Cause | Solution |
 |---------|--------------|----------|
@@ -250,11 +333,116 @@ TDZA + PSZA (parallel) → PCF → PDC → MLFS
 | Slow performance | Backfill mode not active | Verify `backfill_mode=True` |
 | Missing dates | Batch boundary gap | Run missing dates explicitly |
 
+### Dealing with Gaps
+
+#### Step 1: Identify the Gap
+
+```bash
+# Find missing dates in Phase 4
+bq query --use_legacy_sql=false '
+WITH expected AS (
+  SELECT date FROM UNNEST(GENERATE_DATE_ARRAY("2021-11-01", "2021-12-31")) AS date
+),
+actual AS (
+  SELECT DISTINCT game_date FROM nba_precompute.player_composite_factors
+  WHERE game_date BETWEEN "2021-11-01" AND "2021-12-31"
+)
+SELECT e.date as missing_date
+FROM expected e
+LEFT JOIN actual a ON e.date = a.game_date
+WHERE a.game_date IS NULL
+ORDER BY 1'
+
+# Or use validation script
+.venv/bin/python scripts/validate_backfill_coverage.py \
+    --start-date 2021-11-01 --end-date 2021-12-31 --show-gaps
+```
+
+#### Step 2: Determine Gap Type
+
+| Gap Type | How to Identify | Root Cause |
+|----------|-----------------|------------|
+| **Missing entirely** | Date not in table at all | Backfill never ran |
+| **Partial records** | Date exists but fewer records than expected | Some players failed |
+| **Cascade contamination** | Records exist but critical fields are NULL/0 | Upstream gap propagated |
+
+```bash
+# Check if it's cascade contamination
+.venv/bin/python scripts/validate_cascade_contamination.py \
+    --start-date 2021-12-04 --end-date 2021-12-04
+```
+
+#### Step 3: Fix the Gap
+
+**For missing dates (never ran):**
+```bash
+# Just run the backfill for missing dates
+.venv/bin/python backfill_jobs/precompute/player_composite_factors/player_composite_factors_precompute_backfill.py \
+    --start-date 2021-12-04 --end-date 2021-12-04
+```
+
+**For cascade contamination (upstream issue):**
+```bash
+# 1. Find the upstream source of the problem
+bq query --use_legacy_sql=false '
+SELECT game_date, COUNT(*) as total,
+       COUNTIF(opp_paint_attempts > 0) as valid
+FROM nba_analytics.team_defense_game_summary
+WHERE game_date = "2021-12-04"
+GROUP BY 1'
+
+# 2. Fix upstream FIRST (example: TDZA)
+.venv/bin/python backfill_jobs/precompute/team_defense_zone_analysis/team_defense_zone_analysis_precompute_backfill.py \
+    --start-date 2021-12-04 --end-date 2021-12-04
+
+# 3. Then reprocess downstream in order
+.venv/bin/python backfill_jobs/precompute/player_composite_factors/player_composite_factors_precompute_backfill.py \
+    --start-date 2021-12-04 --end-date 2021-12-04
+```
+
+**For partial records (some players failed):**
+```bash
+# Check which players failed
+bq query --use_legacy_sql=false '
+SELECT player_id, failure_reason, COUNT(*) as failures
+FROM nba_precompute.precompute_failures
+WHERE data_date = "2021-12-04"
+  AND processor_name = "player_composite_factors"
+GROUP BY 1, 2
+ORDER BY 3 DESC'
+
+# Re-run the backfill (will retry failed players)
+.venv/bin/python backfill_jobs/precompute/player_composite_factors/player_composite_factors_precompute_backfill.py \
+    --start-date 2021-12-04 --end-date 2021-12-04
+```
+
+#### Step 4: Validate the Fix
+
+```bash
+# Confirm gap is fixed
+.venv/bin/python scripts/validate_backfill_coverage.py \
+    --start-date 2021-12-04 --end-date 2021-12-04 --details
+
+# Confirm no cascade contamination
+.venv/bin/python scripts/validate_cascade_contamination.py \
+    --start-date 2021-12-04 --end-date 2021-12-04 --strict
+```
+
+### Common Gap Scenarios
+
+| Scenario | Cause | Fix |
+|----------|-------|-----|
+| Gap at batch boundary | Backfill stopped mid-range | Re-run for missing dates |
+| All zeros in opponent_strength | TDZA missing for that date | Fix TDZA → reprocess PCF |
+| Low player count (~50 vs ~300) | Early season bootstrap | Expected, not a bug |
+| Random scattered gaps | Transient failures | Re-run those specific dates |
+
 ---
 
 ## Related Documentation
 
-- **Project tracking:** `docs/08-projects/current/backfill/` (27+ files)
-- **Session handoffs:** `docs/09-handoff/` (lessons learned from sessions 62-76)
-- **Scripts:** `bin/backfill/` (execution scripts)
-- **Validation:** `scripts/validate_*.py` (validation tools)
+- **Scripts:** `bin/backfill/` - Preflight, verification, backfill execution
+- **Validation:** `scripts/validate_*.py` - Coverage and quality checks
+- **Error tables:** `nba_reference.processor_run_history`, `nba_reference.registry_errors`
+- **Archived project docs:** `docs/08-projects/completed/backfill-2025-11-to-12/` - Historical reference
+- **Session handoffs:** `docs/09-handoff/` - Session-by-session notes
