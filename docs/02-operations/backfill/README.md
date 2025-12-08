@@ -2,7 +2,7 @@
 
 **File:** `docs/02-operations/backfill/README.md`
 **Created:** 2025-12-08 11:45 AM PST
-**Last Updated:** 2025-12-08 12:45 PM PST
+**Last Updated:** 2025-12-08 02:15 PM PST
 **Purpose:** Navigation hub for all backfill-related documentation
 **Status:** Current
 
@@ -14,7 +14,7 @@
 
 **Understanding backfill mode?** See [backfill-mode-reference.md](./backfill-mode-reference.md)
 
-**Investigating data issues?** See [data-gap-prevention-and-recovery.md](./data-gap-prevention-and-recovery.md)
+**Investigating data issues?** See [data-integrity-guide.md](./data-integrity-guide.md)
 
 **Running Phase 4?** Use [runbooks/phase4-precompute-backfill.md](./runbooks/phase4-precompute-backfill.md)
 
@@ -28,8 +28,7 @@
 |----------|---------|-------------|
 | [backfill-guide.md](./backfill-guide.md) | Comprehensive backfill procedures | Planning any backfill operation |
 | [backfill-mode-reference.md](./backfill-mode-reference.md) | All backfill mode behaviors (13 optimizations) | Understanding what changes in backfill mode |
-| [data-gap-prevention-and-recovery.md](./data-gap-prevention-and-recovery.md) | Gap detection, prevention, recovery | Investigating missing/bad data |
-| [cascade-contamination-prevention.md](./cascade-contamination-prevention.md) | Cascade detection, 3-layer defense | Preventing upstream gaps from propagating |
+| [data-integrity-guide.md](./data-integrity-guide.md) | Gap detection, prevention, cascade contamination, recovery | Investigating missing/bad data |
 | [PHASE4-PERFORMANCE-ANALYSIS.md](./PHASE4-PERFORMANCE-ANALYSIS.md) | Performance benchmarks, optimization details | Tuning backfill performance |
 
 ### Runbooks
