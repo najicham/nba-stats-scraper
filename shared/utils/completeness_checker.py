@@ -16,6 +16,8 @@ from datetime import date, timedelta, datetime
 from typing import List, Dict, Optional
 import logging
 
+from shared.utils.player_name_normalizer import normalize_name_for_lookup
+
 logger = logging.getLogger(__name__)
 
 
@@ -918,5 +920,622 @@ class CompletenessChecker:
             f"Fast daily check: {found_count}/{len(entity_ids)} entities "
             f"have data on {target_date}"
         )
+
+        return results
+
+    def check_raw_boxscore_for_player(
+        self,
+        player_lookup: str,
+        game_date: date
+    ) -> bool:
+        """
+        Check if a player appears in raw box score data for a given date.
+
+        This determines if the player actually played (and we're missing data)
+        vs the player didn't play (DNP - expected).
+
+        Used by classify_failure() to distinguish between:
+        - DATA_GAP: Player in raw data but missing from analytics (correctable)
+        - PLAYER_DNP: Player not in raw data (expected, not correctable)
+
+        Args:
+            player_lookup: Player lookup key (e.g., 'lebron_james' or 'lebronjames')
+                          Auto-normalized to BDL format (no underscores)
+            game_date: Date to check
+
+        Returns:
+            True if player appears in raw box score for that date, False otherwise
+        """
+        from google.cloud import bigquery
+
+        # Normalize player_lookup to BDL format (removes underscores, spaces, etc.)
+        normalized_lookup = normalize_name_for_lookup(player_lookup)
+
+        # Use bdl_player_boxscores which has player_lookup directly
+        query = f"""
+        SELECT COUNT(*) > 0 as player_in_game
+        FROM `{self.project_id}.nba_raw.bdl_player_boxscores`
+        WHERE game_date = @game_date
+          AND player_lookup = @player_lookup
+        """
+
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("player_lookup", "STRING", normalized_lookup),
+                bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+            ]
+        )
+
+        try:
+            result = self.bq_client.query(query, job_config=job_config).result()
+            row = next(iter(result), None)
+            return row.player_in_game if row else False
+        except Exception as e:
+            logger.warning(f"Error checking raw boxscore for {player_lookup} on {game_date}: {e}")
+            return False
+
+    def check_raw_boxscore_batch(
+        self,
+        player_lookups: List[str],
+        game_dates: List[date]
+    ) -> Dict[str, List[date]]:
+        """
+        Batch check which players appear in raw box scores for given dates.
+
+        More efficient than calling check_raw_boxscore_for_player() multiple times.
+
+        Args:
+            player_lookups: List of player lookup keys (any format, will be normalized)
+            game_dates: List of dates to check
+
+        Returns:
+            Dict mapping player_lookup (normalized) to list of dates they appear in raw data
+            e.g., {'lebronjames': [date(2021,12,25), date(2021,12,28)]}
+        """
+        from google.cloud import bigquery
+
+        if not player_lookups or not game_dates:
+            return {}
+
+        # Normalize all player lookups to BDL format
+        normalized_lookups = [normalize_name_for_lookup(p) for p in player_lookups]
+        # Create mapping from normalized back to original
+        norm_to_original = {normalize_name_for_lookup(p): p for p in player_lookups}
+
+        # Use bdl_player_boxscores which has player_lookup directly
+        query = f"""
+        SELECT
+          player_lookup,
+          game_date
+        FROM `{self.project_id}.nba_raw.bdl_player_boxscores`
+        WHERE player_lookup IN UNNEST(@player_lookups)
+          AND game_date IN UNNEST(@game_dates)
+        """
+
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ArrayQueryParameter("player_lookups", "STRING", normalized_lookups),
+                bigquery.ArrayQueryParameter("game_dates", "DATE", game_dates),
+            ]
+        )
+
+        try:
+            result = self.bq_client.query(query, job_config=job_config).result()
+
+            # Return results keyed by normalized lookup (what BDL uses)
+            player_dates: Dict[str, List[date]] = {p: [] for p in normalized_lookups}
+            for row in result:
+                if row.player_lookup in player_dates:
+                    player_dates[row.player_lookup].append(row.game_date)
+
+            return player_dates
+        except Exception as e:
+            logger.warning(f"Error in batch raw boxscore check: {e}")
+            return {}
+
+    def classify_failure(
+        self,
+        player_lookup: str,
+        analysis_date: date,
+        expected_games: List[date],
+        actual_games: List[date],
+        check_raw_data: bool = True
+    ) -> dict:
+        """
+        Classify a completeness failure as DNP vs Data Gap.
+
+        This is the core function for enhanced failure tracking. It determines
+        WHY a player has missing data:
+
+        - PLAYER_DNP: Player didn't play in the game (expected, not correctable)
+        - DATA_GAP: Player played but data is missing (unexpected, correctable)
+        - MIXED: Some DNP, some data gaps
+        - INSUFFICIENT_HISTORY: Not enough season history yet (early season)
+        - UNKNOWN: Could not determine
+
+        Args:
+            player_lookup: Player lookup key
+            analysis_date: Date being analyzed
+            expected_games: List of game dates player's team had scheduled
+            actual_games: List of game dates player has data for
+            check_raw_data: If True, query raw box scores to verify DNP vs gap
+
+        Returns:
+            {
+                'failure_type': 'PLAYER_DNP' | 'DATA_GAP' | 'MIXED' | 'INSUFFICIENT_HISTORY' | 'UNKNOWN',
+                'is_correctable': bool | None,
+                'expected_count': int,
+                'actual_count': int,
+                'missing_dates': List[date],
+                'dnp_dates': List[date],
+                'data_gap_dates': List[date],
+                'raw_data_checked': bool
+            }
+
+        Example:
+            >>> checker.classify_failure(
+            ...     player_lookup='zach_lavine',
+            ...     analysis_date=date(2021, 12, 31),
+            ...     expected_games=[date(2021,12,25), date(2021,12,28), date(2021,12,31)],
+            ...     actual_games=[date(2021,12,25)],
+            ... )
+            {
+                'failure_type': 'PLAYER_DNP',
+                'is_correctable': False,
+                'expected_count': 3,
+                'actual_count': 1,
+                'missing_dates': [date(2021,12,28), date(2021,12,31)],
+                'dnp_dates': [date(2021,12,28), date(2021,12,31)],
+                'data_gap_dates': [],
+                'raw_data_checked': True
+            }
+        """
+        expected_set = set(expected_games) if expected_games else set()
+        actual_set = set(actual_games) if actual_games else set()
+        missing_dates = sorted(expected_set - actual_set)
+
+        # Base result
+        result = {
+            'failure_type': 'UNKNOWN',
+            'is_correctable': None,
+            'expected_count': len(expected_set),
+            'actual_count': len(actual_set),
+            'missing_dates': missing_dates,
+            'dnp_dates': [],
+            'data_gap_dates': [],
+            'raw_data_checked': False
+        }
+
+        # No missing dates = not actually a failure
+        if not missing_dates:
+            result['failure_type'] = 'COMPLETE'
+            result['is_correctable'] = False
+            return result
+
+        # Check if this is early season (insufficient history expected)
+        if len(expected_set) < 5:
+            result['failure_type'] = 'INSUFFICIENT_HISTORY'
+            result['is_correctable'] = False
+            return result
+
+        # If not checking raw data, return with what we have
+        if not check_raw_data:
+            # Assume DNP for early season dates (conservative)
+            result['failure_type'] = 'UNKNOWN'
+            return result
+
+        # Check raw box scores to determine DNP vs Data Gap
+        result['raw_data_checked'] = True
+
+        dnp_dates = []
+        data_gap_dates = []
+
+        for missing_date in missing_dates:
+            raw_exists = self.check_raw_boxscore_for_player(player_lookup, missing_date)
+            if raw_exists:
+                # Player was in the game but analytics data missing = DATA_GAP
+                data_gap_dates.append(missing_date)
+            else:
+                # No raw data = Player didn't play = DNP
+                dnp_dates.append(missing_date)
+
+        result['dnp_dates'] = dnp_dates
+        result['data_gap_dates'] = data_gap_dates
+
+        # Classify overall failure
+        if data_gap_dates and not dnp_dates:
+            result['failure_type'] = 'DATA_GAP'
+            result['is_correctable'] = True
+        elif dnp_dates and not data_gap_dates:
+            result['failure_type'] = 'PLAYER_DNP'
+            result['is_correctable'] = False
+        elif data_gap_dates and dnp_dates:
+            result['failure_type'] = 'MIXED'
+            result['is_correctable'] = True  # Some can be fixed
+        else:
+            result['failure_type'] = 'UNKNOWN'
+
+        logger.debug(
+            f"Classified failure for {player_lookup}: {result['failure_type']} "
+            f"(DNP: {len(dnp_dates)}, gaps: {len(data_gap_dates)})"
+        )
+
+        return result
+
+    def classify_failures_batch(
+        self,
+        player_failures: Dict[str, dict],
+        check_raw_data: bool = True
+    ) -> Dict[str, dict]:
+        """
+        Batch classify multiple player failures efficiently.
+
+        More efficient than calling classify_failure() for each player because
+        it batches the raw box score queries.
+
+        Args:
+            player_failures: Dict mapping player_lookup to failure info:
+                {
+                    'lebron_james': {
+                        'analysis_date': date(2021, 12, 31),
+                        'expected_games': [date(...), ...],
+                        'actual_games': [date(...), ...]
+                    },
+                    ...
+                }
+            check_raw_data: If True, query raw box scores
+
+        Returns:
+            Dict mapping player_lookup to classification result
+        """
+        results = {}
+
+        # First pass: identify all players/dates that need raw data checks
+        all_missing_dates = set()
+        players_with_missing = []
+
+        for player_lookup, failure_info in player_failures.items():
+            expected = set(failure_info.get('expected_games', []))
+            actual = set(failure_info.get('actual_games', []))
+            missing = expected - actual
+
+            if missing:
+                players_with_missing.append(player_lookup)
+                all_missing_dates.update(missing)
+
+        # Batch query raw data if needed
+        raw_data_lookup = {}
+        if check_raw_data and players_with_missing and all_missing_dates:
+            raw_data_lookup = self.check_raw_boxscore_batch(
+                players_with_missing,
+                list(all_missing_dates)
+            )
+
+        # Second pass: classify each failure
+        for player_lookup, failure_info in player_failures.items():
+            expected = failure_info.get('expected_games', [])
+            actual = failure_info.get('actual_games', [])
+            expected_set = set(expected)
+            actual_set = set(actual)
+            missing_dates = sorted(expected_set - actual_set)
+
+            result = {
+                'failure_type': 'UNKNOWN',
+                'is_correctable': None,
+                'expected_count': len(expected_set),
+                'actual_count': len(actual_set),
+                'missing_dates': missing_dates,
+                'dnp_dates': [],
+                'data_gap_dates': [],
+                'raw_data_checked': check_raw_data
+            }
+
+            if not missing_dates:
+                result['failure_type'] = 'COMPLETE'
+                result['is_correctable'] = False
+            elif len(expected_set) < 5:
+                result['failure_type'] = 'INSUFFICIENT_HISTORY'
+                result['is_correctable'] = False
+            elif check_raw_data:
+                # Use batch results to classify (lookup by normalized name)
+                normalized_lookup = normalize_name_for_lookup(player_lookup)
+                player_raw_dates = set(raw_data_lookup.get(normalized_lookup, []))
+
+                dnp_dates = []
+                data_gap_dates = []
+
+                for missing_date in missing_dates:
+                    if missing_date in player_raw_dates:
+                        data_gap_dates.append(missing_date)
+                    else:
+                        dnp_dates.append(missing_date)
+
+                result['dnp_dates'] = dnp_dates
+                result['data_gap_dates'] = data_gap_dates
+
+                if data_gap_dates and not dnp_dates:
+                    result['failure_type'] = 'DATA_GAP'
+                    result['is_correctable'] = True
+                elif dnp_dates and not data_gap_dates:
+                    result['failure_type'] = 'PLAYER_DNP'
+                    result['is_correctable'] = False
+                elif data_gap_dates and dnp_dates:
+                    result['failure_type'] = 'MIXED'
+                    result['is_correctable'] = True
+
+            results[player_lookup] = result
+
+        logger.info(
+            f"Batch classified {len(results)} failures: "
+            f"DNP={sum(1 for r in results.values() if r['failure_type'] == 'PLAYER_DNP')}, "
+            f"GAP={sum(1 for r in results.values() if r['failure_type'] == 'DATA_GAP')}, "
+            f"MIXED={sum(1 for r in results.values() if r['failure_type'] == 'MIXED')}"
+        )
+
+        return results
+
+    def get_player_game_dates(
+        self,
+        player_lookup: str,
+        analysis_date: date,
+        lookback_days: int = 14
+    ) -> dict:
+        """
+        Get expected and actual game dates for a player in the lookback window.
+
+        This is the key method for enriching INCOMPLETE_DATA failures with
+        DNP vs DATA_GAP classification. It queries:
+        - actual_games: Dates player appears in raw box scores
+        - expected_games: Dates player's team had scheduled games (from schedule)
+
+        The difference allows classify_failure() to determine if missing data
+        is due to DNP (player didn't play) or a data gap (player played but missing).
+
+        Args:
+            player_lookup: Player lookup key (any format, auto-normalized)
+            analysis_date: Date being analyzed (end of lookback window)
+            lookback_days: Days to look back from analysis_date (default 14)
+
+        Returns:
+            {
+                'player_lookup': str,           # Normalized format
+                'team_abbr': str or None,       # Player's current team
+                'actual_games': List[date],     # Dates player in raw box scores
+                'expected_games': List[date],   # Dates team had scheduled games
+                'lookback_start': date,
+                'lookback_end': date,
+                'error': str or None            # Error message if query failed
+            }
+
+        Example:
+            >>> checker.get_player_game_dates('zach_lavine', date(2021, 12, 31), 14)
+            {
+                'player_lookup': 'zachlavine',
+                'team_abbr': 'CHI',
+                'actual_games': [date(2021,12,20), date(2021,12,22), date(2021,12,25)],
+                'expected_games': [date(2021,12,20), date(2021,12,22), date(2021,12,25),
+                                   date(2021,12,28), date(2021,12,31)],
+                'lookback_start': date(2021,12,17),
+                'lookback_end': date(2021,12,31),
+                'error': None
+            }
+        """
+        from google.cloud import bigquery
+
+        normalized_lookup = normalize_name_for_lookup(player_lookup)
+        lookback_start = analysis_date - timedelta(days=lookback_days)
+
+        result = {
+            'player_lookup': normalized_lookup,
+            'team_abbr': None,
+            'actual_games': [],
+            'expected_games': [],
+            'lookback_start': lookback_start,
+            'lookback_end': analysis_date,
+            'error': None
+        }
+
+        try:
+            # Step 1: Get player's games AND team from raw box scores in one query
+            actual_query = f"""
+            SELECT DISTINCT
+                game_date,
+                team_abbr
+            FROM `{self.project_id}.nba_raw.bdl_player_boxscores`
+            WHERE player_lookup = @player_lookup
+              AND game_date >= @lookback_start
+              AND game_date <= @analysis_date
+            ORDER BY game_date
+            """
+
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("player_lookup", "STRING", normalized_lookup),
+                    bigquery.ScalarQueryParameter("lookback_start", "DATE", lookback_start),
+                    bigquery.ScalarQueryParameter("analysis_date", "DATE", analysis_date),
+                ]
+            )
+
+            actual_result = self.bq_client.query(actual_query, job_config=job_config).result()
+
+            actual_games = []
+            team_abbr = None
+            for row in actual_result:
+                actual_games.append(row.game_date)
+                team_abbr = row.team_abbr  # Last team the player was on
+
+            result['actual_games'] = actual_games
+            result['team_abbr'] = team_abbr
+
+            # Step 2: If we have a team, get expected games from schedule
+            # Note: nbac_schedule is partitioned on game_date column
+            if team_abbr:
+                expected_query = f"""
+                SELECT DISTINCT game_date
+                FROM `{self.project_id}.nba_raw.nbac_schedule`
+                WHERE (home_team_tricode = @team_abbr OR away_team_tricode = @team_abbr)
+                  AND game_date >= @lookback_start
+                  AND game_date <= @analysis_date
+                  AND game_status_text = 'Final'
+                ORDER BY game_date
+                """
+
+                expected_config = bigquery.QueryJobConfig(
+                    query_parameters=[
+                        bigquery.ScalarQueryParameter("team_abbr", "STRING", team_abbr),
+                        bigquery.ScalarQueryParameter("lookback_start", "DATE", lookback_start),
+                        bigquery.ScalarQueryParameter("analysis_date", "DATE", analysis_date),
+                    ]
+                )
+
+                expected_result = self.bq_client.query(expected_query, job_config=expected_config).result()
+                result['expected_games'] = [row.game_date for row in expected_result]
+
+            logger.debug(
+                f"get_player_game_dates({normalized_lookup}, {analysis_date}): "
+                f"team={team_abbr}, actual={len(actual_games)}, "
+                f"expected={len(result['expected_games'])}"
+            )
+
+        except Exception as e:
+            logger.warning(f"Error getting game dates for {player_lookup}: {e}")
+            result['error'] = str(e)
+
+        return result
+
+    def get_player_game_dates_batch(
+        self,
+        player_lookups: List[str],
+        analysis_date: date,
+        lookback_days: int = 14
+    ) -> Dict[str, dict]:
+        """
+        Batch get expected and actual game dates for multiple players.
+
+        More efficient than calling get_player_game_dates() for each player.
+        Uses two queries (one for actuals, one for expected) instead of 2N.
+
+        Args:
+            player_lookups: List of player lookup keys
+            analysis_date: Date being analyzed
+            lookback_days: Days to look back
+
+        Returns:
+            Dict mapping player_lookup (normalized) to game dates info
+        """
+        from google.cloud import bigquery
+
+        if not player_lookups:
+            return {}
+
+        normalized_lookups = [normalize_name_for_lookup(p) for p in player_lookups]
+        lookback_start = analysis_date - timedelta(days=lookback_days)
+
+        # Initialize results
+        results = {
+            p: {
+                'player_lookup': p,
+                'team_abbr': None,
+                'actual_games': [],
+                'expected_games': [],
+                'lookback_start': lookback_start,
+                'lookback_end': analysis_date,
+                'error': None
+            }
+            for p in normalized_lookups
+        }
+
+        try:
+            # Step 1: Batch query for all players' actual games and teams
+            actual_query = f"""
+            SELECT
+                player_lookup,
+                game_date,
+                team_abbr
+            FROM `{self.project_id}.nba_raw.bdl_player_boxscores`
+            WHERE player_lookup IN UNNEST(@player_lookups)
+              AND game_date >= @lookback_start
+              AND game_date <= @analysis_date
+            ORDER BY player_lookup, game_date
+            """
+
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ArrayQueryParameter("player_lookups", "STRING", normalized_lookups),
+                    bigquery.ScalarQueryParameter("lookback_start", "DATE", lookback_start),
+                    bigquery.ScalarQueryParameter("analysis_date", "DATE", analysis_date),
+                ]
+            )
+
+            actual_result = self.bq_client.query(actual_query, job_config=job_config).result()
+
+            # Collect teams for each player
+            player_teams = {}
+            for row in actual_result:
+                player = row.player_lookup
+                if player in results:
+                    results[player]['actual_games'].append(row.game_date)
+                    player_teams[player] = row.team_abbr  # Last team
+
+            # Update team_abbr in results
+            for player, team in player_teams.items():
+                results[player]['team_abbr'] = team
+
+            # Step 2: Get unique teams and their scheduled games
+            # Note: nbac_schedule is partitioned on game_date column
+            unique_teams = list(set(player_teams.values()))
+            if unique_teams:
+                expected_query = f"""
+                SELECT
+                    home_team_tricode as team_abbr,
+                    game_date,
+                    'home' as venue
+                FROM `{self.project_id}.nba_raw.nbac_schedule`
+                WHERE home_team_tricode IN UNNEST(@teams)
+                  AND game_date >= @lookback_start
+                  AND game_date <= @analysis_date
+                  AND game_status_text = 'Final'
+                UNION ALL
+                SELECT
+                    away_team_tricode as team_abbr,
+                    game_date,
+                    'away' as venue
+                FROM `{self.project_id}.nba_raw.nbac_schedule`
+                WHERE away_team_tricode IN UNNEST(@teams)
+                  AND game_date >= @lookback_start
+                  AND game_date <= @analysis_date
+                  AND game_status_text = 'Final'
+                """
+
+                expected_config = bigquery.QueryJobConfig(
+                    query_parameters=[
+                        bigquery.ArrayQueryParameter("teams", "STRING", unique_teams),
+                        bigquery.ScalarQueryParameter("lookback_start", "DATE", lookback_start),
+                        bigquery.ScalarQueryParameter("analysis_date", "DATE", analysis_date),
+                    ]
+                )
+
+                expected_result = self.bq_client.query(expected_query, job_config=expected_config).result()
+
+                # Build team -> game dates mapping
+                team_games = {t: set() for t in unique_teams}
+                for row in expected_result:
+                    if row.team_abbr in team_games:
+                        team_games[row.team_abbr].add(row.game_date)
+
+                # Assign expected games to each player based on their team
+                for player, team in player_teams.items():
+                    if team in team_games:
+                        results[player]['expected_games'] = sorted(team_games[team])
+
+            logger.info(
+                f"Batch get_player_game_dates: {len(player_lookups)} players, "
+                f"{len(unique_teams)} teams"
+            )
+
+        except Exception as e:
+            logger.warning(f"Error in batch get_player_game_dates: {e}")
+            for player in results:
+                results[player]['error'] = str(e)
 
         return results

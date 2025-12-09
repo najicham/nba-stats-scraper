@@ -127,6 +127,14 @@ class AnalyticsProcessorBase(RunHistoryMixin):
         # Each entry: {player_lookup, game_date, team_abbr, season, game_id}
         self.registry_failures = []
 
+        # Entity failure tracking (v4.0 feature - for enhanced failure tracking)
+        # Similar to precompute_base.py but for Phase 3 processors
+        # Each entry: {entity_id, entity_type, category, reason, can_retry, ...}
+        self.failed_entities = []
+
+        # Completeness checker for DNP classification
+        self.completeness_checker = None
+
     @property
     def is_backfill_mode(self) -> bool:
         """Check if running in backfill mode (alerts suppressed)."""
@@ -591,9 +599,14 @@ class AnalyticsProcessorBase(RunHistoryMixin):
         """
         Cleanup hook that runs regardless of success/failure.
         Child classes override this for cleanup operations.
-        Base implementation does nothing.
+        Base implementation saves any recorded failures to BigQuery.
         """
-        pass
+        # Save any failures that were recorded during processing
+        try:
+            if self.failed_entities:
+                self.save_failures_to_bq()
+        except Exception as e:
+            logger.warning(f"Error saving failures in finalize(): {e}")
     
     def _get_current_step(self) -> str:
         """Helper to determine current processing step for error context."""
@@ -1755,6 +1768,141 @@ class AnalyticsProcessorBase(RunHistoryMixin):
 
         except Exception as e:
             logger.warning(f"Failed to save registry failure records: {e}")
+
+    def record_failure(
+        self,
+        entity_id: str,
+        entity_type: str,
+        category: str,
+        reason: str,
+        can_retry: bool = False,
+        **kwargs
+    ) -> None:
+        """
+        Record an entity failure for later saving to analytics_failures table.
+
+        Phase 3 equivalent of precompute_base.py's failure tracking.
+
+        Args:
+            entity_id: Player lookup, team abbr, or game_id
+            entity_type: 'PLAYER', 'TEAM', or 'GAME'
+            category: Failure category (e.g., 'MISSING_DATA', 'PROCESSING_ERROR')
+            reason: Human-readable description
+            can_retry: Whether reprocessing might succeed
+            **kwargs: Optional enhanced fields:
+                - failure_type: 'PLAYER_DNP', 'DATA_GAP', 'MIXED', 'UNKNOWN'
+                - is_correctable: bool
+                - expected_count: int
+                - actual_count: int
+                - missing_game_ids: List[str]
+
+        Example:
+            self.record_failure(
+                entity_id='zachlavine',
+                entity_type='PLAYER',
+                category='INCOMPLETE_DATA',
+                reason='Missing 2 games in lookback window',
+                can_retry=True,
+                failure_type='PLAYER_DNP',
+                is_correctable=False,
+                expected_count=5,
+                actual_count=3
+            )
+        """
+        failure = {
+            'entity_id': entity_id,
+            'entity_type': entity_type,
+            'category': category,
+            'reason': reason,
+            'can_retry': can_retry
+        }
+
+        # Add optional enhanced fields
+        for key in ['failure_type', 'is_correctable', 'expected_count', 'actual_count',
+                    'missing_game_ids', 'raw_data_checked']:
+            if key in kwargs:
+                failure[key] = kwargs[key]
+
+        self.failed_entities.append(failure)
+
+    def save_failures_to_bq(self) -> None:
+        """
+        Save failed entity records to analytics_failures BigQuery table.
+
+        This method is called at the end of processing (in finalize() or manually)
+        to persist any failures that were recorded during processing.
+
+        Schema matches nba_processing.analytics_failures:
+            - processor_name, run_id, analysis_date, entity_id, entity_type
+            - failure_category, failure_reason, can_retry
+            - failure_type, is_correctable (enhanced tracking)
+            - expected_record_count, actual_record_count, missing_game_ids
+            - resolution_status, created_at
+        """
+        if not self.failed_entities:
+            return
+
+        try:
+            table_id = f"{self.project_id}.nba_processing.analytics_failures"
+            analysis_date = self.opts.get('end_date') or self.opts.get('start_date')
+
+            # Convert analysis_date to string if needed
+            if hasattr(analysis_date, 'isoformat'):
+                date_str = analysis_date.isoformat()
+            else:
+                date_str = str(analysis_date)
+
+            failure_records = []
+            for failure in self.failed_entities:
+                # Build base record
+                record = {
+                    'processor_name': self.__class__.__name__,
+                    'run_id': self.run_id,
+                    'analysis_date': date_str,
+                    'entity_id': failure.get('entity_id', 'unknown'),
+                    'entity_type': failure.get('entity_type', 'UNKNOWN'),
+                    'failure_category': failure.get('category', 'UNKNOWN'),
+                    'failure_reason': str(failure.get('reason', ''))[:1000],
+                    'can_retry': failure.get('can_retry', False),
+                    'created_at': datetime.now(timezone.utc).isoformat()
+                }
+
+                # Add enhanced failure tracking fields (if provided)
+                if 'failure_type' in failure:
+                    record['failure_type'] = failure['failure_type']
+                if 'is_correctable' in failure:
+                    record['is_correctable'] = failure['is_correctable']
+                if 'expected_count' in failure:
+                    record['expected_record_count'] = failure['expected_count']
+                if 'actual_count' in failure:
+                    record['actual_record_count'] = failure['actual_count']
+                if 'missing_game_ids' in failure:
+                    missing = failure['missing_game_ids']
+                    if isinstance(missing, list):
+                        record['missing_game_ids'] = json.dumps(missing)
+                    else:
+                        record['missing_game_ids'] = str(missing)
+
+                # Resolution tracking - default to UNRESOLVED
+                record['resolution_status'] = failure.get('resolution_status', 'UNRESOLVED')
+
+                failure_records.append(record)
+
+            # Insert in batches of 500
+            batch_size = 500
+            for i in range(0, len(failure_records), batch_size):
+                batch = failure_records[i:i + batch_size]
+                errors = self.bq_client.insert_rows_json(table_id, batch)
+                if errors:
+                    logger.warning(f"Errors inserting failure records: {errors[:3]}")
+
+            logger.info(f"📊 Saved {len(failure_records)} failures to analytics_failures table")
+
+            # Store in stats
+            self.stats['failures_recorded'] = len(failure_records)
+
+        except Exception as e:
+            logger.warning(f"Failed to save failure records to BQ: {e}")
 
     def _publish_completion_message(self, success: bool, error: str = None) -> None:
         """
