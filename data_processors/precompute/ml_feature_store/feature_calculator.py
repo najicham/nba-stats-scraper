@@ -9,12 +9,23 @@ Calculates 6 features that don't exist in any table:
 - Feature 12: minutes_change
 - Feature 21: pct_free_throw
 - Feature 24: team_win_pct
+
+IMPORTANT: All ratio calculations must be rounded to 9 decimal places
+for BigQuery NUMERIC type compatibility. Python float division can
+produce 17+ decimal places which causes batch insert failures.
 """
 
 import logging
 from typing import Dict, List
 
 logger = logging.getLogger(__name__)
+
+# Default values for missing data (league averages)
+DEFAULT_FT_PERCENTAGE = 0.15  # ~15% of points from FT is league average
+DEFAULT_WIN_PERCENTAGE = 0.500  # 50% win rate for unknown teams
+
+# BigQuery NUMERIC type precision limit
+NUMERIC_PRECISION = 9
 
 
 class FeatureCalculator:
@@ -232,7 +243,7 @@ class FeatureCalculator:
         # Need at least 5 games for reasonable calculation
         if len(last_10_games) < 5:
             logger.debug(f"Insufficient games for pct_free_throw: {len(last_10_games)}/5")
-            return 0.15  # League average
+            return DEFAULT_FT_PERCENTAGE
         
         # Sum free throws and points (handle None values)
         total_ft_makes = sum(g.get('ft_makes') or 0 for g in last_10_games)
@@ -241,19 +252,22 @@ class FeatureCalculator:
         # Avoid division by zero
         if total_points == 0:
             logger.debug("No points scored in last 10 games, returning default")
-            return 0.15
-        
+            return DEFAULT_FT_PERCENTAGE
+
         # Calculate percentage
         # Each FT is worth 1 point
         ft_points = float(total_ft_makes)
         pct = ft_points / float(total_points)
-        
+
         # Clamp to reasonable range [0, 0.5]
         # (It's impossible for >50% of points to be from FTs)
         pct = max(0.0, min(0.5, pct))
-        
-        logger.debug(f"FT percentage: ft_makes={total_ft_makes}, points={total_points}, pct={pct:.3f}")
-        
+
+        # Round to 9 decimal places for BigQuery NUMERIC compatibility
+        pct = round(pct, NUMERIC_PRECISION)
+
+        logger.debug(f"FT percentage: ft_makes={total_ft_makes}, points={total_points}, pct={pct:.9f}")
+
         return pct
     
     # ========================================================================
@@ -278,15 +292,19 @@ class FeatureCalculator:
         # Need at least 5 games for meaningful percentage
         if len(season_games) < 5:
             logger.debug(f"Insufficient games for win_pct: {len(season_games)}/5")
-            return 0.500  # Default to 50%
-        
+            return DEFAULT_WIN_PERCENTAGE
+
         # Count wins (handle None values)
         wins = sum(1 for g in season_games if g.get('win_flag'))
         total_games = len(season_games)
-        
+
         # Calculate percentage
         win_pct = float(wins) / float(total_games)
-        
-        logger.debug(f"Team win pct: wins={wins}, total={total_games}, pct={win_pct:.3f}")
-        
+
+        # Round to 9 decimal places for BigQuery NUMERIC compatibility
+        # This prevents repeating decimals like 0.6666666666666666 from 2/3 wins
+        win_pct = round(win_pct, NUMERIC_PRECISION)
+
+        logger.debug(f"Team win pct: wins={wins}, total={total_games}, pct={win_pct:.9f}")
+
         return win_pct

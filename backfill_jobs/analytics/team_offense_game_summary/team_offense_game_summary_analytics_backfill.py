@@ -2,24 +2,42 @@
 """
 Team Offense Game Summary Analytics Backfill Job
 
-Processes team offensive game summaries from player analytics.
+Processes team offensive game summaries from player analytics using day-by-day
+processing to avoid BigQuery size limits.
+
+Features:
+- Checkpointing for resume capability after interruption
+- Day-by-day processing (avoids BigQuery 413 errors)
+- Batch insert (no streaming buffer issues)
+- Comprehensive error tracking and retry support
+- Backfill mode: Disables historical date check (>90 days) and suppresses alerts
 
 Usage:
-    python team_offense_game_summary_analytics_backfill.py --start-date 2024-01-01 --end-date 2024-01-31
-    python team_offense_game_summary_analytics_backfill.py --dry-run --start-date 2024-01-15
+    # Process date range (auto-resumes from checkpoint)
+    python team_offense_game_summary_analytics_backfill.py --start-date 2021-10-19 --end-date 2025-06-22
+
+    # Start fresh, ignore checkpoint
+    python team_offense_game_summary_analytics_backfill.py --start-date 2021-10-19 --end-date 2025-06-22 --no-resume
+
+    # Dry run to check data
+    python team_offense_game_summary_analytics_backfill.py --dry-run --start-date 2024-01-01 --end-date 2024-01-07
+
+    # Retry specific failed dates
+    python team_offense_game_summary_analytics_backfill.py --dates 2024-01-05,2024-01-12,2024-01-18
 """
 
 import os
 import sys
 import argparse
 import logging
-from datetime import datetime, date
-from typing import Dict
+from datetime import datetime, date, timedelta
+from typing import Dict, List
 
 # Add parent directories to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))))
 
 from data_processors.analytics.team_offense_game_summary.team_offense_game_summary_processor import TeamOffenseGameSummaryProcessor
+from shared.backfill.checkpoint import BackfillCheckpoint
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -27,128 +45,332 @@ logger = logging.getLogger(__name__)
 
 
 class TeamOffenseGameSummaryBackfill:
-    """Backfill job for team offense game summary analytics."""
+    """
+    Backfill processor for team offense game summary analytics.
+
+    Features:
+    - Day-by-day processing (avoids BigQuery size limits)
+    - Checkpointing for resume capability
+    - Batch insert (no streaming buffer issues)
+    """
 
     def __init__(self):
         self.processor = TeamOffenseGameSummaryProcessor()
+        self.processor_name = "TeamOffenseGameSummaryProcessor"
 
-    def run_backfill(self, start_date: date, end_date: date, dry_run: bool = False) -> Dict:
-        """
-        Run backfill for date range.
+    def validate_date_range(self, start_date: date, end_date: date) -> bool:
+        """Validate date range for analytics processing."""
+        if start_date > end_date:
+            logger.error("Start date must be before end date")
+            return False
 
-        Args:
-            start_date: Start date (inclusive)
-            end_date: End date (inclusive)
-            dry_run: If True, just show what would be processed
+        if end_date > date.today():
+            logger.error("End date cannot be in the future")
+            return False
 
-        Returns:
-            Dict with processing results
-        """
-        logger.info("="*60)
-        logger.info(f"Team Offense Game Summary Backfill")
-        logger.info(f"Date Range: {start_date} to {end_date}")
-        logger.info(f"Mode: {'DRY RUN' if dry_run else 'PRODUCTION'}")
-        logger.info("="*60)
+        total_days = (end_date - start_date).days + 1
+        logger.info(f"Will process {total_days} days from {start_date} to {end_date}")
+
+        return True
+
+    def run_analytics_processing(self, single_date: date, dry_run: bool = False) -> Dict:
+        """Run analytics processing for a single date."""
+        logger.debug(f"Processing analytics for {single_date}")
 
         if dry_run:
-            logger.info("DRY RUN MODE - No data will be processed")
-            logger.info(f"Would process team offense summaries for:")
-            logger.info(f"  Start Date: {start_date}")
-            logger.info(f"  End Date: {end_date}")
-            logger.info(f"  Days: {(end_date - start_date).days + 1}")
+            logger.info(f"DRY RUN MODE - checking data for {single_date}")
             return {
-                'status': 'dry_run',
-                'start_date': str(start_date),
-                'end_date': str(end_date),
-                'days': (end_date - start_date).days + 1
+                'status': 'dry_run_complete',
+                'date': single_date.isoformat()
             }
 
-        # Process date range
-        logger.info(f"Processing team offense summaries for {start_date} to {end_date}")
-
+        # Run actual processing for single day
         opts = {
-            'start_date': start_date.isoformat(),
-            'end_date': end_date.isoformat(),
+            'start_date': single_date.isoformat(),
+            'end_date': single_date.isoformat(),
             'project_id': os.environ.get('GCP_PROJECT_ID', 'nba-props-platform'),
-            'backfill_mode': True,  # Disables historical date check and suppresses alerts
-            'skip_downstream_trigger': True  # Prevent Phase 4 auto-trigger during backfill
+            'backfill_mode': True,
+            'skip_downstream_trigger': True
         }
 
         try:
             success = self.processor.run(opts)
+            stats = self.processor.get_analytics_stats() if success else {}
 
-            if success:
-                stats = self.processor.get_analytics_stats()
-                logger.info("="*60)
-                logger.info("BACKFILL SUCCESSFUL")
-                logger.info(f"Records Processed: {stats.get('records_processed', 0)}")
-                logger.info(f"Date Range: {stats.get('date_range', 'unknown')}")
-                logger.info(f"Unique Teams: {stats.get('unique_teams', 0)}")
-                logger.info(f"Unique Games: {stats.get('unique_games', 0)}")
-                logger.info("="*60)
+            result = {
+                'status': 'success' if success else 'failed',
+                'date': single_date.isoformat(),
+                'processor_stats': stats,
+                'records_processed': stats.get('records_processed', 0),
+                'unique_teams': stats.get('unique_teams', 0),
+                'unique_games': stats.get('unique_games', 0)
+            }
 
-                return {
-                    'status': 'success',
-                    'records_processed': stats.get('records_processed', 0),
-                    'unique_teams': stats.get('unique_teams', 0),
-                    'unique_games': stats.get('unique_games', 0)
-                }
-            else:
-                logger.error("Processor returned False - check logs for errors")
-                return {
-                    'status': 'failed',
-                    'error': 'Processor returned False'
-                }
+            return result
 
         except Exception as e:
-            logger.error(f"Backfill failed with exception: {e}", exc_info=True)
+            logger.error(f"Exception during processing: {e}", exc_info=True)
             return {
-                'status': 'error',
-                'error': str(e)
+                'status': 'exception',
+                'date': single_date.isoformat(),
+                'error': str(e),
+                'records_processed': 0
             }
+
+    def run_backfill(self, start_date: date, end_date: date, dry_run: bool = False, no_resume: bool = False):
+        """
+        Run backfill processing day-by-day with checkpointing for resume capability.
+        """
+        logger.info(f"Starting day-by-day analytics backfill from {start_date} to {end_date}")
+
+        if not self.validate_date_range(start_date, end_date):
+            return
+
+        # Initialize checkpoint for resume capability
+        checkpoint = BackfillCheckpoint(
+            job_name='team_offense_game_summary',
+            start_date=start_date,
+            end_date=end_date
+        )
+
+        # Calculate totals for progress tracking
+        total_days = (end_date - start_date).days + 1
+
+        # Check for resume
+        dates_to_process = []
+        current = start_date
+        while current <= end_date:
+            dates_to_process.append(current)
+            current += timedelta(days=1)
+
+        resume_date = None
+        if checkpoint.exists() and not no_resume:
+            resume_date = checkpoint.get_resume_date()
+            if resume_date and resume_date > start_date:
+                logger.info(f"📂 Found checkpoint - resuming from {resume_date}")
+                dates_to_process = [d for d in dates_to_process if d >= resume_date]
+                logger.info(f"   Skipping {total_days - len(dates_to_process)} already-processed dates")
+        elif no_resume and checkpoint.exists():
+            logger.info("🔄 --no-resume specified, starting fresh (clearing checkpoint)")
+            checkpoint.clear()
+
+        processed_days = 0
+        successful_days = 0
+        failed_days = []
+        total_records = 0
+        total_teams = 0
+        total_games = 0
+
+        logger.info(f"Processing {len(dates_to_process)} days individually (day-by-day approach)")
+        logger.info(f"Checkpoint: {checkpoint.checkpoint_path}")
+
+        # Process each day individually
+        for current_date in dates_to_process:
+            day_number = processed_days + 1
+
+            logger.info(f"Processing day {day_number}/{len(dates_to_process)}: {current_date}")
+
+            try:
+                result = self.run_analytics_processing(current_date, dry_run)
+
+                if result['status'] == 'success':
+                    successful_days += 1
+                    day_records = result.get('records_processed', 0)
+                    total_records += day_records
+                    total_teams += result.get('unique_teams', 0)
+                    total_games += result.get('unique_games', 0)
+
+                    logger.info(f"  ✓ Success: {day_records} records")
+
+                    # Mark date as complete in checkpoint
+                    checkpoint.mark_date_complete(current_date)
+
+                elif result['status'] == 'failed':
+                    failed_days.append(current_date)
+                    logger.error(f"  ✗ Failed: {current_date}")
+                    checkpoint.mark_date_failed(current_date, error="Processing failed")
+
+                elif result['status'] == 'exception':
+                    failed_days.append(current_date)
+                    error = result.get('error', 'Unknown error')
+                    logger.error(f"  ✗ Exception: {error}")
+                    checkpoint.mark_date_failed(current_date, error=error)
+
+                elif result['status'] == 'dry_run_complete':
+                    logger.info(f"  ✓ Dry run complete")
+
+                processed_days += 1
+
+                # Progress update every 10 days
+                if processed_days % 10 == 0 and not dry_run:
+                    success_rate = successful_days / processed_days * 100
+                    avg_records = total_records / successful_days if successful_days > 0 else 0
+                    logger.info(f"Progress: {processed_days}/{len(dates_to_process)} days ({success_rate:.1f}% success), {total_records} total records (avg {avg_records:.0f}/day)")
+
+            except Exception as e:
+                logger.error(f"Unexpected exception processing {current_date}: {e}", exc_info=True)
+                failed_days.append(current_date)
+                checkpoint.mark_date_failed(current_date, error=str(e))
+                processed_days += 1
+
+        # Final summary
+        logger.info("=" * 80)
+        logger.info(f"DAY-BY-DAY BACKFILL SUMMARY:")
+        logger.info(f"  Date range: {start_date} to {end_date}")
+        logger.info(f"  Total days: {total_days}")
+        logger.info(f"  Successful days: {successful_days}")
+        logger.info(f"  Failed days: {len(failed_days)}")
+
+        if len(dates_to_process) > 0:
+            success_rate = successful_days / len(dates_to_process) * 100
+            logger.info(f"  Success rate: {success_rate:.1f}%")
+
+        if not dry_run:
+            logger.info(f"  Total records processed: {total_records}")
+            if successful_days > 0:
+                avg_records = total_records / successful_days
+                logger.info(f"  Average records per day: {avg_records:.1f}")
+            logger.info(f"  Total teams: {total_teams}")
+            logger.info(f"  Total games: {total_games}")
+
+        # Print checkpoint summary
+        summary = checkpoint.get_summary()
+        logger.info("\n📊 Checkpoint Summary:")
+        logger.info(f"   Total successful: {summary.get('successful', 0)}")
+        logger.info(f"   Total failed: {summary.get('failed', 0)}")
+        logger.info(f"   Checkpoint file: {checkpoint.checkpoint_path}")
+
+        if failed_days:
+            logger.info(f"\n  Failed dates ({len(failed_days)} total):")
+            logger.info(f"    {', '.join(str(d) for d in failed_days[:10])}")
+            if len(failed_days) > 10:
+                logger.info(f"    ... and {len(failed_days) - 10} more")
+
+            logger.info(f"\n  To retry failed days, use --dates parameter:")
+            failed_dates_str = ','.join(str(d) for d in failed_days[:5])
+            logger.info(f"    python {__file__} --dates {failed_dates_str}")
+
+        logger.info("=" * 80)
+
+    def process_specific_dates(self, dates: List[date], dry_run: bool = False):
+        """Process a specific list of dates (useful for retrying failures)."""
+        logger.info(f"Processing {len(dates)} specific dates")
+
+        successful = 0
+        failed = []
+        total_records = 0
+
+        for i, single_date in enumerate(dates, 1):
+            logger.info(f"Processing date {i}/{len(dates)}: {single_date}")
+
+            try:
+                result = self.run_analytics_processing(single_date, dry_run)
+
+                if result['status'] == 'success':
+                    successful += 1
+                    total_records += result.get('records_processed', 0)
+                    logger.info(f"  ✓ Success: {result.get('records_processed', 0)} records")
+                elif result['status'] == 'dry_run_complete':
+                    logger.info(f"  ✓ Dry run complete")
+                else:
+                    failed.append(single_date)
+                    logger.error(f"  ✗ Failed: {result.get('error', 'Unknown error')}")
+
+            except Exception as e:
+                logger.error(f"Exception processing {single_date}: {e}", exc_info=True)
+                failed.append(single_date)
+
+        # Summary
+        logger.info("=" * 80)
+        logger.info(f"SPECIFIC DATES PROCESSING SUMMARY:")
+        logger.info(f"  Total dates: {len(dates)}")
+        logger.info(f"  Successful: {successful}")
+        logger.info(f"  Failed: {len(failed)}")
+
+        if not dry_run and successful > 0:
+            logger.info(f"  Total records: {total_records}")
+            logger.info(f"  Average per date: {total_records/successful:.1f}")
+
+        if failed:
+            logger.info(f"  Failed dates: {', '.join(str(d) for d in failed)}")
+
+        logger.info("=" * 80)
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Backfill team offense game summary analytics'
-    )
+        description='Day-by-day analytics backfill for team offense game summaries',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Dry run to check data availability
+  %(prog)s --dry-run --start-date 2024-01-01 --end-date 2024-01-07
 
-    parser.add_argument('--start-date', type=str, required=True, help='Start date (YYYY-MM-DD)')
-    parser.add_argument('--end-date', type=str, help='End date (YYYY-MM-DD), defaults to start-date')
-    parser.add_argument('--dry-run', action='store_true', help='Show what would be processed without actually processing')
+  # Process a week
+  %(prog)s --start-date 2024-01-01 --end-date 2024-01-07
+
+  # Process a month
+  %(prog)s --start-date 2024-01-01 --end-date 2024-01-31
+
+  # Start fresh, ignore checkpoint
+  %(prog)s --start-date 2024-01-01 --end-date 2024-01-31 --no-resume
+
+  # Retry specific failed dates
+  %(prog)s --dates 2024-01-05,2024-01-12,2024-01-18
+        """
+    )
+    parser.add_argument('--start-date', type=str, help='Start date (YYYY-MM-DD)')
+    parser.add_argument('--end-date', type=str, help='End date (YYYY-MM-DD)')
+    parser.add_argument('--dates', type=str, help='Comma-separated specific dates to process (YYYY-MM-DD,YYYY-MM-DD,...)')
+    parser.add_argument('--dry-run', action='store_true', help='Check data availability without processing')
+    parser.add_argument('--no-resume', action='store_true', help='Start fresh instead of resuming from checkpoint')
 
     args = parser.parse_args()
 
-    # Parse dates
+    backfiller = TeamOffenseGameSummaryBackfill()
+
+    # Handle specific dates for retries
+    if args.dates:
+        try:
+            date_list = [datetime.strptime(d.strip(), '%Y-%m-%d').date()
+                        for d in args.dates.split(',')]
+            logger.info(f"Processing {len(date_list)} specific dates")
+            backfiller.process_specific_dates(date_list, dry_run=args.dry_run)
+        except ValueError as e:
+            logger.error(f"Invalid date format: {e}")
+            logger.error("Expected format: YYYY-MM-DD,YYYY-MM-DD,...")
+            sys.exit(1)
+        return
+
+    # Require start date for range processing
+    if not args.start_date:
+        logger.error("--start-date is required for range processing")
+        sys.exit(1)
+
     try:
         start_date = datetime.strptime(args.start_date, '%Y-%m-%d').date()
     except ValueError:
-        logger.error(f"Invalid start date format: {args.start_date}. Use YYYY-MM-DD")
+        logger.error(f"Invalid start date format: {args.start_date}")
+        logger.error("Expected format: YYYY-MM-DD")
         sys.exit(1)
 
     if args.end_date:
         try:
             end_date = datetime.strptime(args.end_date, '%Y-%m-%d').date()
         except ValueError:
-            logger.error(f"Invalid end date format: {args.end_date}. Use YYYY-MM-DD")
+            logger.error(f"Invalid end date format: {args.end_date}")
+            logger.error("Expected format: YYYY-MM-DD")
             sys.exit(1)
     else:
         end_date = start_date
 
-    # Validate date range
-    if end_date < start_date:
-        logger.error("End date must be >= start date")
-        sys.exit(1)
+    logger.info(f"Day-by-day analytics backfill configuration:")
+    logger.info(f"  Date range: {start_date} to {end_date}")
+    logger.info(f"  Dry run: {args.dry_run}")
+    logger.info(f"  No resume: {args.no_resume}")
+    logger.info(f"  Processing strategy: Day-by-day (fixes BigQuery size limits)")
 
-    # Run backfill
-    backfiller = TeamOffenseGameSummaryBackfill()
-    result = backfiller.run_backfill(start_date, end_date, dry_run=args.dry_run)
-
-    # Exit with appropriate code
-    if result['status'] in ['success', 'dry_run']:
-        sys.exit(0)
-    else:
-        sys.exit(1)
+    backfiller.run_backfill(start_date, end_date, dry_run=args.dry_run, no_resume=args.no_resume)
 
 
 if __name__ == "__main__":

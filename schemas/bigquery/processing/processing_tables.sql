@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_processing.analytics_processo
   run_date TIMESTAMP NOT NULL,                      -- When the processor was executed
   
   -- Execution results
-  success BOOLEAN NOT NULL,                         -- TRUE if processor completed successfully
+  success BOOLEAN,                                  -- TRUE if processor completed successfully (NULLABLE for autodetect compatibility)
   duration_seconds FLOAT64,                         -- Total execution time
   
   -- Data processing scope

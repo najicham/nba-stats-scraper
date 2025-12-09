@@ -312,12 +312,13 @@ def _calculate_player_cache_worker(
     three_pt_rate_last_10 = float(shot_zone_row['three_pt_rate_last_10']) if pd.notna(shot_zone_row['three_pt_rate_last_10']) else None
 
     # Calculate assisted rate (from last 10 games)
+    # Round to 9 decimal places for BigQuery NUMERIC compatibility
     assisted_rate_last_10 = None
     if len(last_10_games) > 0:
         total_fg_makes = last_10_games['fg_makes'].sum()
         total_assisted = last_10_games['assisted_fg_makes'].sum()
         if total_fg_makes > 0:
-            assisted_rate_last_10 = float(total_assisted / total_fg_makes)
+            assisted_rate_last_10 = round(float(total_assisted / total_fg_makes), 9)
 
     # Build complete record
     record = {
@@ -1933,13 +1934,14 @@ class PlayerDailyCacheProcessor(
         three_pt_rate_last_10 = float(shot_zone_row['three_pt_rate_last_10']) if pd.notna(shot_zone_row['three_pt_rate_last_10']) else None
         
         # Calculate assisted rate (from last 10 games)
+        # Round to 9 decimal places for BigQuery NUMERIC compatibility
         assisted_rate_last_10 = None
         if len(last_10_games) > 0:
             total_fg_makes = last_10_games['fg_makes'].sum()
             total_assisted = last_10_games['assisted_fg_makes'].sum()
             if total_fg_makes > 0:
-                assisted_rate_last_10 = float(total_assisted / total_fg_makes)
-        
+                assisted_rate_last_10 = round(float(total_assisted / total_fg_makes), 9)
+
         # Build complete record
         record = {
             # Identifiers

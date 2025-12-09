@@ -843,7 +843,7 @@ class TeamDefenseGameSummaryProcessor(
 
     def _extract_shot_zone_stats(self, start_date: str, end_date: str) -> pd.DataFrame:
         """
-        Extract opponent shot zone statistics from play-by-play data.
+        Extract opponent shot zone statistics and blocks by zone from play-by-play data.
 
         Classifies each shot into zones:
         - Paint: shot_distance <= 8 feet AND shot_type = '2PT'
@@ -851,6 +851,7 @@ class TeamDefenseGameSummaryProcessor(
         - Three-point: shot_type = '3PT'
 
         Returns aggregated stats per game per defending team (opponent's shots allowed).
+        Also includes blocks by zone made by the defending team.
 
         Uses bigdataball_play_by_play as primary source with nbac_play_by_play fallback.
 
@@ -862,6 +863,7 @@ class TeamDefenseGameSummaryProcessor(
               - opp_mid_range_attempts, opp_mid_range_makes
               - points_in_paint_allowed (paint_makes * 2)
               - mid_range_points_allowed (mid_makes * 2)
+              - blocks_paint, blocks_mid_range, blocks_three_pt (blocks made by defending team)
         """
         # Try bigdataball first (better shot_distance data)
         query = f"""
@@ -884,6 +886,42 @@ class TeamDefenseGameSummaryProcessor(
             WHERE game_date BETWEEN '{start_date}' AND '{end_date}'
               AND shot_type IN ('2PT', '3PT')
               AND player_1_team_abbr IS NOT NULL
+        ),
+
+        -- Block events with zone classification - tracks the BLOCKER's team
+        -- Note: player_2_team_abbr is NULL in BigDataBall, so we derive blocker's team
+        -- from shooter's team (if shooter is home team, blocker is away team and vice versa)
+        block_events AS (
+            SELECT
+                game_id,
+                game_date,
+                -- Derive blocker's team: opposite of shooter's team
+                CASE
+                    WHEN player_1_team_abbr = home_team_abbr THEN away_team_abbr
+                    ELSE home_team_abbr
+                END as blocking_team,
+                CASE
+                    WHEN shot_type = '3PT' THEN 'three_pt'
+                    WHEN shot_distance <= 8 THEN 'paint'
+                    ELSE 'mid_range'
+                END as block_zone
+            FROM `{self.project_id}.nba_raw.bigdataball_play_by_play`
+            WHERE game_date BETWEEN '{start_date}' AND '{end_date}'
+              AND player_2_role = 'block'
+              AND shot_distance IS NOT NULL
+              AND player_1_team_abbr IS NOT NULL
+        ),
+
+        -- Aggregate blocks by team and zone
+        team_blocks AS (
+            SELECT
+                game_id,
+                blocking_team as defending_team_abbr,
+                SUM(CASE WHEN block_zone = 'paint' THEN 1 ELSE 0 END) as blocks_paint,
+                SUM(CASE WHEN block_zone = 'mid_range' THEN 1 ELSE 0 END) as blocks_mid_range,
+                SUM(CASE WHEN block_zone = 'three_pt' THEN 1 ELSE 0 END) as blocks_three_pt
+            FROM block_events
+            GROUP BY game_id, blocking_team
         ),
 
         -- Get both teams per game to determine defending team
@@ -909,29 +947,51 @@ class TeamDefenseGameSummaryProcessor(
                 SUM(CASE WHEN shot_zone = 'three_pt' AND shot_made THEN 1 ELSE 0 END) as opp_three_pt_makes_pbp
             FROM shot_events s
             GROUP BY s.game_id, s.shooting_team
-        )
+        ),
 
         -- Flip perspective: shooting team's stats become defending team's "allowed" stats
+        defense_stats AS (
+            SELECT
+                g.game_date,
+                -- The defending team is the OTHER team (not the shooting team)
+                CASE
+                    WHEN t.opponent_team_abbr = g.home_team_abbr THEN g.away_team_abbr
+                    ELSE g.home_team_abbr
+                END as defending_team_abbr,
+                t.opponent_team_abbr,
+                t.game_id,
+                t.opp_paint_attempts,
+                t.opp_paint_makes,
+                t.opp_mid_range_attempts,
+                t.opp_mid_range_makes,
+                t.opp_three_pt_attempts_pbp,
+                t.opp_three_pt_makes_pbp,
+                -- Points allowed by zone
+                t.opp_paint_makes * 2 as points_in_paint_allowed,
+                t.opp_mid_range_makes * 2 as mid_range_points_allowed
+            FROM team_shots t
+            INNER JOIN game_teams g ON t.game_id = g.game_id
+        )
+
+        -- Join blocks data with defense stats
         SELECT
-            g.game_date,
-            -- The defending team is the OTHER team (not the shooting team)
-            CASE
-                WHEN t.opponent_team_abbr = g.home_team_abbr THEN g.away_team_abbr
-                ELSE g.home_team_abbr
-            END as defending_team_abbr,
-            t.opponent_team_abbr,
-            t.opp_paint_attempts,
-            t.opp_paint_makes,
-            t.opp_mid_range_attempts,
-            t.opp_mid_range_makes,
-            t.opp_three_pt_attempts_pbp,
-            t.opp_three_pt_makes_pbp,
-            -- Points allowed by zone
-            t.opp_paint_makes * 2 as points_in_paint_allowed,
-            t.opp_mid_range_makes * 2 as mid_range_points_allowed,
+            d.game_date,
+            d.defending_team_abbr,
+            d.opponent_team_abbr,
+            d.opp_paint_attempts,
+            d.opp_paint_makes,
+            d.opp_mid_range_attempts,
+            d.opp_mid_range_makes,
+            d.opp_three_pt_attempts_pbp,
+            d.opp_three_pt_makes_pbp,
+            d.points_in_paint_allowed,
+            d.mid_range_points_allowed,
+            COALESCE(b.blocks_paint, 0) as blocks_paint,
+            COALESCE(b.blocks_mid_range, 0) as blocks_mid_range,
+            COALESCE(b.blocks_three_pt, 0) as blocks_three_pt,
             'bigdataball_play_by_play' as shot_zone_source
-        FROM team_shots t
-        INNER JOIN game_teams g ON t.game_id = g.game_id
+        FROM defense_stats d
+        LEFT JOIN team_blocks b ON d.game_id = b.game_id AND d.defending_team_abbr = b.defending_team_abbr
         """
 
         try:
@@ -1055,12 +1115,15 @@ class TeamDefenseGameSummaryProcessor(
             merged_df = merged_df.merge(
                 shot_zone_df[['game_date', 'defending_team_abbr', 'opp_paint_attempts', 'opp_paint_makes',
                              'opp_mid_range_attempts', 'opp_mid_range_makes',
-                             'points_in_paint_allowed', 'mid_range_points_allowed', 'shot_zone_source']],
+                             'points_in_paint_allowed', 'mid_range_points_allowed',
+                             'blocks_paint', 'blocks_mid_range', 'blocks_three_pt',
+                             'shot_zone_source']],
                 on=['game_date', 'defending_team_abbr'],
                 how='left',
                 suffixes=('', '_pbp')
             )
-            logger.info(f"Merged shot zone data - {merged_df['opp_paint_attempts'].notna().sum()} records have paint data")
+            blocks_with_data = (merged_df['blocks_paint'].notna() | merged_df['blocks_mid_range'].notna() | merged_df['blocks_three_pt'].notna()).sum()
+            logger.info(f"Merged shot zone data - {merged_df['opp_paint_attempts'].notna().sum()} records have paint data, {blocks_with_data} have block zone data")
         else:
             # No shot zone data - initialize columns as None
             merged_df['opp_paint_attempts'] = None
@@ -1069,6 +1132,9 @@ class TeamDefenseGameSummaryProcessor(
             merged_df['opp_mid_range_makes'] = None
             merged_df['points_in_paint_allowed'] = None
             merged_df['mid_range_points_allowed'] = None
+            merged_df['blocks_paint'] = None
+            merged_df['blocks_mid_range'] = None
+            merged_df['blocks_three_pt'] = None
             merged_df['shot_zone_source'] = None
 
         logger.info(f"Merged {len(merged_df)} complete defensive records")
@@ -1314,10 +1380,10 @@ class TeamDefenseGameSummaryProcessor(
                 'second_chance_points_allowed': None,  # TODO: Extract from play-by-play
                 'fast_break_points_allowed': None,  # TODO: Extract from play-by-play
 
-                # Defensive actions (from player boxscores)
-                'blocks_paint': None,  # Need play-by-play for zone breakdown
-                'blocks_mid_range': None,
-                'blocks_three_pt': None,
+                # Defensive actions by zone (from play-by-play block events)
+                'blocks_paint': int(row['blocks_paint']) if pd.notna(row.get('blocks_paint')) else None,
+                'blocks_mid_range': int(row['blocks_mid_range']) if pd.notna(row.get('blocks_mid_range')) else None,
+                'blocks_three_pt': int(row['blocks_three_pt']) if pd.notna(row.get('blocks_three_pt')) else None,
                 'steals': int(row['steals']) if pd.notna(row['steals']) else 0,
                 'defensive_rebounds': int(row['defensive_rebounds']) if pd.notna(row['defensive_rebounds']) else 0,
 

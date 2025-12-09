@@ -122,6 +122,43 @@ Only after validating single date:
 
 ---
 
+## Detect Gaps Before Running
+
+Before running a backfill, check for existing gaps:
+
+```bash
+# Check for gaps in a date range
+python scripts/detect_gaps.py --start-date 2021-12-01 --end-date 2021-12-31 --phase 3
+
+# The script shows:
+# - Missing dates
+# - Low record counts
+# - Cascade impact (what downstream processors are blocked)
+# - Recovery commands in the correct order
+```
+
+See [gap-detection.md](./gap-detection.md) for full documentation.
+
+---
+
+## Resume Interrupted Backfills
+
+Phase 3 backfills now support checkpointing:
+
+```bash
+# If a backfill is interrupted, just re-run - it resumes automatically
+python backfill_jobs/analytics/player_game_summary/player_game_summary_analytics_backfill.py \
+    --start-date 2021-12-01 --end-date 2021-12-31
+
+# To start fresh (ignore checkpoint)
+python backfill_jobs/analytics/player_game_summary/player_game_summary_analytics_backfill.py \
+    --start-date 2021-12-01 --end-date 2021-12-31 --no-resume
+```
+
+Checkpoint files are stored in `/tmp/backfill_checkpoints/`.
+
+---
+
 ## Common Issues
 
 | Issue | Symptom | Solution |
@@ -130,6 +167,7 @@ Only after validating single date:
 | Early season | High failure rate | Expected - bootstrap period |
 | Cascade contamination | `opponent_strength_score = 0` | Fix TDZA, reprocess |
 | Slow performance | >2 min per date | Check `backfill_mode=True` |
+| Gaps in data | Gap detection shows missing dates | Run recovery commands from script |
 
 ---
 
@@ -150,6 +188,7 @@ If running multiple Phase 4 processors, run in this order:
 
 - [README.md](./README.md) - Full documentation hub
 - [backfill-guide.md](./backfill-guide.md) - Comprehensive procedures
+- [gap-detection.md](./gap-detection.md) - Detect and fix data gaps
 - [data-integrity-guide.md](./data-integrity-guide.md) - Gap prevention
 
 ---

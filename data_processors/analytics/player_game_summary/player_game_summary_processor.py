@@ -539,6 +539,7 @@ class PlayerGameSummaryProcessor(
         - Shot attempts and makes by zone (paint, mid-range, three)
         - Assisted vs unassisted field goals
         - And-1 counts (made shot + shooting foul)
+        - Blocks by zone (paint, mid-range, three) - tracks the BLOCKER
 
         Zone definitions:
         - Paint: shot_distance <= 8 feet
@@ -548,7 +549,7 @@ class PlayerGameSummaryProcessor(
         Gracefully handles missing play-by-play data.
         """
         try:
-            # Query BigDataBall play-by-play for player shot zones and shot creation
+            # Query BigDataBall play-by-play for player shot zones, shot creation, and blocks
             query = f"""
             WITH player_shots AS (
                 SELECT
@@ -582,6 +583,32 @@ class PlayerGameSummaryProcessor(
                     AND game_date BETWEEN '{start_date}' AND '{end_date}'
                 GROUP BY game_id, player_1_lookup
             ),
+            -- Block aggregates by zone - tracks the BLOCKER (player_2), not the shooter
+            block_aggregates AS (
+                SELECT
+                    game_id,
+                    player_2_lookup as blocker_lookup,
+                    COUNT(CASE WHEN zone = 'paint' THEN 1 END) as paint_blocks,
+                    COUNT(CASE WHEN zone = 'mid_range' THEN 1 END) as mid_range_blocks,
+                    COUNT(CASE WHEN zone = 'three' THEN 1 END) as three_pt_blocks
+                FROM (
+                    SELECT
+                        game_id,
+                        player_2_lookup,
+                        CASE
+                            WHEN shot_distance <= 8.0 THEN 'paint'
+                            WHEN event_subtype LIKE '%3pt%' OR shot_distance >= 23.75 THEN 'three'
+                            ELSE 'mid_range'
+                        END as zone
+                    FROM `{self.project_id}.nba_raw.bigdataball_play_by_play`
+                    WHERE event_type = 'shot'
+                        AND player_2_role = 'block'
+                        AND shot_distance IS NOT NULL
+                        AND player_2_lookup IS NOT NULL
+                        AND game_date BETWEEN '{start_date}' AND '{end_date}'
+                )
+                GROUP BY game_id, player_2_lookup
+            ),
             shot_aggregates AS (
                 SELECT
                     game_id,
@@ -612,15 +639,20 @@ class PlayerGameSummaryProcessor(
                 s.three_makes_pbp,
                 s.assisted_fg_makes,
                 s.unassisted_fg_makes,
-                COALESCE(a.and1_count, 0) as and1_count
+                COALESCE(a.and1_count, 0) as and1_count,
+                b.paint_blocks,
+                b.mid_range_blocks,
+                b.three_pt_blocks
             FROM shot_aggregates s
             LEFT JOIN and1_events a ON s.game_id = a.game_id AND s.player_lookup = a.player_lookup
+            LEFT JOIN block_aggregates b ON s.game_id = b.game_id AND s.player_lookup = b.blocker_lookup
             """
 
             shot_zones_df = self.bq_client.query(query).to_dataframe()
 
             if not shot_zones_df.empty:
                 # Convert to dict keyed by (game_id, player_lookup)
+                blocks_found = 0
                 for _, row in shot_zones_df.iterrows():
                     key = (row['game_id'], row['player_lookup'])
                     self.shot_zone_data[key] = {
@@ -631,11 +663,18 @@ class PlayerGameSummaryProcessor(
                         'assisted_fg_makes': int(row['assisted_fg_makes']) if pd.notna(row['assisted_fg_makes']) else None,
                         'unassisted_fg_makes': int(row['unassisted_fg_makes']) if pd.notna(row['unassisted_fg_makes']) else None,
                         'and1_count': int(row['and1_count']) if pd.notna(row['and1_count']) else None,
+                        # Block tracking by zone (tracks the BLOCKER)
+                        'paint_blocks': int(row['paint_blocks']) if pd.notna(row['paint_blocks']) else None,
+                        'mid_range_blocks': int(row['mid_range_blocks']) if pd.notna(row['mid_range_blocks']) else None,
+                        'three_pt_blocks': int(row['three_pt_blocks']) if pd.notna(row['three_pt_blocks']) else None,
                     }
+                    # Count players with any blocks
+                    if pd.notna(row['paint_blocks']) or pd.notna(row['mid_range_blocks']) or pd.notna(row['three_pt_blocks']):
+                        blocks_found += 1
 
                 self.shot_zones_available = True
                 self.shot_zones_source = 'bigdataball_pbp'
-                logger.info(f"✅ Extracted shot zones + shot creation for {len(self.shot_zone_data)} player-games from BigDataBall")
+                logger.info(f"✅ Extracted shot zones + shot creation + blocks for {len(self.shot_zone_data)} player-games ({blocks_found} with blocks) from BigDataBall")
             else:
                 logger.warning("⚠️ BigDataBall play-by-play query returned no shot zones")
                 self.shot_zones_available = False
@@ -667,10 +706,10 @@ class PlayerGameSummaryProcessor(
             'unassisted_fg_makes': zones.get('unassisted_fg_makes'),
             # And-1 (made shot + shooting foul)
             'and1_count': zones.get('and1_count'),
-            # Block tracking by zone (not yet implemented)
-            'paint_blocks': None,
-            'mid_range_blocks': None,
-            'three_pt_blocks': None,
+            # Block tracking by zone (tracks the BLOCKER)
+            'paint_blocks': zones.get('paint_blocks'),
+            'mid_range_blocks': zones.get('mid_range_blocks'),
+            'three_pt_blocks': zones.get('three_pt_blocks'),
         }
 
     def validate_extracted_data(self) -> None:
