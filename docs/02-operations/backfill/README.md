@@ -171,6 +171,24 @@ GROUP BY 1'
 | `CIRCUIT_BREAKER_ACTIVE` | Too many retries | Manual investigation | No |
 | `PROCESSING_ERROR` | Unhandled exception | Debug code | No (bug!) |
 
+### Enhanced Failure Tracking (New)
+
+We now track additional failure metadata to distinguish correctable vs permanent failures:
+
+| Field | Description |
+|-------|-------------|
+| `failure_type` | 'PLAYER_DNP', 'DATA_GAP', 'PROCESSING_ERROR', 'UNKNOWN' |
+| `is_correctable` | TRUE = can be fixed by re-ingesting data |
+| `expected_game_count` | Games expected from schedule |
+| `actual_game_count` | Games actually found |
+| `missing_game_dates` | JSON array of missing dates |
+| `resolution_status` | 'UNRESOLVED', 'RESOLVED', 'PERMANENT' |
+
+**Failure Tables by Phase:**
+- Phase 3 (Analytics): `nba_processing.analytics_failures`
+- Phase 4 (Precompute): `nba_processing.precompute_failures`
+- Phase 5 (Predictions): `nba_processing.prediction_failures`
+
 ### Expected Failure Rates by Season Week
 
 | Season Week | Days | Expected Failure % |
