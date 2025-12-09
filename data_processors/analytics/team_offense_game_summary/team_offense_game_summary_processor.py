@@ -756,13 +756,23 @@ class TeamOffenseGameSummaryProcessor(
                     'error_type': type(e).__name__
                 }
                 processing_errors.append(error_info)
-                
+
                 logger.error(f"Error processing team record {row['game_id']}_{row['team_abbr']}: {e}")
                 self.log_quality_issue(
                     issue_type='processing_error',
                     severity='medium',
                     identifier=f"{row['game_id']}_{row['team_abbr']}",
                     details=error_info
+                )
+
+                # Record failure for unified failure tracking
+                self.record_failure(
+                    entity_id=row['team_abbr'],
+                    entity_type='TEAM',
+                    category='PROCESSING_ERROR',
+                    reason=f"Error processing team record: {str(e)[:200]}",
+                    can_retry=True,
+                    missing_game_ids=[row['game_id']] if row.get('game_id') else None
                 )
                 continue
         

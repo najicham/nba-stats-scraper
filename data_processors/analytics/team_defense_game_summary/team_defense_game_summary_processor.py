@@ -1279,6 +1279,15 @@ class TeamDefenseGameSummaryProcessor(
                     })
                     logger.error(f"Exception processing team defense record: {e}")
 
+                    # Record failure for unified failure tracking
+                    self.record_failure(
+                        entity_id=f"record_{idx}",
+                        entity_type='TEAM',
+                        category='PROCESSING_ERROR',
+                        reason=f"Exception processing team defense record: {str(e)[:200]}",
+                        can_retry=True
+                    )
+
                 # Progress logging every 10 records
                 if processed_count % 10 == 0 or processed_count == len(self.raw_data):
                     elapsed = time.time() - loop_start

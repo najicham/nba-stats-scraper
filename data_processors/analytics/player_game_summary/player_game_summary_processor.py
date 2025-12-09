@@ -937,7 +937,7 @@ class PlayerGameSummaryProcessor(
             logger.warning(f"Failed to send notification: {e}")
     
     def finalize(self) -> None:
-        """Cleanup - flush unresolved players."""
+        """Cleanup - flush unresolved players and save failures."""
         logger.info("Flushing unresolved players...")
 
         try:
@@ -946,6 +946,23 @@ class PlayerGameSummaryProcessor(
             logger.info(f"Registry cache: {cache_stats['hit_rate']:.1%} hit rate")
         except Exception as e:
             logger.error(f"Failed to flush registry: {e}")
+
+        # Convert registry_failures to unified failure tracking format
+        # This enables enhanced failure tracking with DNP classification
+        if hasattr(self, 'registry_failures') and self.registry_failures:
+            for failure in self.registry_failures:
+                self.record_failure(
+                    entity_id=failure.get('player_lookup', 'unknown'),
+                    entity_type='PLAYER',
+                    category='REGISTRY_LOOKUP_FAILED',
+                    reason=f"Player not found in registry for game {failure.get('game_id', 'unknown')}",
+                    can_retry=True,  # Can retry after adding alias
+                    missing_game_ids=[failure.get('game_id')] if failure.get('game_id') else None
+                )
+            logger.info(f"Converted {len(self.registry_failures)} registry failures to unified tracking")
+
+        # Call parent finalize() which saves failures to analytics_failures table
+        super().finalize()
 
     # =========================================================================
     # Parallelization Methods
@@ -1152,6 +1169,16 @@ class PlayerGameSummaryProcessor(
 
         except Exception as e:
             logger.error(f"Failed to process record {idx} ({row.get('game_id', 'unknown')}_{row.get('player_lookup', 'unknown')}): {e}")
+
+            # Record failure for unified failure tracking
+            self.record_failure(
+                entity_id=row.get('player_lookup', 'unknown'),
+                entity_type='PLAYER',
+                category='PROCESSING_ERROR',
+                reason=f"Exception processing player game record: {str(e)[:200]}",
+                can_retry=True,
+                missing_game_ids=[row.get('game_id')] if row.get('game_id') else None
+            )
             return None
 
     def _process_player_games_serial(self, uid_map: dict) -> List[Dict]:
@@ -1306,6 +1333,16 @@ class PlayerGameSummaryProcessor(
 
             except Exception as e:
                 logger.error(f"Error processing {row['game_id']}_{row['player_lookup']}: {e}")
+
+                # Record failure for unified failure tracking
+                self.record_failure(
+                    entity_id=row.get('player_lookup', 'unknown'),
+                    entity_type='PLAYER',
+                    category='PROCESSING_ERROR',
+                    reason=f"Exception processing player game record: {str(e)[:200]}",
+                    can_retry=True,
+                    missing_game_ids=[row.get('game_id')] if row.get('game_id') else None
+                )
                 continue
 
         return records

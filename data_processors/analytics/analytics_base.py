@@ -1825,6 +1825,139 @@ class AnalyticsProcessorBase(RunHistoryMixin):
 
         self.failed_entities.append(failure)
 
+    def classify_recorded_failures(self, analysis_date=None) -> int:
+        """
+        Enrich INCOMPLETE_DATA failures with DNP vs DATA_GAP classification.
+
+        This method should be called after processing but before save_failures_to_bq().
+        It queries expected vs actual game dates for each failed player entity and
+        determines if the failure is due to:
+        - PLAYER_DNP: Player didn't play (expected, not correctable)
+        - DATA_GAP: Player played but data is missing (correctable)
+        - MIXED: Some games DNP, some gaps
+        - INSUFFICIENT_HISTORY: Early season, not enough games yet
+
+        Only processes INCOMPLETE_DATA failures for player entities.
+        Team-based failures are skipped since teams always play their games.
+
+        Args:
+            analysis_date: Date being analyzed. If None, uses self.opts['end_date'] or 'start_date'
+
+        Returns:
+            int: Number of failures that were classified
+
+        Example:
+            # In processor, after recording failures:
+            num_classified = self.classify_recorded_failures()
+            logger.info(f"Classified {num_classified} failures")
+            self.save_failures_to_bq()
+        """
+        if not self.failed_entities:
+            return 0
+
+        # Get analysis date
+        if analysis_date is None:
+            analysis_date = self.opts.get('end_date') or self.opts.get('start_date')
+        if hasattr(analysis_date, 'isoformat'):
+            pass  # Already a date object
+        elif isinstance(analysis_date, str):
+            from datetime import datetime as dt
+            analysis_date = dt.strptime(analysis_date, '%Y-%m-%d').date()
+
+        if not analysis_date:
+            logger.warning("classify_recorded_failures: No analysis_date available")
+            return 0
+
+        # Check if this is a player-based processor (not team-based)
+        processor_name = self.__class__.__name__
+        is_player_processor = any(x in processor_name.lower() for x in [
+            'player', 'pgs', 'upgc', 'upcoming'
+        ])
+
+        if not is_player_processor:
+            logger.debug(f"Skipping failure classification for non-player processor: {processor_name}")
+            return 0
+
+        # Find INCOMPLETE_DATA failures that need classification
+        failures_to_classify = []
+        for i, failure in enumerate(self.failed_entities):
+            if failure.get('category') == 'INCOMPLETE_DATA':
+                if 'failure_type' not in failure:  # Not already classified
+                    failures_to_classify.append((i, failure))
+
+        if not failures_to_classify:
+            return 0
+
+        try:
+            # Get completeness checker
+            if not hasattr(self, 'completeness_checker') or self.completeness_checker is None:
+                from shared.utils.completeness_checker import CompletenessChecker
+                self.completeness_checker = CompletenessChecker(self.bq_client, self.project_id)
+
+            # Batch get game dates for all failed players
+            player_lookups = [f.get('entity_id') for _, f in failures_to_classify if f.get('entity_id')]
+
+            if not player_lookups:
+                return 0
+
+            # Get expected and actual game dates for all failed players
+            game_dates_batch = self.completeness_checker.get_player_game_dates_batch(
+                player_lookups=player_lookups,
+                analysis_date=analysis_date,
+                lookback_days=14  # Standard L14 lookback
+            )
+
+            classified_count = 0
+            for idx, failure in failures_to_classify:
+                entity_id = failure.get('entity_id')
+                if not entity_id:
+                    continue
+
+                # Normalize to match batch results
+                from shared.utils.player_name_normalizer import normalize_name_for_lookup
+                normalized_id = normalize_name_for_lookup(entity_id)
+
+                game_dates = game_dates_batch.get(normalized_id, {})
+                if game_dates.get('error'):
+                    continue
+
+                expected_games = game_dates.get('expected_games', [])
+                actual_games = game_dates.get('actual_games', [])
+
+                if not expected_games:
+                    # Can't classify without expected games
+                    continue
+
+                # Classify the failure
+                classification = self.completeness_checker.classify_failure(
+                    player_lookup=entity_id,
+                    analysis_date=analysis_date,
+                    expected_games=expected_games,
+                    actual_games=actual_games,
+                    check_raw_data=True
+                )
+
+                # Update the failure record with classification data
+                self.failed_entities[idx].update({
+                    'failure_type': classification['failure_type'],
+                    'is_correctable': classification['is_correctable'],
+                    'expected_count': classification['expected_count'],
+                    'actual_count': classification['actual_count'],
+                    'missing_dates': classification['missing_dates'],
+                    'raw_data_checked': classification['raw_data_checked']
+                })
+                classified_count += 1
+
+            logger.info(
+                f"Classified {classified_count}/{len(failures_to_classify)} "
+                f"INCOMPLETE_DATA failures for {processor_name}"
+            )
+            return classified_count
+
+        except Exception as e:
+            logger.warning(f"Error classifying failures: {e}")
+            return 0
+
     def save_failures_to_bq(self) -> None:
         """
         Save failed entity records to analytics_failures BigQuery table.
@@ -1841,6 +1974,13 @@ class AnalyticsProcessorBase(RunHistoryMixin):
         """
         if not self.failed_entities:
             return
+
+        # Auto-classify INCOMPLETE_DATA failures before saving
+        # This adds DNP vs DATA_GAP classification for player processors
+        try:
+            self.classify_recorded_failures()
+        except Exception as classify_e:
+            logger.warning(f"Could not classify failures (continuing anyway): {classify_e}")
 
         try:
             table_id = f"{self.project_id}.nba_processing.analytics_failures"
