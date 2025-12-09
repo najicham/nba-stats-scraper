@@ -80,6 +80,7 @@ ORDER BY started_at DESC'
 | [quick-start.md](./quick-start.md) | Run your first backfill in 10 minutes | New to backfills |
 | [backfill-guide.md](./backfill-guide.md) | Comprehensive backfill procedures | Planning any backfill operation |
 | [backfill-mode-reference.md](./backfill-mode-reference.md) | All backfill mode behaviors (13 optimizations) | Understanding what changes in backfill mode |
+| [completeness-failure-guide.md](./completeness-failure-guide.md) | Completeness failures, visibility, diagnosis, recovery | When entities fail completeness checks |
 | [data-integrity-guide.md](./data-integrity-guide.md) | Gap detection, prevention, cascade contamination, recovery | Investigating missing/bad data |
 | [phase4-performance-analysis.md](./phase4-performance-analysis.md) | Performance benchmarks, optimization details | Tuning backfill performance |
 

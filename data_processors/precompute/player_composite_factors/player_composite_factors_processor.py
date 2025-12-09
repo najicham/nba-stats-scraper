@@ -1184,12 +1184,19 @@ class PlayerCompositeFactorsProcessor(
         # Backfill already has preflight checks at date-level; player-level is redundant
         if self.is_backfill_mode:
             logger.info(f"⏭️ BACKFILL MODE: Skipping completeness check for {len(all_players)} players")
+            # Use actual counts from already-loaded data
+            # player_shot_df has shot zone records per player - count those
+            # This makes metadata accurate for debugging without additional BQ queries
+            if self.player_shot_df is not None and not self.player_shot_df.empty:
+                games_per_player = self.player_shot_df.groupby('player_lookup').size().to_dict()
+            else:
+                games_per_player = {player: 1 for player in all_players}  # At least today's game
             completeness_results = {
                 player: {
                     'is_production_ready': True,
                     'completeness_pct': 100.0,
-                    'expected_count': 0,
-                    'actual_count': 0,
+                    'expected_count': games_per_player.get(player, 1),
+                    'actual_count': games_per_player.get(player, 1),
                     'missing_count': 0,
                     'is_complete': True
                 }

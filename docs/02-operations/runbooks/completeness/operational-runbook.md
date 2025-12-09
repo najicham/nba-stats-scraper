@@ -120,6 +120,47 @@ ORDER BY circuit_breaker_until DESC;
 
 ---
 
+## Root Cause Quick Reference
+
+For comprehensive root cause diagnosis with decision trees, see:
+**[Completeness Failure Guide](../../backfill/completeness-failure-guide.md)**
+
+### Failure Category Quick Reference
+
+| Category | Meaning | Root Cause | Action |
+|----------|---------|------------|--------|
+| `INSUFFICIENT_DATA` | Player has <10 games | Early season, new player | Wait for more games (expected) |
+| `INCOMPLETE_DATA` | Completeness <90% | Phase 3 missing games | Check Phase 3 backfill |
+| `MISSING_UPSTREAM` | No upstream data | Phase 3 didn't run | Run Phase 3 backfill |
+| `NO_SHOT_ZONE` | Shot zone missing | PSZA didn't process player | Run PSZA backfill |
+| `CIRCUIT_BREAKER_ACTIVE` | Too many retries | Persistent issue | Manual investigation needed |
+| `PROCESSING_ERROR` | Unhandled exception | Bug in code | Debug and fix code |
+
+### Quick Diagnosis: Many Entities Fail on Same Date
+
+If 90%+ of entities fail on a single date, check upstream data:
+
+```sql
+-- Check if Phase 3 has data for the date
+SELECT
+    'player_game_summary' as table_name,
+    COUNT(*) as record_count
+FROM `nba-props-platform.nba_analytics.player_game_summary`
+WHERE game_date = '2021-12-15'  -- Replace with failing date
+
+UNION ALL
+
+SELECT
+    'team_defense_game_summary',
+    COUNT(*)
+FROM `nba-props-platform.nba_analytics.team_defense_game_summary`
+WHERE game_date = '2021-12-15';
+```
+
+**If counts are 0 or very low:** Phase 3 didn't run for this date - rerun Phase 3 backfill.
+
+---
+
 ## Investigating Incomplete Data
 
 ### Step 1: Identify the Problem

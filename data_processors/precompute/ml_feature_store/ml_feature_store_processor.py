@@ -761,12 +761,14 @@ class MLFeatureStoreProcessor(
         step_start = time.time()
         if self.is_backfill_mode:
             logger.info(f"⏭️ BACKFILL MODE: Skipping completeness check for {len(all_players)} players")
+            # Use actual game counts from already-loaded data (feature_extractor has last 10 games)
+            # This makes metadata accurate for debugging without additional BQ queries
             completeness_results = {
                 player: {
                     'is_production_ready': True,
                     'completeness_pct': 100.0,
-                    'expected_count': 0,
-                    'actual_count': 0,
+                    'expected_count': len(self.feature_extractor._last_10_games_lookup.get(player, [])),
+                    'actual_count': len(self.feature_extractor._last_10_games_lookup.get(player, [])),
                     'missing_count': 0,
                     'is_complete': True
                 }
