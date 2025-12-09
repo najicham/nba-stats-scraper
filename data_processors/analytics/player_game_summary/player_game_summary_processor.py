@@ -535,7 +535,12 @@ class PlayerGameSummaryProcessor(
         """
         Extract shot zone data from BigDataBall play-by-play (Pass 2 enrichment).
 
-        Extracts per-player shot attempts and makes by zone:
+        Extracts per-player:
+        - Shot attempts and makes by zone (paint, mid-range, three)
+        - Assisted vs unassisted field goals
+        - And-1 counts (made shot + shooting foul)
+
+        Zone definitions:
         - Paint: shot_distance <= 8 feet
         - Mid-range: shot_distance > 8 AND NOT 3pt
         - Three-point: event_subtype contains '3pt' OR shot_distance >= 23.75
@@ -543,7 +548,7 @@ class PlayerGameSummaryProcessor(
         Gracefully handles missing play-by-play data.
         """
         try:
-            # Query BigDataBall play-by-play for player shot zones
+            # Query BigDataBall play-by-play for player shot zones and shot creation
             query = f"""
             WITH player_shots AS (
                 SELECT
@@ -555,28 +560,61 @@ class PlayerGameSummaryProcessor(
                         WHEN event_subtype LIKE '%3pt%' OR shot_distance >= 23.75 THEN 'three'
                         ELSE 'mid_range'
                     END as zone,
-                    shot_made
+                    shot_made,
+                    player_2_role  -- 'assist' or 'block' or NULL
                 FROM `{self.project_id}.nba_raw.bigdataball_play_by_play`
                 WHERE event_type = 'shot'
                     AND shot_made IS NOT NULL
                     AND shot_distance IS NOT NULL
                     AND player_1_lookup IS NOT NULL
                     AND game_date BETWEEN '{start_date}' AND '{end_date}'
+            ),
+            -- And-1 counts from free throw 1/1 events (indicates made shot + foul)
+            and1_events AS (
+                SELECT
+                    game_id,
+                    player_1_lookup as player_lookup,
+                    COUNT(*) as and1_count
+                FROM `{self.project_id}.nba_raw.bigdataball_play_by_play`
+                WHERE event_type = 'free throw'
+                    AND event_subtype = 'free throw 1/1'
+                    AND player_1_lookup IS NOT NULL
+                    AND game_date BETWEEN '{start_date}' AND '{end_date}'
+                GROUP BY game_id, player_1_lookup
+            ),
+            shot_aggregates AS (
+                SELECT
+                    game_id,
+                    player_lookup,
+                    -- Paint zone
+                    COUNT(CASE WHEN zone = 'paint' THEN 1 END) as paint_attempts,
+                    COUNT(CASE WHEN zone = 'paint' AND shot_made = TRUE THEN 1 END) as paint_makes,
+                    -- Mid-range zone
+                    COUNT(CASE WHEN zone = 'mid_range' THEN 1 END) as mid_range_attempts,
+                    COUNT(CASE WHEN zone = 'mid_range' AND shot_made = TRUE THEN 1 END) as mid_range_makes,
+                    -- Three-point (for validation against box score)
+                    COUNT(CASE WHEN zone = 'three' THEN 1 END) as three_attempts_pbp,
+                    COUNT(CASE WHEN zone = 'three' AND shot_made = TRUE THEN 1 END) as three_makes_pbp,
+                    -- Assisted vs unassisted field goals
+                    COUNT(CASE WHEN shot_made = TRUE AND player_2_role = 'assist' THEN 1 END) as assisted_fg_makes,
+                    COUNT(CASE WHEN shot_made = TRUE AND (player_2_role IS NULL OR player_2_role NOT IN ('assist', 'block')) THEN 1 END) as unassisted_fg_makes
+                FROM player_shots
+                GROUP BY game_id, player_lookup
             )
             SELECT
-                game_id,
-                player_lookup,
-                -- Paint zone
-                COUNT(CASE WHEN zone = 'paint' THEN 1 END) as paint_attempts,
-                COUNT(CASE WHEN zone = 'paint' AND shot_made = TRUE THEN 1 END) as paint_makes,
-                -- Mid-range zone
-                COUNT(CASE WHEN zone = 'mid_range' THEN 1 END) as mid_range_attempts,
-                COUNT(CASE WHEN zone = 'mid_range' AND shot_made = TRUE THEN 1 END) as mid_range_makes,
-                -- Three-point (for validation against box score)
-                COUNT(CASE WHEN zone = 'three' THEN 1 END) as three_attempts_pbp,
-                COUNT(CASE WHEN zone = 'three' AND shot_made = TRUE THEN 1 END) as three_makes_pbp
-            FROM player_shots
-            GROUP BY game_id, player_lookup
+                s.game_id,
+                s.player_lookup,
+                s.paint_attempts,
+                s.paint_makes,
+                s.mid_range_attempts,
+                s.mid_range_makes,
+                s.three_attempts_pbp,
+                s.three_makes_pbp,
+                s.assisted_fg_makes,
+                s.unassisted_fg_makes,
+                COALESCE(a.and1_count, 0) as and1_count
+            FROM shot_aggregates s
+            LEFT JOIN and1_events a ON s.game_id = a.game_id AND s.player_lookup = a.player_lookup
             """
 
             shot_zones_df = self.bq_client.query(query).to_dataframe()
@@ -590,11 +628,14 @@ class PlayerGameSummaryProcessor(
                         'paint_makes': int(row['paint_makes']) if pd.notna(row['paint_makes']) else None,
                         'mid_range_attempts': int(row['mid_range_attempts']) if pd.notna(row['mid_range_attempts']) else None,
                         'mid_range_makes': int(row['mid_range_makes']) if pd.notna(row['mid_range_makes']) else None,
+                        'assisted_fg_makes': int(row['assisted_fg_makes']) if pd.notna(row['assisted_fg_makes']) else None,
+                        'unassisted_fg_makes': int(row['unassisted_fg_makes']) if pd.notna(row['unassisted_fg_makes']) else None,
+                        'and1_count': int(row['and1_count']) if pd.notna(row['and1_count']) else None,
                     }
 
                 self.shot_zones_available = True
                 self.shot_zones_source = 'bigdataball_pbp'
-                logger.info(f"✅ Extracted shot zones for {len(self.shot_zone_data)} player-games from BigDataBall")
+                logger.info(f"✅ Extracted shot zones + shot creation for {len(self.shot_zone_data)} player-games from BigDataBall")
             else:
                 logger.warning("⚠️ BigDataBall play-by-play query returned no shot zones")
                 self.shot_zones_available = False
@@ -616,15 +657,20 @@ class PlayerGameSummaryProcessor(
         zones = self.shot_zone_data.get(key, {})
 
         return {
+            # Shot zones by location
             'paint_attempts': zones.get('paint_attempts'),
             'paint_makes': zones.get('paint_makes'),
             'mid_range_attempts': zones.get('mid_range_attempts'),
             'mid_range_makes': zones.get('mid_range_makes'),
-            # These fields not yet extracted from play-by-play
+            # Shot creation (assisted vs self-created)
+            'assisted_fg_makes': zones.get('assisted_fg_makes'),
+            'unassisted_fg_makes': zones.get('unassisted_fg_makes'),
+            # And-1 (made shot + shooting foul)
+            'and1_count': zones.get('and1_count'),
+            # Block tracking by zone (not yet implemented)
             'paint_blocks': None,
             'mid_range_blocks': None,
             'three_pt_blocks': None,
-            'and1_count': None,
         }
 
     def validate_extracted_data(self) -> None:
@@ -1012,12 +1058,8 @@ class PlayerGameSummaryProcessor(
                 'ft_attempts': int(row['free_throws_attempted']) if pd.notna(row['free_throws_attempted']) else None,
                 'ft_makes': int(row['free_throws_made']) if pd.notna(row['free_throws_made']) else None,
 
-                # Shot zones (Pass 2 enrichment from BigDataBall play-by-play)
+                # Shot zones + shot creation (Pass 2 enrichment from BigDataBall play-by-play)
                 **self._get_shot_zone_data(row['game_id'], player_lookup),
-
-                # Shot creation (Pass 2 implementation - future)
-                'assisted_fg_makes': None,
-                'unassisted_fg_makes': None,
 
                 # Efficiency
                 'usage_rate': None,  # Requires team stats
@@ -1170,12 +1212,8 @@ class PlayerGameSummaryProcessor(
                     'ft_attempts': int(row['free_throws_attempted']) if pd.notna(row['free_throws_attempted']) else None,
                     'ft_makes': int(row['free_throws_made']) if pd.notna(row['free_throws_made']) else None,
 
-                    # Shot zones (Pass 2 enrichment from BigDataBall play-by-play)
+                    # Shot zones + shot creation (Pass 2 enrichment from BigDataBall play-by-play)
                     **self._get_shot_zone_data(row['game_id'], player_lookup),
-
-                    # Shot creation (Pass 2 implementation - future)
-                    'assisted_fg_makes': None,
-                    'unassisted_fg_makes': None,
 
                     # Efficiency
                     'usage_rate': None,  # Requires team stats
