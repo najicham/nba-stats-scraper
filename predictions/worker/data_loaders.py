@@ -795,28 +795,28 @@ def validate_features(features: Dict, min_quality_score: float = 70.0) -> tuple:
 
 def normalize_confidence(confidence: float, system_id: str) -> float:
     """
-    Normalize confidence to 0-100 scale for BigQuery
-    
+    Normalize confidence to 0-1 scale for BigQuery
+
     Different systems use different confidence scales:
-    - Moving Average, Zone Matchup, Ensemble: 0.0-1.0 scale
-    - Similarity, XGBoost: 0-100 scale
-    
+    - Moving Average, Zone Matchup, Ensemble: 0.0-1.0 scale (native)
+    - Similarity, XGBoost: 0-100 scale (needs division)
+
     Args:
         confidence: Raw confidence from system
         system_id: System identifier
-    
+
     Returns:
-        float: Confidence on 0-100 scale
+        float: Confidence on 0-1 scale
     """
     if system_id in ['moving_average', 'zone_matchup_v1', 'ensemble_v1']:
-        # Convert 0.0-1.0 to 0-100
-        return confidence * 100.0
-    elif system_id in ['similarity_balanced_v1', 'xgboost_v1']:
-        # Already 0-100
+        # Already 0-1 scale, keep as-is
         return confidence
+    elif system_id in ['similarity_balanced_v1', 'xgboost_v1']:
+        # Convert 0-100 to 0-1
+        return confidence / 100.0
     else:
-        # Default: assume 0-100
-        logger.warning(f"Unknown system_id {system_id}, assuming 0-100 scale")
+        # Default: assume 0-1 scale
+        logger.warning(f"Unknown system_id {system_id}, assuming 0-1 scale")
         return confidence
 
 
