@@ -51,43 +51,90 @@ class FeatureExtractor:
     # PLAYER LIST
     # ========================================================================
     
-    def get_players_with_games(self, game_date: date) -> List[Dict[str, Any]]:
+    def get_players_with_games(self, game_date: date, backfill_mode: bool = False) -> List[Dict[str, Any]]:
         """
         Get list of all players with games on game_date.
 
         v3.2 CHANGE (All-Player Predictions):
         Now includes has_prop_line flag to indicate which players have betting lines.
 
+        v3.3 CHANGE (Backfill Mode):
+        When backfill_mode=True, queries player_game_summary (who actually played)
+        instead of upcoming_player_game_context (who was expected to play).
+        This increases backfill coverage from ~65% to ~100% for historical dates.
+
         Args:
             game_date: Date to query
+            backfill_mode: If True, use actual played data instead of expected
 
         Returns:
             List of dicts with player_lookup, game_id, opponent, has_prop_line, etc.
         """
-        query = f"""
-        SELECT
-            player_lookup,
-            universal_player_id,
-            game_id,
-            game_date,
-            opponent_team_abbr,
-            home_game AS is_home,
-            days_rest,
-            COALESCE(has_prop_line, FALSE) AS has_prop_line,  -- v3.2: Track if player has betting line
-            current_points_line  -- v3.2: Pass through for estimated lines
-        FROM `{self.project_id}.nba_analytics.upcoming_player_game_context`
-        WHERE game_date = '{game_date}'
-        ORDER BY player_lookup
-        """
-        
-        logger.debug(f"Querying players with games on {game_date}")
+        if backfill_mode:
+            # For historical backfill: use actual played data from player_game_summary
+            # This captures ALL players who played, not just those expected to play
+            query = f"""
+            WITH player_rest AS (
+                -- Calculate days rest from previous game
+                SELECT
+                    player_lookup,
+                    game_date,
+                    DATE_DIFF(
+                        game_date,
+                        LAG(game_date) OVER (PARTITION BY player_lookup ORDER BY game_date),
+                        DAY
+                    ) AS days_since_last
+                FROM `{self.project_id}.nba_analytics.player_game_summary`
+                WHERE game_date <= '{game_date}'
+            )
+            SELECT
+                pgs.player_lookup,
+                pgs.universal_player_id,
+                pgs.game_id,
+                pgs.game_date,
+                pgs.opponent_team_abbr,
+                -- Derive is_home from game_id pattern (home team is second in game_id)
+                CASE
+                    WHEN SPLIT(pgs.game_id, '_')[SAFE_OFFSET(2)] = pgs.team_abbr THEN TRUE
+                    ELSE FALSE
+                END AS is_home,
+                COALESCE(pr.days_since_last, 3) AS days_rest,  -- Default 3 days if first game
+                FALSE AS has_prop_line,  -- No betting lines for backfill
+                CAST(NULL AS FLOAT64) AS current_points_line
+            FROM `{self.project_id}.nba_analytics.player_game_summary` pgs
+            LEFT JOIN player_rest pr
+                ON pgs.player_lookup = pr.player_lookup AND pgs.game_date = pr.game_date
+            WHERE pgs.game_date = '{game_date}'
+            ORDER BY pgs.player_lookup
+            """
+            logger.info(f"[BACKFILL MODE] Querying actual played roster for {game_date}")
+        else:
+            # For real-time: use expected players from upcoming_player_game_context
+            query = f"""
+            SELECT
+                player_lookup,
+                universal_player_id,
+                game_id,
+                game_date,
+                opponent_team_abbr,
+                home_game AS is_home,
+                days_rest,
+                COALESCE(has_prop_line, FALSE) AS has_prop_line,  -- v3.2: Track if player has betting line
+                current_points_line  -- v3.2: Pass through for estimated lines
+            FROM `{self.project_id}.nba_analytics.upcoming_player_game_context`
+            WHERE game_date = '{game_date}'
+            ORDER BY player_lookup
+            """
+            logger.debug(f"Querying expected players with games on {game_date}")
+
         result: pd.DataFrame = self.bq_client.query(query).to_dataframe()
-        
+
         if result.empty:
             logger.warning(f"No players found with games on {game_date}")
             return []
-        
-        logger.debug(f"Found {len(result)} players with games on {game_date}")
+
+        logger.info(f"Found {len(result)} players with games on {game_date}" +
+                   (" [BACKFILL MODE]" if backfill_mode else ""))
         return result.to_dict('records')
 
     # ========================================================================

@@ -324,10 +324,14 @@ class MLFeatureStoreProcessor(
             logger.warning(f"Stale Phase 4 data detected (from base class check)")
 
         # Get players with games today
+        # v3.3: In backfill mode, query actual played roster instead of expected roster
         step_start = time.time()
-        self.players_with_games = self.feature_extractor.get_players_with_games(analysis_date)
+        self.players_with_games = self.feature_extractor.get_players_with_games(
+            analysis_date, backfill_mode=self.is_backfill_mode
+        )
         self._timing['get_players_with_games'] = time.time() - step_start
-        logger.info(f"Found {len(self.players_with_games)} players with games on {analysis_date}")
+        logger.info(f"Found {len(self.players_with_games)} players with games on {analysis_date}" +
+                   (" [BACKFILL MODE: actual roster]" if self.is_backfill_mode else ""))
 
         # Extract source hashes from all 4 Phase 4 dependencies (Smart Reprocessing - Pattern #3)
         # Note: _extract_source_hashes has its own timing
@@ -459,10 +463,13 @@ class MLFeatureStoreProcessor(
         Source tracking still populated to show Phase 4 status.
         """
         # Get list of players with games
-        players = self.feature_extractor.get_players_with_games(analysis_date)
-        
+        # v3.3: In backfill mode, query actual played roster
+        players = self.feature_extractor.get_players_with_games(
+            analysis_date, backfill_mode=self.is_backfill_mode
+        )
+
         self.transformed_data = []
-        
+
         for player_row in players:
             record = {
                 'player_lookup': player_row['player_lookup'],
@@ -603,7 +610,10 @@ class MLFeatureStoreProcessor(
 
         try:
             # Get opponent teams for each player from feature_extractor (cached data)
-            players_with_games = self.feature_extractor.get_players_with_games(analysis_date)
+            # v3.3: In backfill mode, query actual played roster
+            players_with_games = self.feature_extractor.get_players_with_games(
+                analysis_date, backfill_mode=self.is_backfill_mode
+            )
             opponent_map = {p['player_lookup']: p.get('opponent_team_abbr') for p in players_with_games}
             unique_opponents = [t for t in set(opponent_map.values()) if t]
 
