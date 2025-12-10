@@ -184,14 +184,54 @@ class FeatureExtractor:
             ('team_games', lambda: self._batch_extract_team_games(game_date, all_teams)),
         ]
 
-        with ThreadPoolExecutor(max_workers=8) as executor:
-            futures = {executor.submit(task[1]): task[0] for task in extraction_tasks}
-            for future in as_completed(futures):
-                task_name = futures[future]
-                try:
-                    future.result()
-                except Exception as e:
-                    logger.error(f"Batch extraction failed for {task_name}: {e}")
+        # Auto-retry logic for transient network/BigQuery errors
+        max_retries = 3
+        retry_delays = [30, 60, 120]  # seconds between retries
+        last_error = None
+
+        for attempt in range(max_retries + 1):
+            try:
+                # Clear cache before each attempt (in case partial data was written)
+                if attempt > 0:
+                    self._clear_batch_cache()
+                    self._batch_cache_date = game_date
+
+                with ThreadPoolExecutor(max_workers=8) as executor:
+                    futures = {executor.submit(task[1]): task[0] for task in extraction_tasks}
+                    for future in as_completed(futures):
+                        task_name = futures[future]
+                        try:
+                            future.result()
+                        except Exception as e:
+                            logger.error(f"Batch extraction failed for {task_name}: {e}")
+                            raise
+
+                # Success - break out of retry loop
+                if attempt > 0:
+                    logger.info(f"Batch extraction succeeded on retry attempt {attempt}")
+                break
+
+            except Exception as e:
+                last_error = e
+                error_str = str(e).lower()
+
+                # Check if error is retryable (transient network/timeout issues)
+                is_retryable = any(keyword in error_str for keyword in [
+                    'timeout', 'timed out', 'connection', 'reset', 'refused',
+                    'unavailable', 'deadline', 'retryerror', 'httpsconnectionpool'
+                ])
+
+                if is_retryable and attempt < max_retries:
+                    delay = retry_delays[attempt]
+                    logger.warning(
+                        f"Batch extraction failed with retryable error (attempt {attempt + 1}/{max_retries + 1}). "
+                        f"Retrying in {delay}s... Error: {e}"
+                    )
+                    time.sleep(delay)
+                else:
+                    # Non-retryable error or max retries exceeded
+                    if attempt >= max_retries:
+                        logger.error(f"Batch extraction failed after {max_retries + 1} attempts. Giving up.")
                     raise
 
         elapsed = time.time() - start_time

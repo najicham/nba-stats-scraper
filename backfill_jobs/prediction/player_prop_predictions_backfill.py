@@ -126,6 +126,80 @@ class PredictionBackfill:
             return False
         return True
 
+    def check_mlfs_completeness(self, game_date: date, min_coverage_pct: float = 90.0) -> Dict:
+        """
+        Check if ML Feature Store data is complete for the date.
+
+        Compares MLFS player count against expected players from player_game_summary.
+        This prevents predictions from running on incomplete/stale MLFS data.
+
+        Args:
+            game_date: Date to check
+            min_coverage_pct: Minimum coverage percentage required (default 90%)
+
+        Returns:
+            Dict with 'complete', 'mlfs_count', 'expected_count', 'coverage_pct'
+        """
+        try:
+            query = f"""
+            WITH mlfs AS (
+                SELECT COUNT(DISTINCT player_lookup) as count
+                FROM `{PROJECT_ID}.nba_predictions.ml_feature_store_v2`
+                WHERE game_date = '{game_date}'
+            ),
+            expected AS (
+                SELECT COUNT(DISTINCT player_lookup) as count
+                FROM `{PROJECT_ID}.nba_analytics.player_game_summary`
+                WHERE game_date = '{game_date}'
+            )
+            SELECT
+                mlfs.count as mlfs_count,
+                expected.count as expected_count
+            FROM mlfs, expected
+            """
+            result = self.bq_client.query(query).to_dataframe()
+
+            if result.empty:
+                return {
+                    'complete': False,
+                    'mlfs_count': 0,
+                    'expected_count': 0,
+                    'coverage_pct': 0.0,
+                    'error': 'No data returned'
+                }
+
+            mlfs_count = int(result['mlfs_count'].iloc[0])
+            expected_count = int(result['expected_count'].iloc[0])
+
+            if expected_count == 0:
+                return {
+                    'complete': False,
+                    'mlfs_count': mlfs_count,
+                    'expected_count': 0,
+                    'coverage_pct': 0.0,
+                    'error': 'No expected players (no games on this date?)'
+                }
+
+            coverage_pct = (mlfs_count / expected_count) * 100.0
+            is_complete = coverage_pct >= min_coverage_pct
+
+            return {
+                'complete': is_complete,
+                'mlfs_count': mlfs_count,
+                'expected_count': expected_count,
+                'coverage_pct': round(coverage_pct, 1)
+            }
+
+        except Exception as e:
+            logger.error(f"Error checking MLFS completeness: {e}")
+            return {
+                'complete': False,
+                'mlfs_count': 0,
+                'expected_count': 0,
+                'coverage_pct': 0.0,
+                'error': str(e)
+            }
+
     def check_phase4_dependencies(self, game_date: date) -> Dict:
         """Check if Phase 4 dependencies exist for the date."""
         try:
@@ -414,12 +488,24 @@ class PredictionBackfill:
             logger.error(f"Error writing predictions to BigQuery: {e}")
             return 0
 
-    def run_predictions_for_date(self, game_date: date, dry_run: bool = False) -> Dict:
+    def run_predictions_for_date(
+        self,
+        game_date: date,
+        dry_run: bool = False,
+        require_complete_mlfs: bool = True,
+        min_mlfs_coverage_pct: float = 90.0
+    ) -> Dict:
         """Run predictions for all players on a specific date.
 
         Uses batch loading optimization (10-40x speedup):
         - Loads all features in ONE query instead of N queries
         - Loads all historical games in ONE query instead of N queries
+
+        Args:
+            game_date: Date to process
+            dry_run: If True, only check dependencies without processing
+            require_complete_mlfs: If True, skip dates with incomplete MLFS (default True)
+            min_mlfs_coverage_pct: Minimum MLFS coverage required (default 90%)
         """
         if is_bootstrap_date(game_date):
             return {
@@ -427,13 +513,30 @@ class PredictionBackfill:
                 'date': game_date.isoformat()
             }
 
-        # Check dependencies
+        # Check Phase 4 dependencies
         deps = self.check_phase4_dependencies(game_date)
         if not deps['available']:
             return {
                 'status': 'missing_dependencies',
                 'date': game_date.isoformat(),
                 'dependencies': deps
+            }
+
+        # Check MLFS completeness (prevents running on stale/incomplete data)
+        mlfs_check = self.check_mlfs_completeness(game_date, min_mlfs_coverage_pct)
+        if require_complete_mlfs and not mlfs_check['complete']:
+            logger.warning(
+                f"MLFS incomplete for {game_date}: {mlfs_check['mlfs_count']}/{mlfs_check['expected_count']} "
+                f"({mlfs_check['coverage_pct']}% < {min_mlfs_coverage_pct}% required). "
+                f"Skipping to prevent predictions on stale data. "
+                f"Use --skip-mlfs-check to override."
+            )
+            return {
+                'status': 'incomplete_mlfs',
+                'date': game_date.isoformat(),
+                'mlfs_count': mlfs_check['mlfs_count'],
+                'expected_count': mlfs_check['expected_count'],
+                'coverage_pct': mlfs_check['coverage_pct']
             }
 
         if dry_run:
@@ -626,9 +729,16 @@ class PredictionBackfill:
         start_date: date,
         end_date: date,
         dry_run: bool = False,
-        checkpoint: BackfillCheckpoint = None
+        checkpoint: BackfillCheckpoint = None,
+        require_complete_mlfs: bool = True,
+        min_mlfs_coverage_pct: float = 90.0
     ):
-        """Run backfill processing day-by-day with checkpoint support."""
+        """Run backfill processing day-by-day with checkpoint support.
+
+        Args:
+            require_complete_mlfs: If True, skip dates with incomplete MLFS data
+            min_mlfs_coverage_pct: Minimum MLFS coverage required (default 90%)
+        """
         logger.info(f"Starting Phase 5 prediction backfill from {start_date} to {end_date}")
 
         if not self.validate_date_range(start_date, end_date):
@@ -672,10 +782,23 @@ class PredictionBackfill:
             logger.info(f"Processing game date {day_number}/{total_game_dates}: {current_date}")
 
             start_time = time.time()
-            result = self.run_predictions_for_date(current_date, dry_run)
+            result = self.run_predictions_for_date(
+                current_date,
+                dry_run=dry_run,
+                require_complete_mlfs=require_complete_mlfs,
+                min_mlfs_coverage_pct=min_mlfs_coverage_pct
+            )
             elapsed = time.time() - start_time
 
-            if result['status'] == 'success':
+            if result['status'] == 'incomplete_mlfs':
+                # MLFS data incomplete - skip to prevent bad predictions
+                coverage = result.get('coverage_pct', 0)
+                logger.warning(f"  ⚠ Skipped: MLFS incomplete ({coverage}% coverage)")
+                skipped_days += 1
+                failed_days.append(current_date)  # Track for retry
+                if checkpoint:
+                    checkpoint.mark_date_failed(current_date, error=f"MLFS incomplete: {coverage}%")
+            elif result['status'] == 'success':
                 successful_days += 1
                 preds = result.get('predictions_generated', 0)
                 total_predictions += preds
@@ -746,6 +869,10 @@ def main():
                         help='Show checkpoint status and exit')
     parser.add_argument('--skip-preflight', action='store_true',
                         help='Skip Phase 4 pre-flight check (not recommended)')
+    parser.add_argument('--skip-mlfs-check', action='store_true',
+                        help='Skip MLFS completeness check (allows running on incomplete MLFS data)')
+    parser.add_argument('--min-mlfs-coverage', type=float, default=90.0,
+                        help='Minimum MLFS coverage percentage required (default: 90)')
 
     args = parser.parse_args()
     backfiller = PredictionBackfill()
@@ -814,7 +941,9 @@ def main():
         start_date,
         end_date,
         dry_run=args.dry_run,
-        checkpoint=checkpoint if not args.dry_run else None
+        checkpoint=checkpoint if not args.dry_run else None,
+        require_complete_mlfs=not args.skip_mlfs_check,
+        min_mlfs_coverage_pct=args.min_mlfs_coverage
     )
 
 

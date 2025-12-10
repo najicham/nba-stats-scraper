@@ -403,7 +403,44 @@ Players traded mid-season may have gaps. All-Star break (usually mid-February) h
 **Fix:** Need to decide on canonical scale:
 - Option A: Fix daily worker to store 0-1 (match backfill)
 - Option B: Fix backfill to normalize to 0-100 (match daily worker)
-**Status:** NOT YET FIXED - need to align all writers on same scale
+**Status:** FIXED - normalized to 0-1 scale (commit 6bccfdd)
+
+### Issue 6: Stale Data from Failed Backfills
+**Symptom:** Failed backfill dates still have old/incomplete data from previous runs
+**Example (Session 106):**
+- Dec 7 backfill failed with BQ timeout
+- Old MLFS data (59 players) remained from previous incorrect run
+- Predictions backfill would have used this incomplete data
+**Root Cause:** MERGE pattern updates/inserts but doesn't remove players that shouldn't exist
+**Fix applied:**
+1. Manual DELETE of stale data before retry
+2. Added MLFS completeness check to predictions backfill (prevents running on incomplete data)
+**Prevention:**
+- Always verify MLFS coverage before running predictions
+- Use `--skip-mlfs-check` only if you understand the implications
+```bash
+# Check MLFS coverage before predictions
+bq query --use_legacy_sql=false "
+SELECT game_date, COUNT(*) as mlfs,
+  (SELECT COUNT(*) FROM nba_analytics.player_game_summary WHERE game_date = m.game_date) as expected
+FROM nba_predictions.ml_feature_store_v2 m
+WHERE game_date = 'YYYY-MM-DD'
+GROUP BY game_date"
+```
+
+### Issue 7: Transient BigQuery Timeouts
+**Symptom:** Random dates fail with 600s timeout on batch extraction
+**Example:** Dec 7/9 2021 failed while Dec 8 (larger date) succeeded
+**Root Cause:** Network/BigQuery connection instability (NOT data volume related)
+**Indicators:**
+- Failed dates have FEWER players than successful dates
+- Failures occur consecutively
+- Dates immediately before/after succeed normally
+**Fix:** Added auto-retry logic to `feature_extractor.py`:
+- 3 retries with 30s, 60s, 120s delays
+- Only retries transient errors (timeout, connection, reset)
+- Clears batch cache between attempts
+**Status:** FIXED (Session 106)
 
 ---
 
@@ -418,6 +455,7 @@ Copy this for each backfill run:
 - [ ] Verified upstream data exists
 - [ ] Checked bootstrap period
 - [ ] Confirmed idempotency in script
+- [ ] For predictions: Verified MLFS has complete coverage (or using `--skip-mlfs-check`)
 
 ### Coverage
 - [ ] Ran validation script
@@ -456,3 +494,4 @@ Copy this for each backfill run:
 | Version | Date | Changes |
 |---------|------|---------|
 | 1.0 | 2025-12-10 | Initial version based on Session 104 learnings |
+| 1.1 | 2025-12-10 | Added Issues 6 (stale data), 7 (BQ timeouts) from Session 106. Added MLFS check to template. |
