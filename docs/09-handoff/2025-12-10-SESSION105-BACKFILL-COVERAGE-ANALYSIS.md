@@ -1,259 +1,225 @@
-# Session 105: Backfill Coverage Analysis and Root Cause Identification
+# Session 105: Backfill Coverage Analysis and MLFS Fix
 
 **Date:** 2025-12-10
-**Status:** ROOT CAUSES IDENTIFIED, FIX IN PROGRESS
+**Status:** FIX IMPLEMENTED AND TESTED - Ready for December Re-backfill
 
 ---
 
 ## Executive Summary
 
-Deep analysis of Nov-Dec 2021 backfill revealed significant coverage gap between November (98.9%) and December (64.2%). Root cause identified: MLFS processor uses forward-looking player data (`upcoming_player_game_context`) instead of actual played data (`player_game_summary`) for historical dates.
+Deep analysis of Nov-Dec 2021 backfill revealed a 35% coverage gap in December (64% vs 99% in November). Root cause identified and fixed: MLFS processor used forward-looking player data instead of actual played data for historical backfills. Fix tested on Dec 1 - coverage increased from 174 to 190 players (100%).
 
 ---
 
-## Coverage Analysis Results
+## Work Completed This Session
 
-### Overall Coverage
+### 1. Confidence Scale Fix (from S104)
+**Status:** COMPLETE
+**Commit:** `6bccfdd`
 
-| Month | Dates | Players Played | Players Predicted | Coverage |
-|-------|-------|----------------|-------------------|----------|
-| November | 24 | 458 | 453 | **98.9%** |
-| December | 30 | 553 | 355 | **64.2%** |
+- Changed `normalize_confidence()` to output 0-1 scale instead of 0-100
+- Fixed 40 bad records in BigQuery via UPDATE
 
-### Daily Coverage Pattern
+### 2. Root Cause Analysis
+**Status:** COMPLETE
 
-**November (post-bootstrap):** 100% coverage on all dates
-```
-Nov 6-30: Every player who played got predictions
-```
+Identified why December coverage was 64% vs November's 99%:
+- MLFS queried `upcoming_player_game_context` (expected players)
+- Should query `player_game_summary` (actual players) for backfill
+- Stars like Luka, Jokic, Herro were missing because they weren't in expected roster
 
-**December:** Coverage drops to 33-80% depending on date
-```
-Worst dates:
-- Dec 30: 33.3% (29/87 players)
-- Dec 19: 42.6% (80/188 players)
-- Dec 22: 43.6% (61/140 players)
-- Dec 29: 45.2% (85/188 players)
-```
+### 3. MLFS Backfill Mode Fix
+**Status:** COMPLETE
+**Commit:** `e4e31c0`
+
+Added `backfill_mode` parameter to `get_players_with_games()`:
+- `feature_extractor.py`: New query path for backfill mode
+- `ml_feature_store_processor.py`: Passes `backfill_mode` to all 3 call sites
+
+### 4. Fix Verification (Dec 1 Test)
+**Status:** COMPLETE
+
+| Metric | Before Fix | After Fix |
+|--------|------------|-----------|
+| MLFS players | 174 | 223 |
+| Players who played | 190 | 190 |
+| Missing players | 16 | **0** |
 
 ---
 
-## Root Causes Identified
+## Current Data State
 
-### Root Cause #1: MLFS Uses Wrong Data Source for Backfill (PRIMARY ISSUE)
+### Prediction Quality (Nov-Dec 2021)
+| System | MAE | Predictions | Notes |
+|--------|-----|-------------|-------|
+| ensemble_v1 | 4.45 | 7,013 | Best performer |
+| xgboost_v1 | 4.47 | 7,013 | Very good |
+| moving_average | 4.58 | 7,013 | Good |
+| similarity_balanced_v1 | 4.79 | 6,088 | Good |
+| zone_matchup_v1 | 5.58 | 7,013 | Acceptable |
 
-**Location:** `data_processors/precompute/ml_feature_store/feature_extractor.py:54-81`
+### Data Integrity
+| Check | Status |
+|-------|--------|
+| NULL game_id | 0 ✅ |
+| Bad confidence (>1 or <0) | 0 ✅ |
+| Negative predicted_points | 0 ✅ |
+| Duplicates | 0 ✅ |
 
-**Problem:**
+### Coverage Gap (To Be Fixed)
+10 December dates have <70% coverage (will be fixed by re-running backfill):
+
+| Date | Current Coverage | After Fix |
+|------|------------------|-----------|
+| Dec 30 | 33.3% | ~100% |
+| Dec 19 | 42.6% | ~100% |
+| Dec 22 | 43.6% | ~100% |
+| Dec 29 | 45.2% | ~100% |
+| Dec 14 | 50.6% | ~100% |
+| Dec 31 | 53.4% | ~100% |
+| Dec 20 | 54.3% | ~100% |
+| Dec 27 | 56.2% | ~100% |
+| Dec 28 | 58.6% | ~100% |
+| Dec 16 | 58.7% | ~100% |
+
+---
+
+## Technical Details
+
+### Root Cause: Wrong Data Source for Backfill
+
+**Before (Bug):**
+```
+MLFS Processor
+    └── get_players_with_games()
+            └── queries: upcoming_player_game_context (174 expected players)
+                         ↓
+                    Missing 16 who actually played!
+```
+
+**After (Fixed):**
+```
+MLFS Processor (backfill_mode=True)
+    └── get_players_with_games(backfill_mode=True)
+            └── queries: player_game_summary (190 actual players)
+                         ↓
+                    All players who played get features!
+```
+
+### Code Changes
+
+**File: `data_processors/precompute/ml_feature_store/feature_extractor.py`**
 ```python
-def get_players_with_games(self, game_date: date) -> List[Dict[str, Any]]:
-    query = f"""
-    SELECT player_lookup, ...
-    FROM `{self.project_id}.nba_analytics.upcoming_player_game_context`  # <-- WRONG FOR BACKFILL
-    WHERE game_date = '{game_date}'
-    """
-```
-
-**Why This Matters:**
-- `upcoming_player_game_context`: Forward-looking (who is EXPECTED to play)
-- `player_game_summary`: Backward-looking (who ACTUALLY played)
-
-**Impact on Dec 1, 2021:**
-| Data Source | Players |
-|-------------|---------|
-| `upcoming_player_game_context` | 174 |
-| `player_game_summary` | 190 |
-| **Missing players** | **16** |
-
-**Missing Star Players:**
-- Luka Doncic (16 prior games)
-- Nikola Jokic (15 prior games)
-- Joel Embiid (11 prior games)
-- Tyler Herro (18 prior games)
-- Jaylen Brown (12 prior games)
-
-These stars PLAYED on Dec 1 but weren't in `upcoming_player_game_context`, so they have NO MLFS features and NO predictions.
-
-### Root Cause #2: COVID Protocols (December 2021)
-
-**Context:** December 2021 was the Omicron wave peak in the NBA.
-
-**Impact on Data:**
-- 48+ game gaps >7 days in player schedules
-- Maximum gap: 21 days (players in health protocols)
-- PDC processor's `INCOMPLETE_DATA` check fails for irregular schedules
-
-**Failure Breakdown:**
-```sql
--- PDC failures in December (all INCOMPLETE_DATA)
-Dec 1:  51 failures
-Dec 8:  68 failures
-Dec 15: 50 failures
-Dec 23: 40 failures
-```
-
-**Note:** These players still got PCF and MLFS features, so this is NOT blocking predictions. The INCOMPLETE_DATA failure is informational.
-
-### Root Cause #3: Prediction Script Correctly Filters Non-Players
-
-**Behavior:** 33 players on Dec 1 have MLFS features but NO predictions.
-
-**Reason:** These 33 players were EXPECTED to play (in `upcoming_player_game_context`) but did NOT actually play on Dec 1. The prediction backfill script correctly queries `player_game_summary` for who to predict.
-
-**Verdict:** This is CORRECT behavior. No fix needed.
-
----
-
-## Data Flow Diagram
-
-```
-For Real-Time (Daily) Predictions:
-  upcoming_player_game_context → MLFS → Predictions
-  (expected players)            (features)
-
-For Backfill (Historical) Predictions:
-  upcoming_player_game_context → MLFS → Predictions ← player_game_summary
-  (expected players)            (features)            (actual players)
-                                   ↓
-                        MISMATCH: Features generated for expected players
-                                  but predictions only for actual players
-```
-
-**The Fix:**
-```
-For Backfill (Historical) Predictions:
-  player_game_summary → MLFS → Predictions ← player_game_summary
-  (actual players)     (features)            (actual players)
-                                ↓
-                    MATCH: Features and predictions aligned
-```
-
----
-
-## Fix Required
-
-### Option A: Add Backfill Mode to MLFS Feature Extractor (RECOMMENDED)
-
-**File:** `data_processors/precompute/ml_feature_store/feature_extractor.py`
-
-**Change:**
-```python
-def get_players_with_games(self, game_date: date, backfill_mode: bool = False) -> List[Dict[str, Any]]:
+def get_players_with_games(self, game_date: date, backfill_mode: bool = False):
     if backfill_mode:
-        # For historical dates, use actual played data
-        query = f"""
-        SELECT player_lookup, universal_player_id, game_id, game_date,
-               opponent_team_abbr, home_game AS is_home, days_rest,
-               FALSE AS has_prop_line, NULL AS current_points_line
-        FROM `{self.project_id}.nba_analytics.player_game_summary`
-        WHERE game_date = '{game_date}'
-        ORDER BY player_lookup
-        """
+        # Query player_game_summary (actual players)
+        query = """SELECT ... FROM player_game_summary WHERE game_date = ..."""
     else:
-        # For real-time, use expected players
-        query = f"""
-        SELECT player_lookup, ...
-        FROM `{self.project_id}.nba_analytics.upcoming_player_game_context`
-        WHERE game_date = '{game_date}'
-        """
+        # Query upcoming_player_game_context (expected players)
+        query = """SELECT ... FROM upcoming_player_game_context WHERE game_date = ..."""
 ```
 
-**Also Update:**
-- `ml_feature_store_processor.py`: Pass `backfill_mode` flag
-- Add CLI argument `--backfill-mode` to processor
+**File: `data_processors/precompute/ml_feature_store/ml_feature_store_processor.py`**
+- Line 329: `get_players_with_games(analysis_date, backfill_mode=self.is_backfill_mode)`
+- Line 467: `get_players_with_games(analysis_date, backfill_mode=self.is_backfill_mode)`
+- Line 614: `get_players_with_games(analysis_date, backfill_mode=self.is_backfill_mode)`
 
-### After Fix: Re-run Backfill
+---
 
-1. Re-run MLFS for December 2021:
+## Next Steps: Re-run December Backfill
+
+### Step 1: Re-run MLFS for December
 ```bash
-PYTHONPATH=. .venv/bin/python -m data_processors.precompute.ml_feature_store.ml_feature_store_processor \
-  --start-date 2021-12-01 --end-date 2021-12-31 --backfill-mode
+PYTHONPATH=. .venv/bin/python backfill_jobs/precompute/ml_feature_store/ml_feature_store_precompute_backfill.py \
+  --start-date 2021-12-02 --end-date 2021-12-31
 ```
+**Expected time:** ~10-15 minutes
+**Expected result:** All December dates will have MLFS features for ALL players who played
 
-2. Re-run Phase 5 predictions for December:
+### Step 2: Re-run Predictions for December
 ```bash
 PYTHONPATH=. .venv/bin/python backfill_jobs/prediction/player_prop_predictions_backfill.py \
   --start-date 2021-12-01 --end-date 2021-12-31 --skip-preflight
 ```
+**Expected time:** ~10-15 minutes
+**Expected result:** December prediction coverage increases from 64% to ~100%
 
----
+### Step 3: Validate Results
+```bash
+PYTHONPATH=. .venv/bin/python scripts/validate_backfill_coverage.py \
+  --start-date 2021-12-01 --end-date 2021-12-31 --details
+```
 
-## Validation Queries
-
-### Check Current Coverage Gap
+### Validation Query
 ```sql
+-- After re-backfill, this should show ~100% coverage for all dates
 SELECT
-  CASE WHEN game_date < '2021-12-01' THEN 'November' ELSE 'December' END as month,
-  COUNT(DISTINCT p.player_lookup) as played,
+  game_date,
+  COUNT(DISTINCT pgs.player_lookup) as played,
   COUNT(DISTINCT pred.player_lookup) as predicted,
-  ROUND(COUNT(DISTINCT pred.player_lookup) * 100.0 / COUNT(DISTINCT p.player_lookup), 1) as coverage_pct
-FROM nba_analytics.player_game_summary p
+  ROUND(COUNT(DISTINCT pred.player_lookup) * 100.0 / COUNT(DISTINCT pgs.player_lookup), 1) as coverage_pct
+FROM nba_analytics.player_game_summary pgs
 LEFT JOIN nba_predictions.player_prop_predictions pred
-  ON p.game_date = pred.game_date AND p.player_lookup = pred.player_lookup
-WHERE p.game_date >= '2021-11-01' AND p.game_date <= '2021-12-31'
-GROUP BY 1;
-```
-
-### Check Missing Star Players
-```sql
-WITH pgs AS (
-  SELECT DISTINCT player_lookup
-  FROM nba_analytics.player_game_summary
-  WHERE game_date = '2021-12-01'
-),
-mlfs AS (
-  SELECT DISTINCT player_lookup
-  FROM nba_predictions.ml_feature_store_v2
-  WHERE game_date = '2021-12-01'
-)
-SELECT p.player_lookup,
-  (SELECT COUNT(*) FROM nba_analytics.player_game_summary
-   WHERE player_lookup = p.player_lookup AND game_date < '2021-12-01') as games_before
-FROM pgs p
-LEFT JOIN mlfs m ON p.player_lookup = m.player_lookup
-WHERE m.player_lookup IS NULL
-ORDER BY games_before DESC;
-```
-
-### Verify After Fix
-```sql
--- Should return 0 after fix
-SELECT COUNT(*) as missing_mlfs
-FROM nba_analytics.player_game_summary p
-LEFT JOIN nba_predictions.ml_feature_store_v2 m
-  ON p.game_date = m.game_date AND p.player_lookup = m.player_lookup
-WHERE p.game_date = '2021-12-01'
-  AND m.player_lookup IS NULL;
+  ON pgs.game_date = pred.game_date AND pgs.player_lookup = pred.player_lookup
+WHERE pgs.game_date >= '2021-12-01' AND pgs.game_date <= '2021-12-31'
+GROUP BY game_date
+ORDER BY coverage_pct
+LIMIT 10;
 ```
 
 ---
 
-## Session 104 → 105 Progress
+## Session Progress
+
+### Session 104 → 105 Completed Items
 
 | Item | S104 Status | S105 Status |
 |------|-------------|-------------|
-| P1: Confidence scale fix | PENDING | **COMPLETE** (commit `6bccfdd`) |
-| P2: Extend backfill Jan-Apr | PENDING | PENDING |
-| Coverage analysis | - | **COMPLETE** |
-| Root cause identification | - | **COMPLETE** |
-| MLFS backfill mode fix | - | **IN PROGRESS** |
+| P1: Confidence scale fix | PENDING | ✅ COMPLETE |
+| Coverage analysis | - | ✅ COMPLETE |
+| Root cause identification | - | ✅ COMPLETE |
+| MLFS backfill mode fix | - | ✅ COMPLETE |
+| Fix verification (Dec 1) | - | ✅ COMPLETE |
+| December re-backfill | - | PENDING |
 
----
-
-## Files Modified This Session
-
-1. `predictions/worker/data_loaders.py` - Fixed `normalize_confidence()` to output 0-1 scale
-
-## Commits This Session
-
+### Commits This Session
 1. `6bccfdd` - fix: Normalize confidence scores to 0-1 scale instead of 0-100
+2. `e4e31c0` - feat: Add backfill mode to MLFS for 100% player coverage
 
 ---
 
-## Next Steps
+## Files Modified
 
-1. **Implement backfill mode in MLFS** (this session)
-2. Re-run MLFS for December 2021
-3. Re-run Phase 5 predictions for December
-4. Validate coverage reaches ~100%
-5. Consider extending to Jan-Apr 2022
+| File | Change |
+|------|--------|
+| `predictions/worker/data_loaders.py` | Fixed `normalize_confidence()` to output 0-1 |
+| `data_processors/precompute/ml_feature_store/feature_extractor.py` | Added `backfill_mode` parameter |
+| `data_processors/precompute/ml_feature_store/ml_feature_store_processor.py` | Passes `backfill_mode` to feature extractor |
+
+---
+
+## Future Improvements (Optional)
+
+### 1. Extend Backfill to Jan-Apr 2022
+The 2021-22 season continues through April 2022. After December is complete:
+```bash
+# Phase 4
+./bin/backfill/run_phase4_backfill.sh --start-date 2022-01-01 --end-date 2022-04-30
+
+# Phase 5
+PYTHONPATH=. .venv/bin/python backfill_jobs/prediction/player_prop_predictions_backfill.py \
+  --start-date 2022-01-01 --end-date 2022-04-30 --skip-preflight
+```
+
+### 2. Add Backfill Mode to Daily Worker
+Currently only the backfill script has `backfill_mode`. Consider if daily worker needs similar handling for edge cases.
+
+---
+
+## Key Learnings
+
+1. **Forward-looking vs Backward-looking Data:** For historical backfills, always use actual outcome data (`player_game_summary`) not expected/projected data (`upcoming_player_game_context`).
+
+2. **COVID Protocol Impact:** December 2021 (Omicron wave) caused many unexpected roster changes, making the forward-looking data especially unreliable for that period.
+
+3. **Test on Representative Dates:** Testing on Dec 1 (which had the coverage issue) immediately validated the fix.
