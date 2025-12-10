@@ -670,7 +670,12 @@ class PlayerCompositeFactorsProcessor(
         
         self.player_context_df = self.bq_client.query(player_context_query).to_dataframe()
         logger.info(f"Extracted {len(self.player_context_df)} player context records")
-        
+
+        # BACKFILL MODE: Generate synthetic context from PGS if no context data exists
+        if self.player_context_df.empty and self.is_backfill_mode:
+            logger.warning(f"No upcoming_player_game_context for {analysis_date}, generating synthetic context from PGS (backfill mode)")
+            self._generate_synthetic_player_context(analysis_date)
+
         # Extract team context
         team_context_query = f"""
         SELECT
@@ -756,6 +761,98 @@ class PlayerCompositeFactorsProcessor(
             logger.info(f"Extracted 4 source hashes for smart reprocessing")
         except Exception as e:
             logger.warning(f"Failed to extract source hashes: {e}")
+
+    def _generate_synthetic_player_context(self, analysis_date: date) -> None:
+        """Generate synthetic player context from player_game_summary for backfill.
+
+        This allows historical backfills to work even when upcoming_player_game_context
+        was never populated (betting data wasn't scraped before games).
+
+        Uses players who ACTUALLY played on the date (from PGS) instead of
+        who was EXPECTED to play (from upcoming_player_game_context).
+        """
+        query = f"""
+        WITH players_on_date AS (
+            -- Get players who actually played on this date with their opponents
+            SELECT DISTINCT
+                pgs.player_lookup,
+                pgs.universal_player_id,
+                pgs.game_id,
+                pgs.game_date,
+                pgs.opponent_team_abbr
+            FROM `{self.project_id}.nba_analytics.player_game_summary` pgs
+            WHERE pgs.game_date = '{analysis_date.isoformat()}'
+        ),
+        game_history AS (
+            -- Get each player's game history for fatigue metrics
+            SELECT
+                pgs.player_lookup,
+                pgs.game_date,
+                pgs.minutes_played,
+                pgs.usage_rate
+            FROM `{self.project_id}.nba_analytics.player_game_summary` pgs
+            WHERE pgs.game_date >= DATE_SUB('{analysis_date.isoformat()}', INTERVAL 14 DAY)
+              AND pgs.game_date < '{analysis_date.isoformat()}'
+        ),
+        fatigue_metrics AS (
+            SELECT
+                p.player_lookup,
+                -- Days rest (simplified - check if played yesterday)
+                CASE WHEN EXISTS (
+                    SELECT 1 FROM game_history gh2
+                    WHERE gh2.player_lookup = p.player_lookup
+                      AND gh2.game_date = DATE_SUB('{analysis_date.isoformat()}', INTERVAL 1 DAY)
+                ) THEN 0 ELSE 1 END as days_rest,
+                -- Back to back
+                EXISTS (
+                    SELECT 1 FROM game_history gh2
+                    WHERE gh2.player_lookup = p.player_lookup
+                      AND gh2.game_date = DATE_SUB('{analysis_date.isoformat()}', INTERVAL 1 DAY)
+                ) as back_to_back,
+                -- Games in last 7 days
+                COUNTIF(gh.game_date >= DATE_SUB('{analysis_date.isoformat()}', INTERVAL 7 DAY)) as games_in_last_7_days,
+                -- Minutes in last 7 days
+                COALESCE(SUM(CASE WHEN gh.game_date >= DATE_SUB('{analysis_date.isoformat()}', INTERVAL 7 DAY)
+                    THEN gh.minutes_played ELSE 0 END), 0) as minutes_in_last_7_days,
+                -- Avg minutes per game last 7
+                SAFE_DIVIDE(
+                    SUM(CASE WHEN gh.game_date >= DATE_SUB('{analysis_date.isoformat()}', INTERVAL 7 DAY)
+                        THEN gh.minutes_played ELSE 0 END),
+                    COUNTIF(gh.game_date >= DATE_SUB('{analysis_date.isoformat()}', INTERVAL 7 DAY))
+                ) as avg_minutes_per_game_last_7,
+                -- Back to backs in last 14 days (simplified)
+                0 as back_to_backs_last_14_days,
+                -- Avg usage rate last 7 games
+                AVG(CASE WHEN gh.game_date >= DATE_SUB('{analysis_date.isoformat()}', INTERVAL 7 DAY)
+                    THEN gh.usage_rate ELSE NULL END) as avg_usage_rate_last_7_games
+            FROM players_on_date p
+            LEFT JOIN game_history gh ON p.player_lookup = gh.player_lookup
+            GROUP BY p.player_lookup
+        )
+        SELECT
+            p.player_lookup,
+            p.universal_player_id,
+            p.game_id,
+            p.game_date,
+            p.opponent_team_abbr,
+            COALESCE(fm.days_rest, 1) as days_rest,
+            COALESCE(fm.back_to_back, FALSE) as back_to_back,
+            COALESCE(fm.games_in_last_7_days, 0) as games_in_last_7_days,
+            CAST(COALESCE(fm.minutes_in_last_7_days, 0) AS INT64) as minutes_in_last_7_days,
+            COALESCE(fm.avg_minutes_per_game_last_7, 0) as avg_minutes_per_game_last_7,
+            COALESCE(fm.back_to_backs_last_14_days, 0) as back_to_backs_last_14_days,
+            NULL as player_age,  -- Not available in PGS
+            NULL as projected_usage_rate,  -- Not available in backfill
+            fm.avg_usage_rate_last_7_games,
+            0 as star_teammates_out,  -- Not available in backfill
+            NULL as pace_differential,  -- Not available in backfill
+            NULL as opponent_pace_last_10  -- Not available in backfill
+        FROM players_on_date p
+        LEFT JOIN fatigue_metrics fm ON p.player_lookup = fm.player_lookup
+        """
+
+        self.player_context_df = self.bq_client.query(query).to_dataframe()
+        logger.info(f"Generated {len(self.player_context_df)} synthetic player contexts from PGS (backfill mode)")
 
     def _is_early_season(self, analysis_date: date) -> bool:
         """
