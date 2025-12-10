@@ -169,68 +169,69 @@ class PredictionDataLoader:
     ) -> List[Dict]:
         """
         Load historical games for similarity matching
-        
+
         Queries player_game_summary for recent games and calculates context:
-        - opponent_tier: Categorized from opponent defense rating
+        - opponent_tier: Categorized from opponent (defaults to average since rating not available)
         - recent_form: Hot/normal/cold based on rolling average
-        
+
         Args:
             player_lookup: Player identifier
             game_date: Current game date (to filter history before this)
             lookback_days: How far back to look (default 90 days)
             max_games: Maximum games to return (default 30)
-        
+
         Returns:
             List of historical games with context
-            
+
         Example Return:
             [
                 {
                     'game_date': '2024-11-05',
                     'opponent_team_abbr': 'GSW',
-                    'opponent_tier': 'tier_1_elite',
+                    'opponent_tier': 'tier_2_average',
                     'days_rest': 1,
                     'is_home': True,
-                    'recent_form': 'hot',
+                    'recent_form': 'normal',
                     'points': 28,
                     'minutes_played': 35
                 },
                 # ... more games
             ]
         """
+        # Query only columns that exist in player_game_summary
         query = """
         WITH recent_games AS (
             SELECT
                 game_date,
                 opponent_team_abbr,
-                is_home,
-                days_rest,
                 points,
-                minutes_played,
-                opponent_def_rating_last_15,
-                points_avg_last_5,
-                points_avg_season
+                minutes_played
             FROM `{project}.nba_analytics.player_game_summary`
             WHERE player_lookup = @player_lookup
               AND game_date < @game_date
               AND game_date >= DATE_SUB(@game_date, INTERVAL @lookback_days DAY)
             ORDER BY game_date DESC
             LIMIT @max_games
+        ),
+        games_with_lag AS (
+            SELECT
+                game_date,
+                opponent_team_abbr,
+                points,
+                minutes_played,
+                LAG(game_date) OVER (ORDER BY game_date DESC) as next_game_date
+            FROM recent_games
         )
         SELECT
             game_date,
             opponent_team_abbr,
-            is_home,
-            days_rest,
             points,
             minutes_played,
-            opponent_def_rating_last_15,
-            points_avg_last_5,
-            points_avg_season
-        FROM recent_games
+            DATE_DIFF(next_game_date, game_date, DAY) as days_until_next
+        FROM games_with_lag
         ORDER BY game_date DESC
         """.format(project=self.project_id)
-        
+
         job_config = bigquery.QueryJobConfig(
             query_parameters=[
                 bigquery.ScalarQueryParameter("player_lookup", "STRING", player_lookup),
@@ -239,38 +240,47 @@ class PredictionDataLoader:
                 bigquery.ScalarQueryParameter("max_games", "INT64", max_games)
             ]
         )
-        
+
         try:
             results = self.client.query(query, job_config=job_config).result()
-            
+
             historical_games = []
-            for row in results:
-                # Calculate opponent tier from defense rating
-                opponent_tier = self._calculate_opponent_tier(
-                    row.opponent_def_rating_last_15
-                )
-                
-                # Calculate recent form from rolling average
-                recent_form = self._calculate_recent_form(
-                    row.points_avg_last_5,
-                    row.points_avg_season
-                )
-                
+            all_points = []
+
+            # First pass: collect all data
+            rows_list = list(results)
+            for row in rows_list:
+                if row.points is not None:
+                    all_points.append(float(row.points))
+
+            # Calculate season average from available data
+            season_avg = sum(all_points) / len(all_points) if all_points else 20.0
+
+            # Second pass: build game records
+            for i, row in enumerate(rows_list):
+                # Calculate recent form from last 5 games
+                recent_points = all_points[max(0, i-5):i] if i > 0 else []
+                recent_avg = sum(recent_points) / len(recent_points) if recent_points else season_avg
+                recent_form = self._calculate_recent_form(recent_avg, season_avg)
+
+                # days_rest is approximated from gap to next game
+                days_rest = row.days_until_next if row.days_until_next else 1
+
                 game = {
                     'game_date': row.game_date.isoformat(),
                     'opponent_team_abbr': row.opponent_team_abbr,
-                    'opponent_tier': opponent_tier,
-                    'days_rest': row.days_rest,
-                    'is_home': row.is_home,
+                    'opponent_tier': 'tier_2_average',  # Default - no defense rating available
+                    'days_rest': min(days_rest, 7),  # Cap at 7 days
+                    'is_home': True,  # Default - not available in table
                     'recent_form': recent_form,
-                    'points': float(row.points),
+                    'points': float(row.points) if row.points else 0.0,
                     'minutes_played': float(row.minutes_played) if row.minutes_played else 0.0
                 }
                 historical_games.append(game)
-            
+
             logger.info(f"Loaded {len(historical_games)} historical games for {player_lookup}")
             return historical_games
-            
+
         except Exception as e:
             logger.error(f"Error loading historical games for {player_lookup}: {e}")
             return []
