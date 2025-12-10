@@ -395,8 +395,15 @@ Players traded mid-season may have gaps. All-Star break (usually mid-February) h
 
 ### Issue 5: Bad Confidence Scores
 **Symptom:** 40 predictions with confidence > 1.0 (values like 52.0, 84.0)
-**Cause:** Specific date (2025-11-25) had incorrect confidence calculation
-**Fix:** TBD - investigate prediction systems for that date
+**Cause:** Scale mismatch between daily worker and backfill:
+- Daily worker uses `normalize_confidence()` which outputs 0-100 scale
+- Backfill script stores raw confidence (0-1 scale) directly
+- The 40 bad records are from 2025-11-25 daily run, NOT backfill
+**Root Cause:** `predictions/worker/worker.py:872` calls `normalize_confidence()` which multiplies by 100
+**Fix:** Need to decide on canonical scale:
+- Option A: Fix daily worker to store 0-1 (match backfill)
+- Option B: Fix backfill to normalize to 0-100 (match daily worker)
+**Status:** NOT YET FIXED - need to align all writers on same scale
 
 ---
 
