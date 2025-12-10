@@ -180,7 +180,8 @@ class PredictionBackfill:
         SELECT DISTINCT
             player_lookup,
             team_abbr,
-            opponent_team_abbr as opponent_abbr
+            opponent_team_abbr as opponent_abbr,
+            game_id
         FROM `{PROJECT_ID}.nba_analytics.player_game_summary`
         WHERE game_date = '{game_date}'
           AND (minutes_played > 0 OR minutes_played IS NULL)
@@ -318,19 +319,34 @@ class PredictionBackfill:
         predictions: List[Dict],
         game_date: date
     ) -> int:
-        """Write predictions to BigQuery.
+        """Write predictions to BigQuery with idempotency.
 
         The table schema expects ONE row per prediction system per player:
         - system_id: identifies the prediction system (moving_average, zone_matchup, etc.)
         - predicted_points: the predicted value
         - confidence_score: confidence level (0-1)
         - recommendation: OVER/UNDER/HOLD
+
+        Idempotency: Deletes existing predictions for this date before inserting,
+        allowing safe re-runs without creating duplicates.
         """
         if not predictions:
             return 0
 
         try:
             from datetime import timezone
+
+            # IDEMPOTENCY: Delete existing predictions for this date first
+            delete_query = f"""
+            DELETE FROM `{PREDICTIONS_TABLE}`
+            WHERE game_date = '{game_date.isoformat()}'
+            """
+            delete_job = self.bq_client.query(delete_query)
+            delete_job.result()  # Wait for completion
+            deleted_count = delete_job.num_dml_affected_rows or 0
+            if deleted_count > 0:
+                logger.info(f"  Deleted {deleted_count} existing predictions for {game_date} (idempotency)")
+
             # Prepare rows for BigQuery - one row per system per player
             rows = []
             timestamp = datetime.now(timezone.utc).isoformat()
@@ -347,6 +363,7 @@ class PredictionBackfill:
             for pred in predictions:
                 player_lookup = pred['player_lookup']
                 betting_line = pred.get('betting_line', 20.0)
+                game_id = pred.get('game_id')  # Now included from get_players_for_date
 
                 # Create one row per prediction system
                 for system_name, system_data in pred.get('predictions', {}).items():
@@ -364,6 +381,7 @@ class PredictionBackfill:
                         'prediction_id': prediction_id,
                         'system_id': system_id_map.get(system_name, system_name),
                         'player_lookup': player_lookup,
+                        'game_id': game_id,  # Now populated at write time
                         'game_date': game_date.isoformat(),
                         'predicted_points': float(predicted_value),
                         'confidence_score': float(system_data.get('confidence', 0.5)),
@@ -476,6 +494,7 @@ class PredictionBackfill:
                         'player_lookup': player_lookup,
                         'team_abbr': player['team_abbr'],
                         'opponent_abbr': player['opponent_abbr'],
+                        'game_id': player.get('game_id'),
                         'predictions': preds
                     })
                     successful += 1
