@@ -276,14 +276,30 @@ class NbacGamebookProcessor(SmartIdempotencyMixin, ProcessorBase):
         """Insert batched resolution logs to BigQuery."""
         if not self.resolution_logs:
             return
-        
+
         try:
             table_id = f"{self.project_id}.nba_processing.name_resolution_log"
-            errors = self.bq_client.insert_rows_json(table_id, self.resolution_logs)
-            
-            if errors:
-                logger.error(f"Failed to insert resolution logs: {errors}")
-                
+
+            # Get table reference for schema
+            table_ref = self.bq_client.get_table(table_id)
+
+            # Use batch loading instead of streaming inserts
+            # This avoids the 90-minute streaming buffer that blocks DML operations
+            # See: docs/05-development/guides/bigquery-best-practices.md
+            job_config = bigquery.LoadJobConfig(
+                schema=table_ref.schema,
+                autodetect=False,
+                source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+                ignore_unknown_values=True
+            )
+
+            load_job = self.bq_client.load_table_from_json(self.resolution_logs, table_id, job_config=job_config)
+            load_job.result()
+
+            if load_job.errors:
+                logger.warning(f"BigQuery load had errors: {load_job.errors[:3]}")
+
                 # Notify about logging failure
                 try:
                     notify_error(
@@ -292,7 +308,7 @@ class NbacGamebookProcessor(SmartIdempotencyMixin, ProcessorBase):
                         details={
                             'processing_run_id': self.processing_run_id,
                             'log_count': len(self.resolution_logs),
-                            'errors': str(errors)[:500]
+                            'errors': str(load_job.errors[:3])
                         },
                         processor_name="NBA.com Gamebook Processor"
                     )
@@ -300,13 +316,13 @@ class NbacGamebookProcessor(SmartIdempotencyMixin, ProcessorBase):
                     logger.warning(f"Failed to send notification: {notify_ex}")
             else:
                 logger.info(f"Inserted {len(self.resolution_logs)} resolution logs")
-            
+
             # Clear the batch
             self.resolution_logs = []
-            
+
         except Exception as e:
             logger.error(f"Error flushing resolution logs: {e}")
-            
+
             # Notify about critical logging error
             try:
                 notify_error(
@@ -498,11 +514,27 @@ class NbacGamebookProcessor(SmartIdempotencyMixin, ProcessorBase):
             
             # Log to BigQuery
             table_id = f"{self.project_id}.nba_processing.resolution_performance"
-            errors = self.bq_client.insert_rows_json(table_id, [performance_summary])
-            
-            if errors:
-                logger.error(f"Failed to log performance summary: {errors}")
-                
+
+            # Get table reference for schema
+            table_ref = self.bq_client.get_table(table_id)
+
+            # Use batch loading instead of streaming inserts
+            # This avoids the 90-minute streaming buffer that blocks DML operations
+            # See: docs/05-development/guides/bigquery-best-practices.md
+            job_config = bigquery.LoadJobConfig(
+                schema=table_ref.schema,
+                autodetect=False,
+                source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+                ignore_unknown_values=True
+            )
+
+            load_job = self.bq_client.load_table_from_json([performance_summary], table_id, job_config=job_config)
+            load_job.result()
+
+            if load_job.errors:
+                logger.warning(f"BigQuery load had errors: {load_job.errors[:3]}")
+
                 # Notify about performance logging failure
                 try:
                     notify_error(
@@ -510,7 +542,7 @@ class NbacGamebookProcessor(SmartIdempotencyMixin, ProcessorBase):
                         message=f"Failed to log performance summary to BigQuery",
                         details={
                             'processing_run_id': self.processing_run_id,
-                            'errors': str(errors)[:500]
+                            'errors': str(load_job.errors[:3])
                         },
                         processor_name="NBA.com Gamebook Processor"
                     )
@@ -1137,30 +1169,27 @@ class NbacGamebookProcessor(SmartIdempotencyMixin, ProcessorBase):
                 self.bq_client.query(delete_query).result()
                 logger.info(f"Deleted existing data for game {game_id}")
             
-            # Insert new rows using batch loading (not streaming insert)
-            # This avoids the 20 DML limit and streaming buffer issues
-            logger.info(f"Loading {len(rows)} rows to {table_id} using batch load")
+            # Get table reference for schema
+            table_ref = self.bq_client.get_table(table_id)
 
-            # Get table schema for load job
-            table = self.bq_client.get_table(table_id)
-
-            # Configure batch load job
+            # Use batch loading instead of streaming inserts
+            # This avoids the 90-minute streaming buffer that blocks DML operations
+            # See: docs/05-development/guides/bigquery-best-practices.md
             job_config = bigquery.LoadJobConfig(
-                schema=table.schema,
+                schema=table_ref.schema,
                 autodetect=False,
+                source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
                 write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
-                create_disposition=bigquery.CreateDisposition.CREATE_IF_NEEDED
+                ignore_unknown_values=True
             )
 
-            # Load using batch job
-            load_job = self.bq_client.load_table_from_json(
-                rows,
-                table_id,
-                job_config=job_config
-            )
-
-            # Wait for completion
+            logger.info(f"Loading {len(rows)} rows to {table_id} using batch load")
+            load_job = self.bq_client.load_table_from_json(rows, table_id, job_config=job_config)
             load_job.result()
+
+            if load_job.errors:
+                logger.warning(f"BigQuery load had errors: {load_job.errors[:3]}")
+
             logger.info(f"Successfully loaded {len(rows)} gamebook rows")
                 
             # If this is the final batch, finalize processing

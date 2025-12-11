@@ -304,12 +304,13 @@ docs/
 
 **Backfill Operations:**
 - `docs/02-operations/backfill/README.md` - **START HERE** for backfill work
+- `docs/02-operations/backfill/backfill-validation-checklist.md` - **VALIDATION CHECKLIST** (use during & after backfills)
 - `docs/02-operations/backfill/backfill-guide.md` - Comprehensive backfill procedures
 - `docs/02-operations/backfill/data-gap-prevention-and-recovery.md` - Gap detection and recovery
 - `docs/02-operations/backfill/cascade-contamination-prevention.md` - Preventing cascade failures
 - `docs/02-operations/backfill/PHASE4-PERFORMANCE-ANALYSIS.md` - Performance benchmarks
 - `docs/02-operations/backfill/runbooks/` - Phase-specific runbooks
-- `docs/08-projects/current/backfill/` - Active project tracking (27+ files)
+- `bin/backfill/monitor_backfill.sh` - Real-time monitoring script
 
 **Phase 5 Predictions:**
 - `docs/03-phases/phase5-predictions/README.md` - Overview
@@ -331,8 +332,11 @@ docs/
 
 ---
 
-*Last Updated: 2025-12-08 11:50 AM PST*
+*Last Updated: 2025-12-10 PM PST*
 *Recent Changes:*
+- **2025-12-10**: Added backfill validation checklist reference and monitoring script
+  - `backfill-validation-checklist.md` - Comprehensive validation for Phase 4 & 5 backfills
+  - `bin/backfill/monitor_backfill.sh` - Real-time monitoring during backfills
 - **2025-12-08**: Consolidated backfill documentation into `docs/02-operations/backfill/`
   - Added backfill navigation hub with key references
   - Moved data-gap-prevention, cascade-contamination, and performance analysis docs

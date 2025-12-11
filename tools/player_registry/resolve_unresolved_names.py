@@ -99,9 +99,25 @@ class ActionLogger:
         }
         
         try:
-            errors = self.bq_client.insert_rows_json(self.log_table, [cloud_record])
-            if errors:
-                logger.warning(f"Failed to write cloud log: {errors}")
+            # Get table reference for schema
+            table_ref = self.bq_client.get_table(self.log_table)
+
+            # Use batch loading instead of streaming inserts
+            # This avoids the 90-minute streaming buffer that blocks DML operations
+            # See: docs/05-development/guides/bigquery-best-practices.md
+            job_config = bigquery.LoadJobConfig(
+                schema=table_ref.schema,
+                autodetect=False,
+                source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+                ignore_unknown_values=True
+            )
+
+            load_job = self.bq_client.load_table_from_json([cloud_record], self.log_table, job_config=job_config)
+            load_job.result()
+
+            if load_job.errors:
+                logger.warning(f"Failed to write cloud log: {load_job.errors}")
         except Exception as e:
             logger.warning(f"Failed to write cloud log: {e}")
 
@@ -332,10 +348,26 @@ class UnresolvedNameResolver:
         
         # Insert alias
         table_id = f"{self.project_id}.{self.alias_table}"
-        errors = self.bq_client.insert_rows_json(table_id, [alias_record])
-        
-        if errors:
-            print(f"\nError creating alias: {errors}")
+
+        # Get table reference for schema
+        table_ref = self.bq_client.get_table(table_id)
+
+        # Use batch loading instead of streaming inserts
+        # This avoids the 90-minute streaming buffer that blocks DML operations
+        # See: docs/05-development/guides/bigquery-best-practices.md
+        job_config = bigquery.LoadJobConfig(
+            schema=table_ref.schema,
+            autodetect=False,
+            source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+            write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+            ignore_unknown_values=True
+        )
+
+        load_job = self.bq_client.load_table_from_json([alias_record], table_id, job_config=job_config)
+        load_job.result()
+
+        if load_job.errors:
+            print(f"\nError creating alias: {load_job.errors}")
             return False
         
         return True
@@ -400,10 +432,26 @@ class UnresolvedNameResolver:
         
         # Insert registry record
         table_id = f"{self.project_id}.{self.registry_table}"
-        errors = self.bq_client.insert_rows_json(table_id, [registry_record])
-        
-        if errors:
-            print(f"\nError creating registry entry: {errors}")
+
+        # Get table reference for schema
+        table_ref = self.bq_client.get_table(table_id)
+
+        # Use batch loading instead of streaming inserts
+        # This avoids the 90-minute streaming buffer that blocks DML operations
+        # See: docs/05-development/guides/bigquery-best-practices.md
+        job_config = bigquery.LoadJobConfig(
+            schema=table_ref.schema,
+            autodetect=False,
+            source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+            write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+            ignore_unknown_values=True
+        )
+
+        load_job = self.bq_client.load_table_from_json([registry_record], table_id, job_config=job_config)
+        load_job.result()
+
+        if load_job.errors:
+            print(f"\nError creating registry entry: {load_job.errors}")
             return False
         
         return True

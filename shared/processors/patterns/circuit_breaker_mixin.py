@@ -19,6 +19,8 @@ from datetime import datetime, timezone, timedelta
 from collections import defaultdict
 import logging
 
+from google.cloud import bigquery
+
 logger = logging.getLogger(__name__)
 
 
@@ -274,11 +276,27 @@ class CircuitBreakerMixin:
             state_record['last_error_type'] = type(last_error).__name__
 
         try:
-            # Use MERGE to update or insert
+            # Use batch loading instead of streaming inserts to avoid the 90-minute
+            # streaming buffer that blocks DML operations (MERGE/UPDATE/DELETE)
+            # Reference: docs/05-development/guides/bigquery-best-practices.md
             table_id = f"{self.project_id}.nba_orchestration.circuit_breaker_state"
 
-            # Simple insert/update (BigQuery will handle MERGE in schema)
-            self.bq_client.insert_rows_json(table_id, [state_record])
+            # Get table reference for schema
+            table_ref = self.bq_client.get_table(table_id)
+
+            job_config = bigquery.LoadJobConfig(
+                schema=table_ref.schema,
+                autodetect=False,
+                source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+                ignore_unknown_values=True
+            )
+
+            load_job = self.bq_client.load_table_from_json([state_record], table_id, job_config=job_config)
+            load_job.result()
+
+            if load_job.errors:
+                logger.warning(f"BigQuery load had errors: {load_job.errors[:3]}")
 
         except Exception as e:
             logger.warning(f"Failed to write circuit state to BigQuery: {e}")

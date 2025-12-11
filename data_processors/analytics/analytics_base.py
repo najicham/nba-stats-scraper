@@ -1593,11 +1593,20 @@ class AnalyticsProcessorBase(RunHistoryMixin):
         try:
             table_id = f"{self.project_id}.nba_processing.analytics_data_issues"
 
-            # Use batch loading via load_table_from_json
+            # Get table reference for schema
+            table_ref = self.bq_client.get_table(table_id)
+
+            # Use batch loading instead of streaming inserts
+            # This avoids the 90-minute streaming buffer that blocks DML operations
+            # See: docs/05-development/guides/bigquery-best-practices.md
             job_config = bigquery.LoadJobConfig(
+                schema=table_ref.schema,
+                autodetect=False,
+                source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
                 write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
-                autodetect=True
+                ignore_unknown_values=True
             )
+
             load_job = self.bq_client.load_table_from_json(
                 [issue_record],
                 table_id,
@@ -1653,11 +1662,20 @@ class AnalyticsProcessorBase(RunHistoryMixin):
         try:
             table_id = f"{self.project_id}.nba_processing.analytics_processor_runs"
 
-            # Use batch loading via load_table_from_json
+            # Get table reference for schema
+            table_ref = self.bq_client.get_table(table_id)
+
+            # Use batch loading instead of streaming inserts
+            # This avoids the 90-minute streaming buffer that blocks DML operations
+            # See: docs/05-development/guides/bigquery-best-practices.md
             job_config = bigquery.LoadJobConfig(
+                schema=table_ref.schema,
+                autodetect=False,
+                source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
                 write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
-                autodetect=True
+                ignore_unknown_values=True
             )
+
             load_job = self.bq_client.load_table_from_json(
                 [run_record],
                 table_id,
@@ -1753,12 +1771,30 @@ class AnalyticsProcessorBase(RunHistoryMixin):
                 })
 
             # Insert in batches of 500 to avoid hitting limits
+            # Use batch loading to avoid streaming buffer issues
+            # See: docs/05-development/guides/bigquery-best-practices.md
             batch_size = 500
             for i in range(0, len(failure_records), batch_size):
                 batch = failure_records[i:i + batch_size]
-                errors = self.bq_client.insert_rows_json(table_id, batch)
-                if errors:
-                    logger.warning(f"Errors inserting registry failure records: {errors[:3]}")
+
+                # Get table reference for schema
+                table_ref = self.bq_client.get_table(table_id)
+
+                # Use batch loading instead of streaming inserts
+                # This avoids the 90-minute streaming buffer that blocks DML operations
+                job_config = bigquery.LoadJobConfig(
+                    schema=table_ref.schema,
+                    autodetect=False,
+                    source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+                    write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+                    ignore_unknown_values=True
+                )
+
+                load_job = self.bq_client.load_table_from_json(batch, table_id, job_config=job_config)
+                load_job.result()
+
+                if load_job.errors:
+                    logger.warning(f"BigQuery load had errors: {load_job.errors[:3]}")
 
             logger.info(f"📊 Saved {len(failure_records)} registry failures to registry_failures table")
 
@@ -2029,12 +2065,30 @@ class AnalyticsProcessorBase(RunHistoryMixin):
                 failure_records.append(record)
 
             # Insert in batches of 500
+            # Use batch loading to avoid streaming buffer issues
+            # See: docs/05-development/guides/bigquery-best-practices.md
             batch_size = 500
             for i in range(0, len(failure_records), batch_size):
                 batch = failure_records[i:i + batch_size]
-                errors = self.bq_client.insert_rows_json(table_id, batch)
-                if errors:
-                    logger.warning(f"Errors inserting failure records: {errors[:3]}")
+
+                # Get table reference for schema
+                table_ref = self.bq_client.get_table(table_id)
+
+                # Use batch loading instead of streaming inserts
+                # This avoids the 90-minute streaming buffer that blocks DML operations
+                job_config = bigquery.LoadJobConfig(
+                    schema=table_ref.schema,
+                    autodetect=False,
+                    source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+                    write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+                    ignore_unknown_values=True
+                )
+
+                load_job = self.bq_client.load_table_from_json(batch, table_id, job_config=job_config)
+                load_job.result()
+
+                if load_job.errors:
+                    logger.warning(f"BigQuery load had errors: {load_job.errors[:3]}")
 
             logger.info(f"📊 Saved {len(failure_records)} failures to analytics_failures table")
 

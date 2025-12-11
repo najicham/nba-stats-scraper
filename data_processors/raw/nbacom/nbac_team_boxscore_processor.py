@@ -584,27 +584,28 @@ class NbacTeamBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
 
                 logger.info(f"Deleted existing records for game {game_id}")
 
-            # Get table schema for load job
-            table = self.bq_client.get_table(table_id)
+            # Get table reference for schema
+            table_ref = self.bq_client.get_table(table_id)
 
-            # Configure batch load job (not streaming insert)
-            load_job_config = bigquery.LoadJobConfig(
-                schema=table.schema,
+            # Use batch loading instead of streaming inserts
+            # This avoids the 90-minute streaming buffer that blocks DML operations
+            # See: docs/05-development/guides/bigquery-best-practices.md
+            job_config = bigquery.LoadJobConfig(
+                schema=table_ref.schema,
                 autodetect=False,
+                source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
                 write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
-                create_disposition=bigquery.CreateDisposition.CREATE_IF_NEEDED
+                ignore_unknown_values=True
             )
 
             # Insert new records using batch loading
             logger.info(f"Loading {len(rows)} rows into {table_id} using batch load")
-            load_job = self.bq_client.load_table_from_json(
-                rows,
-                table_id,
-                job_config=load_job_config
-            )
-
-            # Wait for job completion
+            load_job = self.bq_client.load_table_from_json(rows, table_id, job_config=job_config)
             load_job.result()
+
+            if load_job.errors:
+                logger.warning(f"BigQuery load had errors: {load_job.errors[:3]}")
+
             logger.info(f"Successfully loaded {len(rows)} rows to {self.table_name}")
 
         except Exception as e:

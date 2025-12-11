@@ -333,8 +333,26 @@ class PlayerNameResolver:
                 }]
                 
                 table_id = f"{self.project_id}.nba_reference.unresolved_player_names"
-                errors = self.bq_client.insert_rows_json(table_id, insert_data)
-                
+
+                # Get table reference for schema
+                table_ref = self.bq_client.get_table(table_id)
+
+                # Use batch loading instead of streaming inserts
+                # This avoids the 90-minute streaming buffer that blocks DML operations
+                # See: docs/05-development/guides/bigquery-best-practices.md
+                job_config = bigquery.LoadJobConfig(
+                    schema=table_ref.schema,
+                    autodetect=False,
+                    source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+                    write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+                    ignore_unknown_values=True
+                )
+
+                load_job = self.bq_client.load_table_from_json(insert_data, table_id, job_config=job_config)
+                load_job.result()
+
+                errors = load_job.errors
+
                 if errors:
                     logger.error(f"Failed to insert unresolved name: {errors}")
                     # Only notify on insert failures - these indicate infrastructure issues
@@ -414,8 +432,26 @@ class PlayerNameResolver:
             }]
             
             table_id = f"{self.project_id}.nba_reference.player_aliases"
-            errors = self.bq_client.insert_rows_json(table_id, insert_data)
-            
+
+            # Get table reference for schema
+            table_ref = self.bq_client.get_table(table_id)
+
+            # Use batch loading instead of streaming inserts
+            # This avoids the 90-minute streaming buffer that blocks DML operations
+            # See: docs/05-development/guides/bigquery-best-practices.md
+            job_config = bigquery.LoadJobConfig(
+                schema=table_ref.schema,
+                autodetect=False,
+                source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+                ignore_unknown_values=True
+            )
+
+            load_job = self.bq_client.load_table_from_json(insert_data, table_id, job_config=job_config)
+            load_job.result()
+
+            errors = load_job.errors
+
             if errors:
                 logger.error(f"Failed to create alias mapping: {errors}")
                 # Notify on alias creation failures - these affect future resolution
@@ -622,8 +658,26 @@ class PlayerNameResolver:
             }]
             
             table_id = f"{self.project_id}.nba_reference.nba_players_registry"
-            errors = self.bq_client.insert_rows_json(table_id, insert_data)
-            
+
+            # Get table reference for schema
+            table_ref = self.bq_client.get_table(table_id)
+
+            # Use batch loading instead of streaming inserts
+            # This avoids the 90-minute streaming buffer that blocks DML operations
+            # See: docs/05-development/guides/bigquery-best-practices.md
+            job_config = bigquery.LoadJobConfig(
+                schema=table_ref.schema,
+                autodetect=False,
+                source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+                ignore_unknown_values=True
+            )
+
+            load_job = self.bq_client.load_table_from_json(insert_data, table_id, job_config=job_config)
+            load_job.result()
+
+            errors = load_job.errors
+
             if errors:
                 logger.error(f"Failed to add player to registry: {errors}")
                 return False

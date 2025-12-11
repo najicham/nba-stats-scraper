@@ -1477,11 +1477,26 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
                 if 'is_active' in converted:
                     converted['is_active'] = bool(converted['is_active'])
                 processed_aliases.append(converted)
-            
-            errors = self.bq_client.insert_rows_json(table_id, processed_aliases)
-            
-            if errors:
-                logger.error(f"Errors inserting aliases: {errors}")
+
+            # Get table reference for schema
+            table_ref = self.bq_client.get_table(table_id)
+
+            # Use batch loading instead of streaming inserts
+            # This avoids the 90-minute streaming buffer that blocks DML operations
+            # See: docs/05-development/guides/bigquery-best-practices.md
+            job_config = bigquery.LoadJobConfig(
+                schema=table_ref.schema,
+                autodetect=False,
+                source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+                ignore_unknown_values=True
+            )
+
+            load_job = self.bq_client.load_table_from_json(processed_aliases, table_id, job_config=job_config)
+            load_job.result()
+
+            if load_job.errors:
+                logger.error(f"Aliases load had errors: {load_job.errors[:3]}")
             else:
                 logger.info(f"Successfully inserted {len(new_aliases)} new aliases")
                 
@@ -1547,10 +1562,26 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
                         elif not isinstance(eg, list):
                             converted['example_games'] = list(eg) if hasattr(eg, '__iter__') else []
                     processed_unresolved.append(converted)
-                
-                errors = self.bq_client.insert_rows_json(table_id, processed_unresolved)
-                if errors:
-                    logger.error(f"Errors inserting unresolved: {errors}")
+
+                # Get table reference for schema
+                table_ref = self.bq_client.get_table(table_id)
+
+                # Use batch loading instead of streaming inserts
+                # This avoids the 90-minute streaming buffer that blocks DML operations
+                # See: docs/05-development/guides/bigquery-best-practices.md
+                job_config = bigquery.LoadJobConfig(
+                    schema=table_ref.schema,
+                    autodetect=False,
+                    source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+                    write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+                    ignore_unknown_values=True
+                )
+
+                load_job = self.bq_client.load_table_from_json(processed_unresolved, table_id, job_config=job_config)
+                load_job.result()
+
+                if load_job.errors:
+                    logger.error(f"Unresolved names load had errors: {load_job.errors[:3]}")
                 else:
                     logger.info(f"Inserted {len(new_unresolved)} new unresolved records")
             

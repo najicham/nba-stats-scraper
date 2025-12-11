@@ -167,10 +167,25 @@ class ResolutionCache:
         }
 
         try:
-            errors = self.client.insert_rows_json(self.table_id, [row])
+            # Get table reference for schema enforcement
+            # See: docs/05-development/guides/bigquery-best-practices.md
+            table_ref = self.client.get_table(self.table_id)
 
-            if errors:
-                logger.error(f"Error caching resolution: {errors}")
+            # Use batch loading instead of streaming inserts
+            # This avoids the 90-minute streaming buffer that blocks DML operations
+            job_config = bigquery.LoadJobConfig(
+                schema=table_ref.schema,
+                autodetect=False,
+                source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+                ignore_unknown_values=True
+            )
+
+            load_job = self.client.load_table_from_json([row], self.table_id, job_config=job_config)
+            load_job.result()
+
+            if load_job.errors:
+                logger.error(f"Error caching resolution: {load_job.errors}")
                 return False
 
             logger.debug(f"Cached resolution for {resolution.unresolved_lookup}")

@@ -359,29 +359,43 @@ class NbacPlayerMovementProcessor(SmartIdempotencyMixin, ProcessorBase):
         errors = []
         
         try:
-            # Insert new rows only (we already filtered out existing ones)
-            result = self.bq_client.insert_rows_json(table_id, rows)
-            
-            if result:
-                errors.extend([str(e) for e in result])
-                logger.error(f"BigQuery insert errors: {errors}")
-                
-                # Notify about insert errors
+            # Get table reference for schema
+            table_ref = self.bq_client.get_table(table_id)
+
+            # Use batch loading instead of streaming inserts
+            # This avoids the 90-minute streaming buffer that blocks DML operations
+            # See: docs/05-development/guides/bigquery-best-practices.md
+            job_config = bigquery.LoadJobConfig(
+                schema=table_ref.schema,
+                autodetect=False,
+                source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+                ignore_unknown_values=True
+            )
+
+            load_job = self.bq_client.load_table_from_json(rows, table_id, job_config=job_config)
+            load_job.result()
+
+            if load_job.errors:
+                errors.extend([str(e) for e in load_job.errors])
+                logger.error(f"BigQuery load had errors: {load_job.errors[:3]}")
+
+                # Notify about load errors
                 try:
                     notify_error(
-                        title="BigQuery Insert Errors",
-                        message=f"Encountered {len(result)} errors inserting player movement data",
+                        title="BigQuery Load Errors",
+                        message=f"Encountered {len(load_job.errors)} errors loading player movement data",
                         details={
                             'table_id': table_id,
                             'rows_attempted': len(rows),
-                            'error_count': len(result),
-                            'errors': str(result)[:500]
+                            'error_count': len(load_job.errors),
+                            'errors': str(load_job.errors)[:500]
                         },
                         processor_name="NBA.com Player Movement Processor"
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
-                
+
                 return {'rows_processed': 0, 'errors': errors}
             
             logger.info(f"Successfully inserted {len(rows)} new records")

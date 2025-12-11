@@ -397,24 +397,39 @@ class NbacInjuryReportProcessor(SmartIdempotencyMixin, ProcessorBase):
         try:
             from google.cloud import bigquery
             client = bigquery.Client()
-            table = client.get_table('nba_raw.nbac_injury_report')
-            
-            # APPEND_ALWAYS - just insert all rows
-            errors_result = client.insert_rows_json(table, rows)
-            if errors_result:
-                errors.extend([str(e) for e in errors_result])
-                logger.error(f"Insert errors: {errors_result}")
-                
-                # Notify about insert errors
+            table_id = 'nba_raw.nbac_injury_report'
+
+            # Get table reference for schema
+            table_ref = client.get_table(table_id)
+
+            # Use batch loading instead of streaming inserts
+            # This avoids the 90-minute streaming buffer that blocks DML operations
+            # See: docs/05-development/guides/bigquery-best-practices.md
+            job_config = bigquery.LoadJobConfig(
+                schema=table_ref.schema,
+                autodetect=False,
+                source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+                ignore_unknown_values=True
+            )
+
+            load_job = client.load_table_from_json(rows, table_id, job_config=job_config)
+            load_job.result()
+
+            if load_job.errors:
+                errors.extend([str(e) for e in load_job.errors])
+                logger.error(f"BigQuery load had errors: {load_job.errors[:3]}")
+
+                # Notify about load errors
                 try:
                     notify_error(
-                        title="BigQuery Insert Errors",
-                        message=f"Encountered {len(errors_result)} errors inserting injury report data",
+                        title="BigQuery Load Errors",
+                        message=f"Encountered {len(load_job.errors)} errors loading injury report data",
                         details={
                             'table': 'nba_raw.nbac_injury_report',
                             'rows_attempted': len(rows),
-                            'error_count': len(errors_result),
-                            'errors': str(errors_result)[:500]
+                            'error_count': len(load_job.errors),
+                            'errors': str(load_job.errors)[:500]
                         },
                         processor_name="NBA.com Injury Report Processor"
                     )

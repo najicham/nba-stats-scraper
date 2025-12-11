@@ -470,7 +470,8 @@ class OddsApiPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
                 schema=target_table.schema,  # Enforce exact schema
                 autodetect=False,            # Don't infer schema
                 write_disposition=bigquery.WriteDisposition.WRITE_APPEND,  # Append mode
-                source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON
+                source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+                ignore_unknown_values=True
             )
             
             # Batch load (NO streaming buffer!)
@@ -480,9 +481,32 @@ class OddsApiPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
                 job_config=job_config
             )
             load_job.result()  # Wait for completion
-            
+
+            if load_job.errors:
+                errors.extend([str(e) for e in load_job.errors])
+                logger.error(f"BigQuery load had errors: {load_job.errors[:3]}")
+
+                # Send error notification
+                try:
+                    notify_error(
+                        title="Props BigQuery Load Errors",
+                        message=f"Encountered {len(load_job.errors)} errors loading props data",
+                        details={
+                            'processor': 'OddsApiPropsProcessor',
+                            'table': self.table_name,
+                            'rows_attempted': len(rows),
+                            'error_count': len(load_job.errors),
+                            'errors': str(load_job.errors)[:500]
+                        },
+                        processor_name="Odds API Props Processor"
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+
+                return {'rows_processed': 0, 'errors': errors}
+
             logger.info(f"✅ Batch loaded {len(rows)} prop records (no streaming buffer)")
-            
+
             # Success - send info notification
             try:
                 notify_info(

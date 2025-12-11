@@ -409,19 +409,22 @@ class BettingPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
         errors = []
         
         try:
-            # BATCH LOADING: Use load_table_from_json instead of insert_rows_json
-            # This avoids streaming buffer and allows immediate DML operations
+            # Get table reference for schema
+            table_ref = self.bq_client.get_table(table_id)
+
+            # Use batch loading instead of streaming inserts
+            # This avoids the 90-minute streaming buffer that blocks DML operations
+            # See: docs/05-development/guides/bigquery-best-practices.md
             job_config = bigquery.LoadJobConfig(
-                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+                schema=table_ref.schema,
+                autodetect=False,
                 source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+                ignore_unknown_values=True
             )
-            
-            load_job = self.bq_client.load_table_from_json(
-                rows, 
-                table_id, 
-                job_config=job_config
-            )
-            load_result = load_job.result()  # Wait for completion (2-5 seconds)
+
+            load_job = self.bq_client.load_table_from_json(rows, table_id, job_config=job_config)
+            load_job.result()  # Wait for completion
             
             # Check for errors
             if load_job.errors:

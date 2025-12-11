@@ -93,21 +93,36 @@ def insert_bigquery_rows(
     
     try:
         client = bigquery.Client(project=project_id)
-        
+
         # Ensure table_id has project prefix
         if not table_id.startswith(f"{project_id}."):
             table_id = f"{project_id}.{table_id}"
-        
-        # Use streaming insert for real-time data
-        errors = client.insert_rows_json(table_id, rows)
-        
-        if errors:
-            logger.error(f"Failed to insert rows into {table_id}: {errors}")
+
+        # Get table reference for schema
+        # Use batch loading instead of streaming inserts to avoid the 90-minute
+        # streaming buffer that blocks DML operations (MERGE/UPDATE/DELETE)
+        # Reference: docs/05-development/guides/bigquery-best-practices.md
+        table_ref = client.get_table(table_id)
+
+        job_config = bigquery.LoadJobConfig(
+            schema=table_ref.schema,
+            autodetect=False,
+            source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+            write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+            ignore_unknown_values=True
+        )
+
+        load_job = client.load_table_from_json(rows, table_id, job_config=job_config)
+        load_job.result()
+
+        if load_job.errors:
+            logger.warning(f"BigQuery load had errors: {load_job.errors[:3]}")
+            logger.error(f"Failed to insert rows into {table_id}: {load_job.errors}")
             return False
-        
+
         logger.debug(f"Successfully inserted {len(rows)} rows into {table_id}")
         return True
-        
+
     except Exception as e:
         logger.error(f"Failed to insert rows into {table_id}: {e}")
         return False

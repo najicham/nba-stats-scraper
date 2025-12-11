@@ -1680,10 +1680,10 @@ class PlayerShotZoneAnalysisProcessor(
         """Save failed entity records for debugging."""
         if not self.failed_entities:
             return
-        
+
         try:
             table_id = f"{self.project_id}.nba_processing.precompute_failures"
-            
+
             failure_records = []
             for failure in self.failed_entities:
                 failure_records.append({
@@ -1696,10 +1696,34 @@ class PlayerShotZoneAnalysisProcessor(
                     'can_retry': failure['can_retry'],
                     'created_at': datetime.now(timezone.utc).isoformat()
                 })
-            
-            self.bq_client.insert_rows_json(table_id, failure_records)
+
+            # Use batch loading instead of streaming inserts
+            # This avoids the 90-minute streaming buffer that blocks DML operations
+            # See: docs/05-development/guides/bigquery-best-practices.md
+
+            # Get table reference for schema
+            table_ref = self.bq_client.get_table(table_id)
+
+            # Configure load job with schema enforcement
+            job_config = bigquery.LoadJobConfig(
+                schema=table_ref.schema,
+                autodetect=False,
+                source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+                ignore_unknown_values=True
+            )
+
+            # Load data using batch load job
+            load_job = self.bq_client.load_table_from_json(
+                failure_records, table_id, job_config=job_config
+            )
+            load_job.result()
+
+            if load_job.errors:
+                logger.warning(f"BigQuery load had errors: {load_job.errors[:3]}")
+
             logger.info(f"Saved {len(failure_records)} failure records")
-            
+
         except Exception as e:
             logger.warning(f"Failed to save failure records: {e}")
 

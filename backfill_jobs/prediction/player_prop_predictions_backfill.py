@@ -48,6 +48,9 @@ from shared.config.nba_season_dates import is_early_season, get_season_year_from
 from shared.backfill import BackfillCheckpoint, get_game_dates_for_range
 from google.cloud import bigquery
 
+# Phase 5C: Scoring tier adjustments
+from data_processors.ml_feedback.scoring_tier_processor import ScoringTierAdjuster
+
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -80,6 +83,14 @@ class PredictionBackfill:
         self.bq_client = bigquery.Client(project=PROJECT_ID)
         self._prediction_systems = None
         self._data_loader = None
+        # Phase 5C: Scoring tier adjuster for bias correction
+        self._tier_adjuster = None
+
+    def _init_tier_adjuster(self):
+        """Lazy-load tier adjuster."""
+        if self._tier_adjuster is None:
+            self._tier_adjuster = ScoringTierAdjuster()
+        return self._tier_adjuster
 
     def _init_prediction_systems(self):
         """Lazy-load prediction systems."""
@@ -438,6 +449,7 @@ class PredictionBackfill:
                 player_lookup = pred['player_lookup']
                 betting_line = pred.get('betting_line', 20.0)
                 game_id = pred.get('game_id')  # Now included from get_players_for_date
+                season_avg = pred.get('season_avg')  # Session 121: For tier classification
 
                 # Create one row per prediction system
                 for system_name, system_data in pred.get('predictions', {}).items():
@@ -468,21 +480,59 @@ class PredictionBackfill:
                         'model_version': '1.0',
                         'prediction_version': 1
                     }
+
+                    # Phase 5C: Apply tier adjustment for ensemble predictions
+                    # Session 121 FIX: Use season_avg (historical average) for tier classification
+                    # instead of predicted_points - this ensures adjustments match actual player type
+                    if system_name == 'ensemble':
+                        try:
+                            adjuster = self._init_tier_adjuster()
+                            # Use season average for tier, fall back to predicted value if unavailable
+                            tier_basis = float(season_avg) if season_avg else float(predicted_value)
+                            tier = adjuster.classify_tier_by_season_avg(tier_basis)
+                            adjustment = adjuster.get_adjustment_for_tier(
+                                tier,
+                                as_of_date=game_date.isoformat()
+                            )
+                            row['scoring_tier'] = tier
+                            row['tier_adjustment'] = float(adjustment) if adjustment else None
+                            row['adjusted_points'] = float(predicted_value) + float(adjustment) if adjustment else None
+                        except Exception as e:
+                            logger.debug(f"Tier adjustment failed for {player_lookup}: {e}")
+                            row['scoring_tier'] = None
+                            row['tier_adjustment'] = None
+                            row['adjusted_points'] = None
+
                     rows.append(row)
 
             if not rows:
                 return 0
 
-            # Write to BigQuery
+            # Write to BigQuery using BATCH LOADING (not streaming inserts)
+            # This avoids the 90-minute streaming buffer that blocks DML operations
+            # See: docs/05-development/guides/bigquery-best-practices.md
             table_ref = self.bq_client.get_table(PREDICTIONS_TABLE)
-            errors = self.bq_client.insert_rows_json(table_ref, rows)
 
-            if errors:
-                # Log first few errors but don't fail
-                logger.warning(f"BigQuery insert had {len(errors)} errors (first 3): {errors[:3]}")
-                return len(rows) - len(errors)
+            job_config = bigquery.LoadJobConfig(
+                schema=table_ref.schema,
+                autodetect=False,
+                source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+                ignore_unknown_values=True
+            )
 
-            return len(rows)
+            load_job = self.bq_client.load_table_from_json(
+                rows,
+                PREDICTIONS_TABLE,
+                job_config=job_config
+            )
+            load_job.result()  # Wait for completion
+
+            if load_job.errors:
+                logger.warning(f"BigQuery load had errors: {load_job.errors[:3]}")
+                return load_job.output_rows or 0
+
+            return load_job.output_rows or len(rows)
 
         except Exception as e:
             logger.error(f"Error writing predictions to BigQuery: {e}")
@@ -593,12 +643,15 @@ class PredictionBackfill:
                 )
 
                 if preds:
+                    # Extract season average for tier classification (Session 121 fix)
+                    season_avg = features.get('points_avg_season') if features else None
                     all_predictions.append({
                         'player_lookup': player_lookup,
                         'team_abbr': player['team_abbr'],
                         'opponent_abbr': player['opponent_abbr'],
                         'game_id': player.get('game_id'),
-                        'predictions': preds
+                        'predictions': preds,
+                        'season_avg': season_avg  # For tier classification
                     })
                     successful += 1
                 else:

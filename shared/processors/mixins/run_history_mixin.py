@@ -438,13 +438,30 @@ class RunHistoryMixin:
                 # If we can't get schema, try with all fields
                 filtered_record = record
 
-            # Insert using streaming insert
-            errors = bq_client.insert_rows_json(table_id, [filtered_record])
+            # Use batch loading instead of streaming inserts to avoid the 90-minute
+            # streaming buffer that blocks DML operations (MERGE/UPDATE/DELETE)
+            # Reference: docs/05-development/guides/bigquery-best-practices.md
+            try:
+                table_ref = bq_client.get_table(table_id)
 
-            if errors:
-                logger.warning(f"Errors inserting run history: {errors}")
-            else:
-                logger.info(f"Recorded run history: {record.get('run_id')} - {record.get('status')} ({record.get('duration_seconds', 0):.1f}s)")
+                job_config = bigquery.LoadJobConfig(
+                    schema=table_ref.schema,
+                    autodetect=False,
+                    source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+                    write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+                    ignore_unknown_values=True
+                )
+
+                load_job = bq_client.load_table_from_json([filtered_record], table_id, job_config=job_config)
+                load_job.result()
+
+                if load_job.errors:
+                    logger.warning(f"BigQuery load had errors: {load_job.errors[:3]}")
+                    logger.warning(f"Errors inserting run history: {load_job.errors}")
+                else:
+                    logger.info(f"Recorded run history: {record.get('run_id')} - {record.get('status')} ({record.get('duration_seconds', 0):.1f}s)")
+            except Exception as load_error:
+                logger.warning(f"Errors inserting run history: {load_error}")
 
         except Exception as e:
             # Don't fail the processor if logging fails

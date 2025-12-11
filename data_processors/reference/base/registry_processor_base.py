@@ -452,21 +452,36 @@ class RegistryProcessorBase(ProcessorBase, UpdateSourceTrackingMixin):
         
         # Single INSERT - no UPDATE, no streaming buffer issues
         table_id = f"{self.project_id}.{self.run_history_table}"
-        
+
         try:
-            insert_errors = self.bq_client.insert_rows_json(table_id, [converted_record])
-            
-            if insert_errors:
-                logger.warning(f"Errors recording run completion: {insert_errors}")
+            # Get table reference for schema
+            table_ref = self.bq_client.get_table(table_id)
+
+            # Use batch loading instead of streaming inserts
+            # This avoids the 90-minute streaming buffer that blocks DML operations
+            # See: docs/05-development/guides/bigquery-best-practices.md
+            job_config = bigquery.LoadJobConfig(
+                schema=table_ref.schema,
+                autodetect=False,
+                source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+                ignore_unknown_values=True
+            )
+
+            load_job = self.bq_client.load_table_from_json([converted_record], table_id, job_config=job_config)
+            load_job.result()
+
+            if load_job.errors:
+                logger.warning(f"BigQuery load had errors: {load_job.errors[:3]}")
             else:
                 logger.info(f"✓ Recorded run completion: {self.current_run_id} - {status} ({duration_seconds:.1f}s)")
-            
+
             # Clear run tracking
             self.current_run_id = None
             self.current_season_year = None
             self.run_start_time = None
             self.run_metadata = {}
-            
+
         except Exception as e:
             logger.warning(f"Failed to record run completion (non-fatal): {e}")
     

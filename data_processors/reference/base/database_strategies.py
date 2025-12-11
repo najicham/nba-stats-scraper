@@ -63,22 +63,38 @@ class DatabaseStrategiesMixin:
             # Step 2: Insert new records in batches
             logger.info(f"Step 2: Inserting {len(rows)} new records")
             rows_to_insert = [self._convert_pandas_types_for_json(row) for row in rows]
-            
+
+            # Get table reference for schema
+            table_ref = self.bq_client.get_table(table_id)
+
             batch_size = 1000
             total_inserted = 0
             batch_count = (len(rows_to_insert) + batch_size - 1) // batch_size
-            
+
             for i in range(0, len(rows_to_insert), batch_size):
                 batch = rows_to_insert[i:i+batch_size]
                 batch_num = i//batch_size + 1
-                
+
                 logger.info(f"Inserting batch {batch_num}/{batch_count}: {len(batch)} records")
-                insert_errors = self.bq_client.insert_rows_json(table_id, batch)
-                
-                if insert_errors:
-                    error_msg = f"Batch {batch_num} insertion errors: {insert_errors}"
+
+                # Use batch loading instead of streaming inserts
+                # This avoids the 90-minute streaming buffer that blocks DML operations
+                # See: docs/05-development/guides/bigquery-best-practices.md
+                job_config = bigquery.LoadJobConfig(
+                    schema=table_ref.schema,
+                    autodetect=False,
+                    source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+                    write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+                    ignore_unknown_values=True
+                )
+
+                load_job = self.bq_client.load_table_from_json(batch, table_id, job_config=job_config)
+                load_job.result()
+
+                if load_job.errors:
+                    error_msg = f"Batch {batch_num} load had errors: {load_job.errors[:3]}"
                     logger.error(error_msg)
-                    errors.extend(insert_errors)
+                    errors.extend(load_job.errors)
                 else:
                     total_inserted += len(batch)
                     logger.info(f"✅ Batch {batch_num} success: {len(batch)} records")
@@ -364,10 +380,26 @@ class DatabaseStrategiesMixin:
             # Insert new records
             if processed_records:
                 logger.info(f"Inserting {len(processed_records)} new unresolved player records")
-                insert_errors = self.bq_client.insert_rows_json(table_id, processed_records)
-                
-                if insert_errors:
-                    logger.error(f"Unresolved players insertion errors: {insert_errors}")
+
+                # Get table reference for schema
+                table_ref = self.bq_client.get_table(table_id)
+
+                # Use batch loading instead of streaming inserts
+                # This avoids the 90-minute streaming buffer that blocks DML operations
+                # See: docs/05-development/guides/bigquery-best-practices.md
+                job_config = bigquery.LoadJobConfig(
+                    schema=table_ref.schema,
+                    autodetect=False,
+                    source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+                    write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+                    ignore_unknown_values=True
+                )
+
+                load_job = self.bq_client.load_table_from_json(processed_records, table_id, job_config=job_config)
+                load_job.result()
+
+                if load_job.errors:
+                    logger.error(f"Unresolved players load had errors: {load_job.errors[:3]}")
                 else:
                     logger.info(f"Successfully inserted {len(processed_records)} unresolved player records")
                     

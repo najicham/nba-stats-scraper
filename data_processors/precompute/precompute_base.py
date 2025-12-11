@@ -1789,12 +1789,29 @@ class PrecomputeProcessorBase(RunHistoryMixin):
                 failure_records.append(record)
 
             # Insert in batches of 500 to avoid hitting limits
+            # See docs/05-development/guides/bigquery-best-practices.md for batching rationale
             batch_size = 500
             for i in range(0, len(failure_records), batch_size):
                 batch = failure_records[i:i + batch_size]
-                errors = self.bq_client.insert_rows_json(table_id, batch)
-                if errors:
-                    logger.warning(f"Errors inserting failure records: {errors[:3]}")
+
+                # Get table reference for schema
+                table_ref = self.bq_client.get_table(table_id)
+
+                # Use batch loading instead of streaming inserts
+                # This avoids the 90-minute streaming buffer that blocks DML operations
+                job_config = bigquery.LoadJobConfig(
+                    schema=table_ref.schema,
+                    autodetect=False,
+                    source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+                    write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+                    ignore_unknown_values=True
+                )
+
+                load_job = self.bq_client.load_table_from_json(batch, table_id, job_config=job_config)
+                load_job.result()
+
+                if load_job.errors:
+                    logger.warning(f"BigQuery load had errors: {load_job.errors[:3]}")
 
             logger.info(f"Saved {len(failure_records)} failure records to precompute_failures")
 
@@ -1901,9 +1918,25 @@ class PrecomputeProcessorBase(RunHistoryMixin):
                 'created_at': datetime.now(timezone.utc).isoformat()
             }
 
-            errors = self.bq_client.insert_rows_json(table_id, [failure_record])
-            if errors:
-                logger.warning(f"Error recording date-level failure: {errors}")
+            # Get table reference for schema
+            table_ref = self.bq_client.get_table(table_id)
+
+            # Use batch loading instead of streaming inserts
+            # This avoids the 90-minute streaming buffer that blocks DML operations
+            # See docs/05-development/guides/bigquery-best-practices.md
+            job_config = bigquery.LoadJobConfig(
+                schema=table_ref.schema,
+                autodetect=False,
+                source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+                ignore_unknown_values=True
+            )
+
+            load_job = self.bq_client.load_table_from_json([failure_record], table_id, job_config=job_config)
+            load_job.result()
+
+            if load_job.errors:
+                logger.warning(f"Error recording date-level failure: {load_job.errors}")
             else:
                 logger.info(f"Recorded date-level failure: {category} - {reason[:50]}...")
 

@@ -1244,17 +1244,47 @@ class BaseValidator:
         }
         
         try:
-            # Insert results (batch operation)
-            errors = self.bq_client.insert_rows_json(results_table_id, result_rows)
-            if errors:
-                logger.error(f"Failed to insert some result rows: {errors}")
+            # Insert results using batch loading (avoids streaming buffer)
+            # See: docs/05-development/guides/bigquery-best-practices.md
+            # Streaming inserts create a 90-minute buffer that blocks DML operations.
+            # Batch loading avoids this issue and allows immediate MERGE/UPDATE/DELETE.
+
+            # Get table reference for schema validation
+            results_table_ref = self.bq_client.get_table(results_table_id)
+
+            # Use batch loading instead of streaming inserts
+            job_config = bigquery.LoadJobConfig(
+                schema=results_table_ref.schema,
+                autodetect=False,
+                source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+                ignore_unknown_values=True
+            )
+
+            load_job = self.bq_client.load_table_from_json(result_rows, results_table_id, job_config=job_config)
+            load_job.result()
+
+            if load_job.errors:
+                logger.warning(f"BigQuery load had errors: {load_job.errors[:3]}")
             else:
                 logger.info(f"✅ Saved {len(result_rows)} validation results to BigQuery")
-            
-            # Insert run metadata
-            errors = self.bq_client.insert_rows_json(runs_table_id, [run_row])
-            if errors:
-                logger.error(f"Failed to insert run metadata: {errors}")
+
+            # Insert run metadata using batch loading
+            runs_table_ref = self.bq_client.get_table(runs_table_id)
+
+            job_config_runs = bigquery.LoadJobConfig(
+                schema=runs_table_ref.schema,
+                autodetect=False,
+                source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+                ignore_unknown_values=True
+            )
+
+            load_job_runs = self.bq_client.load_table_from_json([run_row], runs_table_id, job_config=job_config_runs)
+            load_job_runs.result()
+
+            if load_job_runs.errors:
+                logger.warning(f"BigQuery load had errors: {load_job_runs.errors[:3]}")
             else:
                 logger.info(f"✅ Saved validation run metadata to BigQuery")
                 

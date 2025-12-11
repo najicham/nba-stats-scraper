@@ -273,26 +273,41 @@ class CoordinatorRunHistory:
         """
         Insert record to processor_run_history.
 
+        Uses batch loading instead of streaming inserts to avoid the 90-minute
+        streaming buffer that blocks DML operations.
+        See: docs/05-development/guides/bigquery-best-practices.md
+
         Args:
             record: Record dictionary to insert
         """
         try:
             table_id = f"{self.project_id}.{self.RUN_HISTORY_TABLE}"
 
-            # Get table schema to filter out fields not in schema
+            # Get table reference for schema and field filtering
             try:
-                table = self.bq_client.get_table(table_id)
-                valid_fields = {field.name for field in table.schema}
+                table_ref = self.bq_client.get_table(table_id)
+                valid_fields = {field.name for field in table_ref.schema}
                 filtered_record = {k: v for k, v in record.items() if k in valid_fields and v is not None}
             except Exception:
                 # If we can't get schema, use record as-is
                 filtered_record = {k: v for k, v in record.items() if v is not None}
 
-            # Insert using streaming insert
-            errors = self.bq_client.insert_rows_json(table_id, [filtered_record])
+            # Use batch loading instead of streaming inserts
+            # This avoids the 90-minute streaming buffer that blocks DML operations
+            # See: docs/05-development/guides/bigquery-best-practices.md
+            job_config = bigquery.LoadJobConfig(
+                schema=table_ref.schema,
+                autodetect=False,
+                source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+                ignore_unknown_values=True
+            )
 
-            if errors:
-                logger.warning(f"Errors inserting run history: {errors}")
+            load_job = self.bq_client.load_table_from_json([filtered_record], table_id, job_config=job_config)
+            load_job.result()
+
+            if load_job.errors:
+                logger.warning(f"BigQuery load had errors: {load_job.errors[:3]}")
             else:
                 logger.debug(f"Inserted run history: {record.get('run_id')} - {record.get('status')}")
 
