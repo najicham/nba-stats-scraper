@@ -32,7 +32,7 @@ case "$ENVIRONMENT" in
     prod)
         PROJECT_ID="nba-props-platform"
         SERVICE_NAME="prediction-coordinator"
-        MIN_INSTANCES=1  # Always warm for fast response
+        MIN_INSTANCES=0  # Scale to zero - predictions run via local backfill scripts, not Cloud Run
         MAX_INSTANCES=1  # Single instance (threading locks)
         MEMORY="2Gi"
         CPU=2
