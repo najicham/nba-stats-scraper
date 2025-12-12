@@ -18,11 +18,22 @@ Usage:
     # Export only specific types
     python daily_export.py --date 2021-11-10 --only results,best-bets
 
+    # Export tonight's data for website homepage
+    python daily_export.py --date 2024-12-11 --only tonight,tonight-players
+
     # Export player profiles
     python daily_export.py --players
 
     # Export player profiles with minimum games threshold
     python daily_export.py --players --min-games 10
+
+Export Types:
+    results         - Daily prediction results
+    performance     - System performance metrics
+    best-bets       - Top ranked picks
+    predictions     - All predictions grouped by game
+    tonight         - All players for tonight's games (website homepage)
+    tonight-players - Individual player detail for tonight tab
 """
 
 import argparse
@@ -41,6 +52,8 @@ from data_processors.publishing.system_performance_exporter import SystemPerform
 from data_processors.publishing.best_bets_exporter import BestBetsExporter
 from data_processors.publishing.predictions_exporter import PredictionsExporter
 from data_processors.publishing.player_profile_exporter import PlayerProfileExporter
+from data_processors.publishing.tonight_all_players_exporter import TonightAllPlayersExporter
+from data_processors.publishing.tonight_player_exporter import TonightPlayerExporter
 
 # Configure logging
 logging.basicConfig(
@@ -52,7 +65,7 @@ logger = logging.getLogger(__name__)
 PROJECT_ID = 'nba-props-platform'
 
 # Available export types
-EXPORT_TYPES = ['results', 'performance', 'best-bets', 'predictions']
+EXPORT_TYPES = ['results', 'performance', 'best-bets', 'predictions', 'tonight', 'tonight-players']
 
 
 def get_dates_with_predictions() -> List[str]:
@@ -136,6 +149,28 @@ def export_date(
         except Exception as e:
             result['errors'].append(f"predictions: {e}")
             logger.error(f"  Predictions error: {e}")
+
+    # Tonight all players exporter (website homepage)
+    if 'tonight' in export_types:
+        try:
+            exporter = TonightAllPlayersExporter()
+            path = exporter.export(target_date)
+            result['paths']['tonight'] = path
+            logger.info(f"  Tonight All Players: {path}")
+        except Exception as e:
+            result['errors'].append(f"tonight: {e}")
+            logger.error(f"  Tonight All Players error: {e}")
+
+    # Tonight individual player exporters (website player detail)
+    if 'tonight-players' in export_types:
+        try:
+            exporter = TonightPlayerExporter()
+            paths = exporter.export_all_for_date(target_date)
+            result['paths']['tonight_players'] = paths
+            logger.info(f"  Tonight Players: {len(paths)} exported")
+        except Exception as e:
+            result['errors'].append(f"tonight-players: {e}")
+            logger.error(f"  Tonight Players error: {e}")
 
     if result['errors']:
         result['status'] = 'partial' if result['paths'] else 'failed'

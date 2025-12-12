@@ -82,6 +82,7 @@ class PlayerProfileExporter(BaseExporter):
         for p in players:
             formatted.append({
                 'player_lookup': p['player_lookup'],
+                'player_full_name': p.get('player_full_name', p['player_lookup']),
                 'team': p.get('team_abbr'),
                 'games_predicted': p['games_predicted'],
                 'recommendations': p['recommendations'],
@@ -116,14 +117,21 @@ class PlayerProfileExporter(BaseExporter):
             logger.warning(f"No data found for player {player_lookup}")
             return self._empty_player_response(player_lookup)
 
-        # Get recent predictions
-        recent = self._query_recent_predictions(player_lookup, limit=20)
+        # Get game log (50 games with full box score)
+        game_log = self._query_game_log(player_lookup, limit=50)
 
-        # Get breakdown by recommendation type
-        by_rec = self._query_by_recommendation(player_lookup)
+        # Get splits (rest, location, defense_tier, opponents)
+        splits = self._query_splits(player_lookup)
+
+        # Get our track record (OVER/UNDER breakdown)
+        track_record = self._query_track_record(player_lookup)
+
+        # Get next game info
+        next_game = self._query_next_game(player_lookup)
 
         return {
             'player_lookup': player_lookup,
+            'player_full_name': summary.get('player_full_name', player_lookup),
             'generated_at': self.get_generated_at(),
             'summary': {
                 'team': summary.get('team_abbr'),
@@ -142,52 +150,77 @@ class PlayerProfileExporter(BaseExporter):
                 }
             },
             'interpretation': self._build_interpretation(summary),
-            'recent_predictions': self._format_recent_predictions(recent),
-            'by_recommendation': by_rec
+            'game_log': game_log,
+            'splits': splits,
+            'our_track_record': track_record,
+            'next_game': next_game
         }
 
     def _query_player_summaries(self) -> List[Dict]:
         """Query summary stats for all players."""
         query = """
+        WITH accuracy AS (
+            SELECT
+                player_lookup,
+                MAX(team_abbr) as team_abbr,
+                COUNT(DISTINCT game_date) as games_predicted,
+                COUNTIF(recommendation IN ('OVER', 'UNDER')) as recommendations,
+                COUNTIF(prediction_correct) as correct,
+                ROUND(AVG(absolute_error), 2) as mae,
+                ROUND(SAFE_DIVIDE(COUNTIF(prediction_correct), COUNTIF(recommendation IN ('OVER', 'UNDER'))), 3) as win_rate,
+                ROUND(AVG(signed_error), 2) as bias,
+                ROUND(SAFE_DIVIDE(COUNTIF(within_5_points), COUNT(*)), 3) as within_5_pct
+            FROM `nba-props-platform.nba_predictions.prediction_accuracy`
+            WHERE system_id = 'ensemble_v1'
+            GROUP BY player_lookup
+            HAVING games_predicted >= 3
+        )
         SELECT
-            player_lookup,
-            MAX(team_abbr) as team_abbr,
-            COUNT(DISTINCT game_date) as games_predicted,
-            COUNTIF(recommendation IN ('OVER', 'UNDER')) as recommendations,
-            COUNTIF(prediction_correct) as correct,
-            ROUND(AVG(absolute_error), 2) as mae,
-            ROUND(SAFE_DIVIDE(COUNTIF(prediction_correct), COUNTIF(recommendation IN ('OVER', 'UNDER'))), 3) as win_rate,
-            ROUND(AVG(signed_error), 2) as bias,
-            ROUND(SAFE_DIVIDE(COUNTIF(within_5_points), COUNT(*)), 3) as within_5_pct
-        FROM `nba-props-platform.nba_predictions.prediction_accuracy`
-        WHERE system_id = 'ensemble_v1'
-        GROUP BY player_lookup
-        HAVING games_predicted >= 3
-        ORDER BY games_predicted DESC
+            a.*,
+            COALESCE(r.player_name, a.player_lookup) as player_full_name
+        FROM accuracy a
+        LEFT JOIN (
+            SELECT player_lookup, player_name
+            FROM `nba-props-platform.nba_reference.nba_players_registry`
+            QUALIFY ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY season DESC) = 1
+        ) r ON a.player_lookup = r.player_lookup
+        ORDER BY a.games_predicted DESC
         """
         return self.query_to_list(query)
 
     def _query_player_summary(self, player_lookup: str) -> Optional[Dict]:
         """Query detailed summary for a single player."""
         query = """
+        WITH accuracy AS (
+            SELECT
+                player_lookup,
+                MAX(team_abbr) as team_abbr,
+                COUNT(DISTINCT game_date) as games_predicted,
+                COUNTIF(recommendation IN ('OVER', 'UNDER')) as recommendations,
+                COUNTIF(prediction_correct) as correct,
+                ROUND(AVG(absolute_error), 2) as mae,
+                ROUND(SAFE_DIVIDE(COUNTIF(prediction_correct), COUNTIF(recommendation IN ('OVER', 'UNDER'))), 3) as win_rate,
+                ROUND(AVG(signed_error), 2) as bias,
+                ROUND(AVG(confidence_score), 3) as avg_confidence,
+                ROUND(SAFE_DIVIDE(COUNTIF(within_3_points), COUNT(*)), 3) as within_3_pct,
+                ROUND(SAFE_DIVIDE(COUNTIF(within_5_points), COUNT(*)), 3) as within_5_pct,
+                MIN(game_date) as first_date,
+                MAX(game_date) as last_date
+            FROM `nba-props-platform.nba_predictions.prediction_accuracy`
+            WHERE system_id = 'ensemble_v1'
+              AND player_lookup = @player_lookup
+            GROUP BY player_lookup
+        )
         SELECT
-            player_lookup,
-            MAX(team_abbr) as team_abbr,
-            COUNT(DISTINCT game_date) as games_predicted,
-            COUNTIF(recommendation IN ('OVER', 'UNDER')) as recommendations,
-            COUNTIF(prediction_correct) as correct,
-            ROUND(AVG(absolute_error), 2) as mae,
-            ROUND(SAFE_DIVIDE(COUNTIF(prediction_correct), COUNTIF(recommendation IN ('OVER', 'UNDER'))), 3) as win_rate,
-            ROUND(AVG(signed_error), 2) as bias,
-            ROUND(AVG(confidence_score), 3) as avg_confidence,
-            ROUND(SAFE_DIVIDE(COUNTIF(within_3_points), COUNT(*)), 3) as within_3_pct,
-            ROUND(SAFE_DIVIDE(COUNTIF(within_5_points), COUNT(*)), 3) as within_5_pct,
-            MIN(game_date) as first_date,
-            MAX(game_date) as last_date
-        FROM `nba-props-platform.nba_predictions.prediction_accuracy`
-        WHERE system_id = 'ensemble_v1'
-          AND player_lookup = @player_lookup
-        GROUP BY player_lookup
+            a.*,
+            COALESCE(r.player_name, a.player_lookup) as player_full_name
+        FROM accuracy a
+        LEFT JOIN (
+            SELECT player_lookup, player_name
+            FROM `nba-props-platform.nba_reference.nba_players_registry`
+            WHERE player_lookup = @player_lookup
+            QUALIFY ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY season DESC) = 1
+        ) r ON a.player_lookup = r.player_lookup
         """
         params = [
             bigquery.ScalarQueryParameter('player_lookup', 'STRING', player_lookup)
@@ -251,6 +284,312 @@ class PlayerProfileExporter(BaseExporter):
                 'mae': self._safe_float(r['mae'])
             }
         return breakdown
+
+    def _query_game_log(self, player_lookup: str, limit: int = 50) -> List[Dict]:
+        """Query game log with full box score for a player."""
+        query = """
+        SELECT
+            g.game_date,
+            g.opponent_team_abbr,
+            g.team_abbr,
+            g.win_flag as team_win,
+            g.points,
+            g.minutes_played,
+            g.fg_makes,
+            g.fg_attempts,
+            g.three_pt_makes,
+            g.three_pt_attempts,
+            g.ft_makes,
+            g.ft_attempts,
+            (g.offensive_rebounds + g.defensive_rebounds) as rebounds,
+            g.assists,
+            g.steals,
+            g.blocks,
+            g.turnovers,
+            g.points_line,
+            g.over_under_result,
+            -- Derive home_game from game_id format: YYYYMMDD_AWAY_HOME
+            CASE
+                WHEN SPLIT(g.game_id, '_')[OFFSET(2)] = g.team_abbr THEN TRUE
+                ELSE FALSE
+            END as home_game,
+            CASE
+                WHEN g.points_line IS NOT NULL THEN g.points - g.points_line
+                ELSE NULL
+            END as margin
+        FROM `nba-props-platform.nba_analytics.player_game_summary` g
+        WHERE g.player_lookup = @player_lookup
+        ORDER BY g.game_date DESC
+        LIMIT @limit
+        """
+        params = [
+            bigquery.ScalarQueryParameter('player_lookup', 'STRING', player_lookup),
+            bigquery.ScalarQueryParameter('limit', 'INT64', limit)
+        ]
+        results = self.query_to_list(query, params)
+
+        formatted = []
+        for r in results:
+            formatted.append({
+                'game_date': str(r['game_date']),
+                'opponent': r['opponent_team_abbr'],
+                'home_game': r.get('home_game'),
+                'team_result': 'W' if r.get('team_win') else 'L',
+                'points': r['points'],
+                'minutes': self._safe_float(r.get('minutes_played')),
+                'fg': f"{r['fg_makes']}/{r['fg_attempts']}" if r.get('fg_attempts') else None,
+                'three': f"{r['three_pt_makes']}/{r['three_pt_attempts']}" if r.get('three_pt_attempts') else None,
+                'ft': f"{r['ft_makes']}/{r['ft_attempts']}" if r.get('ft_attempts') else None,
+                'rebounds': r.get('rebounds'),
+                'assists': r.get('assists'),
+                'steals': r.get('steals'),
+                'blocks': r.get('blocks'),
+                'turnovers': r.get('turnovers'),
+                'line': self._safe_float(r.get('points_line')),
+                'over_under': r.get('over_under_result'),
+                'margin': self._safe_float(r.get('margin'))
+            })
+        return formatted
+
+    def _query_splits(self, player_lookup: str) -> Dict[str, Any]:
+        """Query performance splits for a player."""
+        query = """
+        WITH games AS (
+            SELECT
+                g.game_date,
+                g.game_id,
+                g.team_abbr,
+                g.points,
+                g.points_line,
+                g.over_under_result,
+                g.opponent_team_abbr,
+                -- Derive home_game from game_id format: YYYYMMDD_AWAY_HOME
+                CASE
+                    WHEN SPLIT(g.game_id, '_')[SAFE_OFFSET(2)] = g.team_abbr THEN TRUE
+                    ELSE FALSE
+                END as home_game,
+                -- Calculate days rest (difference from previous game)
+                DATE_DIFF(g.game_date, LAG(g.game_date) OVER (PARTITION BY g.player_lookup ORDER BY g.game_date), DAY) as days_rest
+            FROM `nba-props-platform.nba_analytics.player_game_summary` g
+            WHERE g.player_lookup = @player_lookup
+              AND g.season_year >= 2021
+        ),
+        games_with_rest AS (
+            SELECT
+                *,
+                CASE WHEN days_rest = 1 THEN TRUE ELSE FALSE END as back_to_back
+            FROM games
+        )
+        SELECT
+            -- Rest splits (back-to-back)
+            ROUND(AVG(CASE WHEN back_to_back THEN points END), 1) as b2b_avg,
+            COUNT(CASE WHEN back_to_back THEN 1 END) as b2b_games,
+            ROUND(SAFE_DIVIDE(COUNTIF(back_to_back AND over_under_result = 'OVER'), COUNTIF(back_to_back AND over_under_result IS NOT NULL)), 3) as b2b_vs_line_pct,
+
+            -- One day rest
+            ROUND(AVG(CASE WHEN days_rest = 2 THEN points END), 1) as one_day_avg,
+            COUNT(CASE WHEN days_rest = 2 THEN 1 END) as one_day_games,
+            ROUND(SAFE_DIVIDE(COUNTIF(days_rest = 2 AND over_under_result = 'OVER'), COUNTIF(days_rest = 2 AND over_under_result IS NOT NULL)), 3) as one_day_vs_line_pct,
+
+            -- Two days rest
+            ROUND(AVG(CASE WHEN days_rest = 3 THEN points END), 1) as two_day_avg,
+            COUNT(CASE WHEN days_rest = 3 THEN 1 END) as two_day_games,
+            ROUND(SAFE_DIVIDE(COUNTIF(days_rest = 3 AND over_under_result = 'OVER'), COUNTIF(days_rest = 3 AND over_under_result IS NOT NULL)), 3) as two_day_vs_line_pct,
+
+            -- Three+ days rest
+            ROUND(AVG(CASE WHEN days_rest >= 4 THEN points END), 1) as three_plus_avg,
+            COUNT(CASE WHEN days_rest >= 4 THEN 1 END) as three_plus_games,
+            ROUND(SAFE_DIVIDE(COUNTIF(days_rest >= 4 AND over_under_result = 'OVER'), COUNTIF(days_rest >= 4 AND over_under_result IS NOT NULL)), 3) as three_plus_vs_line_pct,
+
+            -- Location splits
+            ROUND(AVG(CASE WHEN home_game THEN points END), 1) as home_avg,
+            COUNT(CASE WHEN home_game THEN 1 END) as home_games,
+            ROUND(SAFE_DIVIDE(COUNTIF(home_game AND over_under_result = 'OVER'), COUNTIF(home_game AND over_under_result IS NOT NULL)), 3) as home_vs_line_pct,
+
+            ROUND(AVG(CASE WHEN NOT home_game THEN points END), 1) as away_avg,
+            COUNT(CASE WHEN NOT home_game THEN 1 END) as away_games,
+            ROUND(SAFE_DIVIDE(COUNTIF(NOT home_game AND over_under_result = 'OVER'), COUNTIF(NOT home_game AND over_under_result IS NOT NULL)), 3) as away_vs_line_pct
+
+        FROM games_with_rest
+        """
+        params = [
+            bigquery.ScalarQueryParameter('player_lookup', 'STRING', player_lookup)
+        ]
+        results = self.query_to_list(query, params)
+
+        if not results:
+            return {}
+
+        r = results[0]
+        return {
+            'rest': {
+                'b2b': {
+                    'avg': self._safe_float(r.get('b2b_avg')),
+                    'games': r.get('b2b_games', 0),
+                    'vs_line_pct': self._safe_float(r.get('b2b_vs_line_pct'))
+                },
+                'one_day': {
+                    'avg': self._safe_float(r.get('one_day_avg')),
+                    'games': r.get('one_day_games', 0),
+                    'vs_line_pct': self._safe_float(r.get('one_day_vs_line_pct'))
+                },
+                'two_day': {
+                    'avg': self._safe_float(r.get('two_day_avg')),
+                    'games': r.get('two_day_games', 0),
+                    'vs_line_pct': self._safe_float(r.get('two_day_vs_line_pct'))
+                },
+                'three_plus': {
+                    'avg': self._safe_float(r.get('three_plus_avg')),
+                    'games': r.get('three_plus_games', 0),
+                    'vs_line_pct': self._safe_float(r.get('three_plus_vs_line_pct'))
+                }
+            },
+            'location': {
+                'home': {
+                    'avg': self._safe_float(r.get('home_avg')),
+                    'games': r.get('home_games', 0),
+                    'vs_line_pct': self._safe_float(r.get('home_vs_line_pct'))
+                },
+                'away': {
+                    'avg': self._safe_float(r.get('away_avg')),
+                    'games': r.get('away_games', 0),
+                    'vs_line_pct': self._safe_float(r.get('away_vs_line_pct'))
+                }
+            },
+            'opponents': self._query_opponent_splits(player_lookup)
+        }
+
+    def _query_opponent_splits(self, player_lookup: str) -> List[Dict]:
+        """Query per-opponent splits for teams with 2+ games."""
+        query = """
+        SELECT
+            opponent_team_abbr,
+            ROUND(AVG(points), 1) as avg,
+            COUNT(*) as games,
+            ROUND(SAFE_DIVIDE(COUNTIF(over_under_result = 'OVER'), COUNTIF(over_under_result IS NOT NULL)), 3) as vs_line_pct
+        FROM `nba-props-platform.nba_analytics.player_game_summary`
+        WHERE player_lookup = @player_lookup
+          AND season_year >= 2021
+        GROUP BY opponent_team_abbr
+        HAVING games >= 2
+        ORDER BY games DESC, avg DESC
+        """
+        params = [
+            bigquery.ScalarQueryParameter('player_lookup', 'STRING', player_lookup)
+        ]
+        results = self.query_to_list(query, params)
+
+        return [
+            {
+                'team': r['opponent_team_abbr'],
+                'avg': self._safe_float(r['avg']),
+                'games': r['games'],
+                'vs_line_pct': self._safe_float(r['vs_line_pct'])
+            }
+            for r in results
+        ]
+
+    def _query_track_record(self, player_lookup: str) -> Dict[str, Any]:
+        """Query our prediction track record for this player."""
+        query = """
+        SELECT
+            COUNT(*) as total_predictions,
+            COUNTIF(recommendation IN ('OVER', 'UNDER')) as total_recommendations,
+            COUNTIF(prediction_correct) as wins,
+            COUNTIF(NOT prediction_correct AND recommendation IN ('OVER', 'UNDER')) as losses,
+            ROUND(SAFE_DIVIDE(COUNTIF(prediction_correct), COUNTIF(recommendation IN ('OVER', 'UNDER'))), 3) as overall_pct,
+
+            -- OVER breakdown
+            COUNTIF(recommendation = 'OVER') as over_calls,
+            COUNTIF(recommendation = 'OVER' AND prediction_correct) as over_wins,
+            COUNTIF(recommendation = 'OVER' AND NOT prediction_correct) as over_losses,
+            ROUND(SAFE_DIVIDE(COUNTIF(recommendation = 'OVER' AND prediction_correct), COUNTIF(recommendation = 'OVER')), 3) as over_pct,
+
+            -- UNDER breakdown
+            COUNTIF(recommendation = 'UNDER') as under_calls,
+            COUNTIF(recommendation = 'UNDER' AND prediction_correct) as under_wins,
+            COUNTIF(recommendation = 'UNDER' AND NOT prediction_correct) as under_losses,
+            ROUND(SAFE_DIVIDE(COUNTIF(recommendation = 'UNDER' AND prediction_correct), COUNTIF(recommendation = 'UNDER')), 3) as under_pct,
+
+            -- Error metrics
+            ROUND(AVG(absolute_error), 2) as avg_error,
+            ROUND(AVG(signed_error), 2) as bias,
+            ROUND(SAFE_DIVIDE(COUNTIF(within_3_points), COUNT(*)), 3) as within_3_pts,
+            ROUND(SAFE_DIVIDE(COUNTIF(within_5_points), COUNT(*)), 3) as within_5_pts
+
+        FROM `nba-props-platform.nba_predictions.prediction_accuracy`
+        WHERE player_lookup = @player_lookup
+          AND system_id = 'ensemble_v1'
+        """
+        params = [
+            bigquery.ScalarQueryParameter('player_lookup', 'STRING', player_lookup)
+        ]
+        results = self.query_to_list(query, params)
+
+        if not results:
+            return {}
+
+        r = results[0]
+        return {
+            'total_predictions': r.get('total_predictions', 0),
+            'overall': {
+                'wins': r.get('wins', 0),
+                'losses': r.get('losses', 0),
+                'pct': self._safe_float(r.get('overall_pct'))
+            },
+            'over_calls': {
+                'total': r.get('over_calls', 0),
+                'wins': r.get('over_wins', 0),
+                'losses': r.get('over_losses', 0),
+                'pct': self._safe_float(r.get('over_pct'))
+            },
+            'under_calls': {
+                'total': r.get('under_calls', 0),
+                'wins': r.get('under_wins', 0),
+                'losses': r.get('under_losses', 0),
+                'pct': self._safe_float(r.get('under_pct'))
+            },
+            'avg_error': self._safe_float(r.get('avg_error')),
+            'bias': self._safe_float(r.get('bias')),
+            'within_3_pts': self._safe_float(r.get('within_3_pts')),
+            'within_5_pts': self._safe_float(r.get('within_5_pts'))
+        }
+
+    def _query_next_game(self, player_lookup: str) -> Optional[Dict]:
+        """Query next scheduled game for the player."""
+        query = """
+        SELECT
+            gc.game_date,
+            gc.game_id,
+            gc.opponent_team_abbr,
+            gc.home_game,
+            CASE WHEN pp.player_lookup IS NOT NULL THEN TRUE ELSE FALSE END as has_prediction
+        FROM `nba-props-platform.nba_analytics.upcoming_player_game_context` gc
+        LEFT JOIN `nba-props-platform.nba_predictions.player_prop_predictions` pp
+            ON gc.player_lookup = pp.player_lookup
+            AND gc.game_date = pp.game_date
+            AND pp.system_id = 'ensemble_v1'
+        WHERE gc.player_lookup = @player_lookup
+          AND gc.game_date >= CURRENT_DATE()
+        ORDER BY gc.game_date ASC
+        LIMIT 1
+        """
+        params = [
+            bigquery.ScalarQueryParameter('player_lookup', 'STRING', player_lookup)
+        ]
+        results = self.query_to_list(query, params)
+
+        if not results:
+            return None
+
+        r = results[0]
+        return {
+            'game_date': str(r['game_date']),
+            'game_id': r['game_id'],
+            'opponent': r['opponent_team_abbr'],
+            'home_game': r['home_game'],
+            'has_prediction': r['has_prediction']
+        }
 
     def _format_recent_predictions(self, recent: List[Dict]) -> List[Dict[str, Any]]:
         """Format recent predictions for JSON output."""
@@ -337,11 +676,14 @@ class PlayerProfileExporter(BaseExporter):
         """Return empty response for unknown player."""
         return {
             'player_lookup': player_lookup,
+            'player_full_name': player_lookup,
             'generated_at': self.get_generated_at(),
             'summary': None,
             'interpretation': {'error': 'No prediction data found for this player'},
-            'recent_predictions': [],
-            'by_recommendation': {}
+            'game_log': [],
+            'splits': {},
+            'our_track_record': {},
+            'next_game': None
         }
 
     def export_index(self) -> str:

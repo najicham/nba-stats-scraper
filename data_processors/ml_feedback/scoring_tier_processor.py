@@ -4,8 +4,11 @@ Scoring Tier Adjustments Processor
 Phase 5C ML Feedback: Computes bias adjustments by scoring tier to correct
 systematic prediction errors.
 
-Key Finding: 30+ point scorers are under-predicted by -12.6 points due to
-excessive regression to mean in the prediction systems.
+IMPORTANT (Session 124 fix): Tier classification now uses season_avg from
+ml_feature_store_v2 instead of actual_points. This ensures consistency between
+how adjustments are computed (by season_avg tier) and how they are applied
+(by season_avg tier). Previous approach computed by actual_points but applied
+by season_avg, causing adjustments to make predictions WORSE by +0.089 MAE.
 
 Usage:
     processor = ScoringTierProcessor()
@@ -141,24 +144,48 @@ class ScoringTierProcessor:
         }
 
     def _compute_tier_metrics(self, as_of_date: str, system_id: str) -> dict:
-        """Query prediction_accuracy to compute metrics by tier."""
+        """
+        Query prediction_accuracy to compute metrics by tier.
+
+        IMPORTANT: Tier classification uses season_avg (from ml_feature_store_v2)
+        instead of actual_points. This ensures consistency between how adjustments
+        are computed and how they are applied (both use season_avg).
+
+        Session 123 fix: Previously classified by actual_points which caused a
+        mismatch - adjustments were computed for "players who scored X" but applied
+        to "players who average X", making predictions worse by +0.089 MAE.
+        """
         query = f"""
+        WITH player_season_avg AS (
+          -- Get season average from ML feature store (features[2] = points_avg_season)
+          SELECT
+            player_lookup,
+            game_date,
+            features[OFFSET(2)] as season_avg
+          FROM `nba-props-platform.nba_predictions.ml_feature_store_v2`
+          WHERE game_date > DATE_SUB('{as_of_date}', INTERVAL {self.lookback_days} DAY)
+            AND game_date <= '{as_of_date}'
+        )
         SELECT
+          -- Classify by season_avg to match how adjustments are applied
           CASE
-            WHEN actual_points >= 30 THEN 'STAR_30PLUS'
-            WHEN actual_points >= 20 THEN 'STARTER_20_29'
-            WHEN actual_points >= 10 THEN 'ROTATION_10_19'
+            WHEN psa.season_avg >= 30 THEN 'STAR_30PLUS'
+            WHEN psa.season_avg >= 20 THEN 'STARTER_20_29'
+            WHEN psa.season_avg >= 10 THEN 'ROTATION_10_19'
             ELSE 'BENCH_0_9'
           END as scoring_tier,
           COUNT(*) as sample_size,
-          AVG(signed_error) as avg_signed_error,
-          AVG(absolute_error) as avg_absolute_error,
-          STDDEV(signed_error) as std_signed_error,
-          AVG(CASE WHEN prediction_correct THEN 1 ELSE 0 END) as win_rate
-        FROM `nba-props-platform.nba_predictions.prediction_accuracy`
-        WHERE system_id = '{system_id}'
-          AND game_date > DATE_SUB('{as_of_date}', INTERVAL {self.lookback_days} DAY)
-          AND game_date <= '{as_of_date}'
+          AVG(pa.signed_error) as avg_signed_error,
+          AVG(pa.absolute_error) as avg_absolute_error,
+          STDDEV(pa.signed_error) as std_signed_error,
+          AVG(CASE WHEN pa.prediction_correct THEN 1 ELSE 0 END) as win_rate
+        FROM `nba-props-platform.nba_predictions.prediction_accuracy` pa
+        JOIN player_season_avg psa
+          ON pa.player_lookup = psa.player_lookup
+          AND pa.game_date = psa.game_date
+        WHERE pa.system_id = '{system_id}'
+          AND pa.game_date > DATE_SUB('{as_of_date}', INTERVAL {self.lookback_days} DAY)
+          AND pa.game_date <= '{as_of_date}'
         GROUP BY 1
         HAVING COUNT(*) >= {self.min_sample_size}
         ORDER BY 1
@@ -201,6 +228,93 @@ class ScoringTierProcessor:
         except Exception as e:
             # Table might not exist yet
             logger.debug(f"Delete failed (table may not exist): {e}")
+
+    def validate_adjustments_improve_mae(
+        self,
+        start_date: str,
+        end_date: str,
+        system_id: str = 'ensemble_v1'
+    ) -> dict:
+        """
+        Validate that tier adjustments are actually improving MAE.
+
+        This is a safeguard added in Session 124 after discovering that
+        adjustments were making predictions WORSE due to a computation bug.
+
+        Args:
+            start_date: Start of date range to validate
+            end_date: End of date range to validate
+            system_id: Prediction system to validate
+
+        Returns:
+            dict with validation results including mae_raw, mae_adjusted,
+            mae_change, and is_improving flag
+
+        Raises:
+            ValueError: If adjustments are making MAE worse by > 0.1 points
+        """
+        query = f"""
+        WITH predictions_with_actuals AS (
+          SELECT
+            p.predicted_points,
+            p.adjusted_points,
+            pa.actual_points
+          FROM `nba-props-platform.nba_predictions.player_prop_predictions` p
+          JOIN `nba-props-platform.nba_predictions.prediction_accuracy` pa
+            ON p.player_lookup = pa.player_lookup
+            AND p.game_date = pa.game_date
+            AND p.system_id = pa.system_id
+          WHERE p.system_id = '{system_id}'
+            AND p.scoring_tier IS NOT NULL
+            AND p.game_date BETWEEN '{start_date}' AND '{end_date}'
+        )
+        SELECT
+          COUNT(*) as n,
+          AVG(ABS(predicted_points - actual_points)) as mae_raw,
+          AVG(ABS(adjusted_points - actual_points)) as mae_adjusted
+        FROM predictions_with_actuals
+        """
+
+        result = list(self.client.query(query).result())[0]
+
+        mae_raw = float(result.mae_raw or 0)
+        mae_adjusted = float(result.mae_adjusted or 0)
+        mae_change = mae_adjusted - mae_raw
+        is_improving = mae_change < 0
+
+        validation_result = {
+            'n': result.n,
+            'mae_raw': round(mae_raw, 4),
+            'mae_adjusted': round(mae_adjusted, 4),
+            'mae_change': round(mae_change, 4),
+            'is_improving': is_improving,
+            'date_range': f'{start_date} to {end_date}',
+            'system_id': system_id,
+        }
+
+        if mae_change > 0.1:
+            logger.error(
+                f"VALIDATION FAILED: Tier adjustments making MAE WORSE by {mae_change:.3f} points! "
+                f"Raw MAE: {mae_raw:.3f}, Adjusted MAE: {mae_adjusted:.3f}"
+            )
+            raise ValueError(
+                f"Tier adjustments are making predictions worse (MAE +{mae_change:.3f}). "
+                f"Check that adjustments are computed using the same classification basis "
+                f"(season_avg) as they are applied. See Session 124 handoff for details."
+            )
+
+        if is_improving:
+            logger.info(
+                f"Validation PASSED: Adjustments improve MAE by {-mae_change:.3f} points "
+                f"(Raw: {mae_raw:.3f} -> Adjusted: {mae_adjusted:.3f})"
+            )
+        else:
+            logger.warning(
+                f"Validation WARNING: Adjustments not improving MAE "
+                f"(change: {mae_change:+.3f} points)"
+            )
+
+        return validation_result
 
     def get_adjustment(self, scoring_tier: str, as_of_date: str = None,
                        system_id: str = 'ensemble_v1') -> float:

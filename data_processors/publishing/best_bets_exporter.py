@@ -107,9 +107,16 @@ class BestBetsExporter(BaseExporter):
               AND recommendation IN ('OVER', 'UNDER')
             GROUP BY player_lookup
         ),
+        player_names AS (
+            -- Get player full names from registry
+            SELECT player_lookup, player_name
+            FROM `nba-props-platform.nba_reference.nba_players_registry`
+            QUALIFY ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY season DESC) = 1
+        ),
         predictions AS (
             SELECT
                 p.player_lookup,
+                COALESCE(pn.player_name, p.player_lookup) as player_full_name,
                 p.game_id,
                 p.team_abbr,
                 p.opponent_team_abbr,
@@ -126,6 +133,7 @@ class BestBetsExporter(BaseExporter):
                 h.sample_size as player_sample_size
             FROM `nba-props-platform.nba_predictions.prediction_accuracy` p
             LEFT JOIN player_history h ON p.player_lookup = h.player_lookup
+            LEFT JOIN player_names pn ON p.player_lookup = pn.player_lookup
             WHERE p.game_date = @target_date
               AND p.system_id = 'ensemble_v1'
               AND p.recommendation IN ('OVER', 'UNDER')
@@ -178,6 +186,7 @@ class BestBetsExporter(BaseExporter):
             formatted.append({
                 'rank': rank,
                 'player_lookup': pick['player_lookup'],
+                'player_full_name': pick.get('player_full_name', pick['player_lookup']),
                 'game_id': pick['game_id'],
                 'team': pick['team_abbr'],
                 'opponent': pick['opponent_team_abbr'],

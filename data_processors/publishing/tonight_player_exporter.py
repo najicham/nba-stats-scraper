@@ -1,0 +1,603 @@
+"""
+Tonight Player Exporter for Phase 6 Publishing
+
+Exports detailed tonight data for a specific player.
+Used for the "Tonight" tab in the player detail panel (~3-5 KB per player).
+"""
+
+import logging
+from typing import Dict, List, Any, Optional
+from datetime import date
+
+from google.cloud import bigquery
+
+from .base_exporter import BaseExporter
+
+logger = logging.getLogger(__name__)
+
+
+class TonightPlayerExporter(BaseExporter):
+    """
+    Export tonight's detailed data for a specific player.
+
+    Output files:
+    - tonight/player/{lookup}.json - Tonight tab detail for a player
+
+    JSON structure:
+    {
+        "player_lookup": "lebronjames",
+        "player_full_name": "LeBron James",
+        "game_date": "2024-12-11",
+        "generated_at": "...",
+        "game_context": {...},
+        "quick_numbers": {...},
+        "fatigue": {...},
+        "current_streak": {...},
+        "tonights_factors": [...],
+        "recent_form": [...],
+        "prediction": {...}
+    }
+    """
+
+    def generate_json(self, player_lookup: str, target_date: str) -> Dict[str, Any]:
+        """
+        Generate tonight's detail JSON for a specific player.
+
+        Args:
+            player_lookup: Player identifier
+            target_date: Date string in YYYY-MM-DD format
+
+        Returns:
+            Dictionary ready for JSON serialization
+        """
+        # Get player's game context for tonight
+        context = self._query_game_context(player_lookup, target_date)
+
+        if not context:
+            logger.warning(f"No game found for {player_lookup} on {target_date}")
+            return self._empty_response(player_lookup, target_date)
+
+        # Get prediction
+        prediction = self._query_prediction(player_lookup, target_date)
+
+        # Get fatigue details
+        fatigue = self._query_fatigue(player_lookup, target_date)
+
+        # Get recent form (last 10 games)
+        recent_form = self._query_recent_form(player_lookup, target_date)
+
+        # Get splits for tonight's factors
+        splits = self._query_relevant_splits(player_lookup, context, target_date)
+
+        # Get current streak
+        streak = self._compute_streak(recent_form)
+
+        # Get quick numbers
+        quick_numbers = self._query_quick_numbers(player_lookup, target_date)
+
+        # Build tonight's factors (only relevant ones)
+        tonights_factors = self._build_tonights_factors(context, fatigue, splits)
+
+        return {
+            'player_lookup': player_lookup,
+            'player_full_name': context.get('player_full_name', player_lookup),
+            'game_date': target_date,
+            'generated_at': self.get_generated_at(),
+            'game_context': {
+                'game_id': context.get('game_id'),
+                'opponent': context.get('opponent_team_abbr'),
+                'home_game': context.get('home_game'),
+                'game_time': context.get('game_time'),
+                'team_abbr': context.get('team_abbr'),
+                'line': self._safe_float(prediction.get('current_points_line') if prediction else None),
+                'days_rest': context.get('days_rest'),
+                'is_back_to_back': context.get('back_to_back'),
+                'injury_status': context.get('injury_status', 'available'),
+                'injury_reason': context.get('injury_reason'),
+            },
+            'quick_numbers': quick_numbers,
+            'fatigue': fatigue,
+            'current_streak': streak,
+            'tonights_factors': tonights_factors,
+            'recent_form': recent_form,
+            'prediction': self._format_prediction(prediction) if prediction else None
+        }
+
+    def _query_game_context(self, player_lookup: str, target_date: str) -> Optional[Dict]:
+        """Query game context for the player tonight."""
+        query = """
+        WITH context AS (
+            SELECT
+                gc.player_lookup,
+                gc.game_id,
+                gc.team_abbr,
+                gc.opponent_team_abbr,
+                gc.home_game,
+                gc.days_rest,
+                gc.back_to_back,
+                s.game_time,
+                s.game_status
+            FROM `nba-props-platform.nba_analytics.upcoming_player_game_context` gc
+            JOIN `nba-props-platform.nba_raw.nbac_schedule` s
+                ON gc.game_id = s.game_id
+            WHERE gc.player_lookup = @player_lookup
+              AND gc.game_date = @target_date
+        ),
+        player_name AS (
+            SELECT player_lookup, player_name
+            FROM `nba-props-platform.nba_reference.nba_players_registry`
+            WHERE player_lookup = @player_lookup
+            QUALIFY ROW_NUMBER() OVER (ORDER BY season DESC) = 1
+        ),
+        injury AS (
+            SELECT
+                player_lookup,
+                injury_status,
+                reason as injury_reason
+            FROM `nba-props-platform.nba_raw.nbac_injury_report`
+            WHERE player_lookup = @player_lookup
+              AND report_date <= @target_date
+            QUALIFY ROW_NUMBER() OVER (ORDER BY report_date DESC, report_hour DESC) = 1
+        )
+        SELECT
+            c.*,
+            COALESCE(pn.player_name, c.player_lookup) as player_full_name,
+            FORMAT_TIME('%H:%M', c.game_time) as game_time_formatted,
+            i.injury_status,
+            i.injury_reason
+        FROM context c
+        LEFT JOIN player_name pn ON c.player_lookup = pn.player_lookup
+        LEFT JOIN injury i ON c.player_lookup = i.player_lookup
+        """
+        params = [
+            bigquery.ScalarQueryParameter('player_lookup', 'STRING', player_lookup),
+            bigquery.ScalarQueryParameter('target_date', 'DATE', target_date)
+        ]
+        results = self.query_to_list(query, params)
+        if results:
+            result = results[0]
+            result['game_time'] = result.pop('game_time_formatted', None)
+            return result
+        return None
+
+    def _query_prediction(self, player_lookup: str, target_date: str) -> Optional[Dict]:
+        """Query prediction for the player tonight."""
+        query = """
+        SELECT
+            predicted_points,
+            confidence_score,
+            recommendation,
+            current_points_line,
+            line_margin,
+            pace_adjustment,
+            similar_games_count
+        FROM `nba-props-platform.nba_predictions.player_prop_predictions`
+        WHERE player_lookup = @player_lookup
+          AND game_date = @target_date
+          AND system_id = 'ensemble_v1'
+        """
+        params = [
+            bigquery.ScalarQueryParameter('player_lookup', 'STRING', player_lookup),
+            bigquery.ScalarQueryParameter('target_date', 'DATE', target_date)
+        ]
+        results = self.query_to_list(query, params)
+        return results[0] if results else None
+
+    def _query_fatigue(self, player_lookup: str, target_date: str) -> Dict[str, Any]:
+        """Query fatigue details for the player."""
+        query = """
+        SELECT
+            fatigue_score,
+            fatigue_context_json
+        FROM `nba-props-platform.nba_precompute.player_composite_factors`
+        WHERE player_lookup = @player_lookup
+          AND game_date = @target_date
+        """
+        params = [
+            bigquery.ScalarQueryParameter('player_lookup', 'STRING', player_lookup),
+            bigquery.ScalarQueryParameter('target_date', 'DATE', target_date)
+        ]
+        results = self.query_to_list(query, params)
+
+        if results:
+            r = results[0]
+            score = r.get('fatigue_score')
+            if score is not None:
+                if score >= 95:
+                    level = 'fresh'
+                elif score >= 75:
+                    level = 'normal'
+                else:
+                    level = 'tired'
+            else:
+                level = 'normal'
+                score = None
+
+            return {
+                'score': self._safe_float(score),
+                'level': level,
+                'context': r.get('fatigue_context_json')  # JSON with factor breakdown
+            }
+
+        return {'score': None, 'level': 'normal', 'context': None}
+
+    def _query_recent_form(self, player_lookup: str, before_date: str) -> List[Dict]:
+        """Query last 10 games for the player."""
+        query = """
+        SELECT
+            game_date,
+            game_id,
+            opponent_team_abbr,
+            team_abbr,
+            points,
+            minutes_played,
+            fg_makes,
+            fg_attempts,
+            three_pt_makes,
+            three_pt_attempts,
+            ft_makes,
+            ft_attempts,
+            over_under_result,
+            points_line
+        FROM `nba-props-platform.nba_analytics.player_game_summary`
+        WHERE player_lookup = @player_lookup
+          AND game_date < @before_date
+        ORDER BY game_date DESC
+        LIMIT 10
+        """
+        params = [
+            bigquery.ScalarQueryParameter('player_lookup', 'STRING', player_lookup),
+            bigquery.ScalarQueryParameter('before_date', 'DATE', before_date)
+        ]
+        results = self.query_to_list(query, params)
+
+        formatted = []
+        for r in results:
+            # Derive home_game from game_id (format: YYYYMMDD_AWAY_HOME)
+            game_id = r.get('game_id', '')
+            team_abbr = r.get('team_abbr', '')
+            is_home = game_id.endswith(f'_{team_abbr}') if game_id and team_abbr else None
+
+            formatted.append({
+                'game_date': str(r['game_date']),
+                'opponent': r['opponent_team_abbr'],
+                'home_game': is_home,
+                'points': r['points'],
+                'minutes': self._safe_float(r['minutes_played']),
+                'fg': f"{r['fg_makes']}/{r['fg_attempts']}" if r['fg_attempts'] else None,
+                'three': f"{r['three_pt_makes']}/{r['three_pt_attempts']}" if r['three_pt_attempts'] else None,
+                'ft': f"{r['ft_makes']}/{r['ft_attempts']}" if r['ft_attempts'] else None,
+                'over_under': r['over_under_result'],
+                'line': self._safe_float(r['points_line']),
+                'margin': int(r['points'] - r['points_line']) if r['points_line'] else None
+            })
+
+        return formatted
+
+    def _query_quick_numbers(self, player_lookup: str, target_date: str) -> Dict[str, Any]:
+        """Query quick stat numbers for the player."""
+        query = """
+        WITH season AS (
+            SELECT
+                ROUND(AVG(points), 1) as season_ppg,
+                ROUND(AVG(minutes_played), 1) as season_mpg,
+                COUNT(*) as games_played
+            FROM `nba-props-platform.nba_analytics.player_game_summary`
+            WHERE player_lookup = @player_lookup
+              AND season_year = CASE
+                WHEN EXTRACT(MONTH FROM @target_date) >= 10 THEN EXTRACT(YEAR FROM @target_date)
+                ELSE EXTRACT(YEAR FROM @target_date) - 1
+              END
+              AND game_date < @target_date
+        ),
+        last_10 AS (
+            SELECT
+                ROUND(AVG(points), 1) as last_10_ppg,
+                ROUND(AVG(minutes_played), 1) as last_10_mpg
+            FROM (
+                SELECT points, minutes_played
+                FROM `nba-props-platform.nba_analytics.player_game_summary`
+                WHERE player_lookup = @player_lookup
+                  AND game_date < @target_date
+                ORDER BY game_date DESC
+                LIMIT 10
+            )
+        ),
+        last_5 AS (
+            SELECT
+                ROUND(AVG(points), 1) as last_5_ppg,
+                ROUND(AVG(minutes_played), 1) as last_5_mpg
+            FROM (
+                SELECT points, minutes_played
+                FROM `nba-props-platform.nba_analytics.player_game_summary`
+                WHERE player_lookup = @player_lookup
+                  AND game_date < @target_date
+                ORDER BY game_date DESC
+                LIMIT 5
+            )
+        )
+        SELECT
+            s.season_ppg,
+            s.season_mpg,
+            s.games_played,
+            l10.last_10_ppg,
+            l10.last_10_mpg,
+            l5.last_5_ppg,
+            l5.last_5_mpg
+        FROM season s, last_10 l10, last_5 l5
+        """
+        params = [
+            bigquery.ScalarQueryParameter('player_lookup', 'STRING', player_lookup),
+            bigquery.ScalarQueryParameter('target_date', 'DATE', target_date)
+        ]
+        results = self.query_to_list(query, params)
+
+        if results:
+            r = results[0]
+            return {
+                'season_ppg': self._safe_float(r.get('season_ppg')),
+                'season_mpg': self._safe_float(r.get('season_mpg')),
+                'games_played': r.get('games_played'),
+                'last_10_ppg': self._safe_float(r.get('last_10_ppg')),
+                'last_10_mpg': self._safe_float(r.get('last_10_mpg')),
+                'last_5_ppg': self._safe_float(r.get('last_5_ppg')),
+                'last_5_mpg': self._safe_float(r.get('last_5_mpg')),
+            }
+
+        return {}
+
+    def _query_relevant_splits(
+        self,
+        player_lookup: str,
+        context: Dict,
+        target_date: str
+    ) -> Dict[str, Any]:
+        """Query splits relevant to tonight's game."""
+        query = """
+        WITH games AS (
+            SELECT
+                g.game_date,
+                g.points,
+                g.points_line,
+                g.game_id,
+                g.team_abbr,
+                g.opponent_team_abbr,
+                -- Derive home_game from game_id (format: YYYYMMDD_AWAY_HOME)
+                ENDS_WITH(g.game_id, CONCAT('_', g.team_abbr)) as home_game,
+                -- Calculate days_rest from previous game
+                DATE_DIFF(g.game_date, LAG(g.game_date) OVER (ORDER BY g.game_date), DAY) as days_rest
+            FROM `nba-props-platform.nba_analytics.player_game_summary` g
+            WHERE g.player_lookup = @player_lookup
+              AND g.game_date < @target_date
+              AND g.season_year = CASE
+                WHEN EXTRACT(MONTH FROM @target_date) >= 10 THEN EXTRACT(YEAR FROM @target_date)
+                ELSE EXTRACT(YEAR FROM @target_date) - 1
+              END
+        )
+        SELECT
+            -- Home/Away split
+            ROUND(AVG(CASE WHEN home_game THEN points END), 1) as home_ppg,
+            COUNT(CASE WHEN home_game THEN 1 END) as home_games,
+            ROUND(AVG(CASE WHEN NOT home_game THEN points END), 1) as away_ppg,
+            COUNT(CASE WHEN NOT home_game THEN 1 END) as away_games,
+
+            -- B2B split (days_rest = 1)
+            ROUND(AVG(CASE WHEN days_rest = 1 THEN points END), 1) as b2b_ppg,
+            COUNT(CASE WHEN days_rest = 1 THEN 1 END) as b2b_games,
+            ROUND(AVG(CASE WHEN days_rest > 1 OR days_rest IS NULL THEN points END), 1) as non_b2b_ppg,
+
+            -- Rest split
+            ROUND(AVG(CASE WHEN days_rest >= 2 THEN points END), 1) as rested_ppg,
+            COUNT(CASE WHEN days_rest >= 2 THEN 1 END) as rested_games,
+
+            -- vs Tonight's opponent
+            ROUND(AVG(CASE WHEN opponent_team_abbr = @opponent THEN points END), 1) as vs_opponent_ppg,
+            COUNT(CASE WHEN opponent_team_abbr = @opponent THEN 1 END) as vs_opponent_games
+
+        FROM games
+        """
+        params = [
+            bigquery.ScalarQueryParameter('player_lookup', 'STRING', player_lookup),
+            bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
+            bigquery.ScalarQueryParameter('opponent', 'STRING', context.get('opponent_team_abbr', ''))
+        ]
+        results = self.query_to_list(query, params)
+        return results[0] if results else {}
+
+    def _compute_streak(self, recent_form: List[Dict]) -> Dict[str, Any]:
+        """Compute current over/under streak from recent form."""
+        if not recent_form:
+            return {'type': None, 'length': 0}
+
+        streak_type = None
+        streak_length = 0
+
+        for game in recent_form:
+            ou = game.get('over_under')
+            if ou in ('OVER', 'UNDER'):
+                if streak_type is None:
+                    streak_type = ou
+                    streak_length = 1
+                elif ou == streak_type:
+                    streak_length += 1
+                else:
+                    break
+            else:
+                # No line for this game, break streak
+                if streak_type:
+                    break
+
+        return {
+            'type': streak_type.lower() if streak_type else None,
+            'length': streak_length
+        }
+
+    def _build_tonights_factors(
+        self,
+        context: Dict,
+        fatigue: Dict,
+        splits: Dict
+    ) -> List[Dict]:
+        """Build list of relevant factors for tonight's game."""
+        factors = []
+
+        # Back-to-back factor
+        if context.get('back_to_back'):
+            b2b_ppg = splits.get('b2b_ppg')
+            non_b2b_ppg = splits.get('non_b2b_ppg')
+            if b2b_ppg and non_b2b_ppg:
+                impact = round(b2b_ppg - non_b2b_ppg, 1)
+                factors.append({
+                    'factor': 'back_to_back',
+                    'direction': 'negative' if impact < 0 else 'positive',
+                    'impact': impact,
+                    'description': f"B2B: averages {b2b_ppg} vs {non_b2b_ppg} normally ({impact:+.1f})"
+                })
+
+        # Home/Away factor
+        is_home = context.get('home_game')
+        if is_home is not None:
+            if is_home:
+                ppg = splits.get('home_ppg')
+                games = splits.get('home_games', 0)
+                label = 'home'
+            else:
+                ppg = splits.get('away_ppg')
+                games = splits.get('away_games', 0)
+                label = 'away'
+
+            if ppg and games >= 3:
+                factors.append({
+                    'factor': 'location',
+                    'direction': 'neutral',
+                    'description': f"Averages {ppg} on the {label} ({games} games)"
+                })
+
+        # vs Opponent factor
+        vs_opp_ppg = splits.get('vs_opponent_ppg')
+        vs_opp_games = splits.get('vs_opponent_games', 0)
+        if vs_opp_ppg and vs_opp_games >= 1:
+            factors.append({
+                'factor': 'vs_opponent',
+                'direction': 'neutral',
+                'description': f"Averages {vs_opp_ppg} vs {context.get('opponent_team_abbr')} ({vs_opp_games} games)"
+            })
+
+        # Well-rested factor
+        days_rest = context.get('days_rest')
+        if days_rest and days_rest >= 3:
+            rested_ppg = splits.get('rested_ppg')
+            if rested_ppg:
+                factors.append({
+                    'factor': 'well_rested',
+                    'direction': 'positive',
+                    'description': f"{days_rest} days rest: averages {rested_ppg} when rested"
+                })
+
+        # Fatigue factor
+        if fatigue.get('level') == 'tired':
+            factors.append({
+                'factor': 'fatigue',
+                'direction': 'negative',
+                'description': f"Elevated fatigue (score: {fatigue.get('score')})"
+            })
+        elif fatigue.get('level') == 'fresh':
+            factors.append({
+                'factor': 'fresh',
+                'direction': 'positive',
+                'description': f"Well-rested (fatigue score: {fatigue.get('score')})"
+            })
+
+        return factors
+
+    def _format_prediction(self, prediction: Dict) -> Dict[str, Any]:
+        """Format prediction data for output."""
+        return {
+            'predicted_points': self._safe_float(prediction.get('predicted_points')),
+            'confidence_score': self._safe_float(prediction.get('confidence_score')),
+            'recommendation': prediction.get('recommendation'),
+            'line': self._safe_float(prediction.get('current_points_line')),
+            'edge': self._safe_float(prediction.get('line_margin')),
+            'pace_adjustment': self._safe_float(prediction.get('pace_adjustment')),
+            'similar_games': prediction.get('similar_games_count')
+        }
+
+    def _safe_float(self, value) -> Optional[float]:
+        """Convert to float, handling None and special values."""
+        if value is None:
+            return None
+        try:
+            f = float(value)
+            if f != f:  # NaN check
+                return None
+            return round(f, 2)
+        except (TypeError, ValueError):
+            return None
+
+    def _empty_response(self, player_lookup: str, target_date: str) -> Dict[str, Any]:
+        """Return empty response when player has no game."""
+        return {
+            'player_lookup': player_lookup,
+            'player_full_name': player_lookup,
+            'game_date': target_date,
+            'generated_at': self.get_generated_at(),
+            'game_context': None,
+            'quick_numbers': {},
+            'fatigue': {'score': None, 'level': 'normal', 'context': None},
+            'current_streak': {'type': None, 'length': 0},
+            'tonights_factors': [],
+            'recent_form': [],
+            'prediction': None
+        }
+
+    def export(self, player_lookup: str, target_date: str) -> str:
+        """
+        Generate and upload tonight's player detail JSON.
+
+        Args:
+            player_lookup: Player identifier
+            target_date: Date string in YYYY-MM-DD format
+
+        Returns:
+            GCS path of the exported file
+        """
+        logger.info(f"Exporting tonight detail for {player_lookup} on {target_date}")
+
+        json_data = self.generate_json(player_lookup, target_date)
+
+        path = f'tonight/player/{player_lookup}.json'
+        gcs_path = self.upload_to_gcs(json_data, path, 'public, max-age=300')
+
+        return gcs_path
+
+    def export_all_for_date(self, target_date: str) -> List[str]:
+        """
+        Export tonight details for all players with games on the date.
+
+        Args:
+            target_date: Date string in YYYY-MM-DD format
+
+        Returns:
+            List of GCS paths
+        """
+        logger.info(f"Exporting tonight details for all players on {target_date}")
+
+        # Get all players with games
+        query = """
+        SELECT DISTINCT player_lookup
+        FROM `nba-props-platform.nba_analytics.upcoming_player_game_context`
+        WHERE game_date = @target_date
+        """
+        params = [
+            bigquery.ScalarQueryParameter('target_date', 'DATE', target_date)
+        ]
+        players = self.query_to_list(query, params)
+
+        paths = []
+        for i, p in enumerate(players):
+            player_lookup = p['player_lookup']
+            logger.info(f"[{i+1}/{len(players)}] Exporting {player_lookup}")
+            path = self.export(player_lookup, target_date)
+            paths.append(path)
+
+        return paths
