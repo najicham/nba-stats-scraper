@@ -1,0 +1,5 @@
+# Phase 6 Export Cloud Function requirements
+functions-framework==3.*
+google-cloud-bigquery>=3.0.0
+google-cloud-storage>=2.0.0
+google-cloud-pubsub>=2.0.0

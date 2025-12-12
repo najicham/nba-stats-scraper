@@ -78,8 +78,20 @@ class PubSubTopics:
     # =========================================================================
 
     # Published by: Phase 5 prediction coordinator
-    # Consumed by: (optional) downstream systems, monitoring
+    # Consumed by: Phase 5→6 orchestrator
     PHASE5_PREDICTIONS_COMPLETE = 'nba-phase5-predictions-complete'
+
+    # =========================================================================
+    # PHASE 6: PUBLISHING
+    # =========================================================================
+
+    # Published by: Phase 5→6 orchestrator OR Cloud Scheduler
+    # Consumed by: Phase 6 export Cloud Function
+    PHASE6_EXPORT_TRIGGER = 'nba-phase6-export-trigger'
+
+    # Published by: Phase 6 export Cloud Function
+    # Consumed by: Monitoring, alerting
+    PHASE6_EXPORT_COMPLETE = 'nba-phase6-export-complete'
 
     # =========================================================================
     # HELPER METHODS
@@ -103,6 +115,8 @@ class PubSubTopics:
             'PHASE4_PROCESSOR_COMPLETE': cls.PHASE4_PROCESSOR_COMPLETE,
             'PHASE4_PRECOMPUTE_COMPLETE': cls.PHASE4_PRECOMPUTE_COMPLETE,
             'PHASE5_PREDICTIONS_COMPLETE': cls.PHASE5_PREDICTIONS_COMPLETE,
+            'PHASE6_EXPORT_TRIGGER': cls.PHASE6_EXPORT_TRIGGER,
+            'PHASE6_EXPORT_COMPLETE': cls.PHASE6_EXPORT_COMPLETE,
         }
 
     @classmethod
@@ -125,6 +139,7 @@ class PubSubTopics:
             'phase_3_analytics': cls.PHASE3_ANALYTICS_COMPLETE,
             'phase_4_precompute': cls.PHASE4_PRECOMPUTE_COMPLETE,
             'phase_5_predictions': cls.PHASE5_PREDICTIONS_COMPLETE,
+            'phase_6_publishing': cls.PHASE6_EXPORT_COMPLETE,
         }
 
         if phase not in mapping:

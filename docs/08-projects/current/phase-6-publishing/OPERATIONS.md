@@ -1,8 +1,10 @@
 # Phase 6: Operations Guide
 
-**Last Updated:** 2025-12-10
+**Last Updated:** 2025-12-12
 
 This guide covers day-to-day operations for the Phase 6 Publishing system.
+
+> **See also:** [ORCHESTRATION.md](./ORCHESTRATION.md) for detailed triggering architecture.
 
 ---
 
@@ -424,116 +426,100 @@ For live operations (when processing current season):
 
 ---
 
-## Future: Cloud Scheduler Automation
+## Automated Triggering
 
-### When to Set Up
-
-Cloud Scheduler automation is only needed when:
-- Processing **live/current season** games daily
-- You want hands-off operation
-
-For historical backfills, manual CLI usage is sufficient.
+Phase 6 uses a **hybrid triggering strategy** combining event-driven orchestration with scheduled jobs.
 
 ### Architecture
 
 ```
-Cloud Scheduler (cron) → Pub/Sub Topic → Cloud Function → daily_export.py → GCS
-                                                ↓
-                                         BigQuery (read)
+Tonight Predictions (Event-Driven):
+  Phase 5 Complete → nba-phase5-predictions-complete → phase5-to-phase6-orchestrator
+                                                                ↓
+                                                   nba-phase6-export-trigger
+                                                                ↓
+                                                   phase6-export Cloud Function
+                                                                ↓
+                                                              GCS
+
+Results/Profiles (Scheduled):
+  Cloud Scheduler → nba-phase6-export-trigger → phase6-export Cloud Function → GCS
 ```
 
-### Step 1: Create Cloud Function
+### Trigger Strategy
 
-Create `cloud_functions/daily_export/main.py`:
+| Export Type | Trigger | Schedule |
+|-------------|---------|----------|
+| Tonight predictions | Phase 5→6 Orchestrator | When predictions complete |
+| Tonight backup | Cloud Scheduler | 1 PM ET (fallback) |
+| Results & Best Bets | Cloud Scheduler | 5 AM ET |
+| Player Profiles | Cloud Scheduler | 6 AM ET Sundays |
 
-```python
-import functions_framework
-from datetime import datetime, timedelta
-import subprocess
-import os
-
-@functions_framework.cloud_event
-def main(cloud_event):
-    """Triggered by Pub/Sub message."""
-    # Default to yesterday
-    target_date = (datetime.utcnow() - timedelta(days=1)).strftime('%Y-%m-%d')
-
-    # Run the export
-    result = subprocess.run([
-        'python', 'backfill_jobs/publishing/daily_export.py',
-        '--date', target_date
-    ], capture_output=True, text=True)
-
-    print(f"Export for {target_date}: {result.returncode}")
-    print(result.stdout)
-    if result.stderr:
-        print(f"Errors: {result.stderr}")
-
-    return f"Exported {target_date}"
-```
-
-Create `cloud_functions/daily_export/requirements.txt`:
-
-```
-functions-framework==3.*
-google-cloud-bigquery>=3.0.0
-google-cloud-storage>=2.0.0
-```
-
-### Step 2: Deploy Infrastructure
+### Deployment Commands
 
 ```bash
-# Create Pub/Sub topic
-gcloud pubsub topics create daily-prediction-export
+# Deploy Phase 5→6 orchestrator (event-driven tonight exports)
+./bin/orchestrators/deploy_phase5_to_phase6.sh
 
-# Deploy Cloud Function
-gcloud functions deploy daily-prediction-export \
+# Deploy Cloud Scheduler jobs (results, profiles)
+./bin/deploy/deploy_phase6_scheduler.sh
+
+# Deploy Phase 6 export function
+gcloud functions deploy phase6-export \
   --gen2 \
-  --runtime python310 \
-  --region us-central1 \
-  --trigger-topic daily-prediction-export \
+  --runtime python311 \
+  --region us-west2 \
+  --source orchestration/cloud_functions/phase6_export \
   --entry-point main \
-  --source ./cloud_functions/daily_export \
-  --timeout 540s \
-  --memory 512MB
-
-# Create Cloud Scheduler job
-# Runs at 10 AM UTC (5 AM ET) - after overnight games complete
-gcloud scheduler jobs create pubsub daily-export-trigger \
-  --location us-central1 \
-  --schedule "0 10 * * *" \
-  --topic daily-prediction-export \
-  --message-body '{}' \
-  --description "Daily prediction export to GCS"
+  --trigger-topic nba-phase6-export-trigger \
+  --memory 512MB \
+  --timeout 540s
 ```
 
-### Step 3: Test
+### Pub/Sub Topics
+
+| Topic | Purpose |
+|-------|---------|
+| `nba-phase5-predictions-complete` | Phase 5 signals completion |
+| `nba-phase6-export-trigger` | Triggers Phase 6 exports |
+| `nba-phase6-export-complete` | Signals export completion |
+
+### Monitoring
 
 ```bash
-# Manual trigger
-gcloud scheduler jobs run daily-export-trigger --location us-central1
+# View orchestrator logs
+gcloud functions logs read phase5-to-phase6-orchestrator --region us-west2 --limit 20
 
-# Check logs
-gcloud functions logs read daily-prediction-export --region us-central1
+# View export function logs
+gcloud functions logs read phase6-export --region us-west2 --limit 20
+
+# Check scheduler job status
+gcloud scheduler jobs list --location us-central1
 ```
 
-### Step 4: Player Profile Refresh (Weekly)
-
-Create separate scheduler for weekly player refresh:
+### Manual Trigger (Testing)
 
 ```bash
-gcloud scheduler jobs create pubsub weekly-player-export \
-  --location us-central1 \
-  --schedule "0 12 * * 0" \
-  --topic daily-prediction-export \
-  --message-body '{"players": true}' \
-  --description "Weekly player profile refresh"
+# Simulate Phase 5 completion
+gcloud pubsub topics publish nba-phase5-predictions-complete --message='{
+  "game_date": "2025-12-12",
+  "status": "success",
+  "metadata": {"completion_pct": 100, "completed_predictions": 450}
+}'
+
+# Directly trigger Phase 6 export
+gcloud pubsub topics publish nba-phase6-export-trigger --message='{
+  "export_types": ["tonight", "tonight-players"],
+  "target_date": "2025-12-12",
+  "update_latest": true
+}'
 ```
 
 ### Cost Estimate
 
 - Cloud Scheduler: Free (up to 3 jobs)
-- Cloud Functions: ~$0.01/day (minimal invocations)
+- Cloud Functions: ~$0.02/day (2 functions, minimal invocations)
+- Pub/Sub: Free tier covers messages
 - GCS Storage: ~$0.02/month (< 1GB)
 - BigQuery: Free tier covers queries
 
@@ -543,13 +529,16 @@ gcloud scheduler jobs create pubsub weekly-player-export \
 
 ## Future Steps
 
-### Phase 6.3: Cloud Scheduler (When Ready for Live)
+### Deployment Checklist (When Ready for Live)
 
-1. Create Cloud Function wrapper (code above)
-2. Deploy to GCP
-3. Create scheduler jobs (daily + weekly)
-4. Monitor first few runs
-5. Set up alerting on failures
+1. [x] Create Phase 5→6 orchestrator
+2. [x] Create Phase 6 export Cloud Function
+3. [x] Configure Pub/Sub topics
+4. [ ] Deploy orchestrator: `./bin/orchestrators/deploy_phase5_to_phase6.sh`
+5. [ ] Deploy export function (command above)
+6. [ ] Deploy scheduler jobs: `./bin/deploy/deploy_phase6_scheduler.sh`
+7. [ ] Test end-to-end trigger flow
+8. [ ] Set up alerting on failures
 
 ### Frontend Integration
 
