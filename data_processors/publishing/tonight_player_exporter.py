@@ -75,19 +75,25 @@ class TonightPlayerExporter(BaseExporter):
         # Get quick numbers
         quick_numbers = self._query_quick_numbers(player_lookup, target_date)
 
-        # Build tonight's factors (only relevant ones)
-        tonights_factors = self._build_tonights_factors(context, fatigue, splits)
+        # Get opponent defense tier
+        opponent_abbr = context.get('opponent_team_abbr')
+        defense_tier = self._query_defense_tier(opponent_abbr, target_date) if opponent_abbr else None
 
+        # Build tonight's factors (only relevant ones)
+        tonights_factors = self._build_tonights_factors(context, fatigue, splits, defense_tier)
+
+        games_played = quick_numbers.get('games_played') or 0
         return {
             'player_lookup': player_lookup,
             'player_full_name': context.get('player_full_name', player_lookup),
             'game_date': target_date,
             'generated_at': self.get_generated_at(),
+            'games_played': games_played,
+            'limited_data': games_played < 10,
             'game_context': {
                 'game_id': context.get('game_id'),
                 'opponent': context.get('opponent_team_abbr'),
                 'home_game': context.get('home_game'),
-                'game_time': context.get('game_time'),
                 'team_abbr': context.get('team_abbr'),
                 'line': self._safe_float(prediction.get('current_points_line') if prediction else None),
                 'days_rest': context.get('days_rest'),
@@ -114,12 +120,8 @@ class TonightPlayerExporter(BaseExporter):
                 gc.opponent_team_abbr,
                 gc.home_game,
                 gc.days_rest,
-                gc.back_to_back,
-                s.game_time,
-                s.game_status
+                gc.back_to_back
             FROM `nba-props-platform.nba_analytics.upcoming_player_game_context` gc
-            JOIN `nba-props-platform.nba_raw.nbac_schedule` s
-                ON gc.game_id = s.game_id
             WHERE gc.player_lookup = @player_lookup
               AND gc.game_date = @target_date
         ),
@@ -142,7 +144,6 @@ class TonightPlayerExporter(BaseExporter):
         SELECT
             c.*,
             COALESCE(pn.player_name, c.player_lookup) as player_full_name,
-            FORMAT_TIME('%H:%M', c.game_time) as game_time_formatted,
             i.injury_status,
             i.injury_reason
         FROM context c
@@ -154,11 +155,7 @@ class TonightPlayerExporter(BaseExporter):
             bigquery.ScalarQueryParameter('target_date', 'DATE', target_date)
         ]
         results = self.query_to_list(query, params)
-        if results:
-            result = results[0]
-            result['game_time'] = result.pop('game_time_formatted', None)
-            return result
-        return None
+        return results[0] if results else None
 
     def _query_prediction(self, player_lookup: str, target_date: str) -> Optional[Dict]:
         """Query prediction for the player tonight."""
@@ -359,6 +356,7 @@ class TonightPlayerExporter(BaseExporter):
                 g.game_date,
                 g.points,
                 g.points_line,
+                g.over_under_result,
                 g.game_id,
                 g.team_abbr,
                 g.opponent_team_abbr,
@@ -378,21 +376,26 @@ class TonightPlayerExporter(BaseExporter):
             -- Home/Away split
             ROUND(AVG(CASE WHEN home_game THEN points END), 1) as home_ppg,
             COUNT(CASE WHEN home_game THEN 1 END) as home_games,
+            ROUND(SAFE_DIVIDE(COUNTIF(home_game AND over_under_result = 'OVER'), COUNTIF(home_game AND over_under_result IS NOT NULL)), 3) as home_vs_line_pct,
             ROUND(AVG(CASE WHEN NOT home_game THEN points END), 1) as away_ppg,
             COUNT(CASE WHEN NOT home_game THEN 1 END) as away_games,
+            ROUND(SAFE_DIVIDE(COUNTIF(NOT home_game AND over_under_result = 'OVER'), COUNTIF(NOT home_game AND over_under_result IS NOT NULL)), 3) as away_vs_line_pct,
 
             -- B2B split (days_rest = 1)
             ROUND(AVG(CASE WHEN days_rest = 1 THEN points END), 1) as b2b_ppg,
             COUNT(CASE WHEN days_rest = 1 THEN 1 END) as b2b_games,
+            ROUND(SAFE_DIVIDE(COUNTIF(days_rest = 1 AND over_under_result = 'OVER'), COUNTIF(days_rest = 1 AND over_under_result IS NOT NULL)), 3) as b2b_vs_line_pct,
             ROUND(AVG(CASE WHEN days_rest > 1 OR days_rest IS NULL THEN points END), 1) as non_b2b_ppg,
 
             -- Rest split
             ROUND(AVG(CASE WHEN days_rest >= 2 THEN points END), 1) as rested_ppg,
             COUNT(CASE WHEN days_rest >= 2 THEN 1 END) as rested_games,
+            ROUND(SAFE_DIVIDE(COUNTIF(days_rest >= 2 AND over_under_result = 'OVER'), COUNTIF(days_rest >= 2 AND over_under_result IS NOT NULL)), 3) as rested_vs_line_pct,
 
             -- vs Tonight's opponent
             ROUND(AVG(CASE WHEN opponent_team_abbr = @opponent THEN points END), 1) as vs_opponent_ppg,
-            COUNT(CASE WHEN opponent_team_abbr = @opponent THEN 1 END) as vs_opponent_games
+            COUNT(CASE WHEN opponent_team_abbr = @opponent THEN 1 END) as vs_opponent_games,
+            ROUND(SAFE_DIVIDE(COUNTIF(opponent_team_abbr = @opponent AND over_under_result = 'OVER'), COUNTIF(opponent_team_abbr = @opponent AND over_under_result IS NOT NULL)), 3) as vs_opponent_vs_line_pct
 
         FROM games
         """
@@ -432,11 +435,78 @@ class TonightPlayerExporter(BaseExporter):
             'length': streak_length
         }
 
+    def _query_defense_tier(self, opponent_abbr: str, target_date: str) -> Optional[Dict]:
+        """
+        Query opponent's defense tier ranking.
+
+        Returns a tier (1-30, where 1 = best defense) based on opponent_points_per_game.
+
+        Args:
+            opponent_abbr: Opponent team abbreviation
+            target_date: Date to check defense as of
+
+        Returns:
+            Dict with tier, rank, ppg_allowed, or None if no data
+        """
+        query = """
+        WITH latest_defense AS (
+            -- Get most recent defense data for each team
+            SELECT
+                team_abbr,
+                opponent_points_per_game,
+                defensive_rating_last_15,
+                analysis_date
+            FROM `nba-props-platform.nba_precompute.team_defense_zone_analysis`
+            WHERE analysis_date <= @target_date
+            QUALIFY ROW_NUMBER() OVER (PARTITION BY team_abbr ORDER BY analysis_date DESC) = 1
+        ),
+        ranked_defense AS (
+            -- Rank teams by PPG allowed (lower = better defense)
+            SELECT
+                team_abbr,
+                opponent_points_per_game,
+                defensive_rating_last_15,
+                RANK() OVER (ORDER BY opponent_points_per_game ASC) as rank_ppg
+            FROM latest_defense
+        )
+        SELECT
+            team_abbr,
+            opponent_points_per_game,
+            defensive_rating_last_15,
+            rank_ppg,
+            CASE
+                WHEN rank_ppg <= 5 THEN 'elite'
+                WHEN rank_ppg <= 10 THEN 'good'
+                WHEN rank_ppg <= 20 THEN 'average'
+                ELSE 'weak'
+            END as tier_label
+        FROM ranked_defense
+        WHERE team_abbr = @opponent_abbr
+        """
+        params = [
+            bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
+            bigquery.ScalarQueryParameter('opponent_abbr', 'STRING', opponent_abbr)
+        ]
+
+        results = self.query_to_list(query, params)
+
+        if results:
+            r = results[0]
+            return {
+                'rank': r.get('rank_ppg'),
+                'tier_label': r.get('tier_label'),
+                'ppg_allowed': self._safe_float(r.get('opponent_points_per_game')),
+                'def_rating': self._safe_float(r.get('defensive_rating_last_15'))
+            }
+
+        return None
+
     def _build_tonights_factors(
         self,
         context: Dict,
         fatigue: Dict,
-        splits: Dict
+        splits: Dict,
+        defense_tier: Optional[Dict] = None
     ) -> List[Dict]:
         """Build list of relevant factors for tonight's game."""
         factors = []
@@ -445,13 +515,18 @@ class TonightPlayerExporter(BaseExporter):
         if context.get('back_to_back'):
             b2b_ppg = splits.get('b2b_ppg')
             non_b2b_ppg = splits.get('non_b2b_ppg')
+            b2b_vs_line = splits.get('b2b_vs_line_pct')
             if b2b_ppg and non_b2b_ppg:
                 impact = round(b2b_ppg - non_b2b_ppg, 1)
+                desc = f"B2B: averages {b2b_ppg} vs {non_b2b_ppg} normally ({impact:+.1f})"
+                if b2b_vs_line is not None:
+                    desc += f", {b2b_vs_line:.0%} OVER"
                 factors.append({
                     'factor': 'back_to_back',
                     'direction': 'negative' if impact < 0 else 'positive',
                     'impact': impact,
-                    'description': f"B2B: averages {b2b_ppg} vs {non_b2b_ppg} normally ({impact:+.1f})"
+                    'vs_line_pct': b2b_vs_line,
+                    'description': desc
                 })
 
         # Home/Away factor
@@ -460,38 +535,54 @@ class TonightPlayerExporter(BaseExporter):
             if is_home:
                 ppg = splits.get('home_ppg')
                 games = splits.get('home_games', 0)
+                vs_line = splits.get('home_vs_line_pct')
                 label = 'home'
             else:
                 ppg = splits.get('away_ppg')
                 games = splits.get('away_games', 0)
+                vs_line = splits.get('away_vs_line_pct')
                 label = 'away'
 
             if ppg and games >= 3:
+                desc = f"Averages {ppg} on the {label} ({games} games)"
+                if vs_line is not None:
+                    desc += f", {vs_line:.0%} OVER"
                 factors.append({
                     'factor': 'location',
                     'direction': 'neutral',
-                    'description': f"Averages {ppg} on the {label} ({games} games)"
+                    'vs_line_pct': vs_line,
+                    'description': desc
                 })
 
         # vs Opponent factor
         vs_opp_ppg = splits.get('vs_opponent_ppg')
         vs_opp_games = splits.get('vs_opponent_games', 0)
+        vs_opp_line = splits.get('vs_opponent_vs_line_pct')
         if vs_opp_ppg and vs_opp_games >= 1:
+            desc = f"Averages {vs_opp_ppg} vs {context.get('opponent_team_abbr')} ({vs_opp_games} games)"
+            if vs_opp_line is not None:
+                desc += f", {vs_opp_line:.0%} OVER"
             factors.append({
                 'factor': 'vs_opponent',
                 'direction': 'neutral',
-                'description': f"Averages {vs_opp_ppg} vs {context.get('opponent_team_abbr')} ({vs_opp_games} games)"
+                'vs_line_pct': vs_opp_line,
+                'description': desc
             })
 
         # Well-rested factor
         days_rest = context.get('days_rest')
         if days_rest and days_rest >= 3:
             rested_ppg = splits.get('rested_ppg')
+            rested_vs_line = splits.get('rested_vs_line_pct')
             if rested_ppg:
+                desc = f"{days_rest} days rest: averages {rested_ppg} when rested"
+                if rested_vs_line is not None:
+                    desc += f", {rested_vs_line:.0%} OVER"
                 factors.append({
                     'factor': 'well_rested',
                     'direction': 'positive',
-                    'description': f"{days_rest} days rest: averages {rested_ppg} when rested"
+                    'vs_line_pct': rested_vs_line,
+                    'description': desc
                 })
 
         # Fatigue factor
@@ -506,6 +597,35 @@ class TonightPlayerExporter(BaseExporter):
                 'factor': 'fresh',
                 'direction': 'positive',
                 'description': f"Well-rested (fatigue score: {fatigue.get('score')})"
+            })
+
+        # Defense tier factor
+        if defense_tier:
+            rank = defense_tier.get('rank')
+            tier_label = defense_tier.get('tier_label')
+            ppg_allowed = defense_tier.get('ppg_allowed')
+            opponent = context.get('opponent_team_abbr')
+
+            if tier_label in ('elite', 'good'):
+                # Strong defense = negative for scoring
+                direction = 'negative'
+                desc = f"vs {opponent} ({tier_label} defense, #{rank}, allows {ppg_allowed} PPG)"
+            elif tier_label == 'weak':
+                # Weak defense = positive for scoring
+                direction = 'positive'
+                desc = f"vs {opponent} ({tier_label} defense, #{rank}, allows {ppg_allowed} PPG)"
+            else:
+                # Average defense = neutral
+                direction = 'neutral'
+                desc = f"vs {opponent} (#{rank} defense, allows {ppg_allowed} PPG)"
+
+            factors.append({
+                'factor': 'opponent_defense',
+                'direction': direction,
+                'defense_rank': rank,
+                'defense_tier': tier_label,
+                'ppg_allowed': ppg_allowed,
+                'description': desc
             })
 
         return factors

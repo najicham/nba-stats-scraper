@@ -288,8 +288,52 @@ class TeamOffenseGameSummaryProcessor(
     def _extract_from_nbac_team_boxscore(self, start_date: str, end_date: str) -> pd.DataFrame:
         """Extract team offensive data from nbac_team_boxscore (PRIMARY source)."""
         query = f"""
-        WITH team_boxscores AS (
-            SELECT 
+        WITH team_boxscores_raw AS (
+            -- Deduplicate source data (may have duplicates from bulk loads)
+            SELECT
+                game_id,
+                nba_game_id,
+                game_date,
+                season_year,
+                team_abbr,
+                team_name,
+                is_home,
+                points,
+                fg_made,
+                fg_attempted,
+                fg_percentage,
+                three_pt_made,
+                three_pt_attempted,
+                three_pt_percentage,
+                ft_made,
+                ft_attempted,
+                ft_percentage,
+                offensive_rebounds,
+                defensive_rebounds,
+                total_rebounds,
+                assists,
+                steals,
+                blocks,
+                turnovers,
+                personal_fouls,
+                plus_minus,
+                minutes,
+                processed_at,
+                ROW_NUMBER() OVER (
+                    PARTITION BY game_id, team_abbr
+                    ORDER BY processed_at DESC
+                ) as rn
+            FROM `{self.project_id}.nba_raw.nbac_team_boxscore`
+            WHERE game_date BETWEEN '{start_date}' AND '{end_date}'
+        ),
+
+        team_boxscores_dedup AS (
+            -- Keep only most recent record per game-team
+            SELECT * EXCEPT(rn) FROM team_boxscores_raw WHERE rn = 1
+        ),
+
+        team_boxscores AS (
+            SELECT
                 tb.game_id,
                 tb.nba_game_id,
                 tb.game_date,
@@ -297,11 +341,11 @@ class TeamOffenseGameSummaryProcessor(
                 tb.team_abbr,
                 tb.team_name,
                 tb.is_home,
-                
+
                 -- Opponent via self-join (simplified with v2.0 is_home)
                 t2.team_abbr as opponent_team_abbr,
                 t2.points as opponent_points,
-                
+
                 -- Basic stats
                 tb.points,
                 tb.fg_made,
@@ -322,22 +366,20 @@ class TeamOffenseGameSummaryProcessor(
                 tb.turnovers,
                 tb.personal_fouls,
                 tb.plus_minus,
-                
+
                 -- Minutes for OT calculation
                 tb.minutes,
-                
+
                 -- Source tracking
                 tb.processed_at as source_last_updated
-                
-            FROM `{self.project_id}.nba_raw.nbac_team_boxscore` tb
-            
+
+            FROM team_boxscores_dedup tb
+
             -- Self-join for opponent context (v2.0: simplified with is_home)
-            JOIN `{self.project_id}.nba_raw.nbac_team_boxscore` t2
+            JOIN team_boxscores_dedup t2
                 ON tb.game_id = t2.game_id
                 AND tb.game_date = t2.game_date
                 AND tb.is_home != t2.is_home  -- Get OTHER team
-            
-            WHERE tb.game_date BETWEEN '{start_date}' AND '{end_date}'
         )
         SELECT * FROM team_boxscores
         ORDER BY game_date DESC, game_id, team_abbr

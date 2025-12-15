@@ -542,5 +542,179 @@ SELECT COUNT(*) FROM logs WHERE text_payload LIKE '%streaming buffer%' AND sever
 
 ---
 
-**Last Verified:** 2025-11-21
+## 11. Duplicate Prevention with Atomic MERGE Pattern
+
+### The Problem: DELETE + INSERT Race Conditions
+
+**Vulnerable pattern that creates duplicates:**
+
+```python
+# ❌ DON'T: DELETE + INSERT is not atomic
+def save_data(self, data: list, table_id: str):
+    # Step 1: Delete existing records
+    delete_query = f"DELETE FROM `{table_id}` WHERE game_date = '{date}'"
+    self.bq_client.query(delete_query).result()
+
+    # Step 2: Insert new records
+    load_job = self.bq_client.load_table_from_json(data, table_id, job_config)
+    load_job.result()
+```
+
+**Why this creates duplicates:**
+1. DELETE succeeds for run #1
+2. Run #2 starts before run #1 INSERT completes
+3. Run #2 DELETE succeeds (deletes run #1's partial data)
+4. Run #1 INSERT completes → records in table
+5. Run #2 INSERT completes → **DUPLICATES!**
+
+**Real-world example (Session 134):**
+- `upcoming_player_game_context`: 34,728 duplicates (26.6% of table)
+- Same player-game combinations inserted 2-8 times
+- Timestamps 1-2 seconds apart (within single batch processing)
+
+### The Solution: Atomic MERGE Pattern
+
+**Duplicate-proof implementation:**
+
+```python
+# ✅ DO: Atomic MERGE prevents all duplicates
+def save_data_atomic(self, data: list, table_id: str, merge_keys: set) -> bool:
+    """Save data using atomic MERGE pattern - duplicate-proof."""
+    temp_table_id = None
+
+    try:
+        # 1. Get target table schema
+        target_table = self.bq_client.get_table(table_id)
+        target_schema = target_table.schema
+
+        # 2. Create temporary table
+        temp_table_id = f"{table_id}_temp_{uuid.uuid4().hex[:8]}"
+        temp_table = bigquery.Table(temp_table_id, schema=target_schema)
+        self.bq_client.create_table(temp_table)
+
+        # 3. Load data to temp table
+        ndjson_data = "\n".join(json.dumps(row, default=str) for row in data)
+        job_config = bigquery.LoadJobConfig(
+            schema=target_schema,
+            source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+            write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
+            autodetect=False
+        )
+        load_job = self.bq_client.load_table_from_file(
+            io.BytesIO(ndjson_data.encode('utf-8')),
+            temp_table_id,
+            job_config=job_config
+        )
+        load_job.result()
+
+        # 4. Build dynamic UPDATE SET clause (exclude merge keys)
+        update_columns = [f.name for f in target_schema if f.name not in merge_keys]
+        update_set_clause = ", ".join(f"target.{col} = source.{col}" for col in update_columns)
+
+        # 5. Atomic MERGE with source deduplication
+        merge_query = f"""
+        MERGE `{table_id}` AS target
+        USING (
+            SELECT * EXCEPT(row_num) FROM (
+                SELECT *, ROW_NUMBER() OVER (
+                    PARTITION BY {', '.join(merge_keys)}
+                    ORDER BY processed_at DESC
+                ) as row_num
+                FROM `{temp_table_id}`
+            ) WHERE row_num = 1
+        ) AS source
+        ON {' AND '.join(f'target.{k} = source.{k}' for k in merge_keys)}
+        WHEN MATCHED THEN
+            UPDATE SET {update_set_clause}
+        WHEN NOT MATCHED THEN
+            INSERT ROW
+        """
+
+        merge_job = self.bq_client.query(merge_query)
+        merge_job.result()
+
+        return True
+
+    except Exception as e:
+        if "streaming buffer" in str(e).lower():
+            logger.warning(f"MERGE blocked by streaming buffer - will succeed next run")
+            return False
+        raise
+
+    finally:
+        # Always cleanup temp table
+        if temp_table_id:
+            self.bq_client.delete_table(temp_table_id, not_found_ok=True)
+```
+
+### Why MERGE is Duplicate-Proof
+
+**Key properties:**
+
+1. **Atomic operation** - MERGE is a single DML statement that BigQuery executes atomically
+2. **Source deduplication** - ROW_NUMBER() ensures only one record per merge key
+3. **No race condition** - Concurrent runs see consistent state
+4. **Idempotent** - Run 10 times, get same result
+
+### Merge Keys by Table
+
+| Table | Merge Keys | Notes |
+|-------|------------|-------|
+| `upcoming_player_game_context` | `(player_lookup, game_id)` | Player-game unique |
+| `upcoming_team_game_context` | `(team_abbr, game_id)` | Team-game unique |
+| `ml_feature_store_v2` | `(player_lookup, game_date)` | Player-date unique |
+| `player_shot_zone_analysis` | `(player_lookup, analysis_date)` | Player-date unique |
+
+### Processors Using Atomic MERGE (as of Session 134)
+
+**Phase 3 Analytics:**
+- ✅ `upcoming_player_game_context` - Fixed Session 134
+- ✅ `upcoming_team_game_context` - Fixed Session 134
+- ⚠️ `player_game_summary` - Uses base class (DELETE+INSERT)
+- ⚠️ `team_offense_game_summary` - Uses base class (DELETE+INSERT)
+- ⚠️ `team_defense_game_summary` - Uses base class (DELETE+INSERT)
+
+**Phase 4 Precompute:**
+- ✅ `ml_feature_store_v2` - Uses BatchWriter with MERGE
+- ⚠️ Others use precompute_base (DELETE+INSERT) - no duplicates observed
+
+### Migration Checklist: DELETE+INSERT → MERGE
+
+- [ ] Identify merge keys (unique constraint columns)
+- [ ] Add imports: `uuid`, `io`, `time`
+- [ ] Create temp table with target schema
+- [ ] Load data to temp table via batch load job
+- [ ] Build dynamic UPDATE SET clause from schema
+- [ ] Execute MERGE with source deduplication (ROW_NUMBER)
+- [ ] Handle streaming buffer gracefully
+- [ ] Cleanup temp table in `finally` block
+- [ ] Test with duplicate data to verify idempotency
+- [ ] Monitor for duplicate count = 0
+
+### Validation Query
+
+```sql
+-- Check for duplicates after MERGE implementation
+SELECT
+  'upcoming_player_game_context' as table_name,
+  COUNT(*) as total_rows,
+  COUNT(DISTINCT CONCAT(player_lookup, '-', game_id)) as unique_records,
+  COUNT(*) - COUNT(DISTINCT CONCAT(player_lookup, '-', game_id)) as duplicates
+FROM `nba-props-platform.nba_analytics.upcoming_player_game_context`
+
+UNION ALL
+
+SELECT
+  'upcoming_team_game_context' as table_name,
+  COUNT(*) as total_rows,
+  COUNT(DISTINCT CONCAT(team_abbr, '-', game_id)) as unique_records,
+  COUNT(*) - COUNT(DISTINCT CONCAT(team_abbr, '-', game_id)) as duplicates
+FROM `nba-props-platform.nba_analytics.upcoming_team_game_context`;
+```
+
+**Expected result after MERGE implementation:** `duplicates = 0`
+
+---
+
+**Last Verified:** 2025-12-14
 **Maintained By:** NBA Platform Team

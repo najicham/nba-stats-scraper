@@ -113,6 +113,14 @@ class BestBetsExporter(BaseExporter):
             FROM `nba-props-platform.nba_reference.nba_players_registry`
             QUALIFY ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY season DESC) = 1
         ),
+        fatigue_data AS (
+            -- Get fatigue scores for the date
+            SELECT
+                player_lookup,
+                fatigue_score
+            FROM `nba-props-platform.nba_precompute.player_composite_factors`
+            WHERE game_date = @target_date
+        ),
         predictions AS (
             SELECT
                 p.player_lookup,
@@ -130,10 +138,12 @@ class BestBetsExporter(BaseExporter):
                 p.signed_error,
                 ABS(p.predicted_points - p.line_value) as edge,
                 h.historical_accuracy as player_historical_accuracy,
-                h.sample_size as player_sample_size
+                h.sample_size as player_sample_size,
+                f.fatigue_score
             FROM `nba-props-platform.nba_predictions.prediction_accuracy` p
             LEFT JOIN player_history h ON p.player_lookup = h.player_lookup
             LEFT JOIN player_names pn ON p.player_lookup = pn.player_lookup
+            LEFT JOIN fatigue_data f ON p.player_lookup = f.player_lookup
             WHERE p.game_date = @target_date
               AND p.system_id = 'ensemble_v1'
               AND p.recommendation IN ('OVER', 'UNDER')
@@ -183,6 +193,18 @@ class BestBetsExporter(BaseExporter):
             # Build rationale
             rationale = self._build_rationale(pick)
 
+            # Compute fatigue level from score
+            fatigue_score = pick.get('fatigue_score')
+            if fatigue_score is not None:
+                if fatigue_score >= 95:
+                    fatigue_level = 'fresh'
+                elif fatigue_score >= 75:
+                    fatigue_level = 'normal'
+                else:
+                    fatigue_level = 'tired'
+            else:
+                fatigue_level = None
+
             formatted.append({
                 'rank': rank,
                 'player_lookup': pick['player_lookup'],
@@ -198,6 +220,8 @@ class BestBetsExporter(BaseExporter):
                 'composite_score': round(self._safe_float(pick['composite_score']) or 0, 3),
                 'player_historical_accuracy': self._safe_float(pick['player_historical_accuracy']),
                 'player_sample_size': pick['player_sample_size'],
+                'fatigue_score': self._safe_float(fatigue_score),
+                'fatigue_level': fatigue_level,
                 'rationale': rationale,
                 'result': result,
                 'actual': pick['actual_points'],
@@ -232,6 +256,14 @@ class BestBetsExporter(BaseExporter):
                 rationale.append(f"Strong track record ({hist:.0%} accuracy, {sample} games)")
             elif hist >= 0.70:
                 rationale.append(f"Good track record ({hist:.0%} accuracy, {sample} games)")
+
+        # Fatigue factor
+        fatigue = pick.get('fatigue_score')
+        if fatigue is not None:
+            if fatigue >= 95:
+                rationale.append(f"Well-rested (fatigue: {fatigue:.0f})")
+            elif fatigue < 75:
+                rationale.append(f"Elevated fatigue (fatigue: {fatigue:.0f})")
 
         # If no rationale, add generic
         if not rationale:

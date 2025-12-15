@@ -343,16 +343,16 @@ class TeamDefenseGameSummaryProcessor(
               - defensive metrics derived from opponent offense
         """
         query = f"""
-        WITH game_teams AS (
-            -- Get both teams for each game
-            SELECT 
+        WITH game_teams_raw AS (
+            -- Get both teams for each game (may have duplicates from bulk loads)
+            SELECT
                 game_id,
                 game_date,
                 season_year,
                 nba_game_id,
                 team_abbr,
                 is_home,
-                
+
                 -- Offensive stats (will become defensive stats from opponent perspective)
                 points,
                 fg_made,
@@ -373,10 +373,20 @@ class TeamDefenseGameSummaryProcessor(
                 blocks,
                 personal_fouls,
                 plus_minus,
-                
-                processed_at
+
+                processed_at,
+                -- Deduplication: rank by most recent processed_at
+                ROW_NUMBER() OVER (
+                    PARTITION BY game_id, team_abbr
+                    ORDER BY processed_at DESC
+                ) as rn
             FROM `{self.project_id}.nba_raw.nbac_team_boxscore`
             WHERE game_date BETWEEN '{start_date}' AND '{end_date}'
+        ),
+
+        game_teams AS (
+            -- Deduplicate: keep only most recent record per game-team
+            SELECT * EXCEPT(rn) FROM game_teams_raw WHERE rn = 1
         ),
         
         defense_perspective AS (

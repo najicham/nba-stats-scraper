@@ -704,8 +704,8 @@ class TeamDefenseZoneAnalysisProcessor(
             f"Processed {len(successful)}/{len(all_teams)} teams successfully"
         )
 
-        # Alert if too many failures
-        if len(failed) > 5:
+        # Alert if too many failures (skip in backfill mode to avoid spam)
+        if len(failed) > 5 and not self.is_backfill_mode:
             try:
                 notify_error(
                     title=f"Team Defense Zone Analysis: High Failure Rate",

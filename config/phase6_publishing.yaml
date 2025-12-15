@@ -1,0 +1,161 @@
+# config/phase6_publishing.yaml
+# Configuration for Phase 6 Publishing scheduler jobs
+#
+# Phase 6 exports prediction data to GCS for website consumption.
+# This config defines the Cloud Scheduler jobs to run Phase 6 daily.
+#
+# To deploy: ./bin/deploy/deploy_phase6_scheduler.sh
+# To test manually: PYTHONPATH=. .venv/bin/python backfill_jobs/publishing/daily_export.py --date YYYY-MM-DD
+
+version: "1.0"
+created: "2025-12-12"
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# EXPORT JOBS
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+jobs:
+  # ────────────────────────────────────────────────────────────
+  # Daily Results Export (post-game)
+  # ────────────────────────────────────────────────────────────
+  daily_results_export:
+    name: "phase6-daily-results"
+    description: "Export yesterday's prediction results to GCS"
+    enabled: true
+    priority: "HIGH"
+
+    schedule:
+      # 10 AM UTC = 5 AM ET / 2 AM PT
+      # After overnight games complete and grading runs
+      cron: "0 10 * * *"
+      timezone: "America/New_York"
+
+    export_types:
+      - results
+      - performance
+      - best-bets
+      - predictions
+
+    target_date: "yesterday"  # Default behavior
+    update_latest: true  # Update latest.json files
+
+    # GCS output
+    bucket: "nba-props-platform-api"
+    base_path: "v1"
+
+  # ────────────────────────────────────────────────────────────
+  # Tonight's Picks Export (pre-game)
+  # ────────────────────────────────────────────────────────────
+  tonight_export:
+    name: "phase6-tonight-picks"
+    description: "Export tonight's players and predictions for website homepage"
+    enabled: true
+    priority: "CRITICAL"
+
+    schedule:
+      # 1 PM ET = 6 PM UTC
+      # After predictions run for today's games, before first tipoff
+      cron: "0 18 * * *"
+      timezone: "America/New_York"
+
+    export_types:
+      - tonight
+      - tonight-players
+
+    target_date: "today"
+
+    # GCS output
+    bucket: "nba-props-platform-api"
+    base_path: "v1"
+
+  # ────────────────────────────────────────────────────────────
+  # Player Profiles Refresh (weekly)
+  # ────────────────────────────────────────────────────────────
+  weekly_player_profiles:
+    name: "phase6-player-profiles"
+    description: "Weekly refresh of all player profile pages"
+    enabled: true
+    priority: "MEDIUM"
+
+    schedule:
+      # Sundays at 6 AM ET
+      cron: "0 11 * * 0"
+      timezone: "America/New_York"
+
+    export_types:
+      - players
+
+    min_games: 5  # Minimum games to include player
+
+    # GCS output
+    bucket: "nba-props-platform-api"
+    base_path: "v1"
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# PUB/SUB CONFIGURATION
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+pubsub:
+  # Topic for Phase 6 export triggers
+  trigger_topic: "nba-phase6-export-trigger"
+
+  # Optional: Listen for Phase 5 completion to auto-trigger
+  # Set enabled=true when real-time triggering is desired
+  phase5_completion_listener:
+    enabled: false  # Disabled by default, use scheduler instead
+    source_topic: "nba-predictions-complete"
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# CLOUD FUNCTION CONFIGURATION
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+cloud_function:
+  name: "phase6-daily-export"
+  runtime: "python310"
+  region: "us-central1"
+  memory: "512MB"
+  timeout: "540s"  # 9 minutes
+
+  entry_point: "main"
+  source_dir: "orchestration/cloud_functions/phase6_export"
+
+  environment_variables:
+    GCP_PROJECT: "nba-props-platform"
+    GCS_BUCKET: "nba-props-platform-api"
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# MONITORING & ALERTS
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+monitoring:
+  # Alert if export hasn't run in X hours
+  staleness_threshold_hours: 26  # Should run daily
+
+  # Alert on failure
+  failure_alert:
+    enabled: true
+    channels: ["email"]
+
+  # Data freshness check
+  freshness_check:
+    enabled: true
+    check_files:
+      - "v1/results/latest.json"
+      - "v1/best-bets/latest.json"
+      - "v1/tonight/all-players.json"
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# INTEGRATION NOTES
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Phase 6 fits into the overall pipeline as:
+#
+# Phase 1 (Scrapers) → Phase 2 (Raw) → Phase 3 (Analytics) →
+# Phase 4 (Precompute) → Phase 5 (Predictions) → Phase 6 (Publishing)
+#
+# Trigger Options:
+# 1. SCHEDULER-BASED (recommended):
+#    - Cloud Scheduler triggers at fixed times
+#    - Simple, predictable, no dependencies on upstream
+#
+# 2. EVENT-BASED (optional future):
+#    - Listen for Phase 5 completion messages
+#    - More immediate but requires Pub/Sub infrastructure
+#
+# Current recommendation: Use scheduler-based until daily pipeline
+# is fully operational, then consider adding event-based triggers.

@@ -1076,20 +1076,22 @@ class PrecomputeProcessorBase(RunHistoryMixin):
         """
         if not self.transformed_data:
             logger.warning("No transformed data to save")
-            try:
-                notify_warning(
-                    title=f"Precompute Processor No Data to Save: {self.__class__.__name__}",
-                    message="No precompute data calculated to save",
-                    details={
-                        'processor': self.__class__.__name__,
-                        'run_id': self.run_id,
-                        'table': self.table_name,
-                        'raw_data_exists': self.raw_data is not None,
-                        'analysis_date': str(self.opts.get('analysis_date'))
-                    }
-                )
-            except Exception as notify_ex:
-                logger.warning(f"Failed to send notification: {notify_ex}")
+            # Skip notification in backfill mode (expected for bootstrap/early season dates)
+            if not self.is_backfill_mode:
+                try:
+                    notify_warning(
+                        title=f"Precompute Processor No Data to Save: {self.__class__.__name__}",
+                        message="No precompute data calculated to save",
+                        details={
+                            'processor': self.__class__.__name__,
+                            'run_id': self.run_id,
+                            'table': self.table_name,
+                            'raw_data_exists': self.raw_data is not None,
+                            'analysis_date': str(self.opts.get('analysis_date'))
+                        }
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
             return
             
         table_id = f"{self.project_id}.{self.dataset_id}.{self.table_name}"

@@ -54,6 +54,7 @@ from data_processors.publishing.predictions_exporter import PredictionsExporter
 from data_processors.publishing.player_profile_exporter import PlayerProfileExporter
 from data_processors.publishing.tonight_all_players_exporter import TonightAllPlayersExporter
 from data_processors.publishing.tonight_player_exporter import TonightPlayerExporter
+from data_processors.publishing.streaks_exporter import StreaksExporter
 
 # Configure logging
 logging.basicConfig(
@@ -65,7 +66,7 @@ logger = logging.getLogger(__name__)
 PROJECT_ID = 'nba-props-platform'
 
 # Available export types
-EXPORT_TYPES = ['results', 'performance', 'best-bets', 'predictions', 'tonight', 'tonight-players']
+EXPORT_TYPES = ['results', 'performance', 'best-bets', 'predictions', 'tonight', 'tonight-players', 'streaks']
 
 
 def get_dates_with_predictions() -> List[str]:
@@ -171,6 +172,17 @@ def export_date(
         except Exception as e:
             result['errors'].append(f"tonight-players: {e}")
             logger.error(f"  Tonight Players error: {e}")
+
+    # Streaks exporter (players on OVER/UNDER streaks)
+    if 'streaks' in export_types:
+        try:
+            exporter = StreaksExporter(min_streak_length=4)
+            path = exporter.export(target_date)
+            result['paths']['streaks'] = path
+            logger.info(f"  Streaks: {path}")
+        except Exception as e:
+            result['errors'].append(f"streaks: {e}")
+            logger.error(f"  Streaks error: {e}")
 
     if result['errors']:
         result['status'] = 'partial' if result['paths'] else 'failed'

@@ -1,8 +1,8 @@
 # Session 126: Website UI - Phase 6 Exporters Implementation
 
 **Date:** 2025-12-11
-**Status:** In Progress - Schema Fixes Needed
-**Next Session:** Fix Tonight exporter schema mismatches, test full export
+**Status:** ✅ Complete (Schema fixes applied in Session 127)
+**Next Session:** Frontend development or additional polish
 
 ---
 
@@ -15,10 +15,12 @@ Implemented Phase 6 publishing exporters for the website UI project. Created two
 - `player_full_name` added to index.json and best_bets output
 - CLI updated with new export types
 - All imports compile correctly
+- `TonightAllPlayersExporter` - **Fixed in Session 127**, tested with 2021-12-25
+- `TonightPlayerExporter` - **Fixed in Session 127**, tested with 2021-12-25
 
 ### What Needs Fixing ⚠️
-- `TonightAllPlayersExporter` - Schema mismatches with actual BigQuery tables
-- `TonightPlayerExporter` - Same schema issues
+- ~~TonightAllPlayersExporter - Schema mismatches~~ **FIXED**
+- ~~TonightPlayerExporter - Same schema issues~~ **FIXED**
 
 ---
 

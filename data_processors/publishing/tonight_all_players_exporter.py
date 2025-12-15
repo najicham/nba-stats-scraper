@@ -90,7 +90,12 @@ class TonightAllPlayersExporter(BaseExporter):
         """Query games scheduled for the date."""
         query = """
         SELECT DISTINCT
-            game_id,
+            -- Generate consistent game_id format: YYYYMMDD_AWAY_HOME
+            CONCAT(
+                FORMAT_DATE('%Y%m%d', game_date), '_',
+                away_team_tricode, '_',
+                home_team_tricode
+            ) as game_id,
             home_team_tricode as home_team_abbr,
             away_team_tricode as away_team_abbr,
             game_status
@@ -329,6 +334,7 @@ class TonightAllPlayersExporter(BaseExporter):
                 player_lookup = p['player_lookup']
                 last_10 = last_10_map.get(player_lookup, {})
 
+                games_played = p.get('games_played') or 0
                 player_data = {
                     'player_lookup': player_lookup,
                     'player_full_name': p.get('player_full_name', player_lookup),
@@ -348,6 +354,10 @@ class TonightAllPlayersExporter(BaseExporter):
                     'season_ppg': self._safe_float(p.get('season_ppg')),
                     'season_mpg': self._safe_float(p.get('season_mpg')),
                     'last_5_ppg': self._safe_float(p.get('last_5_ppg')),
+                    'games_played': games_played,
+
+                    # Edge case flags
+                    'limited_data': games_played < 10,
                 }
 
                 # Add prediction data if has line

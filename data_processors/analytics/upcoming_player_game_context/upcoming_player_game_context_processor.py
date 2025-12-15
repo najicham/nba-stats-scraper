@@ -56,6 +56,9 @@ import os
 import re
 import hashlib
 import json
+import uuid
+import io
+import time
 from datetime import datetime, date, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -2527,36 +2530,48 @@ class UpcomingPlayerGameContextProcessor(
     
     def save_analytics(self) -> bool:
         """
-        Save results to BigQuery using MERGE strategy.
-        
+        Save results to BigQuery using atomic MERGE pattern.
+
+        MERGE pattern prevents duplicates by:
+        1. Loading data to temp table
+        2. Executing atomic MERGE (upsert) operation
+        3. Cleaning up temp table
+
+        This replaces the previous DELETE + INSERT pattern which was
+        vulnerable to race conditions and streaming buffer issues.
+
         Returns:
             True if successful, False otherwise
         """
         if not self.transformed_data:
             logger.warning("No data to save")
             return True
-        
+
         table_id = f"{self.project_id}.{self.table_name}"
-        
+        temp_table_id = None
+        timing = {}
+        overall_start = time.time()
+
         try:
-            # MERGE: Delete existing records for this date, then insert new ones
-            delete_query = f"""
-            DELETE FROM `{table_id}`
-            WHERE game_date = '{self.target_date}'
-            """
-            
-            self.bq_client.query(delete_query).result()
-            logger.info(f"Deleted existing records for {self.target_date}")
-            
-            # Insert new records using batch loading (not streaming insert)
-            # This avoids the 20 DML limit and streaming buffer issues
-            logger.info(f"Loading {len(self.transformed_data)} records using batch load")
+            # Step 1: Get target table schema
+            step_start = time.time()
+            target_table = self.bq_client.get_table(table_id)
+            target_schema = target_table.schema
+            schema_fields = {field.name for field in target_schema}
+            required_fields = {f.name for f in target_schema if f.mode == "REQUIRED"}
+            timing['get_schema'] = time.time() - step_start
+            logger.info(f"Got target schema ({timing['get_schema']:.2f}s)")
 
-            # Get table schema for load job
-            table = self.bq_client.get_table(table_id)
+            # Step 2: Create temporary table
+            step_start = time.time()
+            temp_table_id = f"{table_id}_temp_{uuid.uuid4().hex[:8]}"
+            temp_table = bigquery.Table(temp_table_id, schema=target_schema)
+            self.bq_client.create_table(temp_table)
+            timing['create_temp_table'] = time.time() - step_start
+            logger.info(f"Created temp table ({timing['create_temp_table']:.2f}s)")
 
-            # Filter data to only include columns that exist in the schema
-            schema_fields = {field.name for field in table.schema}
+            # Step 3: Sanitize and filter data
+            step_start = time.time()
 
             def sanitize_value(v):
                 """Convert non-JSON-serializable values to None."""
@@ -2571,35 +2586,108 @@ class UpcomingPlayerGameContextProcessor(
                     return v.item()
                 return v
 
-            filtered_data = [
-                {k: sanitize_value(v) for k, v in record.items() if k in schema_fields}
-                for record in self.transformed_data
-            ]
-            logger.info(f"Filtered {len(self.transformed_data)} records to schema fields: {len(schema_fields)} columns")
+            current_utc = datetime.now(timezone.utc)
+            filtered_data = []
+            for record in self.transformed_data:
+                out = {k: sanitize_value(v) for k, v in record.items() if k in schema_fields}
+                # Ensure required timestamp fields
+                if "processed_at" in required_fields and out.get("processed_at") is None:
+                    out["processed_at"] = current_utc.isoformat()
+                filtered_data.append(out)
 
-            # Configure batch load job
+            timing['sanitize_data'] = time.time() - step_start
+            logger.info(f"Sanitized {len(filtered_data)} records ({timing['sanitize_data']:.2f}s)")
+
+            # Step 4: Load data to temp table
+            step_start = time.time()
+            ndjson_data = "\n".join(json.dumps(row, default=str) for row in filtered_data)
+            ndjson_bytes = ndjson_data.encode('utf-8')
+
             job_config = bigquery.LoadJobConfig(
-                schema=table.schema,
-                autodetect=False,
-                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
-                create_disposition=bigquery.CreateDisposition.CREATE_IF_NEEDED
+                schema=target_schema,
+                source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+                write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
+                autodetect=False
             )
 
-            # Load using batch job
-            load_job = self.bq_client.load_table_from_json(
-                filtered_data,
-                table_id,
+            load_job = self.bq_client.load_table_from_file(
+                io.BytesIO(ndjson_bytes),
+                temp_table_id,
                 job_config=job_config
             )
-
-            # Wait for completion
             load_job.result()
-            logger.info(f"Successfully loaded {len(filtered_data)} records")
+            timing['load_temp_table'] = time.time() - step_start
+            logger.info(f"Loaded {len(filtered_data)} rows to temp table ({timing['load_temp_table']:.2f}s)")
+
+            # Step 5: Execute MERGE (atomic upsert)
+            step_start = time.time()
+
+            # Build list of all columns for UPDATE SET clause (exclude merge keys)
+            merge_keys = {'player_lookup', 'game_id'}
+            update_columns = [f.name for f in target_schema if f.name not in merge_keys]
+            update_set_clause = ",\n                ".join(
+                f"target.{col} = source.{col}" for col in update_columns
+            )
+
+            merge_query = f"""
+            MERGE `{table_id}` AS target
+            USING (
+                SELECT * EXCEPT(row_num) FROM (
+                    SELECT *, ROW_NUMBER() OVER (
+                        PARTITION BY player_lookup, game_id
+                        ORDER BY processed_at DESC
+                    ) as row_num
+                    FROM `{temp_table_id}`
+                ) WHERE row_num = 1
+            ) AS source
+            ON target.player_lookup = source.player_lookup
+               AND target.game_id = source.game_id
+            WHEN MATCHED THEN
+                UPDATE SET
+                {update_set_clause}
+            WHEN NOT MATCHED THEN
+                INSERT ROW
+            """
+
+            merge_job = self.bq_client.query(merge_query)
+            merge_job.result()
+
+            timing['merge_operation'] = time.time() - step_start
+            rows_affected = merge_job.num_dml_affected_rows or 0
+            logger.info(f"MERGE completed: {rows_affected} rows affected ({timing['merge_operation']:.2f}s)")
+
+            # Log total timing
+            timing['total'] = time.time() - overall_start
+            logger.info(
+                f"✅ Save complete: {len(filtered_data)} records in {timing['total']:.2f}s "
+                f"(schema: {timing['get_schema']:.1f}s, load: {timing['load_temp_table']:.1f}s, "
+                f"merge: {timing['merge_operation']:.1f}s)"
+            )
+
             return True
-                
+
         except Exception as e:
+            error_msg = str(e).lower()
+
+            # Handle streaming buffer gracefully
+            if "streaming buffer" in error_msg:
+                logger.warning(
+                    f"⚠️ MERGE blocked by streaming buffer - {len(self.transformed_data)} records skipped. "
+                    f"Will succeed on next run."
+                )
+                return False
+
             logger.error(f"Error saving to BigQuery: {e}")
             return False
+
+        finally:
+            # Always cleanup temp table
+            if temp_table_id:
+                try:
+                    self.bq_client.delete_table(temp_table_id, not_found_ok=True)
+                    logger.debug(f"Cleaned up temp table {temp_table_id}")
+                except Exception as cleanup_e:
+                    logger.warning(f"Failed to cleanup temp table: {cleanup_e}")
     
     # ========================================================================
     # Utility Methods
