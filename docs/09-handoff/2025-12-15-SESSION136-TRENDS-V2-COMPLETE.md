@@ -263,4 +263,35 @@ Edit `data_processors/publishing/what_matters_exporter.py` line ~240
 
 ---
 
+## Related Documents to Read
+
+For full context, the new session should also review:
+
+1. **Project Overview & Original TODO:**
+   - `docs/08-projects/current/trends-v2-exporters/overview.md` - Data sources, success criteria
+   - `docs/08-projects/current/trends-v2-exporters/TODO.md` - Full task list with checkboxes
+
+2. **Implementation Plan (created this session):**
+   - `docs/08-projects/current/trends-v2-exporters/IMPLEMENTATION-PLAN.md` - Query patterns, approach decisions
+
+3. **Exporter Source Files:**
+   - `data_processors/publishing/whos_hot_cold_exporter.py`
+   - `data_processors/publishing/bounce_back_exporter.py`
+   - `data_processors/publishing/what_matters_exporter.py`
+   - `data_processors/publishing/team_tendencies_exporter.py`
+   - `data_processors/publishing/quick_hits_exporter.py`
+   - `data_processors/publishing/deep_dive_exporter.py`
+
+4. **Existing Exporter Patterns (for reference):**
+   - `data_processors/publishing/base_exporter.py` - Base class all exporters extend
+   - `data_processors/publishing/streaks_exporter.py` - Similar pattern to hot/cold
+
+5. **CLI Entry Point:**
+   - `backfill_jobs/publishing/daily_export.py` - Where trends exporters are integrated
+
+6. **Frontend Requirements (in props-web repo):**
+   - `/home/naji/code/props-web/docs/06-projects/current/trends-page/backend-data-available.md`
+
+---
+
 **Handoff Status:** Trends v2 backend complete. Ready for frontend integration, unit tests, or Cloud Scheduler setup.
