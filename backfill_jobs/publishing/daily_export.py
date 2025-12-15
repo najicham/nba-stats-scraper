@@ -55,6 +55,13 @@ from data_processors.publishing.player_profile_exporter import PlayerProfileExpo
 from data_processors.publishing.tonight_all_players_exporter import TonightAllPlayersExporter
 from data_processors.publishing.tonight_player_exporter import TonightPlayerExporter
 from data_processors.publishing.streaks_exporter import StreaksExporter
+# Trends v2 exporters
+from data_processors.publishing.whos_hot_cold_exporter import WhosHotColdExporter
+from data_processors.publishing.bounce_back_exporter import BounceBackExporter
+from data_processors.publishing.what_matters_exporter import WhatMattersExporter
+from data_processors.publishing.team_tendencies_exporter import TeamTendenciesExporter
+from data_processors.publishing.quick_hits_exporter import QuickHitsExporter
+from data_processors.publishing.deep_dive_exporter import DeepDiveExporter
 
 # Configure logging
 logging.basicConfig(
@@ -66,7 +73,15 @@ logger = logging.getLogger(__name__)
 PROJECT_ID = 'nba-props-platform'
 
 # Available export types
-EXPORT_TYPES = ['results', 'performance', 'best-bets', 'predictions', 'tonight', 'tonight-players', 'streaks']
+EXPORT_TYPES = [
+    'results', 'performance', 'best-bets', 'predictions',
+    'tonight', 'tonight-players', 'streaks',
+    # Trends v2
+    'trends-hot-cold', 'trends-bounce-back', 'trends-what-matters',
+    'trends-team', 'trends-quick-hits', 'trends-deep-dive',
+    # Shorthand groups
+    'trends-daily', 'trends-weekly', 'trends-all'
+]
 
 
 def get_dates_with_predictions() -> List[str]:
@@ -183,6 +198,85 @@ def export_date(
         except Exception as e:
             result['errors'].append(f"streaks: {e}")
             logger.error(f"  Streaks error: {e}")
+
+    # === TRENDS V2 EXPORTERS ===
+
+    # Expand shorthand groups
+    if 'trends-daily' in export_types:
+        export_types.extend(['trends-hot-cold', 'trends-bounce-back'])
+    if 'trends-weekly' in export_types:
+        export_types.extend(['trends-what-matters', 'trends-team', 'trends-quick-hits'])
+    if 'trends-all' in export_types:
+        export_types.extend([
+            'trends-hot-cold', 'trends-bounce-back', 'trends-what-matters',
+            'trends-team', 'trends-quick-hits', 'trends-deep-dive'
+        ])
+
+    # Who's Hot/Cold (daily)
+    if 'trends-hot-cold' in export_types:
+        try:
+            exporter = WhosHotColdExporter()
+            path = exporter.export(target_date)
+            result['paths']['trends_hot_cold'] = path
+            logger.info(f"  Trends Hot/Cold: {path}")
+        except Exception as e:
+            result['errors'].append(f"trends-hot-cold: {e}")
+            logger.error(f"  Trends Hot/Cold error: {e}")
+
+    # Bounce-Back Watch (daily)
+    if 'trends-bounce-back' in export_types:
+        try:
+            exporter = BounceBackExporter()
+            path = exporter.export(target_date)
+            result['paths']['trends_bounce_back'] = path
+            logger.info(f"  Trends Bounce-Back: {path}")
+        except Exception as e:
+            result['errors'].append(f"trends-bounce-back: {e}")
+            logger.error(f"  Trends Bounce-Back error: {e}")
+
+    # What Matters Most (weekly)
+    if 'trends-what-matters' in export_types:
+        try:
+            exporter = WhatMattersExporter()
+            path = exporter.export(target_date)
+            result['paths']['trends_what_matters'] = path
+            logger.info(f"  Trends What Matters: {path}")
+        except Exception as e:
+            result['errors'].append(f"trends-what-matters: {e}")
+            logger.error(f"  Trends What Matters error: {e}")
+
+    # Team Tendencies (bi-weekly)
+    if 'trends-team' in export_types:
+        try:
+            exporter = TeamTendenciesExporter()
+            path = exporter.export(target_date)
+            result['paths']['trends_team'] = path
+            logger.info(f"  Trends Team: {path}")
+        except Exception as e:
+            result['errors'].append(f"trends-team: {e}")
+            logger.error(f"  Trends Team error: {e}")
+
+    # Quick Hits (weekly)
+    if 'trends-quick-hits' in export_types:
+        try:
+            exporter = QuickHitsExporter()
+            path = exporter.export(target_date)
+            result['paths']['trends_quick_hits'] = path
+            logger.info(f"  Trends Quick Hits: {path}")
+        except Exception as e:
+            result['errors'].append(f"trends-quick-hits: {e}")
+            logger.error(f"  Trends Quick Hits error: {e}")
+
+    # Deep Dive (monthly)
+    if 'trends-deep-dive' in export_types:
+        try:
+            exporter = DeepDiveExporter()
+            path = exporter.export(target_date)
+            result['paths']['trends_deep_dive'] = path
+            logger.info(f"  Trends Deep Dive: {path}")
+        except Exception as e:
+            result['errors'].append(f"trends-deep-dive: {e}")
+            logger.error(f"  Trends Deep Dive error: {e}")
 
     if result['errors']:
         result['status'] = 'partial' if result['paths'] else 'failed'
