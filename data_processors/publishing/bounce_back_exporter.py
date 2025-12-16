@@ -10,11 +10,12 @@ Refresh: Daily (6 AM ET)
 
 import logging
 from typing import Dict, List, Any, Optional
-from datetime import date
+from datetime import date, datetime
 
 from google.cloud import bigquery
 
 from .base_exporter import BaseExporter
+from shared.utils.schedule import NBAScheduleService
 
 logger = logging.getLogger(__name__)
 
@@ -86,9 +87,13 @@ class BounceBackExporter(BaseExporter):
         # Get league baseline
         league_baseline = self._query_league_baseline(as_of_date, shortfall_threshold)
 
-        # Add rankings
+        # Get tonight's games for playing_tonight enrichment
+        tonight_games = self._query_tonight_games(as_of_date)
+
+        # Add rankings and tonight's game info
         for rank, candidate in enumerate(candidates, 1):
             candidate['rank'] = rank
+            self._enrich_with_tonight(candidate, tonight_games)
 
         return {
             'generated_at': self.get_generated_at(),
@@ -222,9 +227,7 @@ class BounceBackExporter(BaseExporter):
                 'shortfall': self._safe_float(r['shortfall']),
                 'bounce_back_rate': self._safe_float(r['bounce_back_rate']),
                 'bounce_back_sample': r['bounce_back_sample'],
-                'significance': r['significance'],
-                'playing_tonight': False,  # Would need schedule data
-                'tonight_opponent': None
+                'significance': r['significance']
             }
             for r in results
         ]
@@ -288,6 +291,68 @@ class BounceBackExporter(BaseExporter):
             return round(f, 3)
         except (TypeError, ValueError):
             return None
+
+    def _query_tonight_games(self, as_of_date: str) -> Dict[str, Dict]:
+        """Query games scheduled for today/tonight.
+
+        Returns:
+            Dict mapping team codes to game info:
+            {
+                'LAL': {'opponent': 'GSW', 'game_time': '7:30 PM ET'},
+                'GSW': {'opponent': 'LAL', 'game_time': '7:30 PM ET'},
+                ...
+            }
+        """
+        try:
+            schedule = NBAScheduleService()
+            games = schedule.get_games_for_date(as_of_date)
+
+            tonight_map = {}
+            for game in games:
+                # Parse game time from ISO format to readable format
+                game_time = self._format_game_time(game.commence_time)
+
+                # Add both teams to the map
+                tonight_map[game.home_team] = {
+                    'opponent': game.away_team,
+                    'game_time': game_time
+                }
+                tonight_map[game.away_team] = {
+                    'opponent': game.home_team,
+                    'game_time': game_time
+                }
+
+            logger.info(f"Found {len(games)} games tonight with {len(tonight_map)} teams playing")
+            return tonight_map
+
+        except Exception as e:
+            logger.warning(f"Could not fetch tonight's games: {e}")
+            return {}
+
+    def _format_game_time(self, commence_time: str) -> Optional[str]:
+        """Format ISO commence_time to readable game time."""
+        if not commence_time:
+            return None
+        try:
+            # Parse ISO format (e.g., "2024-12-15T19:30:00-05:00")
+            dt = datetime.fromisoformat(commence_time.replace('Z', '+00:00'))
+            # Format as "7:30 PM ET"
+            return dt.strftime('%-I:%M %p ET')
+        except (ValueError, AttributeError):
+            return None
+
+    def _enrich_with_tonight(self, candidate: Dict, tonight_games: Dict) -> None:
+        """Add tonight's game info to candidate (mutates in place)."""
+        team = candidate.get('team')
+        if team and team in tonight_games:
+            game = tonight_games[team]
+            candidate['playing_tonight'] = True
+            candidate['tonight_opponent'] = game.get('opponent')
+            candidate['tonight_game_time'] = game.get('game_time')
+        else:
+            candidate['playing_tonight'] = False
+            candidate['tonight_opponent'] = None
+            candidate['tonight_game_time'] = None
 
     def export(self, as_of_date: str = None, **kwargs) -> str:
         """

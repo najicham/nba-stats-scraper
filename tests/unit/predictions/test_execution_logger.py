@@ -22,11 +22,25 @@ class MockBigQueryClient:
     def __init__(self):
         self.inserted_rows = []
         self.insert_errors = []
+        self.load_job_result = Mock()
 
     def insert_rows_json(self, table_id, rows):
         """Mock insert rows"""
         self.inserted_rows.extend(rows)
         return self.insert_errors
+
+    def get_table(self, table_id):
+        """Mock get_table for schema retrieval"""
+        mock_table = Mock()
+        mock_table.schema = []  # Empty schema is fine for testing
+        return mock_table
+
+    def load_table_from_json(self, rows, table_id, job_config=None):
+        """Mock load_table_from_json for batch loading"""
+        self.inserted_rows.extend(rows)
+        mock_job = Mock()
+        mock_job.result.return_value = None
+        return mock_job
 
 
 class TestExecutionLoggerInit:

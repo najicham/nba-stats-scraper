@@ -480,5 +480,87 @@ class TestSafeFloat:
                 assert exporter._safe_float(None) is None
 
 
+class TestTonightGameEnrichment:
+    """Test suite for playing_tonight enrichment"""
+
+    def test_enrich_with_tonight_playing(self):
+        """Test player whose team is playing tonight"""
+        with patch('data_processors.publishing.bounce_back_exporter.bigquery.Client'):
+            with patch('data_processors.publishing.base_exporter.storage.Client'):
+                exporter = BounceBackExporter()
+
+                candidate = {
+                    'player_lookup': 'lebron',
+                    'player_name': 'LeBron James',
+                    'team': 'LAL',
+                    'shortfall': 12.0
+                }
+
+                tonight_games = {
+                    'LAL': {'opponent': 'GSW', 'game_time': '7:30 PM ET'},
+                    'GSW': {'opponent': 'LAL', 'game_time': '7:30 PM ET'}
+                }
+
+                exporter._enrich_with_tonight(candidate, tonight_games)
+
+                assert candidate['playing_tonight'] is True
+                assert candidate['tonight_opponent'] == 'GSW'
+                assert candidate['tonight_game_time'] == '7:30 PM ET'
+
+    def test_enrich_with_tonight_not_playing(self):
+        """Test player whose team is not playing tonight"""
+        with patch('data_processors.publishing.bounce_back_exporter.bigquery.Client'):
+            with patch('data_processors.publishing.base_exporter.storage.Client'):
+                exporter = BounceBackExporter()
+
+                candidate = {
+                    'player_lookup': 'curry',
+                    'player_name': 'Stephen Curry',
+                    'team': 'GSW',
+                    'shortfall': 15.0
+                }
+
+                tonight_games = {
+                    'LAL': {'opponent': 'BOS', 'game_time': '8:00 PM ET'},
+                    'BOS': {'opponent': 'LAL', 'game_time': '8:00 PM ET'}
+                }
+
+                exporter._enrich_with_tonight(candidate, tonight_games)
+
+                assert candidate['playing_tonight'] is False
+                assert candidate['tonight_opponent'] is None
+                assert candidate['tonight_game_time'] is None
+
+
+class TestFormatGameTime:
+    """Test suite for _format_game_time utility method"""
+
+    def test_format_game_time_valid(self):
+        """Test valid ISO time formatting"""
+        with patch('data_processors.publishing.bounce_back_exporter.bigquery.Client'):
+            with patch('data_processors.publishing.base_exporter.storage.Client'):
+                exporter = BounceBackExporter()
+
+                # Test ISO format with timezone
+                result = exporter._format_game_time('2024-12-15T19:30:00-05:00')
+                assert result == '7:30 PM ET'
+
+    def test_format_game_time_none(self):
+        """Test None handling"""
+        with patch('data_processors.publishing.bounce_back_exporter.bigquery.Client'):
+            with patch('data_processors.publishing.base_exporter.storage.Client'):
+                exporter = BounceBackExporter()
+
+                assert exporter._format_game_time(None) is None
+
+    def test_format_game_time_invalid(self):
+        """Test invalid format returns None"""
+        with patch('data_processors.publishing.bounce_back_exporter.bigquery.Client'):
+            with patch('data_processors.publishing.base_exporter.storage.Client'):
+                exporter = BounceBackExporter()
+
+                assert exporter._format_game_time('not a date') is None
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

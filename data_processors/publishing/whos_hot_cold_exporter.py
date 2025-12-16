@@ -17,6 +17,7 @@ from datetime import date, datetime
 from google.cloud import bigquery
 
 from .base_exporter import BaseExporter
+from shared.utils.schedule import NBAScheduleService
 
 logger = logging.getLogger(__name__)
 
@@ -255,10 +256,53 @@ class WhosHotColdExporter(BaseExporter):
         ]
 
     def _query_tonight_games(self, as_of_date: str) -> Dict[str, Dict]:
-        """Query games scheduled for today/tonight."""
-        # For now, return empty - would need schedule data
-        # In production, this would query a games schedule table
-        return {}
+        """Query games scheduled for today/tonight.
+
+        Returns:
+            Dict mapping team codes to game info:
+            {
+                'LAL': {'opponent': 'GSW', 'game_time': '7:30 PM ET'},
+                'GSW': {'opponent': 'LAL', 'game_time': '7:30 PM ET'},
+                ...
+            }
+        """
+        try:
+            schedule = NBAScheduleService()
+            games = schedule.get_games_for_date(as_of_date)
+
+            tonight_map = {}
+            for game in games:
+                # Parse game time from ISO format to readable format
+                game_time = self._format_game_time(game.commence_time)
+
+                # Add both teams to the map
+                tonight_map[game.home_team] = {
+                    'opponent': game.away_team,
+                    'game_time': game_time
+                }
+                tonight_map[game.away_team] = {
+                    'opponent': game.home_team,
+                    'game_time': game_time
+                }
+
+            logger.info(f"Found {len(games)} games tonight with {len(tonight_map)} teams playing")
+            return tonight_map
+
+        except Exception as e:
+            logger.warning(f"Could not fetch tonight's games: {e}")
+            return {}
+
+    def _format_game_time(self, commence_time: str) -> Optional[str]:
+        """Format ISO commence_time to readable game time."""
+        if not commence_time:
+            return None
+        try:
+            # Parse ISO format (e.g., "2024-12-15T19:30:00-05:00")
+            dt = datetime.fromisoformat(commence_time.replace('Z', '+00:00'))
+            # Format as "7:30 PM ET"
+            return dt.strftime('%-I:%M %p ET')
+        except (ValueError, AttributeError):
+            return None
 
     def _enrich_with_tonight(self, player: Dict, tonight_games: Dict, rank: int) -> Dict:
         """Add tonight's game info and rank to player."""

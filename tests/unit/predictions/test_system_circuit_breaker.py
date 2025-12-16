@@ -25,13 +25,48 @@ class MockBigQueryClient:
         self.query_results = []
         self.inserted_rows = []
         self.query_call_count = 0
+        self.executed_queries = []
 
     def query(self, query_string, **kwargs):
         """Mock query execution - accepts job_config and other params"""
         self.query_call_count += 1
+        self.executed_queries.append(query_string)
         result_mock = Mock()
 
-        # Create a mock DataFrame
+        # Track DML operations (INSERT/UPDATE) as "inserted_rows" for test assertions
+        query_upper = query_string.upper()
+        if 'INSERT INTO' in query_upper or 'UPDATE' in query_upper:
+            # Parse parameters from job_config if available
+            job_config = kwargs.get('job_config')
+            row_data = {}
+            if job_config and hasattr(job_config, 'query_parameters'):
+                for param in job_config.query_parameters:
+                    # Map system_id param to processor_name for test assertions
+                    if param.name == 'system_id':
+                        row_data['processor_name'] = param.value
+                    row_data[param.name] = param.value
+
+            # Determine state from query content
+            if 'INSERT INTO' in query_upper:
+                # For INSERT, set initial failure_count to 1
+                row_data['failure_count'] = 1
+                row_data['state'] = 'CLOSED'
+            elif "STATE = 'OPEN'" in query_upper and 'HALF_OPEN' not in query_upper:
+                row_data['state'] = 'OPEN'
+            elif 'HALF_OPEN' in query_upper:
+                row_data['state'] = 'HALF_OPEN'
+            elif "STATE = 'CLOSED'" in query_upper:
+                row_data['state'] = 'CLOSED'
+
+            # Set failure_count to 0 if resetting
+            if 'failure_count = 0' in query_string.lower():
+                row_data['failure_count'] = 0
+
+            self.inserted_rows.append(row_data)
+            result_mock.result.return_value = None
+            return result_mock
+
+        # Create a mock DataFrame for SELECT queries
         import pandas as pd
         if self.query_results:
             # Convert mock objects to dict format for DataFrame
@@ -575,33 +610,40 @@ class TestGracefulDegradation:
         bq_client = MockBigQueryClient()
         breaker = SystemCircuitBreaker(bq_client, 'test-project')
 
-        systems = {
-            'moving_average': 'CLOSED',   # Success
-            'zone_matchup_v1': 'CLOSED',  # Success
-            'similarity_balanced_v1': 'OPEN',  # Failed
-            'xgboost_v1': 'CLOSED',       # Success
-            'ensemble_v1': 'OPEN'          # Failed
-        }
+        # Set up all systems at once (code queries all systems in one query)
+        open_time = datetime.now(timezone.utc)
+        bq_client.query_results = [
+            # similarity_balanced_v1 - OPEN (failed)
+            Mock(
+                system_id='similarity_balanced_v1',
+                state='OPEN',
+                failure_count=5,
+                success_count=0,
+                last_error_message='Test error',
+                last_error_type='ValueError',
+                opened_at=open_time,
+                closed_at=None,
+                last_failure_at=open_time
+            ),
+            # ensemble_v1 - OPEN (failed)
+            Mock(
+                system_id='ensemble_v1',
+                state='OPEN',
+                failure_count=5,
+                success_count=0,
+                last_error_message='Test error',
+                last_error_type='ValueError',
+                opened_at=open_time,
+                closed_at=None,
+                last_failure_at=open_time
+            )
+            # Other 3 systems not in results = CLOSED (default)
+        ]
+
+        systems = ['moving_average', 'zone_matchup_v1', 'similarity_balanced_v1', 'xgboost_v1', 'ensemble_v1']
 
         results = {}
-        for system_id, expected_state in systems.items():
-            if expected_state == 'OPEN':
-                open_time = datetime.now(timezone.utc)
-                bq_client.query_results = [Mock(
-                    system_id=system_id,
-                    state='OPEN',
-                    failure_count=5,
-                    success_count=0,
-                    last_error_message='Test error',
-                    last_error_type='ValueError',
-                    opened_at=open_time,
-                    closed_at=None,
-                    last_failure_at=open_time
-                )]
-            else:
-                bq_client.query_results = []
-
-            breaker._state_cache = {}
+        for system_id in systems:
             state, _ = breaker.check_circuit(system_id)
             results[system_id] = state
 

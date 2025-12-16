@@ -400,6 +400,36 @@ class TestTonightGameEnrichment:
                 assert result['tonight_game_time'] is None
 
 
+class TestFormatGameTime:
+    """Test suite for _format_game_time utility method"""
+
+    def test_format_game_time_valid(self):
+        """Test valid ISO time formatting"""
+        with patch('data_processors.publishing.whos_hot_cold_exporter.bigquery.Client'):
+            with patch('data_processors.publishing.base_exporter.storage.Client'):
+                exporter = WhosHotColdExporter()
+
+                # Test ISO format with timezone
+                result = exporter._format_game_time('2024-12-15T19:30:00-05:00')
+                assert result == '7:30 PM ET'
+
+    def test_format_game_time_none(self):
+        """Test None handling"""
+        with patch('data_processors.publishing.whos_hot_cold_exporter.bigquery.Client'):
+            with patch('data_processors.publishing.base_exporter.storage.Client'):
+                exporter = WhosHotColdExporter()
+
+                assert exporter._format_game_time(None) is None
+
+    def test_format_game_time_invalid(self):
+        """Test invalid format returns None"""
+        with patch('data_processors.publishing.whos_hot_cold_exporter.bigquery.Client'):
+            with patch('data_processors.publishing.base_exporter.storage.Client'):
+                exporter = WhosHotColdExporter()
+
+                assert exporter._format_game_time('not a date') is None
+
+
 class TestSafeFloat:
     """Test suite for _safe_float utility method"""
 
