@@ -238,7 +238,7 @@ class WhatMattersExporter(BaseExporter):
         FROM player_archetypes pa
         JOIN `nba-props-platform.nba_reference.nba_players_registry` pn
           ON pa.player_lookup = pn.player_lookup
-        QUALIFY ROW_NUMBER() OVER (PARTITION BY pa.archetype ORDER BY pa.avg_ppg DESC) <= 3
+        QUALIFY ROW_NUMBER() OVER (PARTITION BY pa.archetype, pn.player_lookup ORDER BY pa.avg_ppg DESC) = 1
         ORDER BY pa.archetype, pa.avg_ppg DESC
         """
         example_results = self.query_to_list(example_query, params)
