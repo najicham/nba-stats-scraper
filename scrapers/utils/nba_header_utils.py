@@ -14,14 +14,18 @@ from copy import deepcopy
 import random
 
 USER_AGENTS = [
-    # Rotate a few modern desktop agents to look more “organic”
+    # Updated to Chrome 140 (matches nba_api Sept 2025 update - PR #571)
+    # Modern Chrome version fixes connection issues with stats.nba.com
     ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-     "(KHTML, like Gecko) Chrome/125.0 Safari/537.36"),
+     "(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"),
     ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-     "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"),
+     "(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"),
     ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-     "(KHTML, like Gecko) Chrome/123.0 Safari/537.36"),
+     "(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"),
 ]
+
+# Chrome Client Hints header - must match Chrome version in USER_AGENTS
+SEC_CH_UA = '"Chromium";v="140", "Google Chrome";v="140", "Not;A=Brand";v="24"'
 
 def _ua():
     """Return a random desktop User‑Agent each call."""
@@ -33,18 +37,27 @@ def _ua():
 def stats_api_headers() -> dict:
     """
     Minimal but sufficient header block for stats.nba.com.
-    Keeps request size small while passing Akamai checks.
+    Updated Sept 2025 to match nba_api library - removes deprecated headers.
     """
     return {
-        "User-Agent":         _ua(),
-        "Referer":            "https://stats.nba.com",
-        "Origin":             "https://stats.nba.com",
-        "Accept":             "application/json, text/plain, */*",
-        "x-nba-stats-origin": "stats",
-        "x-nba-stats-token":  "true",
+        "User-Agent": _ua(),
+        "Referer": "https://stats.nba.com/",
+        "Origin": "https://stats.nba.com",
+        "Accept": "application/json, text/plain, */*",
+        "Sec-Ch-Ua": SEC_CH_UA,
+        "Sec-Ch-Ua-Mobile": "?0",
+        # NOTE: x-nba-stats-origin and x-nba-stats-token removed (deprecated Sept 2025)
     }
 
 def stats_nba_headers() -> dict:
+    """
+    Modern header block for stats.nba.com.
+
+    Updated to match nba_api library (Sept 2025, PR #571):
+    - Chrome 140 User-Agent
+    - Added Sec-Ch-Ua headers (Chrome Client Hints)
+    - Removed deprecated x-nba-stats-origin and x-nba-stats-token
+    """
     base = {
         "Accept": "application/json, text/plain, */*",
         "Accept-Encoding": "gzip, deflate, br",
@@ -55,12 +68,16 @@ def stats_nba_headers() -> dict:
         "Origin": "https://www.nba.com",
         "Pragma": "no-cache",
         "Referer": "https://www.nba.com/",
+        # Chrome Client Hints (required for modern stats.nba.com)
+        "Sec-Ch-Ua": SEC_CH_UA,
+        "Sec-Ch-Ua-Mobile": "?0",
+        "Sec-Ch-Ua-Platform": '"Windows"',
+        # Fetch metadata headers
         "Sec-Fetch-Dest": "empty",
         "Sec-Fetch-Mode": "cors",
         "Sec-Fetch-Site": "same-site",
         "User-Agent": _ua(),
-        "x-nba-stats-origin": "stats",
-        "x-nba-stats-token": "true",
+        # NOTE: x-nba-stats-origin and x-nba-stats-token removed (deprecated Sept 2025)
     }
     return deepcopy(base)
 
@@ -85,10 +102,12 @@ def data_nba_headers() -> dict:
     """Headers for cdn.nba.com / data.nba.com JSON feeds."""
     base = {
         "User-Agent": _ua(),
-        "Accept": "application/json, text/plain, */*",   # optional
+        "Accept": "application/json, text/plain, */*",
         "Accept-Encoding": "gzip, deflate, br",
         "Referer": "https://www.nba.com/",
         "Origin": "https://www.nba.com",
+        "Sec-Ch-Ua": SEC_CH_UA,
+        "Sec-Ch-Ua-Mobile": "?0",
     }
     return deepcopy(base)
 
@@ -96,11 +115,14 @@ def data_nba_headers() -> dict:
 cdn_nba_headers = data_nba_headers
 
 def core_api_headers() -> dict:
+    """Headers for core-api.nba.com endpoints."""
     base = {
         "User-Agent": _ua(),
         "Referer": "https://www.nba.com/",
         "Origin": "https://www.nba.com",
         "Accept": "application/json",
+        "Sec-Ch-Ua": SEC_CH_UA,
+        "Sec-Ch-Ua-Mobile": "?0",
     }
     return deepcopy(base)
 
