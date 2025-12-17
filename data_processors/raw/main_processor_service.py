@@ -114,41 +114,110 @@ def health_check():
 def normalize_message_format(message: dict) -> dict:
     """
     Normalize Pub/Sub message format to be compatible with processor routing.
-    
-    Handles two message formats:
+
+    Handles three message formats:
     1. GCS Object Finalize (legacy): {"bucket": "...", "name": "..."}
-    2. Scraper Completion (new): {"scraper_name": "...", "gcs_path": "gs://...", ...}
-    
+    2. Scraper Completion (old): {"scraper_name": "...", "gcs_path": "gs://...", ...}
+    3. Unified Format (v2): {"processor_name": "...", "phase": "...", "metadata": {"gcs_path": "..."}, ...}
+
     Also handles special cases:
     - Failed scraper events (no gcs_path)
     - No data events (no gcs_path)
-    
+
     Args:
         message: Raw Pub/Sub message data
-        
+
     Returns:
         Normalized message with 'bucket' and 'name' fields, or
         a skip_processing dict for events without files
-        
+
     Raises:
         ValueError: If message format is unrecognized or missing required fields
     """
     import logging
-    
+
     logger = logging.getLogger(__name__)
-    
+
     # Case 1: GCS Object Finalize format (legacy)
     if 'bucket' in message and 'name' in message:
         logger.info(f"Processing GCS Object Finalize message: gs://{message['bucket']}/{message['name']}")
         return message
-    
-    # Case 2: Scraper Completion format (new)
+
+    # Case 2: Unified Format (v2) - from UnifiedPubSubPublisher
+    # Identifies by: 'processor_name' AND 'phase' fields
+    if 'processor_name' in message and 'phase' in message:
+        processor_name = message.get('processor_name')
+        status = message.get('status', 'unknown')
+
+        # Extract gcs_path from metadata (unified format stores it there)
+        metadata = message.get('metadata', {})
+        gcs_path = metadata.get('gcs_path')
+
+        logger.info(f"Processing Unified Format message from: {processor_name} (phase={message.get('phase')}, status={status})")
+
+        # Handle failed or no-data events (no file to process)
+        if gcs_path is None or gcs_path == '' or status in ('failed', 'no_data'):
+            logger.warning(
+                f"Scraper {processor_name} published event with status={status} "
+                f"but no gcs_path. This is expected for failed or no-data events. Skipping file processing."
+            )
+            return {
+                'skip_processing': True,
+                'reason': f'No file to process (status={status})',
+                'scraper_name': processor_name,
+                'execution_id': message.get('execution_id'),
+                'status': status,
+                '_original_message': message
+            }
+
+        # Parse GCS path into bucket and name
+        if not gcs_path.startswith('gs://'):
+            raise ValueError(
+                f"Invalid gcs_path format: {gcs_path}. "
+                f"Expected gs://bucket/path format from scraper {processor_name}"
+            )
+
+        path_without_protocol = gcs_path[5:]  # Remove 'gs://'
+        parts = path_without_protocol.split('/', 1)
+
+        if len(parts) != 2:
+            raise ValueError(
+                f"Invalid gcs_path structure: {gcs_path}. "
+                f"Expected gs://bucket/path format from scraper {processor_name}"
+            )
+
+        bucket = parts[0]
+        name = parts[1]
+
+        # Create normalized message preserving unified metadata
+        normalized = {
+            'bucket': bucket,
+            'name': name,
+            '_original_format': 'unified_v2',
+            '_scraper_name': processor_name,
+            '_execution_id': message.get('execution_id'),
+            '_status': status,
+            '_record_count': message.get('record_count'),
+            '_duration_seconds': message.get('duration_seconds'),
+            '_workflow': metadata.get('workflow'),
+            '_timestamp': message.get('timestamp'),
+            '_game_date': message.get('game_date')
+        }
+
+        logger.info(
+            f"Normalized unified message: bucket={bucket}, name={name}, "
+            f"scraper={processor_name}, status={status}"
+        )
+
+        return normalized
+
+    # Case 3: Scraper Completion format (old/v1)
     # Check for 'scraper_name' OR ('name' AND 'gcs_path' without 'bucket')
     if 'scraper_name' in message or ('name' in message and 'gcs_path' in message and 'bucket' not in message):
         # Prefer scraper_name, fallback to name
         scraper_name = message.get('scraper_name') or message.get('name')
         logger.info(f"Processing Scraper Completion message from: {scraper_name}")
-        
+
         # Get gcs_path (may be None for failed/no-data events)
         gcs_path = message.get('gcs_path')
         status = message.get('status', 'unknown')
