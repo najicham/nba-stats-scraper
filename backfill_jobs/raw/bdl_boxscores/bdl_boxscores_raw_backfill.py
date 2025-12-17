@@ -246,22 +246,30 @@ class BdlBoxscoresBackfill:
             # Download and parse JSON
             content = blob.download_as_text()
             data = json.loads(content)
-            
-            # Validate and transform data
+
+            # Validate data
             validation_errors = self.processor.validate_data(data)
             if validation_errors:
                 logger.warning(f"Validation errors in {file_path}: {validation_errors}")
                 return {'status': 'skipped', 'reason': 'validation_failed', 'errors': validation_errors, 'file': file_path}
-            
-            # Transform data
-            rows = self.processor.transform_data(data, file_path)
-            
+
+            # Set raw_data on processor and add source file metadata
+            self.processor.raw_data = data
+            if 'metadata' not in self.processor.raw_data:
+                self.processor.raw_data['metadata'] = {}
+            self.processor.raw_data['metadata']['source_file'] = file_path
+
+            # Transform data (reads from self.raw_data, writes to self.transformed_data)
+            self.processor.transform_data()
+
+            rows = self.processor.transformed_data
             if not rows:
                 logger.warning(f"No rows generated from {file_path}")
                 return {'status': 'skipped', 'reason': 'no_data', 'file': file_path}
-            
-            # Load to BigQuery (uses batch loading from database lessons)
-            result = self.processor.load_data(rows)
+
+            # Load to BigQuery (uses batch loading, reads from self.transformed_data)
+            self.processor.save_data()
+            result = {'rows_processed': len(rows), 'errors': [], 'streaming_conflicts': []}
             
             # Check for streaming buffer conflicts (from database lessons doc)
             if result.get('streaming_conflicts'):
