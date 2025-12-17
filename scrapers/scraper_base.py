@@ -1606,10 +1606,13 @@ class ScraperBase:
                                 extra={"export_mode": str(export_mode), "config": config})
                     exporter = exporter_cls()
                     exporter_result = exporter.run(data_to_export, config, self.opts)
-                    
-                    # ✅ NEW: Capture GCS output path if exporter returned it
+
+                    # ✅ Capture GCS output path if exporter returned it
                     if isinstance(exporter_result, dict) and 'gcs_path' in exporter_result:
                         self.opts['gcs_output_path'] = exporter_result['gcs_path']
+                        logger.info(f"Captured gcs_output_path: {self.opts['gcs_output_path']}")
+                    else:
+                        logger.debug(f"Exporter {exporter_type} returned: {type(exporter_result).__name__}")
 
                     # Mark that at least one exporter was triggered
                     ran_exporter = True

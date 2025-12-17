@@ -1,8 +1,12 @@
 import json
+import logging
 import os
+import sys
 from google.cloud import storage
 import google.auth
 from google.auth.exceptions import DefaultCredentialsError
+
+logger = logging.getLogger(__name__)
 
 class BaseExporter:
     def run(self, data, config, opts):
@@ -65,14 +69,21 @@ class GCSExporter(BaseExporter):
             # Upload text data as UTF-8 encoded bytes
             blob.upload_from_string(payload.encode('utf-8'), content_type=content_type)
 
-        print(f"[GCS Exporter] Uploaded to gs://{bucket_name}/{gcs_path} (content-type: {content_type})")
+        full_gcs_path = f"gs://{bucket_name}/{gcs_path}"
+        logger.info(f"[GCS Exporter] Uploaded to {full_gcs_path} (content-type: {content_type})")
+
+        # Also print and flush for Cloud Run compatibility
+        print(f"[GCS Exporter] Uploaded to {full_gcs_path}", flush=True)
+        sys.stdout.flush()
 
         # Return GCS path for Phase 2 processing
-        return {
-            'gcs_path': f"gs://{bucket_name}/{gcs_path}",
+        result = {
+            'gcs_path': full_gcs_path,
             'bucket': bucket_name,
             'path': gcs_path
         }
+        logger.info(f"[GCS Exporter] Returning result: {result}")
+        return result
 
     def _create_gcs_client(self):
         """
@@ -104,13 +115,13 @@ class GCSExporter(BaseExporter):
             
             for sa_file in service_account_files:
                 if os.path.exists(sa_file):
-                    print(f"[GCS Exporter] Using service account: {sa_file}")
+                    logger.info(f"[GCS Exporter] Using service account: {sa_file}")
                     return storage.Client.from_service_account_json(sa_file)
-            
+
             # Try 3: Check for application default credentials file
             adc_path = os.path.expanduser("~/.config/gcloud/application_default_credentials.json")
             if os.path.exists(adc_path):
-                print(f"[GCS Exporter] Using application default credentials: {adc_path}")
+                logger.info(f"[GCS Exporter] Using application default credentials: {adc_path}")
                 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = adc_path
                 return storage.Client()
             
@@ -145,8 +156,8 @@ class FileExporter(BaseExporter):
             # Write text data in text mode
             with open(filename, "w", encoding="utf-8") as f:
                 f.write(payload)
-                
-        print(f"[File Exporter] Wrote to {filename}")
+
+        logger.info(f"[File Exporter] Wrote to {filename}")
 
 class PrintExporter(BaseExporter):
     """
