@@ -387,8 +387,9 @@ class ParameterResolver:
 
         # Extract game info
         game_date_yyyymmdd = game.game_date.replace('-', '')  # "20240410"
-        away_team = getattr(game, 'away_team_abbr', 'UNK')[:3].upper()
-        home_team = getattr(game, 'home_team_abbr', 'UNK')[:3].upper()
+        # FIX: Use correct attribute names - 'away_team' and 'home_team', not 'away_team_abbr'
+        away_team = getattr(game, 'away_team', 'UNK')[:3].upper()
+        home_team = getattr(game, 'home_team', 'UNK')[:3].upper()
 
         # Build game_code
         game_code = f"{game_date_yyyymmdd}/{away_team}{home_team}"
