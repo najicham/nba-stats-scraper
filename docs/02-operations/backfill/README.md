@@ -1,6 +1,6 @@
 # Backfill Documentation Hub
 
-**Last Updated:** 2025-12-08 | **Status:** Current
+**Last Updated:** 2025-12-18 | **Status:** Current
 
 ---
 
@@ -69,6 +69,28 @@ ORDER BY started_at DESC'
 
 **Running Phase 4?** Use [runbooks/phase4-precompute-backfill.md](./runbooks/phase4-precompute-backfill.md)
 
+**Running Phase 5B (Prediction Grading)?** Use [runbooks/phase5b-prediction-grading-backfill.md](./runbooks/phase5b-prediction-grading-backfill.md)
+
+---
+
+## IMPORTANT: Phase 5B Prediction Grading (December 2025)
+
+**Discovery:** The Phase 5B prediction grading infrastructure exists but tables are EMPTY.
+
+| Table | Status |
+|-------|--------|
+| `prediction_accuracy` | Schema exists, **DATA EMPTY** |
+| `system_daily_performance` | Schema exists, **DATA EMPTY** |
+| `prediction_performance_summary` | **NEW TABLE** needed |
+
+**Run the backfill to enable prediction track record:**
+```bash
+PYTHONPATH=. .venv/bin/python backfill_jobs/grading/prediction_accuracy/prediction_accuracy_grading_backfill.py \
+  --start-date 2025-10-21 --end-date 2025-12-17
+```
+
+See [runbooks/phase5b-prediction-grading-backfill.md](./runbooks/phase5b-prediction-grading-backfill.md) for full details.
+
 ---
 
 ## Documentation Index
@@ -91,6 +113,7 @@ ORDER BY started_at DESC'
 |----------|---------|
 | [runbooks/phase4-precompute-backfill.md](./runbooks/phase4-precompute-backfill.md) | Step-by-step Phase 4 backfill execution |
 | [runbooks/phase4-dependencies.md](./runbooks/phase4-dependencies.md) | Phase 4 dependency chain, issue categories |
+| [runbooks/phase5b-prediction-grading-backfill.md](./runbooks/phase5b-prediction-grading-backfill.md) | **Phase 5B prediction grading backfill** |
 | [runbooks/name-resolution.md](./runbooks/name-resolution.md) | Player name resolution backfill |
 | [runbooks/nbac-team-boxscore.md](./runbooks/nbac-team-boxscore.md) | NBAC team boxscore backfill |
 
