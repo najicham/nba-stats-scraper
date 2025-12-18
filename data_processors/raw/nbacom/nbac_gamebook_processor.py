@@ -1148,10 +1148,16 @@ class NbacGamebookProcessor(SmartIdempotencyMixin, ProcessorBase):
             
             raise e
     
-    def save_data(self) -> None:
-        """Save transformed data to BigQuery (overrides ProcessorBase.save_data())."""
+    def save_data(self, is_final_batch: bool = False) -> dict:
+        """Save transformed data to BigQuery (overrides ProcessorBase.save_data()).
+
+        Args:
+            is_final_batch: If True, finalize processing after this batch.
+
+        Returns:
+            dict with 'rows_processed' and 'errors' keys.
+        """
         rows = self.transformed_data
-        """Load data to BigQuery using MERGE_UPDATE strategy."""
         if not rows:
             return {'rows_processed': 0, 'errors': []}
         
@@ -1193,7 +1199,7 @@ class NbacGamebookProcessor(SmartIdempotencyMixin, ProcessorBase):
             logger.info(f"Successfully loaded {len(rows)} gamebook rows")
                 
             # If this is the final batch, finalize processing
-            if kwargs.get('is_final_batch', False):
+            if is_final_batch:
                 self.finalize_processing()
                 
         except Exception as e:

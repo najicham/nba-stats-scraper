@@ -120,9 +120,9 @@ class NbacGamebookBackfill:
             # Transform data (uses self.raw_data internally)
             self.processor.transform_data()
 
-            # Load to BigQuery (mark final batch if this is the last file)
+            # Save to BigQuery (mark final batch if this is the last file)
             is_final_batch = (file_index == total_files)
-            result = self.processor.load_data(self.processor.transformed_data, is_final_batch=is_final_batch)
+            result = self.processor.save_data(is_final_batch=is_final_batch)
             
             if result.get('errors'):
                 logger.error(f"Failed to load {gcs_path}: {result['errors']}")
