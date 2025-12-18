@@ -105,18 +105,24 @@ class NbacGamebookBackfill:
                 logger.warning(f"Invalid JSON in {gcs_path}")
                 return {'status': 'invalid_json', 'file': gcs_path}
             
+            # Set raw data in processor (required for transform_data)
+            # Add metadata with source file path
+            data['metadata'] = data.get('metadata', {})
+            data['metadata']['source_file'] = file_path
+            self.processor.raw_data = data
+
             # Validate data
             errors = self.processor.validate_data(data)
             if errors:
                 logger.warning(f"Validation errors in {gcs_path}: {errors}")
                 return {'status': 'validation_failed', 'file': gcs_path, 'errors': errors}
-            
-            # Transform data
-            rows = self.processor.transform_data(data, file_path)
-            
+
+            # Transform data (uses self.raw_data internally)
+            self.processor.transform_data()
+
             # Load to BigQuery (mark final batch if this is the last file)
             is_final_batch = (file_index == total_files)
-            result = self.processor.load_data(rows, is_final_batch=is_final_batch)
+            result = self.processor.load_data(self.processor.transformed_data, is_final_batch=is_final_batch)
             
             if result.get('errors'):
                 logger.error(f"Failed to load {gcs_path}: {result['errors']}")
