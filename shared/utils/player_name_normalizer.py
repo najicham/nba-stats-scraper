@@ -104,12 +104,14 @@ def extract_suffix(name: str) -> tuple[str, Optional[str]]:
     if not name:
         return "", None
     
-    # Define common suffixes
+    # Define common suffixes - SORTED BY LENGTH DESC to avoid partial matches
+    # e.g., "III" must be checked before "II" since "iii".endswith("ii") is True
     suffixes = [
-        'Jr.', 'Jr', 'Junior',
-        'Sr.', 'Sr', 'Senior', 
-        'II', 'III', 'IV', 'V',
-        '2nd', '3rd', '4th', '5th'
+        'Junior', 'Senior',  # Longest first
+        'Jr.', 'Sr.',
+        'III', 'IV', 'V', 'II',  # Roman numerals: III before II!
+        '3rd', '4th', '5th', '2nd',  # Ordinals
+        'Jr', 'Sr',  # Without periods last
     ]
     
     name_trimmed = name.strip()

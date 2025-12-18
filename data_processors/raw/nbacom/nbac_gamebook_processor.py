@@ -781,13 +781,30 @@ class NbacGamebookProcessor(SmartIdempotencyMixin, ProcessorBase):
                 return last_name, self.normalize_name(last_name), 'multiple_matches', quality_flags, True
                 
             else:
-                # No match found
+                # No BR roster match - try BDL fallback for two-way/G-League players
+                if game_date:
+                    bdl_result = self.resolve_with_bdl_fallback(last_name, team_abbr, game_date)
+                    if bdl_result:
+                        # BDL fallback succeeded
+                        resolved_name = bdl_result['full_name']
+                        resolved_lookup = bdl_result['lookup']
+                        quality_flags.append('bdl_fallback')
+                        if game_id:
+                            self.log_resolution_attempt(
+                                last_name, team_abbr, season_year, 'resolved', game_id, game_date,
+                                player_status=player_status, resolved_name=resolved_name,
+                                method='bdl_fallback', confidence=0.9, matches_found=1,
+                                source_file_path=source_file_path
+                            )
+                        return resolved_name, resolved_lookup, 'resolved', quality_flags, False
+
+                # No match found anywhere
                 requires_review = player_status == 'inactive'  # Injured players need more attention
                 if game_id and game_date:
                     self.log_resolution_attempt(
                         last_name, team_abbr, season_year, 'not_found', game_id, game_date,
-                        player_status=player_status, method=method, confidence=0.0, 
-                        matches_found=0, error_details=f"No roster match for '{lookup_name}' on {br_team_abbr}",
+                        player_status=player_status, method=method, confidence=0.0,
+                        matches_found=0, error_details=f"No roster match for '{lookup_name}' on {br_team_abbr} (BR + BDL)",
                         source_file_path=source_file_path
                     )
                 return last_name, self.normalize_name(last_name), 'not_found', quality_flags, requires_review
@@ -838,7 +855,89 @@ class NbacGamebookProcessor(SmartIdempotencyMixin, ProcessorBase):
         # Look up in roster cache
         roster_key = (br_team_abbr, last_name.lower())
         return self.br_roster_cache[season_year].get(roster_key, [])
-    
+
+    def resolve_with_bdl_fallback(self, last_name: str, team_abbr: str, game_date: str) -> Optional[Dict]:
+        """
+        Fallback resolution using Ball Don't Lie player boxscores.
+
+        This catches two-way and G-League players who have played NBA games
+        but aren't in traditional roster sources like Basketball Reference.
+
+        Args:
+            last_name: Player's last name (with or without suffix)
+            team_abbr: Team abbreviation
+            game_date: Game date for filtering recent players
+
+        Returns:
+            Dict with 'full_name' and 'lookup' if found, None otherwise
+        """
+        try:
+            # Handle suffix - strip Jr., III, etc.
+            lookup_name = self.handle_suffix_names(last_name)
+
+            # Build list of name variants to try (for compound surnames like "Jones Garcia")
+            name_variants = [lookup_name]
+            if ' ' in lookup_name:
+                # Add individual parts of compound names
+                parts = lookup_name.split()
+                name_variants.extend(parts)
+
+            # Build OR conditions for all variants
+            like_conditions = []
+            for variant in name_variants:
+                like_conditions.append(f"LOWER(player_full_name) LIKE LOWER('%{variant}%')")
+                like_conditions.append(f"LOWER(REPLACE(player_full_name, ' ', '')) LIKE LOWER('%{variant}%')")
+
+            like_clause = ' OR '.join(like_conditions)
+
+            # Query BDL for players on this team with matching last name
+            # Look at games from the current season (last 3 months for safety)
+            query = f"""
+            SELECT DISTINCT
+                player_full_name,
+                player_lookup
+            FROM `{self.project_id}.nba_raw.bdl_player_boxscores`
+            WHERE game_date >= DATE_SUB(DATE('{game_date}'), INTERVAL 90 DAY)
+              AND team_abbr = '{team_abbr}'
+              AND ({like_clause})
+            ORDER BY player_full_name
+            """
+
+            results = self.bq_client.query(query).to_dataframe()
+
+            if len(results) == 1:
+                # Single match - high confidence
+                logger.info(f"BDL fallback resolved '{last_name}' on {team_abbr} → '{results.iloc[0]['player_full_name']}'")
+                return {
+                    'full_name': results.iloc[0]['player_full_name'],
+                    'lookup': results.iloc[0]['player_lookup']
+                }
+            elif len(results) > 1:
+                # Multiple matches - check if any is an exact last name match
+                for _, row in results.iterrows():
+                    name_parts = row['player_full_name'].split()
+                    if len(name_parts) >= 2:
+                        player_last = name_parts[-1].lower()
+                        # Handle Jr., III etc in the full name
+                        if player_last in ['jr.', 'jr', 'sr.', 'sr', 'ii', 'iii', 'iv', 'v']:
+                            player_last = name_parts[-2].lower() if len(name_parts) > 2 else player_last
+                        if player_last == lookup_name.lower():
+                            logger.info(f"BDL fallback exact match '{last_name}' on {team_abbr} → '{row['player_full_name']}'")
+                            return {
+                                'full_name': row['player_full_name'],
+                                'lookup': row['player_lookup']
+                            }
+                # No exact match, log for debugging
+                logger.warning(f"BDL fallback found {len(results)} matches for '{last_name}' on {team_abbr}: {results['player_full_name'].tolist()}")
+                return None
+            else:
+                logger.debug(f"BDL fallback: no match for '{last_name}' on {team_abbr}")
+                return None
+
+        except Exception as e:
+            logger.error(f"BDL fallback error for '{last_name}' on {team_abbr}: {e}")
+            return None
+
     def extract_game_info(self, file_path: str, data: Dict) -> Dict:
         """Extract game metadata from file path and data."""
         # Path format: nba-com/gamebooks-data/2021-10-19/20211019-BKNMIL/20250827_234400.json
