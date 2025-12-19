@@ -168,12 +168,16 @@ class BigDataBallPbpBackfill:
                 }
             
             # Step 3: Transform data to BigQuery rows
-            rows = self.processor.transform_data(raw_data, file_path)
+            # Set raw_data on processor (transform_data expects it to be set)
+            self.processor.raw_data = raw_data
+            self.processor.raw_data['metadata'] = {'source_file': file_path}
+            self.processor.transform_data()
+            rows = self.processor.transformed_data
             if not rows:
                 return {'success': False, 'error': 'No rows generated', 'file': file_path}
             
-            # Step 4: Load to BigQuery
-            result = self.processor.load_data(rows)
+            # Step 4: Save to BigQuery (uses self.transformed_data internally)
+            result = self.processor.save_data()
             
             # Check for errors
             if result.get('errors'):

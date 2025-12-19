@@ -368,8 +368,8 @@ class BigDataBallPbpProcessor(SmartIdempotencyMixin, ProcessorBase):
                 
                 # Event Identifiers
                 'event_id': f"{game_id}_{event.get('play_id')}",
-                'event_sequence': event.get('play_id'),
-                'period': event.get('period'),
+                'event_sequence': int(event.get('play_id')) if event.get('play_id') is not None else None,
+                'period': int(event.get('period')) if event.get('period') is not None else None,
                 
                 # Game Clock
                 'game_clock': event.get('remaining_time'),
@@ -385,8 +385,8 @@ class BigDataBallPbpProcessor(SmartIdempotencyMixin, ProcessorBase):
                 'event_description': event.get('description'),
                 
                 # Score Tracking
-                'score_home': event.get('home_score'),
-                'score_away': event.get('away_score'),
+                'score_home': int(event.get('home_score')) if event.get('home_score') is not None else None,
+                'score_away': int(event.get('away_score')) if event.get('away_score') is not None else None,
                 
                 # Primary Player
                 'player_1_name': event.get('player'),
@@ -409,7 +409,7 @@ class BigDataBallPbpProcessor(SmartIdempotencyMixin, ProcessorBase):
                 'shot_made': event.get('result') == 'made' if event.get('event_type') == 'shot' else None,
                 'shot_type': self.determine_shot_type(event.get('type')) if event.get('event_type') == 'shot' else None,
                 'shot_distance': event.get('shot_distance'),
-                'points_scored': event.get('points'),
+                'points_scored': int(event.get('points')) if event.get('points') is not None else None,
                 
                 # Shot Coordinates
                 'original_x': event.get('original_x'),
