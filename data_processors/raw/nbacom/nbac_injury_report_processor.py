@@ -51,7 +51,11 @@ class NbacInjuryReportProcessor(SmartIdempotencyMixin, ProcessorBase):
         self.bq_client = bigquery.Client(project=self.project_id)
         self.records_processed = 0
         self.records_failed = 0
-        
+
+    def load_data(self) -> None:
+        """Load data from GCS."""
+        self.raw_data = self.load_json_from_gcs()
+
     def validate_data(self, data: Dict) -> List[str]:
         """Validate the JSON data structure."""
         errors = []
@@ -473,3 +477,12 @@ class NbacInjuryReportProcessor(SmartIdempotencyMixin, ProcessorBase):
                 logger.warning(f"Failed to send notification: {notify_ex}")
         
         return {'rows_processed': len(rows), 'errors': errors}
+
+    def get_processor_stats(self) -> Dict:
+        """Return processing statistics."""
+        return {
+            'rows_processed': self.stats.get('rows_inserted', 0),
+            'rows_failed': self.stats.get('rows_failed', 0),
+            'run_id': self.stats.get('run_id'),
+            'total_runtime': self.stats.get('total_runtime', 0)
+        }

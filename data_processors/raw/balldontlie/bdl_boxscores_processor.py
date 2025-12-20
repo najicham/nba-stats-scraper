@@ -62,7 +62,11 @@ class BdlBoxscoresProcessor(SmartIdempotencyMixin, ProcessorBase):
         
         # Standard NBA team abbreviations for validation
         self.valid_team_abbrevs = set(self.team_mapping.values())
-    
+
+    def load_data(self) -> None:
+        """Load boxscores data from GCS."""
+        self.raw_data = self.load_json_from_gcs()
+
     def normalize_team_name(self, team_name: str) -> str:
         """Normalize team name to standard abbreviation."""
         if not team_name:
@@ -699,4 +703,13 @@ class BdlBoxscoresProcessor(SmartIdempotencyMixin, ProcessorBase):
             'rows_processed': len(rows) if not errors else 0,
             'errors': errors,
             'streaming_conflicts': streaming_conflicts
+        }
+
+    def get_processor_stats(self) -> Dict:
+        """Return processing statistics."""
+        return {
+            'rows_processed': self.stats.get('rows_inserted', 0),
+            'rows_failed': self.stats.get('rows_failed', 0),
+            'run_id': self.stats.get('run_id'),
+            'total_runtime': self.stats.get('total_runtime', 0)
         }

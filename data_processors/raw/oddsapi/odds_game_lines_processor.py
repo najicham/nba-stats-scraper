@@ -55,7 +55,11 @@ class OddsGameLinesProcessor(SmartIdempotencyMixin, ProcessorBase):
         
         # Initialize Eastern timezone for game date conversions
         self.eastern_tz = pytz.timezone('US/Eastern')
-    
+
+    def load_data(self) -> None:
+        """Load data from GCS."""
+        self.raw_data = self.load_json_from_gcs()
+
     def is_historical_format(self, data: Dict) -> bool:
         """
         Detect if data is in historical format (wrapped) or current format (unwrapped).
@@ -703,3 +707,12 @@ class OddsGameLinesProcessor(SmartIdempotencyMixin, ProcessorBase):
                     logger.debug(f"Cleaned up temporary table: {temp_table_id}")
                 except Exception as cleanup_error:
                     logger.warning(f"Failed to cleanup temp table: {cleanup_error}")
+
+    def get_processor_stats(self) -> Dict:
+        """Return processing statistics."""
+        return {
+            'rows_processed': self.stats.get('rows_inserted', 0),
+            'rows_failed': self.stats.get('rows_failed', 0),
+            'run_id': self.stats.get('run_id'),
+            'total_runtime': self.stats.get('total_runtime', 0)
+        }

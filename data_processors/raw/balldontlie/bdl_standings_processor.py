@@ -42,7 +42,11 @@ class BdlStandingsProcessor(SmartIdempotencyMixin, ProcessorBase):
         self.processing_strategy = 'MERGE_UPDATE'
         self.project_id = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
         self.bq_client = bigquery.Client(project=self.project_id)
-        
+
+    def load_data(self) -> None:
+        """Load standings data from GCS."""
+        self.raw_data = self.load_json_from_gcs()
+
     def parse_record_string(self, record_str: str) -> Tuple[int, int]:
         """Parse '41-11' format into (wins, losses) tuple."""
         if not record_str or '-' not in record_str:
@@ -431,4 +435,13 @@ class BdlStandingsProcessor(SmartIdempotencyMixin, ProcessorBase):
         return {
             'rows_processed': len(rows) if not errors else 0,
             'errors': errors
+        }
+
+    def get_processor_stats(self) -> Dict:
+        """Return processing statistics."""
+        return {
+            'rows_processed': self.stats.get('rows_inserted', 0),
+            'rows_failed': self.stats.get('rows_failed', 0),
+            'run_id': self.stats.get('run_id'),
+            'total_runtime': self.stats.get('total_runtime', 0)
         }

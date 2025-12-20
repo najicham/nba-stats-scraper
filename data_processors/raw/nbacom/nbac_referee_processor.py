@@ -598,3 +598,12 @@ class NbacRefereeProcessor(SmartIdempotencyMixin, ProcessorBase):
                 'game_assignments_processed': 0,
                 'replay_center_processed': 0
             }
+
+    def get_processor_stats(self) -> Dict:
+        """Return processing statistics."""
+        return {
+            'rows_processed': self.stats.get('rows_inserted', 0),
+            'rows_failed': self.stats.get('rows_failed', 0),
+            'run_id': self.stats.get('run_id'),
+            'total_runtime': self.stats.get('total_runtime', 0)
+        }

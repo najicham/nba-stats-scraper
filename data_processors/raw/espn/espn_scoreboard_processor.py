@@ -89,7 +89,11 @@ class EspnScoreboardProcessor(SmartIdempotencyMixin, ProcessorBase):
             'CNS',   # China team
             'FLMG',  # Flamingos Mexico
         }
-        
+
+    def load_data(self) -> None:
+        """Load data from GCS."""
+        self.raw_data = self.load_json_from_gcs()
+
         # Game statuses to filter (these games never happened)
         self.filtered_statuses = {
             'postponed',
@@ -648,3 +652,12 @@ class EspnScoreboardProcessor(SmartIdempotencyMixin, ProcessorBase):
                 logging.warning(f"Failed to send notification: {notify_ex}")
             
             return {'rows_processed': 0, 'errors': [error_msg]}
+
+    def get_processor_stats(self) -> Dict:
+        """Return processing statistics."""
+        return {
+            'rows_processed': self.stats.get('rows_inserted', 0),
+            'rows_failed': self.stats.get('rows_failed', 0),
+            'run_id': self.stats.get('run_id'),
+            'total_runtime': self.stats.get('total_runtime', 0)
+        }

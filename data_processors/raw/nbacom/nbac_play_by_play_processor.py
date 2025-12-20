@@ -55,7 +55,11 @@ class NbacPlayByPlayProcessor(SmartIdempotencyMixin, ProcessorBase):
 
         # Schedule service for season type detection
         self.schedule_service = NBAScheduleService()
-        
+
+    def load_data(self) -> None:
+        """Load data from GCS."""
+        self.raw_data = self.load_json_from_gcs()
+
         # NBA team ID to abbreviation mapping
         self.team_id_mapping = {
             1610612737: 'ATL', 1610612738: 'BOS', 1610612751: 'BRK', 1610612766: 'CHA',
@@ -708,6 +712,16 @@ class NbacPlayByPlayProcessor(SmartIdempotencyMixin, ProcessorBase):
             'errors': errors,
             'events_processed': len(rows)
         }
+
+    def get_processor_stats(self) -> Dict:
+        """Return processing statistics."""
+        return {
+            'rows_processed': self.stats.get('rows_inserted', 0),
+            'rows_failed': self.stats.get('rows_failed', 0),
+            'run_id': self.stats.get('run_id'),
+            'total_runtime': self.stats.get('total_runtime', 0)
+        }
+
 
 
 # CLI entry point for testing

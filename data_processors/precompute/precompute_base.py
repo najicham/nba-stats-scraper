@@ -481,10 +481,10 @@ class PrecomputeProcessorBase(RunHistoryMixin):
     def check_dependencies(self, analysis_date: date) -> dict:
         """
         Check if required upstream data exists and is fresh enough.
-        
+
         Args:
-            analysis_date: Date to check dependencies for
-            
+            analysis_date: Date to check dependencies for (can be string or date)
+
         Returns:
             dict: {
                 'all_critical_present': bool,
@@ -494,6 +494,10 @@ class PrecomputeProcessorBase(RunHistoryMixin):
                 'details': Dict[str, Dict]
             }
         """
+        # Ensure analysis_date is a date object, not a string
+        if isinstance(analysis_date, str):
+            analysis_date = datetime.strptime(analysis_date, '%Y-%m-%d').date()
+
         dependencies = self.get_dependencies()
         
         results = {
@@ -640,13 +644,13 @@ class PrecomputeProcessorBase(RunHistoryMixin):
             row_count = row.row_count
             last_updated = row.last_updated
 
-            # Strip timezone info if present (BQ returns tz-aware, datetime.utcnow() is naive)
-            if last_updated and last_updated.tzinfo:
-                last_updated = last_updated.replace(tzinfo=None)
-
-            # Calculate age
+            # Calculate age using timezone-aware datetime
+            # BQ returns tz-aware timestamps, so use datetime.now(timezone.utc) for comparison
             if last_updated:
-                age_hours = (datetime.utcnow() - last_updated).total_seconds() / 3600
+                # Ensure last_updated is timezone-aware (add UTC if naive)
+                if last_updated.tzinfo is None:
+                    last_updated = last_updated.replace(tzinfo=timezone.utc)
+                age_hours = (datetime.now(timezone.utc) - last_updated).total_seconds() / 3600
             else:
                 age_hours = None
             
@@ -849,6 +853,10 @@ class PrecomputeProcessorBase(RunHistoryMixin):
         logger.info("🛡️  Running defensive checks...")
 
         try:
+            # Ensure analysis_date is a date object, not a string
+            if isinstance(analysis_date, str):
+                analysis_date = datetime.strptime(analysis_date, '%Y-%m-%d').date()
+
             # Initialize completeness checker
             checker = CompletenessChecker(self.bq_client, self.project_id)
 

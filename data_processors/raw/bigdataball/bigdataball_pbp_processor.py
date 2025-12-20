@@ -53,7 +53,11 @@ class BigDataBallPbpProcessor(SmartIdempotencyMixin, ProcessorBase):
         # CRITICAL: These two lines are REQUIRED for all processors
         self.project_id = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
         self.bq_client = bigquery.Client(project=self.project_id)
-        
+
+    def load_data(self) -> None:
+        """Load data from GCS."""
+        self.raw_data = self.load_json_from_gcs()
+
     def parse_json(self, json_content: str, file_path: str) -> Dict:
         """
         Parse BigDataBall data - handles BOTH JSON and CSV formats.
@@ -571,4 +575,13 @@ class BigDataBallPbpProcessor(SmartIdempotencyMixin, ProcessorBase):
             'rows_processed': len(rows) if not errors else 0, 
             'errors': errors,
             'game_id': rows[0]['game_id'] if rows else None
+        }
+
+    def get_processor_stats(self) -> Dict:
+        """Return processing statistics."""
+        return {
+            'rows_processed': self.stats.get('rows_inserted', 0),
+            'rows_failed': self.stats.get('rows_failed', 0),
+            'run_id': self.stats.get('run_id'),
+            'total_runtime': self.stats.get('total_runtime', 0)
         }

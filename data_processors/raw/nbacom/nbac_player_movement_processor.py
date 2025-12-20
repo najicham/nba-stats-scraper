@@ -61,7 +61,11 @@ class NbacPlayerMovementProcessor(SmartIdempotencyMixin, ProcessorBase):
         # Tracking counters
         self.transactions_processed = 0
         self.transactions_failed = 0
-    
+
+    def load_data(self) -> None:
+        """Load data from GCS."""
+        self.raw_data = self.load_json_from_gcs()
+
     def normalize_player_slug(self, slug: str) -> Tuple[str, str]:
         """Convert player slug to full name and lookup."""
         if not slug:

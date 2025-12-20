@@ -99,7 +99,11 @@ class BettingPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
             37: 'Hard Rock',
             49: 'Fliff',
         }
-    
+
+    def load_data(self) -> None:
+        """Load data from GCS."""
+        self.raw_data = self.load_json_from_gcs()
+
     def file_already_processed(self, file_path: str) -> bool:
         """
         Check if this specific GCS file has already been processed.
@@ -624,3 +628,12 @@ class BettingPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
                 'unique_bookmakers': 0,
                 'props_processed': 0
             }
+
+    def get_processor_stats(self) -> Dict:
+        """Return processing statistics."""
+        return {
+            'rows_processed': self.stats.get('rows_inserted', 0),
+            'rows_failed': self.stats.get('rows_failed', 0),
+            'run_id': self.stats.get('run_id'),
+            'total_runtime': self.stats.get('total_runtime', 0)
+        }

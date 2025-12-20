@@ -55,7 +55,11 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
         
         # NEW: Source tracking
         self.data_source = None  # Will be set from file path
-    
+
+    def load_data(self) -> None:
+        """Load data from GCS."""
+        self.raw_data = self.load_json_from_gcs()
+
     def detect_data_source(self, file_path: str) -> str:
         """
         Detect data source from GCS file path.
@@ -746,6 +750,16 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
                 'rows_processed': 0,
                 'data_source': self.data_source if hasattr(self, 'data_source') else None
             }
+
+    def get_processor_stats(self) -> Dict:
+        """Return processing statistics."""
+        return {
+            'rows_processed': self.stats.get('rows_inserted', 0),
+            'rows_failed': self.stats.get('rows_failed', 0),
+            'run_id': self.stats.get('run_id'),
+            'total_runtime': self.stats.get('total_runtime', 0)
+        }
+
 
 
 # CLI entry point for testing

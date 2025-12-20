@@ -196,10 +196,10 @@ create_or_update_scheduler_job \
     "${SERVICE_URL}/generate-daily-schedule" \
     "180"
 
-# Job 2: Master Controller - Hourly 6 AM - 11 PM ET
+# Job 2: Master Controller - Every hour (24/7 for post-game windows at 1 AM and 4 AM)
 create_or_update_scheduler_job \
     "master-controller-hourly" \
-    "0 6-23 * * *" \
+    "0 * * * *" \
     "${SERVICE_URL}/evaluate-workflows" \
     "300"
 

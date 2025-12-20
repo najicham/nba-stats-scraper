@@ -95,7 +95,20 @@ class NbacGamebookProcessor(SmartIdempotencyMixin, ProcessorBase):
         self.files_processed = 0
 
         logger.info(f"Initialized processor with run ID: {self.processing_run_id}")
-    
+
+    def load_data(self) -> None:
+        """Load gamebook data from GCS with source file metadata."""
+        json_data = self.load_json_from_gcs()
+        # Wrap data with metadata for transform_data to access file path
+        self.raw_data = {
+            **json_data,
+            'metadata': {
+                'source_file': self.opts.get('file_path', 'unknown'),
+                'bucket': self.opts.get('bucket', 'nba-scraped-data')
+            }
+        }
+        logger.info(f"Loaded gamebook data from GCS: {self.opts.get('file_path')}")
+
     def set_processing_date_range(self, start_date: str, end_date: str):
         """Set the date range for this processing run (for performance logging)."""
         self.processing_date_range_start = start_date
@@ -1493,6 +1506,16 @@ class NbacGamebookProcessor(SmartIdempotencyMixin, ProcessorBase):
             
             # Fall back to Basketball Reference on error
             return self.resolve_inactive_player(last_name, team_abbr, season_year, game_id, game_date, player_status, source_file_path)
+
+    def get_processor_stats(self) -> Dict:
+        """Return processing statistics."""
+        return {
+            'rows_processed': self.stats.get('rows_inserted', 0),
+            'rows_failed': self.stats.get('rows_failed', 0),
+            'run_id': self.stats.get('run_id'),
+            'total_runtime': self.stats.get('total_runtime', 0)
+        }
+
 
 
 # CLI entry point for testing

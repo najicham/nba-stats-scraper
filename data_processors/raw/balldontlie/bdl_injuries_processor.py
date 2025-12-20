@@ -84,7 +84,11 @@ class BdlInjuriesProcessor(SmartIdempotencyMixin, ProcessorBase):
             29: 'UTA',  # Utah Jazz
             30: 'WAS',  # Washington Wizards
         }
-    
+
+    def load_data(self) -> None:
+        """Load injuries data from GCS."""
+        self.raw_data = self.load_json_from_gcs()
+
     def normalize_text(self, text: str) -> str:
         """Aggressive normalization for player name consistency."""
         if not text:
@@ -570,3 +574,12 @@ class BdlInjuriesProcessor(SmartIdempotencyMixin, ProcessorBase):
             logger.warning(f"Could not extract timestamp from {file_path}: {e}")
         
         return None
+
+    def get_processor_stats(self) -> Dict:
+        """Return processing statistics."""
+        return {
+            'rows_processed': self.stats.get('rows_inserted', 0),
+            'rows_failed': self.stats.get('rows_failed', 0),
+            'run_id': self.stats.get('run_id'),
+            'total_runtime': self.stats.get('total_runtime', 0)
+        }

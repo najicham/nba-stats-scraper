@@ -490,3 +490,12 @@ class BdlActivePlayersProcessor(SmartIdempotencyMixin, ProcessorBase):
                 logging.warning(f"Failed to send notification: {notify_ex}")
         
         return {'rows_processed': len(rows) if not errors else 0, 'errors': errors}
+
+    def get_processor_stats(self) -> Dict:
+        """Return processing statistics."""
+        return {
+            'rows_processed': self.stats.get('rows_inserted', 0),
+            'rows_failed': self.stats.get('rows_failed', 0),
+            'run_id': self.stats.get('run_id'),
+            'total_runtime': self.stats.get('total_runtime', 0)
+        }

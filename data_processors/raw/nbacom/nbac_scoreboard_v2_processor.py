@@ -60,7 +60,11 @@ class NbacScoreboardV2Processor(SmartIdempotencyMixin, ProcessorBase):
         # Tracking counters
         self.games_processed = 0
         self.games_failed = 0
-    
+
+    def load_data(self) -> None:
+        """Load data from GCS."""
+        self.raw_data = self.load_json_from_gcs()
+
     def normalize_team_abbreviation(self, abbr: str) -> str:
         """Normalize team abbreviation to standard format."""
         if not abbr:
@@ -522,6 +526,16 @@ class NbacScoreboardV2Processor(SmartIdempotencyMixin, ProcessorBase):
                 logging.warning(f"Failed to send notification: {notify_ex}")
             
             return {'rows_processed': 0, 'errors': errors}
+
+    def get_processor_stats(self) -> Dict:
+        """Return processing statistics."""
+        return {
+            'rows_processed': self.stats.get('rows_inserted', 0),
+            'rows_failed': self.stats.get('rows_failed', 0),
+            'run_id': self.stats.get('run_id'),
+            'total_runtime': self.stats.get('total_runtime', 0)
+        }
+
     
 if __name__ == "__main__":
     import argparse
