@@ -352,8 +352,8 @@ class UpcomingPlayerGameContextProcessor(
         return {
             'nba_raw.odds_api_player_points_props': {
                 'field_prefix': 'source_props',
-                'description': 'Player prop bets (DRIVER - determines which players to process)',
-                'critical': True,
+                'description': 'Player prop bets (optional - fallback to all-player mode without)',
+                'critical': False,  # Not critical - processor works without props (all-player mode)
                 'check_type': 'date_match'
             },
             'nba_raw.bdl_player_boxscores': {
@@ -371,8 +371,8 @@ class UpcomingPlayerGameContextProcessor(
             },
             'nba_raw.odds_api_game_lines': {
                 'field_prefix': 'source_game_lines',
-                'description': 'Game spreads and totals',
-                'critical': True,
+                'description': 'Game spreads and totals (optional - can predict without)',
+                'critical': False,  # Not critical - processor works without game lines
                 'check_type': 'date_match'
             }
         }
