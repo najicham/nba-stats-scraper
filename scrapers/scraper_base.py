@@ -518,6 +518,9 @@ class ScraperBase:
                 record_count = self.data.get('game_count', 0)
             elif 'record_count' in self.data:
                 record_count = self.data.get('record_count', 0)
+            elif 'rowCount' in self.data:
+                # Odds scrapers use rowCount (camelCase)
+                record_count = self.data.get('rowCount', 0)
             elif 'playerCount' in self.data:
                 record_count = self.data.get('playerCount', 0)
             elif 'records_found' in self.data:

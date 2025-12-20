@@ -72,6 +72,7 @@ PROCESSOR_REGISTRY = {
     
     'odds-api/player-props': OddsApiPropsProcessor,
     'odds-api/game-lines-history': OddsGameLinesProcessor,
+    'odds-api/game-lines': OddsGameLinesProcessor,  # Current/live game lines (non-historical)
     
     'nba-com/gamebooks-data': NbacGamebookProcessor,
     'nba-com/player-list': NbacPlayerListProcessor,
