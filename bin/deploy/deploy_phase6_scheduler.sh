@@ -18,7 +18,7 @@
 set -e
 
 PROJECT_ID="nba-props-platform"
-REGION="us-central1"
+REGION="us-west2"
 TOPIC="nba-phase6-export-trigger"
 DRY_RUN=false
 DELETE=false
@@ -142,6 +142,7 @@ if $DELETE; then
     delete_job "phase6-daily-results"
     delete_job "phase6-tonight-picks"
     delete_job "phase6-player-profiles"
+    delete_job "phase6-hourly-trends"
     echo ""
     echo "Done! All Phase 6 scheduler jobs deleted."
     exit 0
@@ -176,6 +177,14 @@ create_job "phase6-player-profiles" \
     '{"players": true, "min_games": 5}' \
     "Weekly refresh of player profiles (Sundays 6 AM ET)"
 
+# Job 4: Hourly Trends Export
+# Runs hourly 6 AM - 2 AM ET (covers game times)
+# Includes: who's hot/cold, bounce-back watch, tonight's trend plays
+create_job "phase6-hourly-trends" \
+    "0 6-23 * * *" \
+    '{"export_types": ["trends-hot-cold", "trends-bounce-back", "tonight-trend-plays"], "target_date": "today"}' \
+    "Hourly trends refresh for Trends page (6 AM - 11 PM ET)"
+
 echo ""
 echo "============================================"
 echo "Deployment Complete!"
@@ -185,6 +194,7 @@ echo "Created scheduler jobs:"
 echo "  - phase6-daily-results    (5 AM ET daily)"
 echo "  - phase6-tonight-picks    (1 PM ET daily)"
 echo "  - phase6-player-profiles  (6 AM ET Sundays)"
+echo "  - phase6-hourly-trends    (6 AM - 11 PM ET hourly)"
 echo ""
 echo "To test manually:"
 echo "  gcloud scheduler jobs run phase6-daily-results --location=$REGION"
