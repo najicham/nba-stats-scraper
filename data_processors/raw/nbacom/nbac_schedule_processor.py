@@ -25,15 +25,16 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
 
     Processing Strategy: MERGE_UPDATE
     Smart Idempotency: Enabled (Pattern #14)
-        Hash Fields: game_id, game_date, game_time_utc, home_team_tricode, away_team_tricode, game_status
+        Hash Fields: game_id, game_date, game_date_est, home_team_tricode, away_team_tricode, game_status
         Expected Skip Rate: 20% when schedules unchanged
     """
 
     # Smart Idempotency: Define meaningful fields for hash computation
+    # Note: Uses game_date_est (includes time) instead of game_time_utc (which doesn't exist in transformed data)
     HASH_FIELDS = [
         'game_id',
         'game_date',
-        'game_time_utc',
+        'game_date_est',
         'home_team_tricode',
         'away_team_tricode',
         'game_status'
