@@ -2,7 +2,7 @@
 
 **Created:** 2025-12-17
 **Last Updated:** 2025-12-18
-**Status:** Current
+**Status:** Historical Data Complete
 **Purpose:** Backfill prediction_accuracy and related grading tables
 
 ---
@@ -12,14 +12,23 @@
 Phase 5B grades predictions against actual results. This runbook covers:
 - `prediction_accuracy` - Per-prediction grading
 - `system_daily_performance` - Daily aggregates by system
-- `prediction_performance_summary` - Multi-dimensional aggregates (NEW)
+- `prediction_performance_summary` - Multi-dimensional aggregates
 
-### Key Discovery (December 2025)
+### Current Status (December 18, 2025)
 
-**The Phase 5B infrastructure exists but the tables are EMPTY.**
-- Schema: Exists
-- Processor code: Exists
-- Data: **Empty - needs backfill**
+**Historical data is now FULLY POPULATED:**
+
+| Table | Records | Date Range | Status |
+|-------|---------|------------|--------|
+| `prediction_accuracy` | 315,442 | 2021-11-06 to 2024-04-14 | ✅ Complete |
+| `system_daily_performance` | 2,015 | 2021-11-06 to 2024-04-14 | ✅ Complete |
+| `prediction_performance_summary` | 3,664 | As of 2024-04-14 | ✅ Complete |
+
+### Known Blockers for 2025-26 Season
+
+1. **No 2025-26 predictions exist** - Only 40 test predictions with wrong format
+2. **player_lookup format mismatch** - Predictions use `stephen_curry`, analytics uses `stephencurry`
+3. **Missing player_archetypes table** - Archetype summaries can't be computed
 
 ---
 
@@ -48,13 +57,25 @@ WHERE points IS NOT NULL'
 
 ## Quick Start
 
-### One-Command Backfill (Current Season)
+### Historical Data Already Backfilled ✅
+
+All historical data (2021-2024) has been backfilled. No action needed for historical data.
+
+### If You Need to Backfill New Dates
 
 ```bash
-# Backfill prediction accuracy for 2025-26 season
+# Backfill prediction accuracy for a date range
 PYTHONPATH=. .venv/bin/python backfill_jobs/grading/prediction_accuracy/prediction_accuracy_grading_backfill.py \
-  --start-date 2025-10-21 \
-  --end-date 2025-12-17
+  --start-date YYYY-MM-DD \
+  --end-date YYYY-MM-DD
+
+# Then run system_daily_performance aggregation
+PYTHONPATH=. .venv/bin/python data_processors/grading/system_daily_performance/system_daily_performance_processor.py \
+  --start-date YYYY-MM-DD --end-date YYYY-MM-DD
+
+# Then run performance_summary aggregation
+PYTHONPATH=. .venv/bin/python data_processors/grading/performance_summary/performance_summary_processor.py \
+  --date YYYY-MM-DD
 ```
 
 ### Verify Success
