@@ -1608,9 +1608,14 @@ class ScraperBase:
                     exporter_result = exporter.run(data_to_export, config, self.opts)
 
                     # ✅ Capture GCS output path if exporter returned it
+                    # Only capture the FIRST gcs_path (primary data exporter)
+                    # Secondary exporters (metadata, etc.) should not overwrite
                     if isinstance(exporter_result, dict) and 'gcs_path' in exporter_result:
-                        self.opts['gcs_output_path'] = exporter_result['gcs_path']
-                        logger.info(f"Captured gcs_output_path: {self.opts['gcs_output_path']}")
+                        if 'gcs_output_path' not in self.opts:
+                            self.opts['gcs_output_path'] = exporter_result['gcs_path']
+                            logger.info(f"Captured gcs_output_path: {self.opts['gcs_output_path']}")
+                        else:
+                            logger.debug(f"Skipping secondary gcs_path: {exporter_result['gcs_path']}")
                     else:
                         logger.debug(f"Exporter {exporter_type} returned: {type(exporter_result).__name__}")
 
