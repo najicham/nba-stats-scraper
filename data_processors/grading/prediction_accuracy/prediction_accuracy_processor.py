@@ -17,6 +17,7 @@ Key Features:
 - Evaluates OVER/UNDER recommendation correctness
 - Tracks threshold accuracy (within_3_points, within_5_points)
 - Computes margin analysis for betting evaluation
+- Tracks line source (has_prop_line, line_source) for no-line player analysis
 """
 
 import logging
@@ -97,7 +98,11 @@ class PredictionAccuracyProcessor:
             current_points_line as line_value,
             pace_adjustment,
             similar_games_count as similarity_sample_size,
-            model_version
+            model_version,
+            -- Line source tracking (for no-line player analysis)
+            COALESCE(has_prop_line, TRUE) as has_prop_line,
+            COALESCE(line_source, 'ACTUAL_PROP') as line_source,
+            estimated_line_value
         FROM `{PREDICTIONS_TABLE}`
         WHERE game_date = '{game_date}'
         """
@@ -285,6 +290,12 @@ class PredictionAccuracyProcessor:
             # Threshold accuracy
             'within_3_points': within_3,
             'within_5_points': within_5,
+
+            # Line source tracking (for no-line player analysis)
+            # Enables segmented accuracy analysis by whether player had real betting line
+            'has_prop_line': bool(prediction.get('has_prop_line', True)),
+            'line_source': prediction.get('line_source', 'ACTUAL_PROP'),
+            'estimated_line_value': round_numeric(self._safe_float(prediction.get('estimated_line_value')), 1),
 
             # Metadata
             'model_version': prediction.get('model_version'),

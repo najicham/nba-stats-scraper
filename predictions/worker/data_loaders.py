@@ -82,6 +82,8 @@ class PredictionDataLoader:
             feature_names,
             feature_quality_score,
             data_source,
+            days_rest,
+            is_home,
 
             -- Completeness metadata (Phase 5)
             expected_games_count,
@@ -126,12 +128,36 @@ class PredictionDataLoader:
             # Build feature dict
             features = dict(zip(feature_names, feature_array))
 
+            # Add feature name aliases for backward compatibility with prediction systems
+            # Some systems expect different names than what ml_feature_store_v2 provides
+            FEATURE_ALIASES = {
+                # Feature store name -> Alternative names systems might use
+                'games_in_last_7_days': ['games_played_last_7_days'],
+                'opponent_def_rating': ['opponent_def_rating_last_15'],
+                'opponent_pace': ['opponent_pace_last_15'],
+                'home_away': ['is_home'],
+                'pct_paint': ['paint_rate_last_10'],
+                'pct_mid_range': ['mid_range_rate_last_10'],
+                'pct_three': ['three_pt_rate_last_10'],
+                'pct_free_throw': ['assisted_rate_last_10'],
+                'team_pace': ['team_pace_last_10'],
+                'team_off_rating': ['team_off_rating_last_10'],
+                'team_win_pct': ['usage_rate_last_10'],
+            }
+            for source_name, aliases in FEATURE_ALIASES.items():
+                if source_name in features:
+                    for alias in aliases:
+                        features[alias] = features[source_name]
+
             # Add metadata
             features['feature_count'] = len(feature_array)
             features['feature_version'] = feature_version
             features['data_source'] = row.data_source
             features['feature_quality_score'] = float(row.feature_quality_score)
             features['features_array'] = feature_array  # Keep array for systems that need it
+
+            # Add row-level fields that prediction systems need
+            features['days_rest'] = int(row.days_rest) if row.days_rest is not None else 1
 
             # Add completeness metadata (Phase 5)
             features['completeness'] = {
@@ -701,44 +727,46 @@ def validate_features(features: Dict, min_quality_score: float = 70.0) -> tuple:
     """
     errors = []
     
-    # Required fields (25 features)
+    # Required fields (25 features) - matches ml_feature_store_v2 schema
     required_fields = [
         # Recent performance (0-4)
         'points_avg_last_5',
         'points_avg_last_10',
         'points_avg_season',
         'points_std_last_10',
-        'games_played_last_7_days',
-        
-        # Composite factors (5-12)
+        'games_in_last_7_days',
+
+        # Composite factors (5-8)
         'fatigue_score',
         'shot_zone_mismatch_score',
         'pace_score',
         'usage_spike_score',
-        'referee_favorability_score',
-        'look_ahead_pressure_score',
-        'matchup_history_score',
-        'momentum_score',
-        
+
+        # Derived factors (9-12)
+        'rest_advantage',
+        'injury_risk',
+        'recent_trend',
+        'minutes_change',
+
         # Matchup context (13-17)
-        'opponent_def_rating_last_15',
-        'opponent_pace_last_15',
-        'is_home',
-        'days_rest',
+        'opponent_def_rating',
+        'opponent_pace',
+        'home_away',
         'back_to_back',
-        
+        'playoff_game',
+
         # Shot zones (18-21)
-        'paint_rate_last_10',
-        'mid_range_rate_last_10',
-        'three_pt_rate_last_10',
-        'assisted_rate_last_10',
-        
+        'pct_paint',
+        'pct_mid_range',
+        'pct_three',
+        'pct_free_throw',
+
         # Team context (22-24)
-        'team_pace_last_10',
-        'team_off_rating_last_10',
-        'usage_rate_last_10',
-        
-        # Metadata
+        'team_pace',
+        'team_off_rating',
+        'team_win_pct',
+
+        # Metadata (from row, not feature array)
         'feature_quality_score'
     ]
     
@@ -771,11 +799,10 @@ def validate_features(features: Dict, min_quality_score: float = 70.0) -> tuple:
         ('points_avg_last_5', 0, 80),
         ('points_avg_last_10', 0, 80),
         ('fatigue_score', 0, 100),
-        ('opponent_def_rating_last_15', 95, 125),
-        ('usage_rate_last_10', 5, 45),
-        ('is_home', 0, 1),
-        ('days_rest', 0, 10),
-        ('back_to_back', 0, 1)
+        ('opponent_def_rating', 95, 125),
+        ('home_away', 0, 1),
+        ('back_to_back', 0, 1),
+        ('playoff_game', 0, 1),
     ]
     
     for field, min_val, max_val in range_checks:

@@ -452,11 +452,16 @@ class TestLastGameStructure:
 
                 result = exporter._query_bounce_back_candidates('2024-12-15', 10)
 
+                # Check new field names
+                assert result[0]['player_full_name'] == 'Test Player'
+                assert result[0]['team_abbr'] == 'TOR'
+
                 last_game = result[0]['last_game']
                 assert isinstance(last_game, dict)
                 assert last_game['date'] == '2024-12-14'
-                assert last_game['points'] == 15
+                assert last_game['result'] == 15  # renamed from 'points'
                 assert last_game['opponent'] == 'BKN'
+                assert last_game['margin'] == -10.5  # negative shortfall
 
 
 class TestSafeFloat:
@@ -491,21 +496,22 @@ class TestTonightGameEnrichment:
 
                 candidate = {
                     'player_lookup': 'lebron',
-                    'player_name': 'LeBron James',
-                    'team': 'LAL',
+                    'player_full_name': 'LeBron James',
+                    'team_abbr': 'LAL',
                     'shortfall': 12.0
                 }
 
                 tonight_games = {
-                    'LAL': {'opponent': 'GSW', 'game_time': '7:30 PM ET'},
-                    'GSW': {'opponent': 'LAL', 'game_time': '7:30 PM ET'}
+                    'LAL': {'opponent': 'GSW', 'game_time': '7:30 PM ET', 'home': True},
+                    'GSW': {'opponent': 'LAL', 'game_time': '7:30 PM ET', 'home': False}
                 }
 
                 exporter._enrich_with_tonight(candidate, tonight_games)
 
                 assert candidate['playing_tonight'] is True
-                assert candidate['tonight_opponent'] == 'GSW'
-                assert candidate['tonight_game_time'] == '7:30 PM ET'
+                assert candidate['tonight']['opponent'] == 'GSW'
+                assert candidate['tonight']['game_time'] == '7:30 PM ET'
+                assert candidate['tonight']['home'] is True
 
     def test_enrich_with_tonight_not_playing(self):
         """Test player whose team is not playing tonight"""
@@ -515,21 +521,20 @@ class TestTonightGameEnrichment:
 
                 candidate = {
                     'player_lookup': 'curry',
-                    'player_name': 'Stephen Curry',
-                    'team': 'GSW',
+                    'player_full_name': 'Stephen Curry',
+                    'team_abbr': 'GSW',
                     'shortfall': 15.0
                 }
 
                 tonight_games = {
-                    'LAL': {'opponent': 'BOS', 'game_time': '8:00 PM ET'},
-                    'BOS': {'opponent': 'LAL', 'game_time': '8:00 PM ET'}
+                    'LAL': {'opponent': 'BOS', 'game_time': '8:00 PM ET', 'home': True},
+                    'BOS': {'opponent': 'LAL', 'game_time': '8:00 PM ET', 'home': False}
                 }
 
                 exporter._enrich_with_tonight(candidate, tonight_games)
 
                 assert candidate['playing_tonight'] is False
-                assert candidate['tonight_opponent'] is None
-                assert candidate['tonight_game_time'] is None
+                assert candidate['tonight'] is None
 
 
 class TestFormatGameTime:

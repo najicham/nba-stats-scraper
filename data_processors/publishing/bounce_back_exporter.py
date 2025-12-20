@@ -6,6 +6,14 @@ and shows their historical bounce-back rate.
 
 Output: /v1/trends/bounce-back.json
 Refresh: Daily (6 AM ET)
+
+Frontend fields (BounceBackCandidate):
+- player_lookup, player_full_name, team_abbr
+- last_game: {result, opponent, margin}
+- season_average, shortfall
+- bounce_back_rate, bounce_back_sample
+- significance ("high"/"medium"/"low")
+- playing_tonight, tonight: {opponent, game_time, home}
 """
 
 import logging
@@ -32,12 +40,13 @@ class BounceBackExporter(BaseExporter):
             {
                 "rank": 1,
                 "player_lookup": "stephencurry",
-                "player_name": "Stephen Curry",
-                "team": "GSW",
+                "player_full_name": "Stephen Curry",
+                "team_abbr": "GSW",
                 "last_game": {
                     "date": "2024-12-14",
-                    "points": 12,
-                    "opponent": "LAL"
+                    "result": 12,
+                    "opponent": "LAL",
+                    "margin": -14.5
                 },
                 "season_average": 26.5,
                 "shortfall": 14.5,
@@ -45,7 +54,11 @@ class BounceBackExporter(BaseExporter):
                 "bounce_back_sample": 14,
                 "significance": "high",
                 "playing_tonight": true,
-                "tonight_opponent": "PHX"
+                "tonight": {
+                    "opponent": "PHX",
+                    "game_time": "7:30 PM ET",
+                    "home": true
+                }
             }
         ],
         "league_baseline": {
@@ -216,12 +229,13 @@ class BounceBackExporter(BaseExporter):
         return [
             {
                 'player_lookup': r['player_lookup'],
-                'player_name': r['player_name'],
-                'team': r['team'],
+                'player_full_name': r['player_name'],
+                'team_abbr': r['team'],
                 'last_game': {
                     'date': str(r['last_game_date']),
-                    'points': r['last_game_points'],
-                    'opponent': r['last_game_opponent']
+                    'result': r['last_game_points'],
+                    'opponent': r['last_game_opponent'],
+                    'margin': -self._safe_float(r['shortfall']),  # Negative since below average
                 },
                 'season_average': self._safe_float(r['season_average']),
                 'shortfall': self._safe_float(r['shortfall']),
@@ -298,8 +312,8 @@ class BounceBackExporter(BaseExporter):
         Returns:
             Dict mapping team codes to game info:
             {
-                'LAL': {'opponent': 'GSW', 'game_time': '7:30 PM ET'},
-                'GSW': {'opponent': 'LAL', 'game_time': '7:30 PM ET'},
+                'LAL': {'opponent': 'GSW', 'game_time': '7:30 PM ET', 'home': True},
+                'GSW': {'opponent': 'LAL', 'game_time': '7:30 PM ET', 'home': False},
                 ...
             }
         """
@@ -312,14 +326,16 @@ class BounceBackExporter(BaseExporter):
                 # Parse game time from ISO format to readable format
                 game_time = self._format_game_time(game.commence_time)
 
-                # Add both teams to the map
+                # Add both teams to the map with home/away distinction
                 tonight_map[game.home_team] = {
                     'opponent': game.away_team,
-                    'game_time': game_time
+                    'game_time': game_time,
+                    'home': True
                 }
                 tonight_map[game.away_team] = {
                     'opponent': game.home_team,
-                    'game_time': game_time
+                    'game_time': game_time,
+                    'home': False
                 }
 
             logger.info(f"Found {len(games)} games tonight with {len(tonight_map)} teams playing")
@@ -343,16 +359,18 @@ class BounceBackExporter(BaseExporter):
 
     def _enrich_with_tonight(self, candidate: Dict, tonight_games: Dict) -> None:
         """Add tonight's game info to candidate (mutates in place)."""
-        team = candidate.get('team')
+        team = candidate.get('team_abbr')
         if team and team in tonight_games:
             game = tonight_games[team]
             candidate['playing_tonight'] = True
-            candidate['tonight_opponent'] = game.get('opponent')
-            candidate['tonight_game_time'] = game.get('game_time')
+            candidate['tonight'] = {
+                'opponent': game.get('opponent'),
+                'game_time': game.get('game_time'),
+                'home': game.get('home', False),
+            }
         else:
             candidate['playing_tonight'] = False
-            candidate['tonight_opponent'] = None
-            candidate['tonight_game_time'] = None
+            candidate['tonight'] = None
 
     def export(self, as_of_date: str = None, **kwargs) -> str:
         """

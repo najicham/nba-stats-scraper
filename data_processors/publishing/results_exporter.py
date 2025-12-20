@@ -3,6 +3,12 @@ Results Exporter for Phase 6 Publishing
 
 Exports daily prediction results to JSON for the website.
 Shows how predictions compared to actual outcomes.
+
+Enhanced fields (December 2025):
+- confidence_tier: high/medium/low based on confidence_score
+- player_tier: elite/starter/role_player based on season PPG
+- Context fields: is_home, is_back_to_back, days_rest
+- Breakdowns: aggregated stats by tier, confidence, recommendation, context
 """
 
 import logging
@@ -14,6 +20,58 @@ from google.cloud import bigquery
 from .base_exporter import BaseExporter
 
 logger = logging.getLogger(__name__)
+
+
+# Tier thresholds
+CONFIDENCE_THRESHOLDS = {
+    'high': 0.70,
+    'medium': 0.55,
+}
+
+PLAYER_TIER_THRESHOLDS = {
+    'elite': 25.0,      # 25+ PPG
+    'starter': 15.0,    # 15-25 PPG
+}
+
+
+def get_confidence_tier(confidence_score: Optional[float]) -> str:
+    """
+    Bucket confidence score into tiers.
+
+    Args:
+        confidence_score: 0.0 to 1.0 confidence value
+
+    Returns:
+        'high', 'medium', or 'low'
+    """
+    if confidence_score is None:
+        return 'low'
+    if confidence_score >= CONFIDENCE_THRESHOLDS['high']:
+        return 'high'
+    elif confidence_score >= CONFIDENCE_THRESHOLDS['medium']:
+        return 'medium'
+    else:
+        return 'low'
+
+
+def get_player_tier(season_ppg: Optional[float]) -> str:
+    """
+    Classify player tier based on season PPG.
+
+    Args:
+        season_ppg: Player's season scoring average
+
+    Returns:
+        'elite', 'starter', or 'role_player'
+    """
+    if season_ppg is None:
+        return 'role_player'
+    if season_ppg >= PLAYER_TIER_THRESHOLDS['elite']:
+        return 'elite'
+    elif season_ppg >= PLAYER_TIER_THRESHOLDS['starter']:
+        return 'starter'
+    else:
+        return 'role_player'
 
 
 class ResultsExporter(BaseExporter):
@@ -61,43 +119,76 @@ class ResultsExporter(BaseExporter):
         # Build summary statistics
         summary = self._build_summary(results)
 
-        # Format individual results
+        # Format individual results (with tier and context fields)
         formatted_results = self._format_results(results)
 
         # Get highlights (best/worst predictions)
         highlights = self._get_highlights(results)
 
+        # Compute breakdowns by tier, confidence, recommendation, context
+        breakdowns = self._compute_breakdowns(formatted_results)
+
         return {
             'game_date': target_date,
             'generated_at': self.get_generated_at(),
             'summary': summary,
+            'breakdowns': breakdowns,
             'results': formatted_results,
             'highlights': highlights
         }
 
     def _query_results(self, target_date: str) -> List[Dict]:
-        """Query prediction_accuracy for ensemble results on a date."""
+        """
+        Query prediction_accuracy for ensemble results on a date.
+
+        Joins with ml_feature_store_v2 to get:
+        - is_home: whether player's team is home
+        - days_rest: days since player's team last played
+        - points_avg_season: for player_tier classification
+        - back_to_back: from features array (index 16)
+        """
         query = """
+        WITH feature_data AS (
+            SELECT
+                player_lookup,
+                game_id,
+                is_home,
+                days_rest,
+                -- Extract points_avg_season from features array (index 2)
+                SAFE_CAST(features[OFFSET(2)] AS FLOAT64) as points_avg_season,
+                -- Extract back_to_back from features array (index 16)
+                CASE WHEN features[OFFSET(16)] > 0.5 THEN TRUE ELSE FALSE END as is_back_to_back
+            FROM `nba-props-platform.nba_predictions.ml_feature_store_v2`
+            WHERE game_date = @target_date
+        )
         SELECT
-            player_lookup,
-            game_id,
-            team_abbr,
-            opponent_team_abbr,
-            predicted_points,
-            actual_points,
-            line_value,
-            recommendation,
-            prediction_correct,
-            absolute_error,
-            signed_error,
-            confidence_score,
-            within_3_points,
-            within_5_points,
-            minutes_played
-        FROM `nba-props-platform.nba_predictions.prediction_accuracy`
-        WHERE game_date = @target_date
-          AND system_id = 'ensemble_v1'
-        ORDER BY game_id, player_lookup
+            pa.player_lookup,
+            pa.game_id,
+            pa.team_abbr,
+            pa.opponent_team_abbr,
+            pa.predicted_points,
+            pa.actual_points,
+            pa.line_value,
+            pa.recommendation,
+            pa.prediction_correct,
+            pa.absolute_error,
+            pa.signed_error,
+            pa.confidence_score,
+            pa.within_3_points,
+            pa.within_5_points,
+            pa.minutes_played,
+            -- Context fields from feature store
+            COALESCE(fd.is_home, FALSE) as is_home,
+            COALESCE(fd.days_rest, 1) as days_rest,
+            COALESCE(fd.is_back_to_back, FALSE) as is_back_to_back,
+            fd.points_avg_season
+        FROM `nba-props-platform.nba_predictions.prediction_accuracy` pa
+        LEFT JOIN feature_data fd
+            ON pa.player_lookup = fd.player_lookup
+            AND pa.game_id = fd.game_id
+        WHERE pa.game_date = @target_date
+          AND pa.system_id = 'ensemble_v1'
+        ORDER BY pa.game_id, pa.player_lookup
         """
 
         params = [
@@ -148,7 +239,7 @@ class ResultsExporter(BaseExporter):
         }
 
     def _format_results(self, results: List[Dict]) -> List[Dict[str, Any]]:
-        """Format individual results for JSON output."""
+        """Format individual results for JSON output with tier and context fields."""
         formatted = []
 
         for r in results:
@@ -162,6 +253,10 @@ class ResultsExporter(BaseExporter):
             else:
                 result_status = 'PUSH'  # Exactly hit the line
 
+            # Calculate tiers
+            confidence_score = float(r['confidence_score']) if r['confidence_score'] else None
+            season_ppg = float(r['points_avg_season']) if r.get('points_avg_season') else None
+
             formatted.append({
                 'player_lookup': r['player_lookup'],
                 'game_id': r['game_id'],
@@ -174,8 +269,15 @@ class ResultsExporter(BaseExporter):
                 'result': result_status,
                 'error': float(r['absolute_error']) if r['absolute_error'] else None,
                 'bias': float(r['signed_error']) if r['signed_error'] else None,
-                'confidence': float(r['confidence_score']) if r['confidence_score'] else None,
-                'minutes': float(r['minutes_played']) if r['minutes_played'] else None
+                'confidence': confidence_score,
+                'minutes': float(r['minutes_played']) if r['minutes_played'] else None,
+                # NEW: Tier fields
+                'confidence_tier': get_confidence_tier(confidence_score),
+                'player_tier': get_player_tier(season_ppg),
+                # NEW: Context fields
+                'is_home': r.get('is_home', False),
+                'is_back_to_back': r.get('is_back_to_back', False),
+                'days_rest': r.get('days_rest', 1),
             })
 
         return formatted
@@ -214,8 +316,79 @@ class ResultsExporter(BaseExporter):
             }
         }
 
+    def _compute_breakdowns(self, formatted_results: List[Dict]) -> Dict[str, Any]:
+        """
+        Compute aggregated breakdown stats by tier, confidence, recommendation, and context.
+
+        Args:
+            formatted_results: List of formatted result dicts (with tier and context fields)
+
+        Returns:
+            Dictionary with breakdown stats for each category
+        """
+        def compute_stats(results_subset: List[Dict]) -> Dict[str, Any]:
+            """Compute stats for a subset of results."""
+            total = len(results_subset)
+            if total == 0:
+                return {
+                    'total': 0,
+                    'wins': 0,
+                    'losses': 0,
+                    'pushes': 0,
+                    'win_rate': 0,
+                    'avg_error': 0,
+                }
+
+            # Only count recommendations (OVER/UNDER, not PASS)
+            recs = [r for r in results_subset if r['recommendation'] in ('OVER', 'UNDER')]
+            wins = sum(1 for r in recs if r['result'] == 'WIN')
+            losses = sum(1 for r in recs if r['result'] == 'LOSS')
+            pushes = sum(1 for r in recs if r['result'] == 'PUSH')
+
+            errors = [r['error'] for r in results_subset if r['error'] is not None]
+            avg_error = round(sum(errors) / len(errors), 2) if errors else 0
+
+            rec_count = len(recs)
+            return {
+                'total': total,
+                'wins': wins,
+                'losses': losses,
+                'pushes': pushes,
+                'win_rate': round(wins / rec_count, 3) if rec_count > 0 else 0,
+                'avg_error': avg_error,
+            }
+
+        # Filter to non-PASS recommendations for meaningful breakdowns
+        recs_only = [r for r in formatted_results if r['recommendation'] in ('OVER', 'UNDER')]
+
+        return {
+            'by_player_tier': {
+                'elite': compute_stats([r for r in recs_only if r['player_tier'] == 'elite']),
+                'starter': compute_stats([r for r in recs_only if r['player_tier'] == 'starter']),
+                'role_player': compute_stats([r for r in recs_only if r['player_tier'] == 'role_player']),
+            },
+            'by_confidence': {
+                'high': compute_stats([r for r in recs_only if r['confidence_tier'] == 'high']),
+                'medium': compute_stats([r for r in recs_only if r['confidence_tier'] == 'medium']),
+                'low': compute_stats([r for r in recs_only if r['confidence_tier'] == 'low']),
+            },
+            'by_recommendation': {
+                'over': compute_stats([r for r in recs_only if r['recommendation'] == 'OVER']),
+                'under': compute_stats([r for r in recs_only if r['recommendation'] == 'UNDER']),
+            },
+            'by_context': {
+                'home': compute_stats([r for r in recs_only if r['is_home']]),
+                'away': compute_stats([r for r in recs_only if not r['is_home']]),
+                'back_to_back': compute_stats([r for r in recs_only if r['is_back_to_back']]),
+                'rested': compute_stats([r for r in recs_only if r['days_rest'] >= 2]),
+            },
+        }
+
     def _empty_response(self, target_date: str) -> Dict[str, Any]:
         """Return empty response for dates with no data."""
+        empty_stats = {
+            'total': 0, 'wins': 0, 'losses': 0, 'pushes': 0, 'win_rate': 0, 'avg_error': 0
+        }
         return {
             'game_date': target_date,
             'generated_at': self.get_generated_at(),
@@ -232,6 +405,28 @@ class ResultsExporter(BaseExporter):
                 'within_3_pct': 0,
                 'within_5_points': 0,
                 'within_5_pct': 0
+            },
+            'breakdowns': {
+                'by_player_tier': {
+                    'elite': empty_stats.copy(),
+                    'starter': empty_stats.copy(),
+                    'role_player': empty_stats.copy(),
+                },
+                'by_confidence': {
+                    'high': empty_stats.copy(),
+                    'medium': empty_stats.copy(),
+                    'low': empty_stats.copy(),
+                },
+                'by_recommendation': {
+                    'over': empty_stats.copy(),
+                    'under': empty_stats.copy(),
+                },
+                'by_context': {
+                    'home': empty_stats.copy(),
+                    'away': empty_stats.copy(),
+                    'back_to_back': empty_stats.copy(),
+                    'rested': empty_stats.copy(),
+                },
             },
             'results': [],
             'highlights': {}

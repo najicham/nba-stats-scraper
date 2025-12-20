@@ -496,10 +496,18 @@ def process_player_predictions(
     completeness = features.get('completeness', {})
     metadata['completeness'] = completeness
 
-    if not completeness.get('is_production_ready', False) and not completeness.get('backfill_bootstrap_mode', False):
+    # Allow processing if: production_ready OR bootstrap_mode OR high quality score (70+)
+    quality_score = features.get('feature_quality_score', 0)
+    is_acceptable = (
+        completeness.get('is_production_ready', False) or
+        completeness.get('backfill_bootstrap_mode', False) or
+        quality_score >= 70  # Accept high-quality features even if not marked production-ready
+    )
+
+    if not is_acceptable:
         logger.warning(
             f"Features not production-ready for {player_lookup} "
-            f"(completeness: {completeness.get('completeness_percentage', 0):.1f}%) - skipping"
+            f"(completeness: {completeness.get('completeness_percentage', 0):.1f}%, quality: {quality_score:.1f}) - skipping"
         )
         metadata['error_message'] = (
             f"Features incomplete: {completeness.get('completeness_percentage', 0):.1f}% "

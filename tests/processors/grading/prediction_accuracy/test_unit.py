@@ -284,7 +284,11 @@ class TestGradePrediction:
             'line_value': 24.5,
             'pace_adjustment': 1.05,
             'similarity_sample_size': 15,
-            'model_version': 'v1.0'
+            'model_version': 'v1.0',
+            # Line source tracking (for no-line player analysis)
+            'has_prop_line': True,
+            'line_source': 'ACTUAL_PROP',
+            'estimated_line_value': None
         }
 
     @pytest.fixture
@@ -432,6 +436,60 @@ class TestGradePrediction:
         result = processor.grade_prediction(sample_prediction, sample_actual)
 
         assert result['game_date'] == '2025-12-15'
+
+    def test_includes_has_prop_line(self, processor, sample_prediction, sample_actual):
+        """Test has_prop_line is included for line source tracking."""
+        result = processor.grade_prediction(sample_prediction, sample_actual)
+
+        assert result['has_prop_line'] is True
+
+    def test_includes_line_source(self, processor, sample_prediction, sample_actual):
+        """Test line_source is included for line source tracking."""
+        result = processor.grade_prediction(sample_prediction, sample_actual)
+
+        assert result['line_source'] == 'ACTUAL_PROP'
+
+    def test_includes_estimated_line_value_when_present(self, processor, sample_prediction, sample_actual):
+        """Test estimated_line_value is included when present."""
+        sample_prediction['has_prop_line'] = False
+        sample_prediction['line_source'] = 'ESTIMATED_AVG'
+        sample_prediction['estimated_line_value'] = 22.3
+
+        result = processor.grade_prediction(sample_prediction, sample_actual)
+
+        assert result['has_prop_line'] is False
+        assert result['line_source'] == 'ESTIMATED_AVG'
+        assert result['estimated_line_value'] == 22.3
+
+    def test_no_line_player_still_computes_point_accuracy(self, processor, sample_prediction, sample_actual):
+        """Test that no-line players still get point accuracy metrics."""
+        # Simulate a no-line player (only has estimated line)
+        sample_prediction['has_prop_line'] = False
+        sample_prediction['line_source'] = 'ESTIMATED_AVG'
+        sample_prediction['line_value'] = None  # No real betting line
+        sample_prediction['estimated_line_value'] = 22.3
+
+        result = processor.grade_prediction(sample_prediction, sample_actual)
+
+        # Point accuracy should still be computed
+        assert result['absolute_error'] == 2.5  # |27.5 - 30| = 2.5
+        assert result['signed_error'] == -2.5
+        assert result['within_3_points'] is True
+        # But O/U correctness cannot be evaluated
+        assert result['prediction_correct'] is None
+        assert result['predicted_margin'] is None
+        assert result['actual_margin'] is None
+
+    def test_defaults_has_prop_line_to_true(self, processor, sample_prediction, sample_actual):
+        """Test that missing has_prop_line defaults to True for backwards compatibility."""
+        del sample_prediction['has_prop_line']
+        del sample_prediction['line_source']
+        del sample_prediction['estimated_line_value']
+
+        result = processor.grade_prediction(sample_prediction, sample_actual)
+
+        assert result['has_prop_line'] is True
+        assert result['line_source'] == 'ACTUAL_PROP'
 
     def test_rounds_numeric_values(self, processor, sample_prediction, sample_actual):
         """Test that numeric values are rounded for BigQuery NUMERIC compatibility."""

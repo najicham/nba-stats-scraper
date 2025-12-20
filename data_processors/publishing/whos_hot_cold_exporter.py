@@ -5,9 +5,16 @@ Exports players on hot and cold streaks based on a composite "heat score"
 that combines hit rate, streak length, and margin performance.
 
 Heat Score = 50% hit_rate + 25% streak_factor + 25% margin_factor
+(Scaled 0-10 for frontend)
 
 Output: /v1/trends/whos-hot-v2.json
 Refresh: Daily (6 AM ET)
+
+Frontend fields (HotPlayerEntryV2):
+- player_lookup, player_full_name, team_abbr, position
+- heat_score (0-10), hit_rate, hit_rate_games
+- current_streak, streak_direction ("over"/"under"), avg_margin
+- playing_tonight, tonight: {opponent, game_time, home, prop_line}
 """
 
 import logging
@@ -30,23 +37,27 @@ class WhosHotColdExporter(BaseExporter):
     {
         "generated_at": "...",
         "as_of_date": "2024-12-15",
-        "time_period": "last_10",
+        "time_period": "last_30_days",
         "min_games": 5,
         "hot": [
             {
                 "rank": 1,
                 "player_lookup": "jordanclarkson",
-                "player_name": "Jordan Clarkson",
-                "team": "UTA",
-                "heat_score": 0.85,
+                "player_full_name": "Jordan Clarkson",
+                "team_abbr": "UTA",
+                "position": "SG",
+                "heat_score": 8.5,
                 "hit_rate": 0.75,
+                "hit_rate_games": 10,
                 "current_streak": 5,
-                "streak_type": "OVER",
+                "streak_direction": "over",
                 "avg_margin": 3.2,
-                "games_played": 10,
                 "playing_tonight": true,
-                "tonight_opponent": "LAL",
-                "tonight_game_time": "9:00 PM ET"
+                "tonight": {
+                    "opponent": "LAL",
+                    "game_time": "9:00 PM ET",
+                    "home": true
+                }
             }
         ],
         "cold": [...],
@@ -204,7 +215,7 @@ class WhosHotColdExporter(BaseExporter):
             LEFT JOIN max_games mg ON f.player_lookup = mg.player_lookup
         ),
         player_names AS (
-            SELECT player_lookup, player_name, team_abbr
+            SELECT player_lookup, player_name, team_abbr, position
             FROM `nba-props-platform.nba_reference.nba_players_registry`
             QUALIFY ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY season DESC) = 1
         ),
@@ -213,17 +224,20 @@ class WhosHotColdExporter(BaseExporter):
                 ps.player_lookup,
                 COALESCE(pn.player_name, ps.player_lookup) as player_name,
                 ps.team_abbr,
+                pn.position,
                 ps.games_played,
                 ps.hit_rate,
                 ps.avg_margin,
                 COALESCE(sc.streak_length, 0) as current_streak,
                 COALESCE(sc.current_result, 'NONE') as streak_type,
-                -- Heat score calculation
+                -- Heat score calculation (scaled 0-10 for frontend)
                 ROUND(
-                    0.5 * ps.hit_rate +
-                    0.25 * LEAST(COALESCE(sc.streak_length, 0) / 10.0, 1.0) +
-                    0.25 * LEAST(GREATEST((ps.avg_margin + 10) / 20.0, 0), 1.0)
-                , 3) as heat_score
+                    10 * (
+                        0.5 * ps.hit_rate +
+                        0.25 * LEAST(COALESCE(sc.streak_length, 0) / 10.0, 1.0) +
+                        0.25 * LEAST(GREATEST((ps.avg_margin + 10) / 20.0, 0), 1.0)
+                    )
+                , 1) as heat_score
             FROM player_stats ps
             LEFT JOIN streak_calc sc ON ps.player_lookup = sc.player_lookup
             LEFT JOIN player_names pn ON ps.player_lookup = pn.player_lookup
@@ -243,14 +257,15 @@ class WhosHotColdExporter(BaseExporter):
         return [
             {
                 'player_lookup': r['player_lookup'],
-                'player_name': r['player_name'],
-                'team': r['team_abbr'],
+                'player_full_name': r['player_name'],
+                'team_abbr': r['team_abbr'],
+                'position': r.get('position'),
                 'heat_score': self._safe_float(r['heat_score']),
                 'hit_rate': self._safe_float(r['hit_rate']),
+                'hit_rate_games': r['games_played'],
                 'current_streak': r['current_streak'],
-                'streak_type': r['streak_type'],
+                'streak_direction': r['streak_type'].lower() if r['streak_type'] != 'NONE' else None,
                 'avg_margin': self._safe_float(r['avg_margin']),
-                'games_played': r['games_played']
             }
             for r in results
         ]
@@ -261,8 +276,8 @@ class WhosHotColdExporter(BaseExporter):
         Returns:
             Dict mapping team codes to game info:
             {
-                'LAL': {'opponent': 'GSW', 'game_time': '7:30 PM ET'},
-                'GSW': {'opponent': 'LAL', 'game_time': '7:30 PM ET'},
+                'LAL': {'opponent': 'GSW', 'game_time': '7:30 PM ET', 'home': True},
+                'GSW': {'opponent': 'LAL', 'game_time': '7:30 PM ET', 'home': False},
                 ...
             }
         """
@@ -275,14 +290,16 @@ class WhosHotColdExporter(BaseExporter):
                 # Parse game time from ISO format to readable format
                 game_time = self._format_game_time(game.commence_time)
 
-                # Add both teams to the map
+                # Add both teams to the map with home/away distinction
                 tonight_map[game.home_team] = {
                     'opponent': game.away_team,
-                    'game_time': game_time
+                    'game_time': game_time,
+                    'home': True
                 }
                 tonight_map[game.away_team] = {
                     'opponent': game.home_team,
-                    'game_time': game_time
+                    'game_time': game_time,
+                    'home': False
                 }
 
             logger.info(f"Found {len(games)} games tonight with {len(tonight_map)} teams playing")
@@ -309,16 +326,18 @@ class WhosHotColdExporter(BaseExporter):
         player['rank'] = rank
 
         # Check if player's team has a game tonight
-        team = player.get('team')
+        team = player.get('team_abbr')
         if team and team in tonight_games:
             game = tonight_games[team]
             player['playing_tonight'] = True
-            player['tonight_opponent'] = game.get('opponent')
-            player['tonight_game_time'] = game.get('game_time')
+            player['tonight'] = {
+                'opponent': game.get('opponent'),
+                'game_time': game.get('game_time'),
+                'home': game.get('home', False),
+            }
         else:
             player['playing_tonight'] = False
-            player['tonight_opponent'] = None
-            player['tonight_game_time'] = None
+            player['tonight'] = None
 
         return player
 

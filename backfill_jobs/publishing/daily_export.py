@@ -62,6 +62,10 @@ from data_processors.publishing.what_matters_exporter import WhatMattersExporter
 from data_processors.publishing.team_tendencies_exporter import TeamTendenciesExporter
 from data_processors.publishing.quick_hits_exporter import QuickHitsExporter
 from data_processors.publishing.deep_dive_exporter import DeepDiveExporter
+# Frontend API Backend exporters (Session 143)
+from data_processors.publishing.player_season_exporter import PlayerSeasonExporter
+from data_processors.publishing.player_game_report_exporter import PlayerGameReportExporter
+from data_processors.publishing.tonight_trend_plays_exporter import TonightTrendPlaysExporter
 
 # Configure logging
 logging.basicConfig(
@@ -79,6 +83,8 @@ EXPORT_TYPES = [
     # Trends v2
     'trends-hot-cold', 'trends-bounce-back', 'trends-what-matters',
     'trends-team', 'trends-quick-hits', 'trends-deep-dive',
+    # Frontend API Backend (Session 143)
+    'tonight-trend-plays',
     # Shorthand groups
     'trends-daily', 'trends-weekly', 'trends-all'
 ]
@@ -203,13 +209,13 @@ def export_date(
 
     # Expand shorthand groups
     if 'trends-daily' in export_types:
-        export_types.extend(['trends-hot-cold', 'trends-bounce-back'])
+        export_types.extend(['trends-hot-cold', 'trends-bounce-back', 'tonight-trend-plays'])
     if 'trends-weekly' in export_types:
         export_types.extend(['trends-what-matters', 'trends-team', 'trends-quick-hits'])
     if 'trends-all' in export_types:
         export_types.extend([
             'trends-hot-cold', 'trends-bounce-back', 'trends-what-matters',
-            'trends-team', 'trends-quick-hits', 'trends-deep-dive'
+            'trends-team', 'trends-quick-hits', 'trends-deep-dive', 'tonight-trend-plays'
         ])
 
     # Who's Hot/Cold (daily)
@@ -277,6 +283,19 @@ def export_date(
         except Exception as e:
             result['errors'].append(f"trends-deep-dive: {e}")
             logger.error(f"  Trends Deep Dive error: {e}")
+
+    # === FRONTEND API BACKEND EXPORTERS (Session 143) ===
+
+    # Tonight's Trend Plays (hourly on game days)
+    if 'tonight-trend-plays' in export_types:
+        try:
+            exporter = TonightTrendPlaysExporter()
+            path = exporter.export(game_date=target_date)
+            result['paths']['tonight_trend_plays'] = path
+            logger.info(f"  Tonight Trend Plays: {path}")
+        except Exception as e:
+            result['errors'].append(f"tonight-trend-plays: {e}")
+            logger.error(f"  Tonight Trend Plays error: {e}")
 
     if result['errors']:
         result['status'] = 'partial' if result['paths'] else 'failed'

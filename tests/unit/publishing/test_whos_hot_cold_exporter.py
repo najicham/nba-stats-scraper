@@ -133,13 +133,14 @@ class TestHeatScoreCalculation:
                         'player_lookup': 'cold',
                         'player_name': 'Cold Player',
                         'team_abbr': 'DET',
+                        'position': 'SG',
                         'games_played': 10,
                         'hit_rate': 0.2,  # 20%
                         'avg_margin': -8.0,  # -8 margin
                         'current_streak': 6,
                         'streak_type': 'UNDER',
-                        # 0.5 * 0.2 + 0.25 * 0.6 + 0.25 * 0.1 = 0.275
-                        'heat_score': 0.275
+                        # 10 * (0.5 * 0.2 + 0.25 * 0.6 + 0.25 * 0.1) = 2.75
+                        'heat_score': 2.8  # Scaled 0-10
                     }
                 ])
 
@@ -148,8 +149,8 @@ class TestHeatScoreCalculation:
 
                 result = exporter._query_heat_scores('2024-12-15', 5, 30)
 
-                assert result[0]['heat_score'] == 0.275
-                assert result[0]['streak_type'] == 'UNDER'
+                assert result[0]['heat_score'] == 2.8
+                assert result[0]['streak_direction'] == 'under'
 
 
 class TestStreakDetection:
@@ -166,12 +167,13 @@ class TestStreakDetection:
                         'player_lookup': 'hot',
                         'player_name': 'Hot Player',
                         'team_abbr': 'MIA',
+                        'position': 'SF',
                         'games_played': 10,
                         'hit_rate': 0.7,
                         'avg_margin': 3.5,
                         'current_streak': 7,
                         'streak_type': 'OVER',
-                        'heat_score': 0.65
+                        'heat_score': 6.5
                     }
                 ])
 
@@ -180,7 +182,7 @@ class TestStreakDetection:
 
                 result = exporter._query_heat_scores('2024-12-15', 5, 30)
 
-                assert result[0]['streak_type'] == 'OVER'
+                assert result[0]['streak_direction'] == 'over'
                 assert result[0]['current_streak'] == 7
 
     def test_streak_under_detected(self):
@@ -194,12 +196,13 @@ class TestStreakDetection:
                         'player_lookup': 'cold',
                         'player_name': 'Cold Player',
                         'team_abbr': 'DET',
+                        'position': 'PG',
                         'games_played': 10,
                         'hit_rate': 0.3,
                         'avg_margin': -4.0,
                         'current_streak': 5,
                         'streak_type': 'UNDER',
-                        'heat_score': 0.35
+                        'heat_score': 3.5
                     }
                 ])
 
@@ -208,7 +211,7 @@ class TestStreakDetection:
 
                 result = exporter._query_heat_scores('2024-12-15', 5, 30)
 
-                assert result[0]['streak_type'] == 'UNDER'
+                assert result[0]['streak_direction'] == 'under'
                 assert result[0]['current_streak'] == 5
 
     def test_no_streak_returns_zero(self):
@@ -222,12 +225,13 @@ class TestStreakDetection:
                         'player_lookup': 'inconsistent',
                         'player_name': 'Inconsistent Player',
                         'team_abbr': 'SAC',
+                        'position': 'C',
                         'games_played': 10,
                         'hit_rate': 0.5,
                         'avg_margin': 0.0,
                         'current_streak': 0,
                         'streak_type': 'NONE',
-                        'heat_score': 0.4
+                        'heat_score': 4.0
                     }
                 ])
 
@@ -237,7 +241,7 @@ class TestStreakDetection:
                 result = exporter._query_heat_scores('2024-12-15', 5, 30)
 
                 assert result[0]['current_streak'] == 0
-                assert result[0]['streak_type'] == 'NONE'
+                assert result[0]['streak_direction'] is None
 
 
 class TestEmptyDataHandling:
@@ -358,15 +362,16 @@ class TestTonightGameEnrichment:
 
                 player = {
                     'player_lookup': 'lebron',
-                    'player_name': 'LeBron James',
-                    'team': 'LAL',
-                    'heat_score': 0.85
+                    'player_full_name': 'LeBron James',
+                    'team_abbr': 'LAL',
+                    'heat_score': 8.5
                 }
 
                 tonight_games = {
                     'LAL': {
                         'opponent': 'GSW',
-                        'game_time': '10:00 PM ET'
+                        'game_time': '10:00 PM ET',
+                        'home': True
                     }
                 }
 
@@ -374,8 +379,9 @@ class TestTonightGameEnrichment:
 
                 assert result['rank'] == 1
                 assert result['playing_tonight'] is True
-                assert result['tonight_opponent'] == 'GSW'
-                assert result['tonight_game_time'] == '10:00 PM ET'
+                assert result['tonight']['opponent'] == 'GSW'
+                assert result['tonight']['game_time'] == '10:00 PM ET'
+                assert result['tonight']['home'] is True
 
     def test_enrich_with_tonight_not_playing(self):
         """Test enrichment when player is not playing tonight"""
@@ -385,9 +391,9 @@ class TestTonightGameEnrichment:
 
                 player = {
                     'player_lookup': 'lebron',
-                    'player_name': 'LeBron James',
-                    'team': 'LAL',
-                    'heat_score': 0.85
+                    'player_full_name': 'LeBron James',
+                    'team_abbr': 'LAL',
+                    'heat_score': 8.5
                 }
 
                 tonight_games = {}  # No games tonight
@@ -396,8 +402,7 @@ class TestTonightGameEnrichment:
 
                 assert result['rank'] == 3
                 assert result['playing_tonight'] is False
-                assert result['tonight_opponent'] is None
-                assert result['tonight_game_time'] is None
+                assert result['tonight'] is None
 
 
 class TestFormatGameTime:
