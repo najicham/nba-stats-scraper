@@ -535,7 +535,7 @@ class PlayerLoader:
         SELECT
             points_avg_last_5,
             points_avg_last_10,
-            games_played_last_30
+            l10_games_used as games_played
         FROM `{project}.nba_analytics.upcoming_player_game_context`
         WHERE player_lookup = @player_lookup
         ORDER BY game_date DESC
@@ -554,7 +554,7 @@ class PlayerLoader:
 
             if row is not None:
                 # Check if player has minimum games (Issue 3: new player handling)
-                games_played = row.games_played_last_30 or 0
+                games_played = row.games_played or 0
                 if games_played < config.new_player.min_games_required:
                     logger.info(
                         f"Player {player_lookup} has only {games_played} games "
