@@ -488,9 +488,22 @@ class UpcomingPlayerGameContextProcessor(
         self._extract_rosters()
         self._extract_injuries()
         self._extract_registry()
-        
+
         logger.info("Data extraction complete")
-    
+
+    def validate_extracted_data(self) -> None:
+        """
+        Override base class validation to check players_to_process instead of raw_data.
+
+        This processor uses self.players_to_process as the main data structure,
+        not self.raw_data which the base class checks.
+        """
+        if not self.players_to_process:
+            logger.warning(f"No players to process for {self.target_date}")
+            raise ValueError("No data extracted")
+
+        logger.info(f"Validation passed: {len(self.players_to_process)} players to process")
+
     def _determine_processing_mode(self) -> str:
         """
         Determine whether to use daily or backfill processing mode.
