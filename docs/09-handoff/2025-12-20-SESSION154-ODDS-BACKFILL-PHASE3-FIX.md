@@ -172,9 +172,35 @@ Still pending - wait until pipeline is fully flowing.
 | TeamDefenseZoneAnalysisProcessor | ⚠️ Expected fail (no play-by-play) |
 | MLFeatureStoreProcessor | ⚠️ Expected fail (no game data) |
 
+## Phase 5 Fixes (Additional)
+
+### Issues Fixed
+
+1. **Pub/Sub topic names wrong**
+   - Default was `prediction-request` but actual topic is `prediction-request-prod`
+   - Same for `prediction-ready` → `prediction-ready-prod`
+   - Error: "404 Resource not found (resource=prediction-request)"
+
+2. **SQL column doesn't exist**
+   - Query referenced `games_played_last_30` but column doesn't exist
+   - Changed to `l10_games_used as games_played`
+
+3. **Field reference mismatch**
+   - Code referenced `row.games_played_last_30` after SQL change
+   - Changed to `row.games_played`
+
+### Phase 5 Limitation
+
+**Phase 5 cannot run for future dates** - predictions require `ml_feature_store_v2` data which is only populated AFTER games are played. This is because the feature store depends on:
+- `player_game_summary` (actual game stats)
+- `team_defense_zone_analysis` (play-by-play data)
+
+For Dec 20: Predictions will run automatically once games complete and Phase 3-4 process the new data.
+
 ## Git Commits
 
 ```
+e154d07 fix: Phase 5 predictions - topic names and column reference
 d45fc53 fix: Phase 4 precompute - backfill_mode, date conversion, mixin init
 2b6a75d fix: Phase 3 analytics - add db-dtypes and fix validation
 ```
