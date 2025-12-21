@@ -165,6 +165,12 @@ class PrecomputeProcessorBase(RunHistoryMixin):
             # Setup
             self.set_opts(opts)
             self.validate_opts()
+
+            # Convert analysis_date string to date object early (before set_additional_opts)
+            # This ensures all processors receive a proper date object, not a string
+            if 'analysis_date' in self.opts and isinstance(self.opts['analysis_date'], str):
+                self.opts['analysis_date'] = date.fromisoformat(self.opts['analysis_date'])
+
             self._validate_and_normalize_backfill_flags()  # Validate backfill flags early
             self.set_additional_opts()
             self.validate_additional_opts()

@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install -y \
 
 # Copy shared requirements first (for better caching)
 COPY shared/requirements.txt /app/shared/
-RUN pip install --no-cache-dir -r /app/shared/requirements.txt || true
+RUN pip install --no-cache-dir -r /app/shared/requirements.txt
 
 # Copy all necessary code
 COPY shared/ /app/shared/
