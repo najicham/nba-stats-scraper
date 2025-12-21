@@ -1,8 +1,8 @@
-# Session 155: Pipeline Diagnosis and Fixes
+# Session 155/156: Pipeline Diagnosis and Fixes
 
 **Date:** 2025-12-21
-**Duration:** ~45 minutes
-**Status:** Partial restoration - blocked on stale gamebook data
+**Duration:** Session 155 (~45 min) + Session 156 (~30 min)
+**Status:** ✅ FULLY RESTORED - gamebook backfilled, scheduler fixed
 
 ## Executive Summary
 
@@ -214,19 +214,61 @@ Files modified:
 
 ---
 
-## Quick Start for Next Session
+## Session 156: Full Restoration (continued)
+
+### Root Cause Found: Scheduler Gap
+
+The `execute-workflows` scheduler only ran from **6 AM to 11 PM ET** (`5 6-23 * * *`), but the `post_game_window_3` workflow (which contains `nbac_gamebook_pdf`) is scheduled for **4 AM ET**.
+
+The `/evaluate` at 4 AM correctly marked the workflow as "RUN", but `/execute-workflows` wasn't called until 6:05 AM, by which point the decision was stale.
+
+### Fixes Applied (Session 156)
+
+1. **Gamebook Backfill**: Scraped and processed 30 games (Dec 16-20)
+   - 1,051 player rows loaded
+   - 0 failures
+   - Duration: 15 minutes
+
+2. **Scheduler Fix**: Updated `execute-workflows` to run every hour:
+   ```bash
+   gcloud scheduler jobs update http execute-workflows \
+       --location=us-west2 \
+       --schedule="5 0-23 * * *"
+   ```
+
+3. **Pipeline Run for Dec 20**:
+   - Phase 4: All 5 processors succeeded (including MLFeatureStoreProcessor)
+   - Phase 3: Partial success (see known issues below)
+
+### Data Source Status (Updated)
+
+| Source | Latest Date | Status |
+|--------|-------------|--------|
+| `bdl_player_boxscores` | 2025-12-20 | ✅ OK |
+| `nbac_gamebook_player_stats` | 2025-12-20 | ✅ FIXED |
+| `espn_boxscores` | NULL | ❌ No data |
+| `nbac_schedule` | 2026-04-12 | ✅ OK |
+| `ml_feature_store_v2` | 2025-12-20 | ✅ OK |
+
+### Known Issues Remaining
+
+1. **Phase 3 Processors Failing**: PlayerGameSummaryProcessor, TeamOffenseGameSummaryProcessor, TeamDefenseGameSummaryProcessor, UpcomingTeamGameContextProcessor still have errors
+2. **Predictions not working for Dec 21**: Coordinator returns "No players found" - likely needs additional data or query adjustment
+
+---
+
+## Quick Reference
 
 ```bash
-# 1. Check gamebook scraper status
-gcloud run services logs read nba-phase1-scrapers --region us-west2 --limit 50 | grep -i gamebook
-
-# 2. Check latest gamebook data
+# Gamebook status
 bq query --use_legacy_sql=false 'SELECT MAX(game_date) FROM nba_raw.nbac_gamebook_player_stats'
 
-# 3. If gamebook is still stale, investigate scraper:
-# - Check scheduler: gcloud scheduler jobs list --location=us-west2
-# - Check for errors in scraper logs
-# - Manually trigger gamebook scraper if needed
+# ML Feature Store status
+bq query --use_legacy_sql=false 'SELECT game_date, COUNT(*) FROM nba_predictions.ml_feature_store_v2 WHERE game_date >= "2025-12-18" GROUP BY game_date ORDER BY game_date'
 
-# 4. Once gamebook has Dec 20 data, run full pipeline (see commands above)
+# Run Phase 4 for a specific date
+curl -X POST "https://nba-phase4-precompute-processors-f7p3g7f6ya-wl.a.run.app/process-date" \
+    -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
+    -H "Content-Type: application/json" \
+    -d '{"analysis_date": "2025-12-20", "backfill_mode": true}'
 ```
