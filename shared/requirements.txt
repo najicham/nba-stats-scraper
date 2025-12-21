@@ -9,6 +9,7 @@ google-crc32c==1.7.1
 google-resumable-media==2.7.2
 
 pandas==2.3.0
+db-dtypes>=1.2.0  # Required for BigQuery pandas integration (to_dataframe())
 google-cloud-pubsub>=2.31.1
 
 # Core web framework (stable, shared across services)

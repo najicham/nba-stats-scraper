@@ -102,6 +102,9 @@ class PrecomputeProcessorBase(RunHistoryMixin):
         self.transformed_data = {}
         self.stats = {}
 
+        # Initialize run history tracking from mixin
+        self._init_run_history()
+
         # Time tracking - MUST be instance variable to avoid shared state between processors
         # This was causing cumulative timing bug in backfills where times increased across dates
         self.time_markers = {}
@@ -201,6 +204,11 @@ class PrecomputeProcessorBase(RunHistoryMixin):
             # ═══════════════════════════════════════════════════════════════
             strict_mode = opts.get('strict_mode', True)  # Default: enabled
             analysis_date = opts.get('analysis_date')
+
+            # Convert string to date object if needed
+            if isinstance(analysis_date, str):
+                analysis_date = date.fromisoformat(analysis_date)
+                opts['analysis_date'] = analysis_date  # Update opts with date object
 
             self._run_defensive_checks(analysis_date, strict_mode)
 

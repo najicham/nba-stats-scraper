@@ -166,6 +166,7 @@ def process_date():
 
         analysis_date = data.get('analysis_date')
         processor_names = data.get('processors', [])
+        backfill_mode = data.get('backfill_mode', False)
 
         if not analysis_date:
             return jsonify({"error": "analysis_date required"}), 400
@@ -200,7 +201,8 @@ def process_date():
                 opts = {
                     'analysis_date': analysis_date,
                     'project_id': os.environ.get('GCP_PROJECT_ID', 'nba-props-platform'),
-                    'triggered_by': 'manual'
+                    'triggered_by': 'manual',
+                    'backfill_mode': backfill_mode
                 }
 
                 success = processor.run(opts)
