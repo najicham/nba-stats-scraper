@@ -57,6 +57,7 @@ from data_processors.raw.bigdataball.bigdataball_pbp_processor import BigDataBal
 from data_processors.raw.nbacom.nbac_referee_processor import NbacRefereeProcessor
 from data_processors.raw.oddsapi.odds_game_lines_processor import OddsGameLinesProcessor
 from data_processors.raw.nbacom.nbac_schedule_processor import NbacScheduleProcessor
+from data_processors.raw.nbacom.nbac_injury_report_processor import NbacInjuryReportProcessor
 
 
 # from balldontlie.bdl_boxscore_processor import BdlBoxscoreProcessor
@@ -89,6 +90,7 @@ PROCESSOR_REGISTRY = {
     'nba-com/play-by-play': NbacPlayByPlayProcessor,
     'nba-com/referee-assignments': NbacRefereeProcessor,
     'nba-com/schedule': NbacScheduleProcessor,
+    'nba-com/injury-report-data': NbacInjuryReportProcessor,
 
     'espn/boxscores': EspnBoxscoreProcessor,
     'espn/rosters': EspnTeamRosterProcessor,

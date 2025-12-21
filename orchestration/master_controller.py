@@ -493,7 +493,7 @@ class MasterWorkflowController:
         # Get games already collected (have box scores in BigQuery)
         query = f"""
             SELECT DISTINCT game_id
-            FROM `nba-props-platform.nba_raw.bdl_box_scores`
+            FROM `nba-props-platform.nba_raw.bdl_player_boxscores`
             WHERE game_date = '{yesterday}'
         """
         

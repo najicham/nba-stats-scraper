@@ -83,7 +83,25 @@ scrapers:
     depends_on: "oddsa_events"
     processor_name: "p2_odds_game_lines"
     estimated_duration_seconds: 120
-  
+
+  bp_events:
+    name: "bp_events"
+    description: "BettingPros event IDs (MUST complete before player props)"
+    module: "scrapers.bettingpros.bp_events"
+    critical: false
+    dependency_for: ["bp_player_props"]
+    processor_name: "p2_bettingpros_events"
+    estimated_duration_seconds: 30
+
+  bp_player_props:
+    name: "bp_player_props"
+    description: "BettingPros player prop betting lines"
+    module: "scrapers.bettingpros.bp_player_props"
+    critical: false
+    depends_on: "bp_events"
+    processor_name: "p2_bettingpros_player_props"
+    estimated_duration_seconds: 60
+
   # ────────────────────────────────────────────────────────────
   # Box Scores
   # ────────────────────────────────────────────────────────────
@@ -217,15 +235,17 @@ workflows:
         type: "sequential"
         scrapers:
           - oddsa_events
-      
-      # Step 2: Parallel (both depend on events)
+          - bp_events
+
+      # Step 2: Parallel (props depend on events)
       step_2:
         type: "parallel"
-        depends_on: "oddsa_events"
+        depends_on: ["oddsa_events", "bp_events"]
         scrapers:
           - oddsa_player_props
           - oddsa_game_lines
-    
+          - bp_player_props
+
     alerts:
       failure: "CRITICAL"
       quota_warning_pct: 80  # Alert if >80% of Odds API quota used
