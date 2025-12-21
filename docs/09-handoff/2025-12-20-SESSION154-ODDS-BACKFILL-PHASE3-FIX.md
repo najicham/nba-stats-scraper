@@ -143,9 +143,39 @@ Still pending - wait until pipeline is fully flowing.
 - What value it had (empty, None, etc.)
 - What the processor expected
 
+## Phase 4 Fixes (Additional)
+
+### Issues Fixed
+
+1. **backfill_mode not passed to processors**
+   - `/process-date` endpoint didn't support bypassing dependency checks
+   - Added `backfill_mode` parameter to opts
+
+2. **analysis_date string not converted to date object**
+   - Processors expected `date` object but received string
+   - Added `date.fromisoformat()` conversion in `precompute_base.run()`
+
+3. **RunHistoryMixin._run_start_time not initialized**
+   - Mixin attribute accessed before initialization
+   - Added `_init_run_history()` call in `PrecomputeProcessorBase.__init__`
+
+4. **db-dtypes missing from shared requirements**
+   - Added to `shared/requirements.txt` for all services
+
+### Phase 4 Results (Dec 20)
+
+| Processor | Status |
+|-----------|--------|
+| PlayerDailyCacheProcessor | ✅ Success |
+| PlayerShotZoneAnalysisProcessor | ✅ Success |
+| PlayerCompositeFactorsProcessor | ✅ Success |
+| TeamDefenseZoneAnalysisProcessor | ⚠️ Expected fail (no play-by-play) |
+| MLFeatureStoreProcessor | ⚠️ Expected fail (no game data) |
+
 ## Git Commits
 
 ```
+d45fc53 fix: Phase 4 precompute - backfill_mode, date conversion, mixin init
 2b6a75d fix: Phase 3 analytics - add db-dtypes and fix validation
 ```
 
