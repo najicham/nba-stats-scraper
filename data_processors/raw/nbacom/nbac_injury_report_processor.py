@@ -212,11 +212,17 @@ class NbacInjuryReportProcessor(SmartIdempotencyMixin, ProcessorBase):
             scrape_time = metadata.get('scrape_time', '')
             run_id = metadata.get('run_id', '')
             
-            # Parse report date
-            try:
-                report_date_obj = datetime.strptime(report_date, '%Y%m%d').date()
-            except Exception as e:
-                logger.error(f"Error parsing report date '{report_date}': {e}")
+            # Parse report date (handle both %Y%m%d and %Y-%m-%d formats)
+            report_date_obj = None
+            for date_format in ('%Y%m%d', '%Y-%m-%d'):
+                try:
+                    report_date_obj = datetime.strptime(report_date, date_format).date()
+                    break
+                except ValueError:
+                    continue
+
+            if report_date_obj is None:
+                logger.error(f"Error parsing report date '{report_date}': no matching format")
                 report_date_obj = date.today()
                 
                 try:
