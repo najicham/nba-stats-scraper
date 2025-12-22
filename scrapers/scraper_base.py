@@ -1007,10 +1007,12 @@ class ScraperBase:
                     # SIMPLE FIX: If scraper has the property, treat as success
                     if hasattr(self, 'treat_max_retries_as_success') and getattr(self, 'treat_max_retries_as_success', []):
                         logger.info("✅ Treating max retries as 'no data available' success")
-                        
+
                         # Set up successful "no data" response
-                        self.data = []
-                        self.decoded_data = []
+                        # Use get_no_data_response() so child scrapers can provide proper structure
+                        no_data_response = self.get_no_data_response()
+                        self.data = no_data_response
+                        self.decoded_data = no_data_response
                         
                         # ADD THIS FLAG to skip validation:
                         self._no_data_success = True
@@ -1555,10 +1557,24 @@ class ScraperBase:
     ##########################################################################
     def should_save_data(self):
         """
-        Return False to skip exporting under certain conditions. 
+        Return False to skip exporting under certain conditions.
         Child scrapers can override if needed.
         """
         return True
+
+    def get_no_data_response(self) -> dict | list:
+        """
+        Return the data structure to use when no data is available
+        (e.g., after max retries with treat_max_retries_as_success).
+
+        Child scrapers can override this to return a proper structured
+        response with metadata instead of an empty list.
+
+        Returns:
+            Default: [] (empty list)
+            Child classes can return {"metadata": {...}, "records": []} etc.
+        """
+        return []
 
     def export_data(self):
         """

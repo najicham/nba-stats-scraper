@@ -105,18 +105,29 @@ def main():
                 logger.warning(f"Validation errors for {blob.name}: {errors}")
                 failed += 1
                 continue
-            
+
+            # Set raw_data on processor (processor uses self.raw_data internally)
+            data['metadata'] = data.get('metadata', {})
+            data['metadata']['source_file'] = f"gs://{bucket_name}/{blob.name}"
+            processor.raw_data = data
+
             # Transform
-            rows = processor.transform_data(data, f"gs://{bucket_name}/{blob.name}")
-            
+            processor.transform_data()
+            rows = processor.transformed_data
+
+            if not rows:
+                logger.warning(f"No rows generated for {blob.name}")
+                failed += 1
+                continue
+
             # Load to BigQuery
-            result = processor.load_data(rows)
-            if result['errors']:
+            result = processor.save_data()
+            if result.get('errors'):
                 logger.error(f"Load errors for {blob.name}: {result['errors']}")
                 failed += 1
             else:
                 successful += 1
-                total_records += result['rows_processed']
+                total_records += result.get('rows_processed', 0)
             
             # Progress logging
             if i % args.batch_size == 0:

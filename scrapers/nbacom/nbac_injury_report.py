@@ -102,6 +102,48 @@ class GetNbaComInjuryReport(ScraperBase, ScraperFlaskMixin):
         # Initialize the validated parser
         self.injury_parser = InjuryReportParser(logger=logger)
 
+    def get_no_data_response(self) -> dict:
+        """
+        Override base class to return proper structured response when
+        PDF is unavailable (403/404). This ensures GCS files have
+        metadata even when no injury data is available.
+        """
+        # Ensure opts are set (may be called before full initialization)
+        gamedate = self.opts.get("gamedate", "unknown")
+        hour = self.opts.get("hour", "0")
+        period = self.opts.get("period", "PM")
+        hour24 = self.opts.get("hour24", "00")
+        season = self.opts.get("season", "unknown")
+        scrape_time = self.opts.get("time", "00-00-00")
+
+        return {
+            "metadata": {
+                "gamedate": gamedate,
+                "hour": hour,
+                "period": period,
+                "hour24": hour24,
+                "season": season,
+                "scrape_time": scrape_time,
+                "run_id": self.run_id,
+                "is_empty_report": True,
+                "no_data_reason": "pdf_unavailable"  # Distinguishes from genuinely empty PDFs
+            },
+            "parsing_stats": {
+                "total_records": 0,
+                "overall_confidence": 1.0,
+                "status_counts": {},
+                "confidence_distribution": {},
+                "parsing_stats": {
+                    "total_lines": 0,
+                    "player_lines": 0,
+                    "merged_multiline": 0,
+                    "unparsed_count": 0
+                },
+                "unparsed_lines_sample": []
+            },
+            "records": []
+        }
+
     def sleep_before_retry(self):
         """Fast retry strategy - only 2 seconds between attempts."""
         sleep_seconds = 2
