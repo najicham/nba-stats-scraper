@@ -80,6 +80,13 @@ else
     echo "⚠️  Email alerting configuration skipped - missing required variables"
 fi
 
+# Build secrets string for AWS SES (from Secret Manager)
+SECRETS="AWS_SES_ACCESS_KEY_ID=aws-ses-access-key-id:latest"
+SECRETS="$SECRETS,AWS_SES_SECRET_ACCESS_KEY=aws-ses-secret-access-key:latest"
+
+# Add AWS SES region to environment variables
+ENV_VARS="$ENV_VARS,AWS_SES_REGION=us-west-2"
+
 gcloud run deploy $SERVICE_NAME \
     --source=. \
     --region=$REGION \
@@ -92,7 +99,8 @@ gcloud run deploy $SERVICE_NAME \
     --concurrency=20 \
     --min-instances=0 \
     --max-instances=10 \
-    --set-env-vars="$ENV_VARS"
+    --set-env-vars="$ENV_VARS" \
+    --set-secrets="$SECRETS"
 
 DEPLOY_STATUS=$?
 DEPLOY_PHASE_END=$(date +%s)
