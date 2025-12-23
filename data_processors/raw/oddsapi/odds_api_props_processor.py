@@ -241,10 +241,10 @@ class OddsApiPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
         return errors
     
     def transform_data(self) -> None:
-        """Transform raw data into transformed data."""
-        raw_data = self.raw_data
-        file_path = self.raw_data.get('metadata', {}).get('source_file', 'unknown')
         """Transform Odds API props data to BigQuery rows."""
+        raw_data = self.raw_data
+        # Get file path from opts (set by processor service), not from JSON data
+        file_path = self.opts.get('file_path', 'unknown')
         rows = []
         
         try:
