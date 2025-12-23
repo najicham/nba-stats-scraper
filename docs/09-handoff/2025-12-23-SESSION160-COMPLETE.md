@@ -66,6 +66,8 @@ The direct subscription pattern is actually **better** for a real-time sports da
 1. `b139c03` - fix: Add Cloud Logging setup and debug prints to Phase 2→3 orchestrator
 2. `4894a66` - docs: Add Session 160 handoff - pipeline automation fix
 3. `d5bddd1` - docs: Add architecture discovery - orchestrator is vestigial
+4. `7c647f6` - docs: Add complete Session 160 handoff with monitoring commands
+5. `f9cfac3` - fix: Escape single quotes in basketball-ref roster processor SQL
 
 ---
 
