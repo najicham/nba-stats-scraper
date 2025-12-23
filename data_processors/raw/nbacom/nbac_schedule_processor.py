@@ -416,15 +416,16 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
                     
                     business_relevant_games += 1
                     
-                    # Parse game date
-                    game_date_est = game.get('gameDateEst', '')
-                    if game_date_est.endswith('Z'):
-                        game_datetime = datetime.fromisoformat(game_date_est.replace('Z', '+00:00'))
+                    # Parse game date and time
+                    # Use gameDateTimeEst (has actual game time) instead of gameDateEst (date only at midnight)
+                    game_datetime_str = game.get('gameDateTimeEst') or game.get('gameDateEst', '')
+                    if game_datetime_str.endswith('Z'):
+                        game_datetime = datetime.fromisoformat(game_datetime_str.replace('Z', '+00:00'))
                     else:
-                        game_datetime = datetime.fromisoformat(game_date_est)
+                        game_datetime = datetime.fromisoformat(game_datetime_str)
                     
                     game_date = game_datetime.date()
-                    season_year = self.calculate_season_year(game_date_est)
+                    season_year = self.calculate_season_year(game_datetime_str)
                     
                     # Extract team data
                     home_team = game.get('homeTeam', {})
