@@ -1,20 +1,22 @@
 # Orchestrators Architecture
 
-**Purpose:** Coordinate phase transitions in the event-driven pipeline
-**Status:** v1.0 deployed and operational
+**Purpose:** Track phase completion for observability (monitoring mode)
+**Status:** v2.0 - Phase 2→3 is monitoring-only, Phase 3→4 operational
 **Created:** 2025-11-29 16:53 PST
-**Last Updated:** 2025-11-29 16:53 PST
+**Last Updated:** 2025-12-23
 
 ---
 
 ## Overview
 
-Orchestrators are Cloud Functions that coordinate transitions between processing phases. They track completion of upstream processors and trigger downstream phases only when all required inputs are ready.
+Orchestrators are Cloud Functions that track processor completions for observability.
+
+> **IMPORTANT (Dec 2025):** The Phase 2→3 orchestrator is now **monitoring-only**. Phase 3 is triggered directly via Pub/Sub subscription (`nba-phase3-analytics-sub`), not by the orchestrator. The orchestrator's output topic (`nba-phase3-trigger`) has no subscribers.
 
 **Key Responsibilities:**
-- Track completion counts using Firestore
+- Track completion counts using Firestore (observability)
 - Prevent race conditions with atomic transactions
-- Aggregate entity changes for selective processing
+- Aggregate entity changes for selective processing (Phase 3→4 only)
 - Preserve correlation IDs for end-to-end tracing
 - Ensure idempotent operation (handle Pub/Sub retries)
 
@@ -29,16 +31,17 @@ Orchestrators are Cloud Functions that coordinate transitions between processing
 
 ### Daily Operations (Production Pipeline)
 
-Orchestrators are the coordination layer for real-time data processing:
+The pipeline uses **direct Pub/Sub subscriptions** for real-time data flow:
 
 ```
-Scrapers → Phase 2 → [Orchestrator] → Phase 3 → [Orchestrator] → Phase 4 → Phase 5
-                          ↑                          ↑
-              Waits for 21/21              Waits for 5/5
-              processors                   processors
+Scrapers → Phase 2 → nba-phase2-raw-complete → Phase 3 → nba-phase3-analytics-complete → Phase 4 → Phase 5
+                            ↓                                      ↓
+                     [Orchestrator]                          [Orchestrator]
+                     (monitoring only)                       (triggers Phase 4)
 ```
 
-Each processor publishes completion to Pub/Sub. Orchestrators count completions and trigger the next phase when all upstream processors finish.
+**Phase 2→3:** Direct subscription triggers Phase 3 immediately. Orchestrator only monitors.
+**Phase 3→4:** Orchestrator aggregates entities_changed and triggers Phase 4 when all 5 processors complete.
 
 ### Backfill (Historical Data Processing)
 
@@ -68,23 +71,30 @@ Backfill Script → Phase 2 → Phase 3 → Phase 4 (all local, manual sequencin
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
-│                    Phase 2→3 Orchestrator                              │
+│                    Phase 2→3 Orchestrator (MONITORING ONLY)            │
 ├────────────────────────────────────────────────────────────────────────┤
 │                                                                        │
-│  ┌─────────────┐    ┌─────────────────┐    ┌────────────────────┐     │
-│  │ Pub/Sub     │───▶│  Cloud Function │───▶│ Pub/Sub            │     │
-│  │ nba-phase2- │    │  phase2-to-     │    │ nba-phase3-trigger │     │
-│  │ raw-complete│    │  phase3-        │    │                    │     │
-│  │             │    │  orchestrator   │    │ (published when    │     │
-│  │ (21 msgs)   │    │                 │    │  21/21 complete)   │     │
-│  └─────────────┘    └────────┬────────┘    └────────────────────┘     │
-│                              │                                         │
-│                              ▼                                         │
-│                    ┌─────────────────┐                                │
-│                    │    Firestore    │                                │
-│                    │ phase2_completion│                               │
-│                    │ /{game_date}    │                                │
-│                    └─────────────────┘                                │
+│  ┌─────────────┐    ┌─────────────────┐                               │
+│  │ Pub/Sub     │───▶│  Cloud Function │    ❌ NO OUTPUT               │
+│  │ nba-phase2- │    │  phase2-to-     │    (nba-phase3-trigger        │
+│  │ raw-complete│    │  phase3-        │     has no subscribers)       │
+│  │             │    │  orchestrator   │                               │
+│  │ (~6 msgs)   │    │  v2.0           │                               │
+│  └──────┬──────┘    └────────┬────────┘                               │
+│         │                    │                                         │
+│         │                    ▼                                         │
+│         │          ┌─────────────────┐                                │
+│         │          │    Firestore    │  ← Tracks completion           │
+│         │          │ phase2_completion│    for observability          │
+│         │          │ /{game_date}    │                                │
+│         │          └─────────────────┘                                │
+│         │                                                              │
+│         └─────────────────────────────────────────────────────────────│
+│                               │                                        │
+│  ACTUAL TRIGGER:              ▼                                        │
+│  ┌─────────────────────────────────────────────────────────────┐      │
+│  │ nba-phase3-analytics-sub (direct subscription to Phase 3)   │      │
+│  └─────────────────────────────────────────────────────────────┘      │
 │                                                                        │
 └────────────────────────────────────────────────────────────────────────┘
 
@@ -112,11 +122,14 @@ Backfill Script → Phase 2 → Phase 3 → Phase 4 (all local, manual sequencin
 
 ---
 
-## Phase 2→3 Orchestrator
+## Phase 2→3 Orchestrator (Monitoring Only)
+
+> **v2.0 (Dec 2025):** This orchestrator is now monitoring-only. It tracks completions but does NOT trigger Phase 3. Phase 3 is triggered directly via `nba-phase3-analytics-sub` subscription.
 
 **Function:** `phase2-to-phase3-orchestrator`
 **Location:** `orchestration/cloud_functions/phase2_to_phase3/main.py`
 **Entry Point:** `orchestrate_phase2_to_phase3`
+**Mode:** Monitoring only (no Pub/Sub output)
 
 ### Configuration
 
@@ -128,23 +141,34 @@ Backfill Script → Phase 2 → Phase 3 → Phase 4 (all local, manual sequencin
 | Max Instances | 10 |
 | Trigger | Pub/Sub `nba-phase2-raw-complete` |
 | Firestore Collection | `phase2_completion/{game_date}` |
+| **Output** | **None** (monitoring only) |
 
 ### Behavior
 
 1. **Receive** completion message from Phase 2 processor
 2. **Validate** required fields (game_date, processor_name, status)
 3. **Update** Firestore document atomically (prevents race conditions)
-4. **Check** if all 21 processors have completed
-5. **Trigger** Phase 3 if complete (publish to `nba-phase3-trigger`)
+4. **Log** completion status for observability
+5. ~~Trigger Phase 3~~ (removed in v2.0)
 
-### Expected Processors (21)
+### Expected Processors (6)
 
-The orchestrator tracks these 21 Phase 2 raw processors:
-- BdlGamesProcessor, BdlTeamsProcessor, BdlPlayersProcessor, BdlBoxscoresProcessor
-- NbacBoxscoreProcessor, NbacGamesProcessor, NbacPlayersProcessor, NbacTeamsProcessor, NbacTeamBoxscoreProcessor
-- PdGamesProcessor, PdPlayerStatsProcessor, PdTeamsProcessor, PdScheduleProcessor
-- OddsGamesProcessor, OddsPlayerPropsProcessor, OddsTeamLinesProcessor
-- InjuriesProcessor, NewsProcessor, TransactionsProcessor, RefereesProcessor, StandingsProcessor
+The orchestrator tracks these core daily processors:
+- `bdl_player_boxscores` - Daily box scores from balldontlie
+- `bigdataball_play_by_play` - Per-game play-by-play
+- `odds_api_game_lines` - Per-game odds
+- `nbac_schedule` - Schedule updates
+- `nbac_gamebook_player_stats` - Post-game player stats
+- `br_roster` - Basketball-ref rosters
+
+> **Note:** Not all processors publish completion messages. The actual count tracked may be lower.
+
+### HTTP Endpoints (v2.0)
+
+| Endpoint | Purpose |
+|----------|---------|
+| `/status?date=YYYY-MM-DD` | Query completion status for a date |
+| `/health` | Health check |
 
 ### Deployment
 
@@ -469,6 +493,7 @@ Clean up old Firestore documents:
 
 ---
 
-**Document Version:** 1.0
+**Document Version:** 2.0
 **Created:** 2025-11-29 16:53 PST
-**Last Updated:** 2025-11-29 16:53 PST
+**Last Updated:** 2025-12-23
+**Changes:** Phase 2→3 orchestrator converted to monitoring-only mode

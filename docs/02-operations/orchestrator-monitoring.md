@@ -3,7 +3,9 @@
 **Purpose:** Monitor and troubleshoot Phase 2→3 and Phase 3→4 orchestrators
 **Audience:** Operations, DevOps, On-call
 **Created:** 2025-11-29 16:54 PST
-**Last Updated:** 2025-11-29 16:54 PST
+**Last Updated:** 2025-12-23
+
+> **Note (Dec 2025):** Phase 2→3 orchestrator is now **monitoring-only** (v2.0). It tracks completions in Firestore but does NOT trigger Phase 3. Phase 3 is triggered directly via `nba-phase3-analytics-sub` subscription.
 
 ---
 
@@ -135,13 +137,14 @@ from google.cloud import firestore
 
 db = firestore.Client()
 
-# Phase 2
+# Phase 2 (monitoring only - tracks ~6 expected processors)
 doc = db.collection('phase2_completion').document('$DATE').get()
 if doc.exists:
     data = doc.to_dict()
     count = len([k for k in data if not k.startswith('_')])
     triggered = data.get('_triggered', False)
-    print(f"Phase 2: {count}/21 complete, triggered: {triggered}")
+    print(f"Phase 2: {count}/6 tracked (monitoring only)")
+    print(f"  Note: Phase 3 triggered via direct subscription, not orchestrator")
 else:
     print("Phase 2: No data yet")
 
@@ -185,10 +188,12 @@ gcloud pubsub subscriptions describe eventarc-us-west2-phase2-to-phase3-orchestr
 
 ### Issue 2: Phase Not Triggering After All Processors Complete
 
-**Symptoms:**
-- All 21 (or 5) processors show complete in Firestore
+> **Note:** For Phase 2→3, this is expected behavior in v2.0. The orchestrator is monitoring-only and does NOT trigger Phase 3. Phase 3 is triggered directly via Pub/Sub subscription.
+
+**Symptoms (Phase 3→4 only):**
+- All 5 processors show complete in Firestore
 - `_triggered` field is False
-- Next phase not running
+- Phase 4 not running
 
 **Diagnosis:**
 ```bash
@@ -360,13 +365,11 @@ gcloud alpha monitoring policies create \
 
 ### Re-trigger Phase (Emergency Only)
 
-If orchestrator failed but processors completed:
+> **Phase 2→3:** Manual triggering is typically NOT needed. Phase 3 is triggered directly via `nba-phase3-analytics-sub` subscription whenever Phase 2 completes. If Phase 3 didn't run, check the subscription and Phase 3 service logs.
+
+**Phase 3→4 only:** If orchestrator failed but processors completed:
 
 ```bash
-# Phase 2→3: Manually trigger Phase 3
-gcloud pubsub topics publish nba-phase3-trigger \
-  --message='{"game_date":"2025-11-29","correlation_id":"manual-recovery","trigger_source":"manual","triggered_by":"operator"}'
-
 # Phase 3→4: Manually trigger Phase 4
 gcloud pubsub topics publish nba-phase4-trigger \
   --message='{"game_date":"2025-11-29","correlation_id":"manual-recovery","trigger_source":"manual","triggered_by":"operator","entities_changed":{},"is_incremental":false}'
@@ -429,6 +432,7 @@ gcloud functions deploy phase2-to-phase3-orchestrator \
 
 ---
 
-**Document Version:** 1.0
+**Document Version:** 2.0
 **Created:** 2025-11-29 16:54 PST
-**Last Updated:** 2025-11-29 16:54 PST
+**Last Updated:** 2025-12-23
+**Changes:** Updated for Phase 2→3 monitoring-only mode (v2.0)
