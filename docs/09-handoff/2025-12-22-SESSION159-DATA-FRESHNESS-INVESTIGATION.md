@@ -259,6 +259,34 @@ bq query --use_legacy_sql=false 'SELECT game_date, COUNT(*) FROM nba_analytics.p
 ## Commits This Session
 
 1. `5b466a6` - fix: Handle both date formats in injury report processor
+2. `02d4c58` - docs: Add Session 159 handoff - data freshness root cause analysis
+3. `a6e92b6` - fix: Resolve Phase 2→3 pipeline naming mismatches
+4. `7290358` - feat: Add backfill_mode support to analytics process-date-range endpoint
+5. `94d4a7c` - fix: Reorder gamebook exporters so DATA path is published to Phase 2
+
+## Fixes Implemented
+
+### 1. Orchestrator Naming Fix (`a6e92b6`)
+Updated `normalize_processor_name()` to strip dataset prefix from `output_table`:
+```python
+if output_table:
+    table_name = output_table.split('.')[-1] if '.' in output_table else output_table
+    if table_name in EXPECTED_PROCESSOR_SET:
+        return table_name
+```
+
+### 2. Analytics Field Extraction Fix (`a6e92b6`)
+Updated analytics service to read `output_table` and strip dataset prefix:
+```python
+raw_table = message.get('output_table') or message.get('source_table')
+source_table = raw_table.split('.')[-1] if '.' in raw_table else raw_table
+```
+
+### 3. Backfill Mode Support (`7290358`)
+Added `backfill_mode` parameter to `/process-date-range` endpoint to bypass dependency checks.
+
+### 4. Gamebook Exporter Order Fix (`94d4a7c`)
+Reordered exporters so DATA exporter runs first, ensuring the correct path (gamebooks-data) is published to Phase 2 instead of the PDF path (gamebooks-pdf).
 
 ---
 
