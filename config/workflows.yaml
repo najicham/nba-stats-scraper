@@ -305,13 +305,13 @@ workflows:
     priority: "HIGH"
     decision_type: "game_aware_yesterday"
     description: "Final box score collection + enhanced data - 4 AM ET (all games must be complete)"
-    
+
     schedule:
       game_aware: true
       target_date: "yesterday"
       fixed_time: "04:00"  # 4 AM ET
       tolerance_minutes: 30
-    
+
     execution_plan:
       type: "parallel"
       scrapers:
@@ -319,9 +319,88 @@ workflows:
         - bigdataball_pbp          # Enhanced data
         - nbac_play_by_play
         - nbac_gamebook_pdf
-    
+
     alerts:
       missing_games: "CRITICAL"  # All games MUST be collected
+
+  # ────────────────────────────────────────────────────────────
+  # Early Game Collection - Christmas Day, MLK Day, etc.
+  # ────────────────────────────────────────────────────────────
+  early_game_window_1:
+    enabled: true
+    priority: "HIGH"
+    decision_type: "game_aware_early"
+    description: "Early game collection - 3 PM ET (for noon games like Christmas Day)"
+
+    schedule:
+      game_aware: true
+      target_date: "today"
+      fixed_time: "15:00"  # 3 PM ET
+      tolerance_minutes: 30
+      early_game_cutoff_hour: 19  # Games starting before 7 PM are "early"
+      collection_delay_hours: 3   # Wait 3 hours after game start
+
+    execution_plan:
+      type: "parallel"
+      scrapers:
+        - bdl_box_scores
+        - nbac_team_boxscore
+        - nbac_player_boxscore
+
+    alerts:
+      missing_games: "WARNING"  # Some early games may still be in progress
+
+  early_game_window_2:
+    enabled: true
+    priority: "HIGH"
+    decision_type: "game_aware_early"
+    description: "Early game collection - 6 PM ET (for afternoon games)"
+
+    schedule:
+      game_aware: true
+      target_date: "today"
+      fixed_time: "18:00"  # 6 PM ET
+      tolerance_minutes: 30
+      early_game_cutoff_hour: 19
+      collection_delay_hours: 3
+
+    execution_plan:
+      type: "parallel"
+      scrapers:
+        - bdl_box_scores
+        - nbac_team_boxscore
+        - nbac_player_boxscore
+        - bigdataball_pbp
+
+    alerts:
+      missing_games: "WARNING"
+
+  early_game_window_3:
+    enabled: true
+    priority: "HIGH"
+    decision_type: "game_aware_early"
+    description: "Early game final collection - 9 PM ET (catch any remaining early games)"
+
+    schedule:
+      game_aware: true
+      target_date: "today"
+      fixed_time: "21:00"  # 9 PM ET
+      tolerance_minutes: 30
+      early_game_cutoff_hour: 19
+      collection_delay_hours: 3
+
+    execution_plan:
+      type: "parallel"
+      scrapers:
+        - bdl_box_scores
+        - nbac_team_boxscore
+        - nbac_player_boxscore
+        - bigdataball_pbp
+        - nbac_play_by_play
+        - nbac_gamebook_pdf
+
+    alerts:
+      missing_games: "CRITICAL"  # All early games should be collected by now
 
   # ────────────────────────────────────────────────────────────
   # Discovery Mode - Injury Report

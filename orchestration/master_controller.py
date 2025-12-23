@@ -173,7 +173,12 @@ class MasterWorkflowController:
                     yesterday = (current_time.date() - timedelta(days=1)).strftime('%Y-%m-%d')
                     games_yesterday = self.schedule_service.get_games_for_date(yesterday)
                     decision = self._evaluate_post_game(workflow_name, workflow_config, current_time, games_yesterday)
-                
+
+                elif decision_type == "game_aware_early":
+                    # For early game days (Christmas, MLK Day, etc.) - collect TODAY's games
+                    today = current_time.date().strftime('%Y-%m-%d')
+                    decision = self._evaluate_early_game(workflow_name, workflow_config, current_time, games_today, today)
+
                 elif decision_type == "discovery":
                     decision = self._evaluate_discovery(workflow_name, workflow_config, current_time, games_today)
                 
@@ -559,7 +564,154 @@ class MasterWorkflowController:
                     'error': str(e)
                 }
             )
-    
+
+    def _evaluate_early_game(self, workflow_name: str, config: Dict, current_time: datetime, games_today: list, today_str: str) -> WorkflowDecision:
+        """
+        Evaluate early game collection workflow (Christmas Day, MLK Day, etc.).
+
+        Logic:
+        1. Check if today has early games (games starting before 7 PM ET)
+        2. Check if in time window for this collection
+        3. Check which early games are finished and need collection
+        4. Decide RUN or SKIP
+        """
+        schedule = config['schedule']
+        early_game_cutoff_hour = schedule.get('early_game_cutoff_hour', 19)  # 7 PM default
+
+        # Check 1: Any early games today?
+        # Early games = games starting before the cutoff hour
+        et_tz = pytz.timezone('America/New_York')
+        early_games = []
+
+        for game in games_today:
+            # Get game start time (game_date_et is a datetime)
+            if hasattr(game, 'game_date_et') and game.game_date_et:
+                game_hour = game.game_date_et.hour
+                if game_hour < early_game_cutoff_hour:
+                    early_games.append(game)
+
+        if not early_games:
+            return WorkflowDecision(
+                action=DecisionAction.SKIP,
+                reason=f"No early games today (before {early_game_cutoff_hour}:00 ET)",
+                workflow_name=workflow_name,
+                priority=config['priority'],
+                context={'total_games': len(games_today), 'early_games': 0},
+                next_check_time=current_time + timedelta(hours=12)
+            )
+
+        # Check 2: Time window
+        fixed_time_str = schedule.get('fixed_time')  # e.g., "15:00"
+        tolerance_minutes = schedule.get('tolerance_minutes', 30)
+
+        if fixed_time_str:
+            hour, minute = map(int, fixed_time_str.split(':'))
+            window_time = current_time.replace(hour=hour, minute=minute, second=0, microsecond=0)
+
+            time_diff_minutes = abs((current_time - window_time).total_seconds() / 60)
+
+            if time_diff_minutes > tolerance_minutes:
+                return WorkflowDecision(
+                    action=DecisionAction.SKIP,
+                    reason=f"Not in time window ({fixed_time_str} ±{tolerance_minutes}min)",
+                    workflow_name=workflow_name,
+                    priority=config['priority'],
+                    next_check_time=window_time,
+                    context={
+                        'early_games': len(early_games),
+                        'time_diff_minutes': int(time_diff_minutes)
+                    }
+                )
+
+        # Check 3: Which early games need collection?
+        # Only target games that have likely finished (started 3+ hours ago)
+        collection_delay_hours = schedule.get('collection_delay_hours', 3)
+        finished_games = []
+
+        for game in early_games:
+            if hasattr(game, 'game_date_et') and game.game_date_et:
+                game_start = game.game_date_et
+                hours_since_start = (current_time - game_start).total_seconds() / 3600
+                if hours_since_start >= collection_delay_hours:
+                    finished_games.append(game)
+
+        if not finished_games:
+            return WorkflowDecision(
+                action=DecisionAction.SKIP,
+                reason=f"No early games finished yet ({len(early_games)} early games, waiting {collection_delay_hours}h after start)",
+                workflow_name=workflow_name,
+                priority=config['priority'],
+                context={
+                    'early_games': len(early_games),
+                    'finished': 0,
+                    'collection_delay_hours': collection_delay_hours
+                },
+                next_check_time=current_time + timedelta(hours=1)
+            )
+
+        # Check 4: Which finished games are already collected?
+        query = f"""
+            SELECT DISTINCT game_id
+            FROM `nba-props-platform.nba_raw.bdl_player_boxscores`
+            WHERE game_date = '{today_str}'
+        """
+
+        try:
+            collected = execute_bigquery(query)
+            collected_game_ids = {row['game_id'] for row in collected}
+
+            missing_games = [g for g in finished_games if g.game_id not in collected_game_ids]
+
+            if not missing_games:
+                return WorkflowDecision(
+                    action=DecisionAction.SKIP,
+                    reason=f"All {len(finished_games)} finished early games already collected",
+                    workflow_name=workflow_name,
+                    priority=config['priority'],
+                    context={
+                        'early_games': len(early_games),
+                        'finished': len(finished_games),
+                        'collected': len(collected_game_ids),
+                        'missing': 0
+                    },
+                    next_check_time=current_time + timedelta(hours=2)
+                )
+
+            # RUN - collect missing games
+            scrapers = self._extract_scrapers_from_plan(config['execution_plan'])
+
+            return WorkflowDecision(
+                action=DecisionAction.RUN,
+                reason=f"{len(missing_games)} early games need collection (window: {fixed_time_str})",
+                workflow_name=workflow_name,
+                priority=config['priority'],
+                scrapers=scrapers,
+                target_games=[g.game_id for g in missing_games],
+                context={
+                    'early_games': len(early_games),
+                    'finished': len(finished_games),
+                    'collected': len(collected_game_ids),
+                    'missing': len(missing_games)
+                }
+            )
+
+        except Exception as e:
+            logger.error(f"Error checking collected early games: {e}")
+            scrapers = self._extract_scrapers_from_plan(config['execution_plan'])
+
+            return WorkflowDecision(
+                action=DecisionAction.RUN,
+                reason=f"Cannot verify collected early games, attempting collection",
+                workflow_name=workflow_name,
+                priority=config['priority'],
+                scrapers=scrapers,
+                alert_level=AlertLevel.WARNING,
+                context={
+                    'early_games': len(early_games),
+                    'error': str(e)
+                }
+            )
+
     def _evaluate_discovery(self, workflow_name: str, config: Dict, current_time: datetime, games_today: list) -> WorkflowDecision:
         """
         Evaluate discovery mode workflow.
