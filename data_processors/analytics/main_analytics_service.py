@@ -49,13 +49,19 @@ def process_analytics():
     """
     Handle Pub/Sub messages for analytics processing.
     Triggered when raw data processing completes.
-    Expected message format:
+
+    Expected message format (from Phase 2 UnifiedPubSubPublisher):
     {
-        "source_table": "nbac_gamebook_player_stats",
+        "processor_name": "BdlBoxscoresProcessor",
+        "phase": "phase_2_raw",
+        "output_table": "nba_raw.bdl_player_boxscores",
+        "output_dataset": "nba_raw",
         "game_date": "2024-01-15",
-        "processor_name": "NbacGamebookProcessor",
-        "success": true
+        "status": "success",
+        "record_count": 150
     }
+
+    Also supports legacy format with 'source_table' for backward compatibility.
     """
     envelope = request.get_json()
     
@@ -77,18 +83,25 @@ def process_analytics():
             return jsonify({"error": "No data in Pub/Sub message"}), 400
         
         # Extract trigger info
-        source_table = message.get('source_table')
+        # Phase 2 processors publish 'output_table' (e.g., "nba_raw.bdl_player_boxscores")
+        # For backward compatibility, also check 'source_table'
+        raw_table = message.get('output_table') or message.get('source_table')
         game_date = message.get('game_date')
-        success = message.get('success', True)
-        
-        if not success:
-            logger.info(f"Raw processing failed for {source_table}, skipping analytics")
+        status = message.get('status', 'success')
+        success = message.get('success', status == 'success')
+
+        if not success or status == 'failed':
+            logger.info(f"Raw processing failed for {raw_table}, skipping analytics")
             return jsonify({"status": "skipped", "reason": "Raw processing failed"}), 200
-        
-        if not source_table:
-            return jsonify({"error": "Missing source_table in message"}), 400
-            
-        logger.info(f"Processing analytics for {source_table}, date: {game_date}")
+
+        if not raw_table:
+            logger.warning(f"Missing output_table/source_table in message: {list(message.keys())}")
+            return jsonify({"error": "Missing output_table in message"}), 400
+
+        # Strip dataset prefix if present: "nba_raw.bdl_player_boxscores" -> "bdl_player_boxscores"
+        source_table = raw_table.split('.')[-1] if '.' in raw_table else raw_table
+
+        logger.info(f"Processing analytics for {source_table} (from {raw_table}), date: {game_date}")
         
         # Determine which analytics processors to run
         processors_to_run = ANALYTICS_TRIGGERS.get(source_table, [])

@@ -116,9 +116,13 @@ def normalize_processor_name(raw_name: str, output_table: Optional[str] = None) 
     if raw_name in EXPECTED_PROCESSOR_SET:
         return raw_name
 
-    # If output_table matches expected, use it
-    if output_table and output_table in EXPECTED_PROCESSOR_SET:
-        return output_table
+    # If output_table matches expected, use it (strip dataset prefix first)
+    # Example: "nba_raw.bdl_player_boxscores" -> "bdl_player_boxscores"
+    if output_table:
+        table_name = output_table.split('.')[-1] if '.' in output_table else output_table
+        if table_name in EXPECTED_PROCESSOR_SET:
+            logger.debug(f"Matched via output_table: '{output_table}' -> '{table_name}'")
+            return table_name
 
     # Convert CamelCase to snake_case and strip "Processor" suffix
     name = raw_name.replace('Processor', '')
