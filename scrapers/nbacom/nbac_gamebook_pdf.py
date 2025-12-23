@@ -89,22 +89,23 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
     
     # ------------------------------------------------------------------ #
     # Exporters - Save BOTH PDF and parsed data
+    # NOTE: DATA exporter MUST be first so its path is used for Phase 2 Pub/Sub
     # ------------------------------------------------------------------ #
     exporters = [
+        # Always save parsed data to GCS (FIRST - its path triggers Phase 2)
+        {
+            "type": "gcs",
+            "key": GCSPathBuilder.get_path("nba_com_gamebooks_pdf_data"),
+            "export_mode": ExportMode.DATA,
+            "groups": ["prod", "s3", "gcs", "reparse_from_gcs"],
+        },
         # Save original PDF to GCS (skip when pdf_source="gcs" since PDF already exists)
         {
             "type": "gcs",
             "key": GCSPathBuilder.get_path("nba_com_gamebooks_pdf_raw"),
             "export_mode": ExportMode.RAW,
-            "groups": ["prod", "s3", "gcs", "reparse_from_nba"],  # NEW: reparse_from_nba group
-            "condition": "pdf_source_download",  # NEW: conditional export
-        },
-        # Always save parsed data to GCS
-        {
-            "type": "gcs", 
-            "key": GCSPathBuilder.get_path("nba_com_gamebooks_pdf_data"),
-            "export_mode": ExportMode.DATA,
-            "groups": ["prod", "s3", "gcs", "reparse_from_gcs"],  # NEW: reparse_from_gcs group
+            "groups": ["prod", "s3", "gcs", "reparse_from_nba"],
+            "condition": "pdf_source_download",
         },
         # Development exports
         {
