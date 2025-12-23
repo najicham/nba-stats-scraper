@@ -142,12 +142,25 @@ class OddsApiPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
     def extract_metadata_from_path(self, file_path: str, is_historical: bool) -> Dict:
         """
         Extract metadata from file path.
-        
+
         Historical: odds-api/player-props-history/2023-10-24/fd55db2fa9ee5be1f108be5151e2ecb0-LALDEN/20250812_035909-snap-2130.json
         Current:    odds-api/player-props/2025-10-21/bbde7751a144b98ed150d7a5f7dc8f87-HOUOKC/20251019_032435-snap-0324.json
         """
         path_parts = file_path.split('/')
-        
+
+        # Validate path has enough parts (need at least 5: odds-api/player-props/date/event/file.json)
+        if len(path_parts) < 5:
+            logger.warning(f"Invalid path format (not enough parts): {file_path}")
+            return {
+                'game_date': None,
+                'event_id': None,
+                'away_team': None,
+                'home_team': None,
+                'capture_timestamp': None,
+                'snapshot_tag': None,
+                'is_historical': is_historical
+            }
+
         # Extract date (same position for both formats)
         date_str = path_parts[-3]  # "2023-10-24" or "2025-10-21"
         
@@ -270,7 +283,12 @@ class OddsApiPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
             
             # Extract metadata from file path
             metadata = self.extract_metadata_from_path(file_path, is_historical)
-            
+
+            # Skip if metadata extraction failed (invalid path)
+            if metadata.get('game_date') is None:
+                logger.error(f"Could not extract game_date from path: {file_path}")
+                raise ValueError(f"Invalid file path format: {file_path}")
+
             # Get game data based on format
             if is_historical:
                 game_data = raw_data.get('data', {})
