@@ -41,9 +41,19 @@ from typing import Dict, List, Optional, Set
 from google.cloud import firestore, pubsub_v1
 import functions_framework
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Configure logging - use structured logging for Cloud Run
+import google.cloud.logging
+try:
+    client = google.cloud.logging.Client()
+    client.setup_logging()
+except Exception as e:
+    print(f"Could not setup Cloud Logging client: {e}")
+
+logging.basicConfig(level=logging.INFO, format='%(levelname)s:%(name)s:%(message)s')
 logger = logging.getLogger(__name__)
+
+# Debug: print to stdout/stderr to ensure visibility
+print("Phase2-to-Phase3 Orchestrator module loaded")
 
 # Constants
 PROJECT_ID = os.environ.get('GCP_PROJECT', 'nba-props-platform')
@@ -159,6 +169,11 @@ def orchestrate_phase2_to_phase3(cloud_event):
     Args:
         cloud_event: CloudEvent from Pub/Sub containing Phase 2 completion data
     """
+    # Debug: print immediately to verify function is invoked
+    print(f"DEBUG: orchestrate_phase2_to_phase3 invoked with cloud_event type: {type(cloud_event)}")
+    import sys
+    sys.stdout.flush()
+
     try:
         # Parse Pub/Sub message
         message_data = parse_pubsub_message(cloud_event)
