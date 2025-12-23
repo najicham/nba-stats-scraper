@@ -19,29 +19,17 @@ class PhaseTransitionConfig:
     """Configuration for phase transition orchestration."""
 
     # Phase 2 -> Phase 3: List of expected processors
-    # When all complete, Phase 3 is triggered
+    # NOTE: Phase 2->3 orchestrator is now monitoring-only. Phase 3 is triggered
+    # directly via Pub/Sub subscription (nba-phase3-analytics-sub).
+    # This list is used for tracking completeness in Firestore.
     phase2_expected_processors: List[str] = field(default_factory=lambda: [
-        'bdl_player_boxscores',
-        'bdl_injuries',
-        'nbac_gamebook_player_stats',
-        'nbac_team_boxscore',
-        'nbac_schedule',
-        'nbac_injury_report',
-        'nbac_play_by_play',
-        'espn_boxscores',
-        'espn_team_rosters',
-        'espn_scoreboard',
-        'odds_api_game_lines',
-        'odds_api_player_points_props',
-        'bettingpros_player_points_props',
-        'bigdataball_play_by_play',
-        'bigdataball_schedule',
-        'nbac_player_list_current',
-        'nbac_team_list',
-        'nbac_standings',
-        'nbac_active_players',
-        'nbac_referee_assignments',
-        'nbac_officials',
+        # Core daily processors that reliably publish completion messages
+        'bdl_player_boxscores',       # Daily box scores from balldontlie
+        'bigdataball_play_by_play',   # Per-game play-by-play
+        'odds_api_game_lines',        # Per-game odds
+        'nbac_schedule',              # Schedule updates
+        'nbac_gamebook_player_stats', # Post-game player stats
+        'br_roster',                  # Basketball-ref rosters
     ])
 
     # Phase 3 -> Phase 4: List of expected processors

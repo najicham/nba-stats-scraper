@@ -1,17 +1,16 @@
 #!/bin/bash
 # Deploy Phase 2 → Phase 3 Orchestrator to Google Cloud Functions
 #
-# This orchestrator tracks completion of all 21 Phase 2 processors and triggers
-# Phase 3 when complete.
+# MONITORING MODE (v2.0): This orchestrator now only tracks processor completions
+# for observability. Phase 3 is triggered directly via Pub/Sub subscription
+# (nba-phase3-analytics-sub), NOT by this orchestrator.
 #
 # Usage:
 #   ./bin/orchestrators/deploy_phase2_to_phase3.sh
 #
 # Prerequisites:
 #   - gcloud CLI installed and authenticated
-#   - Pub/Sub topics created:
-#       - nba-phase2-raw-complete (input)
-#       - nba-phase3-trigger (output)
+#   - Pub/Sub topic: nba-phase2-raw-complete (input for event trigger)
 #   - Firestore database initialized
 
 set -e  # Exit on error
