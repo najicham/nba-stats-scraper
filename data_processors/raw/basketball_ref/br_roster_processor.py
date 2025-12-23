@@ -322,21 +322,27 @@ class BasketballRefRosterProcessor(SmartIdempotencyMixin, ProcessorBase):
             if update_rows:
                 season_year = self.opts["season_year"]
                 team_abbrev = self.opts["team_abbrev"]
-                # Escape single quotes in player names to prevent SQL injection
-                player_names = [r["player_full_name"].replace("'", "''") for r in update_rows]
-                # Also escape team_abbrev just in case
-                team_abbrev_escaped = team_abbrev.replace("'", "''")
+                player_names = [r["player_full_name"] for r in update_rows]
 
+                # Use parameterized query to safely handle special characters in names
                 query = f"""
                 UPDATE `{table_id}`
                 SET last_scraped_date = CURRENT_DATE()
-                WHERE season_year = {season_year}
-                  AND team_abbrev = '{team_abbrev_escaped}'
-                  AND player_full_name IN ({','.join([f"'{n}'" for n in player_names])})
+                WHERE season_year = @season_year
+                  AND team_abbrev = @team_abbrev
+                  AND player_full_name IN UNNEST(@player_names)
                 """
 
+                job_config = bigquery.QueryJobConfig(
+                    query_parameters=[
+                        bigquery.ScalarQueryParameter("season_year", "INT64", season_year),
+                        bigquery.ScalarQueryParameter("team_abbrev", "STRING", team_abbrev),
+                        bigquery.ArrayQueryParameter("player_names", "STRING", player_names),
+                    ]
+                )
+
                 logger.info(f"Updating {len(update_rows)} existing players")
-                query_job = self.bq_client.query(query)
+                query_job = self.bq_client.query(query, job_config=job_config)
                 query_job.result()  # Wait for completion
             
             self.stats["rows_inserted"] = len(new_rows)
