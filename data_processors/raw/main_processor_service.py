@@ -829,7 +829,25 @@ def extract_opts_from_path(file_path: str) -> dict:
                 
             except (ValueError, IndexError):
                 logger.warning(f"Could not parse season from path: {season_str}")
-    
+
+    elif 'nba-com/gamebooks-data' in file_path:
+        # Path: nba-com/gamebooks-data/2025-12-21/20251221-TORBKN/timestamp.json
+        parts = file_path.split('/')
+        try:
+            # Find date part (YYYY-MM-DD format)
+            for part in parts:
+                if len(part) == 10 and part[4] == '-' and part[7] == '-':
+                    game_date = datetime.strptime(part, '%Y-%m-%d').date()
+                    opts['game_date'] = game_date
+                    opts['date'] = str(game_date)
+
+                    # Calculate season year (Oct-Sept NBA season)
+                    season_year = game_date.year if game_date.month >= 10 else game_date.year - 1
+                    opts['season_year'] = season_year
+                    break
+        except ValueError:
+            logger.warning(f"Could not parse date from gamebook path: {file_path}")
+
     return opts    
 
 
