@@ -137,7 +137,7 @@ class BdlStandingsProcessor(SmartIdempotencyMixin, ProcessorBase):
         
         if not date_str:
             logging.error(f"Could not extract date from file path: {file_path}")
-            
+
             # Notify about date extraction failure
             try:
                 notify_error(
@@ -156,6 +156,8 @@ class BdlStandingsProcessor(SmartIdempotencyMixin, ProcessorBase):
 
             # Smart Idempotency: Add data_hash to all records
             self.add_data_hash()
+            return  # Exit early if no date found
+
         try:
             date_recorded = datetime.strptime(date_str, '%Y-%m-%d').date()
         except ValueError:
