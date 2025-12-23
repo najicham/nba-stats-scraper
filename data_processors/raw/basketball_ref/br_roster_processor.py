@@ -322,16 +322,19 @@ class BasketballRefRosterProcessor(SmartIdempotencyMixin, ProcessorBase):
             if update_rows:
                 season_year = self.opts["season_year"]
                 team_abbrev = self.opts["team_abbrev"]
-                player_names = [r["player_full_name"] for r in update_rows]
-                
+                # Escape single quotes in player names to prevent SQL injection
+                player_names = [r["player_full_name"].replace("'", "''") for r in update_rows]
+                # Also escape team_abbrev just in case
+                team_abbrev_escaped = team_abbrev.replace("'", "''")
+
                 query = f"""
                 UPDATE `{table_id}`
                 SET last_scraped_date = CURRENT_DATE()
                 WHERE season_year = {season_year}
-                  AND team_abbrev = '{team_abbrev}'
+                  AND team_abbrev = '{team_abbrev_escaped}'
                   AND player_full_name IN ({','.join([f"'{n}'" for n in player_names])})
                 """
-                
+
                 logger.info(f"Updating {len(update_rows)} existing players")
                 query_job = self.bq_client.query(query)
                 query_job.result()  # Wait for completion
