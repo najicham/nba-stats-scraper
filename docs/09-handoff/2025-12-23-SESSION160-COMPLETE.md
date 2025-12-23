@@ -68,6 +68,28 @@ The direct subscription pattern is actually **better** for a real-time sports da
 3. `d5bddd1` - docs: Add architecture discovery - orchestrator is vestigial
 4. `7c647f6` - docs: Add complete Session 160 handoff with monitoring commands
 5. `f9cfac3` - fix: Escape single quotes in basketball-ref roster processor SQL
+6. `3537d30` - fix: Use parameterized queries in basketball-ref roster processor
+
+## Basketball-Ref Processor Fix
+
+**Problem:** Player names with apostrophes (e.g., "D'Angelo Russell") were breaking SQL UPDATE queries, causing constant log spam with errors like:
+```
+Syntax error: Expected ")" or "," but got identifier "Sean"
+```
+
+**Root Cause:** String concatenation in SQL query building wasn't escaping special characters.
+
+**Solution:** Replaced string concatenation with BigQuery parameterized queries:
+```python
+# Before (vulnerable):
+AND player_full_name IN ({','.join([f"'{n}'" for n in player_names])})
+
+# After (safe):
+AND player_full_name IN UNNEST(@player_names)
+# With QueryJobConfig parameters
+```
+
+**Result:** All teams now processing successfully, including DAL with D'Angelo Russell.
 
 ---
 
@@ -129,7 +151,7 @@ SELECT 'precompute', COUNT(*) FROM nba_precompute.player_daily_cache WHERE cache
 
 ### High Priority
 1. **Monitor Dec 23 end-to-end** - Confirm pipeline automation works
-2. **Fix basketball-ref processor failures** - Flooding logs with errors
+2. ~~**Fix basketball-ref processor failures**~~ - ✅ DONE (commit `3537d30`)
 
 ### Medium Priority
 3. **Update orchestrator to monitoring-only** - Stop publishing to unused topic
