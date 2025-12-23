@@ -167,14 +167,20 @@ def process_analytics():
 def process_date_range():
     """
     Process analytics for a date range (manual trigger).
-    POST body: {"start_date": "2024-01-01", "end_date": "2024-01-07", "processors": ["PlayerGameSummaryProcessor"]}
+    POST body: {
+        "start_date": "2024-01-01",
+        "end_date": "2024-01-07",
+        "processors": ["PlayerGameSummaryProcessor"],
+        "backfill_mode": true  // Optional: bypass dependency checks
+    }
     """
     try:
         data = request.get_json()
-        
+
         start_date = data.get('start_date')
         end_date = data.get('end_date')
         processor_names = data.get('processors', [])
+        backfill_mode = data.get('backfill_mode', False)
         
         if not start_date or not end_date:
             return jsonify({"error": "start_date and end_date required"}), 400
@@ -204,8 +210,12 @@ def process_date_range():
                     'start_date': start_date,
                     'end_date': end_date,
                     'project_id': os.environ.get('GCP_PROJECT_ID', 'nba-props-platform'),
-                    'triggered_by': 'manual'
+                    'triggered_by': 'manual',
+                    'backfill_mode': backfill_mode
                 }
+
+                if backfill_mode:
+                    logger.info(f"Running {processor_class.__name__} in BACKFILL mode")
                 
                 success = processor.run(opts)
                 stats = processor.get_analytics_stats()
