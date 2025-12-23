@@ -107,6 +107,34 @@ These processors will never complete, blocking automatic Phase 3 triggers.
 
 ---
 
+## Architecture Discovery (Critical!)
+
+**The Phase 2→3 orchestrator is vestigial infrastructure!**
+
+Investigation revealed that the pipeline works via **direct Pub/Sub subscriptions**, not through the orchestrator:
+
+```
+Phase 2 Processor → Pub/Sub (nba-phase2-raw-complete)
+                          ↓
+            ┌─────────────┴─────────────┐
+            ↓                           ↓
+    Analytics Service             Orchestrator (tracks 21 processors)
+    (nba-phase3-analytics-sub)         ↓
+    ✅ PROCESSES DIRECTLY       Pub/Sub (nba-phase3-trigger)
+                                       ↓
+                                  NO SUBSCRIBERS! ❌
+```
+
+**Key Insight:** The orchestrator's output topic (`nba-phase3-trigger`) has NO subscribers. The analytics service processes data directly from Phase 2 completions via its own subscription.
+
+**Phase 3 → Phase 4:** Works via both:
+1. Phase 3→4 Orchestrator (Pub/Sub trigger)
+2. Scheduler fallback (`player-daily-cache-daily` at 23:15 UTC)
+
+**Recommendation:** Consider deprecating the Phase 2→3 orchestrator or repurposing it for alerting/monitoring rather than triggering.
+
+---
+
 ## Next Session Priorities
 
 ### High Priority
