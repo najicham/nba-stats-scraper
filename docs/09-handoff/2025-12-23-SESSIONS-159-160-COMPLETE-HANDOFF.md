@@ -84,6 +84,8 @@ The direct subscription pattern is actually **better** for a real-time sports da
 | `cb927c4` | Update handoff with basketball-ref fix | Documentation |
 | `53df840` | Update handoff | Documentation |
 | `c5545bb` | Add early return when date_str is None (standings) | Fixed null date error |
+| `42c97fc` | Add comprehensive Sessions 159-160 handoff | Documentation |
+| `74bb875` | Add AWS SES credentials from Secret Manager | Fixed email alerts |
 
 ---
 
@@ -154,6 +156,21 @@ exporters = [
 **Problem:** Missing `return` statement after error handling caused TypeError when date_str was None.
 
 **Solution:** Added early return after date extraction failure.
+
+### 6. AWS SES Email Credentials (`74bb875`)
+
+**Problem:** Email alerts failing with "Unable to locate credentials" because AWS SES credentials weren't injected into Cloud Run.
+
+**Solution:** Updated deployment script to inject AWS SES credentials from Secret Manager:
+```bash
+# Added to deploy_processors_simple.sh
+SECRETS="AWS_SES_ACCESS_KEY_ID=aws-ses-access-key-id:latest"
+SECRETS="$SECRETS,AWS_SES_SECRET_ACCESS_KEY=aws-ses-secret-access-key:latest"
+
+gcloud run deploy ... --set-secrets="$SECRETS"
+```
+
+**Result:** Email alerts via AWS SES now work correctly.
 
 ---
 
@@ -263,6 +280,9 @@ for date in ['2025-12-21', '2025-12-22', '2025-12-23']:
 ### Orchestration
 - `orchestration/cloud_functions/phase2_to_phase3/main.py` - Cloud Logging, normalization fix
 - `orchestration/cloud_functions/phase2_to_phase3/requirements.txt` - google-cloud-logging
+
+### Deployment
+- `bin/raw/deploy/deploy_processors_simple.sh` - Added AWS SES secrets from Secret Manager
 
 ### Documentation
 - `docs/09-handoff/2025-12-22-SESSION159-DATA-FRESHNESS-INVESTIGATION.md`
