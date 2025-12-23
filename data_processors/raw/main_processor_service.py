@@ -832,12 +832,13 @@ def extract_opts_from_path(file_path: str) -> dict:
 
     elif 'nba-com/gamebooks-data' in file_path:
         # Path: nba-com/gamebooks-data/2025-12-21/20251221-TORBKN/timestamp.json
+        from datetime import datetime as dt
         parts = file_path.split('/')
         try:
             # Find date part (YYYY-MM-DD format)
             for part in parts:
                 if len(part) == 10 and part[4] == '-' and part[7] == '-':
-                    game_date = datetime.strptime(part, '%Y-%m-%d').date()
+                    game_date = dt.strptime(part, '%Y-%m-%d').date()
                     opts['game_date'] = game_date
                     opts['date'] = str(game_date)
 
