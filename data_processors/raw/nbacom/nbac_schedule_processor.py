@@ -10,6 +10,7 @@ import os
 import re
 from datetime import datetime, date
 from typing import Dict, List, Optional
+import pytz
 from google.cloud import bigquery, storage
 from data_processors.raw.processor_base import ProcessorBase
 from data_processors.raw.smart_idempotency_mixin import SmartIdempotencyMixin
@@ -418,9 +419,14 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
                     
                     # Parse game date and time
                     # Use gameDateTimeEst (has actual game time) instead of gameDateEst (date only at midnight)
+                    # NOTE: NBA API uses 'Z' suffix but gameDateTimeEst is actually Eastern time (not UTC)
+                    # The gameStatusText confirms this (e.g., "12:00 pm ET" matches gameDateTimeEst: "2025-12-25T12:00:00Z")
                     game_datetime_str = game.get('gameDateTimeEst') or game.get('gameDateEst', '')
                     if game_datetime_str.endswith('Z'):
-                        game_datetime = datetime.fromisoformat(game_datetime_str.replace('Z', '+00:00'))
+                        # Parse as naive datetime, then localize to Eastern (handles DST automatically)
+                        naive_dt = datetime.fromisoformat(game_datetime_str.replace('Z', ''))
+                        eastern = pytz.timezone('America/New_York')
+                        game_datetime = eastern.localize(naive_dt)
                     else:
                         game_datetime = datetime.fromisoformat(game_datetime_str)
                     
