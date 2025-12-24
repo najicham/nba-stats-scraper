@@ -44,9 +44,17 @@ Result: `TypeError: transform_data() missing 2 required positional arguments: 'r
 ### Timeline
 
 - Session 162 (Dec 23): Modified schedule processor with timezone fixes
-- Dec 23 19:XX ET: First errors start appearing
+- Dec 23 19:XX ET: First errors start appearing (revision 00031-00033)
 - Dec 24 08:XX ET: ~600 emails accumulated
-- Dec 24 09:06 ET: Fix deployed
+- Dec 24 09:XX ET: Fix committed (73af391) but **NOT deployed**
+- Dec 24 12:10 ET: Revision 00034 deployed (partial fix attempt)
+- Dec 24 13:50 ET: Rate limiter committed (36962e1)
+- Dec 24 13:54 ET: Revision 00035 deployed **(fix + rate limiter active)**
+- Dec 24 14:16 ET: Last error email received (from before 00035)
+
+**CRITICAL NOTE:** The original handoff incorrectly stated "09:06 ET: Fix deployed".
+The fix was committed at ~09:00 ET but actual deployment to Cloud Run was delayed
+until 13:54 ET (revision 00035). This 4-5 hour gap caused continued email flood.
 
 ---
 
@@ -176,6 +184,14 @@ WHERE game_date = '2025-12-23'
 -- Shows: 11 games, 387 player rows
 ```
 
+### Session 164 Re-verification (17:24 ET Dec 24)
+Confirmed fix is active:
+- No Phase 2 errors in 4+ hours since revision 00035 deployed
+- Schedule processor successfully processed at 21:08 UTC (1231 rows)
+- Phase 3 analytics ran successfully at 18:10 UTC (501 players)
+- All Cloud Run services healthy
+- Pub/Sub pipeline connectivity verified
+
 ---
 
 ## Files Modified
@@ -208,6 +224,15 @@ The processor worked fine for manual/backfill runs (`process_file()`) but broke 
 - Aggregation of similar errors
 - Severity escalation (first = info, 100th = critical)
 
+### Commit ≠ Deploy
+
+A git commit does NOT mean the fix is live. Always verify:
+1. Check Cloud Run revision timestamp: `gcloud run services describe SERVICE --format="value(status.latestReadyRevisionName)"`
+2. Check revision creation time: `gcloud run revisions describe REVISION --format="value(metadata.creationTimestamp)"`
+3. Verify logs show expected behavior after deployment
+
+In this incident, a 4-5 hour gap between commit and deploy allowed hundreds more error emails.
+
 ---
 
 ## Todo for Next Session
@@ -227,18 +252,40 @@ The processor worked fine for manual/backfill runs (`process_file()`) but broke 
 
 ## Christmas Day Readiness
 
-| Component | Status |
-|-----------|--------|
-| Schedule data | ✅ Fresh (5 games: 12, 2:30, 5, 8, 10:30 PM ET) |
-| Early game workflows | ✅ Fixed and tested |
-| Rate limiting | ✅ Active (max 5 emails/hr/error) |
-| Scrapers service | ✅ Deployed (revision 00033) |
-| Phase 2 processors | ✅ Deployed (revision 00035) |
-| Integration tests | ✅ 6 tests passing |
+| Component | Status | Revision/Details |
+|-----------|--------|------------------|
+| Schedule data | ✅ Fresh | 5 games: 12, 2:30, 5, 8, 10:30 PM ET |
+| Early game workflows | ✅ Fixed | Uses `commence_time` attribute correctly |
+| Rate limiting | ✅ Active | Max 5 emails/hr/error signature |
+| Phase 1 Scrapers | ✅ Healthy | Revision 00033 |
+| Phase 2 Processors | ✅ Fixed | Revision 00035 (deployed 13:54 ET) |
+| Phase 3 Analytics | ✅ Running | Revision 00019 |
+| Phase 4 Precompute | ✅ Healthy | Revision 00016 |
+| Prediction Coordinator | ✅ Healthy | Revision 00003 |
+| Pub/Sub connectivity | ✅ Verified | All Phase 1→6 subscriptions active |
+| Integration tests | ✅ Passing | 6 tests for processor.run() path |
 
-**First collection:** 3:00 PM ET (for noon game CLE @ NYK)
+### Christmas Day Schedule
+| Time (ET) | Game | Early Game? |
+|-----------|------|-------------|
+| 12:00 PM | CLE @ NYK | ✅ Yes (before 7 PM) |
+| 2:30 PM | SAS @ OKC | ✅ Yes |
+| 5:00 PM | DAL @ GSW | ✅ Yes |
+| 8:00 PM | HOU @ LAL | No |
+| 10:30 PM | MIN @ DEN | No |
+
+### First Activity Timeline (Dec 25)
+| Time (ET) | Action |
+|-----------|--------|
+| ~6:00 AM | `betting_lines` workflow starts (6 hrs before noon game) |
+| 12:00 PM | First game tips off (CLE @ NYK) |
+| ~3:00 PM | `early_game_window_1` collects noon game box scores |
+| ~6:00 PM | `early_game_window_2` collects 2:30 PM game |
+| ~9:00 PM | `early_game_window_3` collects 5:00 PM game |
 
 ---
 
-**Session Duration:** ~4 hours
+**Session 163 Duration:** ~4 hours
+**Session 164 Update:** Verified deployment timeline, confirmed fix active
 **Pipeline Status:** Fully operational, rate limiting active, Christmas Day ready
+**Last Verified:** Dec 24, 2025 17:24 ET
