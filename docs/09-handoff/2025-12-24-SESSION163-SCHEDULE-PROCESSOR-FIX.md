@@ -1,20 +1,21 @@
-# Session 163: Schedule Processor Method Signature Fix
+# Session 163: Schedule Processor Fix & Notification Rate Limiting
 
 **Date:** December 24, 2025
 **Status:** Complete
-**Focus:** Fix NbacScheduleProcessor causing 600+ error emails
+**Focus:** Fix NbacScheduleProcessor causing 600+ error emails + add rate limiting
 
 ---
 
 ## Executive Summary
 
-Fixed a critical method signature bug in NbacScheduleProcessor that caused ~600 error emails overnight. The processor's `transform_data()` method expected arguments but ProcessorBase calls it with none.
+Fixed a critical method signature bug in NbacScheduleProcessor that caused ~600 error emails overnight. Then implemented notification rate limiting to prevent future email floods.
 
 ### Key Accomplishments
 1. Identified root cause of "missing 2 required positional arguments" error
 2. Fixed transform_data() to follow ProcessorBase contract
 3. Deployed Phase 2 and verified schedule data is now fresh
 4. Verified Dec 23 box score data is flowing (11 games, 387 player rows)
+5. **Implemented notification rate limiting** (max 5 emails/hr per error type)
 
 ---
 
@@ -70,6 +71,7 @@ def transform_data(self) -> None:
 | Commit | Description |
 |--------|-------------|
 | `73af391` | fix: NbacScheduleProcessor transform_data() follows ProcessorBase contract |
+| `36962e1` | feat: Add notification rate limiting to prevent email floods |
 
 ---
 
@@ -82,22 +84,36 @@ def transform_data(self) -> None:
 
 ---
 
-## Recommendations for Prevention
+## Prevention Measures Implemented
 
-### Testing
+### Notification Rate Limiting (COMPLETED)
+
+Added `shared/alerts/rate_limiter.py` with:
+- [x] **Rate limiting**: Max 5 emails/hour per error signature
+- [x] **Aggregation**: After 3 occurrences, sends summary with count
+- [x] **Auto-cleanup**: Expired entries removed after 60 min cooldown
+- [x] **Thread-safe**: Uses locks for concurrent access
+
+Configuration via environment variables:
+```bash
+NOTIFICATION_RATE_LIMIT_PER_HOUR=5      # Max emails/hr per signature
+NOTIFICATION_COOLDOWN_MINUTES=60        # Reset after 60 min
+NOTIFICATION_AGGREGATE_THRESHOLD=3      # Send summary after 3 occurrences
+```
+
+Documentation: `docs/03-configuration/notification-rate-limiting.md`
+
+### Still TODO
+
+#### Testing
 - [ ] Add integration test calling `processor.run(opts)` not just `process_file()`
 - [ ] Add contract validation ensuring all processors follow ProcessorBase signature
 
-### Notification System
-- [ ] Rate limiting: Max N emails/hour for same error
-- [ ] Deduplication: Same traceback = 1 aggregated email
-- [ ] Exponential backoff for recurring errors
-
-### Deployment
+#### Deployment
 - [ ] Commit SHA in Cloud Run labels/env for version tracking
 - [ ] Pre-deploy smoke test processing synthetic message
 
-### Monitoring
+#### Monitoring
 - [ ] Error rate spike detection vs historical baseline
 - [ ] Anomaly alerting when error counts exceed threshold
 
@@ -128,6 +144,10 @@ WHERE game_date = '2025-12-23'
 | File | Change |
 |------|--------|
 | `data_processors/raw/nbacom/nbac_schedule_processor.py` | Fixed transform_data() signature, updated process_file() |
+| `shared/alerts/__init__.py` | New: Rate limiting module entry point |
+| `shared/alerts/rate_limiter.py` | New: Core rate limiting logic |
+| `shared/utils/notification_system.py` | Integrated rate limiting into notify_error() |
+| `docs/03-configuration/notification-rate-limiting.md` | New: Rate limiting documentation |
 
 ---
 
@@ -151,7 +171,7 @@ The processor worked fine for manual/backfill runs (`process_file()`) but broke 
 ## Todo for Next Session
 
 ### High Priority
-1. Implement notification rate limiting
+1. ~~Implement notification rate limiting~~ **DONE**
 2. Add integration test for processor.run() path
 
 ### Medium Priority
@@ -160,5 +180,5 @@ The processor worked fine for manual/backfill runs (`process_file()`) but broke 
 
 ---
 
-**Session Duration:** ~1 hour
-**Pipeline Status:** Fully operational, Dec 23 data flowing correctly
+**Session Duration:** ~2 hours
+**Pipeline Status:** Fully operational, Dec 23 data flowing correctly, rate limiting deployed
