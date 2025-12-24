@@ -387,10 +387,22 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
         
         return errors
     
-    def transform_data(self, raw_data: dict, file_path: str) -> list:
-        """Transform raw schedule data into BigQuery format."""
+    def transform_data(self) -> None:
+        """Transform raw schedule data into BigQuery format.
+
+        Uses self.raw_data (loaded by load_data()) and self.opts['file_path'].
+        Sets self.transformed_data with the result.
+        """
         rows = []
-        
+
+        # Get raw_data and file_path from instance attributes
+        raw_data = self.raw_data
+        file_path = self.opts.get('file_path', '')
+
+        # Detect data source from file path if not already set
+        if not self.data_source:
+            self.data_source = self.detect_data_source(f"gs://{self.opts.get('bucket', 'nba-scraped-data')}/{file_path}")
+
         try:
             # Extract metadata
             scrape_timestamp = self.extract_scrape_timestamp(raw_data)
@@ -548,7 +560,8 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
             # Smart Idempotency: Add data_hash to all records
             self.add_data_hash()
 
-            return rows
+            # Note: Base class expects transform_data() to set self.transformed_data, not return
+            return
 
         except Exception as e:
             logging.error(f"Critical error in transform_data: {e}")
@@ -696,18 +709,22 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
                     'data_source': self.data_source
                 }
             
-            # Transform and load
-            rows = self.transform_data(raw_data, file_path)
-            self.transformed_data = rows
+            # Transform and load - set raw_data and file_path for transform_data()
+            self.raw_data = raw_data
+            if not hasattr(self, 'opts') or self.opts is None:
+                self.opts = {}
+            self.opts['file_path'] = file_path.replace('gs://', '').split('/', 1)[-1] if file_path.startswith('gs://') else file_path
+            self.opts['bucket'] = file_path.replace('gs://', '').split('/')[0] if file_path.startswith('gs://') else 'nba-scraped-data'
+            self.transform_data()
             result = self.save_data()
-            
+
             if result.get('errors'):
                 status = 'partial_success' if result.get('rows_processed', 0) > 0 else 'failed'
                 logging.warning(f"{status.title()}: {len(result['errors'])} errors for {file_path}")
             else:
                 status = 'success'
                 logging.info(f"Successfully processed {file_path}: {result['rows_processed']} rows from {self.data_source}")
-                
+
                 # Send success notification
                 try:
                     notify_info(
@@ -717,7 +734,7 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
                             'file_path': file_path,
                             'rows_processed': result['rows_processed'],
                             'games_failed': self.games_failed,
-                            'season': rows[0].get('season') if rows else None,
+                            'season': self.transformed_data[0].get('season') if self.transformed_data else None,
                             'data_source': self.data_source
                         }
                     )
