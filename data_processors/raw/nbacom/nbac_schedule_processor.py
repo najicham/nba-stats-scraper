@@ -387,10 +387,7 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
         
         return errors
     
-    def transform_data(self) -> None:
-        """Transform raw data into transformed data."""
-        raw_data = self.raw_data
-        file_path = self.raw_data.get('metadata', {}).get('source_file', 'unknown')
+    def transform_data(self, raw_data: dict, file_path: str) -> list:
         """Transform raw schedule data into BigQuery format."""
         rows = []
         
@@ -551,6 +548,8 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
             # Smart Idempotency: Add data_hash to all records
             self.add_data_hash()
 
+            return rows
+
         except Exception as e:
             logging.error(f"Critical error in transform_data: {e}")
             
@@ -699,7 +698,8 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
             
             # Transform and load
             rows = self.transform_data(raw_data, file_path)
-            result = self.load_data(rows, **kwargs)
+            self.transformed_data = rows
+            result = self.save_data()
             
             if result.get('errors'):
                 status = 'partial_success' if result.get('rows_processed', 0) > 0 else 'failed'
