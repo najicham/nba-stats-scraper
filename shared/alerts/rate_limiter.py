@@ -20,7 +20,7 @@ import hashlib
 import logging
 import threading
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional, Any, Tuple
 from collections import defaultdict
 
@@ -131,7 +131,7 @@ class AlertManager:
             return True, None
         
         signature = get_error_signature(processor_name, error_type, message)
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         
         with self._lock:
             # Clean up expired entries
