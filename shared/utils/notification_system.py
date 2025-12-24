@@ -25,13 +25,20 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
-# Import AlertManager for backfill-aware alerting
+# Import AlertManager for rate-limited alerting
 try:
-    from shared.alerts import get_alert_manager
+    from shared.alerts import get_alert_manager, should_send_alert, get_error_signature
     ALERT_MANAGER_AVAILABLE = True
 except ImportError:
     logger.warning("AlertManager not available, falling back to direct notifications")
     ALERT_MANAGER_AVAILABLE = False
+
+    # Stub functions when AlertManager not available
+    def should_send_alert(*args, **kwargs):
+        return True
+
+    def get_error_signature(*args, **kwargs):
+        return "unknown"
 
 # Module-level singleton for performance
 _router_instance = None
@@ -641,34 +648,57 @@ def _get_router() -> NotificationRouter:
 # Convenience functions for quick notifications (use singleton)
 def notify_error(title: str, message: str, details: Dict = None, processor_name: str = "NBA Platform", backfill_mode: bool = False):
     """
-    Quick function to send error notification.
+    Quick function to send error notification with rate limiting.
+
+    Rate limiting is ALWAYS applied to prevent email floods.
+    Default: Max 5 emails per hour per unique error signature.
 
     Args:
         title: Alert title
         message: Alert message
         details: Additional context
         processor_name: Name of processor sending alert
-        backfill_mode: If True, suppresses non-critical alerts via AlertManager
+        backfill_mode: If True, uses more aggressive rate limiting (1/hr)
+
+    Returns:
+        Dict with channel success status, or None if rate limited
     """
-    # If AlertManager available and backfill mode, use rate limiting
-    if ALERT_MANAGER_AVAILABLE and backfill_mode:
-        alert_mgr = get_alert_manager(backfill_mode=True)
+    # Extract error_type for rate limiting signature
+    error_type = 'error'
+    if details and 'error_type' in details:
+        error_type = details['error_type']
 
-        # Determine category for rate limiting
-        category = f"{processor_name}_error"
-        if details and 'error_type' in details:
-            category = f"{processor_name}_{details['error_type']}"
+    # ALWAYS apply rate limiting (this prevents email floods)
+    if ALERT_MANAGER_AVAILABLE:
+        alert_mgr = get_alert_manager(backfill_mode=backfill_mode)
+        should_send, metadata = alert_mgr.should_send(processor_name, error_type, message)
 
-        # Use AlertManager (will batch/suppress during backfill)
-        return alert_mgr.send_alert(
-            severity='warning',  # Downgrade to warning during backfill
-            title=title,
-            message=message,
-            category=category,
-            context=details
-        )
+        if not should_send:
+            # Rate limited - log but don't send
+            logger.info(
+                f"Rate limited notification: {processor_name}/{error_type} "
+                f"(check logs for rate limit stats)"
+            )
+            return None
 
-    # Normal path (not backfill)
+        # Modify title/message if this is an aggregated summary
+        if metadata and metadata.get('is_summary'):
+            count = metadata.get('occurrence_count', 0)
+            suppressed = metadata.get('suppressed_count', 0)
+            title = f"[AGGREGATED x{count}] {title}"
+
+            if details is None:
+                details = {}
+            details['_aggregated'] = True
+            details['_occurrence_count'] = count
+            details['_suppressed_count'] = suppressed
+            details['_first_seen'] = metadata.get('first_seen')
+            details['_rate_limit_note'] = (
+                f"This error occurred {count} times. "
+                f"Further occurrences will be suppressed for 60 minutes."
+            )
+
+    # Send notification through normal channels
     router = _get_router()
     return router.send_notification(
         level=NotificationLevel.ERROR,
