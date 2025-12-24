@@ -579,15 +579,29 @@ class MasterWorkflowController:
         early_game_cutoff_hour = schedule.get('early_game_cutoff_hour', 19)  # 7 PM default
 
         # Check 1: Any early games today?
-        # Early games = games starting before the cutoff hour
+        # Early games = games starting before the cutoff hour (in ET)
         et_tz = pytz.timezone('America/New_York')
         early_games = []
 
         for game in games_today:
-            # Get game start time (game_date_et is a datetime)
-            if hasattr(game, 'game_date_et') and game.game_date_et:
-                game_hour = game.game_date_et.hour
+            # Get game start time - NBAGame uses 'commence_time' (UTC string or datetime)
+            commence_time = getattr(game, 'commence_time', None)
+            if commence_time:
+                # Parse if string, convert to ET
+                if isinstance(commence_time, str):
+                    from datetime import datetime as dt
+                    # Format: "2025-12-25T17:00:00Z"
+                    commence_time = dt.fromisoformat(commence_time.replace('Z', '+00:00'))
+
+                # Convert to ET
+                if commence_time.tzinfo is None:
+                    commence_time = pytz.utc.localize(commence_time)
+                game_time_et = commence_time.astimezone(et_tz)
+                game_hour = game_time_et.hour
+
                 if game_hour < early_game_cutoff_hour:
+                    # Store the ET time on the game object for later use
+                    game._game_time_et = game_time_et
                     early_games.append(game)
 
         if not early_games:
@@ -629,8 +643,19 @@ class MasterWorkflowController:
         finished_games = []
 
         for game in early_games:
-            if hasattr(game, 'game_date_et') and game.game_date_et:
-                game_start = game.game_date_et
+            # Use the _game_time_et we stored earlier, or parse commence_time again
+            game_start = getattr(game, '_game_time_et', None)
+            if not game_start:
+                commence_time = getattr(game, 'commence_time', None)
+                if commence_time:
+                    if isinstance(commence_time, str):
+                        from datetime import datetime as dt
+                        commence_time = dt.fromisoformat(commence_time.replace('Z', '+00:00'))
+                    if commence_time.tzinfo is None:
+                        commence_time = pytz.utc.localize(commence_time)
+                    game_start = commence_time.astimezone(et_tz)
+
+            if game_start:
                 hours_since_start = (current_time - game_start).total_seconds() / 3600
                 if hours_since_start >= collection_delay_hours:
                     finished_games.append(game)
