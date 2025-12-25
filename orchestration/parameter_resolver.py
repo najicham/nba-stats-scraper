@@ -52,23 +52,23 @@ YESTERDAY_TARGET_WORKFLOWS = [
 class ParameterResolver:
     """
     Resolves parameters for scraper execution.
-    
+
     Strategy:
         1. Check if scraper has complex resolver (code-based)
         2. Otherwise use simple YAML config
         3. Build workflow context (season, date, games)
         4. Apply parameter mappings
-    
+
     Design Principles:
         - Simple for 90% of scrapers (YAML config)
         - Flexible for complex cases (Python functions)
         - Context-aware (knows about current season, games, etc.)
     """
-    
+
     def __init__(self, config_path: str = "config/scraper_parameters.yaml"):
         """
         Initialize resolver with config.
-        
+
         Args:
             config_path: Path to scraper parameter config YAML
         """
@@ -76,7 +76,7 @@ class ParameterResolver:
         self.config = self._load_config()
         self.schedule_service = NBAScheduleService()
         self.ET = pytz.timezone('America/New_York')
-        
+
         # Registry of complex resolvers (code-based)
         self.complex_resolvers = {
             'nbac_play_by_play': self._resolve_nbac_play_by_play,
@@ -89,6 +89,65 @@ class ParameterResolver:
             'oddsa_player_props': self._resolve_odds_props,
             'oddsa_game_lines': self._resolve_odds_game_lines,
         }
+
+        # Validate workflow config on startup (non-blocking warning)
+        self._validate_workflow_date_config()
+
+    def _validate_workflow_date_config(self) -> None:
+        """
+        Validate that YESTERDAY_TARGET_WORKFLOWS matches workflows.yaml config.
+
+        This catches configuration mismatches early, before they cause
+        data staleness issues like Session 165.
+
+        Checks:
+        1. All decision_type="game_aware_yesterday" workflows are in YESTERDAY_TARGET_WORKFLOWS
+        2. All YESTERDAY_TARGET_WORKFLOWS entries have decision_type="game_aware_yesterday"
+        """
+        try:
+            workflows_path = "config/workflows.yaml"
+            if not os.path.exists(workflows_path):
+                logger.debug("workflows.yaml not found, skipping date config validation")
+                return
+
+            with open(workflows_path, 'r') as f:
+                workflows_config = yaml.safe_load(f)
+
+            workflows = workflows_config.get('workflows', {})
+
+            # Find all workflows with game_aware_yesterday decision type
+            yaml_yesterday_workflows = set()
+            for name, config in workflows.items():
+                if config.get('decision_type') == 'game_aware_yesterday':
+                    yaml_yesterday_workflows.add(name)
+
+            code_yesterday_workflows = set(YESTERDAY_TARGET_WORKFLOWS)
+
+            # Check for mismatches
+            in_yaml_not_code = yaml_yesterday_workflows - code_yesterday_workflows
+            in_code_not_yaml = code_yesterday_workflows - yaml_yesterday_workflows
+
+            if in_yaml_not_code:
+                logger.warning(
+                    f"⚠️  WORKFLOW CONFIG MISMATCH: These workflows have "
+                    f"decision_type='game_aware_yesterday' in workflows.yaml but are "
+                    f"NOT in YESTERDAY_TARGET_WORKFLOWS: {in_yaml_not_code}. "
+                    f"Add them to YESTERDAY_TARGET_WORKFLOWS in parameter_resolver.py!"
+                )
+
+            if in_code_not_yaml:
+                # This is less critical - the workflow might have been removed from YAML
+                logger.info(
+                    f"Note: These workflows are in YESTERDAY_TARGET_WORKFLOWS but not "
+                    f"configured as game_aware_yesterday in workflows.yaml: {in_code_not_yaml}"
+                )
+
+            if not in_yaml_not_code and not in_code_not_yaml:
+                logger.info("✅ Workflow date targeting config validated successfully")
+
+        except Exception as e:
+            # Non-blocking - just log and continue
+            logger.warning(f"Could not validate workflow date config: {e}")
     
     def _load_config(self) -> Dict[str, Any]:
         """Load parameter configuration from YAML."""
