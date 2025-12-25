@@ -110,17 +110,19 @@ Added deployment verification to 3 main deploy scripts:
 5. Displays revision creation timestamp
 
 ### Deploy Scripts Updated
-- `bin/raw/deploy/deploy_processors_simple.sh` (Phase 2)
 - `bin/scrapers/deploy/deploy_scrapers_simple.sh` (Phase 1)
+- `bin/raw/deploy/deploy_processors_simple.sh` (Phase 2)
 - `bin/analytics/deploy/deploy_analytics_processors.sh` (Phase 3)
+- `bin/precompute/deploy/deploy_precompute_processors.sh` (Phase 4)
 
-### Services Deployed with Commit Tracking (bb3d80e)
+### Services Deployed with Commit Tracking
 
-| Service | Revision | Deployed |
-|---------|----------|----------|
-| Phase 1 Scrapers | `00035-sqh` | 00:26 UTC |
-| Phase 2 Processors | `00036-h9k` | 00:18 UTC |
-| Phase 3 Analytics | `00020-xdd` | 00:36 UTC |
+| Service | Revision | Commit | Deployed |
+|---------|----------|--------|----------|
+| Phase 1 Scrapers | `00035-sqh` | `bb3d80e` | 00:26 UTC |
+| Phase 2 Processors | `00036-h9k` | `bb3d80e` | 00:18 UTC |
+| Phase 3 Analytics | `00020-xdd` | `bb3d80e` | 00:36 UTC |
+| Phase 4 Precompute | `00018-x68` | `9b8ba99` | 01:39 UTC |
 
 ### Example Output
 ```
@@ -155,7 +157,8 @@ Added deployment verification to 3 main deploy scripts:
 |--------|-------------|
 | `8a0864a` | docs: Correct deployment timeline in Session 163 handoff |
 | `266db2d` | docs: Add Session 164 handoff - deployment verification |
-| `0184edf` | feat: Add commit SHA tracking to deploy scripts |
+| `0184edf` | feat: Add commit SHA tracking to deploy scripts (Phase 1-3) |
+| `9b8ba99` | feat: Add commit SHA tracking to Phase 4 precompute deploy script |
 
 ---
 
