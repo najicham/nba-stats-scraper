@@ -449,6 +449,44 @@ Messages are logged to Cloud Logging. View via:
 
 ---
 
+## Known Limitations
+
+### Bulk Message Publishing
+
+> ⚠️ **Important:** Pub/Sub is not reliable for bulk backfill operations.
+
+When many messages are published rapidly (e.g., during backfills):
+- Some messages may be dropped or delayed
+- Subscriptions may not receive all messages
+- Downstream processors may only process a subset of data
+
+**Example Issue (Dec 2025):**
+A gamebook backfill published 20+ messages rapidly. Only 1 message per date was received by Phase 2, resulting in incomplete data.
+
+**Solution:**
+For backfill operations, **bypass Pub/Sub entirely** and invoke processors directly:
+
+```python
+# Direct processor invocation (reliable for backfills)
+from data_processors.raw.nbacom.nbac_gamebook_processor import NbacGamebookProcessor
+
+processor = NbacGamebookProcessor()
+processor.process_file(gcs_path)  # Direct call, not via Pub/Sub
+```
+
+**When to use Pub/Sub:**
+- Real-time event-driven processing (single scraper completion)
+- Normal daily pipeline operations
+
+**When to bypass Pub/Sub:**
+- Bulk backfills (multiple dates/games at once)
+- Re-processing historical data
+- Recovery from data loss
+
+See also: [Troubleshooting - Backfill Data Missing](../../02-operations/troubleshooting.md#backfill-data-missing-after-bulk-run)
+
+---
+
 ## Related Documentation
 
 - [Orchestrators Architecture](./orchestrators.md) - How orchestrators coordinate phases
@@ -458,6 +496,6 @@ Messages are logged to Cloud Logging. View via:
 
 ---
 
-**Document Version:** 1.0
+**Document Version:** 1.1
 **Created:** 2025-11-29 16:51 PST
-**Last Updated:** 2025-11-29 16:51 PST
+**Last Updated:** 2025-12-25

@@ -439,7 +439,7 @@ def process_in_chunks(data, chunk_size=1000):
    ```bash
    # Check Pub/Sub subscriptions
    gcloud pubsub subscriptions list
-   
+
    # Check for unacked messages
    gcloud pubsub subscriptions describe SUBSCRIPTION_NAME
    ```
@@ -457,6 +457,61 @@ def process_in_chunks(data, chunk_size=1000):
      -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
      -d '{"date": "2025-10-14", "processor": "bdl_box_scores"}'
    ```
+
+### Backfill Data Missing After Bulk Run
+
+**Symptoms:**
+- Backfill script ran "successfully" but data is incomplete
+- Only 1 game per date instead of all games
+- GCS files exist but BigQuery table missing records
+
+**Root Cause:**
+Pub/Sub is not reliable for bulk backfills. When many messages are published rapidly:
+- Some messages may be dropped or delayed
+- The subscription may not receive all messages
+- Downstream processors only process a subset of data
+
+**Diagnosis:**
+```bash
+# Check actual data vs expected
+bq query --use_legacy_sql=false "
+SELECT game_date, COUNT(DISTINCT game_id) as actual_games
+FROM nba_raw.nbac_gamebook_player_stats
+WHERE game_date >= '2025-12-20'
+GROUP BY game_date ORDER BY game_date"
+
+# Compare to schedule
+bq query --use_legacy_sql=false "
+SELECT game_date, COUNT(*) as scheduled_games
+FROM nba_reference.nba_schedule
+WHERE game_date >= '2025-12-20' AND game_status = 3
+GROUP BY game_date ORDER BY game_date"
+```
+
+**Solution:**
+Backfill scripts should **directly invoke processors**, bypassing Pub/Sub:
+
+```python
+# Example: Direct processor invocation (no Pub/Sub)
+from data_processors.raw.nbacom.nbac_gamebook_processor import NbacGamebookProcessor
+
+processor = NbacGamebookProcessor()
+processor.process_file(gcs_path)  # Direct call, not via Pub/Sub
+```
+
+**For gamebook backfills specifically:**
+```bash
+# Re-process existing GCS data (bypass Pub/Sub)
+PYTHONPATH=. python scripts/backfill_gamebooks.py --date 2025-12-23 --skip-scrape
+
+# Full scrape + process
+PYTHONPATH=. python scripts/backfill_gamebooks.py --date 2025-12-23
+```
+
+**Verification Checklist:**
+- [ ] Count games in BigQuery matches scheduled games
+- [ ] Player count is reasonable (~30-35 players per game)
+- [ ] Phase 3 analytics show updated data after backfill
 
 ---
 

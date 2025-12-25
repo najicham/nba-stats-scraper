@@ -1426,11 +1426,39 @@ class ScraperBase:
         If we're expecting JSON, parse self.raw_response.content as JSON.
         If DownloadType.HTML, store text in self.decoded_data.
         If BINARY, do nothing special.
+
+        Handles encoding issues by falling back to latin-1 if UTF-8 fails.
         """
         logger.debug("Decoding raw response as '%s'", self.download_type)
         if self.download_type == DownloadType.JSON:
             try:
                 self.decoded_data = json.loads(self.raw_response.content)
+            except UnicodeDecodeError as e:
+                # UTF-8 decode failed, try latin-1 fallback
+                logger.warning("UTF-8 decode failed for %s, trying latin-1: %s",
+                             self.__class__.__name__, e)
+                try:
+                    content_str = self.raw_response.content.decode('latin-1')
+                    self.decoded_data = json.loads(content_str)
+                    logger.info("Successfully decoded with latin-1 fallback")
+                except (UnicodeDecodeError, json.JSONDecodeError) as e2:
+                    logger.error("All encoding attempts failed for %s: %s",
+                               self.__class__.__name__, e2)
+                    try:
+                        notify_warning(
+                            title=f"Scraper Encoding Failed: {self.__class__.__name__}",
+                            message="Could not decode response with UTF-8 or latin-1",
+                            details={
+                                'scraper': self.__class__.__name__,
+                                'run_id': self.run_id,
+                                'url': getattr(self, 'url', 'unknown'),
+                                'error': str(e2),
+                                'content_preview': self.raw_response.content[:200].decode('utf-8', errors='replace')
+                            }
+                        )
+                    except Exception as notify_ex:
+                        logger.warning(f"Failed to send notification: {notify_ex}")
+                    raise DownloadDataException(f"Response encoding failed: {e2}") from e2
             except json.JSONDecodeError as ex:
                 try:
                     notify_warning(
@@ -1449,7 +1477,12 @@ class ScraperBase:
                 # eligible for retry
                 raise DownloadDataException(f"JSON decode failed: {ex}") from ex
         elif self.download_type == DownloadType.HTML:
-            self.decoded_data = self.raw_response.text
+            try:
+                self.decoded_data = self.raw_response.text
+            except UnicodeDecodeError:
+                # Fallback for HTML content with non-UTF-8 encoding
+                logger.warning("UTF-8 decode failed for HTML, using latin-1 fallback")
+                self.decoded_data = self.raw_response.content.decode('latin-1')
         elif self.download_type == DownloadType.BINARY:
             # Still place the bytes in decoded_data so ExportMode.DECODED works
             self.decoded_data = self.raw_response.content
