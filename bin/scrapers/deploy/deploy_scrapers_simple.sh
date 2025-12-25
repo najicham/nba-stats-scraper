@@ -1,7 +1,7 @@
 #!/bin/bash
 # deploy_scrapers_simple.sh - Deploy NBA Scrapers with Phase 1 Orchestration support
 #
-# Version: 2.0 - Added SERVICE_URL for Phase 1 Orchestration
+# Version: 2.1 - Added commit SHA tracking for deployment verification
 #
 # WHAT THIS DOES:
 # 1. Deploys nba-scrapers Cloud Run service
@@ -9,11 +9,17 @@
 # 3. Sets up API key secrets
 # 4. Tests health endpoint
 # 5. Configures SERVICE_URL for Phase 1 orchestration (HTTP scraper calls)
+# 6. Tracks git commit SHA for deployment verification
 #
 # USAGE: ./bin/scrapers/deploy/deploy_scrapers_simple.sh
 
 SERVICE_NAME="nba-phase1-scrapers"
 REGION="us-west2"
+
+# Capture git commit SHA for deployment tracking
+GIT_COMMIT_SHA=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+GIT_COMMIT_FULL=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
+GIT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
 
 # Load environment variables from .env file
 if [ -f ".env" ]; then
@@ -31,9 +37,14 @@ DEPLOY_START_DISPLAY=$(date '+%Y-%m-%d %H:%M:%S')
 echo "🚀 Deploying NBA Scrapers"
 echo "========================"
 echo "⏰ Start time: $DEPLOY_START_DISPLAY"
+echo "📦 Git commit: $GIT_COMMIT_SHA ($GIT_BRANCH)"
 
 # Build environment variables string
 ENV_VARS="GCP_PROJECT_ID=nba-props-platform"
+ENV_VARS="$ENV_VARS,COMMIT_SHA=$GIT_COMMIT_SHA"
+ENV_VARS="$ENV_VARS,COMMIT_SHA_FULL=$GIT_COMMIT_FULL"
+ENV_VARS="$ENV_VARS,GIT_BRANCH=$GIT_BRANCH"
+ENV_VARS="$ENV_VARS,DEPLOY_TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 # Add email configuration if available
 if [[ -n "$BREVO_SMTP_PASSWORD" && -n "$EMAIL_ALERTS_TO" ]]; then
@@ -92,7 +103,8 @@ gcloud run deploy $SERVICE_NAME \
     --cpu=1 \
     --clear-base-image \
     --set-secrets="ODDS_API_KEY=ODDS_API_KEY:latest,BDL_API_KEY=BDL_API_KEY:latest" \
-    --set-env-vars="$ENV_VARS"
+    --set-env-vars="$ENV_VARS" \
+    --labels="commit-sha=$GIT_COMMIT_SHA,git-branch=${GIT_BRANCH//\//-}"
 
 DEPLOY_STATUS=$?
 DEPLOY_PHASE_END=$(date +%s)
@@ -151,11 +163,39 @@ fi
 if [ $DEPLOY_STATUS -eq 0 ]; then
     echo ""
     echo "✅ Deployment completed successfully in $DURATION_DISPLAY!"
-    
-    # Phase 4: Testing
-    TEST_START=$(date +%s)
-    echo "📋 Phase 4: Testing health endpoint..."
+
+    # Phase 4: Verify deployment
+    VERIFY_START=$(date +%s)
+    echo "📋 Phase 4: Verifying deployment..."
     sleep 3
+
+    # Get deployed revision info
+    DEPLOYED_REVISION=$(gcloud run services describe $SERVICE_NAME --region=$REGION --format="value(status.latestReadyRevisionName)" 2>/dev/null)
+    REVISION_TIMESTAMP=$(gcloud run revisions describe $DEPLOYED_REVISION --region=$REGION --format="value(metadata.creationTimestamp)" 2>/dev/null)
+    DEPLOYED_COMMIT=$(gcloud run services describe $SERVICE_NAME --region=$REGION --format="value(metadata.labels.commit-sha)" 2>/dev/null)
+
+    echo ""
+    echo "📦 DEPLOYMENT VERIFICATION"
+    echo "=========================="
+    echo "   Intended commit:  $GIT_COMMIT_SHA"
+    echo "   Deployed commit:  ${DEPLOYED_COMMIT:-not-found}"
+    echo "   Revision:         $DEPLOYED_REVISION"
+    echo "   Created:          $REVISION_TIMESTAMP"
+
+    if [ "$DEPLOYED_COMMIT" = "$GIT_COMMIT_SHA" ]; then
+        echo "   ✅ Commit SHA verified!"
+    else
+        echo "   ⚠️  Commit SHA mismatch - verify deployment!"
+    fi
+
+    VERIFY_END=$(date +%s)
+    VERIFY_DURATION=$((VERIFY_END - VERIFY_START))
+    echo "⏱️  Verification completed in ${VERIFY_DURATION}s"
+
+    # Phase 5: Testing health endpoint
+    TEST_START=$(date +%s)
+    echo ""
+    echo "📋 Phase 5: Testing health endpoint..."
     SERVICE_URL=$(gcloud run services describe $SERVICE_NAME --region=$REGION --format="value(status.url)" 2>/dev/null)
     
     if [ ! -z "$SERVICE_URL" ]; then
@@ -166,10 +206,10 @@ if [ $DEPLOY_STATUS -eq 0 ]; then
         echo "📊 Available scrapers: $HEALTH_RESULT"
         echo "⏱️  Health test completed in ${TEST_DURATION}s"
         
-        # Phase 5: Configure SERVICE_URL for Phase 1 Orchestration
+        # Phase 6: Configure SERVICE_URL for Phase 1 Orchestration
         ORCHESTRATION_START=$(date +%s)
         echo ""
-        echo "📋 Phase 5: Configuring Phase 1 Orchestration..."
+        echo "📋 Phase 6: Configuring Phase 1 Orchestration..."
         echo "   Setting SERVICE_URL environment variable..."
         
         gcloud run services update $SERVICE_NAME \
