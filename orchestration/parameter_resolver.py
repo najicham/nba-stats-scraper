@@ -7,20 +7,46 @@ Supports:
 - Simple YAML-based parameter mappings (most scrapers)
 - Complex code-based resolution (game-specific scrapers)
 - Context building (season, date, games list)
+- Target date awareness for post-game workflows
 
 Path: orchestration/parameter_resolver.py
+
+IMPORTANT: This module handles date targeting for workflows:
+- post_game_* workflows target YESTERDAY's games (games that finished)
+- late_games workflow targets YESTERDAY's games
+- All other workflows target TODAY's games
+
+See build_workflow_context() and _determine_target_date() for details.
 """
 
 import logging
 import yaml
 import os
 from typing import Dict, Any, List, Optional
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 import pytz
 
 from shared.utils.schedule import NBAScheduleService
 
 logger = logging.getLogger(__name__)
+
+
+# ============================================================================
+# WORKFLOW TARGET DATE CONFIGURATION
+# ============================================================================
+# Workflows that should fetch games from YESTERDAY instead of TODAY.
+# These are post-game collection workflows that run after games finish.
+#
+# CRITICAL: If you add a new post-game workflow, add it here!
+# Failure to do so will cause the workflow to look for TODAY's games
+# instead of YESTERDAY's finished games.
+# ============================================================================
+YESTERDAY_TARGET_WORKFLOWS = [
+    'post_game_window_1',    # 10 PM ET - first collection attempt
+    'post_game_window_2',    # 1 AM ET - second collection attempt
+    'post_game_window_3',    # 4 AM ET - final collection (gamebooks, etc.)
+    'late_games',            # Late night game collection
+]
 
 
 class ParameterResolver:
@@ -79,56 +105,131 @@ class ParameterResolver:
             logger.error(f"Failed to load parameter config: {e}")
             return {'simple_scrapers': {}, 'complex_scrapers': []}
     
+    def _determine_target_date(
+        self,
+        workflow_name: str,
+        current_time: datetime,
+        explicit_target_date: Optional[str] = None
+    ) -> str:
+        """
+        Determine the target date for game fetching based on workflow type.
+
+        This is CRITICAL for post-game workflows which need YESTERDAY's games,
+        not today's games. Without this logic, gamebook scrapers would try to
+        fetch gamebooks for games that haven't finished yet.
+
+        Args:
+            workflow_name: Name of workflow being executed
+            current_time: Current datetime in ET
+            explicit_target_date: If provided, use this date (for backfills)
+
+        Returns:
+            Target date string in YYYY-MM-DD format
+
+        Examples:
+            - post_game_window_3 at 4 AM on Dec 25 → returns Dec 24
+            - betting_lines at 8 AM on Dec 25 → returns Dec 25
+            - Any workflow with explicit_target_date="2025-12-23" → returns 2025-12-23
+        """
+        # Explicit date takes precedence (for backfills)
+        if explicit_target_date:
+            logger.info(f"Using explicit target_date: {explicit_target_date}")
+            return explicit_target_date
+
+        today = current_time.date().strftime('%Y-%m-%d')
+        yesterday = (current_time.date() - timedelta(days=1)).strftime('%Y-%m-%d')
+
+        # Check if this is a post-game workflow that targets yesterday's games
+        if workflow_name in YESTERDAY_TARGET_WORKFLOWS:
+            logger.info(
+                f"Workflow '{workflow_name}' targets YESTERDAY's games. "
+                f"Target date: {yesterday} (today is {today})"
+            )
+            return yesterday
+
+        # Default: target today's games
+        return today
+
     def build_workflow_context(
         self,
         workflow_name: str,
-        target_games: Optional[List[str]] = None
+        target_games: Optional[List[str]] = None,
+        target_date: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Build context for parameter resolution.
-        
+
+        IMPORTANT: This method now correctly handles post-game workflows
+        by targeting YESTERDAY's games instead of today's games.
+
         Args:
             workflow_name: Workflow being executed
             target_games: Optional list of game IDs
-        
+            target_date: Optional explicit target date (for backfills).
+                         If not provided, determined from workflow_name.
+
         Returns:
             Dict with context information:
                 - execution_date: Current date (YYYY-MM-DD)
+                - target_date: Date to fetch games for (may differ from execution_date)
                 - season: Current NBA season in NBA format (e.g., "2024-25")
                 - season_year: 4-digit ending year of season (e.g., "2025")
-                - games_today: List of game objects for today
+                - games_today: List of game objects for TARGET date
+                - games_count: Number of games on target date
                 - target_games: Game IDs to process (if provided)
         """
         current_time = datetime.now(self.ET)
         execution_date = current_time.date().strftime('%Y-%m-%d')
-        
+
+        # Determine target date based on workflow type
+        resolved_target_date = self._determine_target_date(
+            workflow_name=workflow_name,
+            current_time=current_time,
+            explicit_target_date=target_date
+        )
+
         # Determine current NBA season
         season = self.get_current_season(current_time)
-        
-        # Get games for today
-        games_today = []
+
+        # Get games for TARGET date (not necessarily today!)
+        games_for_target_date = []
         try:
-            games_today = self.schedule_service.get_games_for_date(execution_date)
+            games_for_target_date = self.schedule_service.get_games_for_date(resolved_target_date)
+            logger.info(
+                f"Fetched {len(games_for_target_date)} games for target date {resolved_target_date}"
+            )
         except Exception as e:
-            logger.warning(f"Failed to get games for {execution_date}: {e}")
-        
+            logger.warning(f"Failed to get games for {resolved_target_date}: {e}")
+
         # Extract 4-digit starting year from season (e.g., "2025-26" -> "2025")
         season_year = season.split('-')[0]  # "2025"
 
         context = {
             'workflow_name': workflow_name,
             'execution_date': execution_date,
+            'target_date': resolved_target_date,  # NEW: May differ from execution_date
             'season': season,  # NBA format: "2025-26"
             'season_year': season_year,  # 4-digit starting year: "2025"
-            'games_today': games_today,
-            'games_count': len(games_today)
+            'games_today': games_for_target_date,  # Games for TARGET date
+            'games_count': len(games_for_target_date)
         }
-        
+
         if target_games:
             context['target_games'] = target_games
-        
-        logger.debug(f"Built context: {context}")
-        
+
+        # Log warning if no games found for yesterday-targeting workflows
+        if (workflow_name in YESTERDAY_TARGET_WORKFLOWS
+            and len(games_for_target_date) == 0):
+            logger.warning(
+                f"⚠️  Workflow '{workflow_name}' targets yesterday ({resolved_target_date}) "
+                f"but no games found. This may be expected if there were no games."
+            )
+
+        logger.info(
+            f"Built context for {workflow_name}: execution_date={execution_date}, "
+            f"target_date={resolved_target_date}, games={len(games_for_target_date)}"
+        )
+
         return context
     
     def resolve_parameters(

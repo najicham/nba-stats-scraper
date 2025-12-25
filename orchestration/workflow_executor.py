@@ -234,23 +234,28 @@ class WorkflowExecutor:
         workflow_name: str,
         scrapers: List[str],
         decision_id: Optional[str] = None,
-        target_games: Optional[List[str]] = None
+        target_games: Optional[List[str]] = None,
+        target_date: Optional[str] = None
     ) -> WorkflowExecution:
         """
         Execute a single workflow by calling its scrapers.
-        
+
         Args:
             workflow_name: Workflow identifier
             scrapers: List of scraper names to execute
             decision_id: Optional decision ID that triggered this execution
             target_games: Optional list of game IDs to process
-        
+            target_date: Optional explicit target date (YYYY-MM-DD) for game fetching.
+                         If not provided, inferred from workflow_name:
+                         - post_game_* workflows → yesterday
+                         - Other workflows → today
+
         Returns:
             WorkflowExecution with results
         """
         execution_id = str(uuid.uuid4())
         start_time = datetime.now(timezone.utc)
-        
+
         logger.info(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         logger.info(f"▶️  Executing Workflow: {workflow_name}")
         logger.info(f"   Execution ID: {execution_id}")
@@ -258,12 +263,17 @@ class WorkflowExecutor:
         logger.info(f"   Scrapers: {len(scrapers)}")
         if target_games:
             logger.info(f"   Target Games: {len(target_games)}")
+        if target_date:
+            logger.info(f"   Target Date: {target_date}")
         logger.info(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        
+
         # Build workflow context for parameter resolution
+        # Note: target_date may be None - the parameter resolver will infer
+        # the correct date based on workflow_name (yesterday for post_game_*)
         context = self.parameter_resolver.build_workflow_context(
             workflow_name=workflow_name,
-            target_games=target_games
+            target_games=target_games,
+            target_date=target_date
         )
         
         scraper_executions = []
