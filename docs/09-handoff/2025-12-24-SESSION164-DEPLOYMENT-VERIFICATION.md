@@ -98,14 +98,43 @@ All Pub/Sub subscriptions verified active:
 
 ---
 
+## Implemented: Commit SHA Tracking
+
+Added deployment verification to 3 main deploy scripts:
+
+### What It Does
+1. Captures `git rev-parse --short HEAD` at deploy time
+2. Adds as Cloud Run labels: `commit-sha`, `git-branch`
+3. Adds as env vars: `COMMIT_SHA`, `COMMIT_SHA_FULL`, `GIT_BRANCH`, `DEPLOY_TIMESTAMP`
+4. Verifies deployed commit matches intended commit after deploy
+5. Displays revision creation timestamp
+
+### Deploy Scripts Updated
+- `bin/raw/deploy/deploy_processors_simple.sh` (Phase 2)
+- `bin/scrapers/deploy/deploy_scrapers_simple.sh` (Phase 1)
+- `bin/analytics/deploy/deploy_analytics_processors.sh` (Phase 3)
+
+### Example Output
+```
+📦 DEPLOYMENT VERIFICATION
+==========================
+   Intended commit:  abc1234
+   Deployed commit:  abc1234
+   Revision:         nba-phase2-raw-processors-00036-xyz
+   Created:          2025-12-24T22:30:00Z
+   ✅ Commit SHA verified!
+```
+
+---
+
 ## TODO for Next Session
 
-### High Priority
-1. [ ] Add commit SHA to Cloud Run deployments
-2. [ ] Create post-deploy verification in deploy scripts
-3. [ ] Monitor Christmas Day pipeline
+### Completed
+1. [x] Add commit SHA to Cloud Run deployments
+2. [x] Create post-deploy verification in deploy scripts
 
-### Medium Priority
+### Still TODO
+3. [ ] Monitor Christmas Day pipeline
 4. [ ] Add pre-deploy smoke tests
 5. [ ] Create monitoring dashboard
 6. [ ] Test rate limiter with actual errors
@@ -117,6 +146,8 @@ All Pub/Sub subscriptions verified active:
 | Commit | Description |
 |--------|-------------|
 | `8a0864a` | docs: Correct deployment timeline in Session 163 handoff |
+| `266db2d` | docs: Add Session 164 handoff - deployment verification |
+| `0184edf` | feat: Add commit SHA tracking to deploy scripts |
 
 ---
 
