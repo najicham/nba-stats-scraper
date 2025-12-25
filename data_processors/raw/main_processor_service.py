@@ -101,6 +101,13 @@ PROCESSOR_REGISTRY = {
     'big-data-ball': BigDataBallPbpProcessor,
 }
 
+# Paths that are intentionally not processed (event IDs, metadata, etc.)
+# These files are saved to GCS for reference but don't need BigQuery processing
+SKIP_PROCESSING_PATHS = [
+    'odds-api/events',      # OddsAPI event IDs - used by scrapers, not processed
+    'bettingpros/events',   # BettingPros event IDs - used by scrapers, not processed
+]
+
 
 @app.route('/', methods=['GET'])
 @app.route('/health', methods=['GET'])
@@ -432,8 +439,15 @@ def process_pubsub():
                 break
         
         if not processor_class:
+            # Check if this is an intentionally skipped path (events, metadata, etc.)
+            is_skip_path = any(skip_path in file_path for skip_path in SKIP_PROCESSING_PATHS)
+
+            if is_skip_path:
+                logger.info(f"Skipping file (no processing needed): {file_path}")
+                return jsonify({"status": "skipped", "reason": "Intentionally not processed"}), 200
+
             logger.warning(f"No processor found for file: {file_path}")
-            
+
             # Send notification for unregistered file type
             try:
                 notify_warning(
@@ -449,7 +463,7 @@ def process_pubsub():
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             return jsonify({"status": "skipped", "reason": "No processor for file type"}), 200
         
         # Extract metadata from file path
