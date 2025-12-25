@@ -1428,17 +1428,30 @@ class ScraperBase:
         If BINARY, do nothing special.
 
         Handles encoding issues by falling back to latin-1 if UTF-8 fails.
+        Also handles gzip-compressed responses that weren't auto-decompressed.
         """
         logger.debug("Decoding raw response as '%s'", self.download_type)
         if self.download_type == DownloadType.JSON:
+            content = self.raw_response.content
+
+            # Check if response is gzip-compressed but wasn't auto-decompressed
+            # (can happen when proxy doesn't pass Content-Encoding header correctly)
+            if content[:2] == b'\x1f\x8b':  # gzip magic number
+                import gzip
+                try:
+                    content = gzip.decompress(content)
+                    logger.info("Manually decompressed gzip response")
+                except Exception as e:
+                    logger.warning("Failed to decompress gzip response: %s", e)
+
             try:
-                self.decoded_data = json.loads(self.raw_response.content)
+                self.decoded_data = json.loads(content)
             except UnicodeDecodeError as e:
                 # UTF-8 decode failed, try latin-1 fallback
                 logger.warning("UTF-8 decode failed for %s, trying latin-1: %s",
                              self.__class__.__name__, e)
                 try:
-                    content_str = self.raw_response.content.decode('latin-1')
+                    content_str = content.decode('latin-1')
                     self.decoded_data = json.loads(content_str)
                     logger.info("Successfully decoded with latin-1 fallback")
                 except (UnicodeDecodeError, json.JSONDecodeError) as e2:
@@ -1453,7 +1466,7 @@ class ScraperBase:
                                 'run_id': self.run_id,
                                 'url': getattr(self, 'url', 'unknown'),
                                 'error': str(e2),
-                                'content_preview': self.raw_response.content[:200].decode('utf-8', errors='replace')
+                                'content_preview': content[:200].decode('utf-8', errors='replace')
                             }
                         )
                     except Exception as notify_ex:
@@ -1469,7 +1482,7 @@ class ScraperBase:
                             'run_id': self.run_id,
                             'url': getattr(self, 'url', 'unknown'),
                             'retry_count': self.download_retry_count,
-                            'content_preview': self.raw_response.content[:200].decode('utf-8', errors='ignore')
+                            'content_preview': content[:200].decode('utf-8', errors='ignore')
                         }
                     )
                 except Exception as notify_ex:
