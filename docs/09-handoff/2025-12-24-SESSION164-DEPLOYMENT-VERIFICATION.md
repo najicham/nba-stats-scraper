@@ -114,6 +114,14 @@ Added deployment verification to 3 main deploy scripts:
 - `bin/scrapers/deploy/deploy_scrapers_simple.sh` (Phase 1)
 - `bin/analytics/deploy/deploy_analytics_processors.sh` (Phase 3)
 
+### Services Deployed with Commit Tracking (bb3d80e)
+
+| Service | Revision | Deployed |
+|---------|----------|----------|
+| Phase 1 Scrapers | `00035-sqh` | 00:26 UTC |
+| Phase 2 Processors | `00036-h9k` | 00:18 UTC |
+| Phase 3 Analytics | `00020-xdd` | 00:36 UTC |
+
 ### Example Output
 ```
 📦 DEPLOYMENT VERIFICATION
