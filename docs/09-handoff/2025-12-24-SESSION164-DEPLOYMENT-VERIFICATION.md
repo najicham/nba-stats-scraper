@@ -159,6 +159,7 @@ Added deployment verification to 3 main deploy scripts:
 | `266db2d` | docs: Add Session 164 handoff - deployment verification |
 | `0184edf` | feat: Add commit SHA tracking to deploy scripts (Phase 1-3) |
 | `9b8ba99` | feat: Add commit SHA tracking to Phase 4 precompute deploy script |
+| `fd32901` | feat: Add Christmas Day monitoring script |
 
 ---
 
@@ -176,12 +177,21 @@ Added deployment verification to 3 main deploy scripts:
 3. **Confirmed Christmas Day schedule** - 5 games loaded with correct times
 4. **Implemented commit SHA tracking** - Added to 4 deploy scripts with verification
 5. **Deployed all services** - Phase 1-4 now have commit labels for verification
+6. **Created monitoring script** - `bin/monitoring/christmas_day_check.sh` for quick status checks
 
 ### Key Lesson
 **Commit ≠ Deploy** - Always verify deployment with:
 ```bash
 gcloud run services describe SERVICE --region=us-west2 --format="value(metadata.labels.commit-sha)"
 ```
+
+### Christmas Day Monitoring
+Run this script for quick status check:
+```bash
+./bin/monitoring/christmas_day_check.sh
+```
+
+Shows: service status, recent errors, game schedule, data freshness, workflow activity.
 
 ### Christmas Day Timeline
 | Time (ET) | Event |
