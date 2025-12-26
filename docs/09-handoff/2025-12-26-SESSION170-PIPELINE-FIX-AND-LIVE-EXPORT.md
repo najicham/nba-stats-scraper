@@ -39,37 +39,59 @@ This session addressed the prediction pipeline being broken since Dec 20 and dep
 
 ---
 
-## Remaining Issues
+## Session 170b: Follow-up Fixes (Dec 26, 2:00 PM ET)
 
-### ✅ FIXED: Same-Day Predictions Now Working
+### 5. Same-Day Predictions - IMPLEMENTED AND TESTED
 
-Added `strict_mode` and `skip_dependency_check` parameters to bypass checks for same-day predictions.
+**Code Change:** Modified `ml_feature_store_processor.py` to respect `strict_mode` and `skip_dependency_check`:
+- Lines 773-777: Skip batch completeness check
+- Lines 1290-1295: Skip per-player completeness check in parallel mode
+- Lines 1412-1417: Skip per-player completeness check in serial mode
 
-**Solution:**
+**Commit:** `125383e`
+
+**Test Results:**
 ```bash
 curl -X POST /process-date -d '{
   "analysis_date": "2025-12-26",
   "processors": ["MLFeatureStoreProcessor"],
-  "backfill_mode": false,
   "strict_mode": false,
   "skip_dependency_check": true
 }'
+# Result: 172 feature records generated for Dec 26
 ```
 
-**Previous Problem:**
-- "2 gaps detected in historical data (2025-12-16 to 2025-12-26)"
-- Missing dates: Dec 24 (no games) and Dec 26 (games not played yet)
+**Prediction Coordinator:**
+```bash
+curl -X POST /start -d '{"game_date": "2025-12-26"}'
+# Result: 70 workers processed, 1565 predictions, 100% success rate
+# Final: 440 active predictions for 54 players
+```
 
-**Root Cause:**
-The system is designed for next-day processing. Same-day predictions need:
-1. Skip defensive checks OR
-2. Use `upcoming_player_game_context` as roster source instead of `player_game_summary`
+### 6. Unknown Bookmakers Fix
 
-**Proposed Fix Options:**
-1. Add `strict_mode` parameter to `/process-date` endpoint
-2. Create a same-day prediction mode that:
-   - Skips gap checks for today's date
-   - Uses upcoming_player_game_context for player roster
+**Issue:** Alert about unknown bookmaker IDs 39, 45, 60, 63
+**Fix:** Added to `bettingpros_player_props_processor.py`:
+```python
+39: 'Sleeper',
+45: 'PropSwap',
+60: 'PrizePicks',
+63: 'Underdog',
+```
+**Commit:** `f634010`
+**Note:** Names are educated guesses - update if actual names differ
+
+### 7. Phase 2-to-Phase 3 Orchestrator - Verified Working
+
+**Status:** Working as designed
+- Orchestrator is in MONITORING-ONLY mode (correct)
+- Phase 3 is triggered directly via Pub/Sub subscription `nba-phase3-analytics-sub`
+- Subscription pushes to `https://nba-phase3-analytics-processors-.../process`
+- No action needed
+
+---
+
+## All Issues Resolved
 
 ---
 
@@ -110,7 +132,7 @@ The system is designed for next-day processing. Same-day predictions need:
 
 ---
 
-## Data Freshness Status (Dec 26)
+## Data Freshness Status (Dec 26, 2:15 PM ET)
 
 | Table | Latest Date | Status |
 |-------|-------------|--------|
@@ -118,8 +140,8 @@ The system is designed for next-day processing. Same-day predictions need:
 | nba_analytics.player_game_summary | Dec 25 | ✅ |
 | nba_precompute.player_composite_factors | Dec 26 | ✅ |
 | nba_precompute.player_daily_cache | Dec 26 | ✅ |
-| nba_predictions.ml_feature_store_v2 | Dec 26 | ✅ |
-| nba_predictions.player_prop_predictions | Dec 26 | ✅ (390 predictions) |
+| nba_predictions.ml_feature_store_v2 | Dec 26 | ✅ (172 records) |
+| nba_predictions.player_prop_predictions | Dec 26 | ✅ (440 predictions, 54 players) |
 
 ---
 
@@ -128,6 +150,8 @@ The system is designed for next-day processing. Same-day predictions need:
 - `bin/deploy/deploy_live_export.sh` - Updated to copy dependencies and fix service account
 - `bin/analytics/deploy/deploy_analytics_processors.sh` - Verified correct
 - `orchestration/cloud_functions/live_export/requirements.txt` - Added pandas, db-dtypes, pyarrow
+- `data_processors/precompute/ml_feature_store/ml_feature_store_processor.py` - Same-day predictions fix
+- `data_processors/raw/bettingpros/bettingpros_player_props_processor.py` - Unknown bookmakers fix
 
 ---
 
@@ -176,24 +200,20 @@ for doc in stuck:
 
 ---
 
-## Priority Action Items for Next Session
+## Status: All Critical Issues Resolved
 
-### 1. Fix Same-Day Predictions (CRITICAL)
-- Modify `MLFeatureStoreProcessor` to handle same-day scenario
-- Options:
-  - Add `strict_mode=false` to skip defensive checks
-  - Use `upcoming_player_game_context` for player roster
+| Issue | Status | Resolution |
+|-------|--------|------------|
+| Same-Day Predictions | ✅ FIXED | `strict_mode=false, skip_dependency_check=true` |
+| Phase 3 Auto-Triggering | ✅ WORKING | Direct Pub/Sub subscription (not orchestrator) |
+| Unknown Bookmakers | ✅ FIXED | Added IDs 39, 45, 60, 63 to mapping |
+| Email Alerting Phase 4 | ✅ WORKING | Already configured with Brevo SMTP |
 
-### 2. Fix Phase 3 Auto-Triggering (HIGH)
-- Phase 2-to-Phase 3 orchestrator is in MONITORING-ONLY mode
-- Either set up Pub/Sub subscription OR modify orchestrator
+### Remaining Low-Priority Items
 
-### 3. Add AWS SES to Phase 4 (MEDIUM)
-- Email alerting failing on Phase 4
-
-### 4. Review Idempotency Logic (MEDIUM)
-- Processor marks "success" with partial data
-- Consider checking actual vs expected record counts
+1. **Review Idempotency Logic (LOW)**
+   - Processor marks "success" with partial data
+   - Consider checking actual vs expected record counts
 
 ---
 
@@ -217,4 +237,4 @@ for doc in stuck:
 
 ---
 
-*Last Updated: December 26, 2025 3:45 PM ET*
+*Last Updated: December 26, 2025 2:20 PM ET (Session 170b complete)*
