@@ -41,15 +41,22 @@ This session addressed the prediction pipeline being broken since Dec 20 and dep
 
 ## Remaining Issues
 
-### CRITICAL: Same-Day Predictions Not Working
+### ✅ FIXED: Same-Day Predictions Now Working
 
-The prediction pipeline cannot generate predictions for today's games due to defensive checks in `MLFeatureStoreProcessor`:
+Added `strict_mode` and `skip_dependency_check` parameters to bypass checks for same-day predictions.
 
-**Problem Flow:**
-1. `backfill_mode=true` → Queries `player_game_summary` (completed games) → No Dec 26 data
-2. `backfill_mode=false` → Runs defensive checks → Fails due to gaps in `player_game_summary`
+**Solution:**
+```bash
+curl -X POST /process-date -d '{
+  "analysis_date": "2025-12-26",
+  "processors": ["MLFeatureStoreProcessor"],
+  "backfill_mode": false,
+  "strict_mode": false,
+  "skip_dependency_check": true
+}'
+```
 
-**Defensive Checks Failing:**
+**Previous Problem:**
 - "2 gaps detected in historical data (2025-12-16 to 2025-12-26)"
 - Missing dates: Dec 24 (no games) and Dec 26 (games not played yet)
 
@@ -111,8 +118,8 @@ The system is designed for next-day processing. Same-day predictions need:
 | nba_analytics.player_game_summary | Dec 25 | ✅ |
 | nba_precompute.player_composite_factors | Dec 26 | ✅ |
 | nba_precompute.player_daily_cache | Dec 26 | ✅ |
-| nba_predictions.ml_feature_store_v2 | Dec 25 | ❌ Blocked |
-| nba_predictions.player_prop_predictions | Dec 20 | ❌ Blocked |
+| nba_predictions.ml_feature_store_v2 | Dec 26 | ✅ |
+| nba_predictions.player_prop_predictions | Dec 26 | ✅ (390 predictions) |
 
 ---
 
