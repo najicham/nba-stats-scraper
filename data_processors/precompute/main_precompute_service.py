@@ -173,11 +173,18 @@ def process_date():
         if not analysis_date:
             return jsonify({"error": "analysis_date required"}), 400
 
-        # Handle AUTO date (yesterday)
+        # Handle special date values
         if analysis_date == "AUTO":
+            # AUTO = yesterday (for overnight post-game processing)
             yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).date()
             analysis_date = yesterday.strftime('%Y-%m-%d')
             logger.info(f"AUTO date resolved to: {analysis_date}")
+        elif analysis_date == "TODAY":
+            # TODAY = today in ET timezone (for same-day pre-game predictions)
+            from zoneinfo import ZoneInfo
+            today_et = datetime.now(ZoneInfo('America/New_York')).date()
+            analysis_date = today_et.strftime('%Y-%m-%d')
+            logger.info(f"TODAY date resolved to: {analysis_date}")
 
         # Map processor names to classes
         processor_map = {
