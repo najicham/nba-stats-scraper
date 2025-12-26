@@ -77,7 +77,7 @@ class BettingPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
             0: 'BettingPros Consensus',
             2: 'SuperBook',
             10: 'FanDuel',
-            12: 'DraftKings', 
+            12: 'DraftKings',
             13: 'Caesars',
             14: 'PointsBet',
             15: 'SugarHouse',
@@ -97,7 +97,11 @@ class BettingPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
             33: 'Fanatics',
             36: 'ESPN Bet',
             37: 'Hard Rock',
+            39: 'Sleeper',  # Session 170: Added based on BettingPros API IDs
+            45: 'PropSwap',  # Session 170: Added based on BettingPros API IDs
             49: 'Fliff',
+            60: 'PrizePicks',  # Session 170: Added based on BettingPros API IDs
+            63: 'Underdog',  # Session 170: Added based on BettingPros API IDs
         }
 
     def load_data(self) -> None:
