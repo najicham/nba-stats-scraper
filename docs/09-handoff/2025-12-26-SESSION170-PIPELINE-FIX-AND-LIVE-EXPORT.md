@@ -91,6 +91,45 @@ curl -X POST /start -d '{"game_date": "2025-12-26"}'
 
 ---
 
+## Session 170c: Pipeline Health Check (Dec 26, 3:30 PM ET)
+
+### 8. Injury Report Staleness - Expected Behavior
+
+**Finding:** NBA has not published injury report PDFs since Dec 22 (holiday break)
+- Scraper correctly detects: `is_empty_report: true, no_data_reason: "pdf_unavailable"`
+- Files exist in GCS but contain empty `records: []`
+- This is NOT a bug - NBA doesn't publish during holidays
+
+### 9. Dec 25 Christmas Gamebook Backfill
+
+**Issue:** Only 1/5 Christmas games had gamebook data
+**Fix:** Ran backfill script for all 5 games
+```bash
+PYTHONPATH=. .venv/bin/python scripts/backfill_gamebooks.py --date 2025-12-25
+```
+**Result:** All 5 games now have complete gamebook data:
+- CLE @ NYK: 34 players
+- SAS @ OKC: 36 players
+- DAL @ GSW: 36 players
+- HOU @ LAL: 34 players
+- MIN @ DEN: 34 players
+
+### 10. Scheduler Verification - All Automated
+
+Daily automation is fully configured:
+
+| Time (ET) | Job | Description |
+|-----------|-----|-------------|
+| 10:30 AM | `same-day-phase3` | Phase 3 analytics for today |
+| 11:00 AM | `same-day-phase4` | ML Feature Store (`strict_mode=false`) |
+| 11:30 AM | `same-day-predictions` | Generate predictions |
+| 7 PM - midnight | `live-export-evening` | Every 3 min during games |
+| midnight - 2 AM | `live-export-late-night` | Late game exports |
+
+**Key:** Same-day schedulers already use correct parameters (`strict_mode=false, skip_dependency_check=true`)
+
+---
+
 ## All Issues Resolved
 
 ---
@@ -237,4 +276,4 @@ for doc in stuck:
 
 ---
 
-*Last Updated: December 26, 2025 2:20 PM ET (Session 170b complete)*
+*Last Updated: December 26, 2025 3:45 PM ET (Session 170c complete)*
