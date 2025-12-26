@@ -768,9 +768,16 @@ class MLFeatureStoreProcessor(
         # ============================================================
         # OPTIMIZATION (Session 64): Skip slow completeness check in backfill mode
         # Backfill already has preflight checks at date-level; player-level is redundant
+        # Session 170: Also skip in same-day mode (skip_dependency_check=True or strict_mode=False)
         step_start = time.time()
-        if self.is_backfill_mode:
-            logger.info(f"⏭️ BACKFILL MODE: Skipping completeness check for {len(all_players)} players")
+        skip_completeness = (
+            self.is_backfill_mode or
+            self.opts.get('skip_dependency_check', False) or
+            not self.opts.get('strict_mode', True)
+        )
+        if skip_completeness:
+            mode_reason = "BACKFILL" if self.is_backfill_mode else "SAME-DAY"
+            logger.info(f"⏭️ {mode_reason} MODE: Skipping completeness check for {len(all_players)} players")
             # Use actual game counts from already-loaded data (feature_extractor has last 10 games)
             # This makes metadata accurate for debugging without additional BQ queries
             completeness_results = {
@@ -807,11 +814,13 @@ class MLFeatureStoreProcessor(
             )
             is_season_boundary = self.completeness_checker.is_season_boundary(analysis_date)
 
+        self._timing['completeness_check'] = time.time() - step_start
+
+        if not skip_completeness:
             logger.info(
                 f"Completeness check complete in {self._timing['completeness_check']:.2f}s. "
                 f"Bootstrap mode: {is_bootstrap}, Season boundary: {is_season_boundary}"
             )
-        self._timing['completeness_check'] = time.time() - step_start
 
         # Check upstream completeness (CASCADE PATTERN - Week 5)
         # Note: _query_upstream_completeness has its own timing
@@ -1279,9 +1288,15 @@ class MLFeatureStoreProcessor(
                 })
 
             # BACKFILL MODE FIX: Skip completeness checks in backfill mode
-            skip_completeness_checks = self.is_backfill_mode or is_bootstrap
+            # Session 170: Also skip in same-day mode (skip_dependency_check=True or strict_mode=False)
+            skip_completeness_checks = (
+                self.is_backfill_mode or
+                is_bootstrap or
+                self.opts.get('skip_dependency_check', False) or
+                not self.opts.get('strict_mode', True)
+            )
 
-            # Check production readiness (skip if incomplete, unless in bootstrap/backfill mode)
+            # Check production readiness (skip if incomplete, unless in bootstrap/backfill/same-day mode)
             if not completeness['is_production_ready'] and not skip_completeness_checks:
                 logger.warning(
                     f"{player_lookup}: Completeness {completeness['completeness_pct']:.1f}% "
@@ -1395,9 +1410,15 @@ class MLFeatureStoreProcessor(
                     continue
 
                 # BACKFILL MODE FIX: Skip completeness checks in backfill mode
-                skip_completeness_checks = self.is_backfill_mode or is_bootstrap
+                # Session 170: Also skip in same-day mode (skip_dependency_check=True or strict_mode=False)
+                skip_completeness_checks = (
+                    self.is_backfill_mode or
+                    is_bootstrap or
+                    self.opts.get('skip_dependency_check', False) or
+                    not self.opts.get('strict_mode', True)
+                )
 
-                # Check production readiness (skip if incomplete, unless in bootstrap/backfill mode)
+                # Check production readiness (skip if incomplete, unless in bootstrap/backfill/same-day mode)
                 if not completeness['is_production_ready'] and not skip_completeness_checks:
                     logger.warning(
                         f"{player_lookup}: Completeness {completeness['completeness_pct']:.1f}% "

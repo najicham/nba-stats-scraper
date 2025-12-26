@@ -222,9 +222,12 @@ class PrecomputeProcessorBase(RunHistoryMixin):
             # Cache result as self.dep_check for use in extract_raw_data()
             self.mark_time("dependency_check")
 
-            # Skip dependency check in backfill mode - trust that historical data exists
+            # Skip dependency check in backfill mode OR if explicitly requested
             # BUT do a quick existence check to catch completely missing upstream data
-            if self.is_backfill_mode:
+            skip_dep_check = opts.get('skip_dependency_check', False)
+            if self.is_backfill_mode or skip_dep_check:
+                if skip_dep_check and not self.is_backfill_mode:
+                    logger.info("⏭️  SKIP DEPENDENCY CHECK: Same-day prediction mode")
                 # SAFETY: Quick existence check for critical Phase 4 dependencies
                 # This catches cases like Dec 4, 2021 where TDZA was skipped between batches
                 missing_upstream = self._quick_upstream_existence_check(analysis_date)
@@ -239,7 +242,10 @@ class PrecomputeProcessorBase(RunHistoryMixin):
                     )
                     raise ValueError(error_msg)
 
-                logger.info("⏭️  BACKFILL MODE: Skipping full dependency check (quick existence check passed)")
+                if skip_dep_check and not self.is_backfill_mode:
+                    logger.info("⏭️  SAME-DAY MODE: Skipping full dependency check (quick existence check passed)")
+                else:
+                    logger.info("⏭️  BACKFILL MODE: Skipping full dependency check (quick existence check passed)")
                 self.dep_check = {
                     'all_critical_present': True,
                     'all_fresh': True,  # Don't care about freshness for historical data

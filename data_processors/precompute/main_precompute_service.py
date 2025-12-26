@@ -167,6 +167,8 @@ def process_date():
         analysis_date = data.get('analysis_date')
         processor_names = data.get('processors', [])
         backfill_mode = data.get('backfill_mode', False)
+        strict_mode = data.get('strict_mode', True)  # Set False to skip defensive checks
+        skip_dependency_check = data.get('skip_dependency_check', False)  # Set True for same-day
 
         if not analysis_date:
             return jsonify({"error": "analysis_date required"}), 400
@@ -202,7 +204,9 @@ def process_date():
                     'analysis_date': analysis_date,
                     'project_id': os.environ.get('GCP_PROJECT_ID', 'nba-props-platform'),
                     'triggered_by': 'manual',
-                    'backfill_mode': backfill_mode
+                    'backfill_mode': backfill_mode,
+                    'strict_mode': strict_mode,
+                    'skip_dependency_check': skip_dependency_check
                 }
 
                 success = processor.run(opts)
