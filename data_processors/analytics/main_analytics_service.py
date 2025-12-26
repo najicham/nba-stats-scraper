@@ -181,10 +181,20 @@ def process_date_range():
         end_date = data.get('end_date')
         processor_names = data.get('processors', [])
         backfill_mode = data.get('backfill_mode', False)
-        
+
         if not start_date or not end_date:
             return jsonify({"error": "start_date and end_date required"}), 400
-        
+
+        # Handle special date values (TODAY = today in ET timezone)
+        from zoneinfo import ZoneInfo
+        today_et = datetime.now(ZoneInfo('America/New_York')).date().strftime('%Y-%m-%d')
+        if start_date == "TODAY":
+            start_date = today_et
+            logger.info(f"TODAY start_date resolved to: {start_date}")
+        if end_date == "TODAY":
+            end_date = today_et
+            logger.info(f"TODAY end_date resolved to: {end_date}")
+
         # Map processor names to classes
         processor_map = {
             'PlayerGameSummaryProcessor': PlayerGameSummaryProcessor,
