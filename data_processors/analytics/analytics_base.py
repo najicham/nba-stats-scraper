@@ -861,24 +861,31 @@ class AnalyticsProcessorBase(RunHistoryMixin):
             else:
                 age_hours = None
 
-            # Determine if exists based on minimum count
-            # In backfill mode, use 1 (any data present) instead of expected_count_min
-            # This allows processing dates with fewer games (e.g., early season)
-            if self.is_backfill_mode:
-                expected_min = 1
-                if config.get('expected_count_min', 1) > 1:
-                    logger.debug(f"BACKFILL_MODE: Using expected_count_min=1 instead of {config.get('expected_count_min')}")
-            else:
-                expected_min = config.get('expected_count_min', 1)
-            exists = row_count >= expected_min
+            # Determine if data exists - LENIENT CHECK
+            # Data "exists" if ANY rows are present (row_count > 0)
+            # This prevents false negatives that block the pipeline
+            # The expected_count_min is used for warnings, not blocking
+            expected_min = config.get('expected_count_min', 1)
+            exists = row_count > 0  # LENIENT: any data = exists
+
+            # Check if data is "sufficient" (meets expected threshold)
+            sufficient = row_count >= expected_min
+
+            # Log warning if data exists but is below expected threshold
+            if exists and not sufficient and not self.is_backfill_mode:
+                logger.warning(
+                    f"{table_name}: Data exists ({row_count} rows) but below "
+                    f"expected minimum ({expected_min}). Proceeding anyway."
+                )
 
             details = {
                 'exists': exists,
+                'sufficient': sufficient,
                 'row_count': row_count,
                 'expected_count_min': expected_min,
                 'age_hours': round(age_hours, 2) if age_hours else None,
                 'last_updated': last_updated.isoformat() if last_updated else None,
-                'data_hash': data_hash  # NEW: Representative hash from source data
+                'data_hash': data_hash  # Representative hash from source data
             }
 
             logger.debug(f"{table_name}: {details}")
