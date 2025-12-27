@@ -1,6 +1,6 @@
 # Processors Documentation
 
-**Last Updated:** 2025-11-29 17:30 PST
+**Last Updated:** 2025-12-27
 **Purpose:** Data processor operations for Phases 2-5
 **Audience:** Engineers operating and troubleshooting data processors
 
@@ -176,8 +176,8 @@ Phase transitions are now coordinated by Cloud Function orchestrators:
   - Processing: 450 players in 2-5 minutes (parallel fan-out via Pub/Sub)
   - Features: Confidence-weighted ensemble, edge calculation, graceful degradation
 
-### Future Phases
-- **Phase 6 Publishing:** Web app JSON generation (planned)
+### Phase 6: Publishing & Exports ✅ Production
+- **Phase 6 Publishing:** Production (21 exporters, live scoring) - see [phase6-publishing/](phase6-publishing/)
 
 ---
 
