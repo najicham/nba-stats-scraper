@@ -1,161 +1,175 @@
 # NBA Props Platform - System Status
 
-**Created:** 2025-11-15 10:00 PST
-**Last Updated:** 2025-12-02 16:45 PST
-**Purpose:** Single source of truth for current deployment status
-**Audience:** Anyone asking "what's the current state of the system?"
+**Last Updated:** December 26, 2025 (Session 171)
 
 ---
 
-## TL;DR - Current State
+## Quick Status Overview
 
-**Overall Status:** v1.0 DEPLOYED - Backfill In Progress
-**Deployment Date:** 2025-11-29
-**Current Focus:** Historical data backfill (Phase 3 complete, Phase 4 pending)
-
----
-
-## Data Pipeline Coverage
-
-| Phase | Dataset | Days with Data | Date Range | Status |
-|-------|---------|----------------|------------|--------|
-| **Phase 2 (Raw)** | `nba_raw` | 888 days | 2021-10-03 to 2025-06-22 | Complete |
-| **Phase 3 (Analytics)** | `nba_analytics` | 524 days | 2021-10-20 to 2025-06-22 | ~60% Complete |
-| **Phase 4 (Precompute)** | `nba_precompute` | 0 days | - | Pending Backfill |
-| **Phase 5 (Predictions)** | `nba_predictions` | 0 days | - | Pending Backfill |
-
-**Next Step:** Run Phase 4 backfill starting from Nov 2, 2021 (after 14-day bootstrap period)
+| Pipeline Phase | Status | Last Run | Notes |
+|----------------|--------|----------|-------|
+| Phase 1 (Scrapers) | :white_check_mark: Working | Hourly | Running on schedule |
+| Phase 2 (Raw Processors) | :white_check_mark: Working | On data arrival | Triggered by Pub/Sub |
+| Phase 3 (Analytics) | :white_check_mark: Working | Multiple triggers | Fixed Dec 26 (wrong Docker image) |
+| Phase 4 (Precompute) | :white_check_mark: Working | Overnight + Morning | NEW: same-day scheduler added |
+| Phase 5 (Predictions) | :white_check_mark: Working | Morning | NEW: same-day scheduler added |
+| Phase 6 (Export) | :white_check_mark: Working | Multiple times daily | Exports to GCS |
 
 ---
 
-## v1.0 Architecture
+## Active Schedulers
 
+### Same-Day Predictions (NEW - Added Dec 26)
+
+| Scheduler | Time (ET) | What It Does |
+|-----------|-----------|--------------|
+| `same-day-phase3` | 10:30 AM | UpcomingPlayerGameContextProcessor for TODAY |
+| `same-day-phase4` | 11:00 AM | MLFeatureStoreProcessor for TODAY (same-day mode) |
+| `same-day-predictions` | 11:30 AM | Prediction coordinator for TODAY |
+
+### Overnight Processing (Post-Game)
+
+| Scheduler | Time (PT) | What It Does |
+|-----------|-----------|--------------|
+| `player-composite-factors-daily` | 11:00 PM | Composite factors for YESTERDAY |
+| `player-daily-cache-daily` | 11:15 PM | Daily cache for YESTERDAY |
+| `ml-feature-store-daily` | 11:30 PM | ML features for YESTERDAY |
+
+### Exports (Phase 6)
+
+| Scheduler | Time (ET) | What It Does |
+|-----------|-----------|--------------|
+| `phase6-daily-results` | 5:00 AM | Export yesterday's results |
+| `phase6-tonight-picks` | 1:00 PM | Export tonight's predictions |
+| `phase6-hourly-trends` | Hourly 6AM-11PM | Export trend data |
+| `live-export-evening` | Every 3 min 7-11 PM | Live scores during games |
+| `live-export-late-night` | Every 3 min 12-1 AM | Late night games |
+
+### Other
+
+| Scheduler | Time (ET) | What It Does |
+|-----------|-----------|--------------|
+| `execute-workflows` | :05 every hour | Master workflow executor |
+| `master-controller-hourly` | :00 every hour | Pipeline orchestration |
+| `grading-daily` | 11:00 AM | Grade yesterday's predictions |
+
+---
+
+## Known Issues (Active)
+
+### 1. AWS SES Missing on Phase 4
+**Priority:** LOW
+**Impact:** Email alerts from Phase 4 fail silently
+
+Phase 4 service doesn't have AWS SES credentials configured. Email alerting will fail.
+
+**Fix:** Add AWS credentials to Phase 4 deploy script or run:
+```bash
+gcloud run services update nba-phase4-precompute-processors \
+  --region=us-west2 \
+  --set-env-vars="AWS_ACCESS_KEY_ID=<KEY>,AWS_SECRET_ACCESS_KEY=<SECRET>"
 ```
-Phase 1: Scrapers (26+)
-    | Pub/Sub: nba-phase1-scrapers-complete
-    v
-Phase 2: Raw Processors (21)
-    | Pub/Sub: nba-phase2-raw-complete
-    v
-Phase 2->3 Orchestrator (Cloud Function)
-    | Pub/Sub: nba-phase3-trigger
-    v
-Phase 3: Analytics (5 processors)
-    | Pub/Sub: nba-phase3-analytics-complete
-    v
-Phase 3->4 Orchestrator (Cloud Function)
-    | Pub/Sub: nba-phase4-trigger
-    v
-Phase 4: Precompute (5 processors)
-    | Pub/Sub: nba-phase4-precompute-complete
-    v
-Phase 5: Predictions (Coordinator + Workers)
-    | Pub/Sub: nba-phase5-predictions-complete
-    v
-Phase 6: Web App (Not started)
+
+### 2. Prediction Gap Dec 21-25
+**Priority:** MEDIUM
+**Impact:** Historical predictions missing
+
+Predictions from Dec 21-25 don't exist. The pipeline was broken during this period.
+
+**Fix:** Backfill using manual commands (see runbook)
+
+### 3. player_daily_cache Low Coverage
+**Priority:** LOW
+**Impact:** Only 44/172 players in cache for some dates
+
+Investigation needed to understand why cache coverage is low.
+
+---
+
+## Recently Resolved Issues
+
+### Phase 5 Predictions Not Running (Resolved Dec 26)
+**Root Cause:** No same-day prediction scheduler existed. Overnight schedulers process YESTERDAY's games.
+
+**Resolution:**
+- Added `TODAY` date support to Phase 3/4 services
+- Created morning schedulers for same-day predictions
+- See: `docs/08-projects/current/PHASE5-PREDICTIONS-NOT-RUNNING.md`
+
+### Phase 3 Wrong Docker Image (Resolved Dec 26)
+**Root Cause:** Phase 3 service was running Phase 4 code.
+
+**Resolution:** Redeployed with correct `analytics-processor.Dockerfile`.
+
+---
+
+## Service URLs
+
+| Service | URL | Health Check |
+|---------|-----|--------------|
+| Phase 1 Scrapers | https://nba-phase1-scrapers-f7p3g7f6ya-wl.a.run.app | /health |
+| Phase 2 Raw | https://nba-phase2-raw-processors-f7p3g7f6ya-wl.a.run.app | /health |
+| Phase 3 Analytics | https://nba-phase3-analytics-processors-f7p3g7f6ya-wl.a.run.app | /health |
+| Phase 4 Precompute | https://nba-phase4-precompute-processors-f7p3g7f6ya-wl.a.run.app | /health |
+| Prediction Coordinator | https://prediction-coordinator-f7p3g7f6ya-wl.a.run.app | /health |
+| Prediction Worker | https://prediction-worker-f7p3g7f6ya-wl.a.run.app | /health |
+
+---
+
+## Quick Health Check
+
+```bash
+# Check all services
+for svc in nba-phase1-scrapers nba-phase2-raw-processors nba-phase3-analytics-processors nba-phase4-precompute-processors prediction-coordinator; do
+  echo -n "$svc: "
+  curl -s "https://${svc}-f7p3g7f6ya-wl.a.run.app/health" -H "Authorization: Bearer $(gcloud auth print-identity-token)" | jq -r '.status // .error // "failed"' 2>/dev/null || echo "failed"
+done
 ```
 
 ---
 
-## Cloud Run Services (15 Deployed)
+## Key BigQuery Tables
 
-| Service | Phase | Status |
-|---------|-------|--------|
-| `nba-phase1-scrapers` | 1 | Running |
-| `nba-phase2-raw-processors` | 2 | Running |
-| `nba-phase3-analytics-processors` | 3 | Running |
-| `nba-phase4-precompute-processors` | 4 | Running |
-| `prediction-coordinator` | 5 | Running |
-| `prediction-worker` | 5 | Running |
-| `phase2-to-phase3-orchestrator` | 2->3 | Running |
-| `phase3-to-phase4-orchestrator` | 3->4 | Running |
-| `phase4-to-phase5-orchestrator` | 4->5 | Running |
-| `pipeline-health-summary` | Monitor | Running |
-| + 5 legacy services | - | Running |
+| Table | Purpose | Expected Freshness |
+|-------|---------|-------------------|
+| `nba_raw.*` | Raw scraped data | Updated hourly |
+| `nba_analytics.player_game_summary` | Per-game player stats | After games complete |
+| `nba_analytics.upcoming_player_game_context` | Today's expected players | By 11 AM ET |
+| `nba_precompute.ml_feature_store_v2` | ML features | By 11:30 AM ET |
+| `nba_predictions.player_prop_predictions` | Generated predictions | By noon ET |
 
 ---
 
-## Phase Status Detail
+## Emergency Procedures
 
-| Phase | Status | Components | Notes |
-|-------|--------|------------|-------|
-| Phase 1 | Production | 26+ scrapers | Data collection operational |
-| Phase 2 | Production | 21 processors | Raw data processing complete |
-| Phase 2->3 | Production | Cloud Function | Orchestrator deployed |
-| Phase 3 | Production | 5 processors | Analytics deployed, backfill 60% |
-| Phase 3->4 | Production | Cloud Function | Orchestrator deployed |
-| Phase 4 | Deployed | 5 processors | Needs backfill (0 days of data) |
-| Phase 5 | Deployed | Coordinator + Workers | Needs Phase 4 data |
-| Phase 6 | Not Started | - | Web app publishing |
+### Pipeline Completely Down
+1. Check GCP status: https://status.cloud.google.com/
+2. Check Cloud Run services are deployed
+3. Check Pub/Sub topics exist
+4. Manually trigger schedulers
 
----
+### Predictions Not Generating
+1. Check Phase 4 completion in Firestore
+2. Run Phase 4→5 orchestrator manually
+3. Trigger prediction coordinator directly:
+```bash
+curl -s -X POST "https://prediction-coordinator-f7p3g7f6ya-wl.a.run.app/start" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
+  -d '{"force": true}'
+```
 
-## Key v1.0 Features
-
-| Feature | Status |
-|---------|--------|
-| Event-Driven Pipeline | Deployed |
-| Pub/Sub Orchestration | 8 topics active |
-| Firestore State Management | 2 collections |
-| Cloud Function Orchestrators | 2 deployed |
-| Fallback Data Sources | Configured |
-| Quality Tracking | Implemented |
-| Validation System | Operational |
-| Email Alerts | Configured |
+### Exports Missing
+1. Check Phase 6 Cloud Function logs
+2. Manually trigger export:
+```bash
+gcloud scheduler jobs run phase6-tonight-picks --location=us-west2
+```
 
 ---
 
-## Recent Updates (2025-12-02)
+## Related Documentation
 
-- Validation system enhanced with:
-  - Cross-phase consistency checks
-  - Duplicate detection
-  - Timeout handling improvements
-  - NULL field tracking
-- All Cloud Run services verified running
-- Documentation review completed
-
----
-
-## Backfill Priority
-
-1. **Phase 4 Backfill** (Primary)
-   - Start date: 2021-11-02 (after 14-day bootstrap)
-   - End date: Present
-   - Prerequisite: Phase 3 data must exist
-
-2. **Phase 3 Gap Fill** (Secondary)
-   - Missing: 2021-10-19 (day 1)
-   - Current coverage: 524/~900 expected days
-
-See: [Backfill Project](../08-projects/current/backfill/00-START-HERE.md)
-
----
-
-## Quick Links
-
-| Need | Link |
-|------|------|
-| Validation | `python3 bin/validate_pipeline.py YYYY-MM-DD` |
-| Health check | `./bin/orchestration/quick_health_check.sh` |
-| Backfill guide | [08-projects/current/backfill/](../08-projects/current/backfill/) |
-| Architecture | [01-architecture/quick-reference.md](../01-architecture/quick-reference.md) |
-
----
-
-## Cost Estimates (Monthly)
-
-| Component | Cost |
-|-----------|------|
-| Cloud Run (all services) | ~$50 |
-| Cloud Functions | ~$2 |
-| BigQuery | ~$20 |
-| Pub/Sub | Free tier |
-| Firestore | Free tier |
-| **Total** | **~$72/month** |
-
----
-
-**Document Version:** 4.0
-**Last Verification:** 2025-12-02 16:45 PST
-**Next Review:** After Phase 4 backfill complete
+- [Prediction Pipeline Runbook](../../02-operations/runbooks/prediction-pipeline.md)
+- [Troubleshooting Guide](../../02-operations/troubleshooting.md)
+- [Daily Monitoring](../../02-operations/daily-monitoring.md)

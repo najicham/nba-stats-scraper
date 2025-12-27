@@ -2,7 +2,7 @@
 
 **File:** `docs/01-architecture/quick-reference.md`
 **Created:** 2025-11-15 10:00 PST
-**Last Updated:** 2025-11-29 17:00 PST
+**Last Updated:** 2025-12-27 (v2.0 - Full system operational)
 **Purpose:** At-a-glance overview of the event-driven pipeline architecture
 **For detailed docs:** See v1.0 architecture docs: [Pub/Sub Topics](./orchestration/pubsub-topics.md), [Orchestrators](./orchestration/orchestrators.md), [Firestore State](./orchestration/firestore-state-management.md)
 
@@ -46,8 +46,8 @@
 │  Phase 5: Predictions ✅ Production                         │
 │  └─► Pub/Sub: nba-phase5-predictions-complete ✅           │
 │      ↓                                                       │
-│  Phase 6: Web App ❌ Not started                            │
-│  └─► Firestore + GCS                                        │
+│  Phase 6: Publishing ✅ Production (GCS JSON exports)       │
+│  └─► Static JSON files to GCS for website                   │
 │                                                              │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -87,11 +87,11 @@
 
 ---
 
-## 📈 Current Status (2025-12-02)
+## 📈 Current Status (2025-12-27)
 
 ### What's Working ✅
 
-**Complete Event-Driven Pipeline (v1.0 Production)**
+**Complete Event-Driven Pipeline (v2.0 Production)**
 - 33 scrapers collect data from NBA APIs
 - 21 raw processors load to BigQuery `nba_raw.*` tables
 - Phase 2→3 orchestrator coordinates 21 processor completions
@@ -99,49 +99,60 @@
 - Phase 3→4 orchestrator coordinates 5 processor completions + entity aggregation
 - 5 precompute processors generate ML features
 - Prediction coordinator and workers operational
+- Phase 6 publishing exports predictions to GCS as static JSON
 - Full Pub/Sub event chain working end-to-end
 - Atomic Firestore transactions prevent race conditions
 - End-to-end correlation ID tracking
 
-**Key v1.0 Infrastructure:**
+**Same-Day Prediction Schedulers (Added Dec 2025):**
+| Scheduler | Time (ET) | Purpose |
+|-----------|-----------|---------|
+| `same-day-phase3` | 10:30 AM | UpcomingPlayerGameContextProcessor for TODAY |
+| `same-day-phase4` | 11:00 AM | MLFeatureStoreProcessor for TODAY |
+| `same-day-predictions` | 11:30 AM | Prediction coordinator for TODAY |
+
+**Date Modes:**
+- `analysis_date: "AUTO"` → Resolves to YESTERDAY (post-game processing)
+- `analysis_date: "TODAY"` → Resolves to current date in ET (same-day predictions)
+
+**Key v2.0 Infrastructure:**
 - 8 Pub/Sub topics for event-driven communication
 - 2 Cloud Function orchestrators (Phase 2→3, Phase 3→4)
 - Firestore for atomic state management
 - Cloud Run for Phase 5 predictions
+- GCS buckets for Phase 6 JSON exports
+- AWS SES for email alerts
 
 ### Remaining Work ⏳
 
-1. **Phase 6 web app** (not started)
-   - Firestore + GCS for web app publishing
+1. **Historical backfill completion**
+   - 4-season backfill (2021-2024) Phase 5 in progress
+   - 2021-22 complete, 2022-2025 pending
 
-2. **Historical backfill** (optional)
-   - Load historical seasons for predictions
+2. **System evolution**
+   - Adaptive learning framework (blocked by backfill)
 
 ---
 
-## 🚀 Next Steps
+## 🚀 Current Focus
 
-### Immediate: Historical Backfill (Optional)
+### Active: Four-Season Backfill
 
-**Goal:** Load historical seasons for predictions and analysis
+**Goal:** Complete historical data for ML model training
 
-**Tasks:**
-1. Run backfill for 2021-22, 2022-23, 2023-24 seasons
-2. Validate data completeness
-3. Enable historical predictions
+**Status:**
+- Phases 1-4: Complete for all 4 seasons (2021-2024)
+- Phase 5: 2021-22 complete, 2022-2025 in progress
 
-**See:** [NEXT-SESSION-BACKFILL.md](../09-handoff/NEXT-SESSION-BACKFILL.md)
+**See:** [08-projects/current/four-season-backfill/](../08-projects/current/four-season-backfill/)
 
-### Future: Phase 6 Web App
+### Active: System Evolution
 
-**Goal:** Publish predictions to web application
+**Goal:** Implement adaptive learning framework
 
-**Tasks:**
-1. Design Firestore schema for web app
-2. Create publishing service
-3. Build web app UI
+**Status:** Planning (blocked by backfill completion)
 
-**Impact:** User-facing predictions
+**See:** [08-projects/current/system-evolution/](../08-projects/current/system-evolution/)
 
 ---
 
@@ -194,7 +205,7 @@ python3 bin/validate_pipeline.py 2024-01-15
 ```
 
 **"What's the current priority?"**
-Historical backfill - Phase 4 has 0 days of data, needs backfill from Nov 2021.
+Four-season historical backfill (Phase 5 predictions for 2022-2025 seasons).
 
 **"Are predictions automatic?"**
 Yes - v1.0 pipeline is fully event-driven. Predictions run automatically after Phase 4 completes.
@@ -281,5 +292,5 @@ See: [Validation System](../07-monitoring/validation-system.md)
 
 ---
 
-**Last Updated:** 2025-12-02
-**Next Review:** After Phase 4 backfill complete
+**Last Updated:** 2025-12-27
+**Next Review:** After four-season backfill complete

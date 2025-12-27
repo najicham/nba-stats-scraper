@@ -515,6 +515,191 @@ PYTHONPATH=. python scripts/backfill_gamebooks.py --date 2025-12-23
 
 ---
 
+## Run History Cleanup and Stuck Processors
+
+### Detecting Stuck Processors
+
+**Symptoms:**
+- Processor skips work with "Already processed" messages
+- Grafana alert "Stale Running Processors"
+- Processor shows `status='running'` for > 2 hours in run history
+
+**Detection Query:**
+```sql
+-- Find processors stuck in 'running' status > 1 hour
+SELECT
+  started_at,
+  processor_name,
+  phase,
+  data_date,
+  TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), started_at, MINUTE) as minutes_running,
+  run_id
+FROM nba_reference.processor_run_history
+WHERE status = 'running'
+  AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), started_at, MINUTE) > 60
+ORDER BY started_at;
+```
+
+### How Stuck Entries Occur
+
+1. Processor writes `status='running'` at startup
+2. Process crashes or is forcefully terminated
+3. No final status entry is written
+4. Subsequent runs see stale `running` entry and skip (for < 2 hours)
+
+**Automatic Recovery:**
+- Stale threshold: 2 hours (entries older than this are automatically retried)
+- If entry is > 2 hours old, the next run proceeds normally
+
+### Manual Cleanup Procedure
+
+**When to use:** When automatic recovery isn't working or you need immediate cleanup.
+
+**Step 1: Identify stuck entries**
+```bash
+bq query --use_legacy_sql=false "
+SELECT run_id, processor_name, data_date, started_at
+FROM nba_reference.processor_run_history
+WHERE status = 'running'
+  AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), started_at, HOUR) > 2
+ORDER BY started_at"
+```
+
+**Step 2: Delete stale 'running' entries**
+```bash
+# Delete stuck entries older than 4 hours
+bq query --use_legacy_sql=false "
+DELETE FROM nba_reference.processor_run_history
+WHERE status = 'running'
+  AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), started_at, HOUR) > 4"
+```
+
+**Step 3: Verify cleanup and re-trigger**
+```bash
+# Verify entries removed
+bq query --use_legacy_sql=false "
+SELECT COUNT(*) as stuck_count
+FROM nba_reference.processor_run_history
+WHERE status = 'running'
+  AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), started_at, HOUR) > 1"
+
+# Re-trigger the processor (example for Phase 4)
+curl -X POST "https://nba-phase4-precompute-processors-f7p3g7f6ya-wl.a.run.app/process-date" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
+  -d '{"analysis_date": "2025-12-26", "processors": ["MLFeatureStoreProcessor"]}'
+```
+
+### Bulk Cleanup (Emergency)
+
+**Use with caution:** Only when many entries are stuck.
+
+```bash
+# Delete ALL running entries older than 4 hours
+bq query --use_legacy_sql=false "
+DELETE FROM nba_reference.processor_run_history
+WHERE status = 'running'
+  AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), started_at, HOUR) > 4"
+
+# Session 170 example: Cleaned 114,434 stale entries
+bq query --use_legacy_sql=false "
+DELETE FROM nba_reference.processor_run_history
+WHERE status = 'running'
+  AND started_at < TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)"
+```
+
+### Prevention
+
+1. **Monitor Grafana alerts** - "Stale Running Processors" triggers at 60 min
+2. **Check run history table size** - Large accumulation indicates issues
+3. **Review Cloud Run logs** - Look for crash patterns
+4. **Ensure proper shutdown** - Processors should call `record_run_complete()` even on failure
+
+### Related Documentation
+
+- [Run History Guide](../07-monitoring/run-history-guide.md)
+- [Grafana Dashboard Queries](../07-monitoring/grafana/dashboards/pipeline-run-history-queries.sql)
+
+---
+
+## Defensive Check Failures
+
+### "DependencyError: Upstream X failed for Y"
+
+**Symptoms:**
+```
+DependencyError: Upstream PlayerGameSummaryProcessor failed for 2025-12-25
+```
+
+**Root Cause:** Defensive checks detected that the upstream processor failed yesterday.
+
+**Diagnosis:**
+```bash
+# Check upstream processor status
+bq query --use_legacy_sql=false "
+SELECT processor_name, data_date, status, error_message
+FROM nba_reference.processor_run_history
+WHERE processor_name = 'PlayerGameSummaryProcessor'
+  AND data_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 3 DAY)
+ORDER BY data_date DESC, started_at DESC"
+```
+
+**Resolution:**
+1. Fix the upstream processor issue
+2. Re-run the upstream processor for the failed date
+3. Then re-run the downstream processor
+
+### "Defensive checks failed for same-day data"
+
+**Symptoms:**
+```
+ERROR: Defensive checks failed - no upstream data for TODAY
+```
+
+**Root Cause:** Same-day predictions need special mode (no historical data exists yet).
+
+**Resolution:**
+Use `strict_mode=false` and `skip_dependency_check=true`:
+```bash
+curl -X POST "https://nba-phase4-precompute-processors-f7p3g7f6ya-wl.a.run.app/process-date" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
+  -d '{
+    "analysis_date": "TODAY",
+    "processors": ["MLFeatureStoreProcessor"],
+    "strict_mode": false,
+    "skip_dependency_check": true
+  }'
+```
+
+**Automated Fix:** Morning schedulers (10:30/11:00/11:30 AM ET) already use these flags.
+
+### "Missing critical dependencies"
+
+**Symptoms:**
+```
+ValueError: Missing critical dependencies: ['nba_raw.nbac_team_boxscore']
+```
+
+**Root Cause:** Required upstream data doesn't exist for the date.
+
+**Diagnosis:**
+```bash
+# Check if upstream data exists
+bq query --use_legacy_sql=false "
+SELECT game_date, COUNT(*) as rows
+FROM nba_raw.nbac_team_boxscore
+WHERE game_date = '2025-12-25'
+GROUP BY game_date"
+```
+
+**Resolution:**
+1. Check if scraper ran for that date
+2. If missing, run backfill: `PYTHONPATH=. python scripts/backfill_gamebooks.py --date 2025-12-25`
+3. Re-run the failing processor
+
+---
+
 ## Getting Help
 
 ### Debug Information to Collect

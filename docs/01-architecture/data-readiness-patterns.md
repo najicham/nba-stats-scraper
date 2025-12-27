@@ -703,6 +703,111 @@ When a processor runs, patterns are checked in this order (first blocker wins):
 | `strict_mode` | `True` | Enable defensive checks |
 | `backfill_mode` | `False` | Disable alerts, relax thresholds |
 | `skip_downstream_trigger` | `False` | Don't publish to next phase |
+| `skip_dependency_check` | `False` | Skip full validation (same-day mode) |
+
+---
+
+### Parameter Deep Dive: strict_mode
+
+**Purpose:** Controls whether defensive checks run before processing.
+
+**Default:** `True` (enabled)
+
+**Implementation:**
+```python
+# In precompute_base.py:211, analytics_base.py:327
+strict_mode = opts.get('strict_mode', True)
+
+if strict_mode and not self.is_backfill_mode:
+    logger.info("🔒 STRICT MODE: Running defensive checks...")
+
+    # DEFENSE 1: Check if yesterday's upstream processor succeeded
+    status = checker.check_upstream_processor_status(...)
+
+    # DEFENSE 2: Check for gaps in lookback window
+    gaps = checker.check_date_range_completeness(...)
+```
+
+**When to disable (`strict_mode=False`):**
+- Same-day prediction processing (no historical data exists yet)
+- Testing/debugging (skip slow checks)
+- When you've manually verified upstream data
+
+**Risk of disabling:** Processor may run with stale or incomplete upstream data.
+
+---
+
+### Parameter Deep Dive: skip_dependency_check
+
+**Purpose:** Skip full dependency validation for same-day pre-game processing.
+
+**Default:** `False` (enabled)
+
+**Implementation:**
+```python
+# In precompute_base.py:227
+skip_dep_check = opts.get('skip_dependency_check', False)
+
+if self.is_backfill_mode or skip_dep_check:
+    if skip_dep_check and not self.is_backfill_mode:
+        logger.info("⏭️  SKIP DEPENDENCY CHECK: Same-day prediction mode")
+
+    # SAFETY: Still run quick existence check for critical upstream data
+    missing_upstream = self._quick_upstream_existence_check(analysis_date)
+    if missing_upstream:
+        raise ValueError(f"⛔ BACKFILL SAFETY: Critical upstream data missing...")
+```
+
+**When to use (`skip_dependency_check=True`):**
+- Same-day prediction mode (no games have been played today yet)
+- When processing TODAY's date for pre-game predictions
+
+**Safety mechanism:** Even with `skip_dependency_check=True`, a quick existence check still runs to verify critical upstream data exists. This is less strict than full validation but prevents total failures.
+
+---
+
+### Same-Day Prediction Mode Configuration
+
+For same-day pre-game predictions, use this combination:
+```python
+{
+    "analysis_date": "TODAY",
+    "strict_mode": false,
+    "skip_dependency_check": true,
+    "backfill_mode": false  # Keep alerts enabled
+}
+```
+
+**Why both flags?**
+- `strict_mode=false` → Skip defensive checks (upstream processor status, gap detection)
+- `skip_dependency_check=true` → Skip full dependency validation
+- Together they enable processing for dates without historical data
+
+**Scheduler Example (Phase 4):**
+```bash
+# From bin/orchestrators/setup_same_day_schedulers.sh
+gcloud scheduler jobs create http same-day-phase4 \
+    --schedule="0 11 * * *" \
+    --time-zone="America/New_York" \
+    --uri="${PHASE4_URL}/process-date" \
+    --message-body='{
+        "analysis_date": "TODAY",
+        "processors": ["MLFeatureStoreProcessor"],
+        "strict_mode": false,
+        "skip_dependency_check": true
+    }'
+```
+
+---
+
+### Mode Comparison Table
+
+| Mode | strict_mode | skip_dependency_check | backfill_mode | Use Case |
+|------|-------------|----------------------|---------------|----------|
+| **Production** | `true` | `false` | `false` | Normal overnight processing |
+| **Same-Day** | `false` | `true` | `false` | Pre-game predictions for TODAY |
+| **Backfill** | `true` | `false` | `true` | Historical data backfill |
+| **Testing** | `false` | `false` | `false` | Manual testing with real data |
 
 ### Child Class Configuration
 
@@ -821,6 +926,6 @@ These are not blocking issues - the current implementation is production-ready. 
 
 ---
 
-**Last Updated:** 2025-11-29
+**Last Updated:** 2025-12-27 (Added strict_mode/skip_dependency_check deep dive)
 **Owner:** Engineering Team
-**Next Review:** After backfill operations complete
+**Next Review:** After four-season backfill complete
