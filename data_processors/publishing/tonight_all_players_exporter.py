@@ -90,18 +90,16 @@ class TonightAllPlayersExporter(BaseExporter):
         """Query games scheduled for the date."""
         query = """
         SELECT DISTINCT
-            -- Generate consistent game_id format: YYYYMMDD_AWAY_HOME
-            CONCAT(
-                FORMAT_DATE('%Y%m%d', game_date), '_',
-                away_team_tricode, '_',
-                home_team_tricode
-            ) as game_id,
+            game_id,  -- Use native NBA game_id to match upcoming_player_game_context
             home_team_tricode as home_team_abbr,
             away_team_tricode as away_team_abbr,
-            game_status
+            game_status,
+            -- Format game time as "7:30 PM ET" for frontend lock time calculation
+            FORMAT_TIMESTAMP('%l:%M %p ET', game_date_est, 'America/New_York') as game_time,
+            game_date_est
         FROM `nba-props-platform.nba_raw.nbac_schedule`
         WHERE game_date = @target_date
-        ORDER BY game_id
+        ORDER BY game_date_est, game_id
         """
         params = [
             bigquery.ScalarQueryParameter('target_date', 'DATE', target_date)
@@ -188,6 +186,18 @@ class TonightAllPlayersExporter(BaseExporter):
                 home_game
             FROM `nba-props-platform.nba_analytics.upcoming_player_game_context`
             WHERE game_date = @target_date
+        ),
+        best_odds AS (
+            -- Get best over/under odds from BettingPros
+            SELECT
+                player_lookup,
+                points_line,
+                MAX(CASE WHEN bet_side = 'over' THEN odds_american END) as over_odds,
+                MAX(CASE WHEN bet_side = 'under' THEN odds_american END) as under_odds
+            FROM `nba-props-platform.nba_raw.bettingpros_player_points_props`
+            WHERE game_date = @target_date
+              AND is_best_line = TRUE
+            GROUP BY player_lookup, points_line
         )
         SELECT
             gc.player_lookup,
@@ -223,7 +233,11 @@ class TonightAllPlayersExporter(BaseExporter):
             ss.games_played,
 
             -- Recent form
-            l5.last_5_ppg
+            l5.last_5_ppg,
+
+            -- Betting odds (for props array)
+            bo.over_odds,
+            bo.under_odds
 
         FROM game_context gc
         LEFT JOIN predictions p ON gc.player_lookup = p.player_lookup AND gc.game_id = p.game_id
@@ -232,6 +246,8 @@ class TonightAllPlayersExporter(BaseExporter):
         LEFT JOIN injuries i ON gc.player_lookup = i.player_lookup
         LEFT JOIN season_stats ss ON gc.player_lookup = ss.player_lookup
         LEFT JOIN last_5_stats l5 ON gc.player_lookup = l5.player_lookup
+        LEFT JOIN best_odds bo ON gc.player_lookup = bo.player_lookup
+            AND ROUND(p.current_points_line, 1) = ROUND(bo.points_line, 1)
         ORDER BY gc.game_id, COALESCE(ss.season_ppg, 0) DESC
         """
         params = [
@@ -337,8 +353,8 @@ class TonightAllPlayersExporter(BaseExporter):
                 games_played = p.get('games_played') or 0
                 player_data = {
                     'player_lookup': player_lookup,
-                    'player_full_name': p.get('player_full_name', player_lookup),
-                    'team_abbr': p.get('team_abbr'),
+                    'name': p.get('player_full_name', player_lookup),  # Renamed for frontend
+                    'team': p.get('team_abbr'),  # Renamed for frontend
                     'is_home': p.get('home_game'),
                     'has_line': p.get('has_line', False),
 
@@ -360,16 +376,23 @@ class TonightAllPlayersExporter(BaseExporter):
                     'limited_data': games_played < 10,
                 }
 
-                # Add prediction data if has line
+                # Add props array with betting line (frontend expected structure)
                 if p.get('has_line'):
-                    player_data.update({
-                        'current_points_line': self._safe_float(p.get('current_points_line')),
-                        'predicted_points': self._safe_float(p.get('predicted_points')),
-                        'confidence_score': self._safe_float(p.get('confidence_score')),
+                    line_value = self._safe_float(p.get('current_points_line'))
+                    player_data['props'] = [{
+                        'stat_type': 'points',
+                        'line': line_value,
+                        'over_odds': p.get('over_odds'),  # Will be None until odds query added
+                        'under_odds': p.get('under_odds'),  # Will be None until odds query added
+                    }]
+                    # Keep prediction data for our analytics (not in frontend spec but useful)
+                    player_data['prediction'] = {
+                        'predicted': self._safe_float(p.get('predicted_points')),
+                        'confidence': self._safe_float(p.get('confidence_score')),
                         'recommendation': p.get('recommendation'),
-                        'last_10_results': last_10.get('results', []),
-                        'last_10_record': last_10.get('record'),
-                    })
+                    }
+                    player_data['last_10_results'] = last_10.get('results', [])
+                    player_data['last_10_record'] = last_10.get('record')
                 else:
                     # For players without lines, show raw points
                     player_data['last_10_points'] = last_10.get('points', [])
@@ -381,7 +404,7 @@ class TonightAllPlayersExporter(BaseExporter):
                 key=lambda x: (
                     not x.get('has_line', False),  # has_line first
                     x.get('injury_status') == 'out',  # OUT players last
-                    -(x.get('confidence_score') or 0),  # high confidence first
+                    -(x.get('prediction', {}).get('confidence') or 0),  # high confidence first
                     -(x.get('season_ppg') or 0)  # high PPG first
                 )
             )
