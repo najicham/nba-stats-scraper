@@ -66,6 +66,9 @@ from data_processors.publishing.deep_dive_exporter import DeepDiveExporter
 from data_processors.publishing.player_season_exporter import PlayerSeasonExporter
 from data_processors.publishing.player_game_report_exporter import PlayerGameReportExporter
 from data_processors.publishing.tonight_trend_plays_exporter import TonightTrendPlaysExporter
+# Live scoring for Challenge System
+from data_processors.publishing.live_scores_exporter import LiveScoresExporter
+from data_processors.publishing.live_grading_exporter import LiveGradingExporter
 
 # Configure logging
 logging.basicConfig(
@@ -85,6 +88,8 @@ EXPORT_TYPES = [
     'trends-team', 'trends-quick-hits', 'trends-deep-dive',
     # Frontend API Backend (Session 143)
     'tonight-trend-plays',
+    # Live scoring for Challenge System
+    'live', 'live-grading',
     # Shorthand groups
     'trends-daily', 'trends-weekly', 'trends-all'
 ]
@@ -296,6 +301,30 @@ def export_date(
         except Exception as e:
             result['errors'].append(f"tonight-trend-plays: {e}")
             logger.error(f"  Tonight Trend Plays error: {e}")
+
+    # === LIVE SCORING FOR CHALLENGE SYSTEM ===
+
+    # Live scores (every 2-5 minutes during game windows)
+    if 'live' in export_types:
+        try:
+            exporter = LiveScoresExporter()
+            path = exporter.export(target_date, update_latest=update_latest)
+            result['paths']['live'] = path
+            logger.info(f"  Live Scores: {path}")
+        except Exception as e:
+            result['errors'].append(f"live: {e}")
+            logger.error(f"  Live Scores error: {e}")
+
+    # Live grading (every 2-5 minutes during game windows)
+    if 'live-grading' in export_types:
+        try:
+            exporter = LiveGradingExporter()
+            path = exporter.export(target_date, update_latest=update_latest)
+            result['paths']['live_grading'] = path
+            logger.info(f"  Live Grading: {path}")
+        except Exception as e:
+            result['errors'].append(f"live-grading: {e}")
+            logger.error(f"  Live Grading error: {e}")
 
     if result['errors']:
         result['status'] = 'partial' if result['paths'] else 'failed'
