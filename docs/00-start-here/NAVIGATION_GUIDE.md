@@ -215,7 +215,7 @@ What do you need?
 4. **Daily Operations (30 min)**
    - Read: `docs/06-reference/processor-cards/workflow-daily-processing-timeline.md`
    - Read: `docs/07-monitoring/grafana/daily-health-check.md`
-   - Run: `./bin/orchestration/quick_health_check.sh`
+   - Run: `./bin/monitoring/quick_pipeline_check.sh`
 
 5. **Hands-on Exploration (2-3 hours)**
    - Browse processor cards: `docs/06-reference/processor-cards/README.md`
@@ -261,7 +261,7 @@ What do you need?
 
 1. **Quick Script (30 seconds)**
    ```bash
-   ./bin/orchestration/quick_health_check.sh
+   ./bin/monitoring/quick_pipeline_check.sh
    ```
 
 2. **If Issues Found (2-3 min)**
@@ -542,7 +542,7 @@ Each directory has a README with:
 2. Troubleshooting → `docs/02-operations/troubleshooting-matrix.md`
 3. Processor cards → All cards for health checks
 4. Operations → `docs/02-operations/daily-monitoring.md`
-5. Scripts → `./bin/orchestration/quick_health_check.sh`
+5. Scripts → `./bin/monitoring/quick_pipeline_check.sh`
 
 ### ML Engineer (Phase 5 Focus)
 1. Phase 5 overview → `docs/06-reference/processor-cards/phase5-prediction-coordinator.md`
@@ -610,7 +610,7 @@ Each directory has a README with:
 **Document Version**: 1.0
 **Created**: 2025-11-15
 **Maintained By**: Engineering team
-**Next Review**: After Phase 3 deployment
+**Next Review**: Quarterly or after major doc reorganization
 
 ---
 
