@@ -1,7 +1,7 @@
 # NBA Scrapers Reference
 
 **Created:** 2025-11-21 17:12:03 PST
-**Last Updated:** 2025-11-21 17:12:03 PST
+**Last Updated:** 2025-12-27
 
 Quick reference for NBA data scrapers - deployment, debugging, and monitoring.
 
@@ -73,6 +73,13 @@ nba-scraped-data/
 
 - `GetNbaComTeamBoxscore` - Official team stats
 - `BdlBoxScoresScraper` - Team + player stats
+
+### Live Game Data ⭐ (NEW)
+
+**Timing:** Every 3 min during games (7 PM - 2 AM ET)
+**Purpose:** Real-time stats for challenge grading
+
+- `BdlLiveBoxScoresScraper` - Live player stats during games
 
 ### Advanced Analytics
 
@@ -159,7 +166,7 @@ GetNbaComGamebooks(date)  # PDFs with DNP reasons
 
 **Rate Limit:** None (be respectful)
 
-### Ball Don't Lie (4 scrapers)
+### Ball Don't Lie (5 scrapers)
 
 ```python
 # Validation
@@ -169,6 +176,12 @@ BdlInjuriesScraper()
 # Game Data
 BdlBoxScoresScraper(date)
 BdlStandingsScraper(season)
+
+# Live Game Data (NEW - Session 174)
+BdlLiveBoxScoresScraper()  # Every 3 min during games
+# Output: /ball-dont-lie/live-boxscores/{date}/{poll_id}.json
+# Schedule: bdl-live-boxscores-evening (7-11 PM ET)
+#           bdl-live-boxscores-late (12-2 AM ET)
 ```
 
 **Rate Limit:** 600 requests/minute
