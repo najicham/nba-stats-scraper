@@ -214,7 +214,8 @@ class TeamDefenseGameSummaryProcessor(
                 'expected_count_min': 4,  # Minimum 4 team records (2 games × 2 teams)
                 'max_age_hours_warn': 24,
                 'max_age_hours_fail': 72,
-                'critical': True
+                # NOT critical: can reconstruct from player boxscores
+                'critical': False
             },
             'nba_raw.nbac_gamebook_player_stats': {
                 'field_prefix': 'source_gamebook_players',
