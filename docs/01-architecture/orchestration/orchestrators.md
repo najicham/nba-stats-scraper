@@ -1,9 +1,9 @@
 # Orchestrators Architecture
 
-**Purpose:** Track phase completion for observability (monitoring mode)
-**Status:** v2.0 - Phase 2→3 is monitoring-only, Phase 3→4 operational
+**Purpose:** Track phase completion and trigger downstream processing
+**Status:** v3.0 - Added Phase 4→5, Phase 5→6, and morning schedulers
 **Created:** 2025-11-29 16:53 PST
-**Last Updated:** 2025-12-23
+**Last Updated:** 2025-12-26
 
 ---
 
@@ -237,6 +237,113 @@ The Phase 3→4 orchestrator combines `entities_changed` from all analytics proc
 
 ```bash
 ./bin/orchestrators/deploy_phase3_to_phase4.sh
+```
+
+---
+
+## Phase 4→5 Orchestrator
+
+**Function:** `phase4-to-phase5-orchestrator`
+**Location:** `orchestration/cloud_functions/phase4_to_phase5/main.py`
+**Entry Point:** `orchestrate_phase4_to_phase5`
+
+### Configuration
+
+| Setting | Value |
+|---------|-------|
+| Runtime | Python 3.11 |
+| Memory | 256MB |
+| Timeout | 60s |
+| Max Instances | 10 |
+| Trigger | Pub/Sub `nba-phase4-precompute-complete` |
+| Firestore Collection | `phase4_completion/{game_date}` |
+
+### Behavior
+
+1. **Receive** completion message from Phase 4 processor
+2. **Normalize** processor name (class name → config name)
+3. **Update** Firestore document atomically
+4. **Check** if all 5 processors have completed
+5. **Trigger** Phase 5 via:
+   - Pub/Sub to `nba-predictions-trigger`
+   - HTTP POST to prediction-coordinator `/start` endpoint
+
+### Expected Processors (5)
+
+- `team_defense_zone_analysis`
+- `player_shot_zone_analysis`
+- `player_composite_factors`
+- `player_daily_cache`
+- `ml_feature_store`
+
+### Deployment
+
+```bash
+./bin/orchestrators/deploy_phase4_to_phase5.sh
+```
+
+---
+
+## Phase 5→6 Orchestrator
+
+**Function:** `phase5-to-phase6-orchestrator`
+**Location:** `orchestration/cloud_functions/phase5_to_phase6/main.py`
+
+### Configuration
+
+| Setting | Value |
+|---------|-------|
+| Trigger | Pub/Sub `nba-phase5-predictions-complete` |
+| Firestore Collection | `phase5_completion/{game_date}` |
+
+### Behavior
+
+1. **Receive** prediction completion message
+2. **Check** completion percentage (requires >80%)
+3. **Trigger** Phase 6 export if threshold met
+
+---
+
+## Cloud Schedulers (Phase 4/5)
+
+In addition to Pub/Sub orchestrators, several **Cloud Scheduler jobs** trigger Phase 4 and 5 directly.
+
+### Overnight Post-Game Processing
+
+These run overnight and process **YESTERDAY's** games (post-game data):
+
+| Scheduler | Time (PT) | Target | Purpose |
+|-----------|-----------|--------|---------|
+| `player-composite-factors-daily` | 11:00 PM | Phase 4 | Composite factors for yesterday |
+| `player-daily-cache-daily` | 11:15 PM | Phase 4 | Daily cache for yesterday |
+| `ml-feature-store-daily` | 11:30 PM | Phase 4 | ML features for yesterday |
+
+> **Note:** These use `analysis_date: "AUTO"` which resolves to **YESTERDAY** in UTC.
+
+### Morning Same-Day Processing (Added Dec 2025)
+
+These run in the morning and process **TODAY's** games (pre-game predictions):
+
+| Scheduler | Time (ET) | Target | Purpose |
+|-----------|-----------|--------|---------|
+| `same-day-phase3` | 10:30 AM | Phase 3 | UpcomingPlayerGameContext for today |
+| `same-day-phase4` | 11:00 AM | Phase 4 | MLFeatureStore for today (same-day mode) |
+| `same-day-predictions` | 11:30 AM | Phase 5 | Prediction coordinator for today |
+
+> **Note:** These use `analysis_date: "TODAY"` which resolves to **today in ET timezone**.
+
+### Same-Day vs Overnight Mode
+
+| Mode | When | Date Processed | Key Parameters |
+|------|------|----------------|----------------|
+| **Overnight** | 11 PM - midnight PT | Yesterday | `backfill_mode: true` (post-game) |
+| **Same-Day** | 10:30 - 11:30 AM ET | Today | `strict_mode: false, skip_dependency_check: true` |
+
+### Setup Script
+
+```bash
+# Create or recreate same-day schedulers
+./bin/orchestrators/setup_same_day_schedulers.sh
 ```
 
 ---
@@ -493,7 +600,9 @@ Clean up old Firestore documents:
 
 ---
 
-**Document Version:** 2.0
+**Document Version:** 3.0
 **Created:** 2025-11-29 16:53 PST
-**Last Updated:** 2025-12-23
-**Changes:** Phase 2→3 orchestrator converted to monitoring-only mode
+**Last Updated:** 2025-12-26
+**Changes:**
+- v3.0 (2025-12-26): Added Phase 4→5, Phase 5→6 orchestrators; Added morning schedulers section
+- v2.0 (2025-12-23): Phase 2→3 orchestrator converted to monitoring-only mode
