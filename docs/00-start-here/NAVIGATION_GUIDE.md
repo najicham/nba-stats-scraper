@@ -2,7 +2,7 @@
 
 **File:** `docs/00-start-here/NAVIGATION_GUIDE.md`
 **Created:** 2025-11-15
-**Last Updated:** 2025-12-02
+**Last Updated:** 2025-12-27
 **Purpose:** How to navigate the NBA stats pipeline documentation system
 **Status:** Current
 **Audience:** Anyone asking "where do I find information about X?"
@@ -209,18 +209,18 @@ What do you need?
    - Read: `docs/01-architecture/pipeline-design.md`
 
 3. **Phase 1 Understanding (30 min)**
-   - Read: `docs/orchestration/01-how-it-works.md`
-   - Read: `docs/orchestration/02-phase1-overview.md`
+   - Read: `docs/03-phases/phase1-orchestration/how-it-works.md`
+   - Read: `docs/03-phases/phase1-orchestration/overview.md`
 
 4. **Daily Operations (30 min)**
-   - Read: `docs/processor-cards/workflow-daily-processing-timeline.md`
-   - Read: `docs/monitoring/02-grafana-daily-health-check.md`
+   - Read: `docs/06-reference/processor-cards/workflow-daily-processing-timeline.md`
+   - Read: `docs/07-monitoring/grafana/daily-health-check.md`
    - Run: `./bin/orchestration/quick_health_check.sh`
 
 5. **Hands-on Exploration (2-3 hours)**
-   - Browse processor cards: `docs/processor-cards/README.md`
-   - Read Phase 5 getting started: `docs/predictions/tutorials/01-getting-started.md`
-   - Explore troubleshooting: `docs/operations/cross-phase-troubleshooting-matrix.md`
+   - Browse processor cards: `docs/06-reference/processor-cards/README.md`
+   - Read Phase 5 getting started: `docs/03-phases/phase5-predictions/tutorials/01-getting-started.md`
+   - Explore troubleshooting: `docs/02-operations/troubleshooting-matrix.md`
 
 **Success criteria:** Can explain 6-phase pipeline, run health checks, navigate docs independently
 
@@ -233,17 +233,17 @@ What do you need?
 **Path (5-15 minutes):**
 
 1. **Symptom → Diagnosis (2 min)**
-   - Open: `docs/operations/cross-phase-troubleshooting-matrix.md`
+   - Open: `docs/02-operations/troubleshooting-matrix.md`
    - Go to Section 1.1: "No Predictions Generated Today"
    - Follow diagnostic steps (check coordinator, features, games)
 
 2. **Phase-Specific Troubleshooting (3-5 min)**
-   - If Phase 5 issue: `docs/predictions/operations/03-troubleshooting.md`
-   - If Phase 4 issue: `docs/processors/07-phase4-troubleshooting.md`
+   - If Phase 5 issue: `docs/03-phases/phase5-predictions/operations/03-troubleshooting.md`
+   - If Phase 4 issue: `docs/03-phases/phase4-precompute/troubleshooting.md`
 
 3. **Processor Details (if needed) (5 min)**
-   - Phase 5 details: `docs/processor-cards/phase5-prediction-coordinator.md`
-   - ML Feature Store: `docs/processor-cards/phase4-ml-feature-store-v2.md`
+   - Phase 5 details: `docs/06-reference/processor-cards/phase5-prediction-coordinator.md`
+   - ML Feature Store: `docs/06-reference/processor-cards/phase4-ml-feature-store-v2.md`
 
 4. **Apply Fix & Verify**
    - Run fix procedure from troubleshooting doc
@@ -265,12 +265,12 @@ What do you need?
    ```
 
 2. **If Issues Found (2-3 min)**
-   - Open: `docs/monitoring/02-grafana-daily-health-check.md`
+   - Open: `docs/07-monitoring/grafana/daily-health-check.md`
    - Run relevant queries from 6-panel dashboard
    - If problems → Go to Scenario 2 (troubleshooting)
 
 3. **Weekly Deep Check (10 min)**
-   - Review: `docs/monitoring/01-grafana-monitoring-guide.md`
+   - Review: `docs/07-monitoring/grafana/monitoring-guide.md`
    - Check all phase health queries
 
 **Success criteria:** All phases healthy, no alerts
@@ -284,13 +284,13 @@ What do you need?
 **Path (2-4 hours):**
 
 1. **Understand What's Being Deployed (30 min)**
-   - Read: `docs/SYSTEM_STATUS.md` (Phase 3 section)
-   - Read: `docs/processor-cards/README.md` (Phase 3 section)
+   - Read: `docs/00-start-here/SYSTEM_STATUS.md` (Phase 3 section)
+   - Read: `docs/06-reference/processor-cards/README.md` (Phase 3 section)
    - Scan: All 5 Phase 3 processor cards
 
 2. **Operations Guide (45 min)**
-   - Read: `docs/processors/02-phase3-operations-guide.md`
-   - Read: `docs/processors/03-phase3-scheduling-strategy.md`
+   - Read: `docs/03-phases/phase3-analytics/operations.md`
+   - Read: `docs/03-phases/phase3-analytics/scheduling.md`
 
 3. **Architecture Understanding (30 min)**
    - Read: `docs/01-architecture/integration-plan.md`
@@ -317,18 +317,18 @@ What do you need?
 **Path (1-2 hours):**
 
 1. **Quick Overview (5 min)**
-   - Read: `docs/processor-cards/phase5-prediction-coordinator.md`
+   - Read: `docs/06-reference/processor-cards/phase5-prediction-coordinator.md`
 
 2. **Comprehensive Tutorial (30-45 min)**
-   - Read: `docs/predictions/tutorials/01-getting-started.md` ⭐
+   - Read: `docs/03-phases/phase5-predictions/tutorials/01-getting-started.md` ⭐
    - Covers: All 5 models, ensemble weighting, confidence scoring
 
 3. **Architecture Deep Dive (30 min)**
-   - Read: `docs/predictions/operations/04-worker-deepdive.md`
-   - Read: `docs/predictions/architecture/01-parallelization-strategy.md`
+   - Read: `docs/03-phases/phase5-predictions/operations/04-worker-deepdive.md`
+   - Read: `docs/03-phases/phase5-predictions/architecture/01-parallelization-strategy.md`
 
 4. **Real-Time Flow (15 min)**
-   - Read: `docs/processor-cards/workflow-realtime-prediction-flow.md`
+   - Read: `docs/06-reference/processor-cards/workflow-realtime-prediction-flow.md`
 
 5. **Code Exploration (optional) (30+ min)**
    - Explore: `predictions/worker/prediction_systems/`
@@ -345,7 +345,7 @@ What do you need?
 **Path (45 minutes):**
 
 1. **Current Status (5 min)**
-   - Read: `docs/SYSTEM_STATUS.md` (roadmap section)
+   - Read: `docs/00-start-here/SYSTEM_STATUS.md` (roadmap section)
 
 2. **Detailed Roadmap (30 min)**
    - Read: `docs/01-architecture/implementation-roadmap.md`
@@ -366,7 +366,7 @@ What do you need?
 **Path (10-20 minutes):**
 
 1. **Symptom Diagnosis (3 min)**
-   - Open: `docs/operations/cross-phase-troubleshooting-matrix.md`
+   - Open: `docs/02-operations/troubleshooting-matrix.md`
    - Go to Section 1.4: "Low Confidence Predictions"
 
 2. **Trace Backward (5 min)**
@@ -374,7 +374,7 @@ What do you need?
    - Identify which Phase 4 processor has low quality
 
 3. **Processor Details (5 min)**
-   - If ML Feature Store: `docs/processor-cards/phase4-ml-feature-store-v2.md`
+   - If ML Feature Store: `docs/06-reference/processor-cards/phase4-ml-feature-store-v2.md`
    - Check quality scoring logic (lines 112-132)
 
 4. **Fix Upstream (5-10 min)**
@@ -392,12 +392,12 @@ What do you need?
 **Path (1-2 hours):**
 
 1. **Quick Dashboard (30 min)**
-   - Read: `docs/monitoring/02-grafana-daily-health-check.md`
+   - Read: `docs/07-monitoring/grafana/daily-health-check.md`
    - Implement 6-panel dashboard
    - Copy-paste queries
 
 2. **Comprehensive Monitoring (1-2 hours)**
-   - Read: `docs/monitoring/01-grafana-monitoring-guide.md`
+   - Read: `docs/07-monitoring/grafana/monitoring-guide.md`
    - Set up all phase-specific queries
    - Configure alerts
 
@@ -412,21 +412,21 @@ What do you need?
 ## 🔍 Quick Reference - By Question Type
 
 ### "What's the current state?"
-→ `docs/SYSTEM_STATUS.md`
+→ `docs/00-start-here/SYSTEM_STATUS.md`
 
 ### "How do I check if X is working?"
-→ `docs/processor-cards/` (find relevant card, use health check query)
+→ `docs/06-reference/processor-cards/` (find relevant card, use health check query)
 
 ### "Production is broken, how do I fix it?"
-→ `docs/operations/cross-phase-troubleshooting-matrix.md`
+→ `docs/02-operations/troubleshooting-matrix.md`
 
 ### "How does X work?"
 → Phase-specific detailed docs:
-- Phase 1: `docs/orchestration/01-how-it-works.md`
-- Phase 5: `docs/predictions/tutorials/01-getting-started.md`
+- Phase 1: `docs/03-phases/phase1-orchestration/how-it-works.md`
+- Phase 5: `docs/03-phases/phase5-predictions/tutorials/01-getting-started.md`
 
 ### "How do I deploy X?"
-→ Operations guides in `docs/processors/` or `docs/predictions/operations/`
+→ Operations guides in `docs/03-phases/` or `docs/04-deployment/`
 
 ### "What's the roadmap?"
 → `docs/01-architecture/implementation-roadmap.md`
@@ -435,10 +435,10 @@ What do you need?
 → Processor cards have dependencies section
 
 ### "What are the performance benchmarks?"
-→ Processor cards or `docs/processor-cards/workflow-daily-processing-timeline.md`
+→ Processor cards or `docs/06-reference/processor-cards/workflow-daily-processing-timeline.md`
 
 ### "How do I add new documentation?"
-→ `docs/DOCUMENTATION_GUIDE.md` + `docs/DOCS_DIRECTORY_STRUCTURE.md`
+→ `docs/05-development/docs-organization.md`
 
 ---
 
@@ -446,82 +446,57 @@ What do you need?
 
 ```
 docs/
-├── SYSTEM_STATUS.md ⭐ START HERE
-├── NAVIGATION_GUIDE.md (you are here)
-│
-├── processor-cards/ 🏃 QUICK REFERENCE
-│   ├── README.md (13 cards)
-│   ├── phase3-*.md (5 cards)
-│   ├── phase4-*.md (5 cards)
-│   ├── phase5-prediction-coordinator.md
-│   └── workflow-*.md (2 cards)
-│
-├── operations/ 🚨 TROUBLESHOOTING
-│   └── cross-phase-troubleshooting-matrix.md
-│
-├── orchestration/ 📋 PHASE 1
-│   ├── 01-how-it-works.md ⭐
-│   ├── 02-phase1-overview.md
-│   ├── 03-bigquery-schemas.md
-│   └── 04-troubleshooting.md
-│
-├── processors/ 🔧 PHASE 2-4
-│   ├── 01-phase2-operations-guide.md
-│   ├── 02-phase3-operations-guide.md
-│   ├── 03-phase3-scheduling-strategy.md
-│   ├── 04-phase3-troubleshooting.md
-│   ├── 05-phase4-operations-guide.md
-│   ├── 06-phase4-scheduling-strategy.md
-│   ├── 07-phase4-troubleshooting.md
-│   └── 08-phase4-ml-feature-store-deepdive.md
-│
-├── predictions/ 🤖 PHASE 5
-│   ├── tutorials/ (4 docs)
-│   │   ├── 01-getting-started.md ⭐⭐ PHASE 5 START HERE
-│   │   ├── 02-understanding-prediction-systems.md
-│   │   ├── 03-worked-prediction-examples.md
-│   │   └── 04-operations-command-reference.md
-│   ├── operations/ (9 docs)
-│   │   ├── 01-deployment-guide.md
-│   │   ├── 02-scheduling-strategy.md
-│   │   ├── 03-troubleshooting.md
-│   │   ├── 04-worker-deepdive.md
-│   │   ├── 05-daily-operations-checklist.md
-│   │   ├── 06-performance-monitoring.md
-│   │   ├── 07-weekly-maintenance.md
-│   │   ├── 08-monthly-maintenance.md
-│   │   └── 09-emergency-procedures.md
-│   ├── ml-training/ (2 docs)
-│   │   ├── 01-initial-model-training.md
-│   │   └── 02-continuous-retraining.md
-│   ├── algorithms/ (2 docs)
-│   │   ├── 01-composite-factor-calculations.md
-│   │   └── 02-confidence-scoring-framework.md
-│   ├── architecture/ (1 doc)
-│   │   └── 01-parallelization-strategy.md
-│   ├── design/ (1 doc)
-│   │   └── 01-architectural-decisions.md
-│   └── data-sources/ (1 doc)
-│       └── 01-data-categorization.md
-│
-├── monitoring/ 📊 DAILY OPS
-│   ├── 01-grafana-monitoring-guide.md
-│   └── 02-grafana-daily-health-check.md ⭐ DAILY START HERE
+├── 00-start-here/ ⭐ START HERE
+│   ├── SYSTEM_STATUS.md - Current system state
+│   ├── NAVIGATION_GUIDE.md (you are here)
+│   └── README.md - Quick start
 │
 ├── 01-architecture/ 🏗️ DESIGN
-│   ├── quick-reference.md ⭐
-│   ├── integration-plan.md
-│   ├── pipeline-design.md ⭐⭐ COMPLETE VISION
-│   ├── implementation-roadmap.md
-│   ├── monitoring-error-handling-design.md
-│   ├── orchestration/ 🔌 v1.0 ORCHESTRATION
-│   │   ├── pubsub-topics.md
-│   │   ├── orchestrators.md
-│   │   └── firestore-state-management.md
-│   └── change-detection/
+│   ├── quick-reference.md ⭐ Quick overview
+│   ├── pipeline-design.md ⭐⭐ Complete vision
+│   ├── data-readiness-patterns.md - All safety patterns
+│   └── orchestration/ - Pub/Sub, orchestrators, Firestore
 │
-└── 06-reference/data-flow/ 📈 TRANSFORMATIONS
-    └── README.md
+├── 02-operations/ 🚨 TROUBLESHOOTING & OPS
+│   ├── troubleshooting.md - Common issues
+│   ├── troubleshooting-matrix.md - Symptom → fix
+│   ├── daily-monitoring.md - Daily health checks
+│   ├── backfill/ - Backfill procedures
+│   └── runbooks/ - Operational runbooks
+│
+├── 03-phases/ 📋 PHASE-SPECIFIC DOCS
+│   ├── phase1-orchestration/ - Scrapers & scheduling
+│   ├── phase2-raw/ - Raw data processors
+│   ├── phase3-analytics/ - Analytics processors
+│   ├── phase4-precompute/ - ML features
+│   ├── phase5-predictions/ 🤖
+│   │   ├── tutorials/01-getting-started.md ⭐⭐ PHASE 5 START
+│   │   ├── operations/ - Deployment, troubleshooting
+│   │   └── architecture/ - Worker design
+│   └── phase6-publishing/ - Website exports
+│
+├── 04-deployment/ 🚀 DEPLOYMENT
+│   ├── deployment-verification-checklist.md ⭐ Post-deploy checks
+│   └── v1.0-deployment-guide.md
+│
+├── 05-development/ 💻 DEVELOPER GUIDES
+│   ├── docs-organization.md - How docs are structured
+│   └── patterns/ - Processing patterns
+│
+├── 06-reference/ 🏃 QUICK REFERENCE
+│   ├── processor-cards/ - Per-processor quick facts
+│   └── data-flow/ - Field transformations
+│
+├── 07-monitoring/ 📊 GRAFANA & ALERTS
+│   ├── grafana/ - Dashboard queries
+│   └── run-history-guide.md
+│
+├── 08-projects/ 📁 PROJECT TRACKING
+│   ├── current/ - Active work (10 projects)
+│   └── completed/ - Archived projects (18 projects)
+│
+└── 09-handoff/ 📝 SESSION HANDOFFS
+    └── 2025-12-*.md - Daily session notes
 ```
 
 ---
@@ -536,11 +511,11 @@ Documents marked with ⭐ are recommended starting points for that topic.
 - Need details? → Follow link to detailed doc (20-60 min)
 
 ### Tip 3: Bookmark These 5 Docs
-1. `docs/SYSTEM_STATUS.md` - Current state
-2. `docs/processor-cards/README.md` - Quick reference index
-3. `docs/operations/cross-phase-troubleshooting-matrix.md` - When broken
-4. `docs/monitoring/02-grafana-daily-health-check.md` - Daily checks
-5. `docs/predictions/tutorials/01-getting-started.md` - Phase 5 complete guide
+1. `docs/00-start-here/SYSTEM_STATUS.md` - Current state
+2. `docs/06-reference/processor-cards/README.md` - Quick reference index
+3. `docs/02-operations/troubleshooting-matrix.md` - When broken
+4. `docs/07-monitoring/grafana/daily-health-check.md` - Daily checks
+5. `docs/03-phases/phase5-predictions/tutorials/01-getting-started.md` - Phase 5 complete guide
 
 ### Tip 4: Follow the Cross-References
 All docs link to related docs. If you're in the wrong place, follow links to the right doc.
@@ -563,24 +538,24 @@ Each directory has a README with:
 5. Data flow → `docs/06-reference/data-flow/` (field mappings)
 
 ### SRE / Operations Engineer
-1. Daily health → `monitoring/02-grafana-daily-health-check.md`
-2. Troubleshooting → `operations/cross-phase-troubleshooting-matrix.md`
+1. Daily health → `docs/07-monitoring/grafana/daily-health-check.md`
+2. Troubleshooting → `docs/02-operations/troubleshooting-matrix.md`
 3. Processor cards → All cards for health checks
-4. Phase 1 ops → `orchestration/04-troubleshooting.md`
+4. Operations → `docs/02-operations/daily-monitoring.md`
 5. Scripts → `./bin/orchestration/quick_health_check.sh`
 
 ### ML Engineer (Phase 5 Focus)
-1. Phase 5 overview → `processor-cards/phase5-prediction-coordinator.md`
-2. Complete tutorial → `predictions/tutorials/01-getting-started.md` ⭐⭐
-3. Worker internals → `predictions/operations/04-worker-deepdive.md`
-4. Deployment → `predictions/operations/01-deployment-guide.md`
+1. Phase 5 overview → `docs/06-reference/processor-cards/phase5-prediction-coordinator.md`
+2. Complete tutorial → `docs/03-phases/phase5-predictions/tutorials/01-getting-started.md` ⭐⭐
+3. Worker internals → `docs/03-phases/phase5-predictions/operations/04-worker-deepdive.md`
+4. Deployment → `docs/03-phases/phase5-predictions/operations/01-deployment-guide.md`
 5. Source code → `predictions/worker/prediction_systems/`
 
 ### Product Manager / Leadership
 1. System status → `docs/00-start-here/SYSTEM_STATUS.md`
 2. Quick overview → `docs/01-architecture/quick-reference.md`
-3. Roadmap → `docs/01-architecture/implementation-roadmap.md`
-4. Daily operations → `docs/02-operations/orchestrator-monitoring.md`
+3. Roadmap → `docs/08-projects/current/` (active projects)
+4. Daily operations → `docs/02-operations/daily-monitoring.md`
 
 ### New Team Member (Any Role)
 1. System status → `docs/00-start-here/SYSTEM_STATUS.md` (10 min)

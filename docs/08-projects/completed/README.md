@@ -1,6 +1,6 @@
 # Completed Projects
 
-**Last Updated:** 2025-11-29
+**Last Updated:** 2025-12-27
 **Purpose:** Reference documentation for completed implementations
 **Status:** Archive of completed work with ongoing reference value
 
@@ -17,10 +17,56 @@
 | **[smart-idempotency](./smart-idempotency/)** | Hash-based change detection | 2025-11-21 | 5 |
 | **[dependency-checking](./dependency-checking/)** | Upstream data verification patterns | 2025-11-21 | 3 |
 | **[completeness](./completeness/)** | Percentage-based data quality verification | 2025-11-22 | 4 |
+| **[predictions-all-players](./predictions-all-players/)** | Expanded predictions to all players (not just prop lines) | 2025-12-01 | 2 |
+| **[ai-name-resolution](./ai-name-resolution/)** | Claude API integration for unresolved player names | 2025-12-06 | 8 |
+| **[grafana-monitoring-enhancements](./grafana-monitoring-enhancements/)** | Dashboard improvements and queries | 2025-11-30 | 1 |
+| **[validation](./validation/)** | Validation framework and gap analysis | 2025-12-02 | 4 |
+| **[phase6-design](./phase6-design/)** | Phase 6 publishing architecture design | 2025-12-02 | 4 |
+| **[backfill-2025-11-to-12](./backfill-2025-11-to-12/)** | November-December 2025 backfill tracking | 2025-12-08 | 2 |
+| **[scraper-backfill-2025-11](./scraper-backfill-2025-11/)** | November 2025 scraper backfill | 2025-12-08 | 1 |
+| **[phase-6-publishing](./phase-6-publishing/)** | Website publishing implementation | 2025-12-12 | 5 |
+| **[trends-v2-exporters](./trends-v2-exporters/)** | 6 JSON exporters for Trends page | 2025-12-15 | 3 |
+| **[frontend-api-backend](./frontend-api-backend/)** | Results, Trends, Player Modal API endpoints | 2025-12-19 | 6 |
+| **[PHASE5-PREDICTIONS-NOT-RUNNING.md](./PHASE5-PREDICTIONS-NOT-RUNNING.md)** | Issue resolution: Same-day prediction schedulers | 2025-12-26 | 1 |
 
 ---
 
-## Recent Completions (v1.0 Release)
+## Recent Completions (December 2025)
+
+### Frontend API Backend
+**What:** Three phases of API endpoints for the props website
+**Impact:** Complete backend support for Results, Trends, and Player Modal pages
+**Phases:**
+1. Results page fields (confidence_tier, player_tier, context, breakdowns)
+2. Trends exporters (hot/cold, bounce-back, system performance)
+3. Player modal endpoints (game report, season data)
+**See:** `./frontend-api-backend/`
+
+### Phase 6 Publishing
+**What:** Static JSON export to GCS for website consumption
+**Impact:** Website can load predictions without API calls
+**Exports:** Tonight picks, daily results, best bets, player profiles
+**See:** `./phase-6-publishing/`
+
+### Trends v2 Exporters
+**What:** 6 JSON exporters for the Trends page
+**Exports:** hot/cold streaks, bounce-back candidates, what-matters analysis, team tendencies, quick-hits, deep-dive
+**See:** `./trends-v2-exporters/`
+
+### AI Name Resolution
+**What:** Claude API integration for resolving unresolved player names
+**Impact:** 0 pending unresolved names, 61 unit tests
+**See:** `./ai-name-resolution/`
+
+### Phase 5 Predictions Fix (Dec 26)
+**What:** Root cause analysis and fix for missing same-day predictions
+**Resolution:** Created morning schedulers (10:30/11:00/11:30 AM ET) for same-day predictions
+**Key insight:** Overnight schedulers process YESTERDAY, not TODAY
+**See:** `./PHASE5-PREDICTIONS-NOT-RUNNING.md`
+
+---
+
+## v1.0 Release Projects (November 2025)
 
 ### Phase 4-5 Integration
 **What:** Event-driven orchestration connecting all pipeline phases via Pub/Sub
@@ -40,11 +86,6 @@
 **Key docs:** `IMPLEMENTATION-COMPLETE.md`, `TESTING-GUIDE.md`
 **See also:** `docs/01-architecture/bootstrap-period-overview.md`
 
-### Streaming Buffer Migration
-**What:** Migrate from streaming inserts to batch loading
-**Impact:** Eliminated BigQuery DML limit errors during backfills
-**Key docs:** `checklist.md`, `overview.md`
-
 ---
 
 ## Historical Implementations
@@ -52,22 +93,14 @@
 ### Smart Idempotency
 **What:** Hash-based change detection to skip unnecessary processing
 **Impact:** 75-85% skip rates, prevents wasted downstream processing
-**Key concepts:**
-- Selective field hashing (hash what matters, skip noise)
-- 4 DB fields per dependency: hash, timestamp, rows, completeness
 
 ### Dependency Checking
 **What:** Verifying upstream data availability before processing
-**Patterns:**
-- Point-in-time (same-game data)
-- Historical range (sliding window, 10-20 games)
+**Patterns:** Point-in-time, Historical range (sliding window)
 
 ### Completeness Checking
 **What:** Percentage-based data quality verification
 **Impact:** Processors only run with ≥90% complete upstream data
-**Key concepts:**
-- Schedule-based verification
-- Circuit breaker triggers
 
 ---
 
@@ -82,25 +115,18 @@
 1. **Why does this work this way?** Design docs explain reasoning
 2. **What were the tradeoffs?** Docs discuss alternatives considered
 
-### For Onboarding
-1. Start with README in each project
-2. Review implementation guides
-3. Check summary docs in `docs/01-architecture/`
-
 ---
 
 ## Related Documentation
 
-### Architecture Summaries
+- [Architecture Overview](../../01-architecture/quick-reference.md)
 - [Pipeline Integrity](../../01-architecture/pipeline-integrity.md)
 - [Bootstrap Period Overview](../../01-architecture/bootstrap-period-overview.md)
 - [v1.0 Orchestration](../../01-architecture/orchestration/)
-
-### Operations
-- [Backfill Guide](../../02-operations/backfill-guide.md)
-- [Orchestrator Monitoring](../../02-operations/orchestrator-monitoring.md)
+- [Backfill Guide](../../02-operations/backfill/)
+- [Troubleshooting](../../02-operations/troubleshooting.md)
 
 ---
 
-**Total Projects:** 7
-**Documents:** 70+ across all projects
+**Total Projects:** 18
+**Documents:** 100+ across all projects

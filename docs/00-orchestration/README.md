@@ -6,12 +6,12 @@ Central documentation for the daily data pipeline orchestration system.
 
 | Document | Description |
 |----------|-------------|
-| [Architecture](architecture.md) | System design and data flow |
-| [Services](services.md) | All services, their roles, and deployment |
-| [Workflows](workflows.md) | Workflow configuration and scheduling |
+| [Services](services.md) | All services, their roles, and status |
 | [Monitoring](monitoring.md) | Dashboards, alerts, and observability |
 | [Troubleshooting](troubleshooting.md) | Common issues and fixes |
-| [Deployment](deployment.md) | How to deploy each component |
+| [Architecture](../01-architecture/quick-reference.md) | System design (in 01-architecture/) |
+| [Orchestrators](../01-architecture/orchestration/orchestrators.md) | Pub/Sub orchestrators (in 01-architecture/) |
+| [Deployment](../04-deployment/deployment-verification-checklist.md) | Deployment verification |
 
 ## Pipeline Overview
 
@@ -32,7 +32,7 @@ Central documentation for the daily data pipeline orchestration system.
 ## Key Concepts
 
 ### Workflows
-Workflows define WHEN scrapers run based on game schedules. See [workflows.md](workflows.md).
+Workflows define WHEN scrapers run based on game schedules. See [config/workflows.yaml](../../config/workflows.yaml).
 
 ### Phases
 Each phase transforms data and triggers the next via Pub/Sub:
