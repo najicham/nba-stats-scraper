@@ -42,6 +42,7 @@ from data_processors.raw.nbacom.nbac_player_list_processor import NbacPlayerList
 from data_processors.raw.balldontlie.bdl_standings_processor import BdlStandingsProcessor
 from data_processors.raw.balldontlie.bdl_injuries_processor import BdlInjuriesProcessor
 from data_processors.raw.balldontlie.bdl_boxscores_processor import BdlBoxscoresProcessor
+from data_processors.raw.balldontlie.bdl_live_boxscores_processor import BdlLiveBoxscoresProcessor
 from data_processors.raw.balldontlie.bdl_active_players_processor import BdlActivePlayersProcessor
 from data_processors.raw.nbacom.nbac_player_movement_processor import NbacPlayerMovementProcessor
 from data_processors.raw.nbacom.nbac_scoreboard_v2_processor import NbacScoreboardV2Processor
@@ -81,6 +82,7 @@ PROCESSOR_REGISTRY = {
     'ball-dont-lie/standings': BdlStandingsProcessor,
     'ball-dont-lie/injuries': BdlInjuriesProcessor,
     'ball-dont-lie/boxscores': BdlBoxscoresProcessor,
+    'ball-dont-lie/live-boxscores': BdlLiveBoxscoresProcessor,
     'ball-dont-lie/active-players': BdlActivePlayersProcessor,
     
     'nba-com/player-movement': NbacPlayerMovementProcessor,
@@ -648,22 +650,38 @@ def extract_opts_from_path(file_path: str) -> dict:
         except ValueError:
             logger.warning(f"Could not parse date from injuries path: {date_str}")
     
-    elif 'ball-dont-lie/boxscores' in file_path:
-        # Extract date from path: ball-dont-lie/boxscores/2021-12-04/timestamp.json
+    elif 'ball-dont-lie/live-boxscores' in file_path:
+        # Extract date from path: ball-dont-lie/live-boxscores/2025-12-27/timestamp.json
+        # NOTE: This check MUST come before 'ball-dont-lie/boxscores' due to substring matching
         parts = file_path.split('/')
         if len(parts) >= 4:
-            date_str = parts[-2]  # "2021-12-04"
-            
+            date_str = parts[-2]  # "2025-12-27"
+
             # Parse game date
             try:
                 from datetime import datetime
                 game_date = datetime.strptime(date_str, '%Y-%m-%d').date()
                 opts['game_date'] = game_date
-                
+
+            except ValueError:
+                logger.warning(f"Could not parse date from live-boxscores path: {date_str}")
+
+    elif 'ball-dont-lie/boxscores' in file_path:
+        # Extract date from path: ball-dont-lie/boxscores/2021-12-04/timestamp.json
+        parts = file_path.split('/')
+        if len(parts) >= 4:
+            date_str = parts[-2]  # "2021-12-04"
+
+            # Parse game date
+            try:
+                from datetime import datetime
+                game_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+                opts['game_date'] = game_date
+
                 # Calculate season year (Oct-Sept NBA season)
                 season_year = game_date.year if game_date.month >= 10 else game_date.year - 1
                 opts['season_year'] = season_year
-                
+
             except ValueError:
                 logger.warning(f"Could not parse date from boxscores path: {date_str}")
     
