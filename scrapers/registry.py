@@ -91,10 +91,14 @@ SCRAPER_REGISTRY: Dict[str, Tuple[str, str]] = {
         "BdlInjuriesScraper"
     ),
     "bdl_standings": (
-        "scrapers.balldontlie.bdl_standings", 
+        "scrapers.balldontlie.bdl_standings",
         "BdlStandingsScraper"
     ),
-    
+    "bdl_live_box_scores": (
+        "scrapers.balldontlie.bdl_live_box_scores",
+        "BdlLiveBoxScoresScraper"
+    ),
+
     # ========================================================================
     # BettingPros Scrapers (2 total)
     # ========================================================================
