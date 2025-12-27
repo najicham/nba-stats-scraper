@@ -399,6 +399,75 @@ def process_in_chunks(data, chunk_size=1000):
 
 ---
 
+### 7. Predictions Not Generated (Quality Score Failure)
+
+#### Symptoms
+```
+ERROR - Invalid features for player on 2025-12-27: ['Quality score 62.8 below threshold 70.0']
+WARNING - No predictions generated for player
+```
+
+Or: Today's predictions are 0 despite games being scheduled.
+
+#### Root Cause
+The ML Feature Store quality score is below the 70% threshold. This happens when upstream data (especially gamebooks) is incomplete for yesterday's games.
+
+#### Diagnosis
+
+**Step 1: Check quality score errors**
+```bash
+gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="prediction-worker" AND "Quality score"' \
+  --limit=5 --format="table(timestamp,textPayload)" --freshness=6h
+```
+
+**Step 2: Check gamebook completeness for yesterday**
+```bash
+# How many games in BigQuery?
+bq query --use_legacy_sql=false "
+SELECT game_date, COUNT(DISTINCT game_id) as games
+FROM nba_raw.nbac_gamebook_player_stats
+WHERE game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
+GROUP BY game_date"
+
+# How many should there be?
+bq query --use_legacy_sql=false "
+SELECT COUNT(*) as scheduled_games
+FROM nba_raw.nbac_schedule
+WHERE game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
+  AND game_status = 3"
+```
+
+**Step 3: Check if files exist in GCS but weren't processed**
+```bash
+gsutil ls "gs://nba-scraped-data/nba-com/gamebooks-data/$(date -d yesterday +%Y-%m-%d)/" | wc -l
+```
+
+#### Fix
+
+**Step 1: Reprocess gamebooks (if files exist in GCS)**
+```bash
+PYTHONPATH=. python scripts/backfill_gamebooks.py --date $(date -d yesterday +%Y-%m-%d) --skip-scrape
+```
+
+**Step 2: Re-run Phase 4 with backfill mode**
+```bash
+curl -X POST "https://nba-phase4-precompute-processors-f7p3g7f6ya-wl.a.run.app/process-date" \
+  -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
+  -H "Content-Type: application/json" \
+  -d '{"analysis_date": "'$(date +%Y-%m-%d)'", "backfill_mode": true}'
+```
+
+**Step 3: Re-run predictions**
+```bash
+gcloud scheduler jobs run same-day-predictions --location=us-west2
+```
+
+#### Prevention
+- Monitor gamebook completeness daily (see [daily-monitoring.md](./daily-monitoring.md))
+- The quality threshold is 70% - if less than 70% of expected data is available, predictions are blocked
+
+---
+
 ## Emergency Procedures
 
 ### System Down - All Workflows Failing
