@@ -184,12 +184,70 @@ gcloud scheduler jobs describe execute-workflows --location=us-west2
 
 ## Existing Automated Monitoring
 
+### Core Pipeline Jobs
+
 | Job | Schedule | Purpose |
 |-----|----------|---------|
 | `daily-pipeline-health-summary` | 6 AM PT | Email summary of yesterday's pipeline health |
 | `execute-workflows` | Hourly (5 min past) | Triggers scraper workflows |
 | `cleanup-processor` | Every 15 min | Republishes stuck files |
 | `master-controller-hourly` | Hourly | Orchestrates dependent workflows |
+
+### Same-Day Prediction Jobs (Added Dec 2025)
+
+| Job | Schedule (ET) | Purpose |
+|-----|---------------|---------|
+| `same-day-phase3` | 10:30 AM | UpcomingPlayerGameContext for TODAY |
+| `same-day-phase4` | 11:00 AM | MLFeatureStore for TODAY (same-day mode) |
+| `same-day-predictions` | 11:30 AM | Prediction coordinator for TODAY |
+
+### Overnight Post-Game Jobs
+
+| Job | Schedule (PT) | Purpose |
+|-----|---------------|---------|
+| `player-composite-factors-daily` | 11:00 PM | Composite factors for YESTERDAY |
+| `player-daily-cache-daily` | 11:15 PM | Daily cache for YESTERDAY |
+| `ml-feature-store-daily` | 11:30 PM | ML features for YESTERDAY |
+
+### Export Jobs
+
+| Job | Schedule (ET) | Purpose |
+|-----|---------------|---------|
+| `phase6-tonight-picks` | 1:00 PM | Export tonight's predictions |
+| `live-export-evening` | Every 3 min 7-11 PM | Live scores during games |
+
+---
+
+## Check Predictions
+
+### Are today's predictions generated?
+
+```bash
+bq query --use_legacy_sql=false "
+SELECT game_date, COUNT(*) as predictions, MAX(created_at) as last_created
+FROM nba_predictions.player_prop_predictions
+WHERE game_date = CURRENT_DATE() AND is_active = TRUE
+GROUP BY game_date"
+```
+
+### Manually trigger same-day predictions
+
+```bash
+# Step 1: Phase 3
+gcloud scheduler jobs run same-day-phase3 --location=us-west2
+
+# Wait 30 seconds
+
+# Step 2: Phase 4
+gcloud scheduler jobs run same-day-phase4 --location=us-west2
+
+# Wait 60 seconds
+
+# Step 3: Predictions
+gcloud scheduler jobs run same-day-predictions --location=us-west2
+```
+
+See also: `docs/02-operations/runbooks/prediction-pipeline.md`
 
 ---
 
@@ -222,4 +280,4 @@ Escalate if:
 
 ---
 
-*Last Updated: December 25, 2025 - Session 168*
+*Last Updated: December 26, 2025 - Session 171 (added prediction scheduler info)*
