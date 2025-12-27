@@ -1,8 +1,8 @@
 # Session 175 Handoff: Prediction Lines Investigation
 
 **Date:** 2025-12-27
-**Duration:** Investigation session
-**Status:** Root cause identified, fix pending
+**Duration:** Investigation + Fix session
+**Status:** FIXED - Schedulers rescheduled, verified working
 
 ---
 
@@ -67,34 +67,56 @@ When lines ARE populated, sources are correctly tracked:
 
 ---
 
-## Potential Fixes
+## Fix Applied
 
-### Option 1: Reschedule Phase 3 (Recommended)
+### Scheduler Changes Made
 
-Move Phase 3 daily run to AFTER betting props scraper:
-- Current: 06:06 UTC (1 AM EST)
-- Proposed: 18:00 UTC (1 PM EST)
+| Scheduler | Old Time (ET) | New Time (ET) | Reason |
+|-----------|---------------|---------------|--------|
+| `same-day-phase3` | 10:30 AM | **12:30 PM** | After betting props (10 AM cycle) |
+| `same-day-phase4` | 11:00 AM | **1:00 PM** | After Phase 3 completes |
+| `same-day-predictions` | 11:30 AM | **1:30 PM** | After Phase 4 completes |
 
-**Pros:** Simple, no code changes
-**Cons:** Delays prediction availability
+### Commands Used
 
-### Option 2: Add Phase 3 Re-run Trigger
+```bash
+# Reschedule Phase 3 to 12:30 PM ET
+gcloud scheduler jobs update http same-day-phase3 \
+  --location=us-west2 \
+  --schedule="30 12 * * *" \
+  --time-zone="America/New_York"
 
-Add a second Phase 3 trigger after betting props completes:
-- Morning run for player roster data
-- Afternoon run for prop line enrichment
+# Reschedule Phase 4 to 1:00 PM ET
+gcloud scheduler jobs update http same-day-phase4 \
+  --location=us-west2 \
+  --schedule="0 13 * * *" \
+  --time-zone="America/New_York"
 
-**Pros:** Earlier roster data, later prop lines
-**Cons:** More complex, potential for duplicate processing
+# Reschedule Predictions to 1:30 PM ET
+gcloud scheduler jobs update http same-day-predictions \
+  --location=us-west2 \
+  --schedule="30 13 * * *" \
+  --time-zone="America/New_York"
+```
 
-### Option 3: Modify Phase 3 to UPDATE Existing Records
+### Verification Results
 
-Change Phase 3 to merge new prop data with existing player records:
-- First run populates player data
-- Later runs UPDATE prop lines without overwriting
+**Before Fix (Dec 27):**
+- UPC: 0/153 players with lines (0%)
+- Predictions: All NULL lines
 
-**Pros:** Most flexible
-**Cons:** Code changes required, more complex logic
+**After Fix (Dec 27):**
+- UPC: 69/153 players with lines (45%)
+- Predictions: 200/570 with lines (35%)
+- Tonight API: Shows props with lines and predictions
+
+**Sample Player (Jeremiah Fears):**
+```json
+{
+  "props": [{"stat_type": "points", "line": 13.5, "over_odds": null, "under_odds": -125}],
+  "prediction": {"predicted": 11.9, "confidence": 0.86, "recommendation": "OVER"}
+}
+```
 
 ---
 
