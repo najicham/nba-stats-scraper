@@ -209,7 +209,8 @@ class BdlLiveBoxScoresScraper(ScraperBase, ScraperFlaskMixin):
                         logger.warning(f"Failed to send pagination error notification: {notify_ex}")
                     raise
 
-            live_boxes.sort(key=lambda g: g.get("game", {}).get("id"))
+            # Sort by game ID, handling None values safely
+            live_boxes.sort(key=lambda g: g.get("game", {}).get("id") or 0)
 
             self.data = {
                 "timestamp": datetime.now(timezone.utc).isoformat(),
