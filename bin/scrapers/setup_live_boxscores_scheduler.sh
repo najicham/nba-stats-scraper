@@ -11,7 +11,7 @@ set -e
 PROJECT_ID="nba-props-platform"
 REGION="us-west2"
 SERVICE_ACCOUNT="scheduler-orchestration@nba-props-platform.iam.gserviceaccount.com"
-SCRAPER_URL="https://nba-phase1-scrapers-f7p3g7f6ya-wl.a.run.app/scrape/bdl_live_box_scores"
+SCRAPER_URL="https://nba-phase1-scrapers-f7p3g7f6ya-wl.a.run.app/scrape"
 
 echo "Setting up BDL Live Box Scores scheduler jobs..."
 
@@ -29,7 +29,7 @@ gcloud scheduler jobs create http bdl-live-boxscores-evening \
     --uri="$SCRAPER_URL" \
     --http-method=POST \
     --headers="Content-Type=application/json" \
-    --message-body='{"group": "gcs"}' \
+    --message-body='{"scraper": "bdl_live_box_scores", "group": "gcs"}' \
     --oidc-service-account-email=$SERVICE_ACCOUNT \
     --oidc-token-audience="$SCRAPER_URL" \
     --attempt-deadline=120s \
@@ -45,7 +45,7 @@ gcloud scheduler jobs create http bdl-live-boxscores-late \
     --uri="$SCRAPER_URL" \
     --http-method=POST \
     --headers="Content-Type=application/json" \
-    --message-body='{"group": "gcs"}' \
+    --message-body='{"scraper": "bdl_live_box_scores", "group": "gcs"}' \
     --oidc-service-account-email=$SERVICE_ACCOUNT \
     --oidc-token-audience="$SCRAPER_URL" \
     --attempt-deadline=120s \
