@@ -1,11 +1,11 @@
 # NBA Processors Reference
 
 **Created:** 2025-11-21 17:12:03 PST
-**Last Updated:** 2025-11-21 17:12:03 PST
+**Last Updated:** 2025-12-27
 
 Quick reference for NBA data processors transforming GCS data to BigQuery.
 
-**Total Active:** 25 processors
+**Total Active:** 26 processors
 
 ## Processing Strategies
 
@@ -193,7 +193,7 @@ GCS: /nba-com/referee-assignments/{date}/{timestamp}.json
 **Processor:** NbacRefereeProcessor
 **Deployment:** nbac-referee-processor-backfill (us-west2)
 
-## Ball Don't Lie (4 processors)
+## Ball Don't Lie (5 processors)
 
 ### Box Scores ⭐
 
@@ -259,6 +259,30 @@ GCS: /ball-dont-lie/standings/{season}/{date}/{timestamp}.json
 **Coverage:** 30 teams per snapshot (daily)
 **Processor:** BdlStandingsProcessor
 **Deployment:** bdl-standings-processor-backfill (us-west2)
+
+### Live Box Scores ⭐ (NEW)
+
+**Status:** ✅ Production Ready (Session 174)
+
+```
+Table: nba_raw.bdl_live_boxscores
+Partition: game_date (REQUIRED)
+Cluster: game_id, player_lookup, poll_timestamp
+Strategy: APPEND_ALWAYS (time-series data)
+GCS: /ball-dont-lie/live-boxscores/{date}/{poll_id}.json
+```
+
+**Purpose:** Real-time player stats for challenge grading
+**Frequency:** Every 3 minutes during games (7 PM - 2 AM ET)
+**Key Fields:**
+- `poll_timestamp` - When snapshot was taken
+- `poll_id` - e.g., "20251227T213000Z"
+- `period`, `time_remaining` - Game progress
+- `player_lookup` - Consistent with tonight endpoint
+- Full box score stats (points, rebounds, assists, etc.)
+
+**Processor:** BdlLiveBoxscoresProcessor
+**Deployment:** nba-phase2-raw-processors (via Pub/Sub)
 
 ## BettingPros (1 processor)
 
@@ -395,6 +419,7 @@ WHERE game_date >= "2021-01-01"
 - nbac_play_by_play
 - nbac_referee_game_assignments
 - bdl_player_boxscores
+- bdl_live_boxscores
 - bettingpros_player_points_props
 - bigdataball_play_by_play
 - espn_boxscores
