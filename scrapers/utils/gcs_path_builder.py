@@ -34,13 +34,14 @@ class GCSPathBuilder:
     # Path templates using Python string formatting (compatible with existing exporter system)
     PATH_TEMPLATES = {
         # Ball Don't Lie API Scrapers
-        # these 3 not used
         "bdl_games": "ball-dont-lie/games/%(date)s/%(timestamp)s.json",
-        "bdl_player_box_scores_by_date": "ball-dont-lie/player-box-scores/%(date)s/%(timestamp)s.json", 
+        "bdl_player_box_scores": "ball-dont-lie/player-box-scores/%(date)s/%(timestamp)s.json",  # Primary path key
+        "bdl_player_box_scores_by_date": "ball-dont-lie/player-box-scores/%(date)s/%(timestamp)s.json",  # Alias
         "bdl_player_box_scores_by_game": "ball-dont-lie/player-box-scores/%(date)s/game_%(game_id)s/%(timestamp)s.json",
 
         "bdl_standings": "ball-dont-lie/standings/%(season_formatted)s/%(date)s/%(timestamp)s.json",
         "bdl_box_scores": "ball-dont-lie/boxscores/%(date)s/%(timestamp)s.json",
+        "bdl_live_box_scores": "ball-dont-lie/live-boxscores/%(date)s/%(timestamp)s.json",
         "bdl_active_players": "ball-dont-lie/active-players/%(date)s/%(timestamp)s.json",
         "bdl_injuries": "ball-dont-lie/injuries/%(date)s/%(timestamp)s.json",
         
