@@ -11,6 +11,25 @@
 
 ---
 
+## Recommended: Comprehensive Validation Script
+
+**Best option for thorough validation:**
+
+```bash
+# Run full pipeline validation for yesterday
+PYTHONPATH=. python3 bin/validate_pipeline.py $(date -d 'yesterday' +%Y-%m-%d)
+
+# Or for a specific date with detailed output
+PYTHONPATH=. python3 bin/validate_pipeline.py 2025-12-26 --legacy-view
+
+# JSON output for programmatic use
+PYTHONPATH=. python3 bin/validate_pipeline.py 2025-12-26 --format json
+```
+
+This script validates all 5 phases, checks chain completeness, and identifies missing data.
+
+---
+
 ## Quick Summary Commands
 
 Run these first for a quick health overview:
@@ -36,6 +55,13 @@ for svc in nba-phase1-scrapers nba-phase2-raw-processors nba-phase3-analytics-pr
   echo -n "$svc: "
   STATUS=$(curl -s "https://${svc}-f7p3g7f6ya-wl.a.run.app/health" -H "Authorization: Bearer $(gcloud auth print-identity-token)" 2>/dev/null | jq -r '.status' 2>/dev/null)
   echo "${STATUS:-FAILED}"
+done
+
+# 5. Check orchestrator functions healthy
+for fn in phase2-to-phase3-orchestrator phase3-to-phase4-orchestrator phase4-to-phase5-orchestrator; do
+  echo -n "$fn: "
+  STATE=$(gcloud functions describe $fn --region=us-west2 --gen2 --format="value(state)" 2>/dev/null)
+  echo "${STATE:-NOT_FOUND}"
 done
 ```
 
@@ -203,6 +229,97 @@ gcloud logging read 'resource.type="cloud_function" AND resource.labels.function
 
 ---
 
+### Step 6: Check Orchestration State (Firestore)
+
+```bash
+# Check if today's orchestration completed
+TODAY=$(date +%Y-%m-%d)
+
+python3 << EOF
+from google.cloud import firestore
+db = firestore.Client()
+
+# Phase 2 completion (monitoring only)
+doc = db.collection('phase2_completion').document('$TODAY').get()
+if doc.exists:
+    data = doc.to_dict()
+    count = len([k for k in data if not k.startswith('_')])
+    print(f"Phase 2: {count} processors tracked")
+else:
+    print("Phase 2: No data yet")
+
+# Phase 3 completion
+doc = db.collection('phase3_completion').document('$TODAY').get()
+if doc.exists:
+    data = doc.to_dict()
+    count = len([k for k in data if not k.startswith('_')])
+    triggered = data.get('_triggered', False)
+    print(f"Phase 3: {count}/5 complete, Phase 4 triggered: {triggered}")
+else:
+    print("Phase 3: No data yet")
+
+# Phase 4 completion
+doc = db.collection('phase4_completion').document('$TODAY').get()
+if doc.exists:
+    data = doc.to_dict()
+    triggered = data.get('_triggered', False)
+    print(f"Phase 4: Phase 5 triggered: {triggered}")
+else:
+    print("Phase 4: No data yet")
+EOF
+```
+
+**Expected:** On game days after noon, Phase 3/4/5 should show triggered.
+
+---
+
+### Step 7: Check Pub/Sub Health
+
+```bash
+# Check for message backlog (stuck messages)
+echo "=== Pub/Sub Subscription Backlogs ==="
+for sub in nba-phase1-scrapers-complete-sub nba-phase2-raw-complete-sub nba-phase3-analytics-sub nba-phase4-trigger-sub; do
+  BACKLOG=$(gcloud pubsub subscriptions describe $sub --format="value(numMessagesUndelivered)" 2>/dev/null)
+  echo "$sub: ${BACKLOG:-0} undelivered"
+done
+
+# Check Dead Letter Queues
+echo ""
+echo "=== Dead Letter Queue Counts ==="
+for dlq in nba-phase1-scrapers-complete-dlq-sub nba-phase2-raw-complete-dlq-sub; do
+  COUNT=$(gcloud pubsub subscriptions describe $dlq --format="value(numMessagesUndelivered)" 2>/dev/null)
+  if [ -n "$COUNT" ] && [ "$COUNT" -gt 0 ]; then
+    echo "⚠️  $dlq: $COUNT messages (needs attention)"
+  else
+    echo "$dlq: 0 messages"
+  fi
+done
+```
+
+**Expected:** Backlogs should be 0 or very low. DLQ > 0 means messages failed permanently.
+
+---
+
+### Step 8: Check Scraper Execution Log (Phase 1)
+
+```bash
+# Recent scraper activity
+bq query --use_legacy_sql=false --format=pretty "
+SELECT
+  scraper_name,
+  status,
+  FORMAT_TIMESTAMP('%H:%M ET', created_at, 'America/New_York') as run_time,
+  CASE WHEN error_message IS NOT NULL THEN 'ERROR' ELSE 'OK' END as has_error
+FROM nba_orchestration.scraper_execution_log
+WHERE DATE(created_at, 'America/New_York') = CURRENT_DATE('America/New_York')
+ORDER BY created_at DESC
+LIMIT 15"
+```
+
+**Expected:** Recent scrapers should show `status: success` and no errors.
+
+---
+
 ## Common Issues & Quick Fixes
 
 ### Issue: No predictions for today
@@ -333,12 +450,37 @@ PYTHONPATH=. .venv/bin/python scripts/backfill_odds_game_lines.py --date YYYY-MM
 
 ## Related Documentation
 
+**Operations:**
 - `docs/02-operations/daily-monitoring.md` - Quick reference commands
 - `docs/02-operations/runbooks/prediction-pipeline.md` - Prediction pipeline details
 - `docs/02-operations/orchestrator-monitoring.md` - Orchestrator specifics
 - `docs/02-operations/troubleshooting.md` - Comprehensive troubleshooting
 
+**Monitoring:**
+- `docs/07-monitoring/validation-system.md` - Full validation script documentation
+- `docs/07-monitoring/observability-gaps.md` - Known monitoring gaps and improvement plan
+- `docs/07-monitoring/run-history-guide.md` - Processor run history analysis
+
+**Architecture:**
+- `docs/01-architecture/orchestration/orchestrators.md` - How orchestrators work
+- `docs/01-architecture/orchestration/firestore-state-management.md` - Completion tracking
+
+---
+
+## Known Observability Gaps
+
+See `docs/07-monitoring/observability-gaps.md` for full details. Key gaps:
+
+| Gap | Impact | Workaround |
+|-----|--------|------------|
+| **No centralized Phase 2-5 processor log** | Can't query "what ran today" for processors | Check Cloud Logging or run history table |
+| **No dependency check log** | Can't see what was missing when processor failed | Search Cloud Logging for "dependency" |
+| **Pub/Sub retry attempts invisible** | Don't know which attempt succeeded | Check DLQ for failed messages |
+| **30-day Cloud Logging retention** | No historical analysis beyond 30 days | BigQuery run history table has some data |
+
+**Improvement plan:** See `docs/08-projects/current/ORCHESTRATION-IMPROVEMENTS.md`
+
 ---
 
 *Created: December 27, 2025*
-*Last Updated: December 27, 2025*
+*Last Updated: December 27, 2025 (Session 174 - added Firestore, Pub/Sub, DLQ checks)*
