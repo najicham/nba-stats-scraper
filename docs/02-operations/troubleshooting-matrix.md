@@ -2,7 +2,7 @@
 
 **File:** `docs/operations/cross-phase-troubleshooting-matrix.md`
 **Created:** 2025-11-15
-**Last Updated:** 2025-11-15
+**Last Updated:** 2025-12-27
 **Purpose:** Symptom-based troubleshooting that traces issues backward through the pipeline
 **Audience:** On-call engineers debugging production issues
 
@@ -22,10 +22,10 @@
 - **Phase 5 Predictions:** `docs/predictions/operations/03-troubleshooting.md`
 
 **Processor Cards (Detailed Issues):**
-- **All processors:** `docs/processor-cards/README.md`
-- **Phase 5 predictions:** `docs/processor-cards/phase5-prediction-coordinator.md`
-- **Workflow timing:** `docs/processor-cards/workflow-daily-processing-timeline.md`
-- **Real-time flow:** `docs/processor-cards/workflow-realtime-prediction-flow.md`
+- **All processors:** `docs/06-reference/processor-cards/README.md`
+- **Phase 5 predictions:** `docs/06-reference/processor-cards/phase5-prediction-coordinator.md`
+- **Workflow timing:** `docs/06-reference/processor-cards/workflow-daily-processing-timeline.md`
+- **Real-time flow:** `docs/06-reference/processor-cards/workflow-realtime-prediction-flow.md`
 
 ---
 
@@ -97,9 +97,9 @@ WHERE game_date = CURRENT_DATE();
 - "Insufficient feature quality" → Phase 4 ran but quality too low (<70%), check Phase 4 dependencies
 
 **References:**
-- Phase 5 processor card: `docs/processor-cards/phase5-prediction-coordinator.md`
+- Phase 5 processor card: `docs/06-reference/processor-cards/phase5-prediction-coordinator.md`
 - Phase 5 troubleshooting: `docs/predictions/operations/03-troubleshooting.md`
-- ML Feature Store: `docs/processor-cards/phase4-ml-feature-store-v2.md`
+- ML Feature Store: `docs/06-reference/processor-cards/phase4-ml-feature-store-v2.md`
 
 ---
 
@@ -170,9 +170,9 @@ WHERE game_date = CURRENT_DATE();
 3. **Dependencies out of order:** Check orchestration timing
 
 **References:**
-- ML Feature Store dependencies: `docs/processor-cards/phase4-ml-feature-store-v2.md`
+- ML Feature Store dependencies: `docs/06-reference/processor-cards/phase4-ml-feature-store-v2.md`
 - Phase 4 troubleshooting: `docs/processors/07-phase4-troubleshooting.md`
-- Dependency flow: `docs/processor-cards/workflow-daily-processing-timeline.md`
+- Dependency flow: `docs/06-reference/processor-cards/workflow-daily-processing-timeline.md`
 
 ---
 
@@ -224,8 +224,8 @@ gcloud logging read "resource.type=cloud_run_revision \
 3. **Emergency mid-day refresh:** Use cache refresh endpoint (if implemented)
 
 **References:**
-- Cache pattern: `docs/processor-cards/phase4-player-daily-cache.md`
-- Real-time flow: `docs/processor-cards/workflow-realtime-prediction-flow.md`
+- Cache pattern: `docs/06-reference/processor-cards/phase4-player-daily-cache.md`
+- Real-time flow: `docs/06-reference/processor-cards/workflow-realtime-prediction-flow.md`
 
 ---
 
@@ -320,8 +320,8 @@ ORDER BY count DESC;
 - Minimum edge: 1.5 points (must beat line by 1.5+ to recommend)
 
 **References:**
-- Phase 5 processor card: `docs/processor-cards/phase5-prediction-coordinator.md`
-- Quality scoring: `docs/processor-cards/phase4-ml-feature-store-v2.md` (lines 112-132)
+- Phase 5 processor card: `docs/06-reference/processor-cards/phase5-prediction-coordinator.md`
+- Quality scoring: `docs/06-reference/processor-cards/phase4-ml-feature-store-v2.md` (lines 112-132)
 - Early season handling: Section 5
 - Confidence thresholds: `docs/predictions/tutorials/01-getting-started.md` (Q3)
 
@@ -380,7 +380,7 @@ WHERE prediction_date = CURRENT_DATE();
 - **2/4 systems or fewer:** Ensemble confidence very low, most predictions become PASS
 
 **References:**
-- Phase 5 processor card: `docs/processor-cards/phase5-prediction-coordinator.md`
+- Phase 5 processor card: `docs/06-reference/processor-cards/phase5-prediction-coordinator.md`
 - XGBoost training guide: `docs/predictions/operations/01-deployment-guide.md` (Model Training section)
 
 ---
@@ -514,14 +514,14 @@ If Phase 3 is missing data, check if Phase 2 has the raw data:
 
 **References:**
 - Phase 3 troubleshooting: `docs/processors/04-phase3-troubleshooting.md`
-- Phase 3 processor cards: `docs/processor-cards/README.md` (Phase 3 section)
+- Phase 3 processor cards: `docs/06-reference/processor-cards/README.md` (Phase 3 section)
 
 **Specific Processor Cards:**
-- Player Game Summary: `docs/processor-cards/phase3-player-game-summary.md`
-- Team Offense: `docs/processor-cards/phase3-team-offense-game-summary.md`
-- Team Defense: `docs/processor-cards/phase3-team-defense-game-summary.md`
-- Upcoming Player: `docs/processor-cards/phase3-upcoming-player-game-context.md`
-- Upcoming Team: `docs/processor-cards/phase3-upcoming-team-game-context.md`
+- Player Game Summary: `docs/06-reference/processor-cards/phase3-player-game-summary.md`
+- Team Offense: `docs/06-reference/processor-cards/phase3-team-offense-game-summary.md`
+- Team Defense: `docs/06-reference/processor-cards/phase3-team-defense-game-summary.md`
+- Upcoming Player: `docs/06-reference/processor-cards/phase3-upcoming-player-game-context.md`
+- Upcoming Team: `docs/06-reference/processor-cards/phase3-upcoming-team-game-context.md`
 
 ---
 
@@ -611,15 +611,15 @@ Phase 4 depends on Phase 3 analytics:
 
 **References:**
 - Phase 4 troubleshooting: `docs/processors/07-phase4-troubleshooting.md`
-- Phase 4 timing: `docs/processor-cards/workflow-daily-processing-timeline.md`
-- Phase 4 processor cards: `docs/processor-cards/README.md` (Phase 4 section)
+- Phase 4 timing: `docs/06-reference/processor-cards/workflow-daily-processing-timeline.md`
+- Phase 4 processor cards: `docs/06-reference/processor-cards/README.md` (Phase 4 section)
 
 **Specific Processor Cards:**
-- Team Defense Zone: `docs/processor-cards/phase4-team-defense-zone-analysis.md`
-- Player Shot Zone: `docs/processor-cards/phase4-player-shot-zone-analysis.md`
-- Player Composite: `docs/processor-cards/phase4-player-composite-factors.md`
-- Player Daily Cache: `docs/processor-cards/phase4-player-daily-cache.md`
-- ML Feature Store: `docs/processor-cards/phase4-ml-feature-store-v2.md`
+- Team Defense Zone: `docs/06-reference/processor-cards/phase4-team-defense-zone-analysis.md`
+- Player Shot Zone: `docs/06-reference/processor-cards/phase4-player-shot-zone-analysis.md`
+- Player Composite: `docs/06-reference/processor-cards/phase4-player-composite-factors.md`
+- Player Daily Cache: `docs/06-reference/processor-cards/phase4-player-daily-cache.md`
+- ML Feature Store: `docs/06-reference/processor-cards/phase4-ml-feature-store-v2.md`
 
 ---
 
@@ -701,7 +701,7 @@ ORDER BY execution_time;
 **References:**
 - Phase 1 orchestration: `docs/orchestration/01-how-it-works.md`
 - Phase 1 troubleshooting: `docs/orchestration/04-troubleshooting.md`
-- Daily timeline: `docs/processor-cards/workflow-daily-processing-timeline.md`
+- Daily timeline: `docs/06-reference/processor-cards/workflow-daily-processing-timeline.md`
 
 ---
 
@@ -765,8 +765,8 @@ CROSS JOIN phase4_times p4;
 - 11:00 PM: Phase 4 starts (30min buffer)
 
 **References:**
-- Daily timeline: `docs/processor-cards/workflow-daily-processing-timeline.md`
-- Phase 4 dependencies: `docs/processor-cards/README.md` (Phase 4 section)
+- Daily timeline: `docs/06-reference/processor-cards/workflow-daily-processing-timeline.md`
+- Phase 4 dependencies: `docs/06-reference/processor-cards/README.md` (Phase 4 section)
 
 ---
 
@@ -815,9 +815,9 @@ gcloud logging read "resource.type=cloud_run_revision \
 - 6:00 AM: Phase 5 loads cache (guaranteed complete)
 
 **References:**
-- Cache pattern: `docs/processor-cards/phase4-player-daily-cache.md`
-- Real-time flow: `docs/processor-cards/workflow-realtime-prediction-flow.md`
-- Daily timeline: `docs/processor-cards/workflow-daily-processing-timeline.md`
+- Cache pattern: `docs/06-reference/processor-cards/phase4-player-daily-cache.md`
+- Real-time flow: `docs/06-reference/processor-cards/workflow-realtime-prediction-flow.md`
+- Daily timeline: `docs/06-reference/processor-cards/workflow-daily-processing-timeline.md`
 
 ---
 
@@ -877,7 +877,7 @@ ORDER BY duration_minutes DESC;
 4. **Query optimization:** Review query plan, add indexes if possible
 
 **References:**
-- Performance benchmarks: `docs/processor-cards/workflow-daily-processing-timeline.md` (Performance Benchmarks section)
+- Performance benchmarks: `docs/06-reference/processor-cards/workflow-daily-processing-timeline.md` (Performance Benchmarks section)
 - Specific processor cards for optimization notes
 
 ---
@@ -931,9 +931,9 @@ WHERE game_date = CURRENT_DATE();
 3. **Parallelize:** P1 and P2 can run simultaneously, P4 and P5 can run simultaneously
 
 **References:**
-- Phase 4 timing: `docs/processor-cards/workflow-daily-processing-timeline.md`
-- Player Composite: `docs/processor-cards/phase4-player-composite-factors.md`
-- Player Shot Zone: `docs/processor-cards/phase4-player-shot-zone-analysis.md`
+- Phase 4 timing: `docs/06-reference/processor-cards/workflow-daily-processing-timeline.md`
+- Player Composite: `docs/06-reference/processor-cards/phase4-player-composite-factors.md`
+- Player Shot Zone: `docs/06-reference/processor-cards/phase4-player-shot-zone-analysis.md`
 
 ---
 
@@ -977,9 +977,9 @@ gcloud logging read "resource.type=cloud_run_revision \
 4. **No parallelization:** Predictions running sequentially instead of parallel
 
 **References:**
-- Real-time flow: `docs/processor-cards/workflow-realtime-prediction-flow.md`
-- Cache pattern: `docs/processor-cards/phase4-player-daily-cache.md`
-- Performance metrics: `docs/processor-cards/workflow-realtime-prediction-flow.md` (Performance Metrics section)
+- Real-time flow: `docs/06-reference/processor-cards/workflow-realtime-prediction-flow.md`
+- Cache pattern: `docs/06-reference/processor-cards/phase4-player-daily-cache.md`
+- Performance metrics: `docs/06-reference/processor-cards/workflow-realtime-prediction-flow.md` (Performance Metrics section)
 
 ---
 
@@ -1050,8 +1050,8 @@ FROM (
 - Normal early season low quality (expected, will resolve naturally)
 
 **References:**
-- Early season handling: `docs/processor-cards/phase4-ml-feature-store-v2.md` (lines 126-132)
-- Quality tiers: `docs/processor-cards/phase4-ml-feature-store-v2.md` (lines 126-132)
+- Early season handling: `docs/06-reference/processor-cards/phase4-ml-feature-store-v2.md` (lines 126-132)
+- Quality tiers: `docs/06-reference/processor-cards/phase4-ml-feature-store-v2.md` (lines 126-132)
 
 ---
 
@@ -1364,7 +1364,7 @@ WHERE prediction_date = CURRENT_DATE();
 
 **Document Version**: 1.1
 **Created**: 2025-11-15
-**Last Updated**: 2025-11-15
+**Last Updated**: 2025-12-27
 **Maintained By**: Engineering Team
 **Review Frequency**: Monthly or after major incidents
 
