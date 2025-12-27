@@ -471,7 +471,8 @@ def process_player_predictions(
 
     # Step 2: Validate features before running predictions
     from data_loaders import validate_features
-    is_valid, validation_errors = validate_features(features, min_quality_score=70.0)
+    # Temporarily lowered from 70.0 to 60.0 due to Phase 3 dependency check bug (2025-12-27)
+    is_valid, validation_errors = validate_features(features, min_quality_score=60.0)
     if not is_valid:
         logger.error(
             f"Invalid features for {player_lookup} on {game_date}: {validation_errors}"
@@ -496,12 +497,13 @@ def process_player_predictions(
     completeness = features.get('completeness', {})
     metadata['completeness'] = completeness
 
-    # Allow processing if: production_ready OR bootstrap_mode OR high quality score (70+)
+    # Allow processing if: production_ready OR bootstrap_mode OR high quality score (60+)
+    # Temporarily lowered from 70 to 60 due to Phase 3 dependency check bug (2025-12-27)
     quality_score = features.get('feature_quality_score', 0)
     is_acceptable = (
         completeness.get('is_production_ready', False) or
         completeness.get('backfill_bootstrap_mode', False) or
-        quality_score >= 70  # Accept high-quality features even if not marked production-ready
+        quality_score >= 60  # Accept high-quality features even if not marked production-ready
     )
 
     if not is_acceptable:
