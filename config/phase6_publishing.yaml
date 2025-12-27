@@ -68,6 +68,46 @@ jobs:
     base_path: "v1"
 
   # ────────────────────────────────────────────────────────────
+  # Live Scores Export (during game windows)
+  # ────────────────────────────────────────────────────────────
+  # NOTE: Live export uses a separate Cloud Function with HTTP trigger
+  # for faster/more frequent execution. See bin/deploy/deploy_live_export.sh
+  live_scores_export:
+    name: "live-export"
+    description: "Export live game scores for real-time challenge grading"
+    enabled: true
+    priority: "CRITICAL"
+
+    schedule:
+      # Evening games: 7 PM - midnight ET, every 3 minutes
+      evening:
+        cron: "*/3 19-23 * * *"
+        timezone: "America/New_York"
+      # Late night: midnight - 2 AM ET, every 3 minutes
+      late_night:
+        cron: "*/3 0-1 * * *"
+        timezone: "America/New_York"
+
+    export_types:
+      - live
+
+    target_date: "today"
+
+    # GCS output with short cache
+    bucket: "nba-props-platform-api"
+    base_path: "v1"
+    cache_control: "public, max-age=30"
+
+    # Cloud Function config (separate from main phase6 function)
+    cloud_function:
+      name: "live-export"
+      runtime: "python311"
+      memory: "512MB"
+      timeout: "120s"
+      trigger: "http"  # HTTP for lower latency
+      max_instances: 5
+
+  # ────────────────────────────────────────────────────────────
   # Player Profiles Refresh (weekly)
   # ────────────────────────────────────────────────────────────
   weekly_player_profiles:
