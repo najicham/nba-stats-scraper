@@ -1,7 +1,7 @@
 # Daily Pipeline Monitoring Guide
 
 **Created:** 2025-12-25
-**Last Updated:** 2025-12-25
+**Last Updated:** 2025-12-27
 **Purpose:** Quick reference for daily pipeline health checks and common issues
 
 ---
@@ -19,6 +19,94 @@ This checks:
 - Today's data counts (boxscores, props, gamebooks)
 - Service health (Phase 1, Phase 2)
 - Data freshness across all key tables
+
+---
+
+## Daily Orchestration Checklist
+
+**Run these checks daily (especially before games start):**
+
+### 1. Are today's predictions generated?
+
+```bash
+# Check prediction count for today
+bq query --use_legacy_sql=false --format=pretty "
+SELECT game_date, COUNT(*) as predictions, COUNT(DISTINCT player_lookup) as players
+FROM nba_predictions.player_prop_predictions
+WHERE game_date = CURRENT_DATE() AND is_active = TRUE
+GROUP BY game_date"
+```
+
+**Expected:** 1500-2500 predictions if games today, 0 if no games.
+
+### 2. Are yesterday's gamebooks complete?
+
+```bash
+# Check gamebook count for yesterday
+bq query --use_legacy_sql=false --format=pretty "
+SELECT game_date, COUNT(DISTINCT game_id) as games
+FROM nba_raw.nbac_gamebook_player_stats
+WHERE game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
+GROUP BY game_date"
+
+# Compare with schedule
+bq query --use_legacy_sql=false "
+SELECT COUNT(*) as scheduled_games
+FROM nba_raw.nbac_schedule
+WHERE game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
+  AND game_status = 3"
+```
+
+**If mismatch:** Run gamebook backfill (see below).
+
+### 3. Did prediction workers have quality issues?
+
+```bash
+# Check for quality score failures
+gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="prediction-worker" AND "Quality score"' \
+  --limit=5 --format="table(timestamp,textPayload)" --freshness=6h
+```
+
+**If "Quality score X below threshold 70.0":** Upstream data is incomplete. Check gamebooks.
+
+### 4. Did the morning schedulers run?
+
+```bash
+# Check scheduler job history
+gcloud scheduler jobs list --location=us-west2 --format="table(name,schedule,state)" | grep -E "same-day|phase[345]"
+
+# Check if Phase 5 coordinator ran today
+gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="prediction-coordinator" AND "Published"' \
+  --limit=5 --format="table(timestamp,textPayload)" --freshness=6h
+```
+
+**Expected schedule (ET):**
+- 10:30 AM: Phase 3 (UpcomingPlayerGameContext)
+- 11:00 AM: Phase 4 (MLFeatureStore)
+- 11:30 AM: Phase 5 (Predictions)
+
+---
+
+## Fix: Missing Predictions
+
+When predictions are missing (quality score < 70%), the root cause is usually incomplete gamebook data:
+
+```bash
+# Step 1: Check gamebook completeness for yesterday
+gsutil ls "gs://nba-scraped-data/nba-com/gamebooks-data/$(date -d yesterday +%Y-%m-%d)/" | wc -l
+
+# Step 2: Reprocess gamebooks if files exist but not in BigQuery
+PYTHONPATH=. python scripts/backfill_gamebooks.py --date $(date -d yesterday +%Y-%m-%d) --skip-scrape
+
+# Step 3: Re-run Phase 4 with backfill mode
+curl -X POST "https://nba-phase4-precompute-processors-f7p3g7f6ya-wl.a.run.app/process-date" \
+  -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
+  -H "Content-Type: application/json" \
+  -d '{"analysis_date": "'$(date +%Y-%m-%d)'", "backfill_mode": true}'
+
+# Step 4: Re-run predictions
+gcloud scheduler jobs run same-day-predictions --location=us-west2
+```
 
 ---
 
@@ -280,4 +368,4 @@ Escalate if:
 
 ---
 
-*Last Updated: December 26, 2025 - Session 171 (added prediction scheduler info)*
+*Last Updated: December 27, 2025 - Session 174 (added orchestration checklist and fix procedures)*
