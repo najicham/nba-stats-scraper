@@ -117,7 +117,10 @@ scrapers:
     name: "nbac_team_boxscore"
     description: "NBA.com team box scores"
     module: "scrapers.nbacom.nbac_team_boxscore"
-    critical: true
+    # TEMPORARILY DISABLED: NBA API returning 0 teams (Dec 2025)
+    # Analytics processors have fallback to reconstruct from player boxscores
+    # TODO: Investigate and re-enable when API issue resolved
+    critical: false
     processor_name: "p2_nbacom_team_boxscore"
     estimated_duration_seconds: 30
   

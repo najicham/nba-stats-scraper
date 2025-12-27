@@ -201,7 +201,8 @@ class TeamOffenseGameSummaryProcessor(
                 'expected_count_min': 20,  # ~10 games × 2 teams per game
                 'max_age_hours_warn': 24,
                 'max_age_hours_fail': 72,
-                'critical': True
+                # NOT critical: has fallback to reconstruct from player boxscores
+                'critical': False
             },
             'nba_raw.nbac_play_by_play': {
                 'field_prefix': 'source_play_by_play',
