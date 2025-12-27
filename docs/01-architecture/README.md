@@ -1,16 +1,16 @@
 # Architecture Documentation
 
 **File:** `docs/01-architecture/README.md`
-**Last Updated:** 2025-11-29
+**Last Updated:** 2025-12-27
 **Purpose:** Architecture, design decisions, and implementation roadmap for NBA data pipeline
-**Status:** v1.0 Deployed and Production Ready
+**Status:** All 6 Phases Operational (v1.0+ Deployed)
 **Audience:** Engineers building and understanding the system
 
 ---
 
-## v1.0 Event-Driven Pipeline (NEW)
+## v1.0 Event-Driven Pipeline
 
-**The complete 5-phase event-driven pipeline is now deployed and operational!**
+**The complete 6-phase event-driven pipeline is deployed and operational!**
 
 ### Quick Start for v1.0
 
@@ -38,11 +38,12 @@
 
 ### Key Features
 
-- **Event-Driven:** All 5 phases connected via Pub/Sub
+- **Event-Driven:** All 6 phases connected via Pub/Sub
 - **Atomic Orchestration:** Firestore transactions prevent race conditions
 - **Correlation Tracking:** End-to-end request tracing
 - **Change Detection:** 99%+ efficiency with selective processing
 - **Data Readiness:** 10 patterns ensuring safe processing
+- **Automation:** 10+ Cloud Schedulers running daily pipeline
 
 ### Directory Structure
 
@@ -303,9 +304,9 @@ archive/
 
 ---
 
-## 🎯 Quick Reference
+## Quick Reference
 
-**Current Status:** v1.0 Deployed and Production Ready (as of 2025-11-29)
+**Current Status:** All 6 Phases Operational (as of 2025-12-27)
 
 | Phase | Status |
 |-------|--------|
@@ -315,8 +316,10 @@ archive/
 | Phase 3 | ✅ Analytics (5) - Production |
 | Phase 3→4 Orchestrator | ✅ Cloud Function - Production |
 | Phase 4 | ✅ Precompute (5) - Production |
+| Phase 4→5 Orchestrator | ✅ Cloud Function - Production |
 | Phase 5 | ✅ Predictions - Production |
-| Phase 6 | ❌ Web App - Not started |
+| Phase 5→6 Orchestrator | ✅ Cloud Function - Production |
+| Phase 6 | ✅ Publishing/Exports - Production |
 
 **For deployment details:** See [v1.0 Deployment Guide](../04-deployment/v1.0-deployment-guide.md)
 
@@ -383,20 +386,19 @@ archive/
 ---
 
 **Document Status:** Current and maintained
-**Last Updated:** 2025-11-29
+**Last Updated:** 2025-12-27
+
+**Changes (2025-12-27):**
+- Updated to reflect all 6 phases operational
+- Added Phase 4→5 and Phase 5→6 orchestrators to status table
+- Updated Phase 6 from "Not started" to "Production"
+- Added Cloud Scheduler automation to key features
+
 **Changes (2025-11-29):**
 - v1.0 deployed to production
-- Added v1.0 documentation section with links to new architecture docs
-- Updated status table to reflect all phases complete
-- Added links to new operations guides
+- Added v1.0 documentation section
 
-**Changes (2025-11-25):**
-- Updated status to ~70% complete
-- Archived implementation task docs (09-11) to `archive/2025-11-25/`
-- Added historical banners to 01, 05
-- Simplified status table (now points to SYSTEM_STATUS.md)
-
-**Next Review:** After backfill operations complete
+**Next Review:** As needed
 
 ---
 

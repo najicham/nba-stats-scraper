@@ -1,7 +1,7 @@
 # NBA Props Platform Documentation
 
-**Last Updated:** 2025-11-25
-**Status:** Production (Phases 1-4), Testing (Phase 5)
+**Last Updated:** 2025-12-27
+**Status:** Production (All 6 Phases Operational)
 
 ---
 
@@ -70,10 +70,11 @@ docs/
 
 ## Key Facts
 
-- **Pipeline:** 6 phases (Scrape -> Raw -> Analytics -> Precompute -> Predictions -> Publishing)
-- **Status:** Phases 1-4 in production, Phase 5 testing, Phase 6 planned
-- **Tech Stack:** GCP (BigQuery, Cloud Run, Pub/Sub), Python, XGBoost
+- **Pipeline:** 6 phases (Scrape → Raw → Analytics → Precompute → Predictions → Publishing)
+- **Status:** All 6 phases operational in production (Dec 2025)
+- **Tech Stack:** GCP (BigQuery, Cloud Run, Pub/Sub, Cloud Scheduler), Python, XGBoost
 - **Goal:** 55%+ accuracy on NBA player prop predictions
+- **Automation:** 10+ Cloud Schedulers running daily pipeline automatically
 
 ---
 
