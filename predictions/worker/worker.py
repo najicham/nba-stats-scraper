@@ -470,9 +470,16 @@ def process_player_predictions(
         return {'predictions': [], 'metadata': metadata}
 
     # Step 2: Validate features before running predictions
+    # SELF-HEALING: Use tiered quality thresholds
+    # - quality >= 70: High confidence (normal)
+    # - quality >= 50: Low confidence (proceed with warning)
+    # - quality < 50: Skip (too unreliable)
     from data_loaders import validate_features
-    # Restored to 70.0 after Phase 3/4 fixes (2025-12-27)
-    is_valid, validation_errors = validate_features(features, min_quality_score=70.0)
+    quality_score = features.get('feature_quality_score', 0)
+
+    # Use lower threshold (50) but track confidence level
+    is_valid, validation_errors = validate_features(features, min_quality_score=50.0)
+
     if not is_valid:
         logger.error(
             f"Invalid features for {player_lookup} on {game_date}: {validation_errors}"
@@ -480,8 +487,26 @@ def process_player_predictions(
         metadata['error_message'] = f'Invalid features: {validation_errors}'
         metadata['error_type'] = 'FeatureValidationError'
         metadata['skip_reason'] = 'invalid_features'
-        metadata['feature_quality_score'] = features.get('feature_quality_score', 0)
+        metadata['feature_quality_score'] = quality_score
         return {'predictions': [], 'metadata': metadata}
+
+    # Determine confidence level based on quality score
+    if quality_score >= 70:
+        confidence_level = 'high'
+    elif quality_score >= 50:
+        confidence_level = 'low'
+        logger.warning(
+            f"Low quality features for {player_lookup} ({quality_score:.1f}%) - "
+            f"proceeding with low confidence predictions"
+        )
+    else:
+        confidence_level = 'skip'
+        logger.warning(f"Quality too low for {player_lookup} ({quality_score:.1f}%) - skipping")
+        metadata['skip_reason'] = 'quality_too_low'
+        metadata['feature_quality_score'] = quality_score
+        return {'predictions': [], 'metadata': metadata}
+
+    metadata['confidence_level'] = confidence_level
 
     logger.info(f"Features validated for {player_lookup} (quality: {features['feature_quality_score']:.1f})")
     metadata['feature_quality_score'] = features['feature_quality_score']
@@ -494,16 +519,18 @@ def process_player_predictions(
     features['estimation_method'] = line_source_info.get('estimation_method')
 
     # Step 2.5: Check feature completeness (Phase 5)
+    # SELF-HEALING: Made more lenient - proceed with warnings instead of blocking
     completeness = features.get('completeness', {})
     metadata['completeness'] = completeness
 
-    # Allow processing if: production_ready OR bootstrap_mode OR high quality score (70+)
-    # Restored to 70 after Phase 3/4 fixes (2025-12-27)
-    quality_score = features.get('feature_quality_score', 0)
+    # LENIENT: Accept if ANY of these conditions are true:
+    # - production_ready flag set
+    # - bootstrap_mode flag set
+    # - quality score >= 50 (lowered from 70 for self-healing)
     is_acceptable = (
         completeness.get('is_production_ready', False) or
         completeness.get('backfill_bootstrap_mode', False) or
-        quality_score >= 70  # Accept high-quality features even if not marked production-ready
+        quality_score >= 50  # Lowered for self-healing (confidence_level tracks actual quality)
     )
 
     if not is_acceptable:
