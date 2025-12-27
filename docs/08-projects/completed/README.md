@@ -28,6 +28,8 @@
 | **[trends-v2-exporters](./trends-v2-exporters/)** | 6 JSON exporters for Trends page | 2025-12-15 | 3 |
 | **[frontend-api-backend](./frontend-api-backend/)** | Results, Trends, Player Modal API endpoints | 2025-12-19 | 6 |
 | **[PHASE5-PREDICTIONS-NOT-RUNNING.md](./PHASE5-PREDICTIONS-NOT-RUNNING.md)** | Issue resolution: Same-day prediction schedulers | 2025-12-26 | 1 |
+| **[scraper-audit](./scraper-audit/)** | Data completeness audit and backfill plan | 2025-12-27 | 3 |
+| **[phase-5c-ml-feedback](./phase-5c-ml-feedback/)** | Scoring tier adjustments (0.055 MAE improvement) | 2025-12-27 | 5 |
 
 ---
 
@@ -128,5 +130,5 @@
 
 ---
 
-**Total Projects:** 18
-**Documents:** 100+ across all projects
+**Total Projects:** 20
+**Documents:** 110+ across all projects
