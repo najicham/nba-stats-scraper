@@ -88,9 +88,9 @@ class CompletenessChecker:
         """
         self.bq_client = bq_client
         self.project_id = project_id
-        # Lowered from 90 to 40 temporarily to allow teams with boxscore gaps (SAC at 44%)
-        # TODO: Restore to 90 after backfilling missing boxscore data
-        self.production_ready_threshold = 40.0  # Percentage
+        # Lowered from 90 to 70 to account for BDL API data gaps
+        # BDL API missing some west coast late games (see BOXSCORE-GAPS-AND-CIRCUIT-BREAKERS.md)
+        self.production_ready_threshold = 70.0  # Percentage
 
     def check_completeness_batch(
         self,
