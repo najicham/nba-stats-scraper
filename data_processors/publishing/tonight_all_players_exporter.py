@@ -111,6 +111,7 @@ class TonightAllPlayersExporter(BaseExporter):
         query = """
         WITH predictions AS (
             -- Get predictions for players (primary ensemble system)
+            -- Use ROW_NUMBER to deduplicate in case of multiple rows per player/game
             SELECT
                 pp.player_lookup,
                 pp.game_id,
@@ -122,6 +123,10 @@ class TonightAllPlayersExporter(BaseExporter):
             FROM `nba-props-platform.nba_predictions.player_prop_predictions` pp
             WHERE pp.game_date = @target_date
               AND pp.system_id = 'ensemble_v1'
+            QUALIFY ROW_NUMBER() OVER (
+                PARTITION BY pp.player_lookup, pp.game_id
+                ORDER BY pp.created_at DESC
+            ) = 1
         ),
         player_names AS (
             -- Get player full names
@@ -380,6 +385,9 @@ class TonightAllPlayersExporter(BaseExporter):
                 }
 
                 # Add props array with betting line (frontend expected structure)
+                # Add last_10_points for ALL players (frontend requested for sparklines)
+                player_data['last_10_points'] = last_10.get('points', [])
+
                 if p.get('has_line'):
                     line_value = self._safe_float(p.get('current_points_line'))
                     player_data['props'] = [{
@@ -396,9 +404,6 @@ class TonightAllPlayersExporter(BaseExporter):
                     }
                     player_data['last_10_results'] = last_10.get('results', [])
                     player_data['last_10_record'] = last_10.get('record')
-                else:
-                    # For players without lines, show raw points
-                    player_data['last_10_points'] = last_10.get('points', [])
 
                 formatted_players.append(player_data)
 
