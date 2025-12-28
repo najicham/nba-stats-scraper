@@ -78,13 +78,15 @@ class ParameterResolver:
         self.ET = pytz.timezone('America/New_York')
 
         # Registry of complex resolvers (code-based)
+        # Note: Scrapers that need per-game invocation return List[Dict]
+        # Scrapers that work on date-level return Dict
         self.complex_resolvers = {
-            'nbac_play_by_play': self._resolve_nbac_play_by_play,
-            'nbac_player_boxscore': self._resolve_game_specific,
-            'nbac_team_boxscore': self._resolve_game_specific_with_game_date,
-            'bigdataball_pbp': self._resolve_game_specific,
+            'nbac_play_by_play': self._resolve_nbac_play_by_play,  # Per-game (returns list)
+            'nbac_player_boxscore': self._resolve_game_specific,   # Date-based (returns dict)
+            'nbac_team_boxscore': self._resolve_game_specific_with_game_date,  # Per-game (returns list)
+            'bigdataball_pbp': self._resolve_bigdataball_pbp,      # Per-game (returns list)
             'br_season_roster': self._resolve_br_season_roster,
-            'nbac_gamebook_pdf': self._resolve_nbac_gamebook_pdf,
+            'nbac_gamebook_pdf': self._resolve_nbac_gamebook_pdf,  # Per-game (returns list)
             'nbac_injury_report': self._resolve_nbac_injury_report,
             'oddsa_player_props': self._resolve_odds_props,
             'oddsa_game_lines': self._resolve_odds_game_lines,
@@ -380,42 +382,37 @@ class ParameterResolver:
     def _resolve_nbac_play_by_play(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
         Resolve parameters for play-by-play scraper.
-        
+
         This scraper needs to be called once per game with game_id.
         Returns list of parameter sets (one per game).
-        
-        Note: The workflow executor will need to handle this specially
-        (call scraper multiple times).
-        
-        For Phase 1, we'll just return params for first game.
-        Phase 2 will handle per-game iteration.
         """
         games = context.get('games_today', [])
-        
+
         if not games:
             logger.warning("No games today for play-by-play scraper")
-            return {}
-        
-        # Phase 1: Just return first game
-        # Phase 2: Return list of params for all games
-        game = games[0]
-        
-        # Extract game_id from game object
-        game_id = game.game_id
-        game_date = game.game_date.replace('-', '')  # YYYYMMDD format
-        
-        return {
-            'game_id': game_id,
-            'gamedate': game_date,
-            'season': context['season']
-        }
+            return []
+
+        params_list = []
+        for game in games:
+            game_id = game.game_id
+            game_date = game.game_date.replace('-', '')  # YYYYMMDD format
+
+            params_list.append({
+                'game_id': game_id,
+                'gamedate': game_date,
+                'season': context['season']
+            })
+
+        logger.info(f"Resolved nbac_play_by_play for {len(params_list)} games")
+        return params_list
     
     def _resolve_game_specific(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Generic resolver for game-specific scrapers (nbac_player_boxscore, bigdataball_pbp).
+        Resolver for nbac_player_boxscore (date-based API).
 
         Uses 'gamedate' parameter (YYYYMMDD format).
-        Returns parameters for first game (Phase 1).
+        This scraper uses leaguegamelog API which returns ALL players for a date,
+        so we only need to pass the date, not iterate per game.
         """
         games = context.get('games_today', [])
 
@@ -432,26 +429,57 @@ class ParameterResolver:
             'season': context['season']
         }
 
-    def _resolve_game_specific_with_game_date(self, context: Dict[str, Any]) -> Dict[str, Any]:
+    def _resolve_bigdataball_pbp(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
-        Resolver for nbac_team_boxscore which uses 'game_date' (not 'gamedate').
+        Resolver for bigdataball_pbp scraper.
 
-        Returns parameters for first game (Phase 1).
+        This scraper downloads from Google Drive by game_id.
+        Returns list of parameter sets (one per game).
         """
         games = context.get('games_today', [])
 
         if not games:
-            logger.warning("No games today for game-specific scraper")
-            return {'date': context['execution_date']}
+            logger.warning("No games today for bigdataball_pbp scraper")
+            return []
 
-        game = games[0]
-        game_date = game.game_date  # YYYY-MM-DD format (with dashes)
+        params_list = []
+        for game in games:
+            game_id = game.game_id
+            game_date = game.game_date.replace('-', '')  # YYYYMMDD format
 
-        return {
-            'game_id': game.game_id,
-            'game_date': game_date,
-            'season': context['season']
-        }
+            params_list.append({
+                'game_id': game_id,
+                'gamedate': game_date,
+                'season': context['season']
+            })
+
+        logger.info(f"Resolved bigdataball_pbp for {len(params_list)} games")
+        return params_list
+
+    def _resolve_game_specific_with_game_date(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        Resolver for nbac_team_boxscore which uses 'game_date' (not 'gamedate').
+
+        Returns list of parameter sets (one per game).
+        """
+        games = context.get('games_today', [])
+
+        if not games:
+            logger.warning("No games today for nbac_team_boxscore scraper")
+            return []
+
+        params_list = []
+        for game in games:
+            game_date = game.game_date  # YYYY-MM-DD format (with dashes)
+
+            params_list.append({
+                'game_id': game.game_id,
+                'game_date': game_date,
+                'season': context['season']
+            })
+
+        logger.info(f"Resolved nbac_team_boxscore for {len(params_list)} games")
+        return params_list
 
     def _resolve_br_season_roster(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
