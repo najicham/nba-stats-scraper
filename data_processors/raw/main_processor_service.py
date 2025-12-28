@@ -123,6 +123,125 @@ def health_check():
     }), 200
 
 
+@app.route('/monitoring/boxscore-completeness', methods=['POST'])
+def check_boxscore_completeness():
+    """
+    Check boxscore data completeness and send alerts if below threshold.
+
+    Called daily by Cloud Scheduler at 6 AM ET.
+
+    Request body:
+        {
+            "check_days": 1,  # Number of days to check (default: 1 = yesterday)
+            "alert_on_gaps": true  # Whether to send alerts
+        }
+    """
+    from google.cloud import bigquery
+    from datetime import date, timedelta
+
+    logger = logging.getLogger(__name__)
+
+    try:
+        data = request.get_json() or {}
+        check_days = data.get('check_days', 1)
+        alert_on_gaps = data.get('alert_on_gaps', True)
+
+        end_date = date.today() - timedelta(days=1)  # Yesterday
+        start_date = end_date - timedelta(days=check_days - 1)
+
+        logger.info(f"Checking boxscore completeness: {start_date} to {end_date}")
+
+        bq_client = bigquery.Client()
+
+        # Query coverage
+        coverage_query = f"""
+        WITH schedule AS (
+          SELECT game_date, home_team_tricode as team FROM nba_raw.nbac_schedule
+          WHERE game_date >= '{start_date}' AND game_date <= '{end_date}'
+          UNION ALL
+          SELECT game_date, away_team_tricode as team FROM nba_raw.nbac_schedule
+          WHERE game_date >= '{start_date}' AND game_date <= '{end_date}'
+        ),
+        team_games AS (
+          SELECT team, COUNT(DISTINCT game_date) as scheduled_games
+          FROM schedule GROUP BY team
+        ),
+        boxscore_games AS (
+          SELECT team_abbr, COUNT(DISTINCT game_date) as boxscore_games
+          FROM nba_raw.bdl_player_boxscores
+          WHERE game_date >= '{start_date}' AND game_date <= '{end_date}'
+          GROUP BY team_abbr
+        )
+        SELECT t.team, t.scheduled_games, COALESCE(b.boxscore_games, 0) as boxscore_games,
+          ROUND(COALESCE(b.boxscore_games, 0) * 100.0 / t.scheduled_games, 1) as coverage_pct
+        FROM team_games t
+        LEFT JOIN boxscore_games b ON t.team = b.team_abbr
+        ORDER BY coverage_pct
+        """
+
+        coverage_result = list(bq_client.query(coverage_query).result())
+
+        # Find teams below thresholds
+        critical_teams = [(r.team, r.coverage_pct) for r in coverage_result if r.coverage_pct < 70]
+        warning_teams = [(r.team, r.coverage_pct) for r in coverage_result if 70 <= r.coverage_pct < 90]
+
+        # Count missing games
+        missing_query = f"""
+        WITH schedule AS (
+          SELECT game_date, home_team_tricode as team FROM nba_raw.nbac_schedule
+          WHERE game_date >= '{start_date}' AND game_date <= '{end_date}'
+          UNION ALL
+          SELECT game_date, away_team_tricode as team FROM nba_raw.nbac_schedule
+          WHERE game_date >= '{start_date}' AND game_date <= '{end_date}'
+        ),
+        boxscores AS (
+          SELECT DISTINCT game_date, team_abbr FROM nba_raw.bdl_player_boxscores
+          WHERE game_date >= '{start_date}' AND game_date <= '{end_date}'
+        )
+        SELECT COUNT(*) as missing_count
+        FROM schedule s
+        LEFT JOIN boxscores b ON s.game_date = b.game_date AND s.team = b.team_abbr
+        WHERE b.team_abbr IS NULL
+        """
+
+        missing_count = list(bq_client.query(missing_query).result())[0].missing_count
+
+        # Send alerts if needed
+        if alert_on_gaps and (critical_teams or warning_teams):
+            date_range = f"{start_date} to {end_date}" if start_date != end_date else str(start_date)
+
+            if critical_teams:
+                critical_msg = ", ".join([f"{t[0]}:{t[1]}%" for t in critical_teams])
+                notify_error(
+                    title=f"CRITICAL: Boxscore Data Gaps ({date_range})",
+                    message=f"Teams below 70%: {critical_msg}. Missing {missing_count} games total.",
+                    context={'critical_teams': critical_teams, 'missing_count': missing_count}
+                )
+            elif warning_teams:
+                warning_msg = ", ".join([f"{t[0]}:{t[1]}%" for t in warning_teams])
+                notify_warning(
+                    title=f"WARNING: Boxscore Coverage Below 90% ({date_range})",
+                    message=f"Teams below 90%: {warning_msg}. Missing {missing_count} games total.",
+                    context={'warning_teams': warning_teams, 'missing_count': missing_count}
+                )
+
+        status = 'critical' if critical_teams else ('warning' if warning_teams else 'ok')
+
+        return jsonify({
+            "status": status,
+            "date_range": f"{start_date} to {end_date}",
+            "missing_games": missing_count,
+            "critical_teams": critical_teams,
+            "warning_teams": warning_teams,
+            "total_teams_checked": len(coverage_result),
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Boxscore completeness check failed: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 def normalize_message_format(message: dict) -> dict:
     """
     Normalize Pub/Sub message format to be compatible with processor routing.
