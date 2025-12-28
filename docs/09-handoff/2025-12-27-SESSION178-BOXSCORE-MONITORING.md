@@ -82,7 +82,7 @@ curl -X POST "https://nba-phase2-raw-processors-f7p3g7f6ya-wl.a.run.app/monitori
 3. No fallback data source currently
 
 **Prevention strategies documented in:**
-`docs/08-projects/current/BOXSCORE-GAPS-AND-CIRCUIT-BREAKERS.md`
+`docs/08-projects/current/boxscore-monitoring/README.md`
 
 ---
 
@@ -129,7 +129,7 @@ Current: 7 days. Consider reducing to 1-2 days.
 
 - `shared/utils/completeness_checker.py` - Threshold setting
 - `data_processors/raw/main_processor_service.py` - Monitoring endpoint
-- `docs/08-projects/current/BOXSCORE-GAPS-AND-CIRCUIT-BREAKERS.md` - Full documentation
+- `docs/08-projects/current/boxscore-monitoring/README.md` - Full documentation
 
 ---
 
@@ -165,4 +165,4 @@ bq query --use_legacy_sql=false "SELECT COUNT(DISTINCT entity_id) FROM nba_orche
 ---
 
 **Session Status:** Complete
-**Documentation:** Updated `BOXSCORE-GAPS-AND-CIRCUIT-BREAKERS.md`
+**Documentation:** `docs/08-projects/current/boxscore-monitoring/`
