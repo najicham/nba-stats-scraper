@@ -88,6 +88,7 @@ Players without prop lines fail completeness checks and trip circuit breakers (7
 | `data_processors/publishing/tonight_all_players_exporter.py` | Deduplication + last_10_points | `811b35c` |
 | `scripts/scrape_espn_all_rosters.py` | Fix team codes, remove duplicate | `b383ad8` |
 | `scripts/validate_tonight_data.py` | New validation script | `b00d41a` |
+| `config/workflows.yaml` | Add ESPN roster to morning_operations | `f82c44f` |
 
 ---
 
@@ -204,9 +205,9 @@ exporter.export('2025-12-28')
 ## Priority for Next Session
 
 ### HIGH
-1. **Add ESPN roster to workflows.yaml**
-   - Add to `daily_foundation` window at 3 AM ET
-   - This prevents future roster staleness
+1. **Add ESPN roster to workflows.yaml** - ✅ DONE
+   - Added to `morning_operations` workflow (6-10 AM ET)
+   - Commit: `f82c44f`
 
 2. **Investigate completeness checker**
    - Why are GSW, POR, DET, LAC, SAC players failing?
@@ -236,4 +237,6 @@ f333a3e docs: Add Session 181 handoff - bug fixes and investigation
 b00d41a feat: Add comprehensive tonight data validation script
 eb03639 docs: Update Session 181 handoff with roster backfill and validation results
 b383ad8 fix: ESPN roster script - use correct team abbreviations
+fb1ba5f docs: Add complete Session 181 handoff with all findings
+f82c44f feat: Add ESPN roster scraper to daily workflows
 ```
