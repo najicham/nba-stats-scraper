@@ -395,9 +395,55 @@ Where `null` = DNP (Did Not Play).
 
 | Item | Priority | Status |
 |------|----------|--------|
-| Add `period`/`time_remaining` to live-grading | High | 🔄 In Progress |
-| Add `days_rest` to tonight | Medium | 🔄 In Progress |
+| Add `period`/`time_remaining` to live-grading | High | ✅ **Deployed** (2025-12-28) |
+| Add `days_rest` to tonight | Medium | ✅ **Deployed** (2025-12-28) |
 | Document `line_source` values | Medium | ✅ Done (above) |
 | Consider preliminary players endpoint | Low | 📋 Backlog |
 | Add `last_10_points` array | Low | 📋 Backlog |
+
+---
+
+## Deployment Verification
+
+### Live Grading - `period` and `time_remaining` ✅
+
+**Verified in production:**
+```json
+{
+  "player_lookup": "jeremiahfears",
+  "game_status": "final",
+  "period": 4,
+  "time_remaining": "Final",
+  "predicted": 12.0,
+  "actual": 18,
+  ...
+}
+```
+
+During live games, you'll see:
+```json
+{
+  "period": 3,
+  "time_remaining": "Q3 8:24"
+}
+```
+
+### Tonight - `days_rest` ✅
+
+**Deployed and ready.** Will appear in next tonight's export (Dec 28 ~1:30 PM ET):
+```json
+{
+  "player_lookup": "lebronjames",
+  "days_rest": 2,
+  "fatigue_level": "normal",
+  ...
+}
+```
+
+**Values:**
+- `0` = Back-to-back
+- `1` = 1 day rest
+- `2` = 2 days rest
+- `3+` = Well rested
+- `null` = Data not available
 
