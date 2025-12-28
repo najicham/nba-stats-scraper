@@ -205,8 +205,17 @@ class LiveScoresExporter(BaseExporter):
             List of transformed game dictionaries
         """
         games = []
+        skipped_games = 0
 
         for box in live_data:
+            # Filter by date - BDL /live API returns games from any date
+            # that are currently active or recently finished
+            game_date = str(box.get("date", ""))[:10]  # "2025-12-28"
+            if game_date and game_date != target_date:
+                skipped_games += 1
+                logger.debug(f"Skipping game {box.get('id')} from {game_date}, target is {target_date}")
+                continue
+
             # BDL live API has flat structure - team info is at box level
             # Extract game metadata
             game_id = str(box.get("id", ""))
@@ -270,6 +279,9 @@ class LiveScoresExporter(BaseExporter):
         # Sort games by status (in_progress first, then final, then scheduled)
         status_order = {'in_progress': 0, 'final': 1, 'scheduled': 2}
         games.sort(key=lambda g: status_order.get(g['status'], 3))
+
+        if skipped_games > 0:
+            logger.info(f"Filtered out {skipped_games} games from other dates (target: {target_date})")
 
         return games
 

@@ -36,14 +36,16 @@ GCS_BUCKET = os.environ.get('GCS_BUCKET', 'nba-props-platform-api')
 
 
 def get_today_date() -> str:
-    """Get today's date in ET timezone."""
-    from datetime import timedelta
+    """Get today's date in ET timezone (DST-aware)."""
+    try:
+        from zoneinfo import ZoneInfo
+        et_tz = ZoneInfo('America/New_York')
+    except ImportError:
+        # Fallback for older Python versions
+        import pytz
+        et_tz = pytz.timezone('America/New_York')
 
-    # Simple ET offset (doesn't handle DST precisely but close enough)
-    utc_now = datetime.now(timezone.utc)
-    et_offset = timedelta(hours=-5)  # EST
-    et_now = utc_now + et_offset
-
+    et_now = datetime.now(et_tz)
     return et_now.strftime('%Y-%m-%d')
 
 

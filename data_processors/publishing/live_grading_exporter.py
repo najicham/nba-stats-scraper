@@ -102,8 +102,8 @@ class LiveGradingExporter(BaseExporter):
         # Fetch live scores from BDL API
         live_data = self._fetch_live_box_scores()
 
-        # Build live scores lookup by player_lookup
-        live_scores = self._build_live_scores_map(live_data)
+        # Build live scores lookup by player_lookup (filtered by target date)
+        live_scores = self._build_live_scores_map(live_data, target_date)
 
         # Grade predictions against live scores
         graded_predictions = self._grade_predictions(predictions, live_scores)
@@ -241,9 +241,13 @@ class LiveGradingExporter(BaseExporter):
             logger.error(f"Failed to fetch live box scores: {e}")
             return []
 
-    def _build_live_scores_map(self, live_data: List[Dict]) -> Dict[str, Dict]:
+    def _build_live_scores_map(self, live_data: List[Dict], target_date: str) -> Dict[str, Dict]:
         """
         Build a map of player_lookup -> live stats from BDL data.
+
+        Args:
+            live_data: Raw BDL API response data
+            target_date: Target date for filtering (YYYY-MM-DD)
 
         Returns dict with structure:
         {
@@ -256,8 +260,14 @@ class LiveGradingExporter(BaseExporter):
         }
         """
         live_scores = {}
+        skipped_games = 0
 
         for box in live_data:
+            # Filter by date - BDL /live API returns games from any date
+            game_date = str(box.get("date", ""))[:10]
+            if game_date and game_date != target_date:
+                skipped_games += 1
+                continue
             # Determine game status
             status_text = str(box.get("status", "")).lower()
             period = box.get("period", 0) or 0
@@ -287,6 +297,9 @@ class LiveGradingExporter(BaseExporter):
                 self._add_player_to_map(
                     live_scores, player_stat, away_abbr, game_status, period, time_remaining
                 )
+
+        if skipped_games > 0:
+            logger.info(f"Filtered out {skipped_games} games from other dates (target: {target_date})")
 
         return live_scores
 
