@@ -237,3 +237,109 @@ After today's fixes:
 - **Empty Games:** Still broken - Need roster backfill first
 
 The API file has been re-exported with fixes at `gs://nba-props-platform-api/v1/tonight/all-players.json`
+
+---
+
+## Part 2: Roster Backfill and Validation (Added during session)
+
+### Roster Backfill Results
+
+Ran `scripts/scrape_espn_all_rosters.py` to backfill roster data:
+- **25/30 teams** scraped successfully
+- **5 teams missing:** GSW, NOP, NYK, SAS, UTA (folders created but possibly empty)
+- Data processed into BigQuery: 440 players
+
+### Phase 3 Re-run Results
+
+Ran `UpcomingPlayerGameContextProcessor` for 2025-12-28:
+- **147 players** processed successfully
+- **99 players** failed due to circuit breakers (active until Jan 4, 2026)
+
+### Current State (After All Fixes)
+
+| Game | Expected Teams | Actual Teams | Status |
+|------|----------------|--------------|--------|
+| GSW@TOR | GSW, TOR | TOR only | ❌ GSW missing |
+| PHI@OKC | PHI, OKC | Both | ✅ |
+| MEM@WAS | MEM, WAS | Both | ✅ |
+| BOS@POR | BOS, POR | BOS only | ❌ POR missing |
+| DET@LAC | DET, LAC | None | ❌ Both missing |
+| SAC@LAL | SAC, LAL | LAL only | ❌ SAC missing |
+
+### Validation Script Created
+
+**File:** `scripts/validate_tonight_data.py`
+
+New comprehensive validation script that checks:
+1. Schedule data exists
+2. Roster data is fresh
+3. Game context has both teams for each game
+4. Predictions exist and aren't duplicated
+5. Prop lines exist
+6. Tonight API is exported correctly
+7. Scrapers in registry vs workflows.yaml
+
+**Usage:**
+```bash
+PYTHONPATH=. python scripts/validate_tonight_data.py --date 2025-12-28
+```
+
+### Issues Found by Validation Script
+
+**7 ERRORS:**
+1. GSW@TOR: Missing team GSW
+2. BOS@POR: Missing team POR
+3. DET@LAC: Missing teams DET, LAC
+4. DET@LAC: No players in game_context
+5. SAC@LAL: Missing team SAC
+6. Predictions: 5x duplicates (130 rows for 26 players)
+7. DET@LAC: No players in export
+
+**20 WARNINGS:**
+- Only 25/30 teams have roster data
+- 18 scrapers in registry but not in workflows.yaml (including espn_roster!)
+
+### Root Cause Analysis
+
+**Why ESPN roster scraper didn't run:**
+1. Scraper exists in `scrapers/registry.py`
+2. NOT included in `config/workflows.yaml`
+3. No scheduler job exists
+4. Last manual run was October 18, 2025
+
+**Why 5 teams missing from roster backfill:**
+- GSW, NOP, NYK, SAS, UTA - need investigation
+- Folders created in GCS but data may be empty/corrupt
+
+**Why 99 players have circuit breakers:**
+- Players previously failed due to missing data
+- Circuit breakers prevent retry until Jan 4, 2026
+- May need manual circuit breaker reset
+
+### Recommendations for System Robustness
+
+1. **Add ESPN roster to workflows.yaml**
+   - Add to `daily_foundation` window
+   - Schedule daily at 3 AM ET
+
+2. **Add validation to daily health check**
+   - Run `validate_tonight_data.py` after 2 PM ET
+   - Alert if any errors found
+
+3. **Create data freshness monitoring**
+   - Check last update time for critical tables
+   - Alert if roster > 1 day old
+
+4. **Add circuit breaker management**
+   - API to clear circuit breakers
+   - Dashboard showing blocked players
+
+5. **Validate scrapers registry vs workflows**
+   - Run weekly audit
+   - Alert on new unscheduled scrapers
+
+### Commits (Part 2)
+
+```
+b00d41a feat: Add comprehensive tonight data validation script
+```
