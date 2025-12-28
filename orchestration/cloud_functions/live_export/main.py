@@ -116,7 +116,12 @@ def main(request):
 
     # Get parameters from request
     request_json = request.get_json(silent=True) or {}
-    target_date = request_json.get('target_date') or get_today_date()
+    raw_date = request_json.get('target_date')
+    # Handle "today" as a special value - convert to actual date in ET
+    if not raw_date or raw_date.lower() == 'today':
+        target_date = get_today_date()
+    else:
+        target_date = raw_date
     include_grading = request_json.get('include_grading', True)
 
     logger.info(f"Live export triggered for {target_date} (grading={include_grading})")
@@ -168,7 +173,12 @@ def pubsub_main(cloud_event):
         logger.warning(f"Failed to parse Pub/Sub message: {e}")
         message_data = {}
 
-    target_date = message_data.get('target_date') or get_today_date()
+    raw_date = message_data.get('target_date')
+    # Handle "today" as a special value - convert to actual date in ET
+    if not raw_date or raw_date.lower() == 'today':
+        target_date = get_today_date()
+    else:
+        target_date = raw_date
 
     logger.info(f"Live export triggered via Pub/Sub for {target_date}")
 

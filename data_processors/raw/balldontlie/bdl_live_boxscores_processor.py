@@ -213,8 +213,9 @@ class BdlLiveBoxscoresProcessor(ProcessorBase):
             home_score = box.get('home_team_score', 0) or 0
             away_score = box.get('visitor_team_score', 0) or 0
 
-            # Derive game_date from poll timestamp (games in progress are for "today")
-            game_date = poll_dt.date().isoformat()
+            # Use the game's date from the API response (not poll timestamp)
+            # This ensures games played past midnight UTC still use correct ET date
+            game_date = box.get('date', poll_dt.date().isoformat())
 
             # Process home team players
             for player_stats in home_team.get('players', []):
