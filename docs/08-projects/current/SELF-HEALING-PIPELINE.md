@@ -126,24 +126,34 @@ Actions:
 
 ---
 
-## Scheduler Setup
+## Cloud Scheduler Setup (DEPLOYED)
 
-To enable automatic self-healing, add this Cloud Scheduler job:
+The self-healing scheduler is already deployed and running:
 
-```bash
-gcloud scheduler jobs create http self-heal-predictions \
-  --location=us-west2 \
-  --schedule="15 14 * * *" \
-  --time-zone="America/New_York" \
-  --uri="https://nba-phase1-scrapers-f7p3g7f6ya-wl.a.run.app/run-script" \
-  --http-method=POST \
-  --message-body='{"script": "bin/pipeline/self_heal_check.sh"}' \
-  --description="Self-healing check 30 min after same-day-predictions"
+| Component | Status | Details |
+|-----------|--------|---------|
+| Cloud Function | ✅ Deployed | `self-heal-check` in us-west2 |
+| Scheduler Job | ✅ Running | `self-heal-predictions` at 2:15 PM ET daily |
+| IAM | ✅ Configured | scheduler-orchestration SA has all permissions |
+
+### Function URL
+```
+https://us-west2-nba-props-platform.cloudfunctions.net/self-heal-check
 ```
 
-Or run as cron on a VM:
-```cron
-15 14 * * * /path/to/nba-stats-scraper/bin/pipeline/self_heal_check.sh >> /var/log/self-heal.log 2>&1
+### Manual Trigger
+```bash
+gcloud scheduler jobs run self-heal-predictions --location=us-west2
+```
+
+### Or call directly
+```bash
+curl -X POST "https://us-west2-nba-props-platform.cloudfunctions.net/self-heal-check"
+```
+
+### Local Script Alternative
+```bash
+./bin/pipeline/self_heal_check.sh
 ```
 
 ---
@@ -256,4 +266,6 @@ for doc in db.collection('run_history').where('status', '==', 'running').stream(
 
 ## Commit History
 
+- `7fc54b0` - feat: Add self-heal Cloud Function and scheduler (2025-12-27)
+- `192d5c2` - docs: Add self-healing pipeline documentation (2025-12-27)
 - `0fd299d` - feat: Add self-healing pipeline improvements (2025-12-27)
