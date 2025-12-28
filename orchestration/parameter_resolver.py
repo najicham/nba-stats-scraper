@@ -527,36 +527,38 @@ class ParameterResolver:
             'period': period
         }
 
-    def _resolve_nbac_gamebook_pdf(self, context: Dict[str, Any]) -> Dict[str, Any]:
+    def _resolve_nbac_gamebook_pdf(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
         Resolver for NBA.com gamebook PDF scraper.
 
         Needs game_code in format: "YYYYMMDD/AWYHOM"
         Example: "20240410/MEMCLE"
 
-        Phase 1: Returns params for first game only.
-        Phase 2: Will return list to iterate over all games.
+        Returns list of parameter sets to iterate over ALL games.
         """
         games = context.get('games_today', [])
 
         if not games:
             logger.warning("No games today for gamebook PDF scraper")
-            return {}
+            return []
 
-        game = games[0]
+        params_list = []
+        for game in games:
+            # Extract game info
+            game_date_yyyymmdd = game.game_date.replace('-', '')  # "20240410"
+            # Use correct attribute names - 'away_team' and 'home_team'
+            away_team = getattr(game, 'away_team', 'UNK')[:3].upper()
+            home_team = getattr(game, 'home_team', 'UNK')[:3].upper()
 
-        # Extract game info
-        game_date_yyyymmdd = game.game_date.replace('-', '')  # "20240410"
-        # FIX: Use correct attribute names - 'away_team' and 'home_team', not 'away_team_abbr'
-        away_team = getattr(game, 'away_team', 'UNK')[:3].upper()
-        home_team = getattr(game, 'home_team', 'UNK')[:3].upper()
+            # Build game_code
+            game_code = f"{game_date_yyyymmdd}/{away_team}{home_team}"
 
-        # Build game_code
-        game_code = f"{game_date_yyyymmdd}/{away_team}{home_team}"
+            params_list.append({
+                'game_code': game_code
+            })
 
-        return {
-            'game_code': game_code
-        }
+        logger.info(f"Resolved nbac_gamebook_pdf for {len(params_list)} games")
+        return params_list
 
     def _resolve_odds_props(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
