@@ -128,8 +128,64 @@ Add monitoring for:
 
 ---
 
+## Root Cause Analysis (2025-12-27)
+
+### Why Did the Boxscore Gaps Occur?
+
+**Primary Cause: BallDontLie API Data Gaps**
+
+The BallDontLie API does not always have complete game data immediately. Testing revealed:
+
+1. **API returns incomplete data for recent games** - Games from Dec 21-23 show only partial team coverage
+2. **West coast late games are most affected** - LAC, SAC, POR games consistently missing
+3. **Some games never appear in BDL API** - Dec 23 games POR@ORL, SAC@DET, LAC@HOU still missing after 4 days
+
+**Secondary Cause: No Daily Completeness Monitoring**
+
+The pipeline lacked:
+- Automated detection of boxscore gaps
+- Alerts when coverage drops below threshold
+- Automatic backfill triggering
+
+### Prevention Strategies
+
+1. **Add Daily Boxscore Completeness Check** (HIGH)
+   - Run after each day's games complete
+   - Compare schedule vs boxscores in BigQuery
+   - Alert if coverage < 95%
+
+2. **Implement Fallback Data Source** (MEDIUM)
+   - NBA.com gamebook data as backup
+   - Already scraped but not used for player boxscores
+
+3. **Reduce Circuit Breaker Aggressiveness** (LOW)
+   - Lower threshold from 90% to 70%
+   - Reduce block duration from 7 days to 1 day
+   - Auto-clear when upstream data improves
+
+### Backfill Completed (2025-12-27)
+
+```
+Dates backfilled: 12/1, 12/2, 12/10, 12/11, 12/12, 12/15, 12/18, 12/20, 12/21, 12/22, 12/23, 12/26
+Method: PYTHONPATH=. .venv/bin/python scrapers/balldontlie/bdl_box_scores.py --date DATE --group gcs
+```
+
+**Coverage After Backfill:**
+- 22 teams at 100%
+- GSW, LAC at 90%
+- SAC at 78%
+- DET, HOU, ORL, POR at 82%
+
+**Remaining Gaps (BDL API limitation):**
+- Dec 21: HOU, SAC
+- Dec 22: DET, GSW, ORL, POR
+- Dec 23: DET, HOU, LAC, ORL, POR, SAC
+
+---
+
 ## Related Files
 
 - `shared/utils/completeness_checker.py` - Completeness threshold
 - `data_processors/analytics/upcoming_player_game_context/upcoming_player_game_context_processor.py` - Player processing logic
 - `nba_orchestration.reprocess_attempts` - Circuit breaker tracking table
+- `scrapers/balldontlie/bdl_box_scores.py` - BDL boxscores scraper
