@@ -53,7 +53,17 @@ scrapers:
     critical: false
     processor_name: "p2_bdl_active_players"
     estimated_duration_seconds: 30
-  
+
+  espn_roster:
+    name: "espn_roster"
+    description: "ESPN team rosters (CRITICAL for Phase 3 game context)"
+    module: "scrapers.espn.espn_roster_api"
+    critical: true
+    processor_name: "p2_espn_roster"
+    estimated_duration_seconds: 180  # ~6 seconds per team x 30 teams
+    # NOTE: Uses ESPN team codes (GS, NO, NY, SA, UTAH) not NBA codes
+    # Coordinator script handles conversion from NBA to ESPN codes
+
   # ────────────────────────────────────────────────────────────
   # Betting Lines (Revenue Critical)
   # ────────────────────────────────────────────────────────────
@@ -207,6 +217,7 @@ workflows:
         - br_season_roster
         - bdl_standings
         - bdl_active_players
+        - espn_roster           # ESPN rosters for Phase 3 game context
     
     alerts:
       failure: "CRITICAL"
