@@ -119,12 +119,46 @@ DELETE FROM nba_orchestration.reprocess_attempts WHERE analysis_date = 'YYYY-MM-
 
 ---
 
-## Detection / Alerting
+## Detection / Alerting (IMPLEMENTED 2025-12-27)
 
-Add monitoring for:
+### Daily Boxscore Completeness Monitor
+
+**Scripts:**
+- `bin/monitoring/check_boxscore_completeness.sh` - Shell script for manual checks
+- `scripts/check_boxscore_completeness.py` - Python script with email alerts
+
+**Cloud Scheduler:** `boxscore-completeness-daily`
+- Runs daily at 6:00 AM ET (after all games complete)
+- Calls `POST /monitoring/boxscore-completeness` on Phase 2 service
+- Sends email alerts if coverage drops below thresholds
+
+**Thresholds:**
+- CRITICAL: < 70% coverage (sends error alert)
+- WARNING: < 90% coverage (sends warning alert)
+
+**Usage:**
+```bash
+# Check yesterday
+./bin/monitoring/check_boxscore_completeness.sh
+
+# Check specific date
+./bin/monitoring/check_boxscore_completeness.sh --date 2025-12-23
+
+# Check last 7 days
+./bin/monitoring/check_boxscore_completeness.sh --days 7
+
+# Python version with email alerts
+PYTHONPATH=. .venv/bin/python scripts/check_boxscore_completeness.py --days 7
+```
+
+**To set up scheduler:**
+```bash
+./bin/monitoring/setup_boxscore_completeness_scheduler.sh
+```
+
+### Future Monitoring (TODO)
 1. Circuit breaker count exceeding threshold (e.g., > 50 players blocked)
-2. Boxscore coverage dropping below 80% for any team
-3. Analytics output missing > 2 teams scheduled to play
+2. Analytics output missing > 2 teams scheduled to play
 
 ---
 
