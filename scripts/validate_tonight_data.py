@@ -1,0 +1,360 @@
+#!/usr/bin/env python3
+"""
+FILE: scripts/validate_tonight_data.py
+
+Comprehensive validation script for tonight's game data.
+Checks each stage of the pipeline and reports issues.
+
+Run after 2 PM ET to verify tonight's predictions are ready.
+
+Usage:
+    python scripts/validate_tonight_data.py [--date YYYY-MM-DD]
+"""
+
+import sys
+import os
+import argparse
+from datetime import date, datetime, timezone
+from typing import Dict, List, Tuple
+from collections import defaultdict
+
+# Add project root to path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
+from google.cloud import bigquery
+
+
+class TonightDataValidator:
+    """Validates all data required for tonight's predictions."""
+
+    def __init__(self, target_date: date):
+        self.target_date = target_date
+        self.client = bigquery.Client()
+        self.project = self.client.project
+        self.issues: List[Dict] = []
+        self.warnings: List[Dict] = []
+        self.stats: Dict = {}
+
+    def add_issue(self, stage: str, message: str, severity: str = "ERROR"):
+        self.issues.append({
+            'stage': stage,
+            'message': message,
+            'severity': severity
+        })
+
+    def add_warning(self, stage: str, message: str):
+        self.warnings.append({
+            'stage': stage,
+            'message': message
+        })
+
+    def check_schedule(self) -> int:
+        """Check that schedule data exists for target date."""
+        query = f"""
+        SELECT
+            COUNT(*) as game_count,
+            ARRAY_AGG(DISTINCT home_team_tricode) as home_teams,
+            ARRAY_AGG(DISTINCT away_team_tricode) as away_teams
+        FROM `{self.project}.nba_raw.nbac_schedule`
+        WHERE game_date = '{self.target_date}'
+        """
+        result = list(self.client.query(query).result())[0]
+
+        game_count = result.game_count
+        self.stats['scheduled_games'] = game_count
+
+        if game_count == 0:
+            self.add_issue('schedule', f'No games scheduled for {self.target_date}')
+            return 0
+
+        # Collect all teams
+        all_teams = set(result.home_teams or []) | set(result.away_teams or [])
+        self.stats['scheduled_teams'] = sorted(all_teams)
+
+        print(f"✓ Schedule: {game_count} games, {len(all_teams)} teams")
+        return game_count
+
+    def check_roster_freshness(self) -> bool:
+        """Check that roster data is recent."""
+        query = f"""
+        SELECT
+            MAX(roster_date) as latest_date,
+            COUNT(DISTINCT team_abbr) as team_count
+        FROM `{self.project}.nba_raw.espn_team_rosters`
+        WHERE roster_date >= DATE_SUB('{self.target_date}', INTERVAL 7 DAY)
+        """
+        result = list(self.client.query(query).result())[0]
+
+        latest_date = result.latest_date
+        team_count = result.team_count
+
+        self.stats['roster_date'] = str(latest_date) if latest_date else None
+        self.stats['roster_teams'] = team_count
+
+        if not latest_date:
+            self.add_issue('roster', 'No roster data in last 7 days!')
+            return False
+
+        days_old = (self.target_date - latest_date).days
+        if days_old > 1:
+            self.add_warning('roster', f'Roster data is {days_old} days old')
+
+        if team_count < 30:
+            self.add_warning('roster', f'Only {team_count}/30 teams have roster data')
+
+        print(f"✓ Roster: {team_count} teams, last updated {latest_date}")
+        return True
+
+    def check_game_context(self) -> Dict[str, List[str]]:
+        """Check game context coverage for each game."""
+        query = f"""
+        SELECT
+            s.game_id,
+            s.home_team_tricode as expected_home,
+            s.away_team_tricode as expected_away,
+            ARRAY_AGG(DISTINCT gc.team_abbr IGNORE NULLS) as actual_teams,
+            COUNT(DISTINCT gc.player_lookup) as player_count
+        FROM `{self.project}.nba_raw.nbac_schedule` s
+        LEFT JOIN `{self.project}.nba_analytics.upcoming_player_game_context` gc
+            ON s.game_id = gc.game_id AND gc.game_date = '{self.target_date}'
+        WHERE s.game_date = '{self.target_date}'
+        GROUP BY s.game_id, s.home_team_tricode, s.away_team_tricode
+        ORDER BY s.game_id
+        """
+        results = list(self.client.query(query).result())
+
+        missing_teams_by_game = {}
+        for row in results:
+            expected = {row.expected_home, row.expected_away}
+            actual = set(row.actual_teams or [])
+            missing = expected - actual
+
+            if missing:
+                game = f"{row.expected_away}@{row.expected_home}"
+                missing_teams_by_game[game] = list(missing)
+                self.add_issue('game_context',
+                    f'{game}: Missing teams {missing}, only have {actual}')
+
+            if row.player_count == 0:
+                game = f"{row.expected_away}@{row.expected_home}"
+                self.add_issue('game_context',
+                    f'{game}: No players in game_context!')
+
+        total_players = sum(r.player_count for r in results)
+        self.stats['game_context_players'] = total_players
+
+        games_with_issues = len(missing_teams_by_game)
+        if games_with_issues == 0:
+            print(f"✓ Game Context: All games have both teams, {total_players} total players")
+        else:
+            print(f"✗ Game Context: {games_with_issues} games missing teams")
+
+        return missing_teams_by_game
+
+    def check_predictions(self) -> Tuple[int, int]:
+        """Check predictions exist and aren't duplicated."""
+        # Check for predictions
+        query = f"""
+        SELECT
+            COUNT(*) as total_rows,
+            COUNT(DISTINCT player_lookup) as unique_players,
+            COUNT(DISTINCT game_id) as games
+        FROM `{self.project}.nba_predictions.player_prop_predictions`
+        WHERE game_date = '{self.target_date}'
+          AND system_id = 'ensemble_v1'
+          AND is_active = TRUE
+        """
+        result = list(self.client.query(query).result())[0]
+
+        total_rows = result.total_rows
+        unique_players = result.unique_players
+        games = result.games
+
+        self.stats['prediction_rows'] = total_rows
+        self.stats['prediction_players'] = unique_players
+        self.stats['prediction_games'] = games
+
+        if total_rows == 0:
+            self.add_issue('predictions', f'No predictions for {self.target_date}')
+            return 0, 0
+
+        # Check for duplicates
+        if total_rows > unique_players:
+            dup_ratio = total_rows / unique_players
+            self.add_issue('predictions',
+                f'Duplicate predictions: {total_rows} rows for {unique_players} players ({dup_ratio:.1f}x)')
+
+        print(f"✓ Predictions: {unique_players} players, {games} games ({total_rows} rows)")
+        return unique_players, total_rows
+
+    def check_prop_lines(self) -> int:
+        """Check prop lines exist."""
+        query = f"""
+        SELECT
+            COUNT(DISTINCT player_lookup) as players_with_lines
+        FROM `{self.project}.nba_raw.bettingpros_player_points_props`
+        WHERE game_date = '{self.target_date}'
+          AND is_active = TRUE
+        """
+        result = list(self.client.query(query).result())[0]
+
+        players = result.players_with_lines
+        self.stats['players_with_lines'] = players
+
+        if players == 0:
+            self.add_warning('prop_lines', 'No prop lines from BettingPros')
+        else:
+            print(f"✓ Prop Lines: {players} players have betting lines")
+
+        return players
+
+    def check_tonight_api(self) -> bool:
+        """Check tonight's API file exists and is fresh."""
+        from google.cloud import storage
+
+        client = storage.Client()
+        bucket = client.bucket('nba-props-platform-api')
+        blob = bucket.blob('v1/tonight/all-players.json')
+
+        if not blob.exists():
+            self.add_issue('api_export', 'Tonight API file does not exist!')
+            return False
+
+        blob.reload()
+        updated = blob.updated
+
+        # Check if file is from today
+        if updated.date() != self.target_date:
+            self.add_warning('api_export',
+                f'API file last updated {updated}, not today')
+
+        # Parse and check content
+        import json
+        content = blob.download_as_text()
+        data = json.loads(content)
+
+        api_date = data.get('game_date')
+        total_players = data.get('total_players', 0)
+        games = len(data.get('games', []))
+
+        self.stats['api_date'] = api_date
+        self.stats['api_players'] = total_players
+        self.stats['api_games'] = games
+
+        if api_date != str(self.target_date):
+            self.add_issue('api_export',
+                f'API has wrong date: {api_date} (expected {self.target_date})')
+            return False
+
+        # Check for issues in API
+        for game in data.get('games', []):
+            if len(game.get('players', [])) == 0:
+                matchup = f"{game.get('away_team')}@{game.get('home_team')}"
+                self.add_issue('api_export', f'{matchup}: No players in export')
+
+        print(f"✓ Tonight API: {total_players} players, {games} games, updated {updated}")
+        return True
+
+    def check_scraper_registry_vs_workflows(self) -> List[str]:
+        """Check for scrapers in registry but not in workflows."""
+        import yaml
+
+        # Read workflows
+        workflows_path = os.path.join(os.path.dirname(__file__), '..', 'config', 'workflows.yaml')
+        with open(workflows_path) as f:
+            workflows = yaml.safe_load(f)
+
+        # Get all scraper names from workflows
+        workflow_scrapers = set()
+        for scraper_name, config in workflows.get('scrapers', {}).items():
+            workflow_scrapers.add(scraper_name)
+
+        # Get all scrapers from registry
+        registry_path = os.path.join(os.path.dirname(__file__), '..', 'scrapers', 'registry.py')
+        with open(registry_path) as f:
+            content = f.read()
+
+        # Parse registry (simple extraction)
+        import re
+        registry_scrapers = set(re.findall(r'"(\w+)":\s*\(', content))
+
+        # Find scrapers in registry but not workflows
+        unscheduled = registry_scrapers - workflow_scrapers
+
+        # Filter out known exceptions (scrapers that are intentionally not scheduled)
+        known_exceptions = {'test_scraper', 'mock_scraper'}
+        unscheduled = unscheduled - known_exceptions
+
+        if unscheduled:
+            for scraper in sorted(unscheduled):
+                self.add_warning('scraper_config',
+                    f'Scraper "{scraper}" in registry but not in workflows.yaml')
+
+        return list(unscheduled)
+
+    def run_all_checks(self) -> bool:
+        """Run all validation checks."""
+        print(f"\n{'='*60}")
+        print(f"TONIGHT'S DATA VALIDATION - {self.target_date}")
+        print(f"{'='*60}\n")
+
+        # Run each check
+        game_count = self.check_schedule()
+        if game_count == 0:
+            print("\n⚠️ No games today - skipping remaining checks")
+            return True
+
+        print()
+        self.check_roster_freshness()
+        print()
+        self.check_game_context()
+        print()
+        self.check_predictions()
+        print()
+        self.check_prop_lines()
+        print()
+        self.check_tonight_api()
+        print()
+        self.check_scraper_registry_vs_workflows()
+
+        # Print summary
+        print(f"\n{'='*60}")
+        print("SUMMARY")
+        print(f"{'='*60}")
+
+        if self.issues:
+            print(f"\n❌ {len(self.issues)} ISSUES FOUND:")
+            for issue in self.issues:
+                print(f"  [{issue['stage']}] {issue['message']}")
+
+        if self.warnings:
+            print(f"\n⚠️ {len(self.warnings)} WARNINGS:")
+            for warning in self.warnings:
+                print(f"  [{warning['stage']}] {warning['message']}")
+
+        if not self.issues and not self.warnings:
+            print("\n✅ All checks passed!")
+
+        print(f"\n{'='*60}\n")
+
+        return len(self.issues) == 0
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Validate tonight\'s game data')
+    parser.add_argument('--date', type=str, help='Target date (YYYY-MM-DD), default: today')
+    args = parser.parse_args()
+
+    if args.date:
+        target_date = date.fromisoformat(args.date)
+    else:
+        target_date = date.today()
+
+    validator = TonightDataValidator(target_date)
+    success = validator.run_all_checks()
+
+    sys.exit(0 if success else 1)
+
+
+if __name__ == '__main__':
+    main()
