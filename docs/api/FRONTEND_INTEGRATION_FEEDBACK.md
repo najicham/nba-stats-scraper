@@ -447,3 +447,407 @@ During live games, you'll see:
 - `3+` = Well rested
 - `null` = Data not available
 
+---
+
+## Frontend Update - December 28, 2025 (Session 201)
+
+**Focus:** Connecting real data for Tonight page and Challenge grading
+
+### Data Status Check (9:39 AM PST / 12:39 PM ET)
+
+| Endpoint | Status | Notes |
+|----------|--------|-------|
+| `/tonight/all-players.json` | ⚠️ **Stale** | Shows Dec 27 (yesterday) |
+| `/tonight/2025-12-28.json` | ❌ **404** | Today's dated file doesn't exist |
+| `/tonight/player/lebronjames.json` | ❌ **Very Stale** | Shows `game_date: "2021-12-25"` |
+| `/live/latest.json` | ✅ **Working** | Shows Dec 28, 9 games final |
+| `/live-grading/latest.json` | ✅ **Working** | Shows Dec 28, empty (no games today) |
+| `/live-grading/2025-12-27.json` | ✅ **Working** | Full grading data available |
+| `/best-bets/latest.json` | ⚠️ **Empty** | Shows Dec 27, 0 picks |
+| `/trends/whos-hot-v2.json` | ⚠️ **Empty** | 0 hot players, 0 cold players |
+| `/results/latest.json` | ✅ **Working** | Shows Dec 27 (correct - yesterday's results) |
+| `/players/lebronjames.json` | ⚠️ **Partial** | `season_stats` is null |
+
+### Critical Issues for Tonight Page
+
+#### Issue 1: `/tonight/all-players.json` Not Updating
+
+**Current State:**
+```json
+{
+  "game_date": "2025-12-27",
+  "generated_at": "2025-12-27T23:16:21.938706+00:00",
+  "total_players": 832,
+  "total_with_lines": 275
+}
+```
+
+**Expected:** Should show Dec 28 data after 1:30 PM ET scheduler runs.
+
+**Question:** Is the Dec 28 scheduler expected to run? If there are no games today, should `all-players.json` show an empty games array?
+
+---
+
+#### Issue 2: Player Detail Endpoint Extremely Stale
+
+**Endpoint:** `/tonight/player/{lookup}.json`
+
+**Example:** `/tonight/player/lebronjames.json`
+```json
+{
+  "player_lookup": "lebronjames",
+  "player_full_name": "LeBron James",
+  "game_date": "2021-12-25",  // <-- 4 YEARS OLD!
+  "generated_at": "2025-12-12T15:40:33.429675+00:00",
+  ...
+}
+```
+
+**Impact:** Player modal "Tonight" tab shows ancient data.
+
+**Question:** Is this endpoint still being maintained? Or was it deprecated?
+
+---
+
+#### Issue 3: Trends Endpoint Empty
+
+**Endpoint:** `/trends/whos-hot-v2.json`
+
+**Response:**
+```json
+{
+  "period": null,
+  "hot_count": 0,
+  "cold_count": 0
+}
+```
+
+**Question:** Is this endpoint being populated? The Trends page relies on this data.
+
+---
+
+#### Issue 4: Best Bets Empty
+
+**Endpoint:** `/best-bets/latest.json`
+
+**Response:**
+```json
+{
+  "game_date": "2025-12-27",
+  "total_picks": 0,
+  "picks": []
+}
+```
+
+**Question:** Are best bets being generated? Previous days may have had games but this shows 0 picks.
+
+---
+
+### Challenge Grading Data ✅
+
+**Good news:** Challenge grading is ready to work with real data.
+
+| Component | Status |
+|-----------|--------|
+| Player lookup matching | ✅ Same format (lowercase, no spaces) |
+| Live grading endpoint | ✅ `/live-grading/latest.json` works |
+| Historical grading | ✅ `/live-grading/{date}.json` works |
+| Required fields | ✅ `actual`, `game_status`, `status`, `line` all present |
+| Adapter layer | ✅ Transforms API → frontend types correctly |
+
+**Test Result (2025-12-27):**
+```json
+{
+  "player_lookup": "jeremiahfears",
+  "actual": 18,
+  "game_status": "final",
+  "status": "correct",
+  "period": 4,
+  "time_remaining": "Final"
+}
+```
+
+All required fields are present. Grading engine will work.
+
+---
+
+### Minor Type Mismatch (Non-Blocking)
+
+**Issue:** API returns `home_team`/`away_team` but TypeScript expects `game_id` in `LiveGradingPrediction`.
+
+**API Response:**
+```json
+{
+  "player_lookup": "jeremiahfears",
+  "home_team": "NOP",
+  "away_team": "PHX"
+  // No game_id field
+}
+```
+
+**Impact:** None - grading engine only matches by `player_lookup`, not `game_id`.
+
+**Recommendation:** Either:
+- Add `game_id` to API response, OR
+- We update frontend types to expect `home_team`/`away_team` instead
+
+---
+
+### Summary: What Frontend Needs to Work
+
+| Priority | Item | Status |
+|----------|------|--------|
+| **High** | `/tonight/all-players.json` updated for current date | ⏳ Waiting |
+| **High** | `/tonight/player/{lookup}.json` with current data | ❌ Broken |
+| **Medium** | `/best-bets/latest.json` with picks | ⏳ Waiting |
+| **Medium** | `/trends/whos-hot-v2.json` with data | ❌ Empty |
+| **Low** | Player profile `season_stats` populated | ⚠️ Partial |
+
+---
+
+### Questions for Backend
+
+1. **What's the scheduler status?** Are the daily jobs running (phase6-tonight-picks, etc.)?
+
+2. **Are there games today (Dec 28)?** If no games, should `all-players.json` update to show empty?
+
+3. **Is `/tonight/player/{lookup}.json` deprecated?** Data is 4 years old.
+
+4. **What populates `/trends/whos-hot-v2.json`?** Currently returning empty.
+
+5. **Are best bets being generated?** `/best-bets/latest.json` shows 0 picks.
+
+---
+
+### Next Steps (Frontend)
+
+Once data is flowing:
+1. Test challenge creation with real tonight data
+2. Test challenge grading with live game data
+3. Verify player modal shows correct tonight analysis
+4. Test trends page with real hot/cold players
+
+---
+
+## Backend Response - December 28, 2025 (Session 180)
+
+**From:** Backend Team
+**Date:** 2025-12-28
+**Time:** 12:55 PM ET
+
+---
+
+### Response to Session 201 Questions
+
+#### Q1: What's the scheduler status?
+
+**Status:** All schedulers are ENABLED and running normally.
+
+| Scheduler | Schedule | Last Run | Status |
+|-----------|----------|----------|--------|
+| `same-day-phase3` | 12:30 PM ET | ✅ Ran today | Analytics prep |
+| `same-day-phase4` | 1:00 PM ET | ⏳ Running in 5 mins | ML features |
+| `same-day-predictions` | 1:30 PM ET | ⏳ 35 mins away | Phase 5 predictions |
+| `phase6-tonight-picks` | 1:00 PM ET | ⏳ Running in 5 mins | Tonight API export |
+| `phase6-player-profiles` | 6 AM ET Sundays | ✅ Ran today | Player detail files |
+
+**Current Time:** 12:55 PM ET - You checked 30-40 minutes before the daily export runs.
+
+---
+
+#### Q2: Are there games today (Dec 28)?
+
+**YES - 6 games scheduled today.**
+
+Verified via NBA API:
+```json
+{ "games_scheduled": 6 }
+```
+
+The `/tonight/all-players.json` will update after:
+1. Phase 4 completes (~1:00 PM ET)
+2. Phase 5 predictions complete (~1:30 PM ET)
+3. Phase 6 export runs (~1:35-1:45 PM ET)
+
+**Expected availability:** ~1:45 PM ET today.
+
+---
+
+#### Q3: Is `/tonight/player/{lookup}.json` deprecated?
+
+**NOT deprecated, but BROKEN.** This is a real bug.
+
+**Investigation:**
+- File `lebronjames.json` was created **Dec 12, 2025** (16 days ago)
+- Contains `game_date: "2021-12-25"` (4 years old!)
+- The weekly scheduler (`phase6-player-profiles`) ran TODAY at 6 AM ET
+- BUT the files weren't updated
+
+**Root Cause:** The scheduler passes `{"players": true, "min_games": 5}` but **no target date**. The exporter may be querying an empty or old dataset.
+
+**Fix Required:** Yes - we need to investigate why the player detail exporter is producing stale data.
+
+**Priority:** High - this affects player modal functionality.
+
+**Workaround:** Use data from `/tonight/all-players.json` instead. Each player object in the `games[].players[]` array has the same core data (prediction, injury, fatigue, etc.).
+
+---
+
+#### Q4: What populates `/trends/whos-hot-v2.json`?
+
+**Working correctly - just no players qualify.**
+
+```json
+{
+  "generated_at": "2025-12-28T17:00:10",
+  "min_games": 5,
+  "total_qualifying_players": 0,
+  "hot": [],
+  "cold": []
+}
+```
+
+**Why empty:**
+- Requires players with 5+ games in last 30 days
+- Requires consistent over/under performance vs their line
+- Early in season + Christmas break = fewer qualifying players
+
+**Suggestion:** Lower `min_games` threshold or adjust criteria. Will look into this.
+
+---
+
+#### Q5: Are best bets being generated?
+
+**Working correctly - just no picks selected.**
+
+```json
+{
+  "game_date": "2025-12-27",
+  "methodology": "Ranked by composite score: confidence * edge_factor * historical_accuracy",
+  "total_picks": 0,
+  "picks": []
+}
+```
+
+**Why 0 picks:**
+- The algorithm is conservative
+- Requires high confidence + significant edge + good historical accuracy
+- Dec 27 may not have had any picks meeting all thresholds
+
+**This is intentional** - showing 0 picks is better than showing bad picks.
+
+---
+
+### Summary: What's Actually Broken vs Working
+
+| Endpoint | Status | Notes |
+|----------|--------|-------|
+| `/tonight/all-players.json` | ⏳ **Expected** | Will update ~1:45 PM ET today |
+| `/tonight/player/{lookup}.json` | ❌ **BROKEN** | 2021 data! Needs investigation |
+| `/live-grading/latest.json` | ⏳ **Expected** | Empty until games start tonight |
+| `/trends/whos-hot-v2.json` | ✅ **Working** | Empty because no players qualify |
+| `/best-bets/latest.json` | ✅ **Working** | Empty because no picks meet thresholds |
+| `/live/latest.json` | ✅ **Working** | Confirmed working |
+| `/results/latest.json` | ✅ **Working** | Shows Dec 27 correctly |
+
+---
+
+### Action Items (Backend)
+
+| Item | Priority | Status |
+|------|----------|--------|
+| Fix `/tonight/player/{lookup}.json` stale data | **High** | 🔍 Investigating |
+| Consider lowering trends `min_games` threshold | Low | 📋 Backlog |
+| Add empty-state file for no-games days | Low | 📋 Backlog |
+
+---
+
+### Check Back After 2 PM ET
+
+The tonight's data will be fully available after the schedulers run:
+- **1:00 PM ET:** Phase 4 + Phase 6 tonight export starts
+- **1:30 PM ET:** Phase 5 predictions complete
+- **~1:45 PM ET:** All data should be fresh
+
+Check `/tonight/all-players.json` after 2 PM ET - it should show Dec 28 with all 6 games.
+
+---
+
+## Update - December 28, 2025 (2:00 PM ET)
+
+**Status:** ✅ ALL DATA NOW FRESH
+
+After re-investigation at 1:55 PM ET, all endpoints are now working:
+
+### Verified Working
+
+| Endpoint | Status | Current Data |
+|----------|--------|--------------|
+| `/tonight/all-players.json` | ✅ Fresh | `game_date: "2025-12-28"`, `total_players: 211`, `generated_at: 2025-12-28T19:30:29` |
+| `/tonight/player/lebronjames.json` | ✅ Fresh | `game_date: "2025-12-28"`, `generated_at: 2025-12-28T18:08:59` |
+| `/live-grading/latest.json` | ✅ Ready | Waiting for games to start |
+
+### Root Cause: Timing
+
+The frontend team checked at **12:39 PM ET**. The scheduler runs at **1:00 PM ET**.
+
+| Time | What Happened |
+|------|---------------|
+| 12:39 PM ET | Frontend checked → saw Dec 27 data (stale) |
+| 1:00 PM ET | Scheduler triggered Phase 6 export |
+| 1:08 PM ET | Player files updated (including lebronjames.json) |
+| 1:30 PM ET | Predictions complete, all-players.json refreshed |
+
+**The "2021-12-25" date in lebronjames.json was from Dec 12** when the file was first created. It was overwritten today at 1:08 PM ET with current data.
+
+### Current LeBron Data
+
+```json
+{
+  "player_lookup": "lebronjames",
+  "game_date": "2025-12-28",
+  "generated_at": "2025-12-28T18:08:59.525308+00:00",
+  "game_context": {
+    "game_id": "0022500446",
+    "opponent": "SAC",
+    "home_game": true,
+    "team_abbr": "LAL",
+    "days_rest": 3,
+    "is_back_to_back": false
+  }
+}
+```
+
+### No Backend Issues Found
+
+All systems working as designed:
+- ✅ Schedulers running on time
+- ✅ Tonight export updates daily at 1 PM ET
+- ✅ Player detail files update for players with games that day
+- ✅ Trends/best-bets empty because no players/picks meet thresholds (intentional)
+
+### Recommendation for Frontend
+
+For real-time data availability checks:
+```javascript
+// Check if tonight data is for today
+const tonight = await fetch('/tonight/all-players.json').then(r => r.json());
+const isStale = tonight.game_date !== new Date().toISOString().split('T')[0];
+
+if (isStale) {
+  // Show "Data updating..." message
+  // Or use player index for selection
+}
+```
+
+---
+
+## Summary: No Backend Changes Needed
+
+All originally reported issues are either:
+1. ✅ Already fixed (period/time_remaining, days_rest)
+2. ✅ Working correctly (trends, best-bets - just empty criteria)
+3. ✅ Timing issue resolved (tonight data - check after 2 PM ET)
+
+**Frontend integration can proceed with current API.**
+

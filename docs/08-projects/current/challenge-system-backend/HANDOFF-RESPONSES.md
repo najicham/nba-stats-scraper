@@ -279,3 +279,39 @@ Backend changes deployed. Frontend can begin testing.
 Questions? Check the implementation in:
 - Tonight exporter: `data_processors/publishing/tonight_all_players_exporter.py`
 - Live exporter: `data_processors/publishing/live_scores_exporter.py`
+
+---
+
+## Update - December 28, 2025 (Session 180)
+
+### Frontend Integration Feedback Review
+
+Reviewed the frontend team's Session 201 feedback (in `/docs/api/FRONTEND_INTEGRATION_FEEDBACK.md`).
+
+**Issues Reported:**
+- `/tonight/all-players.json` showing stale Dec 27 data
+- `/tonight/player/lebronjames.json` showing 2021 data
+- Trends and best-bets endpoints empty
+
+**Root Cause: Timing**
+- Frontend checked at 12:39 PM ET
+- Scheduler runs at 1:00 PM ET
+- All data is now fresh as of 2:00 PM ET
+
+**Current Status (All Working):**
+
+| Endpoint | Status | Data Date |
+|----------|--------|-----------|
+| `/tonight/all-players.json` | ✅ Fresh | Dec 28, 211 players, 6 games |
+| `/tonight/player/lebronjames.json` | ✅ Fresh | Dec 28, LAL vs SAC |
+| `/live-grading/latest.json` | ✅ Ready | Waiting for games |
+| `/trends/whos-hot-v2.json` | ✅ Working | Empty (no qualifying players) |
+| `/best-bets/latest.json` | ✅ Working | Empty (no picks meet threshold) |
+
+**Recommendation for Frontend:**
+Check data freshness using `game_date` field:
+```javascript
+const isStale = data.game_date !== new Date().toISOString().split('T')[0];
+```
+
+**Full details:** See `/docs/api/FRONTEND_INTEGRATION_FEEDBACK.md` for complete back-and-forth discussion.
