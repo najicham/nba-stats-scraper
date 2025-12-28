@@ -177,13 +177,14 @@ class TonightAllPlayersExporter(BaseExporter):
             GROUP BY player_lookup
         ),
         game_context AS (
-            -- Get game context (team, opponent, etc.)
+            -- Get game context (team, opponent, rest days, etc.)
             SELECT
                 player_lookup,
                 game_id,
                 team_abbr,
                 opponent_team_abbr,
-                home_game
+                home_game,
+                days_rest
             FROM `nba-props-platform.nba_analytics.upcoming_player_game_context`
             WHERE game_date = @target_date
         ),
@@ -214,7 +215,7 @@ class TonightAllPlayersExporter(BaseExporter):
             p.current_points_line,
             CASE WHEN p.current_points_line IS NOT NULL THEN TRUE ELSE FALSE END as has_line,
 
-            -- Fatigue
+            -- Fatigue and rest
             f.fatigue_score,
             CASE
                 WHEN f.fatigue_score >= 95 THEN 'fresh'
@@ -222,6 +223,7 @@ class TonightAllPlayersExporter(BaseExporter):
                 WHEN f.fatigue_score IS NOT NULL THEN 'tired'
                 ELSE 'normal'
             END as fatigue_level,
+            gc.days_rest,
 
             -- Injury
             COALESCE(i.injury_status, 'available') as injury_status,
@@ -358,9 +360,10 @@ class TonightAllPlayersExporter(BaseExporter):
                     'is_home': p.get('home_game'),
                     'has_line': p.get('has_line', False),
 
-                    # Fatigue
+                    # Fatigue and rest
                     'fatigue_level': p.get('fatigue_level', 'normal'),
                     'fatigue_score': self._safe_float(p.get('fatigue_score')),
+                    'days_rest': p.get('days_rest'),
 
                     # Injury
                     'injury_status': p.get('injury_status', 'available'),

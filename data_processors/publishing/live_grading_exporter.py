@@ -269,12 +269,15 @@ class LiveGradingExporter(BaseExporter):
             else:
                 game_status = "scheduled"
 
+            # Get time remaining for display
+            time_remaining = box.get("time", "")
+
             # Process home team players
             home_team = box.get("home_team", {})
             home_abbr = home_team.get("abbreviation", "")
             for player_stat in home_team.get("players", []):
                 self._add_player_to_map(
-                    live_scores, player_stat, home_abbr, game_status
+                    live_scores, player_stat, home_abbr, game_status, period, time_remaining
                 )
 
             # Process away team players
@@ -282,7 +285,7 @@ class LiveGradingExporter(BaseExporter):
             away_abbr = away_team.get("abbreviation", "")
             for player_stat in away_team.get("players", []):
                 self._add_player_to_map(
-                    live_scores, player_stat, away_abbr, game_status
+                    live_scores, player_stat, away_abbr, game_status, period, time_remaining
                 )
 
         return live_scores
@@ -292,7 +295,9 @@ class LiveGradingExporter(BaseExporter):
         live_scores: Dict,
         player_stat: Dict,
         team_abbr: str,
-        game_status: str
+        game_status: str,
+        period: int = 0,
+        time_remaining: str = ""
     ) -> None:
         """Add a player's live stats to the map."""
         player_info = player_stat.get("player", {})
@@ -317,6 +322,8 @@ class LiveGradingExporter(BaseExporter):
                 'points': player_stat.get('pts') or 0,
                 'minutes': player_stat.get('min') or "0:00",
                 'team': team_abbr,
+                'period': period,
+                'time_remaining': time_remaining,
                 'game_status': game_status
             }
 
@@ -344,6 +351,8 @@ class LiveGradingExporter(BaseExporter):
                 'home_team': pred.get('home_team'),
                 'away_team': pred.get('away_team'),
                 'game_status': live.get('game_status', 'scheduled') if live else 'scheduled',
+                'period': live.get('period') if live else None,
+                'time_remaining': live.get('time_remaining') if live else None,
                 'predicted': pred.get('predicted_points'),
                 'line': pred.get('line_value'),
                 'recommendation': pred.get('recommendation'),
