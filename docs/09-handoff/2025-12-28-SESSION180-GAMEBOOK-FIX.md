@@ -129,6 +129,8 @@ Dec 27 gamebooks: 9 games, 315 rows
 
 - `orchestration/parameter_resolver.py` - Fixed resolver
 - `scripts/backfill_gamebooks.py` - Backfill script used
+- `scripts/check_data_completeness.py` - NEW: Completeness checker
+- `docs/08-projects/current/GAMEBOOK-INCIDENT-POSTMORTEM.md` - Full incident analysis
 - `orchestration/cleanup_processor.py` - Could add completeness check
 - `orchestration/cloud_functions/self_heal/main.py` - Could extend for gamebooks
 
@@ -145,11 +147,48 @@ Dec 27 gamebooks: 9 games, 315 rows
 | 11:40 AM | Started backfill |
 | 11:44 AM | Backfill complete (4 min) |
 | 11:49 AM | Verified 9/9 games in BigQuery |
+| 1:30 PM | Predictions ran successfully (650 for Dec 28) |
+| 2:30 PM | Tonight API updated (211 players) |
+
+---
+
+## Prevention: New Completeness Checker
+
+Created `scripts/check_data_completeness.py` to catch future gaps:
+
+```bash
+# Check yesterday's data (run after 4 AM ET)
+PYTHONPATH=. python scripts/check_data_completeness.py
+
+# Check specific date
+PYTHONPATH=. python scripts/check_data_completeness.py --date 2025-12-27
+
+# Check last 7 days
+PYTHONPATH=. python scripts/check_data_completeness.py --days 7
+```
+
+Output:
+```
+Data Completeness Report: 2025-12-27
+Scheduled final games: 9
+Gamebooks: 9/9 (100%) ✅
+Box Scores: 9/9 (100%) ✅
+✅ ALL DATA COMPLETE for 2025-12-27
+```
+
+---
+
+## Key Learnings
+
+1. **"Phase 1" comments are debt** - If code says "Phase 2 will do X", create a ticket
+2. **Success logs can mislead** - "success (3 records)" looked fine for 1 game
+3. **Validate completeness, not just success** - Compare expected vs actual
+4. **Morning checks matter** - This was caught by manual review, not automation
 
 ---
 
 ## Commits
 
 ```
-TBD - Will commit after session
+6a842af fix: Gamebook resolver now returns all games (not just first)
 ```
