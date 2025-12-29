@@ -139,7 +139,7 @@ def check_boxscore_completeness():
             "alert_on_gaps": true  # Whether to send alerts
         }
     """
-    from google.cloud import bigquery
+    from google.cloud import bigquery, storage
     from datetime import date, timedelta
 
     logger = logging.getLogger(__name__)
