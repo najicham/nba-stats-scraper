@@ -951,29 +951,76 @@ class NbacGamebookProcessor(SmartIdempotencyMixin, ProcessorBase):
             logger.error(f"BDL fallback error for '{last_name}' on {team_abbr}: {e}")
             return None
 
+    def _lookup_official_game_id(self, game_date_str: str, away_team: str, home_team: str) -> Optional[str]:
+        """
+        Look up the official NBA game_id from the schedule.
+
+        Uses NBA format game_id (e.g., '0022500441') instead of date-based format.
+        This ensures consistency with nbac_schedule for downstream JOINs.
+
+        Args:
+            game_date_str: Date in YYYY-MM-DD format
+            away_team: Away team abbreviation
+            home_team: Home team abbreviation
+
+        Returns:
+            Official NBA game_id or None if not found
+        """
+        try:
+            games = self.schedule_service.get_games_for_date(game_date_str)
+
+            # Normalize team codes for comparison
+            away_normalized = get_nba_tricode(away_team) or away_team
+            home_normalized = get_nba_tricode(home_team) or home_team
+
+            for game in games:
+                game_away = get_nba_tricode(game.away_team) or game.away_team
+                game_home = get_nba_tricode(game.home_team) or game.home_team
+
+                if game_away == away_normalized and game_home == home_normalized:
+                    logger.debug(f"Found official game_id {game.game_id} for {away_team}@{home_team} on {game_date_str}")
+                    return game.game_id
+
+            logger.warning(f"No schedule match for {away_team}@{home_team} on {game_date_str}")
+            return None
+
+        except Exception as e:
+            logger.warning(f"Error looking up game_id for {away_team}@{home_team} on {game_date_str}: {e}")
+            return None
+
     def extract_game_info(self, file_path: str, data: Dict) -> Dict:
         """Extract game metadata from file path and data."""
         # Path format: nba-com/gamebooks-data/2021-10-19/20211019-BKNMIL/20250827_234400.json
         path_parts = file_path.split('/')
         date_str = path_parts[-3]  # 2021-10-19
         game_code = path_parts[-2]  # 20211019-BKNMIL
-        
+
         # Parse game code
         date_part = game_code[:8]  # 20211019
         teams_part = game_code[9:]  # BKNMIL
-        
+
         # Extract teams (first 3 chars = away, last 3 = home)
         away_team = teams_part[:3] if len(teams_part) >= 6 else None
         home_team = teams_part[3:6] if len(teams_part) >= 6 else None
-        
-        # Build game_id in standard format
-        game_id = f"{date_part}_{away_team}_{home_team}" if away_team and home_team else game_code
-        
+
+        # Look up official NBA game_id from schedule (e.g., '0022500441')
+        # This ensures consistency with nbac_schedule for downstream JOINs in analytics
+        official_game_id = None
+        if away_team and home_team:
+            official_game_id = self._lookup_official_game_id(date_str, away_team, home_team)
+
+        # Fall back to date-based format only if schedule lookup fails
+        if official_game_id:
+            game_id = official_game_id
+        else:
+            game_id = f"{date_part}_{away_team}_{home_team}" if away_team and home_team else game_code
+            logger.debug(f"Using fallback game_id format: {game_id}")
+
         # Extract season year (Oct-Dec = current year, Jan-Jun = previous year)
         game_date = datetime.strptime(date_str, '%Y-%m-%d').date()
         month = game_date.month
         season_year = game_date.year if month >= 10 else game_date.year - 1
-        
+
         return {
             'game_id': game_id,
             'game_code': data.get('game_code', game_code),

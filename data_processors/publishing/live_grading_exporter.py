@@ -122,6 +122,10 @@ class LiveGradingExporter(BaseExporter):
         """
         Query tonight's predictions from BigQuery.
         Uses the ensemble_v1 system (production system).
+
+        NOTE: Handles two game_id formats for backward compatibility:
+        1. Official NBA format: '0022500441' (nbac_schedule)
+        2. Date-based format: 'YYYYMMDD_AWAY_HOME' (legacy from odds_api/gamebook)
         """
         query = """
         WITH player_names AS (
@@ -149,8 +153,17 @@ class LiveGradingExporter(BaseExporter):
             ) = 1
         ),
         game_info AS (
+            -- Include both NBA official game_id and date-based format
             SELECT DISTINCT
                 game_id,
+                -- Also create date-based lookup: YYYYMMDD_AWAY_HOME
+                CONCAT(
+                    REPLACE(CAST(game_date AS STRING), '-', ''),
+                    '_',
+                    away_team_tricode,
+                    '_',
+                    home_team_tricode
+                ) as date_based_game_id,
                 home_team_tricode as home_team,
                 away_team_tricode as away_team
             FROM `nba-props-platform.nba_raw.nbac_schedule`
@@ -160,8 +173,8 @@ class LiveGradingExporter(BaseExporter):
             lp.player_lookup,
             COALESCE(pn.player_name, lp.player_lookup) as player_name,
             lp.game_id,
-            gi.home_team,
-            gi.away_team,
+            COALESCE(gi.home_team, gi2.home_team) as home_team,
+            COALESCE(gi.away_team, gi2.away_team) as away_team,
             ROUND(lp.predicted_points, 1) as predicted_points,
             ROUND(lp.confidence_score, 3) as confidence_score,
             lp.recommendation,
@@ -170,7 +183,10 @@ class LiveGradingExporter(BaseExporter):
             lp.line_source
         FROM latest_predictions lp
         LEFT JOIN player_names pn ON lp.player_lookup = pn.player_lookup
+        -- Try official NBA game_id first
         LEFT JOIN game_info gi ON lp.game_id = gi.game_id
+        -- Fallback: try date-based format (YYYYMMDD_AWAY_HOME)
+        LEFT JOIN game_info gi2 ON lp.game_id = gi2.date_based_game_id
         -- Include all predictions (OVER, UNDER, NO_LINE, PASS)
         -- NO_LINE predictions still have predicted points that can be graded
         ORDER BY lp.confidence_score DESC

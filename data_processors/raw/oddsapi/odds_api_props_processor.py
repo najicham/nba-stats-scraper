@@ -16,7 +16,10 @@ from shared.utils.notification_system import (
 )
 
 # Import NBATeamMapper for proper team code normalization
-from shared.utils.nba_team_mapper import NBATeamMapper
+from shared.utils.nba_team_mapper import NBATeamMapper, get_nba_tricode
+
+# Schedule service for official game_id lookup
+from shared.utils.schedule import NBAScheduleService
 
 logger = logging.getLogger(__name__)
 
@@ -51,12 +54,65 @@ class OddsApiPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
         self.table_name = 'nba_raw.odds_api_player_points_props'
         self.processing_strategy = 'APPEND_ALWAYS'
         self.unknown_teams = set()  # Track unknown teams for batch warning
-        
+
         # Initialize team mapper for proper normalization
         # use_database=False to avoid dependency on BigQuery during processing
         self.team_mapper = NBATeamMapper(use_database=False)
-        
-        logger.info("OddsApiPropsProcessor initialized with NBATeamMapper")
+
+        # Schedule service for official game_id lookup
+        self.schedule_service = NBAScheduleService()
+
+        # Cache for game_id lookups (date -> {(away, home) -> game_id})
+        self._game_id_cache: Dict[str, Dict[Tuple[str, str], str]] = {}
+
+        logger.info("OddsApiPropsProcessor initialized with NBATeamMapper and NBAScheduleService")
+
+    def _lookup_official_game_id(self, game_date: str, away_team: str, home_team: str) -> Optional[str]:
+        """
+        Look up the official NBA game_id from the schedule.
+
+        Uses NBA format game_id (e.g., '0022500441') instead of date-based format.
+        This ensures consistency with nbac_schedule for downstream JOINs.
+
+        Args:
+            game_date: Date in YYYY-MM-DD format
+            away_team: Away team abbreviation
+            home_team: Home team abbreviation
+
+        Returns:
+            Official NBA game_id or None if not found
+        """
+        # Check cache first
+        if game_date not in self._game_id_cache:
+            self._game_id_cache[game_date] = {}
+
+        cache_key = (away_team.upper(), home_team.upper())
+        if cache_key in self._game_id_cache[game_date]:
+            return self._game_id_cache[game_date][cache_key]
+
+        try:
+            games = self.schedule_service.get_games_for_date(game_date)
+
+            # Normalize team codes for comparison
+            away_normalized = get_nba_tricode(away_team) or away_team.upper()
+            home_normalized = get_nba_tricode(home_team) or home_team.upper()
+
+            for game in games:
+                game_away = get_nba_tricode(game.away_team) or game.away_team
+                game_home = get_nba_tricode(game.home_team) or game.home_team
+
+                if game_away == away_normalized and game_home == home_normalized:
+                    logger.debug(f"Found official game_id {game.game_id} for {away_team}@{home_team} on {game_date}")
+                    # Cache all games from this date
+                    self._game_id_cache[game_date][cache_key] = game.game_id
+                    return game.game_id
+
+            logger.debug(f"No schedule match for {away_team}@{home_team} on {game_date}")
+            return None
+
+        except Exception as e:
+            logger.warning(f"Error looking up game_id for {away_team}@{home_team} on {game_date}: {e}")
+            return None
 
     def load_data(self) -> None:
         """Load data from GCS."""
@@ -338,9 +394,20 @@ class OddsApiPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
                 logger.debug(f"Normalized home team: '{home_team_full}' → {home_team_abbr}")
             if away_team_full and away_team_abbr:
                 logger.debug(f"Normalized away team: '{away_team_full}' → {away_team_abbr}")
-            
-            # Create game_id in format YYYYMMDD_AWAY_HOME
-            game_id = f"{metadata['game_date'].replace('-', '')}_{away_team_abbr}_{home_team_abbr}"
+
+            # Look up official NBA game_id from schedule (e.g., '0022500441')
+            # This ensures consistency with nbac_schedule for downstream JOINs
+            game_date_str = metadata['game_date']
+            official_game_id = None
+            if away_team_abbr and home_team_abbr:
+                official_game_id = self._lookup_official_game_id(game_date_str, away_team_abbr, home_team_abbr)
+
+            # Fall back to date-based format only if schedule lookup fails
+            if official_game_id:
+                game_id = official_game_id
+            else:
+                game_id = f"{game_date_str.replace('-', '')}_{away_team_abbr}_{home_team_abbr}"
+                logger.debug(f"Using fallback game_id format: {game_id}")
             
             # Parse capture timestamp
             capture_dt = None
