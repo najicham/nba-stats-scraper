@@ -1,7 +1,7 @@
 # NBA Platform - Deployment History
 
 **Created:** 2025-11-22 10:15:00 PST
-**Last Updated:** 2025-11-22 10:15:00 PST
+**Last Updated:** 2025-12-29 13:30:00 PST
 **Format:** Append-only changelog (newest entries first)
 
 ---
@@ -14,6 +14,74 @@ This document provides a chronological record of all NBA platform deployments. E
 - Add new deployments at the top (reverse chronological)
 - Never delete entries (append-only)
 - Link to detailed deployment reports in `archive/` when available
+
+---
+
+## December 2025
+
+### 2025-12-29 13:15 - Self-Heal Function Update (Same-Day Pipeline Fix)
+
+**Deployed By:** NBA Platform Team
+**Components:** Self-Heal Cloud Function, Monitoring Tools, BigQuery View
+**Region:** us-west2 (Cloud Functions)
+**Status:** Complete
+
+**What Was Deployed:**
+
+Cloud Function Updates:
+- `self-heal-predictions` - Updated to check BOTH today AND tomorrow
+- New `get_today_date()` function
+- Refactored healing logic into `heal_for_date()` function
+- Improved status reporting with checks array
+
+Monitoring Tools Created:
+- `bin/monitoring/daily_health_check.sh` - Morning health check script
+- `bin/monitoring/check_orchestration_state.py` - Firestore state inspector
+- `bin/deploy/deploy_self_heal_function.sh` - Self-heal deployment script
+
+BigQuery View Created:
+- `nba_orchestration.daily_phase_status` - Pipeline status by date
+
+**Changes:**
+- Self-heal now detects missing same-day predictions (root cause of Dec 29 incident)
+- Added comprehensive morning health check tooling
+- Created Firestore state inspection for debugging orchestration issues
+- Daily phase status view shows pipeline progress at a glance
+
+**Issues Resolved:**
+- Dec 29 prediction pipeline failure where 11 games had no predictions
+- Self-heal was only checking TOMORROW, not TODAY
+- No visibility into Phase 3 orchestration state
+
+**Trigger Flow:**
+```
+Cloud Scheduler (2:15 PM ET daily)
+    |
+    v
+self-heal-predictions (Cloud Function)
+    |
+    +---> Check TODAY's predictions
+    |        |
+    |        +---> If missing: Trigger healing pipeline
+    |
+    +---> Check TOMORROW's predictions
+             |
+             +---> If missing: Trigger healing pipeline
+```
+
+**Verification:**
+```bash
+# Run health check
+./bin/monitoring/daily_health_check.sh
+
+# Check orchestration state
+PYTHONPATH=. python3 bin/monitoring/check_orchestration_state.py
+
+# Query pipeline status
+bq query --use_legacy_sql=false "SELECT * FROM nba_orchestration.daily_phase_status"
+```
+
+**Detailed Report:** `docs/08-projects/current/same-day-pipeline-fix/README.md`
 
 ---
 

@@ -211,11 +211,11 @@ If time permits, create a Cloud Function that:
 
 After implementing, verify:
 
-- [ ] Self-heal function logs show checks for BOTH today and tomorrow
-- [ ] `./bin/monitoring/daily_health_check.sh` runs successfully
-- [ ] `python3 bin/monitoring/check_orchestration_state.py` shows state
-- [ ] `SELECT * FROM nba_orchestration.daily_phase_status` returns data
-- [ ] All changes committed with descriptive messages
+- [x] Self-heal function logs show checks for BOTH today and tomorrow
+- [x] `./bin/monitoring/daily_health_check.sh` runs successfully
+- [x] `python3 bin/monitoring/check_orchestration_state.py` shows state
+- [x] `SELECT * FROM nba_orchestration.daily_phase_status` returns data
+- [x] All changes committed with descriptive messages
 
 ---
 
@@ -223,13 +223,15 @@ After implementing, verify:
 
 | Item | Status |
 |------|--------|
-| Predictions for Dec 29 | ✅ Generated (1,700+) |
-| Phase 4 service | ✅ Redeployed correctly |
-| ESPN roster fix | ✅ Deployed |
-| Self-heal update | ⏳ TODO |
-| Health check script | ⏳ TODO |
-| Firestore state tool | ⏳ TODO |
-| Daily status view | ⏳ TODO |
+| Predictions for Dec 29 | Done (1,700+) |
+| Phase 4 service | Done |
+| ESPN roster fix | Done |
+| Self-heal update | Done - Checks both TODAY and TOMORROW |
+| Health check script | Done - `bin/monitoring/daily_health_check.sh` |
+| Firestore state tool | Done - `bin/monitoring/check_orchestration_state.py` |
+| Daily status view | Done - `nba_orchestration.daily_phase_status` |
+| Deploy script | Done - `bin/deploy/deploy_self_heal_function.sh` |
+| Documentation | Done - Updated all READMEs and deployment history |
 
 ---
 

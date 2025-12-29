@@ -4,6 +4,54 @@ This directory contains deployment and status scripts for various monitoring sys
 
 ## Monitoring Systems
 
+### 0. Daily Health Check (`daily_health_check.sh`) - NEW
+
+**What it does:** Comprehensive morning health check for pipeline status
+**How to run:** `./bin/monitoring/daily_health_check.sh [DATE]`
+**Purpose:** Run each morning to verify predictions are generated
+
+**Quick commands:**
+```bash
+# Run health check for today
+./bin/monitoring/daily_health_check.sh
+
+# Run health check for specific date
+./bin/monitoring/daily_health_check.sh 2025-12-29
+```
+
+**What it checks:**
+- Games scheduled for the day (NBA API + BigQuery fallback)
+- Predictions count, games covered, players with predictions
+- Phase 3 completion state (Firestore)
+- ML Feature Store record count
+- Recent errors (last 2 hours)
+- Service health (Phase 3, Phase 4, Coordinator)
+- Summary with pipeline status
+
+### 0b. Orchestration State Tool (`check_orchestration_state.py`) - NEW
+
+**What it does:** Query Firestore orchestration state for debugging
+**How to run:** `PYTHONPATH=. python3 bin/monitoring/check_orchestration_state.py [DATE]`
+**Purpose:** Debug Phase 3/4 orchestration issues
+
+**Quick commands:**
+```bash
+# Check today's state
+PYTHONPATH=. python3 bin/monitoring/check_orchestration_state.py
+
+# Check specific date
+PYTHONPATH=. python3 bin/monitoring/check_orchestration_state.py 2025-12-29
+```
+
+**What it shows:**
+- Phase 3 completion: X/5 processors complete
+- Phase 4 completion status
+- Phase 4/5 trigger status
+- Stuck run_history entries
+- Tomorrow's state preview
+
+---
+
 ### 1. Freshness Monitoring (`freshness_monitor`)
 
 **What it monitors:** GCS raw data files from all scrapers  
