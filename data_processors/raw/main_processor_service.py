@@ -645,7 +645,74 @@ def process_pubsub():
             )
         else:
             logger.info(f"📥 Processing file: gs://{bucket}/{file_path}")
-        
+
+        # ============================================================
+        # SPECIAL HANDLING: ESPN roster folder paths
+        # The ESPN roster scraper publishes a folder path like:
+        #   espn/rosters/2025-12-28/
+        # But individual files are in subfolders:
+        #   espn/rosters/2025-12-28/team_ATL/timestamp.json
+        # We need to iterate over all files and process each one.
+        # ============================================================
+        if 'espn/rosters' in file_path and file_path.endswith('/'):
+            logger.info(f"🔄 ESPN roster folder detected, listing files...")
+            try:
+                storage_client = storage.Client()
+                bucket_obj = storage_client.bucket(bucket)
+                blobs = list(bucket_obj.list_blobs(prefix=file_path))
+
+                json_files = [b.name for b in blobs if b.name.endswith('.json')]
+                logger.info(f"Found {len(json_files)} JSON files in {file_path}")
+
+                if not json_files:
+                    logger.warning(f"No JSON files found in folder: {file_path}")
+                    return jsonify({"status": "skipped", "reason": "No files in folder"}), 200
+
+                # Process each file
+                results = {"processed": 0, "failed": 0, "files": []}
+                for json_file in json_files:
+                    try:
+                        opts = extract_opts_from_path(json_file)
+                        opts['bucket'] = bucket
+                        opts['file_path'] = json_file
+                        opts['project_id'] = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
+
+                        processor = EspnTeamRosterProcessor()
+                        success = processor.run(opts)
+
+                        if success:
+                            results["processed"] += 1
+                            logger.info(f"✅ Processed ESPN roster: {json_file}")
+                        else:
+                            results["failed"] += 1
+                            logger.error(f"❌ Failed to process ESPN roster: {json_file}")
+
+                        results["files"].append({
+                            "file": json_file,
+                            "status": "success" if success else "error"
+                        })
+
+                    except Exception as file_error:
+                        results["failed"] += 1
+                        logger.error(f"❌ Error processing {json_file}: {file_error}")
+                        results["files"].append({
+                            "file": json_file,
+                            "status": "error",
+                            "error": str(file_error)
+                        })
+
+                logger.info(f"📊 ESPN roster batch: {results['processed']} processed, {results['failed']} failed")
+                return jsonify({
+                    "status": "success" if results["failed"] == 0 else "partial",
+                    "processed": results["processed"],
+                    "failed": results["failed"],
+                    "files": results["files"][:10]  # Limit response size
+                }), 200 if results["failed"] == 0 else 207
+
+            except Exception as folder_error:
+                logger.error(f"❌ Error processing ESPN roster folder: {folder_error}", exc_info=True)
+                return jsonify({"error": str(folder_error)}), 500
+
         # Determine processor based on file path
         processor_class = None
         for path_prefix, proc_class in PROCESSOR_REGISTRY.items():
