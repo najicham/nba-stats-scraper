@@ -1,7 +1,7 @@
 # Frontend API Reference
 
-**Version:** 1.0
-**Last Updated:** 2025-12-27
+**Version:** 1.1
+**Last Updated:** 2025-12-28
 **Base URL:** `https://storage.googleapis.com/nba-props-platform-api/v1/`
 
 ---
@@ -21,13 +21,16 @@ https://storage.googleapis.com/nba-props-platform-api/v1/{endpoint}/{file}.json
 
 | Endpoint | Description | Update Frequency |
 |----------|-------------|------------------|
-| `/tonight/` | Tonight's predictions and player data | Daily ~6 PM ET |
+| `/status.json` | **NEW** Health check for all services | Every 3 min during games |
+| `/tonight/` | Tonight's predictions and player data | Daily ~2 PM ET |
 | `/live/` | Real-time game scores during games | Every 3 min during games |
 | `/live-grading/` | Real-time prediction grading | Every 3 min during games |
 | `/results/` | Historical prediction results | Daily 5 AM ET |
 | `/trends/` | Hot/cold trends, analytics | Hourly during day |
 | `/best-bets/` | Top picks for the day | Daily with predictions |
 | `/players/` | Individual player profiles | Weekly |
+
+> **Important:** See [FRONTEND_LIVE_DATA_GUIDE.md](./FRONTEND_LIVE_DATA_GUIDE.md) for details on using the status endpoint to detect stale data.
 
 ---
 
