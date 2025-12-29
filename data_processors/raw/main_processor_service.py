@@ -473,11 +473,43 @@ def normalize_message_format(message: dict) -> dict:
         
         return normalized
     
-    # Case 3: Unrecognized format
+    # Case 4: Only gcs_path present (fallback for scrapers with incomplete messages)
+    # This handles cases where the message only contains 'gcs_path' without 'scraper_name'
+    if 'gcs_path' in message:
+        gcs_path = message.get('gcs_path')
+        logger.warning(f"Processing message with only gcs_path (no scraper_name): {gcs_path}")
+
+        if not gcs_path or not gcs_path.startswith('gs://'):
+            raise ValueError(f"Invalid gcs_path format: {gcs_path}. Expected gs://bucket/path format")
+
+        # Parse GCS path into bucket and name
+        path_without_protocol = gcs_path[5:]  # Remove 'gs://'
+        parts = path_without_protocol.split('/', 1)
+
+        if len(parts) != 2:
+            raise ValueError(f"Invalid gcs_path structure: {gcs_path}. Expected gs://bucket/path format")
+
+        bucket = parts[0]
+        name = parts[1]
+
+        # Create normalized message
+        normalized = {
+            'bucket': bucket,
+            'name': name,
+            '_original_format': 'gcs_path_only',
+            '_scraper_name': 'unknown',
+            '_status': message.get('status', 'unknown'),
+            '_record_count': message.get('record_count'),
+        }
+
+        logger.info(f"Normalized gcs_path-only message: bucket={bucket}, name={name}")
+        return normalized
+
+    # Case 5: Unrecognized format
     available_fields = list(message.keys())
     raise ValueError(
         f"Unrecognized message format. "
-        f"Expected 'name' (GCS) or 'gcs_path' (Scraper) field. "
+        f"Expected 'name' (GCS), 'gcs_path' (Scraper), or 'processor_name' (Unified) field. "
         f"Got fields: {available_fields}"
     )
 
