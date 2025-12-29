@@ -218,14 +218,15 @@ def check_boxscore_completeness():
                 notify_error(
                     title=f"CRITICAL: Boxscore Data Gaps ({date_range})",
                     message=f"Teams below 70%: {critical_msg}. Missing {missing_count} games total.",
-                    context={'critical_teams': critical_teams, 'missing_count': missing_count}
+                    details={'critical_teams': critical_teams, 'missing_count': missing_count},
+                    processor_name="Boxscore Completeness Check"
                 )
             elif warning_teams:
                 warning_msg = ", ".join([f"{t[0]}:{t[1]}%" for t in warning_teams])
                 notify_warning(
                     title=f"WARNING: Boxscore Coverage Below 90% ({date_range})",
                     message=f"Teams below 90%: {warning_msg}. Missing {missing_count} games total.",
-                    context={'warning_teams': warning_teams, 'missing_count': missing_count}
+                    details={'warning_teams': warning_teams, 'missing_count': missing_count}
                 )
 
         status = 'critical' if critical_teams else ('warning' if warning_teams else 'ok')
