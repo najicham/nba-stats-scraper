@@ -147,9 +147,20 @@ def start_prediction_batch():
         request_data = request.get_json() or {}
 
         # Get game date (default to today)
+        # Supports: specific date (YYYY-MM-DD), "TODAY", "TOMORROW"
         game_date_str = request_data.get('game_date')
         if game_date_str:
-            game_date = datetime.strptime(game_date_str, '%Y-%m-%d').date()
+            if game_date_str == "TODAY":
+                from zoneinfo import ZoneInfo
+                game_date = datetime.now(ZoneInfo('America/New_York')).date()
+                logger.info(f"TODAY game_date resolved to: {game_date}")
+            elif game_date_str == "TOMORROW":
+                from zoneinfo import ZoneInfo
+                from datetime import timedelta
+                game_date = datetime.now(ZoneInfo('America/New_York')).date() + timedelta(days=1)
+                logger.info(f"TOMORROW game_date resolved to: {game_date}")
+            else:
+                game_date = datetime.strptime(game_date_str, '%Y-%m-%d').date()
         else:
             game_date = date.today()
 

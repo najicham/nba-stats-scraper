@@ -185,6 +185,12 @@ def process_date():
             today_et = datetime.now(ZoneInfo('America/New_York')).date()
             analysis_date = today_et.strftime('%Y-%m-%d')
             logger.info(f"TODAY date resolved to: {analysis_date}")
+        elif analysis_date == "TOMORROW":
+            # TOMORROW = tomorrow in ET timezone (for next-day predictions)
+            from zoneinfo import ZoneInfo
+            tomorrow_et = datetime.now(ZoneInfo('America/New_York')).date() + timedelta(days=1)
+            analysis_date = tomorrow_et.strftime('%Y-%m-%d')
+            logger.info(f"TOMORROW date resolved to: {analysis_date}")
 
         # Map processor names to classes
         processor_map = {
