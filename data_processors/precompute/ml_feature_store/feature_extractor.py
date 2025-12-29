@@ -63,6 +63,11 @@ class FeatureExtractor:
         instead of upcoming_player_game_context (who was expected to play).
         This increases backfill coverage from ~65% to ~100% for historical dates.
 
+        v3.4 CHANGE (Same-Day Fix):
+        For same-day/future dates, ALWAYS use upcoming_player_game_context
+        regardless of backfill_mode. player_game_summary won't have data for
+        games that haven't been played yet.
+
         Args:
             game_date: Date to query
             backfill_mode: If True, use actual played data instead of expected
@@ -70,7 +75,25 @@ class FeatureExtractor:
         Returns:
             List of dicts with player_lookup, game_id, opponent, has_prop_line, etc.
         """
-        if backfill_mode:
+        # v3.4: Determine if this is a same-day/future date (games not yet played)
+        from datetime import datetime
+        try:
+            from zoneinfo import ZoneInfo
+            today_et = datetime.now(ZoneInfo('America/New_York')).date()
+        except ImportError:
+            import pytz
+            today_et = datetime.now(pytz.timezone('America/New_York')).date()
+
+        is_future_or_today = game_date >= today_et
+
+        # For future/same-day dates, ALWAYS use upcoming_player_game_context
+        # regardless of backfill_mode, since player_game_summary won't have data
+        use_backfill_query = backfill_mode and not is_future_or_today
+
+        if backfill_mode and is_future_or_today:
+            logger.info(f"[SAME-DAY FIX] backfill_mode=True but date {game_date} >= today {today_et}, using upcoming_player_game_context")
+
+        if use_backfill_query:
             # For historical backfill: use actual played data from player_game_summary
             # This captures ALL players who played, not just those expected to play
             query = f"""
@@ -107,7 +130,7 @@ class FeatureExtractor:
             WHERE pgs.game_date = '{game_date}'
             ORDER BY pgs.player_lookup
             """
-            logger.info(f"[BACKFILL MODE] Querying actual played roster for {game_date}")
+            logger.info(f"[BACKFILL MODE - HISTORICAL] Querying actual played roster for {game_date}")
         else:
             # For real-time: use expected players from upcoming_player_game_context
             query = f"""

@@ -107,7 +107,7 @@ def clear_stuck_run_history():
 
 
 def trigger_phase3(target_date):
-    """Trigger Phase 3 analytics in backfill mode."""
+    """Trigger Phase 3 analytics for tomorrow's predictions."""
     # Process yesterday's data (needed for tomorrow's predictions)
     yesterday = (datetime.strptime(target_date, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
 
@@ -117,11 +117,14 @@ def trigger_phase3(target_date):
         "Content-Type": "application/json"
     }
 
+    # Note: backfill_mode=False because we need accurate player lists for predictions
+    # backfill_mode=True would query player_game_summary which is for historical data
     payload = {
         "start_date": yesterday,
         "end_date": yesterday,
         "processors": ["PlayerGameSummaryProcessor", "UpcomingPlayerGameContextProcessor"],
-        "backfill_mode": True
+        "backfill_mode": False,
+        "skip_dependency_check": True
     }
 
     response = requests.post(
