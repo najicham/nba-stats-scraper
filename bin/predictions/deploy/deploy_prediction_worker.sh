@@ -7,7 +7,7 @@
 #   ./bin/predictions/deploy/deploy_prediction_worker.sh [environment]
 #
 # Arguments:
-#   environment - dev, staging, or prod (default: dev)
+#   environment - dev, staging, or prod (default: prod)
 #
 # Example:
 #   ./bin/predictions/deploy/deploy_prediction_worker.sh dev
@@ -22,8 +22,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
-# Environment (default: dev)
-ENVIRONMENT="${1:-dev}"
+# Environment (default: prod - this is a single-environment project)
+ENVIRONMENT="${1:-prod}"
 
 # Project configuration
 case "$ENVIRONMENT" in
