@@ -231,6 +231,16 @@ def check_boxscore_completeness():
 
         status = 'critical' if critical_teams else ('warning' if warning_teams else 'ok')
 
+        # Auto-reset circuit breakers for players/teams that now have data
+        # This prevents cascading lockouts when data gaps are backfilled
+        reset_count = 0
+        try:
+            auto_reset = data.get('auto_reset_circuit_breakers', True)
+            if auto_reset:
+                reset_count = _auto_reset_circuit_breakers(bq_client, start_date, end_date, logger)
+        except Exception as reset_error:
+            logger.warning(f"Circuit breaker auto-reset failed (non-fatal): {reset_error}")
+
         return jsonify({
             "status": status,
             "date_range": f"{start_date} to {end_date}",
@@ -238,12 +248,60 @@ def check_boxscore_completeness():
             "critical_teams": critical_teams,
             "warning_teams": warning_teams,
             "total_teams_checked": len(coverage_result),
+            "circuit_breakers_reset": reset_count,
             "timestamp": datetime.now(timezone.utc).isoformat()
         }), 200
 
     except Exception as e:
         logger.error(f"Boxscore completeness check failed: {e}")
         return jsonify({"error": str(e)}), 500
+
+
+def _auto_reset_circuit_breakers(bq_client, start_date, end_date, logger) -> int:
+    """
+    Auto-reset circuit breakers for entities that now have boxscore data.
+
+    When boxscore data is backfilled, players that were previously locked out
+    due to missing data should be automatically unlocked.
+
+    Returns:
+        Number of circuit breakers reset
+    """
+    # Find players with active circuit breakers whose teams now have data
+    reset_query = f"""
+    UPDATE `nba_orchestration.reprocess_attempts`
+    SET circuit_breaker_tripped = FALSE,
+        circuit_breaker_until = NULL,
+        notes = CONCAT(COALESCE(notes, ''), ' | Auto-reset: boxscore data available')
+    WHERE circuit_breaker_tripped = TRUE
+      AND circuit_breaker_until > CURRENT_TIMESTAMP()
+      AND (
+        -- Reset if player has recent boxscore data
+        entity_id IN (
+          SELECT DISTINCT player_lookup
+          FROM nba_raw.bdl_player_boxscores
+          WHERE game_date >= '{start_date}' AND game_date <= '{end_date}'
+        )
+        OR
+        -- Reset if entity is a team that now has data
+        entity_id IN (
+          SELECT DISTINCT team_abbr
+          FROM nba_raw.bdl_player_boxscores
+          WHERE game_date >= '{start_date}' AND game_date <= '{end_date}'
+        )
+      )
+    """
+
+    try:
+        job = bq_client.query(reset_query)
+        job.result()
+        reset_count = job.num_dml_affected_rows or 0
+        if reset_count > 0:
+            logger.info(f"Auto-reset {reset_count} circuit breakers for entities with recent boxscore data")
+        return reset_count
+    except Exception as e:
+        logger.warning(f"Circuit breaker auto-reset query failed: {e}")
+        return 0
 
 
 def normalize_message_format(message: dict) -> dict:

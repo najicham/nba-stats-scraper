@@ -807,10 +807,14 @@ class PlayerShotZoneAnalysisProcessor(
         circuit_breaker_until = None
 
         if circuit_breaker_tripped:
-            circuit_breaker_until = datetime.now(timezone.utc) + timedelta(days=7)
+            # Use config for lockout duration (default: 24 hours, was 7 days)
+            from shared.config.orchestration_config import get_orchestration_config
+            config = get_orchestration_config()
+            circuit_breaker_until = datetime.now(timezone.utc) + timedelta(hours=config.circuit_breaker.entity_lockout_hours)
             logger.error(
-                f"{entity_id}: Circuit breaker TRIPPED after {next_attempt} attempts. "
-                f"Manual intervention required. Next retry allowed: {circuit_breaker_until}"
+                f"{entity_id}: Circuit breaker TRIPPED after {next_attempt} attempts "
+                f"(lockout: {config.circuit_breaker.entity_lockout_hours}h). "
+                f"Next retry allowed: {circuit_breaker_until}"
             )
 
         # Record attempt

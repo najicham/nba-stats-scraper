@@ -995,10 +995,14 @@ def format_prediction_for_bigquery(
 
 def write_predictions_to_bigquery(predictions: List[Dict]):
     """
-    Write predictions to BigQuery player_prop_predictions table
+    Write predictions to BigQuery player_prop_predictions table using MERGE.
 
-    Uses batch loading (load_table_from_json) instead of streaming insert
-    to avoid the 20 DML limit and streaming buffer issues during concurrent processing.
+    Uses a staging table + MERGE pattern to handle Pub/Sub retry duplicates:
+    1. Load predictions to a temp staging table
+    2. MERGE from staging to main table (upsert on player_lookup + game_date)
+    3. Delete staging table
+
+    This ensures idempotency - retried messages update existing rows instead of creating duplicates.
 
     Args:
         predictions: List of prediction dicts
@@ -1012,33 +1016,106 @@ def write_predictions_to_bigquery(predictions: List[Dict]):
         return
 
     table_id = f"{PROJECT_ID}.{PREDICTIONS_TABLE}"
+    # Create unique staging table name with timestamp
+    staging_table_id = f"{PROJECT_ID}.nba_predictions._staging_predictions_{int(time.time() * 1000)}"
 
     try:
-        # Get table schema for load job
-        table = bq_client.get_table(table_id)
+        # Get main table schema
+        main_table = bq_client.get_table(table_id)
 
-        # Configure batch load job (not streaming insert)
-        job_config = bigquery.LoadJobConfig(
-            schema=table.schema,
+        # Step 1: Load predictions to staging table
+        staging_job_config = bigquery.LoadJobConfig(
+            schema=main_table.schema,
             autodetect=False,
-            write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+            write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
             create_disposition=bigquery.CreateDisposition.CREATE_IF_NEEDED
         )
 
-        # Load using batch job
         load_job = bq_client.load_table_from_json(
             predictions,
-            table_id,
-            job_config=job_config
+            staging_table_id,
+            job_config=staging_job_config
         )
-
-        # Wait for completion
         load_job.result()
-        logger.info(f"Successfully wrote {len(predictions)} predictions to BigQuery")
+        logger.info(f"Loaded {len(predictions)} predictions to staging table")
+
+        # Step 2: MERGE from staging to main table
+        # Unique key: player_lookup + game_date
+        # On match: update prediction values and set updated_at
+        # On no match: insert new row
+        merge_query = f"""
+        MERGE `{table_id}` T
+        USING `{staging_table_id}` S
+        ON T.player_lookup = S.player_lookup AND T.game_date = S.game_date
+        WHEN MATCHED THEN
+          UPDATE SET
+            prediction_id = S.prediction_id,
+            system_id = S.system_id,
+            universal_player_id = S.universal_player_id,
+            game_id = S.game_id,
+            prediction_version = S.prediction_version,
+            predicted_points = S.predicted_points,
+            confidence_score = S.confidence_score,
+            recommendation = S.recommendation,
+            current_points_line = S.current_points_line,
+            line_margin = S.line_margin,
+            is_active = S.is_active,
+            updated_at = CURRENT_TIMESTAMP(),
+            superseded_by = S.superseded_by,
+            similarity_baseline = S.similarity_baseline,
+            similar_games_count = S.similar_games_count,
+            avg_similarity_score = S.avg_similarity_score,
+            min_similarity_score = S.min_similarity_score,
+            fatigue_adjustment = S.fatigue_adjustment,
+            shot_zone_adjustment = S.shot_zone_adjustment,
+            pace_adjustment = S.pace_adjustment,
+            usage_spike_adjustment = S.usage_spike_adjustment,
+            home_away_adjustment = S.home_away_adjustment,
+            feature_importance = S.feature_importance,
+            model_version = S.model_version,
+            expected_games_count = S.expected_games_count,
+            actual_games_count = S.actual_games_count,
+            completeness_percentage = S.completeness_percentage,
+            missing_games_count = S.missing_games_count,
+            is_production_ready = S.is_production_ready,
+            data_quality_issues = S.data_quality_issues,
+            last_reprocess_attempt_at = S.last_reprocess_attempt_at,
+            reprocess_attempt_count = S.reprocess_attempt_count,
+            circuit_breaker_active = S.circuit_breaker_active,
+            circuit_breaker_until = S.circuit_breaker_until,
+            manual_override_required = S.manual_override_required,
+            season_boundary_detected = S.season_boundary_detected,
+            backfill_bootstrap_mode = S.backfill_bootstrap_mode,
+            processing_decision_reason = S.processing_decision_reason,
+            has_prop_line = S.has_prop_line,
+            line_source = S.line_source,
+            estimated_line_value = S.estimated_line_value,
+            estimation_method = S.estimation_method,
+            scoring_tier = S.scoring_tier,
+            tier_adjustment = S.tier_adjustment,
+            adjusted_points = S.adjusted_points
+        WHEN NOT MATCHED THEN
+          INSERT ROW
+        """
+
+        merge_job = bq_client.query(merge_query)
+        merge_result = merge_job.result()
+
+        # Get stats from merge
+        rows_affected = merge_job.num_dml_affected_rows or 0
+        logger.info(f"MERGE complete: {rows_affected} rows affected (inserts + updates)")
 
     except Exception as e:
         logger.error(f"Error writing to BigQuery: {e}")
         # Don't raise - log and continue (graceful degradation)
+
+    finally:
+        # Step 3: Always clean up staging table
+        try:
+            bq_client.delete_table(staging_table_id, not_found_ok=True)
+            logger.debug(f"Cleaned up staging table: {staging_table_id}")
+        except Exception as cleanup_error:
+            logger.warning(f"Failed to clean up staging table: {cleanup_error}")
 
 
 def publish_completion_event(player_lookup: str, game_date: str, prediction_count: int):
