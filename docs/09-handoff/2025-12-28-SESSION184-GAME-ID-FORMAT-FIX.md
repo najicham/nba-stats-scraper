@@ -79,13 +79,26 @@ LIMIT 10"
 gsutil cat 'gs://nba-props-platform-api/v1/live-grading/latest.json' | jq '.predictions | map(select(.home_team == null)) | length'
 ```
 
+## Verification Results
+
+After deploying fixes and triggering live export for Dec 28:
+
+| Metric | Before | After |
+|--------|--------|-------|
+| Predictions with null home_team | 3 | **0** |
+| All predictions matched | No | **Yes** (51 official + 5 date-based) |
+
+**Fix confirmed working!**
+
+## Additional Fix: Message Format
+
+Fixed `normalize_message_format()` in `main_processor_service.py` to handle messages with only `gcs_path` field (no `scraper_name`). This resolves the "Unrecognized message format" error for `ball-dont-lie/player-box-scores`.
+
 ## Known Issues
 
-1. **Existing data not fixed**: Historical data with date-based game_id will remain in BigQuery
+1. **Historical data unchanged**: Older data in BigQuery still has date-based game_id format
    - Live grading handles this via dual-format JOIN
-   - Predictions generated from this data will have legacy format
-
-2. **Deployment needed**: Phase 2 processors need redeployment for new data to use correct format
+   - New data going forward will use official NBA format
 
 ## Files Changed
 1. `data_processors/raw/nbacom/nbac_gamebook_processor.py`
