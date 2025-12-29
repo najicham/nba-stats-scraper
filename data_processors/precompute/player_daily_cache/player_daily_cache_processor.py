@@ -1169,10 +1169,14 @@ class PlayerDailyCacheProcessor(
         circuit_breaker_until = None
 
         if circuit_breaker_tripped:
-            circuit_breaker_until = datetime.now(timezone.utc) + timedelta(days=7)
+            # Use config for lockout duration (default: 24 hours, was 7 days)
+            from shared.config.orchestration_config import get_orchestration_config
+            config = get_orchestration_config()
+            circuit_breaker_until = datetime.now(timezone.utc) + timedelta(hours=config.circuit_breaker.entity_lockout_hours)
             logger.error(
-                f"{entity_id}: Circuit breaker TRIPPED after {next_attempt} attempts. "
-                f"Manual intervention required. Next retry allowed: {circuit_breaker_until}"
+                f"{entity_id}: Circuit breaker TRIPPED after {next_attempt} attempts "
+                f"(lockout: {config.circuit_breaker.entity_lockout_hours}h). "
+                f"Next retry allowed: {circuit_breaker_until}"
             )
 
         # Record attempt
@@ -1212,6 +1216,10 @@ class PlayerDailyCacheProcessor(
         if not items:
             return
 
+        # Get config for lockout duration (default: 24 hours, was 7 days)
+        from shared.config.orchestration_config import get_orchestration_config
+        config = get_orchestration_config()
+
         # First, batch check all circuit breakers
         entity_ids = [item['entity_id'] for item in items]
         circuit_status_map = self._check_circuit_breakers_batch(entity_ids, analysis_date)
@@ -1234,7 +1242,7 @@ class PlayerDailyCacheProcessor(
 
             if circuit_breaker_tripped:
                 tripped_count += 1
-                circuit_breaker_until = datetime.now(timezone.utc) + timedelta(days=7)
+                circuit_breaker_until = datetime.now(timezone.utc) + timedelta(hours=config.circuit_breaker.entity_lockout_hours)
                 circuit_breaker_until_sql = f'TIMESTAMP("{circuit_breaker_until.isoformat()}")'
 
             value_rows.append(f"""

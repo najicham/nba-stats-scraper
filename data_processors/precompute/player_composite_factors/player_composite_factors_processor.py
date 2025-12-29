@@ -1058,13 +1058,17 @@ class PlayerCompositeFactorsProcessor(
 
     def _increment_reprocess_count(self, entity_id: str, analysis_date: date, completeness_pct: float, skip_reason: str) -> None:
         """Track reprocessing attempt and trip circuit breaker if needed."""
+        from shared.config.orchestration_config import get_orchestration_config
+        config = get_orchestration_config()
+
         circuit_status = self._check_circuit_breaker(entity_id, analysis_date)
         next_attempt = circuit_status['attempts'] + 1
         circuit_breaker_tripped = next_attempt >= 3
         circuit_breaker_until = None
         if circuit_breaker_tripped:
-            circuit_breaker_until = datetime.now(timezone.utc) + timedelta(days=7)
-            logger.error(f"{entity_id}: Circuit breaker TRIPPED after {next_attempt} attempts")
+            # Use config for lockout duration (default: 24 hours, was 7 days)
+            circuit_breaker_until = datetime.now(timezone.utc) + timedelta(hours=config.circuit_breaker.entity_lockout_hours)
+            logger.error(f"{entity_id}: Circuit breaker TRIPPED after {next_attempt} attempts (lockout: {config.circuit_breaker.entity_lockout_hours}h)")
         insert_query = f"""
         INSERT INTO `{self.project_id}.nba_orchestration.reprocess_attempts`
         (processor_name, entity_id, analysis_date, attempt_number, attempted_at,
