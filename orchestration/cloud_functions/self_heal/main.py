@@ -42,6 +42,14 @@ def get_auth_token(audience):
         raise
 
 
+def get_today_date():
+    """Get today's date in ET timezone."""
+    from zoneinfo import ZoneInfo
+    et = ZoneInfo("America/New_York")
+    today = datetime.now(et)
+    return today.strftime("%Y-%m-%d")
+
+
 def get_tomorrow_date():
     """Get tomorrow's date in ET timezone."""
     from zoneinfo import ZoneInfo
@@ -185,21 +193,69 @@ def trigger_predictions(target_date):
     return response.status_code == 200
 
 
+def heal_for_date(target_date, result):
+    """Trigger healing pipeline for a specific date."""
+    import time
+
+    logger.info(f"Starting healing pipeline for {target_date}")
+
+    # Clear stuck entries (only once per invocation)
+    if not result.get("_cleared_stuck"):
+        cleared = clear_stuck_run_history()
+        if cleared > 0:
+            result["actions_taken"].append(f"Cleared {cleared} stuck run_history entries")
+        result["_cleared_stuck"] = True
+
+    # Trigger Phase 3
+    try:
+        if trigger_phase3(target_date):
+            result["actions_taken"].append(f"Phase 3 triggered for {target_date}")
+        else:
+            result["actions_taken"].append(f"Phase 3 trigger failed for {target_date}")
+    except Exception as e:
+        result["actions_taken"].append(f"Phase 3 error ({target_date}): {str(e)[:50]}")
+
+    time.sleep(10)
+
+    # Trigger Phase 4
+    try:
+        if trigger_phase4(target_date):
+            result["actions_taken"].append(f"Phase 4 triggered for {target_date}")
+        else:
+            result["actions_taken"].append(f"Phase 4 trigger failed for {target_date}")
+    except Exception as e:
+        result["actions_taken"].append(f"Phase 4 error ({target_date}): {str(e)[:50]}")
+
+    time.sleep(10)
+
+    # Trigger predictions
+    try:
+        if trigger_predictions(target_date):
+            result["actions_taken"].append(f"Predictions triggered for {target_date}")
+        else:
+            result["actions_taken"].append(f"Predictions trigger failed for {target_date}")
+    except Exception as e:
+        result["actions_taken"].append(f"Predictions error ({target_date}): {str(e)[:50]}")
+
+
 @functions_framework.http
 def self_heal_check(request):
     """
     Main self-healing check function.
 
-    1. Check if tomorrow has games scheduled
-    2. Check if predictions exist
-    3. If not, trigger pipeline with bypass flags
+    UPDATED: Now checks BOTH today AND tomorrow for missing predictions.
+
+    1. Check if TODAY has games scheduled and predictions exist
+    2. Check if TOMORROW has games scheduled and predictions exist
+    3. If either is missing predictions, trigger self-healing pipeline
     """
-    target_date = get_tomorrow_date()
-    logger.info(f"Self-heal check for {target_date}")
+    today = get_today_date()
+    tomorrow = get_tomorrow_date()
+    logger.info(f"Self-heal check for today={today} and tomorrow={tomorrow}")
 
     result = {
-        "target_date": target_date,
         "timestamp": datetime.now(timezone.utc).isoformat(),
+        "checks": [],
         "actions_taken": [],
         "status": "healthy"
     }
@@ -207,81 +263,82 @@ def self_heal_check(request):
     try:
         bq_client = bigquery.Client()
 
-        # Step 1: Check games scheduled
-        games = check_games_scheduled(bq_client, target_date)
-        result["games_scheduled"] = games
+        # Check TODAY first (most important for same-day predictions)
+        today_games = check_games_scheduled(bq_client, today)
+        if today_games > 0:
+            today_predictions, today_players = check_predictions_exist(bq_client, today)
+            today_quality = check_quality_score(bq_client, today) if today_predictions > 0 else None
 
-        if games == 0:
-            result["status"] = "no_games"
-            result["message"] = f"No games scheduled for {target_date}"
-            logger.info(result["message"])
-            return jsonify(result), 200
+            today_check = {
+                "date": today,
+                "type": "today",
+                "games": today_games,
+                "predictions": today_predictions,
+                "players": today_players,
+                "quality_score": today_quality
+            }
+            result["checks"].append(today_check)
 
-        # Step 2: Check predictions exist
-        predictions, players = check_predictions_exist(bq_client, target_date)
-        result["predictions"] = predictions
-        result["players"] = players
-
-        if predictions > 0:
-            # Check quality
-            quality = check_quality_score(bq_client, target_date)
-            result["quality_score"] = quality
-
-            if quality and quality < 70:
-                result["status"] = "low_quality"
-                result["message"] = f"Predictions exist but quality ({quality}%) below threshold"
-                logger.warning(result["message"])
+            if today_predictions == 0:
+                logger.warning(f"No predictions for TODAY ({today}) - triggering self-healing")
+                result["status"] = "healing_today"
+                heal_for_date(today, result)
+            elif today_quality and today_quality < 70:
+                logger.warning(f"Low quality ({today_quality}%) for TODAY ({today})")
+                today_check["status"] = "low_quality"
             else:
-                result["status"] = "healthy"
-                result["message"] = f"Pipeline healthy: {predictions} predictions for {players} players"
-                logger.info(result["message"])
+                today_check["status"] = "healthy"
+                logger.info(f"TODAY ({today}): {today_predictions} predictions for {today_players} players")
+        else:
+            result["checks"].append({
+                "date": today,
+                "type": "today",
+                "games": 0,
+                "status": "no_games"
+            })
+            logger.info(f"No games scheduled for TODAY ({today})")
 
-            return jsonify(result), 200
+        # Then check TOMORROW (existing behavior)
+        tomorrow_games = check_games_scheduled(bq_client, tomorrow)
+        if tomorrow_games > 0:
+            tomorrow_predictions, tomorrow_players = check_predictions_exist(bq_client, tomorrow)
+            tomorrow_quality = check_quality_score(bq_client, tomorrow) if tomorrow_predictions > 0 else None
 
-        # Step 3: No predictions - trigger self-healing
-        logger.warning(f"No predictions for {target_date} - triggering self-healing")
-        result["status"] = "healing"
+            tomorrow_check = {
+                "date": tomorrow,
+                "type": "tomorrow",
+                "games": tomorrow_games,
+                "predictions": tomorrow_predictions,
+                "players": tomorrow_players,
+                "quality_score": tomorrow_quality
+            }
+            result["checks"].append(tomorrow_check)
 
-        # Clear stuck entries
-        cleared = clear_stuck_run_history()
-        if cleared > 0:
-            result["actions_taken"].append(f"Cleared {cleared} stuck run_history entries")
-
-        # Trigger Phase 3
-        import time
-        try:
-            if trigger_phase3(target_date):
-                result["actions_taken"].append("Triggered Phase 3 (backfill_mode)")
+            if tomorrow_predictions == 0:
+                logger.warning(f"No predictions for TOMORROW ({tomorrow}) - triggering self-healing")
+                if result["status"] == "healthy":
+                    result["status"] = "healing_tomorrow"
+                else:
+                    result["status"] = "healing_both"
+                heal_for_date(tomorrow, result)
+            elif tomorrow_quality and tomorrow_quality < 70:
+                logger.warning(f"Low quality ({tomorrow_quality}%) for TOMORROW ({tomorrow})")
+                tomorrow_check["status"] = "low_quality"
             else:
-                result["actions_taken"].append("Phase 3 trigger failed")
-        except Exception as e:
-            result["actions_taken"].append(f"Phase 3 error: {str(e)[:100]}")
+                tomorrow_check["status"] = "healthy"
+                logger.info(f"TOMORROW ({tomorrow}): {tomorrow_predictions} predictions for {tomorrow_players} players")
+        else:
+            result["checks"].append({
+                "date": tomorrow,
+                "type": "tomorrow",
+                "games": 0,
+                "status": "no_games"
+            })
+            logger.info(f"No games scheduled for TOMORROW ({tomorrow})")
 
-        # Wait a bit for Phase 3 to complete
-        time.sleep(10)
+        # Clean up internal tracking field
+        result.pop("_cleared_stuck", None)
 
-        # Trigger Phase 4
-        try:
-            if trigger_phase4(target_date):
-                result["actions_taken"].append("Triggered Phase 4 (skip_dependency_check)")
-            else:
-                result["actions_taken"].append("Phase 4 trigger failed")
-        except Exception as e:
-            result["actions_taken"].append(f"Phase 4 error: {str(e)[:100]}")
-
-        # Wait for Phase 4
-        time.sleep(10)
-
-        # Trigger predictions
-        try:
-            if trigger_predictions(target_date):
-                result["actions_taken"].append("Triggered Prediction Coordinator")
-            else:
-                result["actions_taken"].append("Prediction Coordinator trigger failed")
-        except Exception as e:
-            result["actions_taken"].append(f"Coordinator error: {str(e)[:100]}")
-
-        result["message"] = f"Self-healing triggered for {target_date}"
         return jsonify(result), 200
 
     except Exception as e:

@@ -1,12 +1,44 @@
 # Monitoring Documentation
 
-**Last Updated:** 2025-12-02
+**Last Updated:** 2025-12-29
 **Purpose:** Observability, monitoring, and health checks across all pipeline phases
 **Audience:** Engineers monitoring system health and investigating issues
 
 ---
 
-## Pipeline Validation (NEW - 2025-12-02)
+## Daily Health Check Tools (NEW - 2025-12-29)
+
+Quick scripts for daily pipeline monitoring:
+
+| Tool | Purpose | Command |
+|------|---------|---------|
+| **Daily Health Check** | Comprehensive morning check | `./bin/monitoring/daily_health_check.sh` |
+| **Orchestration State** | Debug Phase 3/4 state | `PYTHONPATH=. python3 bin/monitoring/check_orchestration_state.py` |
+| **Pipeline Status View** | BigQuery status view | `SELECT * FROM nba_orchestration.daily_phase_status` |
+
+```bash
+# Morning health check (run each day)
+./bin/monitoring/daily_health_check.sh
+
+# Check orchestration state for specific date
+PYTHONPATH=. python3 bin/monitoring/check_orchestration_state.py 2025-12-29
+
+# Query pipeline status (last 7 days)
+bq query --use_legacy_sql=false "SELECT * FROM nba_orchestration.daily_phase_status"
+```
+
+**What the health check shows:**
+- Games scheduled for the day
+- Predictions count, games covered, players
+- Phase 3 completion state (X/5 processors)
+- ML Feature Store record count
+- Recent errors (last 2 hours)
+- Service health status
+- Summary with pipeline status
+
+---
+
+## Pipeline Validation (2025-12-02)
 
 | Document | Purpose |
 |----------|---------|
