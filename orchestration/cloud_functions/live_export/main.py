@@ -49,13 +49,14 @@ def get_today_date() -> str:
     return et_now.strftime('%Y-%m-%d')
 
 
-def run_live_export(target_date: str, include_grading: bool = True) -> dict:
+def run_live_export(target_date: str, include_grading: bool = True, include_status: bool = True) -> dict:
     """
-    Run live scores and grading exports.
+    Run live scores, grading, and status exports.
 
     Args:
         target_date: Date to export (YYYY-MM-DD)
         include_grading: Whether to also export live grading
+        include_status: Whether to also export status.json
 
     Returns:
         Export result dictionary
@@ -93,6 +94,18 @@ def run_live_export(target_date: str, include_grading: bool = True) -> dict:
         except Exception as e:
             result['errors'].append(f"live-grading: {str(e)}")
             logger.error(f"Live grading export failed: {e}", exc_info=True)
+
+    # Export status.json for frontend visibility
+    if include_status:
+        try:
+            from data_processors.publishing.status_exporter import StatusExporter
+            exporter = StatusExporter()
+            path = exporter.export(target_date)
+            result['paths']['status'] = path
+            logger.info(f"Status export completed: {path}")
+        except Exception as e:
+            # Status export failure shouldn't fail the whole export
+            logger.warning(f"Status export failed (non-critical): {e}")
 
     # Set overall status
     if result['errors']:
