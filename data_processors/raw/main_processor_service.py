@@ -20,6 +20,8 @@ from datetime import datetime, timezone
 import base64
 import re
 
+from google.cloud import storage
+
 # Import notification system
 from shared.utils.notification_system import (
     notify_error,
