@@ -265,4 +265,80 @@ GROUP BY game_date"
 
 ---
 
+## Execution Log (December 29, 2025)
+
+### Changes Made
+
+1. **Scheduler Timing Updated (4 schedulers)**
+   - `same-day-phase3`: 12:30 PM → 10:30 AM ET
+   - `same-day-phase4`: 1:00 PM → 11:00 AM ET
+   - `same-day-predictions`: 1:30 PM → 11:30 AM ET
+   - `self-heal-predictions`: 2:15 PM → 12:30 PM ET
+
+2. **TOMORROW Support Added**
+   - Phase 3: `data_processors/analytics/main_analytics_service.py`
+   - Phase 4: `data_processors/precompute/main_precompute_service.py`
+   - Coordinator: `predictions/coordinator/coordinator.py`
+
+3. **Tomorrow Schedulers Created**
+   - `same-day-phase3-tomorrow`: 5:00 PM ET
+   - `same-day-phase4-tomorrow`: 5:30 PM ET
+   - `same-day-predictions-tomorrow`: 6:00 PM ET
+
+4. **Services Deployed**
+   - Phase 3 (nba-phase3-analytics-processors)
+   - Phase 4 (nba-phase4-precompute-processors)
+   - Prediction Coordinator (prediction-coordinator)
+
+### Results
+
+| Date | Context | Features | Predictions | Games |
+|------|---------|----------|-------------|-------|
+| Dec 29 | 352 | 352 | 1700 | 11 |
+| Dec 30 | 60 | 60 | 700 | 2/4 |
+
+**Note:** Dec 30 only has predictions for 2/4 games (Grizzlies vs 76ers, Jazz vs Celtics).
+Lakers vs Pistons and Clippers vs Kings are missing context data.
+
+### Remaining Issues
+
+1. **Dec 30 incomplete predictions** - Only 2/4 games have context
+   - Roster data exists for all teams (latest: Dec 28)
+   - Possible player matching issue in UpcomingPlayerGameContext
+
+2. **Game start time awareness** - No scheduler checks for early games
+   - Should add alert if games start before noon
+
+### Quick Verification Commands
+
+```bash
+# Check scheduler timing
+gcloud scheduler jobs list --location=us-west2 --filter="name~same-day" --format="table(name,schedule)"
+
+# Check pipeline status
+bq query --use_legacy_sql=false "SELECT * FROM nba_orchestration.daily_phase_status WHERE game_date >= CURRENT_DATE() - 1"
+
+# Check predictions
+bq query --use_legacy_sql=false "SELECT game_date, COUNT(*) as predictions FROM nba_predictions.player_prop_predictions WHERE game_date >= CURRENT_DATE() AND is_active = TRUE GROUP BY 1"
+
+# Run health check
+./bin/monitoring/daily_health_check.sh
+```
+
+### Current Scheduler Summary
+
+| Scheduler | Time (ET) | Purpose |
+|-----------|-----------|---------|
+| same-day-phase3 | 10:30 AM | Today's game context |
+| same-day-phase4 | 11:00 AM | Today's ML features |
+| same-day-predictions | 11:30 AM | Today's predictions |
+| self-heal-predictions | 12:30 PM | Catch missing predictions |
+| phase6-tonight-picks | 1:00 PM | Website export |
+| same-day-phase3-tomorrow | 5:00 PM | Tomorrow's game context |
+| same-day-phase4-tomorrow | 5:30 PM | Tomorrow's ML features |
+| same-day-predictions-tomorrow | 6:00 PM | Tomorrow's predictions |
+
+---
+
 *Created: December 29, 2025*
+*Updated: December 29, 2025 - Execution complete*
