@@ -122,6 +122,29 @@ class ProcessingModeConfig:
 
 
 @dataclass
+class CircuitBreakerConfig:
+    """Configuration for circuit breaker behavior."""
+
+    # Entity-level circuit breaker lockout duration
+    # When a player/team fails processing multiple times, lock them out for this long
+    # Default: 24 hours (was 7 days - too aggressive, caused cascading failures)
+    entity_lockout_hours: int = 24
+
+    # Maximum consecutive failures before entity is locked out
+    entity_failure_threshold: int = 5
+
+    # Auto-reset: Clear circuit breaker if data becomes available
+    auto_reset_on_data: bool = True
+
+    # Processor-level circuit breaker timeout (minutes)
+    # How long a processor stays in "open" state after failures
+    processor_timeout_minutes: int = 30
+
+    # Processor failure threshold
+    processor_failure_threshold: int = 5
+
+
+@dataclass
 class NewPlayerConfig:
     """Configuration for handling new players (rookies, traded players)."""
 
@@ -150,6 +173,7 @@ class OrchestrationConfig:
     prediction_mode: PredictionModeConfig = field(default_factory=PredictionModeConfig)
     processing_mode: ProcessingModeConfig = field(default_factory=ProcessingModeConfig)
     new_player: NewPlayerConfig = field(default_factory=NewPlayerConfig)
+    circuit_breaker: CircuitBreakerConfig = field(default_factory=CircuitBreakerConfig)
 
     @classmethod
     def from_environment(cls) -> 'OrchestrationConfig':
@@ -179,6 +203,15 @@ class OrchestrationConfig:
         use_multiple = os.environ.get('USE_MULTIPLE_LINES_DEFAULT')
         if use_multiple is not None:
             config.prediction_mode.use_multiple_lines_default = use_multiple.lower() == 'true'
+
+        # Circuit breaker config
+        entity_lockout = os.environ.get('CIRCUIT_BREAKER_ENTITY_LOCKOUT_HOURS')
+        if entity_lockout:
+            config.circuit_breaker.entity_lockout_hours = int(entity_lockout)
+
+        auto_reset = os.environ.get('CIRCUIT_BREAKER_AUTO_RESET')
+        if auto_reset is not None:
+            config.circuit_breaker.auto_reset_on_data = auto_reset.lower() == 'true'
 
         return config
 
