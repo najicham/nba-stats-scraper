@@ -3,7 +3,7 @@
 **Date:** 2025-12-29
 **Session:** 184
 **Previous Session:** 183 (see 2025-12-29-SESSION183-COMPLETE-HANDOFF.md)
-**Status:** 3 of 4 deployments complete, Phase 5 blocked on permissions
+**Status:** ✅ All 4 deployments complete (Phase 5 fixed in Session 185)
 
 ---
 
@@ -74,45 +74,31 @@ Added `_auto_reset_circuit_breakers()` function that:
 | Phase 2 | nba-phase2-raw-processors | 00048-8gh | ✅ Deployed |
 | Phase 3 | nba-phase3-analytics-processors | 00030-zzv | ✅ Deployed |
 | Phase 4 | nba-phase4-precompute-processors | 00027-zsv | ✅ Deployed |
-| Phase 5 | prediction-worker | 00006-x52 | ❌ BLOCKED |
+| Phase 5 | prediction-worker | 00007-xlr | ✅ Deployed (fixed in Session 185) |
 
 ---
 
-## Phase 5 Deployment Issue
+## Phase 5 Deployment Issue ✅ RESOLVED
 
-### Error
+### Original Error
 ```
 denied: Permission "artifactregistry.repositories.uploadArtifacts" denied on resource
 "projects/nba-props-platform-dev/locations/us-west2/repositories/nba-props"
 ```
 
 ### Root Cause
-The deploy script pushes Docker images to `nba-props-platform-dev` project's Artifact Registry, but current gcloud credentials lack the `Artifact Registry Writer` role.
+The deploy script defaulted to "dev" environment which tried to use `nba-props-platform-dev` project, but that project doesn't exist or is inaccessible.
 
-### Fix Options
-
-**Option 1: Grant permissions (recommended)**
+### Fix Applied (Session 185)
+Changed `bin/predictions/deploy/deploy_prediction_worker.sh` to default to `prod` instead of `dev`:
 ```bash
-# Grant Artifact Registry Writer to your user account
-gcloud artifacts repositories add-iam-policy-binding nba-props \
-  --location=us-west2 \
-  --project=nba-props-platform-dev \
-  --member="user:YOUR_EMAIL" \
-  --role="roles/artifactregistry.writer"
+# Line 26 - changed from:
+ENVIRONMENT="${1:-dev}"
+# To:
+ENVIRONMENT="${1:-prod}"
 ```
 
-**Option 2: Use Cloud Build directly**
-```bash
-cd predictions/worker
-gcloud builds submit --tag us-west2-docker.pkg.dev/nba-props-platform/nba-props/prediction-worker:latest .
-gcloud run deploy prediction-worker --image us-west2-docker.pkg.dev/nba-props-platform/nba-props/prediction-worker:latest --region us-west2
-```
-
-**Option 3: Deploy from different machine with permissions**
-The code is committed and pushed to main. Anyone with deploy permissions can run:
-```bash
-./bin/predictions/deploy/deploy_prediction_worker.sh
-```
+Deployed successfully: `prediction-worker-00007-xlr`
 
 ---
 
@@ -170,8 +156,8 @@ LIMIT 5
 
 ## Remaining Work
 
-### Immediate (needs Phase 5 deploy)
-- Deploy Phase 5 prediction-worker with MERGE fix
+### Immediate ✅ DONE
+- ~~Deploy Phase 5 prediction-worker with MERGE fix~~ → Deployed in Session 185
 
 ### Future (documented in PIPELINE-ROBUSTNESS-PLAN.md)
 - P2: Automatic backfill trigger when gaps detected
