@@ -1,6 +1,6 @@
 # Phase 6: Publishing & Exports
 
-**Last Updated:** 2025-12-27
+**Last Updated:** 2025-12-28
 **Status:** Production
 **Location:** `data_processors/publishing/`
 
@@ -59,6 +59,7 @@ Phase 6 exports predictions, results, and live scoring data to GCS for website c
 |----------|-------------|----------|-------------|
 | `live_scores_exporter.py` | `live/{date}.json` | Every 3 min | Real-time game scores |
 | `live_grading_exporter.py` | `live-grading/{date}.json` | Every 3 min | Real-time prediction accuracy |
+| `status_exporter.py` | `status.json` | Every 3 min | **NEW** Pipeline health for frontend |
 
 ---
 
@@ -76,10 +77,11 @@ gcloud scheduler jobs list --location=us-west2 | grep -E "phase6|export|grading|
 | `phase6-hourly-trends` | Hourly 6AM-11PM | Export trend data |
 | `phase6-player-profiles` | Weekly (Sunday 6 AM) | Export all player profiles |
 | `grading-daily` | 11 AM ET | Grade yesterday's predictions |
-| `live-export-evening` | Every 3 min 7-11 PM | Live scores during games |
+| `live-export-evening` | Every 3 min **4-11 PM** | Live scores during games |
 | `live-export-late-night` | Every 3 min 12-1 AM | Late night games |
-| `bdl-live-boxscores-evening` | Every 3 min 7-11 PM | Live boxscores scraper |
+| `bdl-live-boxscores-evening` | Every 3 min **4-11 PM** | Live boxscores scraper |
 | `bdl-live-boxscores-late` | Every 3 min 12-1 AM | Late night boxscores |
+| `live-freshness-monitor` | Every 5 min 4 PM-1 AM | **NEW** Self-healing monitor |
 
 ---
 
