@@ -137,6 +137,98 @@ gcloud logging read 'severity=ERROR AND resource.type="cloud_run_revision"' \
 
 ---
 
+## 9. Clean Up Historical Duplicate Predictions
+
+The MERGE fix prevents **future** duplicates, but existing data (Dec 26-28) still has 34-51 copies per player. To clean up:
+
+### Option A: Delete duplicates keeping the latest row (RECOMMENDED)
+
+```bash
+# First, check how many duplicates exist
+bq query --use_legacy_sql=false --format=pretty "
+SELECT game_date, COUNT(*) as total_rows, COUNT(DISTINCT player_lookup) as unique_players
+FROM nba_predictions.player_prop_predictions
+WHERE game_date BETWEEN '2025-12-26' AND '2025-12-28'
+  AND is_active = TRUE
+GROUP BY game_date
+ORDER BY game_date
+"
+
+# Create a clean deduplicated table (keeps row with latest created_at per player/date)
+bq query --use_legacy_sql=false --destination_table=nba_predictions.player_prop_predictions_deduped "
+SELECT * FROM (
+  SELECT *,
+    ROW_NUMBER() OVER (PARTITION BY player_lookup, game_date ORDER BY created_at DESC) as rn
+  FROM nba_predictions.player_prop_predictions
+  WHERE is_active = TRUE
+)
+WHERE rn = 1
+"
+
+# Verify the deduped table looks correct
+bq query --use_legacy_sql=false --format=pretty "
+SELECT game_date, COUNT(*) as rows, COUNT(DISTINCT player_lookup) as players
+FROM nba_predictions.player_prop_predictions_deduped
+WHERE game_date >= '2025-12-26'
+GROUP BY game_date
+ORDER BY game_date
+"
+
+# If looks good, swap tables:
+# 1. Rename original to backup
+bq cp nba_predictions.player_prop_predictions nba_predictions.player_prop_predictions_backup_20251229
+
+# 2. Delete original
+bq rm -f nba_predictions.player_prop_predictions
+
+# 3. Rename deduped to original
+bq cp nba_predictions.player_prop_predictions_deduped nba_predictions.player_prop_predictions
+
+# 4. Clean up temp table
+bq rm -f nba_predictions.player_prop_predictions_deduped
+```
+
+### Option B: In-place DELETE using DML (simpler but slower)
+
+```bash
+# Delete all but the latest row per player/date combination
+bq query --use_legacy_sql=false "
+DELETE FROM nba_predictions.player_prop_predictions
+WHERE prediction_id IN (
+  SELECT prediction_id FROM (
+    SELECT prediction_id,
+      ROW_NUMBER() OVER (PARTITION BY player_lookup, game_date ORDER BY created_at DESC) as rn
+    FROM nba_predictions.player_prop_predictions
+    WHERE is_active = TRUE
+  )
+  WHERE rn > 1
+)
+"
+```
+
+### Option C: Mark duplicates as inactive (safest, preserves data)
+
+```bash
+# Mark duplicate rows as inactive instead of deleting
+bq query --use_legacy_sql=false "
+UPDATE nba_predictions.player_prop_predictions
+SET is_active = FALSE
+WHERE prediction_id IN (
+  SELECT prediction_id FROM (
+    SELECT prediction_id,
+      ROW_NUMBER() OVER (PARTITION BY player_lookup, game_date ORDER BY created_at DESC) as rn
+    FROM nba_predictions.player_prop_predictions
+    WHERE is_active = TRUE
+  )
+  WHERE rn > 1
+)
+"
+```
+
+**Recommendation:** Use Option C first (safest), verify the API still works, then consider Option A later if storage becomes a concern.
+
+---
+
 ## If Something Is Wrong
 
 ### No predictions for today:
