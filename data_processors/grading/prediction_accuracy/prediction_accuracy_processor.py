@@ -75,6 +75,25 @@ class PredictionAccuracyProcessor:
         except (TypeError, ValueError):
             return None
 
+    def _safe_string(self, value) -> Optional[str]:
+        """Sanitize string for JSON compatibility.
+
+        Removes control characters that break JSON parsing and ensures
+        proper encoding for BigQuery load_table_from_json.
+        """
+        if value is None:
+            return None
+        try:
+            s = str(value)
+            # Remove control characters (except space, tab, newline)
+            # These can break JSON parsing
+            import re
+            s = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', s)
+            # Limit length to prevent oversized values
+            return s[:500] if len(s) > 500 else s
+        except (TypeError, ValueError):
+            return None
+
     def get_predictions_for_date(self, game_date: date) -> List[Dict]:
         """
         Load all predictions for a specific game date.
@@ -253,20 +272,20 @@ class PredictionAccuracyProcessor:
             return round(float(val), decimals)
 
         return {
-            'player_lookup': prediction['player_lookup'],
-            'game_id': prediction['game_id'],
+            'player_lookup': self._safe_string(prediction['player_lookup']),
+            'game_id': self._safe_string(prediction['game_id']),
             'game_date': prediction['game_date'].isoformat() if hasattr(prediction['game_date'], 'isoformat') else str(prediction['game_date']),
-            'system_id': prediction['system_id'],
+            'system_id': self._safe_string(prediction['system_id']),
 
             # Team context (new in v3)
-            'team_abbr': actual_data.get('team_abbr'),
-            'opponent_team_abbr': actual_data.get('opponent_team_abbr'),
+            'team_abbr': self._safe_string(actual_data.get('team_abbr')),
+            'opponent_team_abbr': self._safe_string(actual_data.get('opponent_team_abbr')),
 
             # Prediction snapshot - round for NUMERIC compatibility
             'predicted_points': round_numeric(predicted_points, 2),
             'confidence_score': round_numeric(confidence_score, 4),
             'confidence_decile': self.compute_confidence_decile(confidence_score),  # new in v3
-            'recommendation': recommendation,
+            'recommendation': self._safe_string(recommendation),
             'line_value': round_numeric(line_value, 2),
 
             # Feature inputs (for ML analysis)
@@ -276,7 +295,7 @@ class PredictionAccuracyProcessor:
 
             # Actual result
             'actual_points': int(actual_points),
-            'minutes_played': actual_data.get('minutes_played'),  # new in v3
+            'minutes_played': self._safe_float(actual_data.get('minutes_played')),  # new in v3
 
             # Core accuracy metrics - round for NUMERIC compatibility
             'absolute_error': round_numeric(absolute_error, 2),
@@ -294,11 +313,11 @@ class PredictionAccuracyProcessor:
             # Line source tracking (for no-line player analysis)
             # Enables segmented accuracy analysis by whether player had real betting line
             'has_prop_line': bool(prediction.get('has_prop_line', True)),
-            'line_source': prediction.get('line_source', 'ACTUAL_PROP'),
+            'line_source': self._safe_string(prediction.get('line_source', 'ACTUAL_PROP')),
             'estimated_line_value': round_numeric(self._safe_float(prediction.get('estimated_line_value')), 1),
 
             # Metadata
-            'model_version': prediction.get('model_version'),
+            'model_version': self._safe_string(prediction.get('model_version')),
             'graded_at': datetime.now(timezone.utc).isoformat()
         }
 
