@@ -80,6 +80,101 @@ except ImportError:
 db = firestore.Client()
 
 
+def check_player_game_summary_for_yesterday() -> Dict:
+    """
+    Check if player_game_summary has data for yesterday.
+
+    This is critical for grading - if player_game_summary is empty for yesterday,
+    grading will fail. This check catches the scenario where Phase 3 analytics
+    didn't run for yesterday's completed games.
+
+    Returns:
+        Dict with check results:
+        - has_data: bool
+        - row_count: int
+        - game_date: str
+        - status: 'healthy', 'warning', or 'critical'
+    """
+    from google.cloud import bigquery
+
+    yesterday = (datetime.now(timezone.utc).date() - timedelta(days=1)).isoformat()
+
+    try:
+        bq_client = bigquery.Client(project=PROJECT_ID)
+
+        query = f"""
+        SELECT COUNT(*) as cnt
+        FROM `{PROJECT_ID}.nba_analytics.player_game_summary`
+        WHERE game_date = '{yesterday}'
+        """
+
+        result = bq_client.query(query).to_dataframe()
+        row_count = int(result.iloc[0]['cnt'])
+
+        # Also check if there were games yesterday
+        games_query = f"""
+        SELECT COUNT(DISTINCT game_id) as game_count
+        FROM `{PROJECT_ID}.nba_raw.nbac_schedule`
+        WHERE game_date = '{yesterday}'
+          AND game_status_text = 'Final'
+        """
+        games_result = bq_client.query(games_query).to_dataframe()
+        game_count = int(games_result.iloc[0]['game_count'])
+
+        if game_count == 0:
+            # No games yesterday, so no data expected
+            return {
+                'has_data': True,
+                'row_count': 0,
+                'game_count': 0,
+                'game_date': yesterday,
+                'status': 'healthy',
+                'message': 'No games scheduled for yesterday'
+            }
+
+        if row_count == 0:
+            return {
+                'has_data': False,
+                'row_count': 0,
+                'game_count': game_count,
+                'game_date': yesterday,
+                'status': 'critical',
+                'message': f'CRITICAL: player_game_summary is EMPTY for {yesterday} but {game_count} games were played. Grading will fail!'
+            }
+
+        # Calculate expected row count (roughly 13 active players per game × 2 teams)
+        expected_min = game_count * 20  # Conservative estimate
+        if row_count < expected_min:
+            return {
+                'has_data': True,
+                'row_count': row_count,
+                'game_count': game_count,
+                'game_date': yesterday,
+                'status': 'warning',
+                'message': f'Low row count: {row_count} rows for {game_count} games (expected ~{expected_min}+)'
+            }
+
+        return {
+            'has_data': True,
+            'row_count': row_count,
+            'game_count': game_count,
+            'game_date': yesterday,
+            'status': 'healthy',
+            'message': f'OK: {row_count} rows for {game_count} games'
+        }
+
+    except Exception as e:
+        logger.error(f"Error checking player_game_summary: {e}")
+        return {
+            'has_data': False,
+            'row_count': 0,
+            'game_count': 0,
+            'game_date': yesterday,
+            'status': 'error',
+            'message': f'Error checking: {str(e)}'
+        }
+
+
 @functions_framework.http
 def monitor_transitions(request):
     """
@@ -114,24 +209,46 @@ def monitor_transitions(request):
             timeout_hours=PHASE4_TIMEOUT_HOURS,
             phase_name='Phase 4 → Phase 5'
         ),
+        # Critical check: player_game_summary for yesterday (grading dependency)
+        'player_game_summary_check': check_player_game_summary_for_yesterday(),
     }
 
     # Summarize
     stuck_count = sum(
         len(r.get('stuck_transitions', []))
         for r in results.values()
-        if isinstance(r, dict)
+        if isinstance(r, dict) and 'stuck_transitions' in r
     )
+
+    # Check player_game_summary status
+    pgs_check = results.get('player_game_summary_check', {})
+    pgs_status = pgs_check.get('status', 'unknown')
+
+    # Determine overall status
+    if pgs_status == 'critical':
+        overall_status = 'critical'
+    elif stuck_count > 0:
+        overall_status = 'stuck_detected'
+    elif pgs_status == 'warning':
+        overall_status = 'warning'
+    else:
+        overall_status = 'healthy'
 
     results['summary'] = {
         'total_stuck': stuck_count,
-        'status': 'healthy' if stuck_count == 0 else 'stuck_detected'
+        'player_game_summary_status': pgs_status,
+        'status': overall_status
     }
 
-    if stuck_count > 0:
+    # Send alerts if needed
+    if overall_status == 'critical':
+        logger.error(f"🚨 CRITICAL: {pgs_check.get('message', 'player_game_summary missing')}")
+        send_alerts(results, include_pgs_alert=True)
+    elif stuck_count > 0:
         logger.warning(f"⚠️  Found {stuck_count} stuck transition(s)")
-        # Send alerts for stuck transitions
-        send_alerts(results)
+        send_alerts(results, include_pgs_alert=False)
+    elif pgs_status == 'warning':
+        logger.warning(f"⚠️  {pgs_check.get('message', 'Low player_game_summary coverage')}")
     else:
         logger.info("✅ All transitions healthy")
 
@@ -243,9 +360,9 @@ def check_phase_transition(
     }
 
 
-def send_alerts(results: Dict) -> None:
+def send_alerts(results: Dict, include_pgs_alert: bool = False) -> None:
     """
-    Send alerts for stuck transitions.
+    Send alerts for stuck transitions and player_game_summary issues.
 
     Currently logs warnings. Can be extended to send:
     - Email via SES
@@ -254,11 +371,12 @@ def send_alerts(results: Dict) -> None:
 
     Args:
         results: Monitoring results with stuck transitions
+        include_pgs_alert: If True, include player_game_summary alert (critical)
     """
     stuck_transitions = []
 
     for phase_name, phase_results in results.items():
-        if phase_name in ('timestamp', 'summary'):
+        if phase_name in ('timestamp', 'summary', 'player_game_summary_check'):
             continue
         if isinstance(phase_results, dict) and phase_results.get('stuck_transitions'):
             for stuck in phase_results['stuck_transitions']:
@@ -267,27 +385,51 @@ def send_alerts(results: Dict) -> None:
                     **stuck
                 })
 
-    if not stuck_transitions:
-        return
+    pgs_check = results.get('player_game_summary_check', {})
 
     # Build alert message
-    alert_lines = [
-        "🚨 STUCK PHASE TRANSITIONS DETECTED",
-        "",
-        f"Time: {datetime.now(timezone.utc).isoformat()}",
-        f"Total stuck: {len(stuck_transitions)}",
-        "",
-    ]
+    alert_lines = []
 
-    for stuck in stuck_transitions:
+    # Add player_game_summary critical alert if needed
+    if include_pgs_alert and pgs_check.get('status') == 'critical':
         alert_lines.extend([
-            f"📍 {stuck['phase']}",
-            f"   Game Date: {stuck['game_date']}",
-            f"   Progress: {stuck['completed_count']}/{stuck['expected_count']}",
-            f"   Age: {stuck['age_hours']} hours (timeout: {stuck['timeout_hours']}h)",
-            f"   Missing: {', '.join(stuck['missing_processors'][:5])}",
+            "🚨 CRITICAL: GRADING WILL FAIL",
+            "",
+            f"❌ player_game_summary is EMPTY for yesterday ({pgs_check.get('game_date')})",
+            f"   Games played: {pgs_check.get('game_count', 'unknown')}",
+            f"   Rows found: {pgs_check.get('row_count', 0)}",
+            "",
+            "ACTION REQUIRED:",
+            "   Run Phase 3 analytics for yesterday:",
+            "   gcloud scheduler jobs run daily-yesterday-analytics --location=us-west2",
+            "",
+            "   Or manually trigger:",
+            "   curl -X POST https://nba-phase3-analytics-processors-f7p3g7f6ya-wl.a.run.app/process-date-range \\",
+            f"     -d '{{\"start_date\": \"{pgs_check.get('game_date')}\", \"end_date\": \"{pgs_check.get('game_date')}\", \"processors\": [\"PlayerGameSummaryProcessor\"]}}'",
             "",
         ])
+
+    if stuck_transitions:
+        alert_lines.extend([
+            "🚨 STUCK PHASE TRANSITIONS DETECTED",
+            "",
+            f"Time: {datetime.now(timezone.utc).isoformat()}",
+            f"Total stuck: {len(stuck_transitions)}",
+            "",
+        ])
+
+        for stuck in stuck_transitions:
+            alert_lines.extend([
+                f"📍 {stuck['phase']}",
+                f"   Game Date: {stuck['game_date']}",
+                f"   Progress: {stuck['completed_count']}/{stuck['expected_count']}",
+                f"   Age: {stuck['age_hours']} hours (timeout: {stuck['timeout_hours']}h)",
+                f"   Missing: {', '.join(stuck['missing_processors'][:5])}",
+                "",
+            ])
+
+    if not alert_lines:
+        return
 
     alert_message = "\n".join(alert_lines)
     logger.warning(alert_message)

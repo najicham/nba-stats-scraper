@@ -1,0 +1,100 @@
+<!-- Coverage Metrics Component -->
+<div class="space-y-6">
+    <!-- Player Game Summary Coverage -->
+    <div>
+        <h4 class="text-sm font-semibold text-gray-700 mb-3">Player Game Summary Coverage (Last 7 Days)</h4>
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200 text-sm">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Games</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Rows</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Status</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">
+                    {% for row in coverage %}
+                    <tr class="{% if row.coverage_status == 'MISSING' %}bg-red-50{% elif row.coverage_status == 'PARTIAL' %}bg-yellow-50{% endif %}">
+                        <td class="px-3 py-2 whitespace-nowrap">{{ row.game_date }}</td>
+                        <td class="px-3 py-2 text-center">{{ row.games_final }}</td>
+                        <td class="px-3 py-2 text-center">{{ row.summary_rows }}</td>
+                        <td class="px-3 py-2 text-center">
+                            {% if row.coverage_status == 'COMPLETE' %}
+                            <span class="px-2 py-1 bg-green-100 text-green-800 text-xs rounded-full">Complete</span>
+                            {% elif row.coverage_status == 'PARTIAL' %}
+                            <span class="px-2 py-1 bg-yellow-100 text-yellow-800 text-xs rounded-full">Partial</span>
+                            {% elif row.coverage_status == 'MISSING' %}
+                            <span class="px-2 py-1 bg-red-100 text-red-800 text-xs rounded-full">Missing</span>
+                            {% elif row.coverage_status == 'NO_GAMES' %}
+                            <span class="px-2 py-1 bg-gray-100 text-gray-600 text-xs rounded-full">No Games</span>
+                            {% else %}
+                            <span class="px-2 py-1 bg-gray-100 text-gray-600 text-xs rounded-full">{{ row.coverage_status }}</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Grading Status -->
+    <div>
+        <h4 class="text-sm font-semibold text-gray-700 mb-3">Grading Status (Last 7 Days)</h4>
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200 text-sm">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Predictions</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Graded</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">MAE</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Status</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">
+                    {% for row in grading %}
+                    <tr class="{% if row.grading_status == 'NOT_GRADED' %}bg-red-50{% elif row.grading_status == 'PARTIAL' %}bg-yellow-50{% endif %}">
+                        <td class="px-3 py-2 whitespace-nowrap">{{ row.game_date }}</td>
+                        <td class="px-3 py-2 text-center">{{ row.prediction_count }}</td>
+                        <td class="px-3 py-2 text-center">{{ row.graded_count }}</td>
+                        <td class="px-3 py-2 text-center">{{ row.mae if row.mae else '-' }}</td>
+                        <td class="px-3 py-2 text-center">
+                            {% if row.grading_status == 'COMPLETE' %}
+                            <span class="px-2 py-1 bg-green-100 text-green-800 text-xs rounded-full">Complete</span>
+                            {% elif row.grading_status == 'PARTIAL' %}
+                            <span class="px-2 py-1 bg-yellow-100 text-yellow-800 text-xs rounded-full">Partial</span>
+                            {% elif row.grading_status == 'NOT_GRADED' %}
+                            <span class="px-2 py-1 bg-red-100 text-red-800 text-xs rounded-full">Not Graded</span>
+                            {% else %}
+                            <span class="px-2 py-1 bg-gray-100 text-gray-600 text-xs rounded-full">{{ row.grading_status }}</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Summary Stats -->
+    <div class="grid grid-cols-2 gap-4 mt-4">
+        <div class="bg-gray-50 rounded-lg p-3 text-center">
+            {% set complete_coverage = coverage|selectattr('coverage_status', 'equalto', 'COMPLETE')|list|length %}
+            {% set missing_coverage = coverage|selectattr('coverage_status', 'equalto', 'MISSING')|list|length %}
+            <div class="text-2xl font-bold {% if missing_coverage > 0 %}text-red-600{% else %}text-green-600{% endif %}">
+                {{ complete_coverage }}/{{ coverage|length }}
+            </div>
+            <div class="text-xs text-gray-500">Days with complete coverage</div>
+        </div>
+        <div class="bg-gray-50 rounded-lg p-3 text-center">
+            {% set complete_grading = grading|selectattr('grading_status', 'equalto', 'COMPLETE')|list|length %}
+            {% set not_graded = grading|selectattr('grading_status', 'equalto', 'NOT_GRADED')|list|length %}
+            <div class="text-2xl font-bold {% if not_graded > 0 %}text-red-600{% else %}text-green-600{% endif %}">
+                {{ complete_grading }}/{{ grading|length }}
+            </div>
+            <div class="text-xs text-gray-500">Days fully graded</div>
+        </div>
+    </div>
+</div>

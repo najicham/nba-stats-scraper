@@ -339,6 +339,9 @@ class PlayerGameSummaryProcessor(
                 player_name as player_full_name,
                 team_abbr,
                 player_status,
+                -- Team context from source (avoids game_id parsing)
+                home_team_abbr as source_home_team,
+                away_team_abbr as source_away_team,
 
                 -- Core stats
                 points,
@@ -374,7 +377,7 @@ class PlayerGameSummaryProcessor(
         ),
         
         bdl_data AS (
-            SELECT 
+            SELECT
                 game_id,
                 game_date,
                 season_year,
@@ -382,8 +385,11 @@ class PlayerGameSummaryProcessor(
                 player_full_name,
                 team_abbr,
                 'active' as player_status,
-                
-                -- Core stats  
+                -- Team context: NULL for bdl, will be parsed from game_id
+                CAST(NULL AS STRING) as source_home_team,
+                CAST(NULL AS STRING) as source_away_team,
+
+                -- Core stats
                 points,
                 assists,
                 rebounds as total_rebounds,
@@ -393,7 +399,7 @@ class PlayerGameSummaryProcessor(
                 blocks,
                 turnovers,
                 personal_fouls,
-                
+
                 -- Shooting stats
                 field_goals_made,
                 NULL as field_goals_attempted,
@@ -401,11 +407,11 @@ class PlayerGameSummaryProcessor(
                 NULL as three_pointers_attempted,
                 free_throws_made,
                 NULL as free_throws_attempted,
-                
+
                 -- Game context
                 minutes,
                 NULL as plus_minus,
-                
+
                 -- Metadata
                 processed_at as source_processed_at,
                 'bdl_boxscores' as primary_source
@@ -464,36 +470,44 @@ class PlayerGameSummaryProcessor(
         ),
         
         -- Add opponent context
+        -- Expected game_id format: YYYYMMDD_AWAY_HOME (e.g., "20251229_ATL_OKC")
+        -- See: shared/utils/game_id_converter.py for standard format
+        --
+        -- Strategy:
+        -- 1. Prefer source_home_team/source_away_team from nbac_gamebook (most reliable)
+        -- 2. Fall back to parsing game_id (handles BDL data and any edge cases)
+        -- SAFE_OFFSET used for backward compatibility with old non-standard game_ids
         games_context AS (
             SELECT DISTINCT
                 game_id,
                 game_date,
-                CASE 
-                    WHEN game_id LIKE '%_%_%' THEN
-                        SPLIT(game_id, '_')[OFFSET(1)]
-                    ELSE NULL
-                END as away_team_abbr,
-                CASE 
-                    WHEN game_id LIKE '%_%_%' THEN  
-                        SPLIT(game_id, '_')[OFFSET(2)]
-                    ELSE NULL
-                END as home_team_abbr
+                source_home_team,
+                source_away_team,
+                -- Use source data if available, else parse from game_id
+                COALESCE(
+                    source_away_team,
+                    CASE WHEN game_id LIKE '%_%_%' THEN SPLIT(game_id, '_')[SAFE_OFFSET(1)] END
+                ) as away_team_abbr,
+                COALESCE(
+                    source_home_team,
+                    CASE WHEN game_id LIKE '%_%_%' THEN SPLIT(game_id, '_')[SAFE_OFFSET(2)] END
+                ) as home_team_abbr
             FROM combined_data
         )
-        
-        SELECT 
+
+        SELECT
             wp.*,
             gc.away_team_abbr,
             gc.home_team_abbr,
-            CASE 
+            CASE
                 WHEN wp.team_abbr = gc.home_team_abbr THEN gc.away_team_abbr
-                ELSE gc.home_team_abbr  
+                ELSE gc.home_team_abbr
             END as opponent_team_abbr,
-            CASE 
+            CASE
                 WHEN wp.team_abbr = gc.home_team_abbr THEN TRUE
                 ELSE FALSE
             END as home_game
-            
+
         FROM with_props wp
         LEFT JOIN games_context gc ON wp.game_id = gc.game_id
         ORDER BY wp.game_date DESC, wp.game_id, wp.player_lookup

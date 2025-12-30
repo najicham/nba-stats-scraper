@@ -1,0 +1,59 @@
+<!-- Processor Failures Component -->
+{% if failures %}
+<div class="space-y-3">
+    {% for failure in failures %}
+    <div class="border border-red-300 rounded-lg p-4 bg-red-50">
+        <div class="flex items-start justify-between mb-2">
+            <div>
+                <span class="px-2 py-1 bg-red-600 text-white text-xs font-bold rounded">
+                    {{ failure.processor_name }}
+                </span>
+                {% if failure.phase %}
+                <span class="ml-2 px-2 py-1 bg-gray-200 text-gray-700 text-xs rounded">
+                    Phase {{ failure.phase }}
+                </span>
+                {% endif %}
+            </div>
+            <span class="text-xs text-gray-500">
+                {{ failure.run_id[:8] if failure.run_id else 'N/A' }}
+            </span>
+        </div>
+
+        {% if failure.data_date %}
+        <div class="text-xs text-gray-600 mb-2">
+            Data Date: {{ failure.data_date }}
+        </div>
+        {% endif %}
+
+        {% if failure.error_message %}
+        <div class="bg-red-100 p-2 rounded text-sm text-red-900 font-mono overflow-x-auto">
+            {{ failure.error_message[:300] }}{% if failure.error_message|length > 300 %}...{% endif %}
+        </div>
+        {% endif %}
+
+        <div class="mt-2 flex justify-between text-xs text-gray-500">
+            <span>{{ failure.started_at[:19].replace('T', ' ') if failure.started_at else 'N/A' }} ET</span>
+            {% if failure.duration_seconds %}
+            <span>Duration: {{ failure.duration_seconds }}s</span>
+            {% endif %}
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+<div class="mt-4 text-center">
+    <p class="text-sm text-red-600 font-medium">
+        {{ failures|length }} processor failure(s) in last 24 hours
+    </p>
+</div>
+
+{% else %}
+<div class="text-center py-8">
+    <div class="inline-flex items-center justify-center w-12 h-12 rounded-full bg-green-100 mb-4">
+        <svg class="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+        </svg>
+    </div>
+    <p class="text-gray-500">No processor failures in last 24 hours</p>
+</div>
+{% endif %}
