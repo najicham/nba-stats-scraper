@@ -140,6 +140,48 @@ class AnalyticsProcessorBase(RunHistoryMixin):
         """Check if running in backfill mode (alerts suppressed)."""
         return self.opts.get('backfill_mode', False)
 
+    def _sanitize_row_for_json(self, row: Dict) -> Dict:
+        """
+        Sanitize a row dictionary for JSON serialization to BigQuery.
+
+        Handles:
+        - NaN and Inf float values (replace with None)
+        - Control characters in strings (remove)
+        - datetime/date objects (convert to ISO string)
+        - Non-serializable types (convert to string)
+        """
+        import math
+        import re
+
+        sanitized = {}
+        for key, value in row.items():
+            if value is None:
+                sanitized[key] = None
+            elif isinstance(value, float):
+                if math.isnan(value) or math.isinf(value):
+                    sanitized[key] = None
+                else:
+                    sanitized[key] = value
+            elif isinstance(value, str):
+                # Remove control characters that break JSON
+                cleaned = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', value)
+                sanitized[key] = cleaned
+            elif isinstance(value, (datetime, date)):
+                sanitized[key] = value.isoformat()
+            elif isinstance(value, (int, bool)):
+                sanitized[key] = value
+            elif isinstance(value, (list, dict)):
+                # Recursively sanitize nested structures
+                try:
+                    json.dumps(value)  # Test if serializable
+                    sanitized[key] = value
+                except (TypeError, ValueError):
+                    sanitized[key] = str(value)
+            else:
+                # Convert other types to string
+                sanitized[key] = str(value)
+        return sanitized
+
     def _send_notification(self, alert_func, *args, **kwargs):
         """
         Send notification alert unless in backfill mode.
@@ -1476,9 +1518,25 @@ class AnalyticsProcessorBase(RunHistoryMixin):
                 logger.warning(f"Could not get table schema: {schema_e}")
                 table_schema = None
             
-            # Convert to NDJSON
-            ndjson_data = "\n".join(json.dumps(row) for row in rows)
+            # Sanitize and convert to NDJSON
+            sanitized_rows = []
+            for i, row in enumerate(rows):
+                try:
+                    sanitized = self._sanitize_row_for_json(row)
+                    # Validate JSON serialization
+                    json.dumps(sanitized)
+                    sanitized_rows.append(sanitized)
+                except (TypeError, ValueError) as e:
+                    logger.warning(f"Skipping row {i} due to JSON error: {e}")
+                    continue
+
+            if not sanitized_rows:
+                logger.warning("No valid rows after sanitization")
+                return
+
+            ndjson_data = "\n".join(json.dumps(row) for row in sanitized_rows)
             ndjson_bytes = ndjson_data.encode('utf-8')
+            logger.info(f"Sanitized {len(sanitized_rows)}/{len(rows)} rows for JSON")
             
             # Configure load job
             job_config = bigquery.LoadJobConfig(
@@ -1499,8 +1557,8 @@ class AnalyticsProcessorBase(RunHistoryMixin):
             # Wait for completion
             try:
                 load_job.result()
-                logger.info(f"✅ Successfully loaded {len(rows)} rows")
-                self.stats["rows_processed"] = len(rows)
+                logger.info(f"✅ Successfully loaded {len(sanitized_rows)} rows")
+                self.stats["rows_processed"] = len(sanitized_rows)
                 
             except Exception as load_e:
                 if "streaming buffer" in str(load_e).lower():
@@ -1510,6 +1568,20 @@ class AnalyticsProcessorBase(RunHistoryMixin):
                     self.stats["rows_processed"] = 0
                     return
                 else:
+                    # Log detailed error info from BigQuery load job
+                    if hasattr(load_job, 'errors') and load_job.errors:
+                        logger.error(f"BigQuery load job errors ({len(load_job.errors)} total):")
+                        for i, error in enumerate(load_job.errors[:10]):  # Log first 10
+                            logger.error(f"  Error {i+1}: {error}")
+                    # Log sample of problematic rows
+                    if sanitized_rows and len(sanitized_rows) > 0:
+                        logger.error(f"Sample row keys: {list(sanitized_rows[0].keys())}")
+                        # Log first row for debugging
+                        try:
+                            sample_row = {k: (v if not isinstance(v, str) or len(str(v)) < 100 else str(v)[:100]+'...') for k, v in sanitized_rows[0].items()}
+                            logger.error(f"Sample row (truncated): {json.dumps(sample_row, default=str)}")
+                        except Exception as sample_e:
+                            logger.error(f"Could not log sample row: {sample_e}")
                     raise load_e
             
         except Exception as e:

@@ -293,6 +293,75 @@ def partial_error_feed():
     return render_template('components/error_feed.html', errors=errors)
 
 
+@app.route('/api/processor-failures')
+def api_processor_failures():
+    """Get recent processor failures."""
+    if not check_auth():
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    hours = request.args.get('hours', 24, type=int)
+    try:
+        failures = bq_service.get_processor_failures(hours=hours)
+        return jsonify({'failures': failures, 'count': len(failures)})
+    except Exception as e:
+        logger.error(f"Error in api_processor_failures: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/partials/processor-failures')
+def partial_processor_failures():
+    """HTMX partial: Processor failures display."""
+    if not check_auth():
+        return '<div class="text-red-500">Unauthorized</div>', 401
+
+    hours = request.args.get('hours', 24, type=int)
+    try:
+        failures = bq_service.get_processor_failures(hours=hours)
+    except Exception as e:
+        return f'<div class="text-red-500">Error: {e}</div>', 500
+
+    return render_template('components/processor_failures.html', failures=failures)
+
+
+@app.route('/api/coverage-metrics')
+def api_coverage_metrics():
+    """Get coverage metrics for recent days."""
+    if not check_auth():
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    days = request.args.get('days', 7, type=int)
+    try:
+        coverage = bq_service.get_player_game_summary_coverage(days=days)
+        grading = bq_service.get_grading_status(days=days)
+        return jsonify({
+            'player_game_summary_coverage': coverage,
+            'grading_status': grading
+        })
+    except Exception as e:
+        logger.error(f"Error in api_coverage_metrics: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/partials/coverage-metrics')
+def partial_coverage_metrics():
+    """HTMX partial: Coverage metrics display."""
+    if not check_auth():
+        return '<div class="text-red-500">Unauthorized</div>', 401
+
+    days = request.args.get('days', 7, type=int)
+    try:
+        coverage = bq_service.get_player_game_summary_coverage(days=days)
+        grading = bq_service.get_grading_status(days=days)
+    except Exception as e:
+        return f'<div class="text-red-500">Error: {e}</div>', 500
+
+    return render_template(
+        'components/coverage_metrics.html',
+        coverage=coverage,
+        grading=grading
+    )
+
+
 # =============================================================================
 # ACTION ENDPOINTS
 # =============================================================================

@@ -48,6 +48,9 @@ except ImportError:
 # Simple team mapper import now that shared/utils/__init__.py is clean
 from shared.utils.nba_team_mapper import get_nba_tricode, get_nba_tricode_fuzzy
 
+# Game ID conversion utility for standardized format
+from shared.utils.game_id_converter import to_standard_game_id
+
 # Schedule service for season type detection
 from shared.utils.schedule import NBAScheduleService
 
@@ -989,7 +992,12 @@ class NbacGamebookProcessor(SmartIdempotencyMixin, ProcessorBase):
             return None
 
     def extract_game_info(self, file_path: str, data: Dict) -> Dict:
-        """Extract game metadata from file path and data."""
+        """Extract game metadata from file path and data.
+
+        IMPORTANT: Always uses standardized game_id format (YYYYMMDD_AWAY_HOME).
+        The NBA.com game_id is stored separately as nba_game_id for reference.
+        This ensures consistent JOINs across all analytics tables.
+        """
         # Path format: nba-com/gamebooks-data/2021-10-19/20211019-BKNMIL/20250827_234400.json
         path_parts = file_path.split('/')
         date_str = path_parts[-3]  # 2021-10-19
@@ -1004,17 +1012,22 @@ class NbacGamebookProcessor(SmartIdempotencyMixin, ProcessorBase):
         home_team = teams_part[3:6] if len(teams_part) >= 6 else None
 
         # Look up official NBA game_id from schedule (e.g., '0022500441')
-        # This ensures consistency with nbac_schedule for downstream JOINs in analytics
-        official_game_id = None
+        # Store this as nba_game_id for reference/debugging
+        nba_game_id = None
         if away_team and home_team:
-            official_game_id = self._lookup_official_game_id(date_str, away_team, home_team)
+            nba_game_id = self._lookup_official_game_id(date_str, away_team, home_team)
 
-        # Fall back to date-based format only if schedule lookup fails
-        if official_game_id:
-            game_id = official_game_id
+        # ALWAYS use standardized format for game_id: YYYYMMDD_AWAY_HOME
+        # This ensures consistency across all tables and analytics processors
+        if away_team and home_team:
+            try:
+                game_id = to_standard_game_id(date_str, away_team, home_team)
+            except ValueError as e:
+                logger.warning(f"Failed to create standard game_id: {e}, using fallback")
+                game_id = f"{date_part}_{away_team}_{home_team}"
         else:
-            game_id = f"{date_part}_{away_team}_{home_team}" if away_team and home_team else game_code
-            logger.debug(f"Using fallback game_id format: {game_id}")
+            game_id = game_code
+            logger.warning(f"Could not extract teams from game_code: {game_code}")
 
         # Extract season year (Oct-Dec = current year, Jan-Jun = previous year)
         game_date = datetime.strptime(date_str, '%Y-%m-%d').date()
@@ -1022,7 +1035,8 @@ class NbacGamebookProcessor(SmartIdempotencyMixin, ProcessorBase):
         season_year = game_date.year if month >= 10 else game_date.year - 1
 
         return {
-            'game_id': game_id,
+            'game_id': game_id,  # STANDARDIZED: YYYYMMDD_AWAY_HOME
+            'nba_game_id': nba_game_id,  # Original NBA.com format (e.g., 0022500441)
             'game_code': data.get('game_code', game_code),
             'game_date': game_date,
             'season_year': season_year,
@@ -1101,6 +1115,7 @@ class NbacGamebookProcessor(SmartIdempotencyMixin, ProcessorBase):
         
         return {
             'game_id': game_info['game_id'],
+            'nba_game_id': game_info.get('nba_game_id'),  # Original NBA.com format for reference
             'game_code': game_info['game_code'],
             'game_date': game_info['game_date'].isoformat() if hasattr(game_info['game_date'], 'isoformat') else game_info['game_date'],
             'season_year': game_info['season_year'],
@@ -1192,6 +1207,7 @@ class NbacGamebookProcessor(SmartIdempotencyMixin, ProcessorBase):
         
         return {
             'game_id': game_info['game_id'],
+            'nba_game_id': game_info.get('nba_game_id'),  # Original NBA.com format for reference
             'game_code': game_info['game_code'],
             'game_date': game_info['game_date'].isoformat() if hasattr(game_info['game_date'], 'isoformat') else game_info['game_date'],
             'season_year': game_info['season_year'],

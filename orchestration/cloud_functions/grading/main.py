@@ -79,12 +79,160 @@ def get_target_date(target_date_str: str) -> str:
         return target_date_str
 
 
-def run_prediction_accuracy_grading(target_date: str) -> Dict:
+def validate_grading_prerequisites(target_date: str) -> Dict:
+    """
+    Validate that prerequisites for grading are met.
+
+    Checks:
+    1. player_game_summary has data for the target date
+    2. Predictions exist for the target date
+    3. Sufficient coverage (actuals cover most predictions)
+
+    Args:
+        target_date: Date to validate (YYYY-MM-DD format)
+
+    Returns:
+        Dict with:
+        - ready: bool - True if ready for grading
+        - predictions_count: int
+        - actuals_count: int
+        - coverage_pct: float
+        - missing_reason: str (if not ready)
+        - can_auto_heal: bool
+    """
+    from google.cloud import bigquery
+
+    bq_client = bigquery.Client(project=PROJECT_ID)
+
+    # Check predictions
+    predictions_query = f"""
+    SELECT COUNT(*) as cnt
+    FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions`
+    WHERE game_date = '{target_date}'
+    """
+
+    # Check actuals (player_game_summary)
+    actuals_query = f"""
+    SELECT COUNT(*) as cnt
+    FROM `{PROJECT_ID}.nba_analytics.player_game_summary`
+    WHERE game_date = '{target_date}'
+    """
+
+    try:
+        predictions_result = bq_client.query(predictions_query).to_dataframe()
+        predictions_count = int(predictions_result.iloc[0]['cnt'])
+
+        actuals_result = bq_client.query(actuals_query).to_dataframe()
+        actuals_count = int(actuals_result.iloc[0]['cnt'])
+
+        # Calculate coverage
+        if predictions_count > 0:
+            coverage_pct = (actuals_count / predictions_count) * 100
+        else:
+            coverage_pct = 0.0
+
+        # Determine readiness
+        if predictions_count == 0:
+            return {
+                'ready': False,
+                'predictions_count': 0,
+                'actuals_count': actuals_count,
+                'coverage_pct': 0.0,
+                'missing_reason': 'no_predictions',
+                'can_auto_heal': False
+            }
+
+        if actuals_count == 0:
+            return {
+                'ready': False,
+                'predictions_count': predictions_count,
+                'actuals_count': 0,
+                'coverage_pct': 0.0,
+                'missing_reason': 'no_actuals',
+                'can_auto_heal': True  # Can trigger Phase 3 analytics
+            }
+
+        # Low coverage warning (but still proceed)
+        min_coverage = 50.0  # At least 50% coverage required
+        if coverage_pct < min_coverage:
+            logger.warning(
+                f"Low actuals coverage for {target_date}: {coverage_pct:.1f}% "
+                f"({actuals_count} actuals / {predictions_count} predictions)"
+            )
+
+        return {
+            'ready': True,
+            'predictions_count': predictions_count,
+            'actuals_count': actuals_count,
+            'coverage_pct': round(coverage_pct, 1),
+            'missing_reason': None,
+            'can_auto_heal': False
+        }
+
+    except Exception as e:
+        logger.error(f"Error validating grading prerequisites: {e}")
+        return {
+            'ready': False,
+            'predictions_count': 0,
+            'actuals_count': 0,
+            'coverage_pct': 0.0,
+            'missing_reason': f'validation_error: {str(e)}',
+            'can_auto_heal': False
+        }
+
+
+def trigger_phase3_analytics(target_date: str) -> bool:
+    """
+    Trigger Phase 3 analytics to generate player_game_summary for a date.
+
+    This is the auto-heal mechanism when grading finds no actuals.
+
+    Args:
+        target_date: Date to process (YYYY-MM-DD format)
+
+    Returns:
+        True if trigger was successful
+    """
+    import requests
+
+    PHASE3_URL = "https://nba-phase3-analytics-processors-f7p3g7f6ya-wl.a.run.app/process-date-range"
+
+    logger.info(f"Auto-triggering Phase 3 analytics for {target_date}")
+
+    try:
+        # Trigger PlayerGameSummaryProcessor for the target date
+        response = requests.post(
+            PHASE3_URL,
+            json={
+                "start_date": target_date,
+                "end_date": target_date,
+                "processors": ["PlayerGameSummaryProcessor"],
+                "backfill_mode": True
+            },
+            timeout=300  # 5 minute timeout
+        )
+
+        if response.status_code == 200:
+            logger.info(f"Phase 3 analytics triggered successfully for {target_date}")
+            return True
+        else:
+            logger.error(
+                f"Phase 3 analytics trigger failed: {response.status_code} - {response.text}"
+            )
+            return False
+
+    except Exception as e:
+        logger.error(f"Error triggering Phase 3 analytics: {e}")
+        return False
+
+
+def run_prediction_accuracy_grading(target_date: str, skip_validation: bool = False) -> Dict:
     """
     Run prediction accuracy grading for a specific date.
 
     Args:
         target_date: Date to grade (YYYY-MM-DD format)
+        skip_validation: If True, skip pre-grading validation
 
     Returns:
         Grading result dictionary
@@ -96,6 +244,48 @@ def run_prediction_accuracy_grading(target_date: str) -> Dict:
     from data_processors.grading.prediction_accuracy.prediction_accuracy_processor import (
         PredictionAccuracyProcessor
     )
+
+    # Pre-grading validation (unless skipped)
+    if not skip_validation:
+        validation = validate_grading_prerequisites(target_date)
+        logger.info(
+            f"Pre-grading validation for {target_date}: "
+            f"predictions={validation['predictions_count']}, "
+            f"actuals={validation['actuals_count']}, "
+            f"coverage={validation['coverage_pct']}%"
+        )
+
+        if not validation['ready']:
+            if validation['can_auto_heal'] and validation['missing_reason'] == 'no_actuals':
+                logger.warning(
+                    f"No actuals for {target_date} - attempting auto-heal via Phase 3"
+                )
+                # Try to trigger Phase 3 analytics
+                if trigger_phase3_analytics(target_date):
+                    # Wait a bit and re-check (Phase 3 takes a few minutes)
+                    import time as time_module
+                    time_module.sleep(10)  # Short wait before proceeding
+
+                    # Re-validate
+                    revalidation = validate_grading_prerequisites(target_date)
+                    if not revalidation['ready']:
+                        return {
+                            'status': 'auto_heal_pending',
+                            'date': target_date,
+                            'predictions_found': validation['predictions_count'],
+                            'actuals_found': 0,
+                            'graded': 0,
+                            'message': 'Phase 3 analytics triggered, grading should retry later'
+                        }
+                else:
+                    return {
+                        'status': 'no_actuals',
+                        'date': target_date,
+                        'predictions_found': validation['predictions_count'],
+                        'actuals_found': 0,
+                        'graded': 0,
+                        'message': 'No actuals and auto-heal failed'
+                    }
 
     logger.info(f"Running prediction accuracy grading for {target_date}")
 

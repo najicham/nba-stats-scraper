@@ -54,6 +54,20 @@
             >
                 7-Day History
             </button>
+            <button
+                @click="activeTab = 'failures'"
+                :class="activeTab === 'failures' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+                class="whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
+            >
+                Processor Failures
+            </button>
+            <button
+                @click="activeTab = 'coverage'"
+                :class="activeTab === 'coverage' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+                class="whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
+            >
+                Coverage Metrics
+            </button>
         </nav>
     </div>
 
@@ -191,6 +205,50 @@
                      hx-trigger="load"
                      hx-swap="innerHTML">
                     <div class="text-gray-500 text-center py-8">Loading history...</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Processor Failures Tab -->
+        <div x-show="activeTab === 'failures'" x-cloak>
+            <div class="bg-white rounded-lg shadow p-6">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="text-lg font-medium text-gray-900">Processor Failures (Last 24 Hours)</h3>
+                    <button
+                        hx-get="/partials/processor-failures"
+                        hx-target="#processor-failures"
+                        hx-swap="innerHTML"
+                        class="text-sm text-blue-600 hover:text-blue-800"
+                    >
+                        Refresh
+                    </button>
+                </div>
+                <div id="processor-failures"
+                     hx-get="/partials/processor-failures"
+                     hx-trigger="load">
+                    <div class="text-gray-500 text-center py-8">Loading processor failures...</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Coverage Metrics Tab -->
+        <div x-show="activeTab === 'coverage'" x-cloak>
+            <div class="bg-white rounded-lg shadow p-6">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="text-lg font-medium text-gray-900">Coverage & Grading Metrics</h3>
+                    <button
+                        hx-get="/partials/coverage-metrics"
+                        hx-target="#coverage-metrics"
+                        hx-swap="innerHTML"
+                        class="text-sm text-blue-600 hover:text-blue-800"
+                    >
+                        Refresh
+                    </button>
+                </div>
+                <div id="coverage-metrics"
+                     hx-get="/partials/coverage-metrics"
+                     hx-trigger="load">
+                    <div class="text-gray-500 text-center py-8">Loading coverage metrics...</div>
                 </div>
             </div>
         </div>

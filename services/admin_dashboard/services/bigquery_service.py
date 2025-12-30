@@ -199,3 +199,169 @@ class BigQueryService:
         # This could query run_history collection or a dedicated stats table
         # For now, return None - to be implemented
         return None
+
+    def get_processor_failures(self, hours: int = 24) -> List[Dict]:
+        """
+        Get recent processor failures from processor_run_history.
+
+        Args:
+            hours: How many hours back to look (default 24)
+
+        Returns:
+            List of failed processor runs with details
+        """
+        query = f"""
+        SELECT
+            processor_name,
+            data_date,
+            run_id,
+            status,
+            error_message,
+            started_at,
+            processed_at,
+            duration_seconds,
+            records_processed,
+            phase
+        FROM `{PROJECT_ID}.nba_reference.processor_run_history`
+        WHERE started_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL {hours} HOUR)
+          AND status IN ('failed', 'error')
+        ORDER BY started_at DESC
+        LIMIT 50
+        """
+
+        try:
+            result = list(self.client.query(query).result())
+            return [
+                {
+                    'processor_name': row.processor_name,
+                    'data_date': str(row.data_date) if row.data_date else None,
+                    'run_id': row.run_id,
+                    'status': row.status,
+                    'error_message': row.error_message[:500] if row.error_message else None,
+                    'started_at': row.started_at.isoformat() if row.started_at else None,
+                    'processed_at': row.processed_at.isoformat() if row.processed_at else None,
+                    'duration_seconds': row.duration_seconds,
+                    'records_processed': row.records_processed,
+                    'phase': row.phase
+                }
+                for row in result
+            ]
+        except Exception as e:
+            logger.error(f"Error querying processor failures: {e}")
+            return []
+
+    def get_player_game_summary_coverage(self, days: int = 7) -> List[Dict]:
+        """
+        Get player_game_summary coverage for recent days.
+
+        Shows row counts vs game counts to identify missing data.
+        """
+        query = f"""
+        WITH game_counts AS (
+            SELECT
+                game_date,
+                COUNT(DISTINCT game_id) as games_final
+            FROM `{PROJECT_ID}.nba_raw.nbac_schedule`
+            WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL {days} DAY)
+              AND game_date < CURRENT_DATE()
+              AND game_status_text = 'Final'
+            GROUP BY game_date
+        ),
+        summary_counts AS (
+            SELECT
+                game_date,
+                COUNT(*) as summary_rows,
+                COUNT(DISTINCT game_id) as games_with_data
+            FROM `{PROJECT_ID}.nba_analytics.player_game_summary`
+            WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL {days} DAY)
+              AND game_date < CURRENT_DATE()
+            GROUP BY game_date
+        )
+        SELECT
+            g.game_date,
+            g.games_final,
+            COALESCE(s.summary_rows, 0) as summary_rows,
+            COALESCE(s.games_with_data, 0) as games_with_data,
+            CASE
+                WHEN g.games_final = 0 THEN 'NO_GAMES'
+                WHEN COALESCE(s.summary_rows, 0) = 0 THEN 'MISSING'
+                WHEN s.games_with_data < g.games_final THEN 'PARTIAL'
+                ELSE 'COMPLETE'
+            END as coverage_status
+        FROM game_counts g
+        LEFT JOIN summary_counts s ON g.game_date = s.game_date
+        ORDER BY g.game_date DESC
+        """
+
+        try:
+            result = list(self.client.query(query).result())
+            return [
+                {
+                    'game_date': str(row.game_date),
+                    'games_final': row.games_final,
+                    'summary_rows': row.summary_rows,
+                    'games_with_data': row.games_with_data,
+                    'coverage_status': row.coverage_status
+                }
+                for row in result
+            ]
+        except Exception as e:
+            logger.error(f"Error querying coverage: {e}")
+            return []
+
+    def get_grading_status(self, days: int = 7) -> List[Dict]:
+        """
+        Get grading status for recent days.
+
+        Shows prediction counts vs graded counts.
+        """
+        query = f"""
+        WITH predictions AS (
+            SELECT
+                game_date,
+                COUNT(*) as prediction_count
+            FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions`
+            WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL {days} DAY)
+              AND game_date < CURRENT_DATE()
+            GROUP BY game_date
+        ),
+        graded AS (
+            SELECT
+                game_date,
+                COUNT(*) as graded_count,
+                ROUND(AVG(absolute_error), 2) as mae
+            FROM `{PROJECT_ID}.nba_predictions.prediction_accuracy`
+            WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL {days} DAY)
+              AND game_date < CURRENT_DATE()
+            GROUP BY game_date
+        )
+        SELECT
+            p.game_date,
+            p.prediction_count,
+            COALESCE(g.graded_count, 0) as graded_count,
+            g.mae,
+            CASE
+                WHEN COALESCE(g.graded_count, 0) = 0 THEN 'NOT_GRADED'
+                WHEN g.graded_count < p.prediction_count * 0.8 THEN 'PARTIAL'
+                ELSE 'COMPLETE'
+            END as grading_status
+        FROM predictions p
+        LEFT JOIN graded g ON p.game_date = g.game_date
+        ORDER BY p.game_date DESC
+        """
+
+        try:
+            result = list(self.client.query(query).result())
+            return [
+                {
+                    'game_date': str(row.game_date),
+                    'prediction_count': row.prediction_count,
+                    'graded_count': row.graded_count,
+                    'mae': row.mae,
+                    'grading_status': row.grading_status
+                }
+                for row in result
+            ]
+        except Exception as e:
+            logger.error(f"Error querying grading status: {e}")
+            return []
