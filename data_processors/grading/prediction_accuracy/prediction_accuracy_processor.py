@@ -325,6 +325,33 @@ class PredictionAccuracyProcessor:
             'graded_at': datetime.now(timezone.utc).isoformat()
         }
 
+    def _sanitize_record(self, record: Dict) -> Dict:
+        """Sanitize a single record for JSON compatibility.
+
+        Handles NaN, Inf, and other non-JSON-serializable values.
+        """
+        import json
+        sanitized = {}
+        for key, value in record.items():
+            if value is None:
+                sanitized[key] = None
+            elif isinstance(value, float):
+                if self._math.isnan(value) or self._math.isinf(value):
+                    sanitized[key] = None
+                else:
+                    sanitized[key] = value
+            elif isinstance(value, bool):
+                sanitized[key] = value  # Keep as bool, not int
+            elif isinstance(value, (int, str)):
+                sanitized[key] = value
+            else:
+                # Try to convert to string for safety
+                try:
+                    sanitized[key] = str(value)
+                except:
+                    sanitized[key] = None
+        return sanitized
+
     def write_graded_results(
         self,
         graded_results: List[Dict],
@@ -338,6 +365,25 @@ class PredictionAccuracyProcessor:
         """
         if not graded_results:
             return 0
+
+        # Sanitize all records to ensure JSON compatibility
+        import json
+        sanitized_results = []
+        for i, record in enumerate(graded_results):
+            try:
+                sanitized = self._sanitize_record(record)
+                # Validate JSON serialization
+                json.dumps(sanitized)
+                sanitized_results.append(sanitized)
+            except (TypeError, ValueError) as e:
+                logger.warning(f"Skipping record {i} due to JSON error: {e}, player={record.get('player_lookup')}")
+                continue
+
+        if not sanitized_results:
+            logger.error("No valid records after sanitization")
+            return 0
+
+        graded_results = sanitized_results
 
         try:
             # IDEMPOTENCY: Delete existing records for this date first
