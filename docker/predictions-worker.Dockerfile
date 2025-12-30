@@ -24,6 +24,8 @@ COPY predictions/worker/data_loaders.py /app/data_loaders.py
 COPY predictions/worker/worker.py /app/worker.py
 COPY predictions/worker/system_circuit_breaker.py /app/system_circuit_breaker.py
 COPY predictions/worker/execution_logger.py /app/execution_logger.py
+COPY predictions/worker/write_metrics.py /app/write_metrics.py
+COPY predictions/worker/batch_staging_writer.py /app/batch_staging_writer.py
 
 # Copy shared utilities (player_registry needed by worker)
 COPY shared/ /app/shared/

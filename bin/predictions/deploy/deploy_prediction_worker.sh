@@ -54,8 +54,11 @@ case "$ENVIRONMENT" in
         REGION="us-west2"
         SERVICE_NAME="prediction-worker"
         MIN_INSTANCES=0  # Scale to zero - predictions run via local backfill scripts, not Cloud Run
-        MAX_INSTANCES=20
-        CONCURRENCY=5
+        # Concurrency settings - configurable via environment variables
+        # Default: 20 instances × 5 concurrent = 100 concurrent (BigQuery limit is 20 DML/table)
+        # Emergency: 4 instances × 3 concurrent = 12 concurrent (safe mode)
+        MAX_INSTANCES="${WORKER_MAX_INSTANCES:-20}"
+        CONCURRENCY="${WORKER_CONCURRENCY:-5}"
         MEMORY="2Gi"
         CPU=2
         TIMEOUT=300

@@ -57,6 +57,9 @@ if TYPE_CHECKING:
     from system_circuit_breaker import SystemCircuitBreaker
     from execution_logger import ExecutionLogger
     from shared.utils.player_registry import RegistryReader, PlayerNotFoundError
+    from batch_staging_writer import BatchStagingWriter, get_worker_id
+
+from write_metrics import PredictionWriteMetrics
 
 logger.info("✓ Heavy imports deferred (will lazy-load on first request)")
 
@@ -80,6 +83,7 @@ _zone_matchup: Optional['ZoneMatchupV1'] = None
 _similarity: Optional['SimilarityBalancedV1'] = None
 _xgboost: Optional['XGBoostV1'] = None
 _ensemble: Optional['EnsembleV1'] = None
+_staging_writer: Optional['BatchStagingWriter'] = None
 
 def get_data_loader() -> 'PredictionDataLoader':
     """Lazy-load data loader on first use"""
@@ -100,6 +104,16 @@ def get_bq_client() -> 'bigquery.Client':
         _bq_client = bigquery.Client(project=PROJECT_ID, location='us-west2')
         logger.info("BigQuery client initialized")
     return _bq_client
+
+def get_staging_writer() -> 'BatchStagingWriter':
+    """Lazy-load staging writer on first use"""
+    from batch_staging_writer import BatchStagingWriter
+    global _staging_writer
+    if _staging_writer is None:
+        logger.info("Initializing BatchStagingWriter...")
+        _staging_writer = BatchStagingWriter(get_bq_client(), PROJECT_ID)
+        logger.info("BatchStagingWriter initialized")
+    return _staging_writer
 
 def get_pubsub_publisher() -> 'pubsub_v1.PublisherClient':
     """Lazy-load Pub/Sub publisher on first use"""
@@ -263,6 +277,7 @@ def handle_prediction_request():
         game_date_str = request_data['game_date']
         game_id = request_data['game_id']
         line_values = request_data.get('line_values', [])
+        batch_id = request_data.get('batch_id')  # From coordinator for staging writes
 
         # v3.2: Extract line source tracking info
         line_source_info = {
@@ -318,9 +333,9 @@ def handle_prediction_request():
             logger.warning(f"No predictions generated for {player_lookup}")
             return ('', 204)  # Still return success (graceful degradation)
 
-        # Write to BigQuery
+        # Write to BigQuery staging table (consolidation happens later by coordinator)
         write_start = time.time()
-        write_predictions_to_bigquery(predictions)
+        write_predictions_to_bigquery(predictions, batch_id=batch_id)
         write_duration = time.time() - write_start
 
         # Publish completion event
@@ -993,129 +1008,92 @@ def format_prediction_for_bigquery(
     return record
 
 
-def write_predictions_to_bigquery(predictions: List[Dict]):
+def write_predictions_to_bigquery(predictions: List[Dict], batch_id: Optional[str] = None):
     """
-    Write predictions to BigQuery player_prop_predictions table using MERGE.
+    Write predictions to a batch staging table for later consolidation.
 
-    Uses a staging table + MERGE pattern to handle Pub/Sub retry duplicates:
-    1. Load predictions to a temp staging table
-    2. MERGE from staging to main table (upsert on player_lookup + game_date)
-    3. Delete staging table
-
-    This ensures idempotency - retried messages update existing rows instead of creating duplicates.
+    Uses the BatchStagingWriter to avoid DML concurrency limits:
+    - Each worker writes to its own staging table using batch INSERT (not DML)
+    - The coordinator consolidates all staging tables with a single MERGE later
+    - This eliminates "Too many DML statements" errors with 20+ concurrent workers
 
     Args:
         predictions: List of prediction dicts
+        batch_id: Unique identifier for the batch (from coordinator).
+                  If not provided, generates a fallback batch_id.
     """
-    from google.cloud import bigquery
-
-    bq_client = get_bq_client()
+    from batch_staging_writer import get_worker_id
 
     if not predictions:
         logger.warning("No predictions to write")
         return
 
-    table_id = f"{PROJECT_ID}.{PREDICTIONS_TABLE}"
-    # Create unique staging table name with timestamp
-    staging_table_id = f"{PROJECT_ID}.nba_predictions._staging_predictions_{int(time.time() * 1000)}"
+    # Track write metrics
+    write_start_time = time.time()
+    player_lookup = predictions[0].get('player_lookup', 'unknown') if predictions else 'unknown'
+    records_count = len(predictions)
+
+    # Get batch_id (from coordinator message) or generate fallback
+    if not batch_id:
+        # Fallback for backwards compatibility or direct calls
+        batch_id = f"fallback_{int(time.time() * 1000)}"
+        logger.warning(f"No batch_id provided, using fallback: {batch_id}")
+
+    # Get unique worker ID for this instance
+    worker_id = get_worker_id()
 
     try:
-        # Get main table schema
-        main_table = bq_client.get_table(table_id)
+        # Get the staging writer (lazy-loaded)
+        staging_writer = get_staging_writer()
 
-        # Step 1: Load predictions to staging table
-        staging_job_config = bigquery.LoadJobConfig(
-            schema=main_table.schema,
-            autodetect=False,
-            write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
-            create_disposition=bigquery.CreateDisposition.CREATE_IF_NEEDED
+        # Write to staging table (NOT a DML operation - no concurrency limits)
+        result = staging_writer.write_to_staging(
+            predictions=predictions,
+            batch_id=batch_id,
+            worker_id=worker_id
         )
 
-        load_job = bq_client.load_table_from_json(
-            predictions,
-            staging_table_id,
-            job_config=staging_job_config
-        )
-        load_job.result()
-        logger.info(f"Loaded {len(predictions)} predictions to staging table")
+        if result.success:
+            logger.info(
+                f"Staging write complete: {result.rows_written} rows to {result.staging_table_name} "
+                f"(batch={batch_id}, worker={worker_id})"
+            )
 
-        # Step 2: MERGE from staging to main table
-        # Unique key: player_lookup + game_date
-        # On match: update prediction values and set updated_at
-        # On no match: insert new row
-        merge_query = f"""
-        MERGE `{table_id}` T
-        USING `{staging_table_id}` S
-        ON T.player_lookup = S.player_lookup AND T.game_date = S.game_date
-        WHEN MATCHED THEN
-          UPDATE SET
-            prediction_id = S.prediction_id,
-            system_id = S.system_id,
-            universal_player_id = S.universal_player_id,
-            game_id = S.game_id,
-            prediction_version = S.prediction_version,
-            predicted_points = S.predicted_points,
-            confidence_score = S.confidence_score,
-            recommendation = S.recommendation,
-            current_points_line = S.current_points_line,
-            line_margin = S.line_margin,
-            is_active = S.is_active,
-            updated_at = CURRENT_TIMESTAMP(),
-            superseded_by = S.superseded_by,
-            similarity_baseline = S.similarity_baseline,
-            similar_games_count = S.similar_games_count,
-            avg_similarity_score = S.avg_similarity_score,
-            min_similarity_score = S.min_similarity_score,
-            fatigue_adjustment = S.fatigue_adjustment,
-            shot_zone_adjustment = S.shot_zone_adjustment,
-            pace_adjustment = S.pace_adjustment,
-            usage_spike_adjustment = S.usage_spike_adjustment,
-            home_away_adjustment = S.home_away_adjustment,
-            feature_importance = S.feature_importance,
-            model_version = S.model_version,
-            expected_games_count = S.expected_games_count,
-            actual_games_count = S.actual_games_count,
-            completeness_percentage = S.completeness_percentage,
-            missing_games_count = S.missing_games_count,
-            is_production_ready = S.is_production_ready,
-            data_quality_issues = S.data_quality_issues,
-            last_reprocess_attempt_at = S.last_reprocess_attempt_at,
-            reprocess_attempt_count = S.reprocess_attempt_count,
-            circuit_breaker_active = S.circuit_breaker_active,
-            circuit_breaker_until = S.circuit_breaker_until,
-            manual_override_required = S.manual_override_required,
-            season_boundary_detected = S.season_boundary_detected,
-            backfill_bootstrap_mode = S.backfill_bootstrap_mode,
-            processing_decision_reason = S.processing_decision_reason,
-            has_prop_line = S.has_prop_line,
-            line_source = S.line_source,
-            estimated_line_value = S.estimated_line_value,
-            estimation_method = S.estimation_method,
-            scoring_tier = S.scoring_tier,
-            tier_adjustment = S.tier_adjustment,
-            adjusted_points = S.adjusted_points
-        WHEN NOT MATCHED THEN
-          INSERT ROW
-        """
+            # Track successful write
+            write_duration = time.time() - write_start_time
+            PredictionWriteMetrics.track_write_attempt(
+                player_lookup=player_lookup,
+                records_count=records_count,
+                success=True,
+                duration_seconds=write_duration
+            )
+        else:
+            # Staging write failed
+            write_duration = time.time() - write_start_time
+            logger.error(f"Staging write failed: {result.error_message}")
 
-        merge_job = bq_client.query(merge_query)
-        merge_result = merge_job.result()
-
-        # Get stats from merge
-        rows_affected = merge_job.num_dml_affected_rows or 0
-        logger.info(f"MERGE complete: {rows_affected} rows affected (inserts + updates)")
+            PredictionWriteMetrics.track_write_attempt(
+                player_lookup=player_lookup,
+                records_count=records_count,
+                success=False,
+                duration_seconds=write_duration,
+                error_type='StagingWriteError'
+            )
 
     except Exception as e:
-        logger.error(f"Error writing to BigQuery: {e}")
-        # Don't raise - log and continue (graceful degradation)
+        write_duration = time.time() - write_start_time
+        error_message = str(e)
+        logger.error(f"Error writing to staging: {e}")
 
-    finally:
-        # Step 3: Always clean up staging table
-        try:
-            bq_client.delete_table(staging_table_id, not_found_ok=True)
-            logger.debug(f"Cleaned up staging table: {staging_table_id}")
-        except Exception as cleanup_error:
-            logger.warning(f"Failed to clean up staging table: {cleanup_error}")
+        # Track write failure
+        PredictionWriteMetrics.track_write_attempt(
+            player_lookup=player_lookup,
+            records_count=records_count,
+            success=False,
+            duration_seconds=write_duration,
+            error_type=type(e).__name__
+        )
+        # Don't raise - log and continue (graceful degradation)
 
 
 def publish_completion_event(player_lookup: str, game_date: str, prediction_count: int):

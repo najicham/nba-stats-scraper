@@ -36,6 +36,12 @@ if TYPE_CHECKING:
 from player_loader import PlayerLoader
 from progress_tracker import ProgressTracker
 from run_history import CoordinatorRunHistory
+from coverage_monitor import PredictionCoverageMonitor
+
+# Import batch consolidator for staging table merging
+import sys
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../worker'))
+from batch_staging_writer import BatchConsolidator
 
 # Import unified publishing (lazy import to avoid cold start)
 import sys
@@ -63,6 +69,8 @@ BATCH_SUMMARY_TOPIC = os.environ.get('BATCH_SUMMARY_TOPIC', 'prediction-batch-co
 _player_loader: Optional[PlayerLoader] = None
 _pubsub_publisher: Optional['pubsub_v1.PublisherClient'] = None
 _run_history: Optional[CoordinatorRunHistory] = None
+_bq_client: Optional['bigquery.Client'] = None
+_batch_consolidator: Optional[BatchConsolidator] = None
 
 # Global state (in production, use Firestore or Redis for multi-instance support)
 current_tracker: Optional[ProgressTracker] = None
@@ -98,6 +106,27 @@ def get_run_history() -> CoordinatorRunHistory:
         _run_history = CoordinatorRunHistory(project_id=PROJECT_ID)
         logger.info("CoordinatorRunHistory initialized successfully")
     return _run_history
+
+
+def get_bq_client() -> 'bigquery.Client':
+    """Lazy-load BigQuery client on first use"""
+    from google.cloud import bigquery
+    global _bq_client
+    if _bq_client is None:
+        logger.info("Initializing BigQuery client...")
+        _bq_client = bigquery.Client(project=PROJECT_ID, location='us-west2')
+        logger.info("BigQuery client initialized")
+    return _bq_client
+
+
+def get_batch_consolidator() -> BatchConsolidator:
+    """Lazy-load batch consolidator on first use"""
+    global _batch_consolidator
+    if _batch_consolidator is None:
+        logger.info("Initializing BatchConsolidator...")
+        _batch_consolidator = BatchConsolidator(get_bq_client(), PROJECT_ID)
+        logger.info("BatchConsolidator initialized")
+    return _batch_consolidator
 
 
 logger.info("Coordinator initialized successfully (heavy clients will lazy-load on first request)")
@@ -500,6 +529,13 @@ def publish_batch_summary(tracker: ProgressTracker, batch_id: str):
     Also logs to processor_run_history for unified monitoring.
     Sends prediction completion email notification.
 
+    Flow:
+    1. Consolidate staging tables (merge all worker writes into main table)
+    2. Check coverage and send alerts if below thresholds
+    3. Log to run history
+    4. Publish completion message
+    5. Send email notification
+
     Args:
         tracker: Progress tracker with final stats
         batch_id: Batch identifier
@@ -512,6 +548,77 @@ def publish_batch_summary(tracker: ProgressTracker, batch_id: str):
 
         summary = tracker.get_summary()
         game_date = current_game_date.isoformat() if current_game_date else date.today().isoformat()
+
+        # Step 1: Consolidate staging tables into main predictions table
+        # This is critical for the batch staging write pattern to work
+        try:
+            consolidator = get_batch_consolidator()
+            consolidation_result = consolidator.consolidate_batch(
+                batch_id=batch_id,
+                game_date=game_date,
+                cleanup=True  # Delete staging tables after successful merge
+            )
+
+            if consolidation_result.success:
+                logger.info(
+                    f"✅ Consolidation complete: {consolidation_result.rows_affected} rows merged "
+                    f"from {consolidation_result.staging_tables_merged} staging tables"
+                )
+                # Update summary with consolidation info
+                summary['consolidation'] = {
+                    'rows_affected': consolidation_result.rows_affected,
+                    'staging_tables_merged': consolidation_result.staging_tables_merged,
+                    'staging_tables_cleaned': consolidation_result.staging_tables_cleaned,
+                    'success': True
+                }
+            else:
+                logger.error(f"❌ Consolidation failed: {consolidation_result.error_message}")
+                summary['consolidation'] = {
+                    'success': False,
+                    'error': consolidation_result.error_message
+                }
+        except Exception as e:
+            # Don't fail the batch summary if consolidation fails
+            logger.error(f"Consolidation failed (non-fatal): {e}", exc_info=True)
+            summary['consolidation'] = {'success': False, 'error': str(e)}
+
+        # Check prediction coverage and send alerts if below thresholds
+        try:
+            coverage_monitor = PredictionCoverageMonitor(project_id=PROJECT_ID)
+            expected_players = summary.get('expected', 0)
+            completed_players = summary.get('completed', 0)
+
+            coverage_ok = coverage_monitor.check_coverage(
+                players_expected=expected_players,
+                players_predicted=completed_players,
+                game_date=current_game_date or date.today(),
+                batch_id=batch_id,
+                additional_context={
+                    'correlation_id': current_correlation_id,
+                    'failed_players': summary.get('failed', 0)
+                }
+            )
+
+            # Track missing players if coverage is not 100%
+            if completed_players < expected_players:
+                # Get the sets from tracker for detailed missing player tracking
+                expected_set = tracker.get_expected_players() if hasattr(tracker, 'get_expected_players') else set()
+                completed_set = tracker.completed_players if hasattr(tracker, 'completed_players') else set()
+
+                if expected_set and completed_set:
+                    missing_players = coverage_monitor.track_missing_players(
+                        expected_set=expected_set,
+                        predicted_set=completed_set,
+                        game_date=current_game_date or date.today(),
+                        log_all=False  # Only log summary for large sets
+                    )
+                    if missing_players:
+                        logger.info(f"Coverage monitor identified {len(missing_players)} missing players")
+
+            logger.info(f"Coverage check complete: {'PASSED' if coverage_ok else 'BELOW THRESHOLD'}")
+        except Exception as e:
+            # Don't fail the batch summary if coverage monitoring fails
+            logger.warning(f"Coverage monitoring failed (non-fatal): {e}")
 
         # Determine status based on completion
         if summary.get('completed', 0) == summary.get('expected', 0):
