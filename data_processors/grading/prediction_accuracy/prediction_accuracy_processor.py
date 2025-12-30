@@ -85,10 +85,14 @@ class PredictionAccuracyProcessor:
             return None
         try:
             s = str(value)
-            # Remove control characters (except space, tab, newline)
-            # These can break JSON parsing
+            # Remove ALL control characters including tab/newline
+            # BigQuery load_table_from_json can't handle these in strings
             import re
-            s = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', s)
+            s = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', s)
+            # Also remove any backslash-quote sequences that might cause issues
+            s = s.replace('\\"', '"').replace('\\', '')
+            # Remove any stray quotes that could break JSON
+            s = s.replace('"', "'")
             # Limit length to prevent oversized values
             return s[:500] if len(s) > 500 else s
         except (TypeError, ValueError):
