@@ -145,6 +145,82 @@ class CircuitBreakerConfig:
 
 
 @dataclass
+class WorkerConcurrencyConfig:
+    """Configuration for prediction worker concurrency.
+
+    BigQuery has a limit of 20 concurrent DML operations per table.
+    Our workers write to predictions table via MERGE, which counts as DML.
+
+    With staging pattern: Workers write to staging (INSERT=no limit),
+    coordinator does single MERGE (1 DML).
+
+    Without staging pattern (legacy): Must limit total concurrent workers.
+    """
+
+    # Maximum Cloud Run instances
+    # Via env: WORKER_MAX_INSTANCES
+    max_instances: int = 20
+
+    # Concurrent requests per instance
+    # Via env: WORKER_CONCURRENCY
+    concurrency_per_instance: int = 5
+
+    # Emergency mode: reduce concurrency when DML errors occur
+    # Via env: WORKER_EMERGENCY_MODE
+    emergency_mode_enabled: bool = False
+
+    # Emergency mode settings (4×3=12 < 20 DML limit)
+    emergency_max_instances: int = 4
+    emergency_concurrency: int = 3
+
+    def get_effective_max_instances(self) -> int:
+        """Get current max instances (considers emergency mode)."""
+        if self.emergency_mode_enabled:
+            return self.emergency_max_instances
+        return self.max_instances
+
+    def get_effective_concurrency(self) -> int:
+        """Get current concurrency per instance."""
+        if self.emergency_mode_enabled:
+            return self.emergency_concurrency
+        return self.concurrency_per_instance
+
+
+@dataclass
+class SelfHealingConfig:
+    """Configuration for self-healing behaviors."""
+
+    # DML Rate Limit Handling
+    # Via env: SELF_HEALING_DML_BACKOFF_ENABLED
+    dml_backoff_enabled: bool = True
+
+    # Via env: SELF_HEALING_DML_MAX_RETRIES
+    dml_max_retries: int = 3
+
+    # Base backoff in seconds (doubles each retry)
+    dml_base_backoff_seconds: float = 5.0
+
+    # Max backoff in seconds
+    dml_max_backoff_seconds: float = 120.0
+
+    # Alert on DML rate limit
+    # Via env: SELF_HEALING_ALERT_ON_DML_LIMIT
+    alert_on_dml_limit: bool = True
+
+    # Auto-reduce concurrency on repeated DML errors
+    # Via env: SELF_HEALING_AUTO_REDUCE_CONCURRENCY
+    auto_reduce_concurrency: bool = True
+
+    # Threshold: number of DML errors in window to trigger concurrency reduction
+    dml_error_threshold: int = 5
+    dml_error_window_seconds: int = 60
+
+    # Coverage threshold alerts
+    coverage_warning_threshold: float = 95.0
+    coverage_critical_threshold: float = 85.0
+
+
+@dataclass
 class NewPlayerConfig:
     """Configuration for handling new players (rookies, traded players)."""
 
@@ -174,6 +250,8 @@ class OrchestrationConfig:
     processing_mode: ProcessingModeConfig = field(default_factory=ProcessingModeConfig)
     new_player: NewPlayerConfig = field(default_factory=NewPlayerConfig)
     circuit_breaker: CircuitBreakerConfig = field(default_factory=CircuitBreakerConfig)
+    worker_concurrency: WorkerConcurrencyConfig = field(default_factory=WorkerConcurrencyConfig)
+    self_healing: SelfHealingConfig = field(default_factory=SelfHealingConfig)
 
     @classmethod
     def from_environment(cls) -> 'OrchestrationConfig':
@@ -212,6 +290,36 @@ class OrchestrationConfig:
         auto_reset = os.environ.get('CIRCUIT_BREAKER_AUTO_RESET')
         if auto_reset is not None:
             config.circuit_breaker.auto_reset_on_data = auto_reset.lower() == 'true'
+
+        # Worker concurrency config
+        max_instances = os.environ.get('WORKER_MAX_INSTANCES')
+        if max_instances:
+            config.worker_concurrency.max_instances = int(max_instances)
+
+        concurrency = os.environ.get('WORKER_CONCURRENCY')
+        if concurrency:
+            config.worker_concurrency.concurrency_per_instance = int(concurrency)
+
+        emergency_mode = os.environ.get('WORKER_EMERGENCY_MODE')
+        if emergency_mode is not None:
+            config.worker_concurrency.emergency_mode_enabled = emergency_mode.lower() == 'true'
+
+        # Self-healing config
+        dml_backoff = os.environ.get('SELF_HEALING_DML_BACKOFF_ENABLED')
+        if dml_backoff is not None:
+            config.self_healing.dml_backoff_enabled = dml_backoff.lower() == 'true'
+
+        dml_max_retries = os.environ.get('SELF_HEALING_DML_MAX_RETRIES')
+        if dml_max_retries:
+            config.self_healing.dml_max_retries = int(dml_max_retries)
+
+        alert_on_dml = os.environ.get('SELF_HEALING_ALERT_ON_DML_LIMIT')
+        if alert_on_dml is not None:
+            config.self_healing.alert_on_dml_limit = alert_on_dml.lower() == 'true'
+
+        auto_reduce = os.environ.get('SELF_HEALING_AUTO_REDUCE_CONCURRENCY')
+        if auto_reduce is not None:
+            config.self_healing.auto_reduce_concurrency = auto_reduce.lower() == 'true'
 
         return config
 
