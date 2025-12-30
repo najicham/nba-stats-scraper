@@ -21,7 +21,8 @@ RUN pip install --no-cache-dir \
     gunicorn>=21.0.0 \
     google-cloud-bigquery>=3.0.0 \
     google-cloud-firestore>=2.0.0 \
-    google-cloud-logging>=3.0.0
+    google-cloud-logging>=3.0.0 \
+    requests>=2.28.0
 
 # Copy shared modules
 COPY shared/ /app/shared/
