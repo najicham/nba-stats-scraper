@@ -1,127 +1,172 @@
 # shared/utils/metrics_utils.py
 """
 Custom metrics utilities for NBA platform
+
+Note: Uses lazy imports for google-cloud-monitoring to avoid
+startup failures when the package is not installed.
 """
 
 import time
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, TYPE_CHECKING
 from datetime import datetime
 
-from google.cloud import monitoring_v3
+# Lazy import to avoid startup failures
+if TYPE_CHECKING:
+    from google.cloud import monitoring_v3
 
 logger = logging.getLogger(__name__)
+
+# Module-level client for lazy loading
+_monitoring_v3 = None
+
+
+def _get_monitoring_module():
+    """Lazy-load monitoring_v3 module."""
+    global _monitoring_v3
+    if _monitoring_v3 is None:
+        try:
+            from google.cloud import monitoring_v3
+            _monitoring_v3 = monitoring_v3
+        except ImportError as e:
+            logger.warning(f"google-cloud-monitoring not available: {e}")
+            return None
+    return _monitoring_v3
 
 
 class MetricsClient:
     """Custom metrics client for NBA platform"""
-    
+
     def __init__(self, project_id: str):
         self.project_id = project_id
-        self.client = monitoring_v3.MetricServiceClient()
         self.project_name = f"projects/{project_id}"
+        self._client = None
+        self._monitoring = None
+
+    def _get_client(self):
+        """Lazy-load the metrics client."""
+        if self._client is None:
+            monitoring = _get_monitoring_module()
+            if monitoring is None:
+                return None
+            self._monitoring = monitoring
+            self._client = monitoring.MetricServiceClient()
+        return self._client
     
-    def send_metric(self, metric_name: str, value: float, 
+    def send_metric(self, metric_name: str, value: float,
                    labels: Optional[Dict[str, str]] = None,
                    metric_type: str = "GAUGE") -> bool:
         """
         Send custom metric to Cloud Monitoring
-        
+
         Args:
             metric_name: Name of the metric (will be prefixed with custom.googleapis.com/nba/)
             value: Metric value
             labels: Optional labels for the metric
             metric_type: GAUGE, COUNTER, or CUMULATIVE
-            
+
         Returns:
             True if successful
         """
+        client = self._get_client()
+        if client is None:
+            logger.debug(f"Metrics client not available, skipping {metric_name}")
+            return False
+
         if labels is None:
             labels = {}
-        
+
         full_metric_name = f"custom.googleapis.com/nba/{metric_name}"
-        
+
         try:
+            monitoring = self._monitoring
+
             # Create the time series
-            series = monitoring_v3.TimeSeries()
+            series = monitoring.TimeSeries()
             series.metric.type = full_metric_name
             series.metric.labels.update(labels)
-            
+
             # Set resource labels
             series.resource.type = 'global'
             series.resource.labels['project_id'] = self.project_id
-            
+
             # Create data point
-            point = monitoring_v3.Point()
+            point = monitoring.Point()
             point.interval.end_time.seconds = int(time.time())
-            
+
             if metric_type == "GAUGE":
                 point.value.double_value = float(value)
             else:
                 point.value.int64_value = int(value)
-            
+
             series.points = [point]
-            
+
             # Send to Cloud Monitoring
-            self.client.create_time_series(
-                name=self.project_name, 
+            client.create_time_series(
+                name=self.project_name,
                 time_series=[series]
             )
-            
+
             logger.debug(f"Sent metric {metric_name}={value} with labels {labels}")
             return True
-            
+
         except Exception as e:
             logger.error(f"Failed to send metric {metric_name}: {e}")
             return False
     
     def create_metric_descriptor(self, metric_name: str, description: str,
-                               metric_kind: str = "GAUGE", 
+                               metric_kind: str = "GAUGE",
                                value_type: str = "DOUBLE") -> bool:
         """
         Create a custom metric descriptor
-        
+
         Args:
             metric_name: Name of the metric
             description: Human-readable description
             metric_kind: GAUGE, CUMULATIVE, or DELTA
             value_type: DOUBLE, INT64, BOOL, STRING
-            
+
         Returns:
             True if successful
         """
+        client = self._get_client()
+        if client is None:
+            logger.debug(f"Metrics client not available, skipping descriptor {metric_name}")
+            return False
+
+        monitoring = self._monitoring
         full_metric_name = f"custom.googleapis.com/nba/{metric_name}"
-        
-        descriptor = monitoring_v3.MetricDescriptor()
+
+        descriptor = monitoring.MetricDescriptor()
         descriptor.type = full_metric_name
         descriptor.description = description
-        
+
         # Set metric kind
         if metric_kind == "GAUGE":
-            descriptor.metric_kind = monitoring_v3.MetricDescriptor.MetricKind.GAUGE
+            descriptor.metric_kind = monitoring.MetricDescriptor.MetricKind.GAUGE
         elif metric_kind == "CUMULATIVE":
-            descriptor.metric_kind = monitoring_v3.MetricDescriptor.MetricKind.CUMULATIVE
+            descriptor.metric_kind = monitoring.MetricDescriptor.MetricKind.CUMULATIVE
         else:
-            descriptor.metric_kind = monitoring_v3.MetricDescriptor.MetricKind.DELTA
-        
+            descriptor.metric_kind = monitoring.MetricDescriptor.MetricKind.DELTA
+
         # Set value type
         if value_type == "DOUBLE":
-            descriptor.value_type = monitoring_v3.MetricDescriptor.ValueType.DOUBLE
+            descriptor.value_type = monitoring.MetricDescriptor.ValueType.DOUBLE
         elif value_type == "INT64":
-            descriptor.value_type = monitoring_v3.MetricDescriptor.ValueType.INT64
+            descriptor.value_type = monitoring.MetricDescriptor.ValueType.INT64
         elif value_type == "BOOL":
-            descriptor.value_type = monitoring_v3.MetricDescriptor.ValueType.BOOL
+            descriptor.value_type = monitoring.MetricDescriptor.ValueType.BOOL
         else:
-            descriptor.value_type = monitoring_v3.MetricDescriptor.ValueType.STRING
-        
+            descriptor.value_type = monitoring.MetricDescriptor.ValueType.STRING
+
         try:
-            self.client.create_metric_descriptor(
-                name=self.project_name, 
+            client.create_metric_descriptor(
+                name=self.project_name,
                 metric_descriptor=descriptor
             )
             logger.info(f"Created metric descriptor: {metric_name}")
             return True
-            
+
         except Exception as e:
             logger.error(f"Failed to create metric descriptor {metric_name}: {e}")
             return False

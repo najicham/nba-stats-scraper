@@ -116,6 +116,37 @@ python monitoring/processor_slowdown_detector.py --processor MLFeatureStoreProce
 
 ---
 
+## Investigation: PredictionCoordinator Slowdown
+
+**Symptom:** PredictionCoordinator running at 8.2x baseline (608s vs 74s avg), exceeding 540s timeout.
+
+**Root Cause Analysis:**
+
+The 608s run on 2025-12-30 04:59:18 UTC was caused by **prediction worker boot failures**, not slow prediction processing:
+
+```
+ImportError: cannot import name 'monitoring_v3' from 'google.cloud' (unknown location)
+```
+
+**Timeline:**
+1. 04:59:18 - Coordinator publishes 28 prediction requests
+2. 05:01:54 - Worker instances try to boot but FAIL (ImportError)
+3. Cloud Run retries repeatedly (autoscaling)
+4. Eventually workers boot correctly
+5. 05:09:27 - Last player completes (~10 min later)
+
+**Problem:** `shared/utils/metrics_utils.py` imports `monitoring_v3` at module load time. If `google-cloud-monitoring` package is missing or has issues, the worker crashes before it can process any requests.
+
+**Fix Applied:** Made imports lazy in `shared/utils/metrics_utils.py`:
+- Moved `from google.cloud import monitoring_v3` to lazy loading
+- Added `_get_monitoring_module()` helper
+- Worker now boots even if metrics module isn't available
+- Metrics are gracefully skipped if unavailable
+
+**File Changed:** `shared/utils/metrics_utils.py`
+
+---
+
 ## Deployment Required
 
 When GCP connectivity is stable:
