@@ -1,0 +1,290 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard | NBA Pipeline Admin{% endblock %}
+
+{% block content %}
+<div x-data="{ activeTab: 'today', showActions: false }">
+
+    <!-- Status Cards -->
+    <div id="status-cards"
+         hx-get="/partials/status-cards"
+         hx-trigger="refresh"
+         hx-swap="innerHTML">
+        {% include "components/status_cards.html" %}
+    </div>
+
+    <!-- Tab Navigation -->
+    <div class="mt-8 border-b border-gray-200">
+        <nav class="-mb-px flex space-x-8">
+            <button
+                @click="activeTab = 'today'"
+                :class="activeTab === 'today' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+                class="whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
+            >
+                Today's Games
+            </button>
+            <button
+                @click="activeTab = 'tomorrow'"
+                :class="activeTab === 'tomorrow' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+                class="whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
+            >
+                Tomorrow's Games
+            </button>
+            <button
+                @click="activeTab = 'errors'"
+                :class="activeTab === 'errors' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+                class="whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
+            >
+                Recent Errors
+                {% if recent_errors|length > 0 %}
+                <span class="ml-2 px-2 py-0.5 bg-red-100 text-red-600 text-xs rounded-full">{{ recent_errors|length }}</span>
+                {% endif %}
+            </button>
+            <button
+                @click="activeTab = 'schedulers'"
+                :class="activeTab === 'schedulers' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+                class="whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
+            >
+                Scheduler History
+            </button>
+            <button
+                @click="activeTab = 'history'"
+                :class="activeTab === 'history' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+                class="whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
+            >
+                7-Day History
+            </button>
+        </nav>
+    </div>
+
+    <!-- Tab Content -->
+    <div class="mt-6">
+        <!-- Today's Games Tab -->
+        <div x-show="activeTab === 'today'" x-cloak>
+            <div class="bg-white rounded-lg shadow p-6">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="text-lg font-medium text-gray-900">
+                        Games for {{ today }} (Today)
+                    </h3>
+                    <button
+                        hx-get="/partials/games-table/{{ today }}"
+                        hx-target="#today-games-table"
+                        hx-swap="innerHTML"
+                        class="text-sm text-blue-600 hover:text-blue-800"
+                    >
+                        Refresh
+                    </button>
+                </div>
+                <div id="today-games-table"
+                     hx-get="/partials/games-table/{{ today }}"
+                     hx-trigger="load">
+                    <div class="text-gray-500 text-center py-8">Loading games...</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tomorrow's Games Tab -->
+        <div x-show="activeTab === 'tomorrow'" x-cloak>
+            <div class="bg-white rounded-lg shadow p-6">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="text-lg font-medium text-gray-900">
+                        Games for {{ tomorrow }} (Tomorrow)
+                    </h3>
+                    <div class="flex space-x-2">
+                        <button
+                            hx-get="/partials/games-table/{{ tomorrow }}"
+                            hx-target="#tomorrow-games-table"
+                            hx-swap="innerHTML"
+                            class="text-sm text-blue-600 hover:text-blue-800"
+                        >
+                            Refresh
+                        </button>
+                        <button
+                            @click="showActions = !showActions"
+                            class="text-sm bg-orange-100 text-orange-700 px-3 py-1 rounded hover:bg-orange-200"
+                        >
+                            Actions
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Action Buttons (hidden by default) -->
+                <div x-show="showActions" x-cloak class="mb-4 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+                    <p class="text-sm text-yellow-800 mb-3">Force data regeneration for tomorrow:</p>
+                    <div class="flex space-x-2">
+                        <button
+                            hx-post="/api/actions/retry-phase"
+                            hx-vals='{"date": "{{ tomorrow }}", "phase": "phase3"}'
+                            hx-confirm="Retry Phase 3 (context generation) for {{ tomorrow }}?"
+                            class="px-3 py-1 bg-blue-500 text-white text-sm rounded hover:bg-blue-600"
+                        >
+                            Retry Phase 3
+                        </button>
+                        <button
+                            hx-post="/api/actions/retry-phase"
+                            hx-vals='{"date": "{{ tomorrow }}", "phase": "phase4"}'
+                            hx-confirm="Retry Phase 4 (ML features) for {{ tomorrow }}?"
+                            class="px-3 py-1 bg-blue-500 text-white text-sm rounded hover:bg-blue-600"
+                        >
+                            Retry Phase 4
+                        </button>
+                        <button
+                            hx-post="/api/actions/force-predictions"
+                            hx-vals='{"date": "{{ tomorrow }}"}'
+                            hx-confirm="Force predictions for {{ tomorrow }}? This will regenerate all predictions."
+                            class="px-3 py-1 bg-green-500 text-white text-sm rounded hover:bg-green-600"
+                        >
+                            Force Predictions
+                        </button>
+                    </div>
+                </div>
+
+                <div id="tomorrow-games-table"
+                     hx-get="/partials/games-table/{{ tomorrow }}"
+                     hx-trigger="load">
+                    <div class="text-gray-500 text-center py-8">Loading games...</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Errors Tab -->
+        <div x-show="activeTab === 'errors'" x-cloak>
+            <div class="bg-white rounded-lg shadow p-6">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="text-lg font-medium text-gray-900">Recent Errors (Last 6 Hours)</h3>
+                    <button
+                        hx-get="/partials/error-feed"
+                        hx-target="#error-feed"
+                        hx-swap="innerHTML"
+                        class="text-sm text-blue-600 hover:text-blue-800"
+                    >
+                        Refresh
+                    </button>
+                </div>
+                <div id="error-feed"
+                     hx-get="/partials/error-feed"
+                     hx-trigger="load">
+                    <div class="text-gray-500 text-center py-8">Loading errors...</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Schedulers Tab -->
+        <div x-show="activeTab === 'schedulers'" x-cloak>
+            <div class="bg-white rounded-lg shadow p-6">
+                <h3 class="text-lg font-medium text-gray-900 mb-4">Scheduler History (Last 12 Hours)</h3>
+                <div id="scheduler-timeline"
+                     hx-get="/api/schedulers"
+                     hx-trigger="load"
+                     hx-swap="innerHTML">
+                    <div class="text-gray-500 text-center py-8">Loading scheduler history...</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- History Tab -->
+        <div x-show="activeTab === 'history'" x-cloak>
+            <div class="bg-white rounded-lg shadow p-6">
+                <h3 class="text-lg font-medium text-gray-900 mb-4">7-Day Pipeline History</h3>
+                <div id="history-table"
+                     hx-get="/api/history"
+                     hx-trigger="load"
+                     hx-swap="innerHTML">
+                    <div class="text-gray-500 text-center py-8">Loading history...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Handle scheduler timeline response
+    document.body.addEventListener('htmx:afterOnLoad', function(evt) {
+        if (evt.detail.target.id === 'scheduler-timeline') {
+            const data = JSON.parse(evt.detail.xhr.responseText);
+            renderSchedulerTimeline(data.schedulers || []);
+        }
+        if (evt.detail.target.id === 'history-table') {
+            const data = JSON.parse(evt.detail.xhr.responseText);
+            renderHistoryTable(data.history || []);
+        }
+    });
+
+    function renderSchedulerTimeline(schedulers) {
+        const container = document.getElementById('scheduler-timeline');
+        if (!schedulers.length) {
+            container.innerHTML = '<p class="text-gray-500 text-center py-4">No scheduler runs in the last 12 hours</p>';
+            return;
+        }
+
+        let html = '<div class="space-y-2">';
+        schedulers.forEach(s => {
+            const statusClass = s.status === 'success' ? 'bg-green-100 text-green-800' :
+                               s.status === 'error' ? 'bg-red-100 text-red-800' :
+                               'bg-blue-100 text-blue-800';
+            const time = new Date(s.timestamp).toLocaleTimeString('en-US', {
+                timeZone: 'America/New_York',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+            html += `
+                <div class="flex items-center justify-between p-3 border rounded-lg">
+                    <div class="flex items-center space-x-3">
+                        <span class="px-2 py-1 text-xs rounded ${statusClass}">${s.status}</span>
+                        <span class="font-mono text-sm">${s.job_id}</span>
+                    </div>
+                    <span class="text-sm text-gray-500">${time} ET</span>
+                </div>
+            `;
+        });
+        html += '</div>';
+        container.innerHTML = html;
+    }
+
+    function renderHistoryTable(history) {
+        const container = document.getElementById('history-table');
+        if (!history.length) {
+            container.innerHTML = '<p class="text-gray-500 text-center py-4">No history available</p>';
+            return;
+        }
+
+        let html = `
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Games</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Context</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Features</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Predictions</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">
+        `;
+
+        history.forEach(h => {
+            const statusClass = h.pipeline_status === 'COMPLETE' ? 'bg-green-100 text-green-800' :
+                               h.pipeline_status.includes('PENDING') ? 'bg-yellow-100 text-yellow-800' :
+                               'bg-gray-100 text-gray-600';
+            html += `
+                <tr>
+                    <td class="px-4 py-3 text-sm font-medium text-gray-900">${h.game_date}</td>
+                    <td class="px-4 py-3 text-sm text-gray-500">${h.games_scheduled}</td>
+                    <td class="px-4 py-3 text-sm text-gray-500">${h.phase3_context}</td>
+                    <td class="px-4 py-3 text-sm text-gray-500">${h.phase4_features}</td>
+                    <td class="px-4 py-3 text-sm text-gray-500">${h.predictions}</td>
+                    <td class="px-4 py-3">
+                        <span class="px-2 py-1 text-xs rounded ${statusClass}">${h.pipeline_status}</span>
+                    </td>
+                </tr>
+            `;
+        });
+
+        html += '</tbody></table>';
+        container.innerHTML = html;
+    }
+</script>
+{% endblock %}

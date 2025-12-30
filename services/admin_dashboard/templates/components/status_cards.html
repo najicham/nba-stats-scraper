@@ -1,0 +1,102 @@
+<!-- Status Cards for Today and Tomorrow -->
+<div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+
+    <!-- Today's Status Card -->
+    <div class="bg-white rounded-lg shadow p-6">
+        <div class="flex items-center justify-between mb-4">
+            <h2 class="text-lg font-semibold text-gray-900">Today ({{ today }})</h2>
+            {% if today_status %}
+                {% if today_status.pipeline_status == 'COMPLETE' %}
+                    <span class="px-3 py-1 bg-green-100 text-green-800 text-sm font-medium rounded-full">Complete</span>
+                {% elif 'PENDING' in today_status.pipeline_status %}
+                    <span class="px-3 py-1 bg-yellow-100 text-yellow-800 text-sm font-medium rounded-full flex items-center">
+                        <span class="w-2 h-2 bg-yellow-500 rounded-full mr-2 pulse-dot"></span>
+                        {{ today_status.pipeline_status.replace('_', ' ').title() }}
+                    </span>
+                {% else %}
+                    <span class="px-3 py-1 bg-gray-100 text-gray-600 text-sm font-medium rounded-full">{{ today_status.pipeline_status }}</span>
+                {% endif %}
+            {% else %}
+                <span class="px-3 py-1 bg-gray-100 text-gray-600 text-sm font-medium rounded-full">No Data</span>
+            {% endif %}
+        </div>
+
+        {% if today_status %}
+        <div class="grid grid-cols-2 gap-4">
+            <div class="bg-gray-50 rounded-lg p-4">
+                <p class="text-sm text-gray-500">Games</p>
+                <p class="text-2xl font-bold text-gray-900">{{ today_status.games_scheduled }}</p>
+            </div>
+            <div class="bg-gray-50 rounded-lg p-4">
+                <p class="text-sm text-gray-500">Predictions</p>
+                <p class="text-2xl font-bold text-gray-900">{{ today_status.predictions }}</p>
+            </div>
+            <div class="bg-gray-50 rounded-lg p-4">
+                <p class="text-sm text-gray-500">Phase 3 Context</p>
+                <p class="text-xl font-semibold text-gray-700">{{ today_status.phase3_context }}</p>
+            </div>
+            <div class="bg-gray-50 rounded-lg p-4">
+                <p class="text-sm text-gray-500">Phase 4 Features</p>
+                <p class="text-xl font-semibold text-gray-700">{{ today_status.phase4_features }}</p>
+            </div>
+        </div>
+        {% else %}
+        <p class="text-gray-500 text-center py-8">No status data available</p>
+        {% endif %}
+    </div>
+
+    <!-- Tomorrow's Status Card -->
+    <div class="bg-white rounded-lg shadow p-6">
+        <div class="flex items-center justify-between mb-4">
+            <h2 class="text-lg font-semibold text-gray-900">Tomorrow ({{ tomorrow }})</h2>
+            {% if tomorrow_status %}
+                {% if tomorrow_status.pipeline_status == 'COMPLETE' %}
+                    <span class="px-3 py-1 bg-green-100 text-green-800 text-sm font-medium rounded-full">Complete</span>
+                {% elif 'PENDING' in tomorrow_status.pipeline_status %}
+                    <span class="px-3 py-1 bg-yellow-100 text-yellow-800 text-sm font-medium rounded-full flex items-center">
+                        <span class="w-2 h-2 bg-yellow-500 rounded-full mr-2 pulse-dot"></span>
+                        {{ tomorrow_status.pipeline_status.replace('_', ' ').title() }}
+                    </span>
+                {% else %}
+                    <span class="px-3 py-1 bg-gray-100 text-gray-600 text-sm font-medium rounded-full">{{ tomorrow_status.pipeline_status }}</span>
+                {% endif %}
+            {% else %}
+                <span class="px-3 py-1 bg-gray-100 text-gray-600 text-sm font-medium rounded-full">No Data</span>
+            {% endif %}
+        </div>
+
+        {% if tomorrow_status %}
+        <div class="grid grid-cols-2 gap-4">
+            <div class="bg-gray-50 rounded-lg p-4">
+                <p class="text-sm text-gray-500">Games</p>
+                <p class="text-2xl font-bold text-gray-900">{{ tomorrow_status.games_scheduled }}</p>
+            </div>
+            <div class="bg-gray-50 rounded-lg p-4">
+                <p class="text-sm text-gray-500">Predictions</p>
+                <p class="text-2xl font-bold {% if tomorrow_status.predictions == 0 and tomorrow_status.games_scheduled > 0 %}text-red-600{% else %}text-gray-900{% endif %}">
+                    {{ tomorrow_status.predictions }}
+                </p>
+            </div>
+            <div class="bg-gray-50 rounded-lg p-4">
+                <p class="text-sm text-gray-500">Phase 3 Context</p>
+                <p class="text-xl font-semibold text-gray-700">{{ tomorrow_status.phase3_context }}</p>
+            </div>
+            <div class="bg-gray-50 rounded-lg p-4">
+                <p class="text-sm text-gray-500">Phase 4 Features</p>
+                <p class="text-xl font-semibold text-gray-700">{{ tomorrow_status.phase4_features }}</p>
+            </div>
+        </div>
+
+        {% if tomorrow_status.games_scheduled > 0 and tomorrow_status.predictions < tomorrow_status.phase3_context %}
+        <div class="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+            <p class="text-sm text-yellow-800">
+                <strong>Warning:</strong> Missing predictions for some games.
+                Expected ~{{ tomorrow_status.phase3_context * 10 }} predictions based on context.
+            </p>
+        </div>
+        {% endif %}
+        {% else %}
+        <p class="text-gray-500 text-center py-8">No status data available</p>
+        {% endif %}
+    </div>
+</div>
