@@ -1,0 +1,45 @@
+<!-- Error Feed Component -->
+{% if errors %}
+<div class="space-y-3">
+    {% for error in errors %}
+    <div class="border border-red-200 rounded-lg p-4 bg-red-50">
+        <div class="flex items-start justify-between">
+            <div class="flex-1">
+                <div class="flex items-center space-x-2 mb-2">
+                    <span class="px-2 py-0.5 bg-red-100 text-red-800 text-xs font-medium rounded">
+                        {{ error.severity }}
+                    </span>
+                    <span class="text-xs text-gray-500 font-mono">
+                        {{ error.service }}
+                    </span>
+                </div>
+                <p class="text-sm text-gray-800 font-mono break-all">
+                    {{ error.message }}
+                </p>
+            </div>
+            <span class="text-xs text-gray-400 whitespace-nowrap ml-4">
+                {% if error.timestamp %}
+                    {{ error.timestamp[:19].replace('T', ' ') }}
+                {% endif %}
+            </span>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+<div class="mt-4 text-center">
+    <p class="text-sm text-gray-500">
+        Showing {{ errors|length }} most recent errors
+    </p>
+</div>
+
+{% else %}
+<div class="text-center py-8">
+    <div class="inline-flex items-center justify-center w-12 h-12 rounded-full bg-green-100 mb-4">
+        <svg class="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+        </svg>
+    </div>
+    <p class="text-gray-500">No errors in the last 6 hours</p>
+</div>
+{% endif %}
