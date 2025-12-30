@@ -1,10 +1,11 @@
 """
 Self-Healing Pipeline Cloud Function
 
-Runs 30 minutes after same-day-predictions scheduler to verify predictions exist.
-If predictions are missing, triggers the pipeline with bypass flags.
+Checks for missing predictions and triggers healing pipelines if necessary.
+Runs 15 minutes BEFORE Phase 6 tonight-picks export to allow time for
+self-healing before exports run.
 
-Schedule: 2:15 PM ET daily (15 14 * * * America/New_York)
+Schedule: 12:45 PM ET daily (45 12 * * * America/New_York)
 """
 
 import functions_framework
