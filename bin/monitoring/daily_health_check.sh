@@ -30,7 +30,30 @@ SELECT
 FROM nba_predictions.player_prop_predictions
 WHERE game_date = '$DATE' AND is_active = TRUE" 2>/dev/null
 
-# 3. Check Phase 3 completion state (Firestore)
+# 3. Prediction Coverage (Expected vs Actual)
+echo ""
+echo "PREDICTION COVERAGE (Last 7 Days):"
+bq query --use_legacy_sql=false --format=pretty "
+SELECT
+  ppc.game_date,
+  ppc.unique_players as predicted,
+  ctx.total_players as expected,
+  ROUND(100.0 * ppc.unique_players / NULLIF(ctx.total_players, 0), 1) as coverage_pct,
+  ctx.total_players - ppc.unique_players as missing
+FROM (
+  SELECT game_date, COUNT(DISTINCT player_lookup) as unique_players
+  FROM nba_predictions.player_prop_predictions
+  WHERE is_active = TRUE GROUP BY 1
+) ppc
+JOIN (
+  SELECT game_date, COUNT(*) as total_players
+  FROM nba_analytics.upcoming_player_game_context
+  WHERE is_production_ready = TRUE GROUP BY 1
+) ctx ON ppc.game_date = ctx.game_date
+WHERE ppc.game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+ORDER BY ppc.game_date DESC" 2>/dev/null
+
+# 4. Check Phase 3 completion state (Firestore)
 echo ""
 echo "PHASE 3 COMPLETION STATE:"
 python3 << EOF
@@ -49,7 +72,7 @@ else:
     print("   No completion data yet")
 EOF
 
-# 4. Check ML Feature Store
+# 5. Check ML Feature Store
 echo ""
 echo "ML FEATURE STORE:"
 bq query --use_legacy_sql=false --format=pretty "
@@ -57,7 +80,7 @@ SELECT COUNT(*) as features
 FROM nba_predictions.ml_feature_store_v2
 WHERE game_date = '$DATE'" 2>/dev/null
 
-# 5. Check for recent errors
+# 6. Check for recent errors
 echo ""
 echo "RECENT ERRORS (last 2h):"
 ERROR_COUNT=$(gcloud logging read 'resource.type="cloud_run_revision" AND severity>=ERROR' \
@@ -69,7 +92,7 @@ else
   echo "   No errors in last 2 hours"
 fi
 
-# 6. Service health
+# 7. Service health
 echo ""
 echo "SERVICE HEALTH:"
 for svc in nba-phase3-analytics-processors nba-phase4-precompute-processors prediction-coordinator; do
@@ -80,13 +103,28 @@ for svc in nba-phase3-analytics-processors nba-phase4-precompute-processors pred
   printf "   %-40s %s\n" "$svc:" "$STATUS"
 done
 
-# 7. Quick summary
+# 8. Quick summary
 echo ""
 echo "================================================"
 echo "SUMMARY:"
 PRED_COUNT=$(bq query --use_legacy_sql=false --format=csv --quiet "SELECT COUNT(*) FROM nba_predictions.player_prop_predictions WHERE game_date = '$DATE' AND is_active = TRUE" 2>/dev/null | tail -1)
+
+# Get today's coverage percentage
+COVERAGE_PCT=$(bq query --use_legacy_sql=false --format=csv --quiet "
+SELECT ROUND(100.0 * ppc.unique_players / NULLIF(ctx.total_players, 0), 1) as coverage_pct
+FROM (SELECT COUNT(DISTINCT player_lookup) as unique_players FROM nba_predictions.player_prop_predictions WHERE game_date = '$DATE' AND is_active = TRUE) ppc
+CROSS JOIN (SELECT COUNT(*) as total_players FROM nba_analytics.upcoming_player_game_context WHERE game_date = '$DATE' AND is_production_ready = TRUE) ctx" 2>/dev/null | tail -1)
+
 if [ "${PRED_COUNT:-0}" -gt 0 ]; then
   echo "   Pipeline status: HEALTHY (${PRED_COUNT} predictions)"
+  if [ -n "$COVERAGE_PCT" ] && [ "$COVERAGE_PCT" != "null" ]; then
+    COVERAGE_INT=${COVERAGE_PCT%.*}
+    if [ "${COVERAGE_INT:-0}" -lt 40 ]; then
+      echo "   ⚠️  Coverage WARNING: ${COVERAGE_PCT}% (expected ~46% due to min_minutes filter)"
+    else
+      echo "   Coverage: ${COVERAGE_PCT}%"
+    fi
+  fi
 else
   echo "   Pipeline status: NEEDS ATTENTION (no predictions for $DATE)"
 fi
