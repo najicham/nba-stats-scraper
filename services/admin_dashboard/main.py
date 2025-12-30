@@ -7,9 +7,11 @@ Shows phase completion status, errors, scheduler history, and allows manual acti
 
 import os
 import logging
+import urllib.request
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from flask import Flask, render_template, jsonify, request
+import requests
 
 # Configure logging
 logging.basicConfig(
@@ -32,6 +34,83 @@ logging_service = LoggingService()
 
 # API Key for simple authentication
 API_KEY = os.environ.get('ADMIN_DASHBOARD_API_KEY', 'dev-key-change-me')
+
+# Cloud Run service URLs
+SERVICE_URLS = {
+    'prediction_coordinator': 'https://prediction-coordinator-f7p3g7f6ya-wl.a.run.app',
+    'phase3_analytics': 'https://nba-phase3-analytics-processors-f7p3g7f6ya-wl.a.run.app',
+    'phase4_precompute': 'https://nba-phase4-precompute-processors-f7p3g7f6ya-wl.a.run.app',
+    'self_heal': 'https://self-heal-f7p3g7f6ya-wl.a.run.app',
+}
+
+
+def get_auth_token(audience: str) -> str:
+    """
+    Get identity token for authenticated service calls using metadata server.
+    Only works when running in GCP (Cloud Run/Cloud Functions).
+
+    Args:
+        audience: The URL of the service to call
+
+    Returns:
+        Identity token string
+    """
+    metadata_url = f"http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity?audience={audience}"
+    req = urllib.request.Request(metadata_url, headers={"Metadata-Flavor": "Google"})
+
+    try:
+        with urllib.request.urlopen(req, timeout=10) as response:
+            return response.read().decode("utf-8")
+    except Exception as e:
+        logger.warning(f"Could not get auth token (expected in local dev): {e}")
+        return None
+
+
+def call_cloud_run_service(service_key: str, endpoint: str, method: str = 'POST',
+                           payload: dict = None, timeout: int = 120) -> dict:
+    """
+    Make an authenticated call to a Cloud Run service.
+
+    Args:
+        service_key: Key in SERVICE_URLS dict
+        endpoint: Endpoint path (e.g., '/start', '/process-date')
+        method: HTTP method
+        payload: JSON payload for POST requests
+        timeout: Request timeout in seconds
+
+    Returns:
+        Dict with 'success', 'status_code', 'response', and 'error' keys
+    """
+    if service_key not in SERVICE_URLS:
+        return {'success': False, 'error': f'Unknown service: {service_key}'}
+
+    base_url = SERVICE_URLS[service_key]
+    url = f"{base_url}{endpoint}"
+
+    # Get auth token
+    token = get_auth_token(base_url)
+
+    headers = {'Content-Type': 'application/json'}
+    if token:
+        headers['Authorization'] = f'Bearer {token}'
+
+    try:
+        if method.upper() == 'POST':
+            response = requests.post(url, json=payload, headers=headers, timeout=timeout)
+        else:
+            response = requests.get(url, headers=headers, timeout=timeout)
+
+        return {
+            'success': response.status_code in (200, 201, 202),
+            'status_code': response.status_code,
+            'response': response.json() if response.headers.get('content-type', '').startswith('application/json') else response.text
+        }
+    except requests.exceptions.Timeout:
+        return {'success': False, 'error': 'Request timed out'}
+    except requests.exceptions.RequestException as e:
+        return {'success': False, 'error': str(e)}
+    except Exception as e:
+        return {'success': False, 'error': str(e)}
 
 
 def check_auth():
@@ -379,14 +458,33 @@ def action_force_predictions():
         return jsonify({'error': 'date required'}), 400
 
     try:
-        # TODO: Implement actual force predictions call
-        # This would call the prediction coordinator endpoint
         logger.info(f"Force predictions requested for {target_date}")
-        return jsonify({
-            'status': 'triggered',
-            'date': target_date,
-            'message': 'Force predictions job triggered'
-        })
+
+        # Log the action for audit trail
+        _log_admin_action('force_predictions', {'date': target_date})
+
+        # Call the prediction coordinator
+        result = call_cloud_run_service(
+            'prediction_coordinator',
+            '/start',
+            payload={'game_date': target_date}
+        )
+
+        if result.get('success'):
+            return jsonify({
+                'status': 'triggered',
+                'date': target_date,
+                'message': 'Force predictions job triggered successfully',
+                'service_response': result.get('response')
+            })
+        else:
+            return jsonify({
+                'status': 'failed',
+                'date': target_date,
+                'error': result.get('error', 'Unknown error'),
+                'status_code': result.get('status_code')
+            }), 500
+
     except Exception as e:
         logger.error(f"Error forcing predictions: {e}")
         return jsonify({'error': str(e)}), 500
@@ -406,17 +504,125 @@ def action_retry_phase():
         return jsonify({'error': 'date and phase required'}), 400
 
     try:
-        # TODO: Implement actual phase retry
         logger.info(f"Retry phase {phase} requested for {target_date}")
-        return jsonify({
-            'status': 'triggered',
-            'date': target_date,
-            'phase': phase,
-            'message': f'Phase {phase} retry triggered'
-        })
+
+        # Log the action for audit trail
+        _log_admin_action('retry_phase', {'date': target_date, 'phase': phase})
+
+        # Determine which service to call based on phase
+        if phase == '3' or phase == 'phase3':
+            result = call_cloud_run_service(
+                'phase3_analytics',
+                '/process-date-range',
+                payload={
+                    'start_date': target_date,
+                    'end_date': target_date,
+                    'processors': ['PlayerGameSummaryProcessor', 'UpcomingPlayerGameContextProcessor'],
+                    'backfill_mode': False
+                }
+            )
+        elif phase == '4' or phase == 'phase4':
+            result = call_cloud_run_service(
+                'phase4_precompute',
+                '/process-date',
+                payload={
+                    'analysis_date': target_date,
+                    'processors': ['MLFeatureStoreProcessor'],
+                    'strict_mode': False
+                }
+            )
+        elif phase == '5' or phase == 'phase5' or phase == 'predictions':
+            result = call_cloud_run_service(
+                'prediction_coordinator',
+                '/start',
+                payload={'game_date': target_date}
+            )
+        elif phase == 'self_heal' or phase == 'heal':
+            result = call_cloud_run_service(
+                'self_heal',
+                '/',
+                method='GET'
+            )
+        else:
+            return jsonify({'error': f'Unknown phase: {phase}. Valid phases: 3, 4, 5, predictions, self_heal'}), 400
+
+        if result.get('success'):
+            return jsonify({
+                'status': 'triggered',
+                'date': target_date,
+                'phase': phase,
+                'message': f'Phase {phase} retry triggered successfully',
+                'service_response': result.get('response')
+            })
+        else:
+            return jsonify({
+                'status': 'failed',
+                'date': target_date,
+                'phase': phase,
+                'error': result.get('error', 'Unknown error'),
+                'status_code': result.get('status_code')
+            }), 500
+
     except Exception as e:
         logger.error(f"Error retrying phase: {e}")
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/actions/trigger-self-heal', methods=['POST'])
+def action_trigger_self_heal():
+    """Trigger the self-heal pipeline check."""
+    if not check_auth():
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    try:
+        logger.info("Self-heal trigger requested")
+
+        # Log the action for audit trail
+        _log_admin_action('trigger_self_heal', {})
+
+        result = call_cloud_run_service(
+            'self_heal',
+            '/',
+            method='GET'
+        )
+
+        if result.get('success'):
+            return jsonify({
+                'status': 'triggered',
+                'message': 'Self-heal check triggered successfully',
+                'service_response': result.get('response')
+            })
+        else:
+            return jsonify({
+                'status': 'failed',
+                'error': result.get('error', 'Unknown error')
+            }), 500
+
+    except Exception as e:
+        logger.error(f"Error triggering self-heal: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+def _log_admin_action(action: str, details: dict):
+    """
+    Log admin actions for audit trail.
+
+    Args:
+        action: Action name
+        details: Action details
+    """
+    try:
+        # Log to console for now
+        # TODO: Consider logging to BigQuery for persistent audit trail
+        log_entry = {
+            'timestamp': datetime.now(ZoneInfo('America/New_York')).isoformat(),
+            'action': action,
+            'details': details,
+            'source': 'admin_dashboard'
+        }
+        logger.info(f"ADMIN_ACTION: {log_entry}")
+    except Exception as e:
+        logger.warning(f"Failed to log admin action: {e}")
 
 
 if __name__ == '__main__':
