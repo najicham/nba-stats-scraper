@@ -4,7 +4,9 @@
 # This function runs daily to check for missing predictions and trigger
 # healing pipelines if necessary. It checks BOTH today AND tomorrow.
 #
-# Schedule: 2:15 PM ET daily (15 14 * * * America/New_York)
+# Schedule: 12:45 PM ET daily (45 12 * * * America/New_York)
+# Note: Runs 15 minutes BEFORE Phase 6 tonight-picks (1 PM ET) to allow
+#       time for self-healing before the export runs.
 #
 # Usage:
 #   ./bin/deploy/deploy_self_heal_function.sh
@@ -33,7 +35,7 @@ TIMEOUT="540s"  # 9 minutes for self-healing pipeline
 
 # Scheduler configuration
 SCHEDULER_NAME="self-heal-predictions"
-SCHEDULER_SCHEDULE="15 14 * * *"  # 2:15 PM ET (14:15)
+SCHEDULER_SCHEDULE="45 12 * * *"  # 12:45 PM ET (runs 15 min before Phase 6 export)
 SCHEDULER_TIMEZONE="America/New_York"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -228,7 +230,7 @@ echo "     - Triggers prediction coordinator"
 echo ""
 
 echo -e "${YELLOW}Self-Heal Flow:${NC}"
-echo "  Cloud Scheduler (2:15 PM ET daily)"
+echo "  Cloud Scheduler (12:45 PM ET daily)"
 echo "       |"
 echo "       v"
 echo "  self-heal-predictions (Cloud Function)"
@@ -240,6 +242,9 @@ echo "       |"
 echo "       +---> Check TOMORROW's predictions"
 echo "                |"
 echo "                +---> If missing: Trigger healing pipeline"
+echo ""
+echo "  Note: Runs 15 min BEFORE Phase 6 tonight-picks export (1 PM ET)"
+echo "        to allow time for self-healing before exports run."
 echo ""
 
 echo -e "${YELLOW}Quick Commands:${NC}"

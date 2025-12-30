@@ -57,6 +57,130 @@ def get_publisher():
     return _publisher
 
 
+def validate_predictions_exist(target_date: str, min_predictions: int = 50) -> Dict:
+    """
+    Validate that predictions exist for a target date before exporting.
+
+    This pre-export validation prevents Phase 6 from exporting empty/incomplete
+    data when predictions are missing.
+
+    Args:
+        target_date: Date to validate (YYYY-MM-DD format)
+        min_predictions: Minimum number of predictions required (default 50)
+
+    Returns:
+        Dict with:
+        - ready: bool - True if ready for export
+        - predictions_count: int
+        - players_count: int
+        - missing_reason: str (if not ready)
+    """
+    from google.cloud import bigquery
+
+    bq_client = bigquery.Client(project=PROJECT_ID)
+
+    query = f"""
+    SELECT
+        COUNT(*) as predictions,
+        COUNT(DISTINCT player_lookup) as players
+    FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions`
+    WHERE game_date = '{target_date}'
+      AND is_active = TRUE
+    """
+
+    try:
+        result = bq_client.query(query).to_dataframe()
+        predictions_count = int(result.iloc[0]['predictions'])
+        players_count = int(result.iloc[0]['players'])
+
+        if predictions_count == 0:
+            return {
+                'ready': False,
+                'predictions_count': 0,
+                'players_count': 0,
+                'missing_reason': 'no_predictions'
+            }
+
+        if predictions_count < min_predictions:
+            return {
+                'ready': False,
+                'predictions_count': predictions_count,
+                'players_count': players_count,
+                'missing_reason': f'insufficient_predictions ({predictions_count} < {min_predictions})'
+            }
+
+        return {
+            'ready': True,
+            'predictions_count': predictions_count,
+            'players_count': players_count,
+            'missing_reason': None
+        }
+
+    except Exception as e:
+        logger.error(f"Error validating predictions: {e}")
+        return {
+            'ready': False,
+            'predictions_count': 0,
+            'players_count': 0,
+            'missing_reason': f'validation_error: {str(e)}'
+        }
+
+
+def trigger_self_heal(target_date: str) -> bool:
+    """
+    Trigger self-heal pipeline when predictions are missing.
+
+    Called from Phase 6 pre-export validation when predictions are missing.
+    This provides faster recovery than waiting for the scheduled self-heal.
+
+    Args:
+        target_date: Date to heal
+
+    Returns:
+        True if self-heal was triggered successfully
+    """
+    import urllib.request
+
+    SELF_HEAL_URL = "https://self-heal-f7p3g7f6ya-wl.a.run.app"
+
+    logger.warning(f"Pre-export validation failed - triggering self-heal for {target_date}")
+
+    try:
+        # Get identity token for authenticated call
+        metadata_url = f"http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity?audience={SELF_HEAL_URL}"
+        req = urllib.request.Request(metadata_url, headers={"Metadata-Flavor": "Google"})
+
+        try:
+            with urllib.request.urlopen(req, timeout=10) as response:
+                token = response.read().decode("utf-8")
+        except Exception as e:
+            logger.warning(f"Could not get auth token (expected in local dev): {e}")
+            token = None
+
+        # Trigger self-heal
+        import requests
+        headers = {"Content-Type": "application/json"}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+
+        response = requests.get(
+            SELF_HEAL_URL,
+            headers=headers,
+            timeout=120
+        )
+
+        if response.status_code == 200:
+            logger.info(f"Self-heal triggered successfully: {response.json()}")
+            return True
+        else:
+            logger.error(f"Self-heal trigger failed: {response.status_code} - {response.text}")
+            return False
+
+    except Exception as e:
+        logger.error(f"Error triggering self-heal: {e}")
+        return False
+
+
 def get_target_date(target_date_str: str) -> str:
     """
     Convert target_date string to actual date.
@@ -178,6 +302,46 @@ def main(cloud_event):
             target_date = get_target_date(target_date_str)
             export_types = message_data.get('export_types', [])
             update_latest = message_data.get('update_latest', True)
+
+            # Pre-export validation for tonight's picks (requires predictions)
+            tonight_types = {'tonight', 'tonight-players', 'predictions', 'best-bets', 'streaks'}
+            requires_predictions = bool(tonight_types.intersection(set(export_types)))
+
+            if requires_predictions:
+                validation = validate_predictions_exist(target_date)
+                logger.info(
+                    f"[{correlation_id}] Pre-export validation for {target_date}: "
+                    f"predictions={validation['predictions_count']}, "
+                    f"players={validation['players_count']}, "
+                    f"ready={validation['ready']}"
+                )
+
+                if not validation['ready']:
+                    logger.error(
+                        f"[{correlation_id}] Pre-export validation FAILED: {validation['missing_reason']}"
+                    )
+                    # Trigger self-heal automatically
+                    self_heal_triggered = trigger_self_heal(target_date)
+
+                    result = {
+                        'status': 'validation_failed',
+                        'target_date': target_date,
+                        'export_types': export_types,
+                        'validation': validation,
+                        'self_heal_triggered': self_heal_triggered,
+                        'errors': [f"Pre-export validation failed: {validation['missing_reason']}"]
+                    }
+
+                    # Publish completion with validation failure
+                    duration_seconds = time.time() - start_time
+                    publish_completion(
+                        correlation_id=correlation_id,
+                        export_type=export_type,
+                        result=result,
+                        duration_seconds=duration_seconds,
+                        message_data=message_data
+                    )
+                    return result
 
             result = run_daily_export(
                 target_date=target_date,
