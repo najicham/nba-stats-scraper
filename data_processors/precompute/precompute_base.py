@@ -781,6 +781,29 @@ class PrecomputeProcessorBase(RunHistoryMixin):
             self.opts.get('skip_downstream_trigger', False)
         )
 
+    def get_prefixed_dataset(self, base_dataset: str) -> str:
+        """
+        Get dataset name with optional prefix for test isolation.
+
+        When running in test mode with dataset_prefix set in opts,
+        returns prefixed dataset name (e.g., 'test_nba_precompute').
+        Otherwise returns the base dataset name unchanged.
+
+        Args:
+            base_dataset: Base dataset name (e.g., 'nba_precompute')
+
+        Returns:
+            Prefixed dataset name if dataset_prefix is set, else base_dataset
+        """
+        prefix = self.opts.get('dataset_prefix', '')
+        if prefix:
+            return f"{prefix}{base_dataset}"
+        return base_dataset
+
+    def get_output_dataset(self) -> str:
+        """Get the output dataset name with any configured prefix."""
+        return self.get_prefixed_dataset(self.dataset_id)
+
     def _validate_and_normalize_backfill_flags(self) -> None:
         """
         Validate backfill-related flags and normalize to canonical form.
@@ -1121,9 +1144,9 @@ class PrecomputeProcessorBase(RunHistoryMixin):
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
             return
-            
-        table_id = f"{self.project_id}.{self.dataset_id}.{self.table_name}"
-        
+
+        table_id = f"{self.project_id}.{self.get_output_dataset()}.{self.table_name}"
+
         # Handle different data types
         if isinstance(self.transformed_data, list):
             rows = self.transformed_data
@@ -1273,9 +1296,9 @@ class PrecomputeProcessorBase(RunHistoryMixin):
         """Delete existing data using batch DELETE query."""
         if not rows:
             return
-            
-        table_id = f"{self.project_id}.{self.dataset_id}.{self.table_name}"
-        
+
+        table_id = f"{self.project_id}.{self.get_output_dataset()}.{self.table_name}"
+
         # Get analysis_date from opts or first row
         analysis_date = self.opts.get('analysis_date')
         

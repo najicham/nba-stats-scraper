@@ -181,6 +181,7 @@ def process_date_range():
         end_date = data.get('end_date')
         processor_names = data.get('processors', [])
         backfill_mode = data.get('backfill_mode', False)
+        dataset_prefix = data.get('dataset_prefix', '')
 
         if not start_date or not end_date:
             return jsonify({"error": "start_date and end_date required"}), 400
@@ -232,7 +233,8 @@ def process_date_range():
                     'end_date': end_date,
                     'project_id': os.environ.get('GCP_PROJECT_ID', 'nba-props-platform'),
                     'triggered_by': 'manual',
-                    'backfill_mode': backfill_mode
+                    'backfill_mode': backfill_mode,
+                    'dataset_prefix': dataset_prefix
                 }
 
                 if backfill_mode:
