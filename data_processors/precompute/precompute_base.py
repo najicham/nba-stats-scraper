@@ -797,7 +797,7 @@ class PrecomputeProcessorBase(RunHistoryMixin):
         """
         prefix = self.opts.get('dataset_prefix', '')
         if prefix:
-            return f"{prefix}{base_dataset}"
+            return f"{prefix}_{base_dataset}"
         return base_dataset
 
     def get_output_dataset(self) -> str:
