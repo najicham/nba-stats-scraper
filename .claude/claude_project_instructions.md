@@ -246,7 +246,7 @@ docs/
 | You're creating... | Put it in... |
 |--------------------|--------------|
 | Active project/task tracking | `08-projects/current/{project-name}/` |
-| Session handoff notes | `09-handoff/sessions/` |
+| Session handoff notes | `09-handoff/` |
 | Backfill documentation | `02-operations/backfill/` |
 | Backfill runbooks | `02-operations/backfill/runbooks/` |
 | Operational procedures | `02-operations/` |
@@ -257,6 +257,35 @@ docs/
 | Monitoring/alerting | `07-monitoring/` |
 
 **Full guide:** `docs/05-development/docs-organization.md`
+
+### Session Handoff Workflow
+
+**CRITICAL: When ending a session and creating handoff documentation, follow this workflow:**
+
+1. **Location**: ALWAYS save handoff documents to `docs/09-handoff/` (root level)
+   - ❌ Do NOT use project subdirectories like `docs/08-projects/.../session-handoffs/`
+   - ❌ Do NOT create subdirectories within `09-handoff/`
+
+2. **Naming Convention**:
+   - Date-specific: `YYYY-MM-DD-description.md`
+   - Session-numbered: `YYYY-MM-DD-SESSION{N}-description.md`
+   - Next session guides: `YYYY-MM-DD-NEXT-SESSION-description.md`
+
+3. **Required Content**:
+   - Summary of work completed in this session
+   - Current system status and any issues encountered
+   - Clear next steps for the following session
+   - References to related documentation or project directories
+
+4. **Examples** (for reference):
+   - `docs/09-handoff/2025-12-31-OVERNIGHT-SESSION-HANDOFF.md`
+   - `docs/09-handoff/2025-12-30-MORNING-SESSION-HANDOFF.md`
+   - `docs/09-handoff/2025-12-29-SESSION184-PIPELINE-ROBUSTNESS.md`
+
+5. **Lifecycle**:
+   - Handoffs remain in root `docs/09-handoff/` for 7 days
+   - After 7 days, they are archived to `docs/09-handoff/archive/YYYY-MM/`
+   - Monthly summaries are created when archiving
 
 ### Documentation Types
 

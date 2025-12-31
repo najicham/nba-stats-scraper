@@ -27,7 +27,7 @@
 | You're creating... | Put it in... |
 |--------------------|--------------|
 | **Active project/task tracking** (checklists, status, progress) | `08-projects/current/{project-name}/` |
-| **Session handoff notes** | `09-handoff/sessions/` |
+| **Session handoff notes** | `09-handoff/` |
 | **Backfill runbooks** | `02-operations/runbooks/backfill/` |
 | **Operational procedures** | `02-operations/` |
 | **Phase-specific docs** | `03-phases/phase{N}/` |

@@ -1084,12 +1084,27 @@ class ScraperBase:
     def get_retry_strategy(self):
         """
         Return a configured urllib3.util.retry.Retry object for HTTP retries.
+
+        Exponential backoff: {backoff_factor} * (2 ** (retry_number - 1))
+        With backoff_factor=3 and max_retries=3:
+          - 1st retry: 3s delay
+          - 2nd retry: 6s delay
+          - 3rd retry: 12s delay
+        Max backoff capped at 60s to prevent excessive delays.
+
+        Status codes that trigger retry:
+          - 429: Too Many Requests (rate limiting)
+          - 500: Internal Server Error
+          - 502: Bad Gateway
+          - 503: Service Unavailable
+          - 504: Gateway Timeout
         """
         return Retry(
             total=self.max_retries_http,
             status_forcelist=[429, 500, 502, 503, 504],
             allowed_methods=["GET"],
-            backoff_factor=3
+            backoff_factor=3,
+            backoff_max=60  # Cap exponential backoff at 60 seconds
         )
 
     def get_http_adapter(self, retry_strategy):
