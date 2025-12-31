@@ -21,6 +21,13 @@ from .game_id_converter import (
     is_standard_game_id
 )
 
+# Environment validation utilities
+from .env_validation import (
+    validate_required_env_vars,
+    get_required_env_var,
+    MissingEnvironmentVariablesError
+)
+
 
 __all__ = [
     "BigQueryClient",
@@ -38,5 +45,9 @@ __all__ = [
     "get_game_id_converter",
     "to_standard_game_id",
     "parse_game_id",
-    "is_standard_game_id"
+    "is_standard_game_id",
+    # Environment validation
+    "validate_required_env_vars",
+    "get_required_env_var",
+    "MissingEnvironmentVariablesError"
 ]

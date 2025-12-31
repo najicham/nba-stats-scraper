@@ -34,12 +34,23 @@ logger.info("✓ Flask imported")
 
 import json
 import os
+import sys
 from typing import Dict, List, Optional, TYPE_CHECKING
 from datetime import datetime, date
 import uuid
 import base64
 import time
 logger.info("✓ Standard library imports completed")
+
+# Validate required environment variables at startup
+# Import path setup needed before shared imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
+from shared.utils.env_validation import validate_required_env_vars
+validate_required_env_vars(
+    ['GCP_PROJECT_ID'],
+    service_name='PredictionWorker'
+)
+logger.info("✓ Environment variables validated")
 
 # Defer google.cloud imports to lazy loading functions to avoid cold start hang
 if TYPE_CHECKING:
@@ -330,8 +341,15 @@ def handle_prediction_request():
                 circuits_opened=metadata.get('circuits_opened', [])
             )
 
-            logger.warning(f"No predictions generated for {player_lookup}")
-            return ('', 204)  # Still return success (graceful degradation)
+            # P1-PROC-2: Return 500 to trigger Pub/Sub retry instead of 204
+            # Empty predictions indicate a transient failure (data not ready, systems failed, etc.)
+            # Pub/Sub will retry the message, allowing the worker to succeed on subsequent attempts
+            error_reason = metadata.get('skip_reason') or metadata.get('error_type') or 'unknown'
+            logger.error(
+                f"No predictions generated for {player_lookup} on {game_date_str} - "
+                f"returning 500 to trigger Pub/Sub retry. Reason: {error_reason}"
+            )
+            return ('Empty predictions - triggering retry', 500)
 
         # Write to BigQuery staging table (consolidation happens later by coordinator)
         write_start = time.time()

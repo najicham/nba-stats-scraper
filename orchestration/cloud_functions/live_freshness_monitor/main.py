@@ -253,6 +253,19 @@ def main(request):
     return jsonify(result), 500
 
 
+# ============================================================================
+# HTTP ENDPOINTS (for health checks)
+# ============================================================================
+
+@functions_framework.http
+def health(request):
+    """Health check endpoint for the live_freshness_monitor function."""
+    return jsonify({
+        'status': 'healthy',
+        'function': 'live_freshness_monitor'
+    }), 200
+
+
 # For local testing
 if __name__ == "__main__":
     print("Checking live data freshness...")

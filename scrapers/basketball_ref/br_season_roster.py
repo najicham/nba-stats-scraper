@@ -343,7 +343,8 @@ class BasketballRefSeasonRoster(ScraperBase, ScraperFlaskMixin):
             # Fallback: try simple ASCII conversion
             try:
                 return text.encode('ascii', 'ignore').decode('ascii')
-            except:
+            except (UnicodeDecodeError, UnicodeEncodeError, AttributeError):
+                # UnicodeDecodeError/UnicodeEncodeError: encoding fails; AttributeError: None.encode()
                 return text  # Last resort: return original
 
     def normalize_name(self, name: str) -> str:

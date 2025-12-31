@@ -289,7 +289,8 @@ class ScheduleTransformer:
                     time_slot = "early_evening"
                 else:  # 8 PM ET and later
                     time_slot = "primetime"
-            except:
+            except (ValueError, IndexError, AttributeError):
+                # ValueError: int conversion fails; IndexError: split fails; AttributeError: None.split()
                 time_slot = "unknown"
         
         return {

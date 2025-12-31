@@ -37,6 +37,19 @@ logger = logging.getLogger(__name__)
 # Constants
 PROJECT_ID = os.environ.get('GCP_PROJECT', 'nba-props-platform')
 
+# Document TTL (days) - documents older than this will be cleaned up
+DOCUMENT_TTL_DAYS = int(os.environ.get('DOCUMENT_TTL_DAYS', '30'))
+
+# Collections to clean up (phase completion tracking documents)
+CLEANUP_COLLECTIONS = [
+    'phase1_completion',
+    'phase2_completion',
+    'phase3_completion',
+    'phase4_completion',
+    'phase5_completion',
+    'phase6_completion',
+]
+
 # Timeout thresholds (hours)
 PHASE2_TIMEOUT_HOURS = float(os.environ.get('PHASE2_TIMEOUT_HOURS', '2'))
 PHASE3_TIMEOUT_HOURS = float(os.environ.get('PHASE3_TIMEOUT_HOURS', '1'))
@@ -488,17 +501,289 @@ def get_document_status(collection: str, game_date: str) -> Dict:
     }
 
 
+# ============================================================================
+# HTTP ENDPOINTS (for health checks)
+# ============================================================================
+
+@functions_framework.http
+def health(request):
+    """Health check endpoint for the transition_monitor function."""
+    return json.dumps({
+        'status': 'healthy',
+        'function': 'transition_monitor',
+        'lookback_days': LOOKBACK_DAYS,
+        'document_ttl_days': DOCUMENT_TTL_DAYS
+    }), 200, {'Content-Type': 'application/json'}
+
+
+# ============================================================================
+# FIRESTORE DOCUMENT CLEANUP (30-day TTL)
+# ============================================================================
+
+def cleanup_old_documents(
+    collections: Optional[List[str]] = None,
+    ttl_days: Optional[int] = None,
+    dry_run: bool = False
+) -> Dict:
+    """
+    Clean up Firestore documents older than TTL.
+
+    Documents are keyed by date (YYYY-MM-DD format), so we can determine
+    age by parsing the document ID.
+
+    Args:
+        collections: List of collection names to clean. Defaults to CLEANUP_COLLECTIONS.
+        ttl_days: Number of days to retain documents. Defaults to DOCUMENT_TTL_DAYS (30).
+        dry_run: If True, only report what would be deleted without actually deleting.
+
+    Returns:
+        Dict with cleanup results per collection
+    """
+    collections = collections or CLEANUP_COLLECTIONS
+    ttl_days = ttl_days if ttl_days is not None else DOCUMENT_TTL_DAYS
+
+    cutoff_date = datetime.now(timezone.utc).date() - timedelta(days=ttl_days)
+    cutoff_str = cutoff_date.isoformat()
+
+    logger.info(f"{'[DRY RUN] ' if dry_run else ''}Cleaning up documents older than {cutoff_str} ({ttl_days} days)")
+
+    results = {
+        'cutoff_date': cutoff_str,
+        'ttl_days': ttl_days,
+        'dry_run': dry_run,
+        'collections': {},
+        'total_deleted': 0,
+        'total_errors': 0
+    }
+
+    for collection_name in collections:
+        collection_result = {
+            'documents_checked': 0,
+            'documents_deleted': 0,
+            'documents_skipped': 0,
+            'errors': []
+        }
+
+        try:
+            # Get all documents in the collection
+            collection_ref = db.collection(collection_name)
+            docs = collection_ref.stream()
+
+            for doc in docs:
+                collection_result['documents_checked'] += 1
+                doc_id = doc.id
+
+                # Document IDs should be in YYYY-MM-DD format
+                try:
+                    doc_date = datetime.strptime(doc_id, '%Y-%m-%d').date()
+                except ValueError:
+                    # Skip documents that don't match the date format
+                    logger.debug(f"Skipping non-date document: {collection_name}/{doc_id}")
+                    collection_result['documents_skipped'] += 1
+                    continue
+
+                # Check if document is older than TTL
+                if doc_date < cutoff_date:
+                    if dry_run:
+                        logger.info(f"[DRY RUN] Would delete: {collection_name}/{doc_id}")
+                        collection_result['documents_deleted'] += 1
+                    else:
+                        try:
+                            doc.reference.delete()
+                            logger.info(f"Deleted: {collection_name}/{doc_id}")
+                            collection_result['documents_deleted'] += 1
+                        except Exception as e:
+                            error_msg = f"Failed to delete {collection_name}/{doc_id}: {str(e)}"
+                            logger.error(error_msg)
+                            collection_result['errors'].append(error_msg)
+
+        except Exception as e:
+            error_msg = f"Error processing collection {collection_name}: {str(e)}"
+            logger.error(error_msg)
+            collection_result['errors'].append(error_msg)
+
+        results['collections'][collection_name] = collection_result
+        results['total_deleted'] += collection_result['documents_deleted']
+        results['total_errors'] += len(collection_result['errors'])
+
+    logger.info(
+        f"{'[DRY RUN] ' if dry_run else ''}Cleanup complete: "
+        f"{results['total_deleted']} documents {'would be ' if dry_run else ''}deleted, "
+        f"{results['total_errors']} errors"
+    )
+
+    return results
+
+
+@functions_framework.http
+def cleanup_firestore_documents(request):
+    """
+    HTTP endpoint to trigger Firestore document cleanup.
+
+    Can be called by Cloud Scheduler or manually.
+
+    Query parameters:
+        - ttl_days: Override default TTL (default: 30)
+        - dry_run: Set to 'true' for dry run (default: false)
+        - collections: Comma-separated list of collections to clean (optional)
+
+    Example:
+        GET /cleanup?dry_run=true
+        GET /cleanup?ttl_days=14
+        GET /cleanup?collections=phase2_completion,phase3_completion
+
+    Returns:
+        JSON response with cleanup results
+    """
+    logger.info("=" * 60)
+    logger.info("🧹 Firestore Document Cleanup Starting")
+    logger.info("=" * 60)
+
+    # Parse query parameters
+    try:
+        ttl_days = int(request.args.get('ttl_days', DOCUMENT_TTL_DAYS))
+    except (ValueError, TypeError):
+        ttl_days = DOCUMENT_TTL_DAYS
+
+    dry_run = request.args.get('dry_run', 'false').lower() == 'true'
+
+    collections_param = request.args.get('collections')
+    if collections_param:
+        collections = [c.strip() for c in collections_param.split(',') if c.strip()]
+    else:
+        collections = CLEANUP_COLLECTIONS
+
+    # Run cleanup
+    results = cleanup_old_documents(
+        collections=collections,
+        ttl_days=ttl_days,
+        dry_run=dry_run
+    )
+
+    results['timestamp'] = datetime.now(timezone.utc).isoformat()
+
+    logger.info("=" * 60)
+    logger.info("🧹 Firestore Document Cleanup Complete")
+    logger.info("=" * 60)
+
+    return json.dumps(results, indent=2, default=str), 200, {'Content-Type': 'application/json'}
+
+
+@functions_framework.http
+def monitor_and_cleanup(request):
+    """
+    Combined endpoint that runs both monitoring and cleanup.
+
+    Useful for a single scheduled job that does both tasks.
+    Cleanup runs first (to reduce document count), then monitoring.
+
+    Query parameters:
+        - skip_cleanup: Set to 'true' to skip cleanup (default: false)
+        - skip_monitor: Set to 'true' to skip monitoring (default: false)
+        - cleanup_dry_run: Set to 'true' for cleanup dry run (default: false)
+
+    Returns:
+        JSON response with both monitoring and cleanup results
+    """
+    logger.info("=" * 60)
+    logger.info("🔄 Combined Monitor and Cleanup Starting")
+    logger.info("=" * 60)
+
+    results = {
+        'timestamp': datetime.now(timezone.utc).isoformat()
+    }
+
+    # Run cleanup first (unless skipped)
+    skip_cleanup = request.args.get('skip_cleanup', 'false').lower() == 'true'
+    if not skip_cleanup:
+        cleanup_dry_run = request.args.get('cleanup_dry_run', 'false').lower() == 'true'
+        results['cleanup'] = cleanup_old_documents(dry_run=cleanup_dry_run)
+    else:
+        results['cleanup'] = {'skipped': True}
+
+    # Run monitoring (unless skipped)
+    skip_monitor = request.args.get('skip_monitor', 'false').lower() == 'true'
+    if not skip_monitor:
+        # Get monitoring results
+        monitor_response, _, _ = monitor_transitions(request)
+        results['monitoring'] = json.loads(monitor_response)
+    else:
+        results['monitoring'] = {'skipped': True}
+
+    logger.info("=" * 60)
+    logger.info("🔄 Combined Monitor and Cleanup Complete")
+    logger.info("=" * 60)
+
+    return json.dumps(results, indent=2, default=str), 200, {'Content-Type': 'application/json'}
+
+
 # For local testing
 if __name__ == '__main__':
     import sys
 
-    if len(sys.argv) > 1 and sys.argv[1] == 'status':
-        # Quick status check
-        status = get_all_transition_status()
-        print(json.dumps(status, indent=2, default=str))
+    class FakeRequest:
+        """Fake request object for local testing."""
+        def __init__(self, args=None):
+            self.args = args or {}
+
+    if len(sys.argv) > 1:
+        command = sys.argv[1]
+
+        if command == 'status':
+            # Quick status check
+            status = get_all_transition_status()
+            print(json.dumps(status, indent=2, default=str))
+
+        elif command == 'cleanup':
+            # Run cleanup (dry run by default for safety)
+            dry_run = '--dry-run' in sys.argv or '-n' in sys.argv
+            ttl_days = DOCUMENT_TTL_DAYS
+
+            # Parse --ttl=N argument
+            for arg in sys.argv:
+                if arg.startswith('--ttl='):
+                    try:
+                        ttl_days = int(arg.split('=')[1])
+                    except ValueError:
+                        pass
+
+            if not dry_run:
+                print("WARNING: This will DELETE documents. Use --dry-run to preview.")
+                print("Proceeding with actual deletion in 3 seconds...")
+                import time
+                time.sleep(3)
+
+            results = cleanup_old_documents(ttl_days=ttl_days, dry_run=dry_run)
+            print(json.dumps(results, indent=2, default=str))
+
+        elif command == 'help':
+            print("""
+Transition Monitor - Local Testing Commands
+
+Usage: python main.py [command] [options]
+
+Commands:
+  (no command)  - Run full transition monitor
+  status        - Quick status check of all transitions
+  cleanup       - Run Firestore document cleanup
+  help          - Show this help message
+
+Cleanup Options:
+  --dry-run, -n   Preview what would be deleted (default)
+  --ttl=N         Set TTL to N days (default: 30)
+
+Examples:
+  python main.py                  # Run monitor
+  python main.py status           # Check status
+  python main.py cleanup --dry-run  # Preview cleanup
+  python main.py cleanup --ttl=14   # Delete docs older than 14 days
+""")
+
+        else:
+            print(f"Unknown command: {command}")
+            print("Use 'python main.py help' for usage information.")
+
     else:
         # Run full monitor
-        class FakeRequest:
-            pass
         result, status_code, _ = monitor_transitions(FakeRequest())
         print(result)

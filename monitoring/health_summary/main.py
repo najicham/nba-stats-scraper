@@ -380,12 +380,23 @@ def query_prediction_stats(bq_client: bigquery.Client, date_str: str) -> Dict:
 if __name__ == '__main__':
     import sys
 
-    # Set up test environment
-    os.environ['AWS_SES_ACCESS_KEY_ID'] = os.environ.get('AWS_SES_ACCESS_KEY_ID', '')
-    os.environ['AWS_SES_SECRET_ACCESS_KEY'] = os.environ.get('AWS_SES_SECRET_ACCESS_KEY', '')
-    os.environ['AWS_SES_REGION'] = 'us-west-2'
-    os.environ['AWS_SES_FROM_EMAIL'] = 'alert@989.ninja'
-    os.environ['EMAIL_ALERTS_TO'] = os.environ.get('EMAIL_ALERTS_TO', 'nchammas@gmail.com')
+    # Validate required AWS credentials from environment variables
+    aws_access_key = os.environ.get('AWS_SES_ACCESS_KEY_ID')
+    aws_secret_key = os.environ.get('AWS_SES_SECRET_ACCESS_KEY')
+
+    if not aws_access_key or not aws_secret_key:
+        logger.warning(
+            "AWS credentials not set. Set AWS_SES_ACCESS_KEY_ID and "
+            "AWS_SES_SECRET_ACCESS_KEY environment variables to enable email alerts."
+        )
+
+    # Set defaults for optional config from environment variables
+    if not os.environ.get('AWS_SES_REGION'):
+        os.environ['AWS_SES_REGION'] = os.environ.get('AWS_SES_REGION', 'us-west-2')
+    if not os.environ.get('AWS_SES_FROM_EMAIL'):
+        logger.warning("AWS_SES_FROM_EMAIL not set, email sending may fail")
+    if not os.environ.get('EMAIL_ALERTS_TO'):
+        logger.warning("EMAIL_ALERTS_TO not set, email sending may fail")
 
     # Get date from command line or use yesterday
     if len(sys.argv) > 1:

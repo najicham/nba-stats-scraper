@@ -476,6 +476,21 @@ def get_completion_status(game_date: str) -> Dict:
     }
 
 
+# ============================================================================
+# HTTP ENDPOINTS (for monitoring and health checks)
+# ============================================================================
+
+@functions_framework.http
+def health(request):
+    """Health check endpoint for the phase3_to_phase4 orchestrator."""
+    return json.dumps({
+        'status': 'healthy',
+        'function': 'phase3_to_phase4',
+        'expected_processors': EXPECTED_PROCESSOR_COUNT,
+        'version': '1.1'
+    }), 200, {'Content-Type': 'application/json'}
+
+
 # For local testing
 if __name__ == '__main__':
     # Example: Check status for a date

@@ -278,7 +278,11 @@ class BatchConsolidator:
         """
         Build the MERGE query with ROW_NUMBER deduplication.
 
-        The merge key is: player_lookup + game_date + system_id + current_points_line
+        The merge key is: game_id + player_lookup + system_id + current_points_line
+
+        P1-DATA-1 FIX: Changed from game_date to game_id for more precise matching,
+        and use COALESCE for current_points_line to handle NULL values properly
+        (NULL = NULL evaluates to NULL in SQL, causing duplicate insertions).
 
         Uses ROW_NUMBER to handle duplicates, keeping the most recent prediction
         based on created_at timestamp.
@@ -298,7 +302,8 @@ class BatchConsolidator:
 
         # The MERGE query with ROW_NUMBER deduplication
         # Keeps the most recent prediction per unique key
-        # Note: CAST current_points_line to STRING because BigQuery doesn't allow FLOAT64 in PARTITION BY
+        # P1-DATA-1: Use game_id (not game_date) and COALESCE for NULL-safe comparison
+        # COALESCE uses -1 as sentinel for NULL since prop lines are always positive
         merge_query = f"""
         MERGE `{main_table}` T
         USING (
@@ -306,17 +311,17 @@ class BatchConsolidator:
             FROM (
                 SELECT *,
                     ROW_NUMBER() OVER (
-                        PARTITION BY player_lookup, game_date, system_id, CAST(current_points_line AS STRING)
+                        PARTITION BY game_id, player_lookup, system_id, COALESCE(current_points_line, -1)
                         ORDER BY created_at DESC
                     ) AS row_num
                 FROM ({union_query})
             )
             WHERE row_num = 1
         ) S
-        ON T.player_lookup = S.player_lookup
-           AND T.game_date = S.game_date
+        ON T.game_id = S.game_id
+           AND T.player_lookup = S.player_lookup
            AND T.system_id = S.system_id
-           AND T.current_points_line = S.current_points_line
+           AND COALESCE(T.current_points_line, -1) = COALESCE(S.current_points_line, -1)
         WHEN MATCHED THEN
           UPDATE SET
             prediction_id = S.prediction_id,

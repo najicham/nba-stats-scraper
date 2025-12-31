@@ -197,7 +197,8 @@ class ScraperPubSubPublisher:
             try:
                 import sentry_sdk
                 sentry_sdk.capture_exception(e)
-            except:
+            except Exception:
+                # Sentry SDK import or capture failed - non-blocking, safe to ignore
                 pass
 
             return None

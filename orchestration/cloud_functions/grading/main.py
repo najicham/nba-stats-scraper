@@ -528,6 +528,19 @@ def parse_pubsub_message(cloud_event) -> Dict:
         return {}
 
 
+# ============================================================================
+# HTTP ENDPOINTS (for health checks)
+# ============================================================================
+
+@functions_framework.http
+def health(request):
+    """Health check endpoint for the grading function."""
+    return json.dumps({
+        'status': 'healthy',
+        'function': 'grading'
+    }), 200, {'Content-Type': 'application/json'}
+
+
 # For local testing
 if __name__ == '__main__':
     import argparse

@@ -6,13 +6,20 @@ Shows phase completion status, errors, scheduler history, and allows manual acti
 """
 
 import os
+import sys
+import json
 import logging
 import secrets
 import urllib.request
+import threading
+import time
+import hashlib
 from datetime import datetime, timedelta
+from functools import wraps
 from zoneinfo import ZoneInfo
 from flask import Flask, render_template, jsonify, request
 import requests
+from google.cloud import bigquery
 
 # Configure logging
 logging.basicConfig(
@@ -20,6 +27,309 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# Validate required environment variables at startup
+# Import path setup needed before shared imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
+from shared.utils.env_validation import validate_required_env_vars
+validate_required_env_vars(
+    ['GCP_PROJECT_ID', 'ADMIN_DASHBOARD_API_KEY'],
+    service_name='AdminDashboard'
+)
+
+
+# =============================================================================
+# RATE LIMITING (P1-DASH-2)
+# =============================================================================
+
+class InMemoryRateLimiter:
+    """
+    Simple in-memory rate limiter using sliding window approach.
+
+    Limits requests per IP address within a configurable time window.
+    Includes automatic cleanup of expired entries to prevent memory leaks.
+    """
+
+    def __init__(self, requests_per_minute: int = 100, cleanup_interval_seconds: int = 60):
+        """
+        Initialize rate limiter.
+
+        Args:
+            requests_per_minute: Maximum requests allowed per minute per IP
+            cleanup_interval_seconds: How often to clean up expired entries
+        """
+        self.requests_per_minute = requests_per_minute
+        self.window_seconds = 60  # 1 minute window
+        self.cleanup_interval = cleanup_interval_seconds
+
+        # Dict of IP -> list of request timestamps
+        self._requests: dict[str, list[float]] = {}
+        self._lock = threading.Lock()
+        self._last_cleanup = time.time()
+
+    def _cleanup_expired(self) -> None:
+        """Remove expired entries from the rate limit tracker."""
+        current_time = time.time()
+        cutoff_time = current_time - self.window_seconds
+
+        # Only cleanup periodically to avoid overhead
+        if current_time - self._last_cleanup < self.cleanup_interval:
+            return
+
+        with self._lock:
+            self._last_cleanup = current_time
+            # Remove IPs with no recent requests
+            expired_ips = []
+            for ip, timestamps in self._requests.items():
+                # Filter to only recent timestamps
+                recent = [t for t in timestamps if t > cutoff_time]
+                if recent:
+                    self._requests[ip] = recent
+                else:
+                    expired_ips.append(ip)
+
+            for ip in expired_ips:
+                del self._requests[ip]
+
+            if expired_ips:
+                logger.debug(f"Rate limiter cleanup: removed {len(expired_ips)} expired IPs")
+
+    def is_allowed(self, ip: str) -> tuple[bool, int]:
+        """
+        Check if a request from the given IP is allowed.
+
+        Args:
+            ip: The client IP address
+
+        Returns:
+            Tuple of (is_allowed, remaining_requests)
+        """
+        current_time = time.time()
+        cutoff_time = current_time - self.window_seconds
+
+        # Trigger cleanup periodically
+        self._cleanup_expired()
+
+        with self._lock:
+            if ip not in self._requests:
+                self._requests[ip] = []
+
+            # Filter to only timestamps within the window
+            recent_requests = [t for t in self._requests[ip] if t > cutoff_time]
+
+            if len(recent_requests) >= self.requests_per_minute:
+                # Rate limit exceeded
+                self._requests[ip] = recent_requests
+                return False, 0
+
+            # Allow request and record timestamp
+            recent_requests.append(current_time)
+            self._requests[ip] = recent_requests
+            remaining = self.requests_per_minute - len(recent_requests)
+            return True, remaining
+
+    def get_retry_after(self, ip: str) -> int:
+        """
+        Get the number of seconds until the client can retry.
+
+        Args:
+            ip: The client IP address
+
+        Returns:
+            Seconds until the oldest request in the window expires
+        """
+        current_time = time.time()
+        cutoff_time = current_time - self.window_seconds
+
+        with self._lock:
+            if ip not in self._requests:
+                return 0
+
+            recent_requests = [t for t in self._requests[ip] if t > cutoff_time]
+            if not recent_requests:
+                return 0
+
+            # Time until oldest request expires
+            oldest = min(recent_requests)
+            return max(1, int((oldest + self.window_seconds) - current_time))
+
+
+# Initialize rate limiter: 100 requests per minute per IP
+rate_limiter = InMemoryRateLimiter(requests_per_minute=100)
+
+
+# =============================================================================
+# AUDIT LOGGING (P2-DASH-3)
+# =============================================================================
+
+class AuditLogger:
+    """
+    Logs admin actions to BigQuery for audit trail.
+
+    Writes to nba_analytics.admin_audit_log table with fields:
+    - timestamp: When the action occurred
+    - user_ip: Client IP address
+    - action_type: Type of action (force_predictions, retry_phase, trigger_self_heal)
+    - endpoint: The API endpoint called
+    - parameters: JSON string of request parameters
+    - result: success/failure/error
+    - api_key_hash: Last 8 characters of API key hash for identification
+    """
+
+    TABLE_ID = 'nba-props-platform.nba_analytics.admin_audit_log'
+
+    def __init__(self):
+        self._client = None
+        self._table = None
+        self._initialized = False
+
+    @property
+    def client(self):
+        """Lazy initialization of BigQuery client."""
+        if self._client is None:
+            try:
+                project_id = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
+                self._client = bigquery.Client(project=project_id)
+            except Exception as e:
+                logger.warning(f"Failed to initialize BigQuery client for audit logging: {e}")
+        return self._client
+
+    def _get_api_key_hash(self) -> str:
+        """
+        Get a safe hash identifier for the API key used in the request.
+
+        Returns last 8 characters of SHA256 hash for identification without exposing the key.
+        """
+        # Check header first
+        provided_key = request.headers.get('X-API-Key')
+        if not provided_key:
+            # Check query param
+            provided_key = request.args.get('key')
+
+        if not provided_key:
+            return 'no_key'
+
+        # Hash the key and return last 8 chars
+        key_hash = hashlib.sha256(provided_key.encode()).hexdigest()
+        return key_hash[-8:]
+
+    def log_action(
+        self,
+        action_type: str,
+        endpoint: str,
+        parameters: dict,
+        result: str,
+        user_ip: str = None
+    ) -> bool:
+        """
+        Log an admin action to BigQuery.
+
+        Args:
+            action_type: Type of action (e.g., 'force_predictions', 'retry_phase')
+            endpoint: The API endpoint path
+            parameters: Request parameters as dict
+            result: Result of the action ('success', 'failure', 'error')
+            user_ip: Client IP (optional, will be auto-detected if not provided)
+
+        Returns:
+            True if logged successfully, False otherwise
+        """
+        if self.client is None:
+            logger.warning("Audit logging skipped: BigQuery client not available")
+            return False
+
+        try:
+            # Build the audit record
+            timestamp = datetime.now(ZoneInfo('UTC'))
+
+            row = {
+                'timestamp': timestamp.isoformat(),
+                'user_ip': user_ip or get_client_ip(),
+                'action_type': action_type,
+                'endpoint': endpoint,
+                'parameters': json.dumps(parameters) if parameters else '{}',
+                'result': result,
+                'api_key_hash': self._get_api_key_hash()
+            }
+
+            # Insert the row using streaming insert
+            errors = self.client.insert_rows_json(
+                self.TABLE_ID,
+                [row]
+            )
+
+            if errors:
+                logger.error(f"Failed to insert audit log: {errors}")
+                return False
+
+            logger.debug(f"Audit log recorded: {action_type} -> {result}")
+            return True
+
+        except Exception as e:
+            # Log the error but don't fail the main request
+            logger.error(f"Error writing audit log to BigQuery: {e}")
+            return False
+
+
+# Initialize audit logger
+audit_logger = AuditLogger()
+
+
+def get_client_ip() -> str:
+    """
+    Get the client's IP address, handling proxy headers.
+
+    Returns:
+        The client IP address
+    """
+    # Check for forwarded headers (when behind load balancer/proxy)
+    if request.headers.get('X-Forwarded-For'):
+        # X-Forwarded-For can contain multiple IPs; first is the client
+        return request.headers.get('X-Forwarded-For').split(',')[0].strip()
+    elif request.headers.get('X-Real-IP'):
+        return request.headers.get('X-Real-IP')
+    else:
+        return request.remote_addr or 'unknown'
+
+
+def rate_limit(f):
+    """
+    Decorator to apply rate limiting to an endpoint.
+
+    Returns 429 Too Many Requests when rate limit is exceeded.
+    """
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        client_ip = get_client_ip()
+        allowed, remaining = rate_limiter.is_allowed(client_ip)
+
+        if not allowed:
+            retry_after = rate_limiter.get_retry_after(client_ip)
+            logger.warning(f"Rate limit exceeded for IP {client_ip}")
+
+            response = jsonify({
+                'error': 'Too Many Requests',
+                'message': f'Rate limit exceeded. Maximum {rate_limiter.requests_per_minute} requests per minute.',
+                'retry_after': retry_after
+            })
+            response.status_code = 429
+            response.headers['Retry-After'] = str(retry_after)
+            response.headers['X-RateLimit-Limit'] = str(rate_limiter.requests_per_minute)
+            response.headers['X-RateLimit-Remaining'] = '0'
+            return response
+
+        # Execute the endpoint
+        response = f(*args, **kwargs)
+
+        # Add rate limit headers to successful responses
+        if hasattr(response, 'headers'):
+            response.headers['X-RateLimit-Limit'] = str(rate_limiter.requests_per_minute)
+            response.headers['X-RateLimit-Remaining'] = str(remaining)
+
+        return response
+
+    return decorated_function
+
 
 app = Flask(__name__)
 
@@ -183,6 +493,7 @@ PARAM_BOUNDS = {
 
 @app.route('/')
 @app.route('/health')
+@rate_limit
 def health():
     """Health check endpoint."""
     return jsonify({
@@ -197,6 +508,7 @@ def health():
 # =============================================================================
 
 @app.route('/dashboard')
+@rate_limit
 def dashboard():
     """Main dashboard page."""
     if not check_auth():
@@ -236,6 +548,7 @@ def dashboard():
 # =============================================================================
 
 @app.route('/api/status')
+@rate_limit
 def api_status():
     """Get current pipeline status for today and tomorrow."""
     if not check_auth():
@@ -268,6 +581,7 @@ def api_status():
 
 
 @app.route('/api/games/<date>')
+@rate_limit
 def api_games(date):
     """Get detailed game status for a specific date."""
     if not check_auth():
@@ -284,6 +598,7 @@ def api_games(date):
 
 
 @app.route('/api/errors')
+@rate_limit
 def api_errors():
     """Get recent errors from Cloud Logging."""
     if not check_auth():
@@ -300,6 +615,7 @@ def api_errors():
 
 
 @app.route('/api/orchestration/<date>')
+@rate_limit
 def api_orchestration(date):
     """Get orchestration state from Firestore."""
     if not check_auth():
@@ -320,6 +636,7 @@ def api_orchestration(date):
 
 
 @app.route('/api/schedulers')
+@rate_limit
 def api_schedulers():
     """Get scheduler job status and recent runs."""
     if not check_auth():
@@ -334,6 +651,7 @@ def api_schedulers():
 
 
 @app.route('/api/history')
+@rate_limit
 def api_history():
     """Get historical pipeline status for the last 7 days."""
     if not check_auth():
@@ -352,6 +670,7 @@ def api_history():
 # =============================================================================
 
 @app.route('/partials/status-cards')
+@rate_limit
 def partial_status_cards():
     """HTMX partial: Status cards for today and tomorrow."""
     if not check_auth():
@@ -375,6 +694,7 @@ def partial_status_cards():
 
 
 @app.route('/partials/games-table/<date>')
+@rate_limit
 def partial_games_table(date):
     """HTMX partial: Games table for a specific date."""
     if not check_auth():
@@ -395,6 +715,7 @@ def partial_games_table(date):
 
 
 @app.route('/partials/error-feed')
+@rate_limit
 def partial_error_feed():
     """HTMX partial: Recent errors feed."""
     if not check_auth():
@@ -409,6 +730,7 @@ def partial_error_feed():
 
 
 @app.route('/api/processor-failures')
+@rate_limit
 def api_processor_failures():
     """Get recent processor failures."""
     if not check_auth():
@@ -424,6 +746,7 @@ def api_processor_failures():
 
 
 @app.route('/partials/processor-failures')
+@rate_limit
 def partial_processor_failures():
     """HTMX partial: Processor failures display."""
     if not check_auth():
@@ -439,6 +762,7 @@ def partial_processor_failures():
 
 
 @app.route('/api/coverage-metrics')
+@rate_limit
 def api_coverage_metrics():
     """Get coverage metrics for recent days."""
     if not check_auth():
@@ -458,6 +782,7 @@ def api_coverage_metrics():
 
 
 @app.route('/partials/coverage-metrics')
+@rate_limit
 def partial_coverage_metrics():
     """HTMX partial: Coverage metrics display."""
     if not check_auth():
@@ -482,6 +807,7 @@ def partial_coverage_metrics():
 # =============================================================================
 
 @app.route('/api/actions/force-predictions', methods=['POST'])
+@rate_limit
 def action_force_predictions():
     """Force prediction generation for a specific date."""
     if not check_auth():
@@ -489,15 +815,16 @@ def action_force_predictions():
 
     data = request.get_json() or {}
     target_date = data.get('date')
+    endpoint = '/api/actions/force-predictions'
+    parameters = {'date': target_date}
 
     if not target_date:
+        # Log failed action due to missing parameters
+        audit_logger.log_action('force_predictions', endpoint, parameters, 'failure')
         return jsonify({'error': 'date required'}), 400
 
     try:
         logger.info(f"Force predictions requested for {target_date}")
-
-        # Log the action for audit trail
-        _log_admin_action('force_predictions', {'date': target_date})
 
         # Call the prediction coordinator
         result = call_cloud_run_service(
@@ -507,6 +834,9 @@ def action_force_predictions():
         )
 
         if result.get('success'):
+            # Log successful action to BigQuery audit trail
+            audit_logger.log_action('force_predictions', endpoint, parameters, 'success')
+
             return jsonify({
                 'status': 'triggered',
                 'date': target_date,
@@ -514,6 +844,9 @@ def action_force_predictions():
                 'service_response': result.get('response')
             })
         else:
+            # Log failed action to BigQuery audit trail
+            audit_logger.log_action('force_predictions', endpoint, parameters, 'failure')
+
             return jsonify({
                 'status': 'failed',
                 'date': target_date,
@@ -523,10 +856,13 @@ def action_force_predictions():
 
     except Exception as e:
         logger.error(f"Error forcing predictions: {e}")
+        # Log error action to BigQuery audit trail
+        audit_logger.log_action('force_predictions', endpoint, parameters, 'error')
         return jsonify({'error': str(e)}), 500
 
 
 @app.route('/api/actions/retry-phase', methods=['POST'])
+@rate_limit
 def action_retry_phase():
     """Retry a specific phase for a date."""
     if not check_auth():
@@ -535,15 +871,16 @@ def action_retry_phase():
     data = request.get_json() or {}
     target_date = data.get('date')
     phase = data.get('phase')
+    endpoint = '/api/actions/retry-phase'
+    parameters = {'date': target_date, 'phase': phase}
 
     if not target_date or not phase:
+        # Log failed action due to missing parameters
+        audit_logger.log_action('retry_phase', endpoint, parameters, 'failure')
         return jsonify({'error': 'date and phase required'}), 400
 
     try:
         logger.info(f"Retry phase {phase} requested for {target_date}")
-
-        # Log the action for audit trail
-        _log_admin_action('retry_phase', {'date': target_date, 'phase': phase})
 
         # Determine which service to call based on phase
         if phase == '3' or phase == 'phase3':
@@ -580,9 +917,14 @@ def action_retry_phase():
                 method='GET'
             )
         else:
+            # Log failed action due to unknown phase
+            audit_logger.log_action('retry_phase', endpoint, parameters, 'failure')
             return jsonify({'error': f'Unknown phase: {phase}. Valid phases: 3, 4, 5, predictions, self_heal'}), 400
 
         if result.get('success'):
+            # Log successful action to BigQuery audit trail
+            audit_logger.log_action('retry_phase', endpoint, parameters, 'success')
+
             return jsonify({
                 'status': 'triggered',
                 'date': target_date,
@@ -591,6 +933,9 @@ def action_retry_phase():
                 'service_response': result.get('response')
             })
         else:
+            # Log failed action to BigQuery audit trail
+            audit_logger.log_action('retry_phase', endpoint, parameters, 'failure')
+
             return jsonify({
                 'status': 'failed',
                 'date': target_date,
@@ -601,20 +946,23 @@ def action_retry_phase():
 
     except Exception as e:
         logger.error(f"Error retrying phase: {e}")
+        # Log error action to BigQuery audit trail
+        audit_logger.log_action('retry_phase', endpoint, parameters, 'error')
         return jsonify({'error': str(e)}), 500
 
 
 @app.route('/api/actions/trigger-self-heal', methods=['POST'])
+@rate_limit
 def action_trigger_self_heal():
     """Trigger the self-heal pipeline check."""
     if not check_auth():
         return jsonify({'error': 'Unauthorized'}), 401
 
+    endpoint = '/api/actions/trigger-self-heal'
+    parameters = {}
+
     try:
         logger.info("Self-heal trigger requested")
-
-        # Log the action for audit trail
-        _log_admin_action('trigger_self_heal', {})
 
         result = call_cloud_run_service(
             'self_heal',
@@ -623,12 +971,18 @@ def action_trigger_self_heal():
         )
 
         if result.get('success'):
+            # Log successful action to BigQuery audit trail
+            audit_logger.log_action('trigger_self_heal', endpoint, parameters, 'success')
+
             return jsonify({
                 'status': 'triggered',
                 'message': 'Self-heal check triggered successfully',
                 'service_response': result.get('response')
             })
         else:
+            # Log failed action to BigQuery audit trail
+            audit_logger.log_action('trigger_self_heal', endpoint, parameters, 'failure')
+
             return jsonify({
                 'status': 'failed',
                 'error': result.get('error', 'Unknown error')
@@ -636,29 +990,9 @@ def action_trigger_self_heal():
 
     except Exception as e:
         logger.error(f"Error triggering self-heal: {e}")
+        # Log error action to BigQuery audit trail
+        audit_logger.log_action('trigger_self_heal', endpoint, parameters, 'error')
         return jsonify({'error': str(e)}), 500
-
-
-def _log_admin_action(action: str, details: dict):
-    """
-    Log admin actions for audit trail.
-
-    Args:
-        action: Action name
-        details: Action details
-    """
-    try:
-        # Log to console for now
-        # TODO: Consider logging to BigQuery for persistent audit trail
-        log_entry = {
-            'timestamp': datetime.now(ZoneInfo('America/New_York')).isoformat(),
-            'action': action,
-            'details': details,
-            'source': 'admin_dashboard'
-        }
-        logger.info(f"ADMIN_ACTION: {log_entry}")
-    except Exception as e:
-        logger.warning(f"Failed to log admin action: {e}")
 
 
 if __name__ == '__main__':

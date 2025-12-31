@@ -472,7 +472,9 @@ class BigDataBallPbpScraper(ScraperBase, ScraperFlaskMixin):
                     team_part = filename.split("-")[-1].replace(".csv", "")  # "IND@OKC"
                     if "@" in team_part:
                         away_team, home_team = team_part.split("@")
-                except:
+                except (IndexError, ValueError):
+                    # IndexError: split fails; ValueError: unpack fails
+                    # Team extraction from filename is optional, continue with defaults
                     pass
             
             # Extract key game information

@@ -398,9 +398,10 @@ def status(request):
 
 @functions_framework.http
 def health(request):
-    """Health check endpoint."""
+    """Health check endpoint for the phase2_to_phase3 orchestrator."""
     return json.dumps({
         'status': 'healthy',
+        'function': 'phase2_to_phase3',
         'mode': 'monitoring-only',
         'expected_processors': EXPECTED_PROCESSOR_COUNT,
         'version': '2.0'
