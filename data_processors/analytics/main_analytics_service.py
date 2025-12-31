@@ -261,41 +261,49 @@ def process_date_range():
             processors_to_run = list(processor_map.values())
         else:
             processors_to_run = [processor_map[name] for name in processor_names if name in processor_map]
-        
-        results = []
-        for processor_class in processors_to_run:
-            try:
-                logger.info(f"Running {processor_class.__name__} for {start_date} to {end_date}")
-                
-                processor = processor_class()
-                opts = {
-                    'start_date': start_date,
-                    'end_date': end_date,
-                    'project_id': os.environ.get('GCP_PROJECT_ID', 'nba-props-platform'),
-                    'triggered_by': 'manual',
-                    'backfill_mode': backfill_mode,
-                    'dataset_prefix': dataset_prefix
-                }
 
-                if backfill_mode:
-                    logger.info(f"Running {processor_class.__name__} in BACKFILL mode")
-                
-                success = processor.run(opts)
-                stats = processor.get_analytics_stats()
-                
-                results.append({
-                    "processor": processor_class.__name__,
-                    "status": "success" if success else "error",
-                    "stats": stats
-                })
-                
-            except Exception as e:
-                logger.error(f"Manual processor {processor_class.__name__} failed: {e}")
-                results.append({
-                    "processor": processor_class.__name__,
-                    "status": "exception",
-                    "error": str(e)
-                })
+        # Build options dict for all processors
+        opts = {
+            'start_date': start_date,
+            'end_date': end_date,
+            'project_id': os.environ.get('GCP_PROJECT_ID', 'nba-props-platform'),
+            'triggered_by': 'manual',
+            'backfill_mode': backfill_mode,
+            'dataset_prefix': dataset_prefix
+        }
+
+        if backfill_mode:
+            logger.info(f"Running {len(processors_to_run)} processors in BACKFILL mode (PARALLEL)")
+
+        # Execute processors in PARALLEL for faster manual runs
+        logger.info(f"🚀 Running {len(processors_to_run)} analytics processors in PARALLEL for {start_date} to {end_date}")
+        results = []
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            # Submit all processors for parallel execution
+            futures = {
+                executor.submit(run_single_analytics_processor, processor_class, opts): processor_class
+                for processor_class in processors_to_run
+            }
+
+            # Collect results as they complete
+            for future in as_completed(futures):
+                processor_class = futures[future]
+                try:
+                    result = future.result(timeout=600)  # 10 min timeout per processor
+                    results.append(result)
+                except TimeoutError:
+                    logger.error(f"⏱️ Processor {processor_class.__name__} timed out after 10 minutes")
+                    results.append({
+                        "processor": processor_class.__name__,
+                        "status": "timeout"
+                    })
+                except Exception as e:
+                    logger.error(f"❌ Failed to get result from {processor_class.__name__}: {e}")
+                    results.append({
+                        "processor": processor_class.__name__,
+                        "status": "exception",
+                        "error": str(e)
+                    })
         
         return jsonify({
             "status": "completed",

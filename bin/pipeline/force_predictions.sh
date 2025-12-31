@@ -1,17 +1,23 @@
 #!/bin/bash
 # Force predictions for a specific date - bypasses all dependency checks
-# Usage: ./bin/pipeline/force_predictions.sh 2025-12-28
+# Usage: ./bin/pipeline/force_predictions.sh 2025-12-28 [dataset_prefix]
 #
 # This script is the "nuclear option" - use when the normal pipeline fails.
 # It clears stuck state and runs all phases with skip_dependency_check=true.
+#
+# dataset_prefix: Optional prefix for test datasets (e.g., "test" -> test_nba_analytics)
 
 set -e
 
 DATE=${1:-$(TZ=America/New_York date -d "tomorrow" +%Y-%m-%d)}
+DATASET_PREFIX=${2:-""}
 REGION="us-west2"
 
 echo "================================================"
 echo "FORCE PREDICTIONS FOR: $DATE"
+if [ -n "$DATASET_PREFIX" ]; then
+  echo "DATASET PREFIX: ${DATASET_PREFIX}_"
+fi
 echo "================================================"
 echo ""
 
@@ -55,28 +61,43 @@ echo ""
 echo "[2/5] Running Phase 3 Analytics (backfill_mode=true)..."
 YESTERDAY=$(TZ=America/New_York date -d "$DATE - 1 day" +%Y-%m-%d)
 
+# Build request payload with optional dataset_prefix
+PHASE3_PAYLOAD=$(cat <<EOF
+{
+  "start_date": "$YESTERDAY",
+  "end_date": "$YESTERDAY",
+  "processors": ["PlayerGameSummaryProcessor", "UpcomingPlayerGameContextProcessor"],
+  "backfill_mode": true$([ -n "$DATASET_PREFIX" ] && echo ",
+  \"dataset_prefix\": \"$DATASET_PREFIX\"" || echo "")
+}
+EOF
+)
+
 curl -s -X POST "https://nba-phase3-analytics-processors-f7p3g7f6ya-wl.a.run.app/process-date-range" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d "{
-    \"start_date\": \"$YESTERDAY\",
-    \"end_date\": \"$YESTERDAY\",
-    \"processors\": [\"PlayerGameSummaryProcessor\", \"UpcomingPlayerGameContextProcessor\"],
-    \"backfill_mode\": true
-  }" | jq -r '.message // .error // .'
+  -d "$PHASE3_PAYLOAD" | jq -r '.message // .error // .'
 
 # Step 3: Run Phase 4 with skip_dependency_check
 echo ""
 echo "[3/5] Running Phase 4 ML Feature Store (skip_dependency_check=true)..."
+
+# Build request payload with optional dataset_prefix
+PHASE4_PAYLOAD=$(cat <<EOF
+{
+  "analysis_date": "$DATE",
+  "processors": ["MLFeatureStoreProcessor"],
+  "strict_mode": false,
+  "skip_dependency_check": true$([ -n "$DATASET_PREFIX" ] && echo ",
+  \"dataset_prefix\": \"$DATASET_PREFIX\"" || echo "")
+}
+EOF
+)
+
 curl -s -X POST "https://nba-phase4-precompute-processors-f7p3g7f6ya-wl.a.run.app/process-date" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d "{
-    \"analysis_date\": \"$DATE\",
-    \"processors\": [\"MLFeatureStoreProcessor\"],
-    \"strict_mode\": false,
-    \"skip_dependency_check\": true
-  }" | jq -r '.message // .error // .'
+  -d "$PHASE4_PAYLOAD" | jq -r '.message // .error // .'
 
 # Step 4: Wait a moment for features to populate
 echo ""
@@ -86,10 +107,20 @@ sleep 10
 # Step 5: Run Prediction Coordinator
 echo ""
 echo "[5/5] Running Prediction Coordinator..."
+
+# Build request payload with optional dataset_prefix
+PHASE5_PAYLOAD=$(cat <<EOF
+{
+  "game_date": "$DATE"$([ -n "$DATASET_PREFIX" ] && echo ",
+  \"dataset_prefix\": \"$DATASET_PREFIX\"" || echo "")
+}
+EOF
+)
+
 curl -s -X POST "https://prediction-coordinator-f7p3g7f6ya-wl.a.run.app/start" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d "{\"game_date\": \"$DATE\"}" | jq -r '.message // .error // .'
+  -d "$PHASE5_PAYLOAD" | jq -r '.message // .error // .'
 
 # Verify results
 echo ""
@@ -98,13 +129,19 @@ echo "VERIFICATION"
 echo "================================================"
 sleep 5
 
+# Use prefixed dataset if specified
+PREDICTIONS_DATASET="nba_predictions"
+if [ -n "$DATASET_PREFIX" ]; then
+  PREDICTIONS_DATASET="${DATASET_PREFIX}_nba_predictions"
+fi
+
 bq query --use_legacy_sql=false --format=pretty "
 SELECT
   game_date,
   COUNT(*) as predictions,
   COUNT(DISTINCT player_lookup) as players,
   ROUND(AVG(expected_value), 2) as avg_ev
-FROM nba_predictions.player_prop_predictions
+FROM ${PREDICTIONS_DATASET}.player_prop_predictions
 WHERE game_date = '$DATE' AND is_active = TRUE
 GROUP BY game_date"
 
