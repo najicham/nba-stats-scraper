@@ -288,7 +288,7 @@ class PipelineReplay:
         # Check if source tables have data
         query = f"""
         SELECT COUNT(*) as count
-        FROM `{self.dataset_prefix}nba_source.bdl_player_boxscores`
+        FROM `{self.dataset_prefix}_nba_source.bdl_player_boxscores`
         WHERE game_date = '{self.replay_date}'
         """
         try:

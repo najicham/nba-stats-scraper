@@ -237,7 +237,7 @@ class ReplayValidator:
             COUNT(DISTINCT game_id) as games_with_predictions,
             COUNT(DISTINCT player_lookup) as players_with_predictions,
             COUNT(*) as total_predictions
-        FROM `{self.dataset_prefix}nba_predictions.player_prop_predictions`
+        FROM `{self.dataset_prefix}_nba_predictions.player_prop_predictions`
         WHERE game_date = '{self.replay_date}'
         """
 
