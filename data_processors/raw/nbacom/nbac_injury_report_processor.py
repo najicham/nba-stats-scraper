@@ -140,7 +140,8 @@ class NbacInjuryReportProcessor(SmartIdempotencyMixin, ProcessorBase):
                 date_obj = datetime.strptime(game_date, '%m/%d/%Y')
                 date_str = date_obj.strftime('%Y%m%d')
                 game_id = f"{date_str}_{away_team}_{home_team}"
-            except:
+            except ValueError as e:
+                logger.warning(f"Could not parse game date '{game_date}': {e}. Using raw format.")
                 game_id = f"{game_date}_{away_team}_{home_team}"
                 
             return {

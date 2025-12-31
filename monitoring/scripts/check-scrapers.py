@@ -38,7 +38,7 @@ def get_date_range(date_arg):
     else:
         try:
             date = datetime.strptime(date_arg, "%Y-%m-%d").date()
-        except:
+        except ValueError:
             print(f"Invalid date format: {date_arg}. Use YYYY-MM-DD, 'today', or 'yesterday'")
             sys.exit(1)
     

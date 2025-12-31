@@ -589,7 +589,8 @@ class OddsApiLinesBackfillJob:
         # Format: extract hour from calculated timestamp, then try earlier times
         try:
             primary_hour = datetime.fromisoformat(primary_timestamp.replace('Z', '+00:00')).hour
-        except:
+        except (ValueError, AttributeError) as e:
+            logger.debug(f"Could not parse timestamp '{primary_timestamp}': {e}. Using fallback hour 19.")
             primary_hour = 19  # Fallback to 7pm UTC if parsing fails
         
         # Build cascade: calculated time, then 2/4/6/8 hours earlier

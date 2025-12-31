@@ -359,8 +359,9 @@ class OddsApiPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
                         # Convert capture timestamp to ISO format
                         capture_dt = datetime.strptime(metadata['capture_timestamp'], '%Y%m%d_%H%M%S')
                         snapshot_timestamp = capture_dt.isoformat() + 'Z'
-                    except:
-                        pass
+                    except (ValueError, TypeError) as e:
+                        logger.debug(f"Could not parse capture timestamp '{metadata.get('capture_timestamp')}': {e}")
+                        snapshot_timestamp = None
             
             # Parse timestamps
             if snapshot_timestamp:
@@ -415,8 +416,8 @@ class OddsApiPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
                 # Format: 20250812_035909
                 try:
                     capture_dt = datetime.strptime(metadata['capture_timestamp'], '%Y%m%d_%H%M%S')
-                except:
-                    logger.warning(f"Could not parse capture timestamp: {metadata.get('capture_timestamp')}")
+                except (ValueError, TypeError) as e:
+                    logger.warning(f"Could not parse capture timestamp '{metadata.get('capture_timestamp')}': {e}")
             
             # Process each bookmaker
             for bookmaker in game_data.get('bookmakers', []):

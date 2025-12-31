@@ -214,8 +214,8 @@ class BackfillCheckpoint:
             if temp_path.exists():
                 try:
                     temp_path.unlink()
-                except:
-                    pass
+                except (FileNotFoundError, OSError) as e:
+                    logger.debug(f"Could not delete temp checkpoint file: {e}")
 
     def exists(self) -> bool:
         """Check if checkpoint file exists."""

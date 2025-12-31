@@ -413,8 +413,8 @@ class ReprocessingOrchestrator:
                 year_code = int(game_id[2:4])
                 start_year = 2000 + year_code
                 return f"{start_year}-{str(start_year + 1)[-2:]}"
-        except:
-            pass
+        except (ValueError, IndexError) as e:
+            logger.debug(f"Could not parse season from game_id '{game_id}': {e}")
         return "2024-25"  # Default to current
 
 

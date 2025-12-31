@@ -811,7 +811,8 @@ class CompletenessChecker:
                     error_message = errors[0].get('message') if isinstance(errors[0], dict) else str(errors[0])
                 else:
                     error_message = str(errors)
-            except:
+            except (json.JSONDecodeError, TypeError, AttributeError, KeyError) as e:
+                logger.debug(f"Could not parse error JSON: {e}")
                 error_message = str(row.errors)
 
         status_msg = "✅ succeeded" if succeeded else f"❌ {row.status}"
