@@ -29,9 +29,6 @@ from google.cloud import bigquery
 logger = logging.getLogger(__name__)
 
 PROJECT_ID = 'nba-props-platform'
-PREDICTIONS_TABLE = f'{PROJECT_ID}.nba_predictions.player_prop_predictions'
-ACTUALS_TABLE = f'{PROJECT_ID}.nba_analytics.player_game_summary'
-ACCURACY_TABLE = f'{PROJECT_ID}.nba_predictions.prediction_accuracy'
 
 
 class PredictionAccuracyProcessor:
@@ -48,11 +45,22 @@ class PredictionAccuracyProcessor:
     - within_5_points: abs(predicted - actual) <= 5
     """
 
-    def __init__(self, project_id: str = PROJECT_ID):
+    def __init__(self, project_id: str = PROJECT_ID, dataset_prefix: str = ''):
         import math
         self._math = math
         self.project_id = project_id
+        self.dataset_prefix = dataset_prefix
         self.bq_client = bigquery.Client(project=project_id)
+
+        # Construct table names with optional prefix
+        predictions_dataset = f"{dataset_prefix}_nba_predictions" if dataset_prefix else "nba_predictions"
+        analytics_dataset = f"{dataset_prefix}_nba_analytics" if dataset_prefix else "nba_analytics"
+
+        self.predictions_table = f'{project_id}.{predictions_dataset}.player_prop_predictions'
+        self.actuals_table = f'{project_id}.{analytics_dataset}.player_game_summary'
+        self.accuracy_table = f'{project_id}.{predictions_dataset}.prediction_accuracy'
+
+        logger.info(f"Initialized PredictionAccuracyProcessor (dataset_prefix: {dataset_prefix or 'production'})")
 
     def _is_nan(self, value) -> bool:
         """Check if value is NaN (handles float, numpy, pandas)."""
@@ -126,7 +134,7 @@ class PredictionAccuracyProcessor:
             COALESCE(has_prop_line, TRUE) as has_prop_line,
             COALESCE(line_source, 'ACTUAL_PROP') as line_source,
             estimated_line_value
-        FROM `{PREDICTIONS_TABLE}`
+        FROM `{self.predictions_table}`
         WHERE game_date = '{game_date}'
         """
 
@@ -150,7 +158,7 @@ class PredictionAccuracyProcessor:
             team_abbr,
             opponent_team_abbr,
             minutes_played
-        FROM `{ACTUALS_TABLE}`
+        FROM `{self.actuals_table}`
         WHERE game_date = '{game_date}'
         """
 
@@ -389,7 +397,7 @@ class PredictionAccuracyProcessor:
         try:
             # IDEMPOTENCY: Delete existing records for this date first
             delete_query = f"""
-            DELETE FROM `{ACCURACY_TABLE}`
+            DELETE FROM `{self.accuracy_table}`
             WHERE game_date = '{game_date}'
             """
             delete_job = self.bq_client.query(delete_query)
@@ -401,7 +409,7 @@ class PredictionAccuracyProcessor:
             # Insert new records using BATCH LOADING (not streaming inserts)
             # This avoids the 90-minute streaming buffer that blocks DML operations
             # See: docs/05-development/guides/bigquery-best-practices.md
-            table_ref = self.bq_client.get_table(ACCURACY_TABLE)
+            table_ref = self.bq_client.get_table(self.accuracy_table)
             job_config = bigquery.LoadJobConfig(
                 schema=table_ref.schema,
                 autodetect=False,
@@ -412,7 +420,7 @@ class PredictionAccuracyProcessor:
 
             load_job = self.bq_client.load_table_from_json(
                 graded_results,
-                ACCURACY_TABLE,
+                self.accuracy_table,
                 job_config=job_config
             )
             load_job.result()  # Wait for completion
@@ -512,7 +520,7 @@ class PredictionAccuracyProcessor:
             COUNT(*) as total,
             COUNT(DISTINCT player_lookup) as players,
             COUNT(DISTINCT system_id) as systems
-        FROM `{PREDICTIONS_TABLE}`
+        FROM `{self.predictions_table}`
         WHERE game_date = '{game_date}'
         """
 
@@ -533,7 +541,7 @@ class PredictionAccuracyProcessor:
         """Check if actual results exist for a date."""
         query = f"""
         SELECT COUNT(*) as players
-        FROM `{ACTUALS_TABLE}`
+        FROM `{self.actuals_table}`
         WHERE game_date = '{game_date}'
         """
 

@@ -73,16 +73,20 @@ class BatchStagingWriter:
             print(f"Wrote {result.rows_written} rows to {result.staging_table_name}")
     """
 
-    def __init__(self, bq_client: bigquery.Client, project_id: str):
+    def __init__(self, bq_client: bigquery.Client, project_id: str, dataset_prefix: str = ''):
         """
         Initialize the staging writer.
 
         Args:
             bq_client: BigQuery client instance
             project_id: GCP project ID
+            dataset_prefix: Optional dataset prefix for test isolation (e.g., "test")
         """
         self.bq_client = bq_client
         self.project_id = project_id
+        self.dataset_prefix = dataset_prefix
+        # Construct dataset name with optional prefix
+        self.staging_dataset = f"{dataset_prefix}_nba_predictions" if dataset_prefix else "nba_predictions"
         self._main_table_schema: Optional[List[bigquery.SchemaField]] = None
 
     def _get_main_table_schema(self) -> List[bigquery.SchemaField]:
@@ -93,7 +97,7 @@ class BatchStagingWriter:
             List of SchemaField objects
         """
         if self._main_table_schema is None:
-            main_table_id = f"{self.project_id}.{STAGING_DATASET}.{MAIN_PREDICTIONS_TABLE}"
+            main_table_id = f"{self.project_id}.{self.staging_dataset}.{MAIN_PREDICTIONS_TABLE}"
             main_table = self.bq_client.get_table(main_table_id)
             self._main_table_schema = main_table.schema
             logger.debug(f"Cached main table schema with {len(self._main_table_schema)} fields")
@@ -117,7 +121,7 @@ class BatchStagingWriter:
         safe_worker_id = worker_id.replace("-", "_")
 
         table_name = f"_staging_{safe_batch_id}_{safe_worker_id}"
-        return f"{self.project_id}.{STAGING_DATASET}.{table_name}"
+        return f"{self.project_id}.{self.staging_dataset}.{table_name}"
 
     def write_to_staging(
         self,
@@ -234,16 +238,20 @@ class BatchConsolidator:
             print(f"Merged {result.rows_affected} rows from {result.staging_tables_merged} tables")
     """
 
-    def __init__(self, bq_client: bigquery.Client, project_id: str):
+    def __init__(self, bq_client: bigquery.Client, project_id: str, dataset_prefix: str = ''):
         """
         Initialize the batch consolidator.
 
         Args:
             bq_client: BigQuery client instance
             project_id: GCP project ID
+            dataset_prefix: Optional dataset prefix for test isolation (e.g., "test")
         """
         self.bq_client = bq_client
         self.project_id = project_id
+        self.dataset_prefix = dataset_prefix
+        # Construct dataset name with optional prefix
+        self.staging_dataset = f"{dataset_prefix}_nba_predictions" if dataset_prefix else "nba_predictions"
 
     def _find_staging_tables(self, batch_id: str) -> List[str]:
         """
@@ -258,13 +266,13 @@ class BatchConsolidator:
         safe_batch_id = batch_id.replace("-", "_")
         prefix = f"_staging_{safe_batch_id}_"
 
-        dataset_ref = bigquery.DatasetReference(self.project_id, STAGING_DATASET)
+        dataset_ref = bigquery.DatasetReference(self.project_id, self.staging_dataset)
         tables = list(self.bq_client.list_tables(dataset_ref))
 
         staging_tables = []
         for table in tables:
             if table.table_id.startswith(prefix):
-                full_table_id = f"{self.project_id}.{STAGING_DATASET}.{table.table_id}"
+                full_table_id = f"{self.project_id}.{self.staging_dataset}.{table.table_id}"
                 staging_tables.append(full_table_id)
 
         logger.info(f"Found {len(staging_tables)} staging tables for batch={batch_id}")
@@ -294,7 +302,7 @@ class BatchConsolidator:
         Returns:
             MERGE SQL query string
         """
-        main_table = f"{self.project_id}.{STAGING_DATASET}.{MAIN_PREDICTIONS_TABLE}"
+        main_table = f"{self.project_id}.{self.staging_dataset}.{MAIN_PREDICTIONS_TABLE}"
 
         # Build UNION ALL of all staging tables with deduplication
         union_parts = [f"SELECT * FROM `{table}`" for table in staging_tables]
@@ -512,7 +520,7 @@ class BatchConsolidator:
         """
         import datetime
 
-        dataset_ref = bigquery.DatasetReference(self.project_id, STAGING_DATASET)
+        dataset_ref = bigquery.DatasetReference(self.project_id, self.staging_dataset)
         tables = list(self.bq_client.list_tables(dataset_ref))
 
         cutoff_time = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=max_age_hours)
@@ -523,7 +531,7 @@ class BatchConsolidator:
                 try:
                     # Get table metadata to check creation time
                     full_table = self.bq_client.get_table(
-                        f"{self.project_id}.{STAGING_DATASET}.{table.table_id}"
+                        f"{self.project_id}.{self.staging_dataset}.{table.table_id}"
                     )
 
                     if full_table.created < cutoff_time:
