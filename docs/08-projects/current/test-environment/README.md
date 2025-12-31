@@ -12,17 +12,20 @@ The Pipeline Replay System allows running the complete NBA data pipeline (Phases
 ## Quick Start
 
 ```bash
-# Replay yesterday's data to test datasets
-./bin/testing/replay_pipeline.sh
+# Create test datasets (one-time setup)
+./bin/testing/setup_test_datasets.sh
+
+# Replay yesterday's data (dry run first)
+PYTHONPATH=. python bin/testing/replay_pipeline.py --dry-run
 
 # Replay a specific date
-./bin/testing/replay_pipeline.sh 2024-12-15
+PYTHONPATH=. python bin/testing/replay_pipeline.py 2024-12-15
 
-# Replay with custom dataset prefix
-./bin/testing/replay_pipeline.sh 2024-12-15 mytest_
+# Replay starting from Phase 4
+PYTHONPATH=. python bin/testing/replay_pipeline.py 2024-12-15 --start-phase=4
 
-# Dry run (show what would happen)
-./bin/testing/replay_pipeline.sh 2024-12-15 test_ --dry-run
+# Validate replay outputs
+PYTHONPATH=. python bin/testing/validate_replay.py 2024-12-15
 ```
 
 ## Architecture Decision
@@ -68,11 +71,16 @@ docs/08-projects/current/test-environment/
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| Dataset prefix support | 🔴 Not Started | Needs ~10 lines in 5 files |
-| GCS prefix support | 🔴 Not Started | Environment variable |
-| Replay script | 🔴 Not Started | Main orchestrator |
-| Validation framework | 🔴 Not Started | Post-replay checks |
+| Test dataset setup | ✅ Complete | `bin/testing/setup_test_datasets.sh` |
+| Replay script | ✅ Complete | `bin/testing/replay_pipeline.py` |
+| Validation framework | ✅ Complete | `bin/testing/validate_replay.py` |
+| Dataset prefix support | 🟡 Partial | Scripts built, processors need update |
+| GCS prefix support | 🔴 Not Started | Environment variable needed |
 | Documentation | ✅ Complete | This folder |
+
+**Note**: The replay script uses HTTP calls to Cloud Run services. For full
+isolation (writing to test datasets), the processor services need to accept
+a `dataset_prefix` parameter. See IMPLEMENTATION-PLAN.md for details.
 
 ## Related Documentation
 
