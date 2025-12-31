@@ -225,16 +225,22 @@ The validation script had schema mismatches that were fixed:
 
 ## Known Issues & Workarounds
 
-### Issue 1: Replay Writes to Production Datasets
+### Issue 1: Replay Writes to Production Datasets ✅ FIXED
 
 **Problem**: The replay script passes `dataset_prefix` to endpoints, but processors ignore it.
 
-**Workaround**: For tonight, run validation against production data only. Don't run actual replay unless you're okay with it writing to production datasets.
+**Solution Implemented** (2025-12-31):
+- Added `get_prefixed_dataset()` and `get_output_dataset()` methods to base classes
+- Updated Flask endpoints to accept and pass `dataset_prefix` parameter
+- Updated table ID construction to use prefixed datasets
 
-**Fix Needed**: Add `DATASET_PREFIX` environment variable support to:
+**Files Changed**:
 - `data_processors/analytics/analytics_base.py`
+- `data_processors/analytics/main_analytics_service.py`
 - `data_processors/precompute/precompute_base.py`
-- `predictions/coordinator/coordinator.py`
+- `data_processors/precompute/main_precompute_service.py`
+
+**Remaining Work**: Prediction coordinator needs similar update for Phase 5
 
 ### Issue 2: Phase 2 Not Replayable
 
