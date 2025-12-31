@@ -159,7 +159,9 @@ class WorkerConcurrencyConfig:
 
     # Maximum Cloud Run instances
     # Via env: WORKER_MAX_INSTANCES
-    max_instances: int = 20
+    # Reduced from 20 to 10 (Dec 31, 2025) - 50% reduction for 40% cost savings
+    # 10 instances × 5 concurrency = 50 workers (sufficient for ~450 players/day)
+    max_instances: int = 10
 
     # Concurrent requests per instance
     # Via env: WORKER_CONCURRENCY

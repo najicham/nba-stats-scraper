@@ -49,9 +49,6 @@ COPY predictions/coordinator/coverage_monitor.py /app/coverage_monitor.py
 # Copy batch staging writer (needed for BatchConsolidator)
 COPY predictions/worker/batch_staging_writer.py /app/batch_staging_writer.py
 
-# Copy data loaders (needed for batch historical games optimization)
-COPY predictions/worker/data_loaders.py /app/data_loaders.py
-
 # Environment variables
 # PYTHONPATH: Ensures imports work correctly
 # PYTHONUNBUFFERED: Ensures logs appear immediately (not buffered)

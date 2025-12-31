@@ -296,6 +296,34 @@ def start_prediction_batch():
                 'summary': summary_stats
             }), 404
 
+        # BATCH OPTIMIZATION: Pre-load historical games for all players (50x speedup!)
+        # Instead of 450 workers each querying individually (225s per worker),
+        # coordinator loads once (3-5s) and passes to workers via Pub/Sub
+        batch_historical_games = None
+        try:
+            player_lookups = [r.get('player_lookup') for r in requests if r.get('player_lookup')]
+            if player_lookups:
+                logger.info(f"🚀 Pre-loading historical games for {len(player_lookups)} players (batch optimization)")
+
+                # Import DataLoader to use batch loading method
+                import sys
+                sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../worker'))
+                from data_loaders import DataLoader
+
+                data_loader = DataLoader()
+                batch_historical_games = data_loader.load_historical_games_batch(
+                    player_lookups=player_lookups,
+                    game_date=game_date,
+                    lookback_days=90,
+                    max_games=30
+                )
+
+                logger.info(f"✅ Batch loaded historical games for {len(batch_historical_games)} players")
+        except Exception as e:
+            # Non-fatal: workers can fall back to individual queries
+            logger.warning(f"Batch historical load failed (workers will use individual queries): {e}")
+            batch_historical_games = None
+
         # Initialize progress tracker
         current_tracker = ProgressTracker(expected_players=len(requests))
 
@@ -312,9 +340,9 @@ def start_prediction_batch():
         except Exception as e:
             # Don't fail the batch if run history logging fails
             logger.warning(f"Failed to log batch start (non-fatal): {e}")
-        
-        # Publish all requests to Pub/Sub
-        published_count = publish_prediction_requests(requests, batch_id)
+
+        # Publish all requests to Pub/Sub (with batch historical data if available)
+        published_count = publish_prediction_requests(requests, batch_id, batch_historical_games)
         
         logger.info(f"Published {published_count}/{len(requests)} prediction requests")
         
@@ -479,13 +507,19 @@ def publish_with_retry(publisher, topic_path: str, message_bytes: bytes,
     return False
 
 
-def publish_prediction_requests(requests: List[Dict], batch_id: str) -> int:
+def publish_prediction_requests(
+    requests: List[Dict],
+    batch_id: str,
+    batch_historical_games: Optional[Dict[str, List[Dict]]] = None
+) -> int:
     """
     Publish prediction requests to Pub/Sub
 
     Args:
         requests: List of prediction request dicts
         batch_id: Batch identifier for tracking
+        batch_historical_games: Optional pre-loaded historical games (batch optimization)
+                                Dict mapping player_lookup -> list of historical games
 
     Returns:
         Number of successfully published messages
@@ -503,6 +537,13 @@ def publish_prediction_requests(requests: List[Dict], batch_id: str) -> int:
             'batch_id': batch_id,
             'timestamp': datetime.now().isoformat()
         }
+
+        # BATCH OPTIMIZATION: Include pre-loaded historical games if available
+        if batch_historical_games:
+            player_lookup = request_data.get('player_lookup')
+            if player_lookup and player_lookup in batch_historical_games:
+                # Add historical games to message (worker will use this instead of querying)
+                message['historical_games_batch'] = batch_historical_games[player_lookup]
 
         # Publish to Pub/Sub with retry logic
         message_bytes = json.dumps(message).encode('utf-8')

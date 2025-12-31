@@ -499,10 +499,13 @@ class PlayerGameSummaryProcessor(
             wp.*,
             gc.away_team_abbr,
             gc.home_team_abbr,
-            CASE
-                WHEN wp.team_abbr = gc.home_team_abbr THEN gc.away_team_abbr
-                ELSE gc.home_team_abbr
-            END as opponent_team_abbr,
+            COALESCE(
+                CASE
+                    WHEN wp.team_abbr = gc.home_team_abbr THEN gc.away_team_abbr
+                    ELSE gc.home_team_abbr
+                END,
+                ''  -- Default to empty string when NULL (handles non-standard game_ids from BDL)
+            ) as opponent_team_abbr,
             CASE
                 WHEN wp.team_abbr = gc.home_team_abbr THEN TRUE
                 ELSE FALSE
