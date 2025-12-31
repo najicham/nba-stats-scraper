@@ -9,7 +9,10 @@ import logging
 import json
 from datetime import datetime
 from google.cloud import storage
+from google.cloud.exceptions import NotFound
 from contextlib import contextmanager
+
+logger = logging.getLogger(__name__)
 
 class ScraperLogger:
     """Simple, noise-free logging for scrapers"""
@@ -32,7 +35,10 @@ class ScraperLogger:
         # Append to existing content
         try:
             existing_content = blob.download_as_text()
-        except:
+        except NotFound:
+            existing_content = ""
+        except Exception as e:
+            logger.warning(f"Error reading existing log content: {e}")
             existing_content = ""
         
         log_line = json.dumps(entry) + "\n"
@@ -119,11 +125,14 @@ def generate_daily_summary(date_str=None):
     storage_client = storage.Client()
     bucket = storage_client.bucket("nba-scraper-logs")
     blob = bucket.blob(f"logs/{date_str}/scraper_runs.jsonl")
-    
+
     try:
         content = blob.download_as_text()
-    except:
+    except NotFound:
         print(f"No logs found for {date_str}")
+        return
+    except Exception as e:
+        print(f"Error reading logs for {date_str}: {e}")
         return
     
     # Parse all log entries

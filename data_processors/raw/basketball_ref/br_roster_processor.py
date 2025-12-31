@@ -417,9 +417,10 @@ class BasketballRefRosterProcessor(SmartIdempotencyMixin, ProcessorBase):
         elif "year" in exp_lower:
             try:
                 return int(exp_lower.split()[0])
-            except:
+            except (ValueError, IndexError, AttributeError) as e:
+                logger.debug(f"Could not parse experience '{exp_lower}': {e}")
                 return None
-        
+
         return None
     
     def get_processor_stats(self) -> Dict:

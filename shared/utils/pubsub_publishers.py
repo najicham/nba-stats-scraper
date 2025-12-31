@@ -172,7 +172,8 @@ class RawDataPubSubPublisher:
             try:
                 import sentry_sdk
                 sentry_sdk.capture_exception(e)
-            except:
+            except (ImportError, Exception):
+                # Sentry not available or failed to capture
                 pass
 
             return None
@@ -299,7 +300,8 @@ class AnalyticsPubSubPublisher:
             try:
                 import sentry_sdk
                 sentry_sdk.capture_exception(e)
-            except:
+            except (ImportError, Exception):
+                # Sentry not available or failed to capture
                 pass
 
             return None

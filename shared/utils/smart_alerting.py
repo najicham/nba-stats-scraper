@@ -11,6 +11,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta
 from google.cloud import storage
+from google.cloud.exceptions import NotFound
 from collections import defaultdict
 
 class SmartAlertManager:
@@ -37,7 +38,8 @@ class SmartAlertManager:
         try:
             content = blob.download_as_text()
             return json.loads(content)
-        except:
+        except (NotFound, json.JSONDecodeError):
+            # File doesn't exist yet or is corrupted - use defaults
             return {
                 "last_alert_time": {},
                 "pending_errors": [],
