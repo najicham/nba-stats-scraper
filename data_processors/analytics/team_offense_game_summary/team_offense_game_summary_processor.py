@@ -1157,7 +1157,8 @@ class TeamOffenseGameSummaryProcessor(
                 offensive_rebounds
             )
             return round(possessions, 1)
-        except:
+        except (TypeError, ValueError, ZeroDivisionError) as e:
+            logger.debug(f"Failed to calculate possessions: {e}")
             return None
     
     def _calculate_true_shooting_pct(self, points: int, fg_attempts: int,
@@ -1172,10 +1173,11 @@ class TeamOffenseGameSummaryProcessor(
             
             if total_shooting_possessions <= 0:
                 return None
-            
+
             ts_pct = points / total_shooting_possessions
             return round(ts_pct, 3)
-        except:
+        except (TypeError, ValueError, ZeroDivisionError) as e:
+            logger.debug(f"Failed to calculate true shooting percentage: {e}")
             return None
     
     def _calculate_quality_tier(self, shot_zones: dict) -> str:

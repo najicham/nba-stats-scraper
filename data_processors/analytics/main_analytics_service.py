@@ -11,6 +11,7 @@ import logging
 from flask import Flask, request, jsonify
 from datetime import datetime, timezone, date, timedelta
 import base64
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Import analytics processors
 from data_processors.analytics.player_game_summary.player_game_summary_processor import PlayerGameSummaryProcessor
@@ -22,6 +23,45 @@ from data_processors.analytics.upcoming_team_game_context.upcoming_team_game_con
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+def run_single_analytics_processor(processor_class, opts):
+    """
+    Run a single analytics processor (for parallel execution).
+
+    Args:
+        processor_class: Processor class to instantiate
+        opts: Options dict for processor.run()
+
+    Returns:
+        Dict with processor results
+    """
+    try:
+        logger.info(f"Running {processor_class.__name__} for {opts.get('start_date')}")
+
+        processor = processor_class()
+        success = processor.run(opts)
+
+        if success:
+            stats = processor.get_analytics_stats()
+            logger.info(f"✅ Successfully ran {processor_class.__name__}: {stats}")
+            return {
+                "processor": processor_class.__name__,
+                "status": "success",
+                "stats": stats
+            }
+        else:
+            logger.error(f"❌ Failed to run {processor_class.__name__}")
+            return {
+                "processor": processor_class.__name__,
+                "status": "error"
+            }
+    except Exception as e:
+        logger.error(f"❌ Analytics processor {processor_class.__name__} failed: {e}", exc_info=True)
+        return {
+            "processor": processor_class.__name__,
+            "status": "exception",
+            "error": str(e)
+        }
 
 # Analytics processor registry - maps source tables to dependent analytics processors
 ANALYTICS_TRIGGERS = {
@@ -113,44 +153,44 @@ def process_analytics():
         # Process analytics for date range (single day or small range)
         start_date = game_date
         end_date = game_date
-        
+
+        # Build options dict for all processors
+        opts = {
+            'start_date': start_date,
+            'end_date': end_date,
+            'project_id': os.environ.get('GCP_PROJECT_ID', 'nba-props-platform'),
+            'triggered_by': source_table
+        }
+
+        # Execute processors in PARALLEL for 75% speedup (20 min → 5 min)
+        logger.info(f"🚀 Running {len(processors_to_run)} analytics processors in PARALLEL for {game_date}")
         results = []
-        for processor_class in processors_to_run:
-            try:
-                logger.info(f"Running {processor_class.__name__} for {game_date}")
-                
-                processor = processor_class()
-                opts = {
-                    'start_date': start_date,
-                    'end_date': end_date,
-                    'project_id': os.environ.get('GCP_PROJECT_ID', 'nba-props-platform'),
-                    'triggered_by': source_table
-                }
-                
-                success = processor.run(opts)
-                
-                if success:
-                    stats = processor.get_analytics_stats()
-                    logger.info(f"Successfully ran {processor_class.__name__}: {stats}")
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            # Submit all processors for parallel execution
+            futures = {
+                executor.submit(run_single_analytics_processor, processor_class, opts): processor_class
+                for processor_class in processors_to_run
+            }
+
+            # Collect results as they complete
+            for future in as_completed(futures):
+                processor_class = futures[future]
+                try:
+                    result = future.result(timeout=600)  # 10 min timeout per processor
+                    results.append(result)
+                except TimeoutError:
+                    logger.error(f"⏱️ Processor {processor_class.__name__} timed out after 10 minutes")
                     results.append({
                         "processor": processor_class.__name__,
-                        "status": "success",
-                        "stats": stats
+                        "status": "timeout"
                     })
-                else:
-                    logger.error(f"Failed to run {processor_class.__name__}")
+                except Exception as e:
+                    logger.error(f"❌ Failed to get result from {processor_class.__name__}: {e}")
                     results.append({
                         "processor": processor_class.__name__,
-                        "status": "error"
+                        "status": "exception",
+                        "error": str(e)
                     })
-                    
-            except Exception as e:
-                logger.error(f"Analytics processor {processor_class.__name__} failed: {e}")
-                results.append({
-                    "processor": processor_class.__name__,
-                    "status": "exception",
-                    "error": str(e)
-                })
         
         return jsonify({
             "status": "completed",

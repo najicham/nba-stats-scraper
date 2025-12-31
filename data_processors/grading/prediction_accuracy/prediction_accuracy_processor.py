@@ -348,7 +348,8 @@ class PredictionAccuracyProcessor:
                 # Try to convert to string for safety
                 try:
                     sanitized[key] = str(value)
-                except:
+                except Exception as e:
+                    logger.debug(f"Failed to convert {key}={value} to string: {e}")
                     sanitized[key] = None
         return sanitized
 
