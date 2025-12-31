@@ -12,14 +12,18 @@ How it works:
 4. Log cleanup operation
 """
 
+import json
 import logging
+import os
 import uuid
 from datetime import datetime, timedelta
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import pytz
 
+from google.cloud import pubsub_v1
 from shared.utils.bigquery_utils import execute_bigquery, insert_bigquery_rows
 from shared.utils.notification_system import notify_warning, notify_error
+from shared.config.pubsub_topics import TOPICS
 
 logger = logging.getLogger(__name__)
 
@@ -37,17 +41,27 @@ class CleanupProcessor:
     
     VERSION = "1.0"
     
-    def __init__(self, lookback_hours: int = 1, min_file_age_minutes: int = 30):
+    def __init__(self, lookback_hours: int = 1, min_file_age_minutes: int = 30, project_id: str = None):
         """
         Initialize cleanup processor.
-        
+
         Args:
             lookback_hours: How far back to check for files
             min_file_age_minutes: Only process files older than this (avoid race conditions)
+            project_id: GCP project ID for Pub/Sub publishing
         """
         self.lookback_hours = lookback_hours
         self.min_file_age_minutes = min_file_age_minutes
         self.ET = pytz.timezone('America/New_York')
+
+        # Initialize Pub/Sub publisher for republishing missed files
+        self.project_id = project_id or os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
+        self.publisher = pubsub_v1.PublisherClient()
+        self.topic_path = self.publisher.topic_path(
+            self.project_id,
+            TOPICS.PHASE1_SCRAPERS_COMPLETE
+        )
+        logger.info(f"CleanupProcessor initialized with topic: {self.topic_path}")
     
     def run(self) -> Dict[str, Any]:
         """
@@ -240,39 +254,56 @@ class CleanupProcessor:
     
     def _republish_messages(self, missing_files: List[Dict]) -> int:
         """
-        Republish Pub/Sub messages for missing files.
-        
-        Note: This requires Pub/Sub utils to be implemented.
-        For now, this is a placeholder that logs what would be republished.
+        Republish Pub/Sub messages for missing files to trigger Phase 2 reprocessing.
+
+        Publishes to the Phase 1 scrapers-complete topic, which will trigger
+        the Phase 2 raw processors to re-process the GCS files.
+
+        Args:
+            missing_files: List of file info dicts with scraper_name, gcs_path, etc.
+
+        Returns:
+            Number of successfully republished messages
         """
         republished_count = 0
-        
+
         for file_info in missing_files:
             try:
-                # TODO: Implement actual Pub/Sub publishing
-                # from shared.utils.pubsub_utils import publish_message
-                
-                # Create Pub/Sub message
+                # Create recovery message matching the scraper output format
                 message = {
                     'scraper_name': file_info['scraper_name'],
                     'gcs_path': file_info['gcs_path'],
+                    'execution_id': f"recovery-{uuid.uuid4().hex[:8]}",
                     'original_execution_id': file_info['execution_id'],
-                    'original_triggered_at': file_info['triggered_at'].isoformat(),
+                    'original_triggered_at': file_info['triggered_at'].isoformat() if hasattr(file_info.get('triggered_at'), 'isoformat') else str(file_info.get('triggered_at')),
                     'recovery': True,
                     'recovery_reason': 'cleanup_processor',
-                    'recovery_timestamp': datetime.utcnow().isoformat()
+                    'recovery_timestamp': datetime.utcnow().isoformat(),
+                    'status': 'success',  # Mimics scraper success message
                 }
-                
-                # Publish to scraper-complete topic
-                # publish_message('scraper-complete', message)
-                
-                # For now, just log
-                logger.info(f"🔄 Would republish: {file_info['scraper_name']}")
+
+                # Publish to Phase 1 complete topic
+                message_data = json.dumps(message).encode('utf-8')
+                future = self.publisher.publish(self.topic_path, data=message_data)
+
+                # Wait for publish to complete (with timeout)
+                message_id = future.result(timeout=10.0)
+
+                logger.info(
+                    f"🔄 Republished {file_info['scraper_name']} to Pub/Sub "
+                    f"(message_id={message_id}, gcs_path={file_info['gcs_path']})"
+                )
                 republished_count += 1
-                
+
             except Exception as e:
-                logger.error(f"Failed to republish {file_info['scraper_name']}: {e}")
-        
+                logger.error(
+                    f"Failed to republish {file_info['scraper_name']}: {e}",
+                    exc_info=True
+                )
+
+        if republished_count > 0:
+            logger.info(f"✅ Successfully republished {republished_count}/{len(missing_files)} messages")
+
         return republished_count
     
     def _log_cleanup(

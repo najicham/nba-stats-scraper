@@ -7,6 +7,7 @@ Shows phase completion status, errors, scheduler history, and allows manual acti
 
 import os
 import logging
+import secrets
 import urllib.request
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -32,8 +33,10 @@ bq_service = BigQueryService()
 firestore_service = FirestoreService()
 logging_service = LoggingService()
 
-# API Key for simple authentication
-API_KEY = os.environ.get('ADMIN_DASHBOARD_API_KEY', 'dev-key-change-me')
+# API Key for simple authentication (required in production)
+API_KEY = os.environ.get('ADMIN_DASHBOARD_API_KEY')
+if not API_KEY:
+    logger.warning("ADMIN_DASHBOARD_API_KEY not set - all authenticated requests will be rejected")
 
 # Cloud Run service URLs
 SERVICE_URLS = {
@@ -119,14 +122,19 @@ def check_auth():
     if os.environ.get('FLASK_ENV') == 'development':
         return True
 
+    # Reject all requests if API key not configured
+    if not API_KEY:
+        logger.error("Authentication failed: ADMIN_DASHBOARD_API_KEY not configured")
+        return False
+
     # Check header
     provided_key = request.headers.get('X-API-Key')
-    if provided_key == API_KEY:
+    if provided_key and secrets.compare_digest(provided_key, API_KEY):
         return True
 
     # Check query param (for browser access)
     provided_key = request.args.get('key')
-    if provided_key == API_KEY:
+    if provided_key and secrets.compare_digest(provided_key, API_KEY):
         return True
 
     return False
@@ -139,6 +147,34 @@ def get_et_dates():
     today = now_et.date()
     tomorrow = today + timedelta(days=1)
     return today, tomorrow, now_et
+
+
+def clamp_param(value: int, min_val: int, max_val: int, default: int) -> int:
+    """
+    Clamp a query parameter to safe bounds.
+
+    Prevents abuse via extremely large values that could cause expensive queries.
+
+    Args:
+        value: The input value
+        min_val: Minimum allowed value
+        max_val: Maximum allowed value
+        default: Default if value is None
+
+    Returns:
+        Clamped value within bounds
+    """
+    if value is None:
+        return default
+    return max(min_val, min(max_val, value))
+
+
+# Query parameter bounds (prevent abuse)
+PARAM_BOUNDS = {
+    'limit': (1, 100, 20),      # min, max, default
+    'hours': (1, 168, 24),      # max 7 days
+    'days': (1, 90, 7),         # max 90 days
+}
 
 
 # =============================================================================
@@ -254,8 +290,8 @@ def api_errors():
         return jsonify({'error': 'Unauthorized'}), 401
 
     try:
-        limit = request.args.get('limit', 20, type=int)
-        hours = request.args.get('hours', 6, type=int)
+        limit = clamp_param(request.args.get('limit', type=int), *PARAM_BOUNDS['limit'])
+        hours = clamp_param(request.args.get('hours', type=int), *PARAM_BOUNDS['hours'])
         errors = logging_service.get_recent_errors(limit=limit, hours=hours)
         return jsonify({'errors': errors})
     except Exception as e:
@@ -378,7 +414,7 @@ def api_processor_failures():
     if not check_auth():
         return jsonify({'error': 'Unauthorized'}), 401
 
-    hours = request.args.get('hours', 24, type=int)
+    hours = clamp_param(request.args.get('hours', type=int), *PARAM_BOUNDS['hours'])
     try:
         failures = bq_service.get_processor_failures(hours=hours)
         return jsonify({'failures': failures, 'count': len(failures)})
@@ -393,7 +429,7 @@ def partial_processor_failures():
     if not check_auth():
         return '<div class="text-red-500">Unauthorized</div>', 401
 
-    hours = request.args.get('hours', 24, type=int)
+    hours = clamp_param(request.args.get('hours', type=int), *PARAM_BOUNDS['hours'])
     try:
         failures = bq_service.get_processor_failures(hours=hours)
     except Exception as e:
@@ -408,7 +444,7 @@ def api_coverage_metrics():
     if not check_auth():
         return jsonify({'error': 'Unauthorized'}), 401
 
-    days = request.args.get('days', 7, type=int)
+    days = clamp_param(request.args.get('days', type=int), *PARAM_BOUNDS['days'])
     try:
         coverage = bq_service.get_player_game_summary_coverage(days=days)
         grading = bq_service.get_grading_status(days=days)
@@ -427,7 +463,7 @@ def partial_coverage_metrics():
     if not check_auth():
         return '<div class="text-red-500">Unauthorized</div>', 401
 
-    days = request.args.get('days', 7, type=int)
+    days = clamp_param(request.args.get('days', type=int), *PARAM_BOUNDS['days'])
     try:
         coverage = bq_service.get_player_game_summary_coverage(days=days)
         grading = bq_service.get_grading_status(days=days)
