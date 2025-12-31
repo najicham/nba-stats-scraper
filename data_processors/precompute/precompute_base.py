@@ -1243,7 +1243,7 @@ class PrecomputeProcessorBase(RunHistoryMixin):
                 schema=table_schema,
                 source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
                 write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
-                autodetect=False,
+                autodetect=(table_schema is None),  # Auto-detect schema on first run when table doesn't exist
                 schema_update_options=None
             )
             
@@ -1321,9 +1321,13 @@ class PrecomputeProcessorBase(RunHistoryMixin):
                     logger.info(f"✅ Delete completed for {analysis_date}")
                     
             except Exception as e:
-                if "streaming buffer" in str(e).lower():
+                error_str = str(e).lower()
+                if "streaming buffer" in error_str:
                     logger.warning("⚠️ Delete blocked by streaming buffer")
                     logger.info("Duplicates will be cleaned up on next run")
+                    return
+                elif "not found" in error_str or "404" in error_str:
+                    logger.info("✅ Table doesn't exist yet (first run) - will be created during INSERT")
                     return
                 else:
                     raise e
