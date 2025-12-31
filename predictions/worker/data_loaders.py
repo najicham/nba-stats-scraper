@@ -33,24 +33,31 @@ QUERY_TIMEOUT_SECONDS = 30
 
 class PredictionDataLoader:
     """Loads data from BigQuery for Phase 5 predictions"""
-    
-    def __init__(self, project_id: str, location: str = 'us-west2'):
+
+    def __init__(self, project_id: str, location: str = 'us-west2', dataset_prefix: str = ''):
         """
         Initialize data loader
 
         Args:
             project_id: GCP project ID (e.g., 'nba-props-platform')
             location: BigQuery location (default: us-west2)
+            dataset_prefix: Optional dataset prefix for test isolation (e.g., "test")
         """
         self.project_id = project_id
+        self.dataset_prefix = dataset_prefix
         self.client = bigquery.Client(project=project_id, location=location)
+
+        # Construct dataset names with optional prefix
+        self.predictions_dataset = f"{dataset_prefix}_nba_predictions" if dataset_prefix else "nba_predictions"
+        self.analytics_dataset = f"{dataset_prefix}_nba_analytics" if dataset_prefix else "nba_analytics"
+        self.precompute_dataset = f"{dataset_prefix}_nba_precompute" if dataset_prefix else "nba_precompute"
 
         # Instance-level cache for historical games (keyed by game_date)
         # First request for a game_date batch-loads all players, subsequent requests use cache
         # This provides ~50x speedup (1 query vs 450 queries)
         self._historical_games_cache: Dict[date, Dict[str, List[Dict]]] = {}
 
-        logger.info(f"Initialized PredictionDataLoader for project {project_id} in {location}")
+        logger.info(f"Initialized PredictionDataLoader for project {project_id} in {location} (dataset_prefix: {dataset_prefix or 'production'})")
     
     # ========================================================================
     # FEATURES LOADING (Required by ALL systems)
@@ -102,12 +109,12 @@ class PredictionDataLoader:
             data_quality_issues,
             backfill_bootstrap_mode,
             processing_decision_reason
-        FROM `{project}.nba_predictions.ml_feature_store_v2`
+        FROM `{project}.{predictions_dataset}.ml_feature_store_v2`
         WHERE player_lookup = @player_lookup
           AND game_date = @game_date
           AND feature_version = @feature_version
         LIMIT 1
-        """.format(project=self.project_id)
+        """.format(project=self.project_id, predictions_dataset=self.predictions_dataset)
         
         job_config = bigquery.QueryJobConfig(
             query_parameters=[
@@ -265,7 +272,7 @@ class PredictionDataLoader:
                 opponent_team_abbr,
                 points,
                 minutes_played
-            FROM `{project}.nba_analytics.player_game_summary`
+            FROM `{project}.{analytics_dataset}.player_game_summary`
             WHERE player_lookup = @player_lookup
               AND game_date < @game_date
               AND game_date >= DATE_SUB(@game_date, INTERVAL @lookback_days DAY)
@@ -289,7 +296,7 @@ class PredictionDataLoader:
             DATE_DIFF(next_game_date, game_date, DAY) as days_until_next
         FROM games_with_lag
         ORDER BY game_date DESC
-        """.format(project=self.project_id)
+        """.format(project=self.project_id, analytics_dataset=self.analytics_dataset)
 
         job_config = bigquery.QueryJobConfig(
             query_parameters=[
@@ -428,11 +435,11 @@ class PredictionDataLoader:
             is_home,
             days_rest,
             back_to_back
-        FROM `{project}.nba_analytics.upcoming_player_game_context`
+        FROM `{project}.{analytics_dataset}.upcoming_player_game_context`
         WHERE player_lookup = @player_lookup
           AND game_date = @game_date
         LIMIT 1
-        """.format(project=self.project_id)
+        """.format(project=self.project_id, analytics_dataset=self.analytics_dataset)
         
         job_config = bigquery.QueryJobConfig(
             query_parameters=[
@@ -500,7 +507,7 @@ class PredictionDataLoader:
                 points,
                 minutes_played,
                 ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY game_date DESC) as game_rank
-            FROM `{project}.nba_analytics.player_game_summary`
+            FROM `{project}.{analytics_dataset}.player_game_summary`
             WHERE player_lookup IN UNNEST(@player_lookups)
               AND game_date < @game_date
               AND game_date >= DATE_SUB(@game_date, INTERVAL @lookback_days DAY)
@@ -531,7 +538,7 @@ class PredictionDataLoader:
             DATE_DIFF(next_game_date, game_date, DAY) as days_until_next
         FROM games_with_lag
         ORDER BY player_lookup, game_date DESC
-        """.format(project=self.project_id)
+        """.format(project=self.project_id, analytics_dataset=self.analytics_dataset)
 
         job_config = bigquery.QueryJobConfig(
             query_parameters=[
@@ -629,11 +636,11 @@ class PredictionDataLoader:
             data_quality_issues,
             backfill_bootstrap_mode,
             processing_decision_reason
-        FROM `{project}.nba_predictions.ml_feature_store_v2`
+        FROM `{project}.{predictions_dataset}.ml_feature_store_v2`
         WHERE player_lookup IN UNNEST(@player_lookups)
           AND game_date = @game_date
           AND feature_version = @feature_version
-        """.format(project=self.project_id)
+        """.format(project=self.project_id, predictions_dataset=self.predictions_dataset)
 
         job_config = bigquery.QueryJobConfig(
             query_parameters=[
@@ -739,9 +746,9 @@ class PredictionDataLoader:
         """
         query = """
         SELECT DISTINCT player_lookup
-        FROM `{project}.nba_predictions.ml_feature_store_v2`
+        FROM `{project}.{predictions_dataset}.ml_feature_store_v2`
         WHERE game_date = @game_date
-        """.format(project=self.project_id)
+        """.format(project=self.project_id, predictions_dataset=self.predictions_dataset)
 
         job_config = bigquery.QueryJobConfig(
             query_parameters=[

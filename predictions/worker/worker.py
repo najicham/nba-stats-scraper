@@ -249,8 +249,7 @@ def handle_prediction_request():
     """
     start_time = time.time()
 
-    # Lazy-load all components on first request
-    data_loader = get_data_loader()
+    # Lazy-load all components on first request (except data_loader - created per request for dataset isolation)
     bq_client = get_bq_client()
     pubsub_publisher = get_pubsub_publisher()
     player_registry = get_player_registry()
@@ -281,7 +280,10 @@ def handle_prediction_request():
         message_data = base64.b64decode(pubsub_message['data']).decode('utf-8')
         request_data = json.loads(message_data)
 
-        logger.info(f"Processing prediction request: {request_data.get('player_lookup')} on {request_data.get('game_date')}")
+        # Extract dataset_prefix for test isolation (if present)
+        dataset_prefix = request_data.get('dataset_prefix', '')
+
+        logger.info(f"Processing prediction request: {request_data.get('player_lookup')} on {request_data.get('game_date')} (dataset_prefix: {dataset_prefix or 'production'})")
 
         # Extract request parameters
         player_lookup = request_data['player_lookup']
@@ -294,6 +296,15 @@ def handle_prediction_request():
         historical_games_batch = request_data.get('historical_games_batch')
         if historical_games_batch:
             logger.debug(f"Using pre-loaded historical games ({len(historical_games_batch)} games) from coordinator")
+
+        # DATASET ISOLATION: Create new data_loader with dataset_prefix if specified
+        # Otherwise use the cached global loader for production
+        if dataset_prefix:
+            from data_loaders import PredictionDataLoader
+            data_loader = PredictionDataLoader(PROJECT_ID, dataset_prefix=dataset_prefix)
+            logger.debug(f"Created isolated data_loader with prefix: {dataset_prefix}")
+        else:
+            data_loader = get_data_loader()  # Use cached production loader
 
         # v3.2: Extract line source tracking info
         line_source_info = {
@@ -363,7 +374,7 @@ def handle_prediction_request():
 
         # Write to BigQuery staging table (consolidation happens later by coordinator)
         write_start = time.time()
-        write_predictions_to_bigquery(predictions, batch_id=batch_id)
+        write_predictions_to_bigquery(predictions, batch_id=batch_id, dataset_prefix=dataset_prefix)
         write_duration = time.time() - write_start
 
         # Publish completion event
@@ -1049,7 +1060,7 @@ def format_prediction_for_bigquery(
     return record
 
 
-def write_predictions_to_bigquery(predictions: List[Dict], batch_id: Optional[str] = None):
+def write_predictions_to_bigquery(predictions: List[Dict], batch_id: Optional[str] = None, dataset_prefix: str = ''):
     """
     Write predictions to a batch staging table for later consolidation.
 
@@ -1062,8 +1073,9 @@ def write_predictions_to_bigquery(predictions: List[Dict], batch_id: Optional[st
         predictions: List of prediction dicts
         batch_id: Unique identifier for the batch (from coordinator).
                   If not provided, generates a fallback batch_id.
+        dataset_prefix: Optional dataset prefix for test isolation (e.g., "test")
     """
-    from batch_staging_writer import get_worker_id
+    from batch_staging_writer import get_worker_id, BatchStagingWriter
 
     if not predictions:
         logger.warning("No predictions to write")
@@ -1084,8 +1096,13 @@ def write_predictions_to_bigquery(predictions: List[Dict], batch_id: Optional[st
     worker_id = get_worker_id()
 
     try:
-        # Get the staging writer (lazy-loaded)
-        staging_writer = get_staging_writer()
+        # DATASET ISOLATION: Create staging writer with dataset_prefix if specified
+        # Otherwise use the cached global writer for production
+        if dataset_prefix:
+            staging_writer = BatchStagingWriter(get_bq_client(), PROJECT_ID, dataset_prefix=dataset_prefix)
+            logger.debug(f"Created isolated staging_writer with prefix: {dataset_prefix}")
+        else:
+            staging_writer = get_staging_writer()  # Use cached production writer
 
         # Write to staging table (NOT a DML operation - no concurrency limits)
         result = staging_writer.write_to_staging(
