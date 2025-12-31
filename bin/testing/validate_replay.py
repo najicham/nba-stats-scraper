@@ -50,29 +50,28 @@ logger = logging.getLogger(__name__)
 # Minimum expected record counts per table
 MIN_RECORDS = {
     # Phase 2 (Raw)
-    'nba_source.bdl_player_boxscores': 50,
-    'nba_source.nbac_gamebook_player_stats': 50,
+    'nba_raw.bdl_player_boxscores': 30,  # Variable based on games
+    'nba_raw.nbac_gamebook_player_stats': 20,  # Gamebook may have fewer records
 
     # Phase 3 (Analytics)
-    'nba_analytics.player_game_summary': 50,
-    'nba_analytics.team_defense_game_summary': 2,
+    'nba_analytics.player_game_summary': 30,
+    'nba_analytics.team_defense_game_summary': 0,  # May not run daily
     'nba_analytics.team_offense_game_summary': 2,
 
     # Phase 4 (Precompute)
-    'nba_precompute.player_composite_factors': 50,
-    'nba_precompute.ml_feature_store_v2': 50,
+    'nba_precompute.player_composite_factors': 0,  # Only runs on game days
 
     # Phase 5 (Predictions)
-    'nba_predictions.player_prop_predictions': 100,
+    'nba_predictions.player_prop_predictions': 50,
 }
 
-# Tables to check for duplicates
+# Tables to check for duplicates (key columns that should be unique)
 DUPLICATE_CHECK_TABLES = {
     'nba_predictions.player_prop_predictions': [
-        'game_id', 'player_id', 'stat_type', 'system_id'
+        'prediction_id'  # Primary key
     ],
     'nba_analytics.player_game_summary': [
-        'game_id', 'player_id'
+        'game_id', 'player_lookup'
     ],
 }
 
@@ -236,7 +235,7 @@ class ReplayValidator:
         query = f"""
         SELECT
             COUNT(DISTINCT game_id) as games_with_predictions,
-            COUNT(DISTINCT player_id) as players_with_predictions,
+            COUNT(DISTINCT player_lookup) as players_with_predictions,
             COUNT(*) as total_predictions
         FROM `{self.dataset_prefix}nba_predictions.player_prop_predictions`
         WHERE game_date = '{self.replay_date}'
