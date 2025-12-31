@@ -14,74 +14,110 @@
 - ✅ Dataset prefix support implemented for Phases 3 & 4
 - ✅ 3 commits made, all tests documented
 
-**Critical Security Issue Discovered:**
-- 🚨 Phase 4 precompute service is **publicly accessible** to the entire internet
-- This needs immediate remediation (details in Security section below)
+**Critical Security Issues Discovered:**
+- 🚨 **5 services are publicly accessible** to the entire internet
+- Phase 1 (Scrapers), Phase 4 (Precompute), Phase 5 (Coordinator + Worker), Admin Dashboard
+- Phase 4 is worst: `allUsers` + `allAuthenticatedUsers`
+- **Immediate remediation required** (15-30 min)
 
-**Your Mission:**
-1. **Fix Phase 4 security issue** (P0 - critical)
+**Your Mission (UPDATED PRIORITIES):**
+1. **Fix 5 security issues** (P0 - CRITICAL - Do first!)
 2. **Complete dataset_prefix for Phase 5** (for full replay capability)
 3. **Run actual pipeline replay test** (Phases 3→6)
 4. **Deploy updated services** (if changes made)
-5. **P0-SEC-2: Secrets migration** (time permitting)
+5. **Audit access logs** for suspicious activity (security follow-up)
+6. **P0-SEC-2: Secrets migration** (time permitting)
 
 ---
 
-## 🚨 CRITICAL: Security Issue
+## 🚨 CRITICAL: Multiple Services Have Public Access
 
-### Phase 4 Public Access Vulnerability
+### ⚠️ SECURITY AUDIT RESULTS - 5 SERVICES VULNERABLE
 
-**Problem:**
-The Phase 4 precompute service allows public internet access. Anyone can trigger expensive BigQuery jobs.
+**Full audit document:** `SECURITY-AUDIT-2025-12-31.md` (in project root)
 
-**Current IAM Policy (INSECURE):**
-```yaml
-# nba-phase4-precompute-processors
-bindings:
-- members:
-  - allUsers                    # ❌ REMOVE THIS
-  - allAuthenticatedUsers       # ❌ REMOVE THIS
-  - serviceAccount:scheduler-orchestration@nba-props-platform.iam.gserviceaccount.com
-  - serviceAccount:service-756957797294@gcp-sa-pubsub.iam.gserviceaccount.com
-  role: roles/run.invoker
-```
+| Service | Status | HTTP Test | Risk Level |
+|---------|--------|-----------|------------|
+| Phase 1 (Scrapers) | ❌ PUBLIC | 200 OK | HIGH |
+| Phase 2 (Raw) | ✅ SECURE | 403 | LOW |
+| Phase 3 (Analytics) | ✅ SECURE | 403 | LOW |
+| **Phase 4 (Precompute)** | ❌ PUBLIC | 200 OK | **CRITICAL** |
+| **Phase 5 (Coordinator)** | ❌ PUBLIC | 200 OK | **CRITICAL** |
+| **Phase 5 (Worker)** | ❌ PUBLIC | 200 OK | **CRITICAL** |
+| Phase 6 (Export) | ✅ SECURE | 403 | LOW |
+| **Admin Dashboard** | ❌ PUBLIC | 200 OK | **CRITICAL** |
 
-**Should Match Phase 3 (SECURE):**
-```yaml
-# nba-phase3-analytics-processors
-bindings:
-- members:
-  - serviceAccount:756957797294-compute@developer.gserviceaccount.com
-  - serviceAccount:scheduler-orchestration@nba-props-platform.iam.gserviceaccount.com
-  - serviceAccount:service-756957797294@gcp-sa-pubsub.iam.gserviceaccount.com
-  role: roles/run.invoker
-```
+**Impact:**
+- Anyone can trigger expensive BigQuery jobs (Phase 4)
+- Anyone can start prediction batches (Phase 5)
+- Anyone can access admin functions (Dashboard)
+- DoS attack potential across all public services
+- Potential for data manipulation and corruption
 
-**Fix Command:**
+### Quick Fix Script (15 minutes)
+
+**Run this to secure all services:**
+
 ```bash
-# Remove public access from Phase 4
-gcloud run services remove-iam-policy-binding nba-phase4-precompute-processors \
-  --region=us-west2 \
-  --member=allUsers \
-  --role=roles/run.invoker
+#!/bin/bash
+# fix-security.sh
+set -e
 
-gcloud run services remove-iam-policy-binding nba-phase4-precompute-processors \
-  --region=us-west2 \
-  --member=allAuthenticatedUsers \
-  --role=roles/run.invoker
+echo "🔒 Securing Cloud Run services..."
 
-# Add compute engine service account (missing from Phase 4)
+# Phase 1
+gcloud run services remove-iam-policy-binding nba-phase1-scrapers \
+  --region=us-west2 --member=allUsers --role=roles/run.invoker --quiet
+
+for SA in 756957797294-compute scheduler-orchestration service-756957797294; do
+  gcloud run services add-iam-policy-binding nba-phase1-scrapers \
+    --region=us-west2 \
+    --member=serviceAccount:${SA}@$([ "$SA" = "service-756957797294" ] && echo "gcp-sa-pubsub" || echo "nba-props-platform").iam.gserviceaccount.com \
+    --role=roles/run.invoker --quiet
+done
+
+# Phase 4
+gcloud run services remove-iam-policy-binding nba-phase4-precompute-processors \
+  --region=us-west2 --member=allUsers --role=roles/run.invoker --quiet
+gcloud run services remove-iam-policy-binding nba-phase4-precompute-processors \
+  --region=us-west2 --member=allAuthenticatedUsers --role=roles/run.invoker --quiet
 gcloud run services add-iam-policy-binding nba-phase4-precompute-processors \
   --region=us-west2 \
   --member=serviceAccount:756957797294-compute@developer.gserviceaccount.com \
-  --role=roles/run.invoker
+  --role=roles/run.invoker --quiet
 
-# Verify
-gcloud run services get-iam-policy nba-phase4-precompute-processors --region=us-west2
+# Phase 5 Coordinator
+gcloud run services remove-iam-policy-binding prediction-coordinator \
+  --region=us-west2 --member=allUsers --role=roles/run.invoker --quiet
+gcloud run services add-iam-policy-binding prediction-coordinator \
+  --region=us-west2 \
+  --member=serviceAccount:756957797294-compute@developer.gserviceaccount.com \
+  --role=roles/run.invoker --quiet
+
+# Phase 5 Worker
+gcloud run services remove-iam-policy-binding prediction-worker \
+  --region=us-west2 --member=allUsers --role=roles/run.invoker --quiet
+for SA in 756957797294-compute service-756957797294; do
+  gcloud run services add-iam-policy-binding prediction-worker \
+    --region=us-west2 \
+    --member=serviceAccount:${SA}@$([ "$SA" = "service-756957797294" ] && echo "gcp-sa-pubsub" || echo "developer").gserviceaccount.com \
+    --role=roles/run.invoker --quiet
+done
+
+# Admin Dashboard
+gcloud run services remove-iam-policy-binding nba-admin-dashboard \
+  --region=us-west2 --member=allUsers --role=roles/run.invoker --quiet
+for SA in 756957797294-compute scheduler-orchestration; do
+  gcloud run services add-iam-policy-binding nba-admin-dashboard \
+    --region=us-west2 \
+    --member=serviceAccount:${SA}@$([ "$SA" = "756957797294-compute" ] && echo "developer" || echo "nba-props-platform").gserviceaccount.com \
+    --role=roles/run.invoker --quiet
+done
+
+echo "✅ All services secured!"
 ```
 
-**Expected Result:**
-Phase 4 should return 403 Forbidden for unauthenticated requests (like Phase 3 does).
+**Simpler one-by-one approach in Quick Start section below.**
 
 ---
 
@@ -102,7 +138,13 @@ Phase 4 should return 403 Forbidden for unauthenticated requests (like Phase 3 d
 
 | Test | Priority | Estimated Time | Blockers |
 |------|----------|----------------|----------|
-| Fix Phase 4 security | P0 | 5 min | None |
+| **Fix Phase 1 security** | **P0** | **3 min** | None |
+| **Fix Phase 4 security** | **P0** | **5 min** | None |
+| **Fix Phase 5 Coordinator security** | **P0** | **3 min** | None |
+| **Fix Phase 5 Worker security** | **P0** | **3 min** | None |
+| **Fix Admin Dashboard security** | **P0** | **3 min** | None |
+| **Verify all security fixes** | **P0** | **2 min** | Security fixes |
+| **Audit access logs** | P1 | 15 min | None |
 | Add dataset_prefix to Phase 5 | P1 | 15 min | None |
 | Deploy updated services | P1 | 10 min | Code changes needed |
 | Run actual replay (Phase 3→6) | P1 | 30 min | Dataset_prefix for Phase 5 |
@@ -358,10 +400,14 @@ The validation script had schema mismatches that were fixed:
 
 ## ✅ Success Criteria
 
-### Must Complete (P0)
-- [ ] Fix Phase 4 security issue (remove public access)
-- [ ] Verify Phase 4 requires authentication (403 without token)
-- [ ] Document security fix
+### Must Complete (P0 - CRITICAL SECURITY)
+- [ ] Fix Phase 1 security (remove allUsers)
+- [ ] Fix Phase 4 security (remove allUsers + allAuthenticatedUsers)
+- [ ] Fix Phase 5 Coordinator security (remove allUsers)
+- [ ] Fix Phase 5 Worker security (remove allUsers)
+- [ ] Fix Admin Dashboard security (remove allUsers)
+- [ ] Verify all 5 services return 403 without token
+- [ ] Document security fixes in audit log
 
 ### Should Complete (P1)
 - [ ] Add dataset_prefix support to Phase 5 (or document as deferred)
@@ -444,27 +490,57 @@ eef6b68 fix: Update validation script schema and document test results
 ```bash
 # Navigate to project
 cd /home/naji/code/nba-stats-scraper
-source .venv/bin/activate
 
-# 1. FIX SECURITY (CRITICAL!)
-gcloud run services remove-iam-policy-binding nba-phase4-precompute-processors \
+# 1. FIX SECURITY (CRITICAL! - Do this FIRST)
+# See SECURITY-AUDIT-2025-12-31.md for full details
+
+# Phase 1
+gcloud run services remove-iam-policy-binding nba-phase1-scrapers \
   --region=us-west2 --member=allUsers --role=roles/run.invoker
 
+# Phase 4 (worst - has allUsers AND allAuthenticatedUsers)
+gcloud run services remove-iam-policy-binding nba-phase4-precompute-processors \
+  --region=us-west2 --member=allUsers --role=roles/run.invoker
 gcloud run services remove-iam-policy-binding nba-phase4-precompute-processors \
   --region=us-west2 --member=allAuthenticatedUsers --role=roles/run.invoker
 
-# 2. TEST SECURITY FIX
-curl -s https://nba-phase4-precompute-processors-756957797294.us-west2.run.app/health
-# Should return: 403 Forbidden
+# Phase 5 Coordinator
+gcloud run services remove-iam-policy-binding prediction-coordinator \
+  --region=us-west2 --member=allUsers --role=roles/run.invoker
 
-# 3. DEPLOY UPDATED SERVICES (if needed)
+# Phase 5 Worker
+gcloud run services remove-iam-policy-binding prediction-worker \
+  --region=us-west2 --member=allUsers --role=roles/run.invoker
+
+# Admin Dashboard
+gcloud run services remove-iam-policy-binding nba-admin-dashboard \
+  --region=us-west2 --member=allUsers --role=roles/run.invoker
+
+# 2. ADD PROPER SERVICE ACCOUNTS
+# See SECURITY-AUDIT-2025-12-31.md for complete add commands
+# Or use the fix-security.sh script in the audit document
+
+# 3. VERIFY SECURITY (All should return 403)
+curl -s -o /dev/null -w "Phase 1: %{http_code}\n" \
+  https://nba-phase1-scrapers-f7p3g7f6ya-wl.a.run.app/health
+curl -s -o /dev/null -w "Phase 4: %{http_code}\n" \
+  https://nba-phase4-precompute-processors-756957797294.us-west2.run.app/health
+curl -s -o /dev/null -w "Phase 5 Coord: %{http_code}\n" \
+  https://prediction-coordinator-756957797294.us-west2.run.app/health
+curl -s -o /dev/null -w "Phase 5 Worker: %{http_code}\n" \
+  https://prediction-worker-756957797294.us-west2.run.app/health
+curl -s -o /dev/null -w "Dashboard: %{http_code}\n" \
+  https://nba-admin-dashboard-f7p3g7f6ya-wl.a.run.app/health
+
+# 4. DEPLOY UPDATED SERVICES (if needed for dataset_prefix)
 # gcloud builds submit --config cloudbuild-analytics.yaml
 # gcloud builds submit --config cloudbuild-precompute.yaml
 
-# 4. RUN REPLAY TEST
+# 5. RUN REPLAY TEST
+source .venv/bin/activate
 PYTHONPATH=. python bin/testing/replay_pipeline.py 2024-12-15 --start-phase=3
 
-# 5. VALIDATE OUTPUTS
+# 6. VALIDATE OUTPUTS
 PYTHONPATH=. python bin/testing/validate_replay.py 2024-12-15 --prefix=test_
 ```
 
