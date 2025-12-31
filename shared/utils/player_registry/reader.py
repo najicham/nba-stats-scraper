@@ -958,9 +958,9 @@ class RegistryReader:
             return
         
         records = []
-        current_datetime = datetime.now()
-        current_date = current_datetime.date()
-        
+        current_datetime = datetime.now().isoformat()  # Convert to string for JSON serialization
+        current_date = datetime.now().date().isoformat()  # Convert to string for JSON serialization
+
         for player_lookup, contexts in self._unresolved_queue.items():
             # Aggregate contexts
             occurrences = len(contexts)
