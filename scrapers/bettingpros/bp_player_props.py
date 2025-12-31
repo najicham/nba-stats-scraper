@@ -558,7 +558,8 @@ class BettingProsPlayerProps(ScraperBase, ScraperFlaskMixin):
                 try:
                     content_preview = self.raw_response.content.decode('utf-8', errors='replace')[:500]
                     logger.error("JSON decode failed. Content preview: %r", content_preview)
-                except Exception:
+                except (UnicodeDecodeError, AttributeError):
+                    # UnicodeDecodeError: decode fails; AttributeError: content is None
                     logger.error("JSON decode failed and couldn't preview content")
                 
                 # Standard JSON decode error (eligible for retry)

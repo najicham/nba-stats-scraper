@@ -50,6 +50,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 from shared.publishers.unified_pubsub_publisher import UnifiedPubSubPublisher
 from shared.config.orchestration_config import get_orchestration_config
+from shared.utils.env_validation import validate_required_env_vars
 
 # Configure logging
 logging.basicConfig(
@@ -57,6 +58,12 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# Validate required environment variables at startup
+validate_required_env_vars(
+    ['GCP_PROJECT_ID'],
+    service_name='PredictionCoordinator'
+)
 
 # Flask app
 app = Flask(__name__)
@@ -428,14 +435,58 @@ def get_batch_status():
     }), 200
 
 
+def publish_with_retry(publisher, topic_path: str, message_bytes: bytes,
+                       player_lookup: str, max_retries: int = 3) -> bool:
+    """
+    Publish a message to Pub/Sub with exponential backoff retry.
+
+    Args:
+        publisher: Pub/Sub publisher client
+        topic_path: Full topic path
+        message_bytes: Encoded message data
+        player_lookup: Player identifier for logging
+        max_retries: Maximum number of retry attempts (default 3)
+
+    Returns:
+        True if publish succeeded, False otherwise
+
+    Retry delays: 1s, 2s, 4s (exponential backoff)
+    """
+    last_exception = None
+
+    for attempt in range(max_retries):
+        try:
+            future = publisher.publish(topic_path, data=message_bytes)
+            # Wait for publish confirmation with timeout
+            future.result(timeout=5.0)
+            return True
+        except Exception as e:
+            last_exception = e
+            if attempt < max_retries - 1:
+                # Exponential backoff: 1s, 2s, 4s
+                delay = 2 ** attempt
+                logger.warning(
+                    f"Pub/Sub publish attempt {attempt + 1}/{max_retries} failed for "
+                    f"{player_lookup}: {e}. Retrying in {delay}s..."
+                )
+                time.sleep(delay)
+            else:
+                logger.error(
+                    f"Pub/Sub publish failed after {max_retries} attempts for "
+                    f"{player_lookup}: {e}"
+                )
+
+    return False
+
+
 def publish_prediction_requests(requests: List[Dict], batch_id: str) -> int:
     """
     Publish prediction requests to Pub/Sub
-    
+
     Args:
         requests: List of prediction request dicts
         batch_id: Batch identifier for tracking
-    
+
     Returns:
         Number of successfully published messages
     """
@@ -446,36 +497,31 @@ def publish_prediction_requests(requests: List[Dict], batch_id: str) -> int:
     failed_count = 0
 
     for request_data in requests:
-        try:
-            # Add batch metadata
-            message = {
-                **request_data,
-                'batch_id': batch_id,
-                'timestamp': datetime.now().isoformat()
-            }
+        # Add batch metadata
+        message = {
+            **request_data,
+            'batch_id': batch_id,
+            'timestamp': datetime.now().isoformat()
+        }
 
-            # Publish to Pub/Sub
-            message_bytes = json.dumps(message).encode('utf-8')
-            future = publisher.publish(topic_path, data=message_bytes)
-            
-            # Wait for publish (with timeout)
-            future.result(timeout=5.0)
-            
+        # Publish to Pub/Sub with retry logic
+        message_bytes = json.dumps(message).encode('utf-8')
+        player_lookup = request_data.get('player_lookup', 'unknown')
+
+        if publish_with_retry(publisher, topic_path, message_bytes, player_lookup):
             published_count += 1
-            
+
             # Log every 50 players
             if published_count % 50 == 0:
                 logger.info(f"Published {published_count}/{len(requests)} requests")
-            
-        except Exception as e:
+        else:
             failed_count += 1
-            logger.error(f"Error publishing request for {request_data.get('player_lookup')}: {e}")
-            
+
             # Mark player as failed in tracker
             if current_tracker:
                 current_tracker.mark_player_failed(
-                    request_data.get('player_lookup', 'unknown'),
-                    str(e)
+                    player_lookup,
+                    "Pub/Sub publish failed after retries"
                 )
     
     logger.info(

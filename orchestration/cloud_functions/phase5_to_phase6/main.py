@@ -359,11 +359,26 @@ def get_export_status(game_date: str) -> Dict:
         return {'game_date': game_date, 'error': str(e)}
 
 
+# ============================================================================
+# HTTP ENDPOINTS (for monitoring and health checks)
+# ============================================================================
+
+@functions_framework.http
+def health(request):
+    """Health check endpoint for the phase5_to_phase6 orchestrator."""
+    return json.dumps({
+        'status': 'healthy',
+        'function': 'phase5_to_phase6',
+        'export_types': TONIGHT_EXPORT_TYPES,
+        'version': '1.1'
+    }), 200, {'Content-Type': 'application/json'}
+
+
 # For local testing
 if __name__ == '__main__':
     import argparse
 
-    parser = argparse.ArgumentParser(description='Phase 5→6 Orchestrator')
+    parser = argparse.ArgumentParser(description='Phase 5->6 Orchestrator')
     parser.add_argument('--game-date', type=str, required=True, help='Game date')
     parser.add_argument('--check-status', action='store_true', help='Check export status')
     parser.add_argument('--trigger', action='store_true', help='Trigger export')

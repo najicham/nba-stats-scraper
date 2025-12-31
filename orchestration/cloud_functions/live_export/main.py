@@ -205,6 +205,20 @@ def pubsub_main(cloud_event):
     return result
 
 
+# ============================================================================
+# HTTP ENDPOINTS (for health checks)
+# ============================================================================
+
+@functions_framework.http
+def health(request):
+    """Health check endpoint for the live_export function."""
+    from flask import jsonify
+    return jsonify({
+        'status': 'healthy',
+        'function': 'live_export'
+    }), 200
+
+
 # For local testing
 if __name__ == '__main__':
     import argparse

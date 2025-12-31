@@ -1,0 +1,15 @@
+# DLQ Monitor Requirements
+# Cloud Function dependencies
+
+# Cloud Functions framework
+functions-framework==3.*
+
+# Google Cloud libraries
+google-cloud-pubsub==2.*
+
+# HTTP requests (for AlertManager Slack integration)
+requests>=2.28.0
+
+# Note: google-cloud-monitoring is optional - used for accurate message counts
+# when DLQ has 100+ messages. Will gracefully degrade if not available.
+# google-cloud-monitoring==2.*

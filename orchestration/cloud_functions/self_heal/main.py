@@ -349,6 +349,19 @@ def self_heal_check(request):
         return jsonify(result), 500
 
 
+# ============================================================================
+# HTTP ENDPOINTS (for health checks)
+# ============================================================================
+
+@functions_framework.http
+def health(request):
+    """Health check endpoint for the self_heal function."""
+    return jsonify({
+        'status': 'healthy',
+        'function': 'self_heal'
+    }), 200
+
+
 # For local testing
 if __name__ == "__main__":
     from flask import Flask, request

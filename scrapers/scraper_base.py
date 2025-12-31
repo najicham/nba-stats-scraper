@@ -476,7 +476,8 @@ class ScraperBase:
         elif source == 'LOCAL':
             try:
                 triggered_by = f"{getpass.getuser()}@local"
-            except:
+            except (KeyError, OSError):
+                # KeyError: USER env var missing; OSError: getpwuid() fails in containers
                 triggered_by = 'unknown@local'
         else:
             triggered_by = os.getenv('K_SERVICE', 'manual')
@@ -606,14 +607,15 @@ class ScraperBase:
             
             insert_bigquery_rows('nba_orchestration.scraper_execution_log', [record])
             logger.info(f"✅ Orchestration logged: {status} ({record_count} records) from {source}")
-            
+
         except Exception as e:
             # Don't fail the scraper if logging fails
             logger.error(f"Failed to log execution to orchestration: {e}")
             # Still capture in Sentry for alerting
             try:
                 sentry_sdk.capture_exception(e)
-            except:
+            except Exception:
+                # Sentry SDK not initialized or network error - safe to ignore
                 pass
 
     def _log_failed_execution_to_bigquery(self, error: Exception):
@@ -664,14 +666,15 @@ class ScraperBase:
             
             insert_bigquery_rows('nba_orchestration.scraper_execution_log', [record])
             logger.info(f"✅ Orchestration logged failure from {source}: {error.__class__.__name__}")
-            
+
         except Exception as e:
             # Don't fail the scraper if logging fails
             logger.error(f"Failed to log failed execution to orchestration: {e}")
             # Still capture in Sentry
             try:
                 sentry_sdk.capture_exception(e)
-            except:
+            except Exception:
+                # Sentry SDK not initialized or network error - safe to ignore
                 pass
 
     ##########################################################################
@@ -727,7 +730,8 @@ class ScraperBase:
             # Still capture in Sentry for alerting
             try:
                 sentry_sdk.capture_exception(e)
-            except:
+            except Exception:
+                # Sentry SDK not initialized or network error - safe to ignore
                 pass
 
     def _publish_failed_event_to_pubsub(self, error: Exception):
@@ -904,7 +908,8 @@ class ScraperBase:
                     eastern = pytz.timezone('US/Eastern')
                     eastern_now = datetime.now(eastern)
                     self.opts["date"] = eastern_now.strftime("%Y-%m-%d")
-                except Exception:
+                except (ImportError, KeyError):
+                    # ImportError: pytz not installed; KeyError: invalid timezone name
                     # Fallback to UTC date if timezone fails
                     self.opts["date"] = datetime.utcnow().strftime("%Y-%m-%d")
 
@@ -1289,8 +1294,10 @@ class ScraperBase:
                 btn = page.locator("button#onetrust-accept-btn-handler")
                 if btn.is_visible(timeout=3_000):
                     btn.click()
-            except Exception:
-                pass
+            except (TimeoutError, Exception) as e:
+                # TimeoutError: button not visible in time; other playwright errors
+                # This is optional UI interaction, safe to continue without it
+                logger.debug("Cookie consent button not clicked: %s", type(e).__name__)
 
             # short pause so Akamai JS can finish
             page.wait_for_timeout(1_500)
