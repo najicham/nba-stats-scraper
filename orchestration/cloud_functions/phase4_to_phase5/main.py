@@ -48,6 +48,8 @@ logger = logging.getLogger(__name__)
 # Constants
 PROJECT_ID = os.environ.get('GCP_PROJECT', 'nba-props-platform')
 PHASE5_TRIGGER_TOPIC = 'nba-predictions-trigger'  # Downstream topic for predictions
+MAX_WAIT_HOURS = 4  # Maximum hours to wait for all processors before timeout
+MAX_WAIT_SECONDS = MAX_WAIT_HOURS * 3600
 
 # Processor name normalization - maps various formats to config names
 # Phase 4 processors publish class names or table names, but config uses simple names
@@ -191,7 +193,7 @@ def orchestrate_phase4_to_phase5(cloud_event):
 
         # Create transaction and execute atomic update
         transaction = db.transaction()
-        should_trigger = update_completion_atomic(
+        should_trigger, trigger_reason, missing = update_completion_atomic(
             transaction,
             doc_ref,
             processor_name,
@@ -205,22 +207,30 @@ def orchestrate_phase4_to_phase5(cloud_event):
         )
 
         if should_trigger:
-            # All processors complete - trigger Phase 5 (predictions)
-            trigger_phase5(game_date, correlation_id, message_data)
-            logger.info(
-                f"✅ All {EXPECTED_PROCESSOR_COUNT} Phase 4 processors complete for {game_date}, "
-                f"triggered Phase 5 predictions (correlation_id={correlation_id})"
-            )
-        else:
+            if trigger_reason == 'all_complete':
+                # All processors complete - trigger Phase 5 (predictions)
+                trigger_phase5(game_date, correlation_id, message_data)
+                logger.info(
+                    f"✅ All {EXPECTED_PROCESSOR_COUNT} Phase 4 processors complete for {game_date}, "
+                    f"triggered Phase 5 predictions (correlation_id={correlation_id})"
+                )
+            elif trigger_reason == 'timeout':
+                # Timeout reached - trigger with partial data
+                trigger_phase5(game_date, correlation_id, message_data)
+                logger.warning(
+                    f"⚠️ TIMEOUT: Triggering Phase 5 for {game_date} with partial data. "
+                    f"Missing processors: {missing}"
+                )
+        elif trigger_reason == 'waiting':
             # Still waiting for more processors
-            logger.info(f"Registered completion for {processor_name}, waiting for others")
+            logger.info(f"Registered completion for {processor_name}, waiting for {len(missing)} more: {missing}")
 
     except Exception as e:
         logger.error(f"Error in Phase 4→5 orchestrator: {e}", exc_info=True)
 
 
 @firestore.transactional
-def update_completion_atomic(transaction: firestore.Transaction, doc_ref, processor_name: str, completion_data: Dict) -> bool:
+def update_completion_atomic(transaction: firestore.Transaction, doc_ref, processor_name: str, completion_data: Dict) -> tuple:
     """
     Atomically update processor completion and determine if should trigger next phase.
 
@@ -234,7 +244,7 @@ def update_completion_atomic(transaction: firestore.Transaction, doc_ref, proces
         completion_data: Completion metadata
 
     Returns:
-        bool: True if this update completes the phase and should trigger Phase 5
+        tuple: (should_trigger: bool, trigger_reason: str, missing_processors: list)
     """
     # Read current state within transaction (locked)
     doc_snapshot = doc_ref.get(transaction=transaction)
@@ -243,33 +253,71 @@ def update_completion_atomic(transaction: firestore.Transaction, doc_ref, proces
     # Idempotency check: skip if this processor already registered
     if processor_name in current:
         logger.debug(f"Processor {processor_name} already registered (duplicate Pub/Sub message)")
-        return False
+        return (False, 'duplicate', [])
+
+    # Already triggered - don't trigger again
+    if current.get('_triggered'):
+        return (False, 'already_triggered', [])
 
     # Add this processor's completion data
     current[processor_name] = completion_data
 
-    # Count completed processors (exclude metadata fields starting with _)
-    completed_count = len([k for k in current.keys() if not k.startswith('_')])
+    # Track when first processor completed (for timeout calculation)
+    now = datetime.now(timezone.utc)
+    if '_first_completion_at' not in current:
+        current['_first_completion_at'] = now.isoformat()
 
-    # Check if this completes the phase AND hasn't been triggered yet
-    if completed_count >= EXPECTED_PROCESSOR_COUNT and not current.get('_triggered'):
+    # Count completed processors (exclude metadata fields starting with _)
+    completed_processors = [k for k in current.keys() if not k.startswith('_')]
+    completed_count = len(completed_processors)
+    missing_processors = list(EXPECTED_PROCESSOR_SET - set(completed_processors))
+
+    # Check if this completes the phase
+    if completed_count >= EXPECTED_PROCESSOR_COUNT:
         # Mark as triggered to prevent duplicate triggers
         current['_triggered'] = True
         current['_triggered_at'] = firestore.SERVER_TIMESTAMP
         current['_completed_count'] = completed_count
+        current['_trigger_reason'] = 'all_complete'
 
         # Write atomically
         transaction.set(doc_ref, current)
 
-        return True  # Trigger Phase 5
-    else:
-        # Not yet complete, or already triggered
-        current['_completed_count'] = completed_count
+        return (True, 'all_complete', [])
 
-        # Write atomically
-        transaction.set(doc_ref, current)
+    # Check for timeout - trigger with partial completion
+    first_completion_str = current.get('_first_completion_at')
+    if first_completion_str:
+        first_completion = datetime.fromisoformat(first_completion_str.replace('Z', '+00:00'))
+        wait_seconds = (now - first_completion).total_seconds()
 
-        return False  # Don't trigger
+        if wait_seconds > MAX_WAIT_SECONDS:
+            logger.warning(
+                f"TIMEOUT: Waited {wait_seconds/3600:.1f} hours for Phase 4 completion. "
+                f"Got {completed_count}/{EXPECTED_PROCESSOR_COUNT} processors. "
+                f"Missing: {missing_processors}. Triggering Phase 5 anyway."
+            )
+
+            # Mark as triggered with timeout reason
+            current['_triggered'] = True
+            current['_triggered_at'] = firestore.SERVER_TIMESTAMP
+            current['_completed_count'] = completed_count
+            current['_trigger_reason'] = 'timeout'
+            current['_missing_processors'] = missing_processors
+            current['_wait_seconds'] = wait_seconds
+
+            # Write atomically
+            transaction.set(doc_ref, current)
+
+            return (True, 'timeout', missing_processors)
+
+    # Not yet complete, update state
+    current['_completed_count'] = completed_count
+
+    # Write atomically
+    transaction.set(doc_ref, current)
+
+    return (False, 'waiting', missing_processors)
 
 
 def trigger_phase5(game_date: str, correlation_id: str, upstream_message: Dict) -> Optional[str]:

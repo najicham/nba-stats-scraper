@@ -20,9 +20,11 @@ Architecture:
 """
 
 from flask import Flask, request, jsonify
+from functools import wraps
 import json
 import logging
 import os
+import secrets
 import uuid
 from typing import Dict, List, Optional, TYPE_CHECKING
 from datetime import datetime, date
@@ -64,6 +66,40 @@ PROJECT_ID = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
 PREDICTION_REQUEST_TOPIC = os.environ.get('PREDICTION_REQUEST_TOPIC', 'prediction-request-prod')
 PREDICTION_READY_TOPIC = os.environ.get('PREDICTION_READY_TOPIC', 'prediction-ready-prod')
 BATCH_SUMMARY_TOPIC = os.environ.get('BATCH_SUMMARY_TOPIC', 'prediction-batch-complete')
+
+# API Key authentication (required for /start and /complete endpoints)
+COORDINATOR_API_KEY = os.environ.get('COORDINATOR_API_KEY')
+if not COORDINATOR_API_KEY:
+    logger.warning("COORDINATOR_API_KEY not set - authenticated endpoints will reject all requests")
+
+
+def require_api_key(f):
+    """
+    Decorator to require API key authentication for endpoints.
+
+    Checks X-API-Key header or 'key' query parameter.
+    Also allows GCP service account identity tokens (Bearer auth).
+    """
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        # Allow GCP identity tokens (for Cloud Scheduler and other GCP services)
+        auth_header = request.headers.get('Authorization', '')
+        if auth_header.startswith('Bearer '):
+            # Trust GCP identity tokens (Cloud Run validates these)
+            return f(*args, **kwargs)
+
+        # Check API key
+        if not COORDINATOR_API_KEY:
+            logger.error("COORDINATOR_API_KEY not configured - rejecting request")
+            return jsonify({'error': 'Server misconfigured'}), 500
+
+        provided_key = request.headers.get('X-API-Key') or request.args.get('key')
+        if not provided_key or not secrets.compare_digest(provided_key, COORDINATOR_API_KEY):
+            logger.warning(f"Unauthorized request to {request.path}")
+            return jsonify({'error': 'Unauthorized'}), 401
+
+        return f(*args, **kwargs)
+    return decorated
 
 # Lazy-loaded components (initialized on first request to avoid cold start timeout)
 _player_loader: Optional[PlayerLoader] = None
@@ -151,6 +187,7 @@ def health_check():
 
 
 @app.route('/start', methods=['POST'])
+@require_api_key
 def start_prediction_batch():
     """
     Start a new prediction batch
@@ -294,6 +331,7 @@ def start_prediction_batch():
 
 
 @app.route('/complete', methods=['POST'])
+@require_api_key
 def handle_completion_event():
     """
     Handle prediction-ready events from workers

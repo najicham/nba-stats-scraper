@@ -16,13 +16,19 @@ Version: 1.0
 Created: 2025-11-28
 """
 
+import json
 import logging
 import os
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Set
 from collections import defaultdict
 
+import requests
+
 logger = logging.getLogger(__name__)
+
+# Slack webhook URL for alert delivery
+SLACK_WEBHOOK_URL = os.environ.get('SLACK_WEBHOOK_URL')
 
 
 class AlertManager:
@@ -262,25 +268,100 @@ class AlertManager:
 
     def _send_to_email(self, alert: Dict) -> None:
         """
-        Send alert via email (placeholder).
+        Send alert via email.
+
+        Note: Email sending is not yet implemented. Requires SMTP configuration
+        or integration with SendGrid/AWS SES/GCP Email API.
 
         Args:
             alert: Alert payload
         """
-        # TODO: Implement email sending
-        # Could use SendGrid, AWS SES, or GCP Email API
-        logger.info(f"[EMAIL] {alert['severity'].upper()}: {alert['title']}")
+        # Email sending requires SMTP credentials or API integration
+        # For now, log the alert so it's visible in Cloud Logging
+        logger.warning(
+            f"[EMAIL-NOT-CONFIGURED] {alert['severity'].upper()}: {alert['title']} - "
+            f"Configure email sending via SMTP_* or SENDGRID_API_KEY env vars"
+        )
 
     def _send_to_slack(self, alert: Dict) -> None:
         """
-        Send alert to Slack (placeholder).
+        Send alert to Slack via webhook.
 
         Args:
-            alert: Alert payload
+            alert: Alert payload with severity, title, message, context
         """
-        # TODO: Implement Slack webhook
-        # Use existing Slack integration if available
-        logger.info(f"[SLACK] {alert['severity'].upper()}: {alert['title']}")
+        if not SLACK_WEBHOOK_URL:
+            logger.debug("SLACK_WEBHOOK_URL not configured - skipping Slack alert")
+            return
+
+        # Map severity to emoji and color
+        severity_config = {
+            'critical': {'emoji': ':rotating_light:', 'color': '#FF0000'},
+            'warning': {'emoji': ':warning:', 'color': '#FFA500'},
+            'info': {'emoji': ':information_source:', 'color': '#0000FF'}
+        }
+        config = severity_config.get(alert['severity'], severity_config['info'])
+
+        # Build Slack message payload
+        payload = {
+            'attachments': [{
+                'color': config['color'],
+                'blocks': [
+                    {
+                        'type': 'header',
+                        'text': {
+                            'type': 'plain_text',
+                            'text': f"{config['emoji']} {alert['title']}",
+                            'emoji': True
+                        }
+                    },
+                    {
+                        'type': 'section',
+                        'text': {
+                            'type': 'mrkdwn',
+                            'text': alert.get('message', 'No details provided')
+                        }
+                    }
+                ]
+            }]
+        }
+
+        # Add context fields if present
+        context = alert.get('context', {})
+        if context:
+            fields = []
+            for key, value in list(context.items())[:10]:  # Limit to 10 fields
+                fields.append({
+                    'type': 'mrkdwn',
+                    'text': f"*{key}:* {value}"
+                })
+            if fields:
+                payload['attachments'][0]['blocks'].append({
+                    'type': 'section',
+                    'fields': fields[:10]  # Slack limit
+                })
+
+        # Add timestamp
+        payload['attachments'][0]['blocks'].append({
+            'type': 'context',
+            'elements': [{
+                'type': 'mrkdwn',
+                'text': f"Sent at {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}"
+            }]
+        })
+
+        try:
+            response = requests.post(
+                SLACK_WEBHOOK_URL,
+                json=payload,
+                timeout=10
+            )
+            if response.status_code == 200:
+                logger.info(f"[SLACK] Sent: {alert['title']}")
+            else:
+                logger.warning(f"[SLACK] Failed ({response.status_code}): {response.text[:100]}")
+        except Exception as e:
+            logger.error(f"[SLACK] Error sending alert: {e}")
 
     def _send_to_sentry(self, alert: Dict) -> None:
         """

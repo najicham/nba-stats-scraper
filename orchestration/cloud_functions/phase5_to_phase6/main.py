@@ -43,10 +43,10 @@ import json
 import logging
 import os
 from datetime import datetime, timezone
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 import functions_framework
-from google.cloud import pubsub_v1
+from google.cloud import bigquery, pubsub_v1
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -68,8 +68,12 @@ TONIGHT_EXPORT_TYPES = ['tonight', 'tonight-players', 'predictions', 'best-bets'
 # Don't export if predictions largely failed
 MIN_COMPLETION_PCT = 80.0
 
-# Initialize Pub/Sub publisher (lazy - created on first use)
+# Initialize clients (lazy - created on first use)
 _publisher = None
+_bq_client = None
+
+# Minimum predictions required to proceed with export
+MIN_PREDICTIONS_REQUIRED = 10
 
 
 def get_publisher():
@@ -78,6 +82,55 @@ def get_publisher():
     if _publisher is None:
         _publisher = pubsub_v1.PublisherClient()
     return _publisher
+
+
+def get_bq_client():
+    """Get or create BigQuery client (lazy initialization)."""
+    global _bq_client
+    if _bq_client is None:
+        _bq_client = bigquery.Client(project=PROJECT_ID)
+    return _bq_client
+
+
+def validate_predictions_exist(game_date: str) -> Tuple[bool, int, str]:
+    """
+    Validate that predictions actually exist in BigQuery for the given date.
+
+    This is a critical safety check - don't trigger exports if no data exists.
+
+    Args:
+        game_date: Date string (YYYY-MM-DD)
+
+    Returns:
+        Tuple of (is_valid, prediction_count, message)
+    """
+    query = """
+    SELECT COUNT(*) as prediction_count
+    FROM `{project}.nba_predictions.player_prop_predictions`
+    WHERE game_date = @game_date
+    """.format(project=PROJECT_ID)
+
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter("game_date", "DATE", game_date)
+        ]
+    )
+
+    try:
+        client = get_bq_client()
+        result = client.query(query, job_config=job_config).result(timeout=30)
+        row = next(result, None)
+        count = row.prediction_count if row else 0
+
+        if count < MIN_PREDICTIONS_REQUIRED:
+            return (False, count, f"Only {count} predictions found (need >= {MIN_PREDICTIONS_REQUIRED})")
+
+        return (True, count, f"Found {count} predictions")
+
+    except Exception as e:
+        logger.error(f"Failed to validate predictions for {game_date}: {e}")
+        # On error, allow proceeding but log warning
+        return (True, -1, f"Validation query failed: {e}")
 
 
 @functions_framework.cloud_event
@@ -134,6 +187,16 @@ def orchestrate_phase5_to_phase6(cloud_event):
             f"({completion_pct:.1f}% < {MIN_COMPLETION_PCT}%)"
         )
         return  # Acknowledge message
+
+    # Validate predictions actually exist in BigQuery (safety check)
+    is_valid, actual_count, validation_msg = validate_predictions_exist(game_date)
+    logger.info(f"[{correlation_id}] BigQuery validation: {validation_msg}")
+
+    if not is_valid:
+        logger.warning(
+            f"[{correlation_id}] Skipping Phase 6 trigger - {validation_msg}"
+        )
+        return  # Acknowledge message - no point retrying if data doesn't exist
 
     # Trigger Phase 6 tonight exports
     # This may raise on transient failures - let Pub/Sub retry
