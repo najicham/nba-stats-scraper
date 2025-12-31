@@ -307,6 +307,8 @@ def start_prediction_batch():
         try:
             player_lookups = [r.get('player_lookup') for r in requests if r.get('player_lookup')]
             if player_lookups:
+                # Use print for visibility in Cloud Run (logger.info gets lost in gunicorn)
+                print(f"🚀 Pre-loading historical games for {len(player_lookups)} players (batch optimization)", flush=True)
                 logger.info(f"🚀 Pre-loading historical games for {len(player_lookups)} players (batch optimization)")
 
                 # Import PredictionDataLoader to use batch loading method
@@ -320,6 +322,7 @@ def start_prediction_batch():
                     max_games=30
                 )
 
+                print(f"✅ Batch loaded historical games for {len(batch_historical_games)} players", flush=True)
                 logger.info(f"✅ Batch loaded historical games for {len(batch_historical_games)} players")
         except Exception as e:
             # Non-fatal: workers can fall back to individual queries
