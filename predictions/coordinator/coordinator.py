@@ -312,7 +312,7 @@ def start_prediction_batch():
                 # Import PredictionDataLoader to use batch loading method
                 from data_loaders import PredictionDataLoader
 
-                data_loader = PredictionDataLoader(dataset_prefix=dataset_prefix)
+                data_loader = PredictionDataLoader(project_id=PROJECT_ID, dataset_prefix=dataset_prefix)
                 batch_historical_games = data_loader.load_historical_games_batch(
                     player_lookups=player_lookups,
                     game_date=game_date,
