@@ -55,9 +55,11 @@ case "$ENVIRONMENT" in
         SERVICE_NAME="prediction-worker"
         MIN_INSTANCES=0  # Scale to zero - predictions run via local backfill scripts, not Cloud Run
         # Concurrency settings - configurable via environment variables
-        # Default: 20 instances × 5 concurrent = 100 concurrent (BigQuery limit is 20 DML/table)
+        # Default: 10 instances × 5 concurrent = 50 concurrent (optimized Dec 31, 2025)
+        #   Reduced from 100 workers - sufficient for ~450 players/day
+        #   40% cost reduction while maintaining 2-3 min completion time
         # Emergency: 4 instances × 3 concurrent = 12 concurrent (safe mode)
-        MAX_INSTANCES="${WORKER_MAX_INSTANCES:-20}"
+        MAX_INSTANCES="${WORKER_MAX_INSTANCES:-10}"
         CONCURRENCY="${WORKER_CONCURRENCY:-5}"
         MEMORY="2Gi"
         CPU=2

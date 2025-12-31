@@ -23,6 +23,7 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone
 from dataclasses import dataclass, asdict
 import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from orchestration.parameter_resolver import ParameterResolver
 from shared.utils.bigquery_utils import execute_bigquery, insert_bigquery_rows
@@ -229,6 +230,91 @@ class WorkflowExecutor:
                 'workflows_executed': 0
             }
     
+    def _execute_single_scraper(
+        self,
+        scraper_name: str,
+        context: Dict[str, Any],
+        workflow_name: str
+    ) -> List[ScraperExecution]:
+        """
+        Execute a single scraper (helper for parallel execution).
+
+        Args:
+            scraper_name: Name of scraper to execute
+            context: Workflow context for parameter resolution
+            workflow_name: Name of the workflow
+
+        Returns:
+            List of ScraperExecution results (list because multi-entity scrapers return multiple)
+        """
+        executions = []
+
+        try:
+            logger.info(f"\n🔧 Executing scraper: {scraper_name}")
+
+            # Resolve parameters for this scraper
+            parameters = self.parameter_resolver.resolve_parameters(
+                scraper_name=scraper_name,
+                workflow_context=context
+            )
+
+            # Handle multi-entity scrapers (returns list of parameter sets)
+            if isinstance(parameters, list):
+                if not parameters:
+                    logger.warning(f"   Skipping {scraper_name} - empty parameter list")
+                    return executions
+
+                logger.info(f"   Multi-entity scraper: {len(parameters)} entities")
+
+                # Execute scraper for each parameter set
+                for idx, params in enumerate(parameters, 1):
+                    logger.info(f"   [{idx}/{len(parameters)}] Parameters: {params}")
+
+                    execution = self._call_scraper(
+                        scraper_name=scraper_name,
+                        parameters=params,
+                        workflow_name=workflow_name
+                    )
+
+                    executions.append(execution)
+
+                    if execution.status == 'success':
+                        logger.info(f"      ✅ SUCCESS")
+                    elif execution.status == 'no_data':
+                        logger.info(f"      ⚠️  NO DATA")
+                    else:
+                        logger.error(f"      ❌ FAILED - {execution.error_message}")
+
+            else:
+                # Single parameter set
+                logger.info(f"   Parameters: {parameters}")
+
+                # Call scraper via HTTP
+                execution = self._call_scraper(
+                    scraper_name=scraper_name,
+                    parameters=parameters,
+                    workflow_name=workflow_name
+                )
+
+                executions.append(execution)
+
+                if execution.status == 'success':
+                    logger.info(f"✅ {scraper_name}: SUCCESS")
+                elif execution.status == 'no_data':
+                    logger.info(f"⚠️  {scraper_name}: NO DATA")
+                else:
+                    logger.error(f"❌ {scraper_name}: FAILED - {execution.error_message}")
+
+        except Exception as e:
+            logger.error(f"❌ {scraper_name}: EXCEPTION - {e}", exc_info=True)
+            executions.append(ScraperExecution(
+                scraper_name=scraper_name,
+                status='failed',
+                error_message=str(e)
+            ))
+
+        return executions
+
     def execute_workflow(
         self,
         workflow_name: str,
@@ -256,11 +342,16 @@ class WorkflowExecutor:
         execution_id = str(uuid.uuid4())
         start_time = datetime.now(timezone.utc)
 
+        # Detect if this workflow should run in parallel
+        parallel_workflows = ['morning_operations']
+        use_parallel = workflow_name in parallel_workflows
+
         logger.info(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         logger.info(f"▶️  Executing Workflow: {workflow_name}")
         logger.info(f"   Execution ID: {execution_id}")
         logger.info(f"   Decision ID: {decision_id or 'manual'}")
         logger.info(f"   Scrapers: {len(scrapers)}")
+        logger.info(f"   Execution Mode: {'🚀 PARALLEL' if use_parallel else 'Sequential'}")
         if target_games:
             logger.info(f"   Target Games: {len(target_games)}")
         if target_date:
@@ -275,81 +366,115 @@ class WorkflowExecutor:
             target_games=target_games,
             target_date=target_date
         )
-        
+
         scraper_executions = []
 
-        # Execute each scraper
-        for scraper_name in scrapers:
-            try:
-                logger.info(f"\n🔧 Executing scraper: {scraper_name}")
+        # Execute scrapers (parallel or sequential)
+        if use_parallel:
+            # PARALLEL EXECUTION for morning_operations
+            logger.info(f"🚀 Running {len(scrapers)} scrapers in PARALLEL")
 
-                # Resolve parameters for this scraper
-                parameters = self.parameter_resolver.resolve_parameters(
-                    scraper_name=scraper_name,
-                    workflow_context=context
-                )
+            with ThreadPoolExecutor(max_workers=len(scrapers)) as executor:
+                # Submit all scrapers for parallel execution
+                futures = {
+                    executor.submit(self._execute_single_scraper, scraper_name, context, workflow_name): scraper_name
+                    for scraper_name in scrapers
+                }
 
-                # Handle multi-entity scrapers (returns list of parameter sets)
-                if isinstance(parameters, list):
-                    if not parameters:
-                        logger.warning(f"   Skipping {scraper_name} - empty parameter list")
-                        continue
+                # Collect results as they complete
+                for future in as_completed(futures):
+                    scraper_name = futures[future]
+                    try:
+                        results = future.result(timeout=300)  # 5 min timeout per scraper
+                        scraper_executions.extend(results)
+                    except TimeoutError:
+                        logger.error(f"⏱️ Scraper {scraper_name} timed out after 5 minutes")
+                        scraper_executions.append(ScraperExecution(
+                            scraper_name=scraper_name,
+                            status='failed',
+                            error_message='Timeout after 5 minutes'
+                        ))
+                    except Exception as e:
+                        logger.error(f"❌ Failed to get result from {scraper_name}: {e}")
+                        scraper_executions.append(ScraperExecution(
+                            scraper_name=scraper_name,
+                            status='failed',
+                            error_message=str(e)
+                        ))
 
-                    logger.info(f"   Multi-entity scraper: {len(parameters)} entities")
+        else:
+            # SEQUENTIAL EXECUTION (original behavior)
+            for scraper_name in scrapers:
+                try:
+                    logger.info(f"\n🔧 Executing scraper: {scraper_name}")
 
-                    # Execute scraper for each parameter set
-                    for idx, params in enumerate(parameters, 1):
-                        logger.info(f"   [{idx}/{len(parameters)}] Parameters: {params}")
+                    # Resolve parameters for this scraper
+                    parameters = self.parameter_resolver.resolve_parameters(
+                        scraper_name=scraper_name,
+                        workflow_context=context
+                    )
 
+                    # Handle multi-entity scrapers (returns list of parameter sets)
+                    if isinstance(parameters, list):
+                        if not parameters:
+                            logger.warning(f"   Skipping {scraper_name} - empty parameter list")
+                            continue
+
+                        logger.info(f"   Multi-entity scraper: {len(parameters)} entities")
+
+                        # Execute scraper for each parameter set
+                        for idx, params in enumerate(parameters, 1):
+                            logger.info(f"   [{idx}/{len(parameters)}] Parameters: {params}")
+
+                            execution = self._call_scraper(
+                                scraper_name=scraper_name,
+                                parameters=params,
+                                workflow_name=workflow_name
+                            )
+
+                            scraper_executions.append(execution)
+
+                            if execution.status == 'success':
+                                logger.info(f"      ✅ SUCCESS")
+                            elif execution.status == 'no_data':
+                                logger.info(f"      ⚠️  NO DATA")
+                            else:
+                                logger.error(f"      ❌ FAILED - {execution.error_message}")
+
+                    else:
+                        # Single parameter set
+                        logger.info(f"   Parameters: {parameters}")
+
+                        # Call scraper via HTTP
                         execution = self._call_scraper(
                             scraper_name=scraper_name,
-                            parameters=params,
+                            parameters=parameters,
                             workflow_name=workflow_name
                         )
 
                         scraper_executions.append(execution)
 
                         if execution.status == 'success':
-                            logger.info(f"      ✅ SUCCESS")
+                            logger.info(f"✅ {scraper_name}: SUCCESS")
+
+                            # SPECIAL: Capture event_ids from oddsa_events for downstream scrapers
+                            if scraper_name == 'oddsa_events':
+                                event_ids = self._extract_event_ids_from_execution(execution)
+                                if event_ids:
+                                    context['event_ids'] = event_ids
+                                    logger.info(f"   📋 Captured {len(event_ids)} event_ids for downstream scrapers")
+
                         elif execution.status == 'no_data':
-                            logger.info(f"      ⚠️  NO DATA")
+                            logger.info(f"⚠️  {scraper_name}: NO DATA")
                         else:
-                            logger.error(f"      ❌ FAILED - {execution.error_message}")
+                            logger.error(f"❌ {scraper_name}: FAILED - {execution.error_message}")
 
-                else:
-                    # Single parameter set
-                    logger.info(f"   Parameters: {parameters}")
-
-                    # Call scraper via HTTP
-                    execution = self._call_scraper(
+                except Exception as e:
+                    logger.error(f"❌ {scraper_name}: EXCEPTION - {e}", exc_info=True)
+                    scraper_executions.append(ScraperExecution(
                         scraper_name=scraper_name,
-                        parameters=parameters,
-                        workflow_name=workflow_name
-                    )
-
-                    scraper_executions.append(execution)
-
-                    if execution.status == 'success':
-                        logger.info(f"✅ {scraper_name}: SUCCESS")
-
-                        # SPECIAL: Capture event_ids from oddsa_events for downstream scrapers
-                        if scraper_name == 'oddsa_events':
-                            event_ids = self._extract_event_ids_from_execution(execution)
-                            if event_ids:
-                                context['event_ids'] = event_ids
-                                logger.info(f"   📋 Captured {len(event_ids)} event_ids for downstream scrapers")
-
-                    elif execution.status == 'no_data':
-                        logger.info(f"⚠️  {scraper_name}: NO DATA")
-                    else:
-                        logger.error(f"❌ {scraper_name}: FAILED - {execution.error_message}")
-
-            except Exception as e:
-                logger.error(f"❌ {scraper_name}: EXCEPTION - {e}", exc_info=True)
-                scraper_executions.append(ScraperExecution(
-                    scraper_name=scraper_name,
-                    status='failed',
-                    error_message=str(e)
+                        status='failed',
+                        error_message=str(e)
                 ))
         
         # Calculate statistics

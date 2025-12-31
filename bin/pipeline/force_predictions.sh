@@ -140,7 +140,7 @@ SELECT
   game_date,
   COUNT(*) as predictions,
   COUNT(DISTINCT player_lookup) as players,
-  ROUND(AVG(expected_value), 2) as avg_ev
+  ROUND(AVG(estimated_line_value), 2) as avg_line_value
 FROM ${PREDICTIONS_DATASET}.player_prop_predictions
 WHERE game_date = '$DATE' AND is_active = TRUE
 GROUP BY game_date"
