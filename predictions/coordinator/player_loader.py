@@ -44,19 +44,21 @@ class PlayerLoader:
     prediction request messages for the worker.
     """
     
-    def __init__(self, project_id: str, location: str = 'us-west2'):
+    def __init__(self, project_id: str, location: str = 'us-west2', dataset_prefix: str = ''):
         """
         Initialize player loader
 
         Args:
             project_id: GCP project ID (e.g., 'nba-props-platform')
             location: BigQuery location (default: us-west2)
+            dataset_prefix: Optional dataset prefix for test isolation (e.g., "test")
         """
         self.project_id = project_id
         self.location = location
+        self.dataset_prefix = dataset_prefix
         self.client = bigquery.Client(project=project_id, location=location)
 
-        logger.info(f"Initialized PlayerLoader for project {project_id} (location: {location})")
+        logger.info(f"Initialized PlayerLoader for project {project_id} (location: {location}, dataset_prefix: {dataset_prefix or 'production'})")
     
     # ========================================================================
     # MAIN API
@@ -66,16 +68,18 @@ class PlayerLoader:
         self,
         game_date: date,
         min_minutes: int = 15,
-        use_multiple_lines: bool = False
+        use_multiple_lines: bool = False,
+        dataset_prefix: str = None
     ) -> List[Dict]:
         """
         Create prediction requests for all players with games on given date
-        
+
         Args:
             game_date: Date to get players for
             min_minutes: Minimum projected minutes (default: 15)
             use_multiple_lines: If True, test multiple betting lines (default: False)
-        
+            dataset_prefix: Optional dataset prefix override (defaults to instance prefix)
+
         Returns:
             List of prediction request dicts, one per player
             
@@ -90,15 +94,18 @@ class PlayerLoader:
                 # ... more players
             ]
         """
-        logger.info(f"Creating prediction requests for {game_date} (min_minutes={min_minutes})")
-        
+        # Use provided dataset_prefix or fall back to instance default
+        prefix = dataset_prefix if dataset_prefix is not None else self.dataset_prefix
+
+        logger.info(f"Creating prediction requests for {game_date} (min_minutes={min_minutes}, dataset_prefix={prefix or 'production'})")
+
         # Validate date before querying
         if not validate_game_date(game_date):
             logger.error(f"Invalid game date: {game_date}")
             return []
-        
+
         # Get all players with games on this date
-        players = self._query_players_for_date(game_date, min_minutes)
+        players = self._query_players_for_date(game_date, min_minutes, dataset_prefix=prefix)
         
         if not players:
             logger.warning(f"No players found for {game_date}")
@@ -127,15 +134,16 @@ class PlayerLoader:
 
         return requests
     
-    def get_summary_stats(self, game_date: date) -> Dict:
+    def get_summary_stats(self, game_date: date, dataset_prefix: str = None) -> Dict:
         """
         Get summary statistics for games on given date
-        
+
         Includes breakdown by position for validation
-        
+
         Args:
             game_date: Date to get stats for
-        
+            dataset_prefix: Optional dataset prefix override (defaults to instance prefix)
+
         Returns:
             Dict with summary stats
             
@@ -238,23 +246,28 @@ class PlayerLoader:
     def _query_players_for_date(
         self,
         game_date: date,
-        min_minutes: int
+        min_minutes: int,
+        dataset_prefix: str = ''
     ) -> List[Dict]:
         """
         Query BigQuery for all players with games on given date
-        
+
         Filters out:
         - Players below minimum minutes threshold
         - Inactive players
         - Injured players (OUT or DOUBTFUL status)
-        
+
         Args:
             game_date: Date to query
             min_minutes: Minimum projected minutes
-        
+            dataset_prefix: Optional dataset prefix for test isolation
+
         Returns:
             List of player dicts with game context
         """
+        # Construct dataset name with optional prefix
+        dataset = f"{dataset_prefix}_nba_analytics" if dataset_prefix else "nba_analytics"
+
         # v3.2 CHANGE: Added has_prop_line and current_points_line for all-player predictions
         query = """
         SELECT
@@ -271,13 +284,13 @@ class PlayerLoader:
             player_status as injury_status,
             COALESCE(has_prop_line, FALSE) as has_prop_line,  -- v3.2: Track if player has betting line
             current_points_line  -- v3.2: Pass through actual betting line if available
-        FROM `{project}.nba_analytics.upcoming_player_game_context`
+        FROM `{project}.{dataset}.upcoming_player_game_context`
         WHERE game_date = @game_date
           AND avg_minutes_per_game_last_7 >= @min_minutes
           AND (player_status IS NULL OR player_status NOT IN ('OUT', 'DOUBTFUL'))
           AND is_production_ready = TRUE  -- Only process players with complete upstream data
         ORDER BY avg_minutes_per_game_last_7 DESC
-        """.format(project=self.project_id)
+        """.format(project=self.project_id, dataset=dataset)
         
         job_config = bigquery.QueryJobConfig(
             query_parameters=[

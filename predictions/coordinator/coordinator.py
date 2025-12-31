@@ -207,7 +207,8 @@ def start_prediction_batch():
         "min_minutes": 15,              # minimum projected minutes
         "use_multiple_lines": false,    # test multiple betting lines
         "correlation_id": "abc-123",    # optional - for pipeline tracing
-        "parent_processor": "MLFeatureStore"  # optional
+        "parent_processor": "MLFeatureStore",  # optional
+        "dataset_prefix": "test"        # optional - for test dataset isolation
     }
 
     Returns:
@@ -249,11 +250,13 @@ def start_prediction_batch():
         # Extract correlation tracking (for pipeline tracing Phase 1→5)
         correlation_id = request_data.get('correlation_id') or str(uuid.uuid4())[:8]
         parent_processor = request_data.get('parent_processor')
+        dataset_prefix = request_data.get('dataset_prefix', '')  # Optional test dataset prefix
         current_correlation_id = correlation_id
 
         logger.info(
             f"Starting prediction batch for {game_date} "
-            f"(correlation_id={correlation_id}, parent={parent_processor})"
+            f"(correlation_id={correlation_id}, parent={parent_processor}, "
+            f"dataset_prefix={dataset_prefix or 'production'})"
         )
 
         # Check if batch already running
@@ -278,14 +281,15 @@ def start_prediction_batch():
         current_game_date = game_date
 
         # Get summary stats first
-        summary_stats = get_player_loader().get_summary_stats(game_date)
+        summary_stats = get_player_loader().get_summary_stats(game_date, dataset_prefix=dataset_prefix)
         logger.info(f"Game date summary: {summary_stats}")
 
         # Create prediction requests
         requests = get_player_loader().create_prediction_requests(
             game_date=game_date,
             min_minutes=min_minutes,
-            use_multiple_lines=use_multiple_lines
+            use_multiple_lines=use_multiple_lines,
+            dataset_prefix=dataset_prefix
         )
 
         if not requests:
@@ -305,12 +309,10 @@ def start_prediction_batch():
             if player_lookups:
                 logger.info(f"🚀 Pre-loading historical games for {len(player_lookups)} players (batch optimization)")
 
-                # Import DataLoader to use batch loading method
-                import sys
-                sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../worker'))
-                from data_loaders import DataLoader
+                # Import PredictionDataLoader to use batch loading method
+                from data_loaders import PredictionDataLoader
 
-                data_loader = DataLoader()
+                data_loader = PredictionDataLoader(dataset_prefix=dataset_prefix)
                 batch_historical_games = data_loader.load_historical_games_batch(
                     player_lookups=player_lookups,
                     game_date=game_date,
@@ -342,7 +344,7 @@ def start_prediction_batch():
             logger.warning(f"Failed to log batch start (non-fatal): {e}")
 
         # Publish all requests to Pub/Sub (with batch historical data if available)
-        published_count = publish_prediction_requests(requests, batch_id, batch_historical_games)
+        published_count = publish_prediction_requests(requests, batch_id, batch_historical_games, dataset_prefix)
         
         logger.info(f"Published {published_count}/{len(requests)} prediction requests")
         
@@ -510,7 +512,8 @@ def publish_with_retry(publisher, topic_path: str, message_bytes: bytes,
 def publish_prediction_requests(
     requests: List[Dict],
     batch_id: str,
-    batch_historical_games: Optional[Dict[str, List[Dict]]] = None
+    batch_historical_games: Optional[Dict[str, List[Dict]]] = None,
+    dataset_prefix: str = ''
 ) -> int:
     """
     Publish prediction requests to Pub/Sub
@@ -520,6 +523,7 @@ def publish_prediction_requests(
         batch_id: Batch identifier for tracking
         batch_historical_games: Optional pre-loaded historical games (batch optimization)
                                 Dict mapping player_lookup -> list of historical games
+        dataset_prefix: Optional dataset prefix for test isolation (e.g., "test")
 
     Returns:
         Number of successfully published messages
@@ -537,6 +541,10 @@ def publish_prediction_requests(
             'batch_id': batch_id,
             'timestamp': datetime.now().isoformat()
         }
+
+        # Add dataset_prefix for test isolation if specified
+        if dataset_prefix:
+            message['dataset_prefix'] = dataset_prefix
 
         # BATCH OPTIMIZATION: Include pre-loaded historical games if available
         if batch_historical_games:
