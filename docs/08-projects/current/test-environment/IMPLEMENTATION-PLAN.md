@@ -374,12 +374,57 @@ See [Test Environment Documentation](docs/08-projects/current/test-environment/R
 - [ ] Phase 1.3: Precompute processor prefix support
 - [ ] Phase 1.4: Predictions prefix support
 - [ ] Phase 1.5: Exporters prefix support
-- [ ] Phase 2.1: Dataset setup script
-- [ ] Phase 3.1: Main replay script
-- [ ] Phase 3.2: Local coordinator runner
-- [ ] Phase 4.1: Validation framework
+- [x] Phase 2.1: Dataset setup script (`bin/testing/setup_test_datasets.sh`)
+- [x] Phase 3.1: Main replay script (`bin/testing/replay_pipeline.py`)
+- [ ] Phase 3.2: Local coordinator runner (replaced with HTTP-based approach)
+- [x] Phase 4.1: Validation framework (`bin/testing/validate_replay.py`)
 - [ ] Phase 5.1: End-to-end test
 - [ ] Phase 5.2: Documentation updates
+
+## Implementation Notes (Added 2025-12-31)
+
+### What's Different from Original Plan
+
+The original plan assumed processors could be run via `python -m data_processors.X.run_all`.
+In reality, processors are Flask services invoked via HTTP endpoints:
+
+| Phase | Original Plan | Actual Implementation |
+|-------|--------------|----------------------|
+| Phase 2 | `python -m data_processors.raw.run_all` | Requires GCS file triggers |
+| Phase 3 | `python -m data_processors.analytics.run_all` | `POST /process-date-range` endpoint |
+| Phase 4 | `python -m data_processors.precompute.run_all` | `POST /process-date` endpoint |
+| Phase 5 | Local coordinator | `POST /start` on coordinator service |
+| Phase 6 | Local exporter | `POST /export` on phase6-export service |
+
+### Current Implementation
+
+The replay pipeline (`bin/testing/replay_pipeline.py`) uses HTTP calls to the existing
+Cloud Run services instead of direct Python imports. This approach:
+
+**Pros:**
+- No code changes needed in processors
+- Tests the exact same code paths as production
+- Works immediately without processor modifications
+
+**Cons:**
+- Requires network access to Cloud Run services
+- Can't run completely offline
+- Need to handle auth tokens
+
+### Remaining Work
+
+1. **Dataset Prefix Support** (required for Phase 3+ to work):
+   - Update `data_processors/analytics/main_analytics_service.py` to accept `dataset_prefix` param
+   - Update `data_processors/precompute/main_precompute_service.py` similarly
+   - Update `predictions/coordinator/coordinator.py` similarly
+
+2. **Golden Date Selection**:
+   - Identify a date with complete data (all scrapers ran, all phases completed)
+   - Document expected record counts for that date
+
+3. **Mock Data for Live Scores**:
+   - Create test fixtures in `tests/fixtures/live_scores/`
+   - Update live score processors to optionally read from fixtures
 
 ## Success Criteria
 

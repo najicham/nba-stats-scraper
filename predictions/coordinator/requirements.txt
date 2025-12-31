@@ -9,9 +9,11 @@ gunicorn==21.2.0
 google-cloud-bigquery==3.13.0
 google-cloud-pubsub==2.18.4
 google-cloud-firestore==2.13.1  # For future multi-instance state management
+google-cloud-storage==2.14.0
 
 # Utilities
 python-dateutil==2.8.2
+pandas>=2.0.0
 
 # Testing (optional, for local testing)
 pytest==7.4.3
