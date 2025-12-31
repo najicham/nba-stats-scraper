@@ -140,6 +140,29 @@ class AnalyticsProcessorBase(RunHistoryMixin):
         """Check if running in backfill mode (alerts suppressed)."""
         return self.opts.get('backfill_mode', False)
 
+    def get_prefixed_dataset(self, base_dataset: str) -> str:
+        """
+        Get dataset name with optional prefix for test isolation.
+
+        When running in test mode with dataset_prefix set in opts,
+        returns prefixed dataset name (e.g., 'test_nba_analytics').
+        Otherwise returns the base dataset name unchanged.
+
+        Args:
+            base_dataset: Base dataset name (e.g., 'nba_analytics')
+
+        Returns:
+            Prefixed dataset name if dataset_prefix is set, else base_dataset
+        """
+        prefix = self.opts.get('dataset_prefix', '')
+        if prefix:
+            return f"{prefix}{base_dataset}"
+        return base_dataset
+
+    def get_output_dataset(self) -> str:
+        """Get the output dataset name with any configured prefix."""
+        return self.get_prefixed_dataset(self.dataset_id)
+
     def _sanitize_row_for_json(self, row: Dict) -> Dict:
         """
         Sanitize a row dictionary for JSON serialization to BigQuery.
@@ -1074,7 +1097,7 @@ class AnalyticsProcessorBase(RunHistoryMixin):
         if '.' in self.table_name:
             table_ref = f"{self.project_id}.{self.table_name}"
         else:
-            table_ref = f"{self.project_id}.{self.dataset_id}.{self.table_name}"
+            table_ref = f"{self.project_id}.{self.get_output_dataset()}.{self.table_name}"
 
         query = f"""
         SELECT {', '.join(hash_fields)}
@@ -1250,7 +1273,7 @@ class AnalyticsProcessorBase(RunHistoryMixin):
         source_config = dependencies[source_table]
         date_field = source_config.get('date_field', 'game_date')
 
-        phase3_table = f"{self.project_id}.{self.dataset_id}.{self.table_name}"
+        phase3_table = f"{self.project_id}.{self.get_output_dataset()}.{self.table_name}"
 
         try:
             logger.info(f"Searching for backfill candidates (last {lookback_days} days)...")
@@ -1463,7 +1486,7 @@ class AnalyticsProcessorBase(RunHistoryMixin):
                 logger.warning(f"Failed to send notification: {notify_ex}")
             return
 
-        table_id = f"{self.project_id}.{self.dataset_id}.{self.table_name}"
+        table_id = f"{self.project_id}.{self.get_output_dataset()}.{self.table_name}"
 
         # Handle different data types
         if isinstance(self.transformed_data, list):
@@ -1611,9 +1634,9 @@ class AnalyticsProcessorBase(RunHistoryMixin):
         """Delete existing data using batch DELETE query."""
         if not rows:
             return
-            
-        table_id = f"{self.project_id}.{self.dataset_id}.{self.table_name}"
-        
+
+        table_id = f"{self.project_id}.{self.get_output_dataset()}.{self.table_name}"
+
         # Get date range from opts
         start_date = self.opts.get('start_date')
         end_date = self.opts.get('end_date')

@@ -169,6 +169,7 @@ def process_date():
         backfill_mode = data.get('backfill_mode', False)
         strict_mode = data.get('strict_mode', True)  # Set False to skip defensive checks
         skip_dependency_check = data.get('skip_dependency_check', False)  # Set True for same-day
+        dataset_prefix = data.get('dataset_prefix', '')
 
         if not analysis_date:
             return jsonify({"error": "analysis_date required"}), 400
@@ -219,7 +220,8 @@ def process_date():
                     'triggered_by': 'manual',
                     'backfill_mode': backfill_mode,
                     'strict_mode': strict_mode,
-                    'skip_dependency_check': skip_dependency_check
+                    'skip_dependency_check': skip_dependency_check,
+                    'dataset_prefix': dataset_prefix
                 }
 
                 success = processor.run(opts)
