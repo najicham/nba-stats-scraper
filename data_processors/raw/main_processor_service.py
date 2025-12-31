@@ -1039,8 +1039,9 @@ def extract_opts_from_path(file_path: str) -> dict:
                 try:
                     opts['roster_date'] = part
                     break
-                except:
-                    pass
+                except Exception as e:
+                    logger.warning(f"Failed to set roster_date from path part '{part}': {e}")
+                    # Continue trying other parts
         
         # Extract team abbreviation from team_{abbr} folder
         for part in parts:

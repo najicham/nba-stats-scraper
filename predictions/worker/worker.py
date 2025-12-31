@@ -305,8 +305,12 @@ def handle_prediction_request():
         # Get universal player ID
         try:
             universal_player_id = player_registry.get_universal_id(player_lookup, required=False)
-        except:
-            pass
+        except Exception as e:
+            logger.warning(
+                f"Failed to get universal_player_id for {player_lookup}: {e}",
+                extra={'player_lookup': player_lookup, 'error': str(e)}
+            )
+            # Continue without universal_player_id (not critical for predictions)
 
         # Process player predictions (returns predictions + metadata)
         result = process_player_predictions(
