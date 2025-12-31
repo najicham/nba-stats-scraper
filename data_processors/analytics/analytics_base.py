@@ -1108,7 +1108,7 @@ class AnalyticsProcessorBase(RunHistoryMixin):
         """
 
         try:
-            result = self.bq_client.query(query).result()
+            result = self.bq_client.query(query).result(timeout=300)
             for row in result:
                 # Convert row to dict
                 hashes = {}
@@ -1579,7 +1579,7 @@ class AnalyticsProcessorBase(RunHistoryMixin):
             
             # Wait for completion
             try:
-                load_job.result()
+                load_job.result(timeout=300)
                 logger.info(f"✅ Successfully loaded {len(sanitized_rows)} rows")
                 self.stats["rows_processed"] = len(sanitized_rows)
                 
@@ -1651,7 +1651,7 @@ class AnalyticsProcessorBase(RunHistoryMixin):
             
             try:
                 delete_job = self.bq_client.query(delete_query)
-                delete_job.result()
+                delete_job.result(timeout=300)
                 
                 if delete_job.num_dml_affected_rows is not None:
                     logger.info(f"✅ Deleted {delete_job.num_dml_affected_rows} existing rows")
@@ -1897,7 +1897,7 @@ class AnalyticsProcessorBase(RunHistoryMixin):
                 )
 
                 load_job = self.bq_client.load_table_from_json(batch, table_id, job_config=job_config)
-                load_job.result()
+                load_job.result(timeout=300)
 
                 if load_job.errors:
                     logger.warning(f"BigQuery load had errors: {load_job.errors[:3]}")
@@ -2191,7 +2191,7 @@ class AnalyticsProcessorBase(RunHistoryMixin):
                 )
 
                 load_job = self.bq_client.load_table_from_json(batch, table_id, job_config=job_config)
-                load_job.result()
+                load_job.result(timeout=300)
 
                 if load_job.errors:
                     logger.warning(f"BigQuery load had errors: {load_job.errors[:3]}")

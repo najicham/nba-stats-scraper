@@ -238,8 +238,8 @@ class BatchWriter:
                     job_config=job_config
                 )
 
-                # Wait for completion
-                load_job.result()
+                # Wait for completion (with timeout to prevent infinite hangs)
+                load_job.result(timeout=300)  # 5 minutes max
 
                 return True
 
@@ -328,7 +328,7 @@ class BatchWriter:
         for attempt in range(self.MAX_RETRIES):
             try:
                 merge_job = self.bq_client.query(merge_query)
-                result = merge_job.result()
+                result = merge_job.result(timeout=300)  # 5 minutes max
 
                 # Log merge stats
                 if merge_job.num_dml_affected_rows is not None:
@@ -406,7 +406,7 @@ class BatchWriter:
                     table_id,
                     job_config=job_config
                 )
-                load_job.result()
+                load_job.result(timeout=300)  # 5 minutes max
 
                 results['rows_processed'] += len(batch_rows)
                 results['batches_written'] += 1
@@ -426,7 +426,7 @@ class BatchWriter:
             WHERE game_date = '{game_date}'
             """
             delete_job = self.bq_client.query(delete_query)
-            delete_job.result()
+            delete_job.result(timeout=300)  # 5 minutes max
             return True
         except Exception as e:
             if "streaming buffer" in str(e).lower():

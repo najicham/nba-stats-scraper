@@ -3,7 +3,7 @@
 Session-by-session development and deployment notes for the NBA Props Platform.
 
 **Purpose:** Historical record of development decisions, session accomplishments, and task continuity.
-**Last Updated:** 2025-12-27
+**Last Updated:** 2025-12-31
 
 ---
 
@@ -18,41 +18,55 @@ Session-by-session development and deployment notes for the NBA Props Platform.
 
 ---
 
-## December 2025 (Current)
+## December 2025 (Current - Last 7 Days)
 
-**183 handoff documents** tracking:
-- Pipeline automation completion (all 6 phases)
-- Same-day prediction schedulers
-- Live export and grading systems
-- Frontend API backend implementation
-- Documentation cleanup and organization
+**68 active handoff documents** (Dec 24-31) tracking:
+- Pipeline reliability improvements
+- Phase 4 & Phase 5 deployment fixes
+- Self-healing orchestration design
+- Analytics and precompute processor improvements
+- Security fixes and IAM policy updates
 
-### Recent Sessions (Last Week)
+### Recent Sessions (Last 7 Days)
 
 | Date | Session | Summary |
 |------|---------|---------|
-| 2025-12-27 | 173 | Documentation deep dive, navigation fixes, project archival |
-| 2025-12-26 | 169-172 | Same-day predictions, backfill Dec 21-25, live export |
-| 2025-12-25 | 165-168 | Parameter resolver fix, Christmas pipeline monitoring |
+| 2025-12-31 | Multiple | Pipeline reliability improvements, orchestration fixes |
+| 2025-12-30 | Multiple | Morning pipeline fixes, deployment testing |
+| 2025-12-29 | 183-184 | Game ID format fix, pipeline robustness improvements |
+| 2025-12-28 | 184 | Same-day pipeline fixes, evening handoff |
+| 2025-12-27 | 173 | Documentation deep dive, navigation fixes |
+| 2025-12-26 | 169-172 | Same-day predictions, backfill Dec 21-25 |
+| 2025-12-25 | 165-168 | Parameter resolver fix, Christmas monitoring |
 | 2025-12-24 | 163-164 | Schedule processor fix, deployment verification |
-| 2025-12-23 | 159-162 | Phase 2→3 orchestrator, scraper staleness fixes |
 
-### Key December Handoffs
+### Key Recent Handoffs
 
 | Document | Description |
 |----------|-------------|
-| [2025-12-27-SESSION173-HANDOFF.md](./2025-12-27-SESSION173-HANDOFF.md) | Latest comprehensive handoff |
-| [2025-12-27-SESSION173-DOCS-DEEP-DIVE.md](./2025-12-27-SESSION173-DOCS-DEEP-DIVE.md) | Documentation cleanup summary |
-| [2025-12-26-SESSION171-SAME-DAY-PREDICTIONS.md](./2025-12-26-SESSION171-SAME-DAY-PREDICTIONS.md) | Same-day prediction scheduler fix |
-| [2025-12-02-COMPREHENSIVE-SYSTEM-HANDOFF.md](./2025-12-02-COMPREHENSIVE-SYSTEM-HANDOFF.md) | Full system overview |
+| [2025-12-31-MORNING-SESSION-RESULTS.md](./2025-12-31-MORNING-SESSION-RESULTS.md) | Phase 4 deployment and testing results |
+| [2025-12-31-OVERNIGHT-SESSION-HANDOFF.md](./2025-12-31-OVERNIGHT-SESSION-HANDOFF.md) | Comprehensive overnight session summary |
+| [2025-12-30-NIGHT-SESSION-HANDOFF.md](./2025-12-30-NIGHT-SESSION-HANDOFF.md) | Night session deployment work |
+| [2025-12-29-SESSION184-PIPELINE-ROBUSTNESS.md](./2025-12-29-SESSION184-PIPELINE-ROBUSTNESS.md) | Pipeline robustness improvements |
 
 ---
 
 ## Archives
 
+### December 2025 (Dec 1-23)
+
+**166 handoff documents archived** covering:
+- Phase 6 publishing deployment (15 exporters)
+- Phase 4 & Phase 5 parallelization (5-10x speedup)
+- Comprehensive backfills (all phases)
+- 315K+ predictions generated
+- Smart reprocessing and AI resolution
+
+See: [archive/2025-12/CONSOLIDATED-DECEMBER-SUMMARY.md](./archive/2025-12/CONSOLIDATED-DECEMBER-SUMMARY.md)
+
 ### November 2025 (v1.0 Deployment)
 
-**70 handoff documents archived** covering:
+**76 handoff documents archived** covering:
 - v1.0 event-driven pipeline deployment
 - Bootstrap period implementation
 - Fallback system design
@@ -95,20 +109,34 @@ archive/YYYY-MM/             # Archived by month
 
 | Category | Count |
 |----------|-------|
-| December 2025 handoffs | 183 |
-| November 2025 (archived) | 70 |
-| Total | 253+ |
+| Active handoffs (last 7 days) | 68 |
+| December 2025 (archived Dec 1-23) | 166 |
+| November 2025 (archived) | 76 |
+| Total handoff documents | 310+ |
+| Archived documents | 242 |
 
 ---
 
 ## Maintenance
 
-**Archival Policy:**
-- Handoffs older than 1 month → archive by month
-- Create monthly consolidated summary when archiving
-- Keep standing documents at root
+**Archival Policy (Updated 2025-12-31):**
+- **Active Period:** Handoffs remain in root for 7 days for easy access
+- **Archival:** Handoffs older than 7 days → moved to `archive/YYYY-MM/`
+- **Monthly Summary:** Create consolidated summary when archiving each month's files
+- **Benefits:** Reduced root directory clutter, easier navigation, better organization
 
 **Keep at Root:**
-- Current month's handoffs
-- Standing documents (WELCOME_BACK, NEXT_SESSION, etc.)
+- Last 7 days of handoffs (active development context)
+- Standing documents (WELCOME_BACK, NEXT_SESSION, PHASE4-DEPLOYMENT-ISSUE, REPLAY-AUTH-LIMITATION, etc.)
 - This README
+
+**Archive Structure:**
+```
+archive/
+├── 2025-11/
+│   ├── CONSOLIDATED-NOVEMBER-SUMMARY.md
+│   └── [76 handoff files]
+├── 2025-12/
+│   ├── CONSOLIDATED-DECEMBER-SUMMARY.md
+│   └── [166 handoff files]
+```

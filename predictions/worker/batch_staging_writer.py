@@ -174,7 +174,7 @@ class BatchStagingWriter:
             )
 
             # Wait for the job to complete
-            load_job.result()
+            load_job.result(timeout=300)
 
             elapsed_ms = (time.time() - start_time) * 1000
             logger.info(
@@ -442,7 +442,7 @@ class BatchConsolidator:
             )
 
             merge_job = self.bq_client.query(merge_query)
-            merge_job.result()
+            merge_job.result(timeout=300)
 
             rows_affected = merge_job.num_dml_affected_rows or 0
 
