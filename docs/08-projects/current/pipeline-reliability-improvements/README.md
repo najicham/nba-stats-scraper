@@ -48,7 +48,38 @@ pipeline-reliability-improvements/
 
 ---
 
-## Current Status (Dec 31, 2025 - 3:00 PM ET)
+## Current Status (Dec 31, 2025 - 6:45 PM ET)
+
+### ✅ Completed Dec 31 Evening Session (3 hours) - CRITICAL BUG FIX!
+
+**INCIDENT RESOLVED:**
+- 🚨 **December 30th Gamebook Failure** - All 4 games failed to scrape
+  - Root cause: Deployment script bug (SERVICE_URL misconfiguration)
+  - Impact: Missing gamebook data, degraded predictions
+  - See: `INCIDENT-2025-12-30-GAMEBOOK-FAILURE.md` for full analysis
+
+**DEPLOYED TO PRODUCTION:**
+1. ✅ **Immediate Fix** - SERVICE_URL corrected on orchestrator service
+   - Changed: `https://nba-phase1-scrapers-...` → `https://nba-scrapers-...`
+   - Deployed: Revision `nba-phase1-scrapers-00058-59j`
+   - Status: Orchestrator now correctly calls scraper service
+
+2. ✅ **Deployment Script Fix** - Permanent resolution
+   - File: `bin/scrapers/deploy/deploy_scrapers_simple.sh`
+   - Added: Separate `ORCHESTRATOR_SERVICE` and `SCRAPER_SERVICE` variables
+   - Added: Validation and warning messages
+   - Prevents: Future deployments from shipping this bug
+
+**DATA RECOVERY:**
+- ✅ All 4 gamebook PDF files scraped and saved to GCS
+- ✅ 1/4 games processed into BigQuery (PHI@MEM)
+- ⏳ 3/4 games pending BigQuery processing (awaiting cleanup processor)
+
+**TOTAL VALUE:**
+- 🛡️ **Critical bug fixed** - Prevented future data loss
+- 📋 **Incident documented** - Root cause analysis complete
+- 🔧 **Deployment improved** - Script now validates configuration
+- 📚 **Architecture clarified** - Two-service design documented
 
 ### ✅ Completed Dec 31 PM Session (2.5 hours) - NEW!
 
