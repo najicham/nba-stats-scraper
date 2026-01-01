@@ -46,6 +46,7 @@ COPY predictions/coordinator/progress_tracker.py /app/progress_tracker.py
 COPY predictions/coordinator/run_history.py /app/run_history.py
 COPY predictions/coordinator/coverage_monitor.py /app/coverage_monitor.py
 COPY predictions/coordinator/batch_state_manager.py /app/batch_state_manager.py
+COPY predictions/coordinator/gunicorn_config.py /app/gunicorn_config.py
 
 # Copy batch staging writer (needed for BatchConsolidator)
 COPY predictions/worker/batch_staging_writer.py /app/batch_staging_writer.py
@@ -71,9 +72,7 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8080/health || exit 1
 
 # Run coordinator with Gunicorn
-# - bind :$PORT - Listen on Cloud Run assigned port
-# - workers 1 - Single process (threading locks work within single process)
-# - threads 8 - Handle 8 concurrent completion events
-# - timeout 300 - 5 minute request timeout (batch initiation can be slow)
-# - worker-class sync - Default synchronous workers with threading
-CMD exec gunicorn --bind :$PORT --workers 1 --threads 8 --timeout 300 coordinator:app
+# - config gunicorn_config.py - Use configuration file with proper logging setup
+# - Logging configuration ensures Python logger.info() appears in Cloud Run logs
+# - Configuration includes: workers, threads, timeout, log formatting
+CMD exec gunicorn --config gunicorn_config.py coordinator:app
