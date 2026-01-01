@@ -18,6 +18,7 @@ Path: orchestration/workflow_executor.py
 import logging
 import uuid
 import os
+import time
 import requests
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone
@@ -481,7 +482,19 @@ class WorkflowExecutor:
         duration = (datetime.now(timezone.utc) - start_time).total_seconds()
         succeeded = sum(1 for s in scraper_executions if s.status in ['success', 'no_data'])
         failed = sum(1 for s in scraper_executions if s.status == 'failed')
-        
+
+        # Aggregate error messages from failed scrapers for debugging
+        error_messages = []
+        for s in scraper_executions:
+            if s.status == 'failed' and s.error_message:
+                error_messages.append(f"{s.scraper_name}: {s.error_message}")
+
+        workflow_error_message = None
+        if error_messages:
+            # Combine all errors (truncate if too long for BigQuery STRING limit)
+            combined_errors = " | ".join(error_messages)
+            workflow_error_message = combined_errors[:1000]  # BigQuery STRING field limit
+
         # Determine overall workflow status
         if failed == 0:
             status = 'completed'
@@ -489,7 +502,7 @@ class WorkflowExecutor:
             status = 'completed'  # Partial success
         else:
             status = 'failed'
-        
+
         workflow_execution = WorkflowExecution(
             execution_id=execution_id,
             workflow_name=workflow_name,
@@ -501,7 +514,8 @@ class WorkflowExecutor:
             scrapers_succeeded=succeeded,
             scrapers_failed=failed,
             scraper_executions=scraper_executions,
-            duration_seconds=duration
+            duration_seconds=duration,
+            error_message=workflow_error_message
         )
         
         # Log to BigQuery
@@ -520,102 +534,171 @@ class WorkflowExecutor:
         self,
         scraper_name: str,
         parameters: Dict[str, Any],
-        workflow_name: str
+        workflow_name: str,
+        max_retries: int = 3
     ) -> ScraperExecution:
         """
-        Call a scraper endpoint via HTTP.
-        
+        Call a scraper endpoint via HTTP with automatic retry on transient errors.
+
+        Retries on:
+        - HTTP 429 (rate limit)
+        - HTTP 5xx (server errors)
+        - Timeouts
+        - Connection errors
+
+        Does NOT retry on:
+        - HTTP 4xx (except 429) - client errors
+        - HTTP 200 with no_data - expected response
+
         Args:
             scraper_name: Name of scraper to call
             parameters: Parameters to pass to scraper
             workflow_name: Workflow name for logging
-        
+            max_retries: Maximum retry attempts (default: 3)
+
         Returns:
             ScraperExecution with result
         """
         start_time = datetime.now(timezone.utc)
-        
+
         # Add workflow context to parameters
         parameters['workflow'] = workflow_name
         parameters['source'] = 'CONTROLLER'
         parameters['scraper'] = scraper_name
-        
-        try:
-            # Call scraper service via POST /scrape
-            url = f"{self.SERVICE_URL}/scrape"
-            
-            logger.debug(f"Calling scraper service: POST {url}")
-            logger.debug(f"Payload: {json.dumps(parameters, indent=2)}")
-            
-            response = requests.post(
-                url,
-                json=parameters,
-                timeout=self.SCRAPER_TIMEOUT
-            )
-            
-            duration = (datetime.now(timezone.utc) - start_time).total_seconds()
-            
-            # Parse response
-            if response.status_code == 200:
-                result = response.json()
 
-                # Extract execution info
-                execution_id = result.get('run_id')
+        last_error_msg = None
 
-                # Determine status from response
-                # Scraper returns status in data_summary
-                data_summary = result.get('data_summary', {})
-                record_count = data_summary.get('rowCount', 0)
+        for attempt in range(1, max_retries + 1):
+            try:
+                # Call scraper service via POST /scrape
+                url = f"{self.SERVICE_URL}/scrape"
 
-                if record_count > 0:
-                    status = 'success'
+                if attempt > 1:
+                    logger.info(f"   🔄 Retry attempt {attempt}/{max_retries} for {scraper_name}")
+
+                logger.debug(f"Calling scraper service: POST {url}")
+                logger.debug(f"Payload: {json.dumps(parameters, indent=2)}")
+
+                response = requests.post(
+                    url,
+                    json=parameters,
+                    timeout=self.SCRAPER_TIMEOUT
+                )
+
+                duration = (datetime.now(timezone.utc) - start_time).total_seconds()
+
+                # SUCCESS - Parse response
+                if response.status_code == 200:
+                    result = response.json()
+
+                    # Extract execution info
+                    execution_id = result.get('run_id')
+
+                    # Determine status from response
+                    # Scraper returns status in data_summary
+                    data_summary = result.get('data_summary', {})
+                    record_count = data_summary.get('rowCount', 0)
+
+                    if record_count > 0:
+                        status = 'success'
+                    else:
+                        status = 'no_data'
+
+                    if attempt > 1:
+                        logger.info(f"   ✅ Retry successful after {attempt} attempts")
+
+                    return ScraperExecution(
+                        scraper_name=scraper_name,
+                        status=status,
+                        execution_id=execution_id,
+                        duration_seconds=duration,
+                        record_count=record_count,
+                        data_summary=data_summary  # Store full stats for downstream use
+                    )
+
+                # CLIENT ERROR (4xx except 429) - Don't retry
+                elif 400 <= response.status_code < 500 and response.status_code != 429:
+                    error_msg = f"HTTP {response.status_code}: {response.text[:200]}"
+                    logger.error(f"Client error (not retrying): {error_msg}")
+
+                    return ScraperExecution(
+                        scraper_name=scraper_name,
+                        status='failed',
+                        duration_seconds=duration,
+                        error_message=error_msg
+                    )
+
+                # RETRYABLE ERROR - 429, 5xx
                 else:
-                    status = 'no_data'
+                    error_msg = f"HTTP {response.status_code}: {response.text[:200]}"
+                    last_error_msg = error_msg
+                    logger.warning(f"Retryable error: {error_msg}")
 
-                return ScraperExecution(
-                    scraper_name=scraper_name,
-                    status=status,
-                    execution_id=execution_id,
-                    duration_seconds=duration,
-                    record_count=record_count,
-                    data_summary=data_summary  # Store full stats for downstream use
-                )
-            
-            else:
-                # HTTP error
-                error_msg = f"HTTP {response.status_code}: {response.text[:200]}"
-                logger.error(f"Scraper HTTP error: {error_msg}")
-                
-                return ScraperExecution(
-                    scraper_name=scraper_name,
-                    status='failed',
-                    duration_seconds=duration,
-                    error_message=error_msg
-                )
-        
-        except requests.Timeout:
-            duration = (datetime.now(timezone.utc) - start_time).total_seconds()
-            error_msg = f"Timeout after {self.SCRAPER_TIMEOUT}s"
-            logger.error(f"Scraper timeout: {error_msg}")
-            
-            return ScraperExecution(
-                scraper_name=scraper_name,
-                status='failed',
-                duration_seconds=duration,
-                error_message=error_msg
-            )
-        
-        except Exception as e:
-            duration = (datetime.now(timezone.utc) - start_time).total_seconds()
-            error_msg = str(e)
-            logger.error(f"Scraper call failed: {error_msg}")
-            
-            return ScraperExecution(
-                scraper_name=scraper_name,
-                status='failed',
-                duration_seconds=duration,
-                error_message=error_msg
-            )
+                    if attempt < max_retries:
+                        # Exponential backoff: 2^attempt seconds
+                        wait_time = 2 ** attempt
+                        logger.info(f"   ⏳ Waiting {wait_time}s before retry...")
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        # Max retries exceeded
+                        final_msg = f"{error_msg} (failed after {max_retries} retries)"
+                        logger.error(f"Max retries exceeded: {final_msg}")
+                        return ScraperExecution(
+                            scraper_name=scraper_name,
+                            status='failed',
+                            duration_seconds=duration,
+                            error_message=final_msg
+                        )
+
+            except requests.Timeout:
+                duration = (datetime.now(timezone.utc) - start_time).total_seconds()
+                error_msg = f"Timeout after {self.SCRAPER_TIMEOUT}s"
+                last_error_msg = error_msg
+                logger.warning(f"Timeout: {error_msg}")
+
+                if attempt < max_retries:
+                    wait_time = 2 ** attempt
+                    logger.info(f"   ⏳ Waiting {wait_time}s before retry...")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    final_msg = f"{error_msg} (failed after {max_retries} retries)"
+                    logger.error(f"Max retries exceeded: {final_msg}")
+                    return ScraperExecution(
+                        scraper_name=scraper_name,
+                        status='failed',
+                        duration_seconds=duration,
+                        error_message=final_msg
+                    )
+
+            except Exception as e:
+                duration = (datetime.now(timezone.utc) - start_time).total_seconds()
+                error_msg = str(e)
+                last_error_msg = error_msg
+                logger.warning(f"Exception: {error_msg}")
+
+                if attempt < max_retries:
+                    wait_time = 2 ** attempt
+                    logger.info(f"   ⏳ Waiting {wait_time}s before retry...")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    final_msg = f"{error_msg} (failed after {max_retries} retries)"
+                    logger.error(f"Max retries exceeded: {final_msg}")
+                    return ScraperExecution(
+                        scraper_name=scraper_name,
+                        status='failed',
+                        duration_seconds=duration,
+                        error_message=final_msg
+                    )
+
+        # Should never reach here, but just in case
+        return ScraperExecution(
+            scraper_name=scraper_name,
+            status='failed',
+            error_message=f"Unknown error after {max_retries} retries: {last_error_msg}"
+        )
 
     def _extract_event_ids_from_execution(self, execution: ScraperExecution) -> List[str]:
         """
