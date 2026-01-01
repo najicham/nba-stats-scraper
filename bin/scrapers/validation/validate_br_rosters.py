@@ -292,23 +292,25 @@ class BasketballRefDataValidator:
         print(f"{'='*70}")
         
         file_paths = list(files.values())
-        file_pattern = " ".join(f'"{path}"' for path in file_paths)
-        
+        # SECURITY FIX: Use shlex.quote to prevent command injection
+        import shlex
+        file_pattern_safe = " ".join(shlex.quote(path) for path in file_paths)
+
         teams_analyzed = list(files.keys())
         print(f"\nAnalyzing {len(teams_analyzed)} teams: {', '.join(teams_analyzed)}")
-        
+
         try:
             # 1. Player counts by team
             print(f"\n📊 PLAYER COUNTS BY TEAM:")
             print("   Format: (team_abbrev, playerCount)")
-            subprocess.run(f"jq -r '.team_abbrev + \": \" + (.playerCount | tostring)' {file_pattern}", 
+            subprocess.run(f"jq -r '.team_abbrev + \": \" + (.playerCount | tostring)' {file_pattern_safe}",
                           shell=True, check=False)
             
             # 2. UNICODE CORRUPTION CHECK (NEW!)
             print(f"\n🔍 UNICODE CORRUPTION CHECK:")
             print("   (Should be EMPTY - looking for corrupted characters like Ä, Ã)")
             result = subprocess.run(
-                f"jq '.players[] | select(.full_name | test(\"Ä|Ã|Ü|Ö\")) | {{name: .full_name, ascii: .full_name_ascii, team: parent.team_abbrev}}' {file_pattern}",
+                f"jq '.players[] | select(.full_name | test(\"Ä|Ã|Ü|Ö\")) | {{name: .full_name, ascii: .full_name_ascii, team: parent.team_abbrev}}' {file_pattern_safe}",
                 shell=True, check=False, capture_output=True, text=True
             )
             if result.stdout.strip():
@@ -321,7 +323,7 @@ class BasketballRefDataValidator:
             print(f"\n🌍 UNICODE EXAMPLES:")
             print("   (International players showing proper UTF-8 → ASCII conversion)")
             result = subprocess.run(
-                f"jq '.players[] | select(.full_name != .full_name_ascii) | \"   \" + .full_name + \" → \" + .full_name_ascii' {file_pattern} | head -10",
+                f"jq '.players[] | select(.full_name != .full_name_ascii) | \"   \" + .full_name + \" → \" + .full_name_ascii' {file_pattern_safe} | head -10",
                 shell=True, check=False, capture_output=True, text=True
             )
             if result.stdout.strip():
@@ -329,23 +331,23 @@ class BasketballRefDataValidator:
             else:
                 print("   ℹ️  No international players found in analyzed teams")
             
-            # 4. Suffix examples  
+            # 4. Suffix examples
             print(f"\n🏷️  SUFFIX EXAMPLES:")
             print("   (Players with suffixes - should show proper last_name extraction)")
             result = subprocess.run(
-                f"jq '.players[] | select(.suffix != \"\") | {{name: .full_name, last_name: .last_name, suffix: .suffix}}' {file_pattern}", 
+                f"jq '.players[] | select(.suffix != \"\") | {{name: .full_name, last_name: .last_name, suffix: .suffix}}' {file_pattern_safe}",
                 shell=True, check=False, capture_output=True, text=True
             )
             if result.stdout.strip():
                 print(result.stdout)
             else:
                 print("   ✅ No players with suffixes found in analyzed teams")
-            
+
             # 5. Last name validation (should be empty)
             print(f"\n✅ LAST NAME VALIDATION CHECK:")
             print("   (Should be EMPTY - no suffixes should appear in last names)")
             result = subprocess.run(
-                f"jq '.players[] | select(.last_name | test(\"Jr|Sr|II|III|IV\")) | {{name: .full_name, last_name: .last_name, team: parent.team_abbrev}}' {file_pattern}", 
+                f"jq '.players[] | select(.last_name | test(\"Jr|Sr|II|III|IV\")) | {{name: .full_name, last_name: .last_name, team: parent.team_abbrev}}' {file_pattern_safe}",
                 shell=True, check=False, capture_output=True, text=True
             )
             if result.stdout.strip():
@@ -356,7 +358,7 @@ class BasketballRefDataValidator:
             
             # 6. Normalization samples
             if file_paths:
-                sample_file = f'"{file_paths[0]}"'
+                sample_file = shlex.quote(file_paths[0])
                 sample_team = list(files.keys())[0]
                 print(f"\n🔤 NORMALIZATION SAMPLES ({sample_team}):")
                 print("   (First 3 players - should be lowercase, no suffixes)")
@@ -365,19 +367,20 @@ class BasketballRefDataValidator:
             # 7. Position distribution across all teams
             print(f"\n🏀 POSITION DISTRIBUTION:")
             print("   (Should see standard NBA positions: PG, SG, SF, PF, C)")
-            subprocess.run(f"jq -r '.players[].position' {file_pattern} | sort | uniq -c | sort -nr", shell=True, check=False)
+            subprocess.run(f"jq -r '.players[].position' {file_pattern_safe} | sort | uniq -c | sort -nr", shell=True, check=False)
             
             # 8. Sample players from each team
             print(f"\n👥 SAMPLE PLAYERS BY TEAM:")
             for team, file_path in files.items():
                 print(f"\n   📋 {team} (first 2 players):")
-                subprocess.run(f"jq -r '.players[0:2] | .[] | \"    #\" + (.jersey_number | tostring) + \" \" + .full_name + \" (\" + .last_name + \") - \" + .position' \"{file_path}\"", shell=True, check=False)
+                file_path_safe = shlex.quote(file_path)
+                subprocess.run(f"jq -r '.players[0:2] | .[] | \"    #\" + (.jersey_number | tostring) + \" \" + .full_name + \" (\" + .last_name + \") - \" + .position' {file_path_safe}", shell=True, check=False)
             
             # 9. Data completeness check
             print(f"\n📋 DATA COMPLETENESS:")
             print("   (Checking for missing required fields)")
             result = subprocess.run(
-                f"jq '.players[] | select(.full_name == \"\" or .last_name == \"\" or .normalized == \"\") | {{team: parent.team_abbrev, name: .full_name, issue: \"missing_required_field\"}}' {file_pattern}",
+                f"jq '.players[] | select(.full_name == \"\" or .last_name == \"\" or .normalized == \"\") | {{team: parent.team_abbrev, name: .full_name, issue: \"missing_required_field\"}}' {file_pattern_safe}",
                 shell=True, check=False, capture_output=True, text=True
             )
             if result.stdout.strip():
