@@ -462,6 +462,7 @@ def handle_completion_event():
                 player_lookup=player_lookup,
                 predictions_count=predictions_count
             )
+            print(f"✅ Recorded: {player_lookup} → batch_complete={batch_complete}", flush=True)
 
             # BACKWARD COMPATIBILITY: Also update in-memory tracker if it exists
             if current_tracker and current_batch_id == batch_id:
@@ -469,16 +470,20 @@ def handle_completion_event():
 
             # If batch is now complete, publish summary and trigger consolidation
             if batch_complete:
+                print(f"🎉 Batch {batch_id} complete! Triggering consolidation...", flush=True)
                 logger.info(f"🎉 Batch {batch_id} complete! Triggering consolidation...")
                 publish_batch_summary_from_firestore(batch_id)
+                print(f"✅ Consolidation triggered for batch {batch_id}", flush=True)
         except Exception as e:
+            print(f"❌ ERROR in completion handler: {e}", flush=True)
             logger.error(f"Error recording completion to Firestore: {e}", exc_info=True)
             # Don't fail the request - worker already succeeded
             # Return 204 so Pub/Sub doesn't retry
 
         return ('', 204)  # Success
-        
+
     except Exception as e:
+        print(f"❌ FATAL ERROR processing completion: {e}", flush=True)
         logger.error(f"Error processing completion event: {e}", exc_info=True)
         return ('Internal Server Error', 500)
 
@@ -730,18 +735,25 @@ def publish_batch_summary_from_firestore(batch_id: str):
     Args:
         batch_id: Batch identifier
     """
+    print(f"🚀 Starting publish_batch_summary_from_firestore for {batch_id}", flush=True)
     try:
         # Get batch state from Firestore
         state_manager = get_state_manager()
         batch_state = state_manager.get_batch_state(batch_id)
 
         if not batch_state:
+            print(f"❌ Batch state not found: {batch_id}", flush=True)
             logger.error(f"Cannot publish summary - batch state not found: {batch_id}")
             return
 
         # Extract game_date and build summary
         game_date = batch_state.game_date
 
+        print(
+            f"📊 Publishing batch summary: {batch_id} "
+            f"({len(batch_state.completed_players)}/{batch_state.expected_players} players, "
+            f"game_date={game_date})", flush=True
+        )
         logger.info(
             f"Publishing batch summary from Firestore: {batch_id} "
             f"({len(batch_state.completed_players)}/{batch_state.expected_players} players)"
@@ -749,6 +761,7 @@ def publish_batch_summary_from_firestore(batch_id: str):
 
         # Step 1: Consolidate staging tables into main predictions table
         try:
+            print(f"🔄 Starting consolidation for batch {batch_id}, game_date={game_date}", flush=True)
             consolidator = get_batch_consolidator()
             consolidation_result = consolidator.consolidate_batch(
                 batch_id=batch_id,
@@ -757,17 +770,25 @@ def publish_batch_summary_from_firestore(batch_id: str):
             )
 
             if consolidation_result.success:
+                print(
+                    f"✅ Consolidation SUCCESS: {consolidation_result.rows_affected} rows merged "
+                    f"from {consolidation_result.staging_tables_merged} staging tables, "
+                    f"cleaned={consolidation_result.staging_tables_cleaned}", flush=True
+                )
                 logger.info(
                     f"✅ Consolidation complete: {consolidation_result.rows_affected} rows merged "
                     f"from {consolidation_result.staging_tables_merged} staging tables"
                 )
             else:
+                print(f"❌ Consolidation FAILED: {consolidation_result.error_message}", flush=True)
                 logger.error(f"❌ Consolidation failed: {consolidation_result.error_message}")
         except Exception as e:
+            print(f"❌ Consolidation EXCEPTION: {e}", flush=True)
             logger.error(f"Consolidation failed: {e}", exc_info=True)
 
         # Step 2: Publish Phase 5 completion event to trigger Phase 6
         try:
+            print(f"📡 Publishing Phase 5 completion to Pub/Sub...", flush=True)
             # Calculate duration if timestamps are available
             duration_seconds = None
             if batch_state.start_time and batch_state.completion_time:
@@ -796,13 +817,17 @@ def publish_batch_summary_from_firestore(batch_id: str):
                     'completion_percentage': batch_state.get_completion_percentage()
                 }
             )
+            print(f"✅ Phase 5 completion published for batch: {batch_id}", flush=True)
             logger.info(f"Published Phase 5 completion for batch: {batch_id}")
         except Exception as e:
+            print(f"❌ Failed to publish Phase 5 completion: {e}", flush=True)
             logger.error(f"Failed to publish completion message: {e}", exc_info=True)
 
+        print(f"✅ Batch summary published successfully: {batch_id}", flush=True)
         logger.info(f"✅ Batch summary published successfully: {batch_id}")
 
     except Exception as e:
+        print(f"❌ ERROR publishing batch summary from Firestore: {e}", flush=True)
         logger.error(f"Error publishing batch summary from Firestore: {e}", exc_info=True)
 
 
