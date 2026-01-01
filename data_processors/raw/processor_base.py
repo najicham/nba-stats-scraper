@@ -186,6 +186,9 @@ class ProcessorBase(RunHistoryMixin):
             save_seconds = self.get_elapsed_seconds("save")
             self.stats["save_time"] = save_seconds
 
+            # LAYER 5: Validate save result (catch 0-row bugs immediately)
+            self._validate_and_log_save_result()
+
             # Publish Phase 2 completion event (triggers Phase 3)
             self._publish_completion_event()
 
@@ -456,7 +459,190 @@ class ProcessorBase(RunHistoryMixin):
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
             raise ValueError("No data loaded")
-    
+
+    def _validate_and_log_save_result(self) -> None:
+        """
+        LAYER 5: Validate processor output to catch silent failures.
+
+        Detects suspicious patterns like:
+        - Expected data but got 0 rows (gamebook bug scenario)
+        - Partial writes (some rows failed silently)
+        - Stats mismatch (processor returned different count than self.stats)
+
+        Logs all results to monitoring table and sends alerts for critical issues.
+        """
+        try:
+            # Get actual rows inserted from stats
+            actual_rows = self.stats.get('rows_inserted', 0)
+
+            # Estimate expected rows based on input data
+            expected_rows = self._estimate_expected_rows()
+
+            # Validate result
+            validation_result = {
+                'processor_name': self.__class__.__name__,
+                'file_path': self.opts.get('file_path', ''),
+                'game_date': str(self.opts.get('game_date', '')),
+                'expected_rows': expected_rows,
+                'actual_rows': actual_rows,
+                'is_valid': True,
+                'severity': 'OK',
+                'issue_type': None,
+                'reason': None,
+            }
+
+            # CASE 1: Zero rows when we expected data
+            if actual_rows == 0 and expected_rows > 0:
+                reason = self._diagnose_zero_rows()
+                is_acceptable = self._is_acceptable_zero_rows(reason)
+
+                validation_result.update({
+                    'is_valid': is_acceptable,
+                    'severity': 'INFO' if is_acceptable else 'CRITICAL',
+                    'issue_type': 'zero_rows',
+                    'reason': reason
+                })
+
+                # Alert if unexpected
+                if not is_acceptable:
+                    self._send_zero_row_alert(validation_result)
+
+            # CASE 2: Partial write (significant data loss)
+            elif 0 < actual_rows < expected_rows * 0.9:  # >10% loss
+                validation_result.update({
+                    'is_valid': False,
+                    'severity': 'WARNING',
+                    'issue_type': 'partial_write',
+                    'reason': f'{((expected_rows - actual_rows) / expected_rows * 100):.1f}% of data lost'
+                })
+
+                notify_warning(
+                    title=f"{self.__class__.__name__}: Partial Data Loss",
+                    message=f"Expected {expected_rows} rows but only saved {actual_rows}",
+                    details=validation_result
+                )
+
+            # Log all validations to monitoring table (for trending)
+            self._log_processor_metrics(validation_result)
+
+        except Exception as e:
+            # Don't fail processor if validation fails
+            logger.warning(f"Output validation failed: {e}")
+
+    def _estimate_expected_rows(self) -> int:
+        """Estimate expected output rows based on input data."""
+        # If we have transformed data, that's our expectation
+        if hasattr(self, 'transformed_data'):
+            if isinstance(self.transformed_data, list):
+                return len(self.transformed_data)
+            elif isinstance(self.transformed_data, dict):
+                return 1
+
+        # Fallback: check raw_data size as rough estimate
+        if hasattr(self, 'raw_data'):
+            if isinstance(self.raw_data, list):
+                return len(self.raw_data)
+            elif isinstance(self.raw_data, dict):
+                # Check for common patterns
+                if 'stats' in self.raw_data:
+                    return len(self.raw_data.get('stats', []))
+                if 'players' in self.raw_data:
+                    return len(self.raw_data.get('players', []))
+                return 1
+
+        return 0
+
+    def _diagnose_zero_rows(self) -> str:
+        """Diagnose why 0 rows were saved."""
+        reasons = []
+
+        # Check if data was loaded
+        if not hasattr(self, 'raw_data') or not self.raw_data:
+            reasons.append("No raw data loaded")
+
+        # Check if transform produced output
+        if not hasattr(self, 'transformed_data') or not self.transformed_data:
+            reasons.append("Transform produced empty dataset")
+        elif len(self.transformed_data) == 0:
+            reasons.append("Transformed data is empty array")
+
+        # Check for idempotency/deduplication
+        if hasattr(self, 'idempotency_stats'):
+            skipped = self.idempotency_stats.get('rows_skipped', 0)
+            if skipped > 0:
+                reasons.append(f"Smart idempotency: {skipped} duplicates skipped")
+
+        # Check run history
+        if self.stats.get('rows_skipped_by_run_history'):
+            reasons.append("Skipped by run history (already processed)")
+
+        return " | ".join(reasons) if reasons else "Unknown - needs investigation"
+
+    def _is_acceptable_zero_rows(self, reason: str) -> bool:
+        """Determine if 0-row result is expected/acceptable."""
+        acceptable_patterns = [
+            "Smart idempotency",
+            "duplicates skipped",
+            "Preseason",
+            "All-Star",
+            "No games scheduled",
+            "Already processed",
+            "Off season"
+        ]
+        return any(pattern.lower() in reason.lower() for pattern in acceptable_patterns)
+
+    def _send_zero_row_alert(self, validation_result: dict) -> None:
+        """Send immediate alert for unexpected 0-row result."""
+        try:
+            notify_warning(
+                title=f"⚠️ {self.__class__.__name__}: Zero Rows Saved",
+                message=f"Expected {validation_result['expected_rows']} rows but saved 0",
+                details={
+                    'processor': validation_result['processor_name'],
+                    'reason': validation_result['reason'],
+                    'file_path': validation_result['file_path'],
+                    'game_date': validation_result['game_date'],
+                    'severity': validation_result['severity'],
+                    'run_id': getattr(self, 'run_id', None),
+                    'detection_layer': 'Layer 5: Processor Output Validation',
+                    'detection_time': datetime.now(timezone.utc).isoformat()
+                }
+            )
+        except Exception as e:
+            logger.warning(f"Failed to send zero-row alert: {e}")
+
+    def _log_processor_metrics(self, validation_result: dict) -> None:
+        """Log processor output validation to monitoring table."""
+        try:
+            # Only log if we have project_id
+            if not hasattr(self, 'project_id') or not self.project_id:
+                return
+
+            table_id = f"{self.project_id}.nba_orchestration.processor_output_validation"
+
+            row = {
+                'timestamp': datetime.now(timezone.utc).isoformat(),
+                'processor_name': validation_result['processor_name'],
+                'file_path': validation_result['file_path'],
+                'game_date': validation_result['game_date'] or None,
+                'expected_rows': validation_result['expected_rows'],
+                'actual_rows': validation_result['actual_rows'],
+                'issue_type': validation_result['issue_type'],
+                'severity': validation_result['severity'],
+                'reason': validation_result['reason'],
+                'is_acceptable': validation_result['is_valid'],
+                'run_id': getattr(self, 'run_id', None)
+            }
+
+            # Insert to monitoring table (non-blocking)
+            errors = self.bq_client.insert_rows_json(table_id, [row])
+            if errors:
+                logger.warning(f"Failed to log processor metrics: {errors}")
+
+        except Exception as e:
+            # Don't fail processor if logging fails
+            logger.debug(f"Could not log processor metrics: {e}")
+
     def save_data(self) -> None:
         """
         Save self.transformed_data to BigQuery using batch loading (not streaming).
