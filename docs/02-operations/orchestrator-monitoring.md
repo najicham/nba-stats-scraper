@@ -1,15 +1,41 @@
 # Orchestrator Monitoring Guide
 
-**Purpose:** Monitor and troubleshoot Phase 2→3 and Phase 3→4 orchestrators
+**Purpose:** Monitor and troubleshoot all orchestrators (Phase 1, Phase 2→3, Phase 3→4)
 **Audience:** Operations, DevOps, On-call
 **Created:** 2025-11-29 16:54 PST
-**Last Updated:** 2025-12-23
+**Last Updated:** 2025-12-31
 
-> **Note (Dec 2025):** Phase 2→3 orchestrator is now **monitoring-only** (v2.0). It tracks completions in Firestore but does NOT trigger Phase 3. Phase 3 is triggered directly via `nba-phase3-analytics-sub` subscription.
+> **CRITICAL (Dec 2025):** Phase 1 orchestrator (`nba-phase1-scrapers`) is the primary orchestrator. It schedules and executes workflows via HTTP calls to the scraper service. See Phase 1 section below for monitoring.
+
+> **Note:** Phase 2→3 orchestrator is now **monitoring-only** (v2.0). It tracks completions in Firestore but does NOT trigger Phase 3. Phase 3 is triggered directly via `nba-phase3-analytics-sub` subscription.
 
 ---
 
 ## Quick Reference
+
+### Phase 1 Orchestrator (Primary - Cloud Run)
+
+**Service:** `nba-phase1-scrapers`
+
+```bash
+# Check service status
+gcloud run services describe nba-phase1-scrapers --region=us-west2 --format="value(status.conditions[0].status)"
+
+# Check health endpoint
+curl -s "https://nba-phase1-scrapers-f7p3g7f6ya-wl.a.run.app/health" | jq '.'
+
+# View recent workflow executions
+gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="nba-phase1-scrapers" AND textPayload:"Executing Workflow"' \
+  --limit=10 --format="table(timestamp,textPayload)" --freshness=6h
+
+# Check for orchestrator errors
+gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="nba-phase1-scrapers" AND severity>=ERROR' \
+  --limit=20 --freshness=6h
+```
+
+**Expected:** Status=`True`, Health=`"status": "healthy"`, No HTTP 403 errors
+
+---
 
 ### Check Orchestrator Status
 
@@ -423,6 +449,187 @@ gcloud functions deploy phase2-to-phase3-orchestrator \
 
 ---
 
+## Phase 1 Orchestrator Troubleshooting
+
+### Architecture Overview
+
+Phase 1 uses a **two-service architecture**:
+
+1. **`nba-phase1-scrapers`** (Orchestrator Service)
+   - URL: `https://nba-phase1-scrapers-f7p3g7f6ya-wl.a.run.app`
+   - Contains: Workflow executor, schedulers, master controller
+   - Role: Schedules and executes workflows via HTTP calls
+
+2. **`nba-scrapers`** (Scraper Service)
+   - URL: `https://nba-scrapers-f7p3g7f6ya-wl.a.run.app`
+   - Contains: Actual scraper implementations
+   - Role: Executes individual scrapers when called
+
+**Critical Configuration:** The orchestrator MUST have `SERVICE_URL` env var pointing to the scraper service URL.
+
+### Verify Orchestrator Configuration
+
+```bash
+# 1. Check SERVICE_URL configuration
+gcloud run services describe nba-phase1-scrapers --region=us-west2 --format="yaml" | grep -E "SERVICE_URL" -A 1
+
+# Expected output:
+# - name: SERVICE_URL
+#   value: https://nba-scrapers-f7p3g7f6ya-wl.a.run.app
+
+# 2. Verify orchestrator can reach scraper service
+curl -s "https://nba-scrapers-f7p3g7f6ya-wl.a.run.app/health" | jq '.status'
+
+# Expected: "healthy"
+```
+
+### Issue: Orchestrator → Scraper Communication Failures
+
+**Symptoms:**
+- HTTP 403 errors in orchestrator logs
+- Gamebooks not being scraped
+- Workflows executing but scrapers not running
+- Log message: `Scraper HTTP error: HTTP 403`
+
+**Diagnosis:**
+```bash
+# 1. Check for HTTP 403 errors
+gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="nba-phase1-scrapers" AND textPayload:"403"' \
+  --limit=10 --format="table(timestamp,textPayload)" --freshness=6h
+
+# 2. Check SERVICE_URL value
+gcloud run services describe nba-phase1-scrapers --region=us-west2 --format="value(spec.template.spec.containers[0].env[?(@.name=='SERVICE_URL')].value)"
+
+# 3. Verify scraper service is accessible
+curl -s -X POST "https://nba-scrapers-f7p3g7f6ya-wl.a.run.app/scrape" \
+  -H "Content-Type: application/json" \
+  -d '{"scraper": "nbac_schedule", "parameters": {}}' | jq '.status'
+```
+
+**Root Causes:**
+1. **SERVICE_URL misconfigured** - Pointing to wrong service (or itself)
+2. **Scraper service down** - nba-scrapers service not responding
+3. **Network issues** - Cloud Run networking problems
+4. **Deployment script bug** - SERVICE_URL set incorrectly during deployment
+
+**Resolution:**
+
+```bash
+# Fix 1: Update SERVICE_URL to correct scraper service
+gcloud run services update nba-phase1-scrapers \
+    --region=us-west2 \
+    --set-env-vars="SERVICE_URL=https://nba-scrapers-f7p3g7f6ya-wl.a.run.app"
+
+# Fix 2: Verify deployment script is correct
+# Check bin/scrapers/deploy/deploy_scrapers_simple.sh
+# Ensure SCRAPER_SERVICE and ORCHESTRATOR_SERVICE are separate
+
+# Fix 3: Redeploy if needed
+./bin/scrapers/deploy/deploy_scrapers_simple.sh
+```
+
+**See Also:** `docs/08-projects/current/pipeline-reliability-improvements/INCIDENT-2025-12-30-GAMEBOOK-FAILURE.md`
+
+### Issue: Workflows Not Executing
+
+**Symptoms:**
+- Cloud Scheduler triggering successfully
+- No workflow execution logs in orchestrator
+- Schedulers show "SUCCESS" but nothing happens
+
+**Diagnosis:**
+```bash
+# 1. Check if scheduler is triggering orchestrator
+gcloud scheduler jobs describe same-day-phase3 --location=us-west2 --format="value(httpTarget.uri)"
+
+# Should be: https://nba-phase1-scrapers-f7p3g7f6ya-wl.a.run.app/execute-workflows
+
+# 2. Check orchestrator logs for scheduler triggers
+gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="nba-phase1-scrapers" AND httpRequest.requestUrl="/execute-workflows"' \
+  --limit=10 --format="table(timestamp,httpRequest.status)" --freshness=6h
+
+# 3. Check for workflow execution start logs
+gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="nba-phase1-scrapers" AND textPayload:"Executing Workflow"' \
+  --limit=10 --freshness=6h
+```
+
+**Resolution:**
+1. Verify scheduler URL points to orchestrator service
+2. Check orchestrator service authentication (should allow invoker)
+3. Check orchestrator /execute-workflows endpoint
+
+### Issue: Gamebook Scraping Failures
+
+**Symptoms:**
+- Games finish but no gamebook files in GCS
+- Missing gamebook data in BigQuery
+- CRITICAL alert: "Boxscore Data Gaps"
+
+**Diagnosis:**
+```bash
+# 1. Check if post_game_window_3 workflow ran
+gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="nba-phase1-scrapers" AND textPayload:"post_game_window_3"' \
+  --limit=5 --format="table(timestamp,textPayload)" --freshness=24h
+
+# 2. Check gamebook scraper execution logs
+gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="nba-phase1-scrapers" AND textPayload:"nbac_gamebook_pdf"' \
+  --limit=10 --format="table(timestamp,textPayload)" --freshness=24h
+
+# 3. Check for scraper errors
+gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="nba-scrapers" AND textPayload:"nbac_gamebook_pdf" AND severity>=ERROR' \
+  --limit=10 --freshness=24h
+
+# 4. Verify files in GCS
+DATE=$(date -d yesterday +%Y-%m-%d)
+gsutil ls "gs://nba-scraped-data/nba-com/gamebooks-data/$DATE/"
+```
+
+**Resolution:**
+
+```bash
+# If workflow didn't run: trigger manually
+curl -X POST "https://nba-phase1-scrapers-f7p3g7f6ya-wl.a.run.app/execute-workflows" \
+  -H "Content-Type: application/json" \
+  -d '{"workflow": "post_game_window_3"}'
+
+# If workflow ran but scrapers failed: check SERVICE_URL (see above)
+
+# If scraper failed but orchestrator called correctly: manual backfill
+DATE=$(date -d yesterday +%Y-%m-%d)
+curl -s -X POST "https://nba-scrapers-f7p3g7f6ya-wl.a.run.app/scrape" \
+  -H "Content-Type: application/json" \
+  -d '{"scraper": "nbac_gamebook_pdf", "game_code": "'$DATE'/PHIMEM"}'
+```
+
+### Verification After Fixes
+
+Use these commands to verify orchestrator is working correctly:
+
+```bash
+# 1. Recent workflow executions (should show multiple workflows)
+gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="nba-phase1-scrapers" AND textPayload:"Executing Workflow"' \
+  --limit=10 --format="table(timestamp,textPayload)" --freshness=6h
+
+# 2. Successful scraper calls (should show HTTP 200, no 403s)
+gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="nba-phase1-scrapers" AND textPayload:"SUCCESS"' \
+  --limit=20 --freshness=6h
+
+# 3. No orchestrator communication errors
+gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="nba-phase1-scrapers" AND textPayload:"Scraper HTTP error"' \
+  --limit=10 --freshness=6h
+
+# Expected: No results, or only HTTP 500 errors (scraper logic failures, not infra)
+
+# 4. Check gamebook data freshness
+bq query --use_legacy_sql=false "
+SELECT MAX(game_date) as latest_gamebook_date
+FROM nba_raw.nbac_gamebook_player_stats"
+
+# Expected: Yesterday's date (or today if games finished and processed)
+```
+
+---
+
 ## Related Documentation
 
 - [Orchestrators Architecture](../01-architecture/orchestration/orchestrators.md) - How orchestrators work
@@ -432,7 +639,9 @@ gcloud functions deploy phase2-to-phase3-orchestrator \
 
 ---
 
-**Document Version:** 2.0
+**Document Version:** 3.0
 **Created:** 2025-11-29 16:54 PST
-**Last Updated:** 2025-12-23
-**Changes:** Updated for Phase 2→3 monitoring-only mode (v2.0)
+**Last Updated:** 2025-12-31
+**Changes:**
+- v3.0 (2025-12-31): Added comprehensive Phase 1 orchestrator troubleshooting section
+- v2.0 (2025-12-23): Updated for Phase 2→3 monitoring-only mode
