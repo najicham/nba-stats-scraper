@@ -37,6 +37,7 @@ from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from typing import Dict, List, Set, Optional
 from google.cloud import firestore
+from google.cloud.firestore import ArrayUnion, Increment, SERVER_TIMESTAMP
 import logging
 
 logger = logging.getLogger(__name__)
@@ -217,10 +218,10 @@ class BatchStateManager:
         predictions_count: int
     ) -> bool:
         """
-        Record a player completion event (ATOMIC & THREAD-SAFE)
+        Record a player completion event using atomic operations (no transactions!)
 
-        Uses Firestore transaction to ensure atomicity even with
-        concurrent completion events from multiple workers.
+        This avoids transaction contention when multiple workers complete simultaneously.
+        Uses Firestore's atomic operations: ArrayUnion and Increment.
 
         Args:
             batch_id: Batch identifier
@@ -230,68 +231,47 @@ class BatchStateManager:
         Returns:
             True if batch is now complete, False otherwise
         """
-        doc_ref = self.collection.document(batch_id)
+        try:
+            doc_ref = self.collection.document(batch_id)
 
-        @firestore.transactional
-        def update_in_transaction(transaction):
-            """Atomic update within transaction"""
-            snapshot = doc_ref.get(transaction=transaction)
+            # Atomic update - no read required, no contention!
+            doc_ref.update({
+                'completed_players': ArrayUnion([player_lookup]),
+                'predictions_by_player.{}'.format(player_lookup): predictions_count,
+                'total_predictions': Increment(predictions_count),
+                'updated_at': SERVER_TIMESTAMP
+            })
 
+            logger.info(f"Recorded completion for {player_lookup} in batch {batch_id}")
+
+            # Check if batch is complete (separate read, non-blocking)
+            snapshot = doc_ref.get()
             if not snapshot.exists:
-                logger.error(f"Batch not found: {batch_id}")
+                logger.warning(f"Batch {batch_id} not found after update")
                 return False
 
             data = snapshot.to_dict()
-            completed_players = data.get('completed_players', [])
+            completed = len(data.get('completed_players', []))
+            expected = data.get('expected_players', 0)
 
-            # Check if already completed (idempotency)
-            if player_lookup in completed_players:
-                logger.debug(f"Player {player_lookup} already completed (duplicate event)")
-                return data.get('is_complete', False)
+            is_complete = completed >= expected
 
-            # Add player to completed list
-            completed_players.append(player_lookup)
-
-            # Update predictions by player
-            predictions_by_player = data.get('predictions_by_player', {})
-            predictions_by_player[player_lookup] = predictions_count
-
-            # Update total predictions
-            total_predictions = data.get('total_predictions', 0) + predictions_count
-
-            # Check if batch is now complete
-            expected_players = data.get('expected_players', 0)
-            is_complete = len(completed_players) >= expected_players
-
-            # Prepare update
-            updates = {
-                'completed_players': completed_players,
-                'predictions_by_player': predictions_by_player,
-                'total_predictions': total_predictions,
-                'updated_at': firestore.SERVER_TIMESTAMP
-            }
-
-            if is_complete and not data.get('is_complete', False):
-                updates['is_complete'] = True
-                updates['completion_time'] = firestore.SERVER_TIMESTAMP
-                logger.info(
-                    f"🎉 Batch {batch_id} complete! "
-                    f"({len(completed_players)}/{expected_players} players)"
-                )
-
-            transaction.update(doc_ref, updates)
-
-            logger.info(
-                f"Player {player_lookup} completed "
-                f"({len(completed_players)}/{expected_players}) "
-                f"with {predictions_count} predictions"
-            )
+            if is_complete:
+                # Mark as complete atomically
+                doc_ref.update({
+                    'is_complete': True,
+                    'completion_time': SERVER_TIMESTAMP
+                })
+                logger.info(f"🎉 Batch {batch_id} complete! ({completed}/{expected} players)")
+            else:
+                logger.debug(f"Batch {batch_id} progress: {completed}/{expected}")
 
             return is_complete
 
-        # Execute transaction
-        transaction = self.db.transaction()
-        return update_in_transaction(transaction)
+        except Exception as e:
+            logger.error(f"Error recording completion for {player_lookup}: {e}", exc_info=True)
+            # Non-fatal - batch can continue
+            return False
 
     def record_failure(
         self,
