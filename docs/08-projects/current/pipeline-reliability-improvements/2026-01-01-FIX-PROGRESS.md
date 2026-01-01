@@ -121,9 +121,19 @@
 - Reliability: 336 operations with timeout protection
 - Security: Risk reduced 4.5/10 → 2.0/10 (56% improvement)
 
-### 🔍 Issues Identified (Not Fixed)
-- Team boxscore scraper stopped after 12/26 (5 days missing)
-- Need deeper investigation for root cause
+### 🔍 Issues Identified (External Dependencies)
+
+**Team Boxscore API Outage** - NBA.com Infrastructure Issue
+- **Status**: 🔴 ACTIVE OUTAGE (since ~12/27)
+- **Root Cause**: NBA.com Stats API (`stats.nba.com/stats/*`) returning empty data
+- **Impact**: LOW - Predictions still working via fallback (reconstructed team data)
+- **Evidence**:
+  - All stats API scrapers failing: team_boxscore, player_boxscore, play_by_play
+  - File-based scrapers working: gamebook_pdf, injury_report, schedule
+  - API times out when tested directly
+  - Error: "Expected 2 teams for game X, got 0"
+- **Action**: Monitor for API recovery, backfill when restored
+- **Details**: See `TEAM-BOXSCORE-API-OUTAGE.md`
 
 ---
 
