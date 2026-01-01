@@ -1,19 +1,26 @@
 #!/bin/bash
 # deploy_scrapers_simple.sh - Deploy NBA Scrapers with Phase 1 Orchestration support
 #
-# Version: 2.1 - Added commit SHA tracking for deployment verification
+# Version: 2.2 - Fixed SERVICE_URL configuration bug
 #
 # WHAT THIS DOES:
-# 1. Deploys nba-scrapers Cloud Run service
+# 1. Deploys nba-phase1-scrapers Cloud Run service (orchestrator)
 # 2. Configures email alerts (if credentials available)
 # 3. Sets up API key secrets
 # 4. Tests health endpoint
-# 5. Configures SERVICE_URL for Phase 1 orchestration (HTTP scraper calls)
+# 5. Configures SERVICE_URL to point to nba-scrapers service (for HTTP scraper calls)
 # 6. Tracks git commit SHA for deployment verification
 #
 # USAGE: ./bin/scrapers/deploy/deploy_scrapers_simple.sh
+#
+# ARCHITECTURE:
+#   - nba-phase1-scrapers: Orchestrator service (workflows, schedulers)
+#   - nba-scrapers: Scraper service (actual scraper implementations)
+#   - nba-phase1-scrapers calls nba-scrapers via SERVICE_URL
 
-SERVICE_NAME="nba-phase1-scrapers"
+ORCHESTRATOR_SERVICE="nba-phase1-scrapers"
+SCRAPER_SERVICE="nba-scrapers"
+SERVICE_NAME="$ORCHESTRATOR_SERVICE"  # For backwards compatibility with rest of script
 REGION="us-west2"
 
 # Capture git commit SHA for deployment tracking
@@ -196,27 +203,41 @@ if [ $DEPLOY_STATUS -eq 0 ]; then
     TEST_START=$(date +%s)
     echo ""
     echo "📋 Phase 5: Testing health endpoint..."
-    SERVICE_URL=$(gcloud run services describe $SERVICE_NAME --region=$REGION --format="value(status.url)" 2>/dev/null)
-    
-    if [ ! -z "$SERVICE_URL" ]; then
-        echo "🔗 Service URL: $SERVICE_URL"
-        HEALTH_RESULT=$(curl -s "$SERVICE_URL/health" 2>/dev/null | jq '.available_scrapers | length' 2>/dev/null || echo "pending...")
+    ORCHESTRATOR_URL=$(gcloud run services describe $ORCHESTRATOR_SERVICE --region=$REGION --format="value(status.url)" 2>/dev/null)
+
+    if [ ! -z "$ORCHESTRATOR_URL" ]; then
+        echo "🔗 Orchestrator URL: $ORCHESTRATOR_URL"
+        HEALTH_RESULT=$(curl -s "$ORCHESTRATOR_URL/health" 2>/dev/null | jq '.available_scrapers | length' 2>/dev/null || echo "pending...")
         TEST_END=$(date +%s)
         TEST_DURATION=$((TEST_END - TEST_START))
         echo "📊 Available scrapers: $HEALTH_RESULT"
         echo "⏱️  Health test completed in ${TEST_DURATION}s"
-        
+
         # Phase 6: Configure SERVICE_URL for Phase 1 Orchestration
         ORCHESTRATION_START=$(date +%s)
         echo ""
         echo "📋 Phase 6: Configuring Phase 1 Orchestration..."
-        echo "   Setting SERVICE_URL environment variable..."
-        
-        gcloud run services update $SERVICE_NAME \
-            --region=$REGION \
-            --set-env-vars="SERVICE_URL=$SERVICE_URL" \
-            --quiet
-        
+        echo "   Getting scraper service URL..."
+
+        # Get the actual scraper service URL (nba-scrapers, not nba-phase1-scrapers)
+        SCRAPER_URL=$(gcloud run services describe $SCRAPER_SERVICE --region=$REGION --format="value(status.url)" 2>/dev/null)
+
+        if [ -z "$SCRAPER_URL" ]; then
+            echo "   ⚠️  WARNING: Scraper service '$SCRAPER_SERVICE' not found!"
+            echo "   ⚠️  Orchestrator will not be able to call scrapers."
+            echo "   ⚠️  Deploy scraper service first, then re-run this script."
+        else
+            echo "   🔗 Scraper service URL: $SCRAPER_URL"
+            echo "   Setting SERVICE_URL environment variable on orchestrator..."
+
+            gcloud run services update $ORCHESTRATOR_SERVICE \
+                --region=$REGION \
+                --set-env-vars="SERVICE_URL=$SCRAPER_URL" \
+                --quiet
+
+            echo "   ✅ Orchestrator configured to call scraper service"
+        fi
+
         ORCHESTRATION_END=$(date +%s)
         ORCHESTRATION_DURATION=$((ORCHESTRATION_END - ORCHESTRATION_START))
         echo "⏱️  Orchestration configuration completed in ${ORCHESTRATION_DURATION}s"
