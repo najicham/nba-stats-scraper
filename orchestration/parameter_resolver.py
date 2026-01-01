@@ -527,13 +527,22 @@ class ParameterResolver:
         Uses current execution hour to determine when report is being captured.
         NBA typically publishes injury reports around 5:30 PM ET.
 
+        As of ~Dec 23, 2025, NBA.com changed URL format to include minutes
+        and publishes reports every 15 minutes (00, 15, 30, 45).
+
         Params needed:
         - gamedate: YYYY-MM-DD or YYYYMMDD
         - hour: 1-12 (12-hour format)
         - period: "AM" or "PM"
+        - minute: "00", "15", "30", or "45" (rounded down to nearest 15-min interval)
         """
         current_time = datetime.now(self.ET)
         hour_24 = current_time.hour
+        current_minute = current_time.minute
+
+        # Round down to nearest 15-minute interval
+        # Examples: 6:07 → :00, 6:23 → :15, 6:38 → :30, 6:52 → :45
+        minute_interval = (current_minute // 15) * 15
 
         # Convert to 12-hour format
         if hour_24 == 0:
@@ -552,7 +561,8 @@ class ParameterResolver:
         return {
             'gamedate': context['execution_date'],
             'hour': hour,
-            'period': period
+            'period': period,
+            'minute': f"{minute_interval:02d}"  # Format as 00, 15, 30, or 45
         }
 
     def _resolve_nbac_gamebook_pdf(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:

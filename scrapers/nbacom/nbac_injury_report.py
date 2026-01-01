@@ -72,7 +72,7 @@ class GetNbaComInjuryReport(ScraperBase, ScraperFlaskMixin):
     # Flask Mixin Configuration
     scraper_name = "nbac_injury_report"
     required_params = ["gamedate", "hour", "period"]
-    optional_params = {}
+    optional_params = {"minute": "00"}  # Default to :00 for new URL format
 
     # Original scraper config
     required_opts = ["gamedate", "hour", "period"]
@@ -156,16 +156,20 @@ class GetNbaComInjuryReport(ScraperBase, ScraperFlaskMixin):
         self.opts["time"] = now.strftime("%H-%M-%S")
         year = int(self.opts["gamedate"][0:4])
         self.opts["season"] = f"{year}-{(year + 1) % 100:02d}"
-        
-        # Calculate hour24 
+
+        # Set default minute if not provided (for new URL format)
+        if "minute" not in self.opts or self.opts["minute"] is None:
+            self.opts["minute"] = "00"
+
+        # Calculate hour24
         hour_12 = int(self.opts["hour"])
         period = self.opts["period"].upper()
-        
+
         if period == "AM":
             hour_24 = 0 if hour_12 == 12 else hour_12
         else:
             hour_24 = 12 if hour_12 == 12 else hour_12 + 12
-        
+
         self.opts["hour24"] = f"{hour_24:02d}"
 
     def validate_opts(self) -> None:
@@ -180,6 +184,15 @@ class GetNbaComInjuryReport(ScraperBase, ScraperFlaskMixin):
         if str(self.opts["period"]).upper() not in {"AM", "PM"}:
             raise DownloadDataException("period must be AM or PM")
 
+        # Validate minute if provided (optional parameter)
+        if "minute" in self.opts and self.opts["minute"] is not None:
+            try:
+                minute = int(self.opts["minute"])
+                if not (0 <= minute <= 59):
+                    raise DownloadDataException("minute must be between 0 and 59")
+            except ValueError:
+                raise DownloadDataException("minute must be a valid number")
+
     def set_url(self) -> None:
         gd = self.opts["gamedate"]
         if "-" not in gd:
@@ -189,10 +202,42 @@ class GetNbaComInjuryReport(ScraperBase, ScraperFlaskMixin):
 
         hour = str(self.opts["hour"]).zfill(2)
         period = str(self.opts["period"]).upper()
-        self.url = (
-            f"https://ak-static.cms.nba.com/referee/injury/"
-            f"Injury-Report_{formatted_date}_{hour}{period}.pdf"
-        )
+        minute = str(self.opts.get("minute", "00")).zfill(2)
+
+        # Determine URL format based on date
+        # NBA.com changed URL format around Dec 23, 2025 to include minutes
+        # Old format: Injury-Report_2025-12-22_06PM.pdf
+        # New format: Injury-Report_2025-12-31_06_00PM.pdf
+        try:
+            # Parse gamedate to determine which format to use
+            if "-" in formatted_date:
+                date_obj = datetime.strptime(formatted_date, "%Y-%m-%d").date()
+            else:
+                date_obj = datetime.strptime(formatted_date, "%Y%m%d").date()
+
+            # Cutoff date: Dec 23, 2025 (when NBA.com changed format)
+            cutoff_date = datetime(2025, 12, 23).date()
+
+            if date_obj >= cutoff_date:
+                # New format with minutes (post-Dec 22, 2025)
+                self.url = (
+                    f"https://ak-static.cms.nba.com/referee/injury/"
+                    f"Injury-Report_{formatted_date}_{hour}_{minute}{period}.pdf"
+                )
+            else:
+                # Old format without minutes (pre-Dec 23, 2025)
+                self.url = (
+                    f"https://ak-static.cms.nba.com/referee/injury/"
+                    f"Injury-Report_{formatted_date}_{hour}{period}.pdf"
+                )
+        except Exception as e:
+            # Fallback to new format if date parsing fails
+            logger.warning(f"Failed to parse date {formatted_date}, using new URL format: {e}")
+            self.url = (
+                f"https://ak-static.cms.nba.com/referee/injury/"
+                f"Injury-Report_{formatted_date}_{hour}_{minute}{period}.pdf"
+            )
+
         logger.info("Injury Report URL: %s", self.url)
 
     def should_save_data(self) -> bool:
