@@ -90,7 +90,7 @@ class BatchResolver:
                 bigquery.ArrayQueryParameter("names", "STRING", names)
             ]
 
-        results = self.client.query(query, job_config=job_config).result()
+        results = self.client.query(query, job_config=job_config).result(timeout=60)
         return [dict(row) for row in results]
 
     def get_team_roster(self, team_abbr: str, season: str) -> List[str]:
@@ -113,7 +113,7 @@ class BatchResolver:
         )
 
         try:
-            results = self.client.query(query, job_config=job_config).result()
+            results = self.client.query(query, job_config=job_config).result(timeout=60)
             return [f"{row.player_lookup} ({row.player_name})" for row in results]
         except Exception as e:
             logger.warning(f"Error getting roster for {team_abbr}/{season}: {e}")
@@ -141,7 +141,7 @@ class BatchResolver:
         )
 
         try:
-            results = self.client.query(query, job_config=job_config).result()
+            results = self.client.query(query, job_config=job_config).result(timeout=60)
             return [row.player_lookup for row in results if row.player_lookup != unresolved_lookup]
         except Exception as e:
             logger.warning(f"Error getting similar names for {unresolved_lookup}: {e}")
@@ -163,7 +163,7 @@ class BatchResolver:
         )
 
         try:
-            results = list(self.client.query(query, job_config=job_config).result())
+            results = list(self.client.query(query, job_config=job_config).result(timeout=60))
             if results:
                 return results[0].player_name
             return canonical_lookup
@@ -196,7 +196,7 @@ class BatchResolver:
         )
 
         try:
-            self.client.query(query, job_config=job_config).result()
+            self.client.query(query, job_config=job_config).result(timeout=60)
             logger.debug(f"Marked {normalized_lookup} as resolved")
         except Exception as e:
             logger.error(f"Error marking {normalized_lookup} as resolved: {e}")
@@ -214,7 +214,7 @@ class BatchResolver:
                 bigquery.ScalarQueryParameter("player_lookup", "STRING", player_lookup)
             ]
         )
-        result = self.bq_client.query(query, job_config=job_config).result()
+        result = self.bq_client.query(query, job_config=job_config).result(timeout=60)
         return result.num_dml_affected_rows or 0
 
     def process_single(self, unresolved: Dict, dry_run: bool = False) -> Dict:

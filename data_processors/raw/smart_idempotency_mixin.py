@@ -274,7 +274,7 @@ class SmartIdempotencyMixin:
                 return None
 
             query_job = self.bq_client.query(query)
-            results = list(query_job.result())
+            results = list(query_job.result(timeout=60))
 
             if results and results[0].data_hash:
                 return results[0].data_hash

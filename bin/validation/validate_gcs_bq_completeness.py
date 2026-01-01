@@ -308,7 +308,7 @@ class BQCounter:
         """
 
         try:
-            result = list(self.client.query(query).result())
+            result = list(self.client.query(query).result(timeout=60))
             count = result[0].cnt if result else 0
             self._cache[cache_key] = count
             return count

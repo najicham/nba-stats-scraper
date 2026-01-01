@@ -896,7 +896,7 @@ class AnalyticsProcessorBase(RunHistoryMixin):
                 raise ValueError(f"Unknown check_type: {check_type}")
 
             # Execute query
-            result = list(self.bq_client.query(query).result())
+            result = list(self.bq_client.query(query).result(timeout=60))
 
             if not result:
                 return False, {
@@ -1292,7 +1292,7 @@ class AnalyticsProcessorBase(RunHistoryMixin):
             """
 
             phase2_games = {}
-            for row in self.bq_client.query(phase2_query).result():
+            for row in self.bq_client.query(phase2_query).result(timeout=60):
                 key = f"{row.game_date}_{row.game_id}"
                 phase2_games[key] = {
                     'game_date': row.game_date.isoformat() if hasattr(row.game_date, 'isoformat') else str(row.game_date),
@@ -1316,7 +1316,7 @@ class AnalyticsProcessorBase(RunHistoryMixin):
             """
 
             phase3_games = set()
-            for row in self.bq_client.query(phase3_query).result():
+            for row in self.bq_client.query(phase3_query).result(timeout=60):
                 game_date = row.game_date.isoformat() if hasattr(row.game_date, 'isoformat') else str(row.game_date)
                 key = f"{game_date}_{row.game_id}"
                 phase3_games.add(key)
@@ -1718,7 +1718,7 @@ class AnalyticsProcessorBase(RunHistoryMixin):
                 table_id,
                 job_config=job_config
             )
-            load_job.result()  # Wait for completion
+            load_job.result(timeout=60)  # Wait for completion
             
             # Send notification for high-severity issues
             if severity in ['CRITICAL', 'HIGH']:
@@ -1787,7 +1787,7 @@ class AnalyticsProcessorBase(RunHistoryMixin):
                 table_id,
                 job_config=job_config
             )
-            load_job.result()  # Wait for completion
+            load_job.result(timeout=60)  # Wait for completion
         except Exception as e:
             logger.warning(f"Failed to log processing run: {e}")
     

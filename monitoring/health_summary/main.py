@@ -208,7 +208,7 @@ def query_phase_status(
     """
 
     try:
-        result = bq_client.query(query).result()
+        result = bq_client.query(query).result(timeout=60)
         row = list(result)[0]
 
         complete = row.success_count + row.partial_count
@@ -263,7 +263,7 @@ def query_gaps_count(bq_client: bigquery.Client, date_str: str) -> int:
     """
 
     try:
-        result = bq_client.query(query).result()
+        result = bq_client.query(query).result(timeout=60)
         row = list(result)[0]
         return row.gap_count or 0
     except Exception as e:
@@ -354,7 +354,7 @@ def query_prediction_stats(bq_client: bigquery.Client, date_str: str) -> Dict:
     """
 
     try:
-        result = bq_client.query(query).result()
+        result = bq_client.query(query).result(timeout=60)
         row = list(result)[0]
 
         return {

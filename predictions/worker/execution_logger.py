@@ -212,7 +212,7 @@ class ExecutionLogger:
                 job_config=job_config
             )
 
-            load_job.result()
+            load_job.result(timeout=60)
             logger.debug(f"Logged execution for {player_lookup} (request_id={request_id})")
 
         except Exception as e:

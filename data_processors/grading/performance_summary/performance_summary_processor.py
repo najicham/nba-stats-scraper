@@ -107,7 +107,7 @@ class PerformanceSummaryProcessor:
           AND game_date >= DATE_SUB('{as_of_date}', INTERVAL 90 DAY)
         ORDER BY system_id
         """
-        result = self.bq_client.query(query).result()
+        result = self.bq_client.query(query).result(timeout=60)
         return [row.system_id for row in result]
 
     def _get_time_periods(self, as_of_date: date) -> List[tuple]:
@@ -314,7 +314,7 @@ class PerformanceSummaryProcessor:
         """
 
         try:
-            result = list(self.bq_client.query(query).result())
+            result = list(self.bq_client.query(query).result(timeout=60))
             if result and result[0].total_predictions > 0:
                 row = result[0]
                 return {
@@ -385,7 +385,7 @@ class PerformanceSummaryProcessor:
         """
 
         try:
-            result = list(self.bq_client.query(query).result())
+            result = list(self.bq_client.query(query).result(timeout=60))
             return [self._row_to_dict(row) for row in result]
         except Exception as e:
             logger.error(f"Error querying by dimension {dimension}: {e}")
@@ -434,7 +434,7 @@ class PerformanceSummaryProcessor:
         """
 
         try:
-            result = list(self.bq_client.query(query).result())
+            result = list(self.bq_client.query(query).result(timeout=60))
             return [self._row_to_dict(row) for row in result]
         except Exception as e:
             logger.error(f"Error querying by archetype: {e}")
@@ -542,7 +542,7 @@ class PerformanceSummaryProcessor:
             DELETE FROM `{SUMMARY_TABLE}`
             WHERE DATE(computed_at) = '{as_of_date}'
             """
-            self.bq_client.query(delete_query).result()
+            self.bq_client.query(delete_query).result(timeout=60)
 
             # Insert using batch loading
             table_ref = self.bq_client.get_table(SUMMARY_TABLE)
@@ -559,7 +559,7 @@ class PerformanceSummaryProcessor:
                 SUMMARY_TABLE,
                 job_config=job_config
             )
-            load_job.result()
+            load_job.result(timeout=60)
 
             return load_job.output_rows or len(summaries)
 

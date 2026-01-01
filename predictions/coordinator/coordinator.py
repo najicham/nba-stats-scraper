@@ -447,6 +447,7 @@ def handle_completion_event():
         batch_id = event.get('batch_id')  # Workers should include batch_id in completion events
         predictions_count = event.get('predictions_generated', 0)
 
+        print(f"📥 Completion: {player_lookup} (batch={batch_id}, predictions={predictions_count})", flush=True)
         logger.debug(f"Received completion event: {player_lookup} (batch={batch_id})")
 
         # Process completion event using Firestore (PERSISTENT - survives restarts!)

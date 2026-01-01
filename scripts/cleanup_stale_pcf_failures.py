@@ -54,7 +54,7 @@ def verify_pcf_data_exists(bq_client: bigquery.Client, start_date: str, end_date
     """
 
     logger.info("Verifying PCF data exists for date range...")
-    result = bq_client.query(query).result()
+    result = bq_client.query(query).result(timeout=60)
 
     data_by_date = {}
     for row in result:
@@ -78,7 +78,7 @@ def count_stale_failures(bq_client: bigquery.Client, start_date: str, end_date: 
     """
 
     logger.info("Counting stale failure records...")
-    result = bq_client.query(query).result()
+    result = bq_client.query(query).result(timeout=60)
     count = list(result)[0].failure_count
     logger.info(f"  Found {count} stale failure records")
 
@@ -105,7 +105,7 @@ def get_sample_failures(bq_client: bigquery.Client, start_date: str, end_date: s
     """
 
     logger.info(f"\nSample of {limit} records to be deleted:")
-    result = bq_client.query(query).result()
+    result = bq_client.query(query).result(timeout=60)
 
     for row in result:
         # Truncate failure_reason for display
@@ -132,7 +132,7 @@ def delete_stale_failures(bq_client: bigquery.Client, start_date: str, end_date:
         return 0
 
     logger.info("\nExecuting DELETE query...")
-    result = bq_client.query(delete_query).result()
+    result = bq_client.query(delete_query).result(timeout=60)
 
     # BigQuery DELETE doesn't return row count directly, so we need to check
     logger.info("DELETE query completed successfully")

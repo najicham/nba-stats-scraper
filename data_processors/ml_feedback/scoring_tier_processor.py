@@ -121,7 +121,7 @@ class ScoringTierProcessor:
             self.table_id,
             job_config=job_config
         )
-        load_job.result()  # Wait for completion
+        load_job.result(timeout=60)  # Wait for completion
 
         if load_job.errors:
             logger.error(f"Failed to insert rows: {load_job.errors}")
@@ -192,7 +192,7 @@ class ScoringTierProcessor:
         """
 
         results = {}
-        for row in self.client.query(query).result():
+        for row in self.client.query(query).result(timeout=60):
             results[row.scoring_tier] = {
                 'sample_size': row.sample_size,
                 'avg_signed_error': float(row.avg_signed_error or 0),
@@ -224,7 +224,7 @@ class ScoringTierProcessor:
         WHERE as_of_date = '{as_of_date}' AND system_id = '{system_id}'
         """
         try:
-            self.client.query(query).result()
+            self.client.query(query).result(timeout=60)
         except Exception as e:
             # Table might not exist yet
             logger.debug(f"Delete failed (table may not exist): {e}")
@@ -275,7 +275,7 @@ class ScoringTierProcessor:
         FROM predictions_with_actuals
         """
 
-        result = list(self.client.query(query).result())[0]
+        result = list(self.client.query(query).result(timeout=60))[0]
 
         mae_raw = float(result.mae_raw or 0)
         mae_adjusted = float(result.mae_adjusted or 0)
@@ -342,7 +342,7 @@ class ScoringTierProcessor:
         LIMIT 1
         """
 
-        result = list(self.client.query(query).result())
+        result = list(self.client.query(query).result(timeout=60))
         if result:
             return float(result[0].recommended_adjustment)
         return 0.0

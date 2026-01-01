@@ -200,7 +200,8 @@ class DataFreshnessChecker:
             for name in common_names:
                 try:
                     test_query = f"SELECT MAX({name}) FROM `{self.project_id}.{table}` LIMIT 1"
-                    self.bq_client.query(test_query).result()
+                    # Wait for completion with timeout to prevent indefinite hangs
+                    self.bq_client.query(test_query).result(timeout=60)
                     return name
                 except Exception:
                     continue
@@ -219,7 +220,8 @@ class DataFreshnessChecker:
                 SELECT MAX({timestamp_column}) as last_updated
                 FROM `{self.project_id}.{table}`
             """
-            result = list(self.bq_client.query(query).result())
+            # Wait for completion with timeout to prevent indefinite hangs
+            result = list(self.bq_client.query(query).result(timeout=60))
             if result and result[0].last_updated:
                 return result[0].last_updated
             return None

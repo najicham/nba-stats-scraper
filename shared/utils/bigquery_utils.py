@@ -47,8 +47,9 @@ def execute_bigquery(
     try:
         client = bigquery.Client(project=project_id)
         query_job = client.query(query)
-        results = query_job.result()
-        
+        # Wait for completion with timeout to prevent indefinite hangs
+        results = query_job.result(timeout=60)
+
         if as_dict:
             # Convert to list of dictionaries
             return [dict(row) for row in results]
@@ -113,7 +114,8 @@ def insert_bigquery_rows(
         )
 
         load_job = client.load_table_from_json(rows, table_id, job_config=job_config)
-        load_job.result()
+        # Wait for completion with timeout to prevent indefinite hangs
+        load_job.result(timeout=60)
 
         if load_job.errors:
             logger.warning(f"BigQuery load had errors: {load_job.errors[:3]}")
@@ -245,8 +247,9 @@ def execute_bigquery_with_params(
             )
         
         query_job = client.query(query, job_config=job_config)
-        results = query_job.result()
-        
+        # Wait for completion with timeout to prevent indefinite hangs
+        results = query_job.result(timeout=60)
+
         return [dict(row) for row in results]
         
     except Exception as e:
@@ -280,8 +283,9 @@ def update_bigquery_rows(
     try:
         client = bigquery.Client(project=project_id)
         query_job = client.query(query)
-        result = query_job.result()
-        
+        # Wait for completion with timeout to prevent indefinite hangs
+        result = query_job.result(timeout=60)
+
         # For DML statements, get number of affected rows
         if hasattr(result, 'num_dml_affected_rows'):
             return result.num_dml_affected_rows

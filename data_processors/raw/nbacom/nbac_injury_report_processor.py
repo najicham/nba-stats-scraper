@@ -425,7 +425,7 @@ class NbacInjuryReportProcessor(SmartIdempotencyMixin, ProcessorBase):
             )
 
             load_job = client.load_table_from_json(rows, table_id, job_config=job_config)
-            load_job.result()
+            load_job.result(timeout=60)
 
             if load_job.errors:
                 errors.extend([str(e) for e in load_job.errors])

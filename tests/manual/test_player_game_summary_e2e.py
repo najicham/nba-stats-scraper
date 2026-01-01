@@ -116,7 +116,7 @@ def verify_phase3_data(game_date: str):
     WHERE game_date = '{game_date}'
     """
 
-    result = list(client.query(query).result())
+    result = list(client.query(query).result(timeout=60))
 
     if result and result[0].player_records > 0:
         row = result[0]

@@ -459,7 +459,7 @@ class EspnScoreboardProcessor(SmartIdempotencyMixin, ProcessorBase):
             )
             
             # Wait for load to complete
-            load_job.result()
+            load_job.result(timeout=60)
             logging.info(f"✅ Batch loaded {len(rows)} rows to {temp_table_id}")
             
             # 5. Execute MERGE operation with explicit partition filter
@@ -494,7 +494,7 @@ class EspnScoreboardProcessor(SmartIdempotencyMixin, ProcessorBase):
             
             logging.info(f"Executing MERGE for game_date={game_date}")
             merge_job = self.bq_client.query(merge_query)
-            merge_result = merge_job.result()
+            merge_result = merge_job.result(timeout=60)
             
             # Get affected rows count
             rows_affected = merge_result.total_rows if hasattr(merge_result, 'total_rows') else len(rows)

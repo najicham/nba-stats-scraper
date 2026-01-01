@@ -56,7 +56,7 @@ def latest_analysis_date(bq_client, project_id):
     SELECT MAX(analysis_date) as latest_date
     FROM `{project_id}.nba_precompute.player_shot_zone_analysis`
     """
-    result = list(bq_client.query(query).result())
+    result = list(bq_client.query(query).result(timeout=60))
     if not result or result[0].latest_date is None:
         pytest.skip("No data in player_shot_zone_analysis table")
     return result[0].latest_date
@@ -274,7 +274,7 @@ class TestCompleteness:
         FROM `{project_id}.nba_precompute.player_shot_zone_analysis`
         WHERE analysis_date = '{latest_analysis_date}'
         """
-        result = list(bq_client.query(query).result())[0]
+        result = list(bq_client.query(query).result(timeout=60))[0]
         assert result.player_count >= 400, \
             f"Expected at least 400 players, found {result.player_count}"
     
@@ -406,7 +406,7 @@ class TestEdgeCases:
         WHERE analysis_date = '{latest_analysis_date}'
           AND early_season_flag = TRUE
         """
-        result = list(bq_client.query(query).result())[0]
+        result = list(bq_client.query(query).result(timeout=60))[0]
         
         # If there are early season flags, they should have <10 games
         if result.early_season_count > 0:

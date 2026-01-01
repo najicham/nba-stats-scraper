@@ -130,7 +130,7 @@ def get_run_history(
     )
 
     try:
-        result = client.query(query, job_config=job_config).result()
+        result = client.query(query, job_config=job_config).result(timeout=60)
 
         seen_processors = set()  # Track latest run per processor
 

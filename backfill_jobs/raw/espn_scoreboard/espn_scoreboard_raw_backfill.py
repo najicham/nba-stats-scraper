@@ -389,7 +389,7 @@ class EspnScoreboardBackfill:
                 WHERE game_date = '{game_date}'
             """
             
-            result = client.query(query).result()
+            result = client.query(query).result(timeout=60)
             row = next(result)
             
             return row.count > 0

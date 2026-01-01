@@ -184,7 +184,7 @@ def check_boxscore_completeness():
         ORDER BY coverage_pct
         """
 
-        coverage_result = list(bq_client.query(coverage_query).result())
+        coverage_result = list(bq_client.query(coverage_query).result(timeout=60))
 
         # Find teams below thresholds
         critical_teams = [(r.team, r.coverage_pct) for r in coverage_result if r.coverage_pct < 70]
@@ -209,7 +209,7 @@ def check_boxscore_completeness():
         WHERE b.team_abbr IS NULL
         """
 
-        missing_count = list(bq_client.query(missing_query).result())[0].missing_count
+        missing_count = list(bq_client.query(missing_query).result(timeout=60))[0].missing_count
 
         # Send alerts if needed
         if alert_on_gaps and (critical_teams or warning_teams):
@@ -296,7 +296,7 @@ def _auto_reset_circuit_breakers(bq_client, start_date, end_date, logger) -> int
 
     try:
         job = bq_client.query(reset_query)
-        job.result()
+        job.result(timeout=60)
         reset_count = job.num_dml_affected_rows or 0
         if reset_count > 0:
             logger.info(f"Auto-reset {reset_count} circuit breakers for entities with recent boxscore data")
@@ -949,24 +949,69 @@ def extract_opts_from_path(file_path: str) -> dict:
                 logger.warning(f"Could not parse date from live-boxscores path: {date_str}")
 
     elif 'ball-dont-lie/player-box-scores' in file_path:
-        # Extract date from path: ball-dont-lie/player-box-scores/2025-12-28/timestamp.json
+        # Extract date from the JSON data itself, not the file path
         # NOTE: This check MUST come before 'ball-dont-lie/boxscores' due to substring matching
-        parts = file_path.split('/')
-        if len(parts) >= 4:
-            date_str = parts[-2]  # "2025-12-28"
+        #
+        # IMPORTANT: For backfill files, the file path date (e.g., 2026-01-01) may differ from
+        # the actual game dates in the data (e.g., Nov 10-12). We must read the JSON to get
+        # the correct dates to avoid run history conflicts.
+        try:
+            from datetime import datetime
+            from google.cloud import storage
 
-            # Parse game date
-            try:
-                from datetime import datetime
-                game_date = datetime.strptime(date_str, '%Y-%m-%d').date()
-                opts['game_date'] = game_date
+            # Download and read the JSON file to get actual dates
+            storage_client = storage.Client()
+            bucket_name = 'nba-scraped-data'  # Standard bucket for all scraped data
+            bucket_obj = storage_client.bucket(bucket_name)
+            blob = bucket_obj.blob(file_path)
+            file_content = blob.download_as_text()
+            file_data = json.loads(file_content)
 
-                # Calculate season year (Oct-Sept NBA season)
-                season_year = game_date.year if game_date.month >= 10 else game_date.year - 1
+            # Get actual date range from the data
+            start_date_str = file_data.get('startDate')
+            end_date_str = file_data.get('endDate')
+
+            if start_date_str and end_date_str:
+                start_date = datetime.strptime(start_date_str, '%Y-%m-%d').date()
+                end_date = datetime.strptime(end_date_str, '%Y-%m-%d').date()
+
+                # Use start_date for run history tracking (single date key)
+                opts['game_date'] = start_date
+
+                # Store both dates for processor use
+                opts['start_date'] = start_date
+                opts['end_date'] = end_date
+                opts['is_multi_date'] = (start_date != end_date)
+
+                # Calculate season year from start date
+                season_year = start_date.year if start_date.month >= 10 else start_date.year - 1
                 opts['season_year'] = season_year
 
-            except ValueError:
-                logger.warning(f"Could not parse date from player-box-scores path: {date_str}")
+                logger.info(f"BDL player-box-scores: actual dates {start_date} to {end_date} (file created {file_path.split('/')[-2]})")
+            else:
+                # Fallback to file path date if JSON doesn't have dates
+                parts = file_path.split('/')
+                if len(parts) >= 4:
+                    date_str = parts[-2]
+                    game_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+                    opts['game_date'] = game_date
+                    season_year = game_date.year if game_date.month >= 10 else game_date.year - 1
+                    opts['season_year'] = season_year
+                    logger.warning(f"BDL player-box-scores: using file path date {game_date} (startDate/endDate not in JSON)")
+
+        except Exception as e:
+            logger.error(f"Failed to read dates from BDL player-box-scores file: {e}")
+            # Fallback to file path parsing
+            parts = file_path.split('/')
+            if len(parts) >= 4:
+                try:
+                    date_str = parts[-2]
+                    game_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+                    opts['game_date'] = game_date
+                    season_year = game_date.year if game_date.month >= 10 else game_date.year - 1
+                    opts['season_year'] = season_year
+                except ValueError:
+                    logger.warning(f"Could not parse date from player-box-scores path: {date_str}")
 
     elif 'ball-dont-lie/boxscores' in file_path:
         # Extract date from path: ball-dont-lie/boxscores/2021-12-04/timestamp.json

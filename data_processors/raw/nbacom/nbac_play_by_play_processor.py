@@ -638,7 +638,7 @@ class NbacPlayByPlayProcessor(SmartIdempotencyMixin, ProcessorBase):
                 delete_query = f"DELETE FROM `{table_id}` WHERE game_id = '{game_id}' AND game_date = '{game_date}'"
                 
                 try:
-                    self.bq_client.query(delete_query).result()
+                    self.bq_client.query(delete_query).result(timeout=60)
                     logging.info(f"Deleted existing data for game_id: {game_id}")
                 except Exception as e:
                     logging.error(f"Error deleting existing data: {e}")
@@ -684,7 +684,7 @@ class NbacPlayByPlayProcessor(SmartIdempotencyMixin, ProcessorBase):
             )
 
             # Wait for completion
-            load_job.result()
+            load_job.result(timeout=60)
             logging.info(f"Successfully loaded {len(rows)} play-by-play events")
         
         except Exception as e:

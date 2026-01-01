@@ -55,7 +55,7 @@ class BaseExporter(ABC):
             job_config = bigquery.QueryJobConfig(query_parameters=params)
 
         try:
-            result = self.bq_client.query(query, job_config=job_config).result()
+            result = self.bq_client.query(query, job_config=job_config).result(timeout=60)
             return [dict(row) for row in result]
         except Exception as e:
             logger.error(f"Query failed: {e}")

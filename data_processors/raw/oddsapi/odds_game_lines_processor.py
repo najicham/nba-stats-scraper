@@ -512,7 +512,7 @@ class OddsGameLinesProcessor(SmartIdempotencyMixin, ProcessorBase):
                 temp_table_id, 
                 job_config=job_config
             )
-            load_job.result()  # Wait for completion
+            load_job.result(timeout=60)  # Wait for completion
             
             logger.info(f"✅ Batch loaded {len(rows)} rows to temp table (no streaming buffer)")
             
@@ -603,7 +603,7 @@ class OddsGameLinesProcessor(SmartIdempotencyMixin, ProcessorBase):
             """
             
             merge_job = self.bq_client.query(merge_query)
-            merge_result = merge_job.result()
+            merge_result = merge_job.result(timeout=60)
             
             # Get number of rows affected
             rows_affected = merge_result.total_rows if hasattr(merge_result, 'total_rows') else len(rows)

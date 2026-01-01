@@ -58,7 +58,7 @@ class TonightDataValidator:
         FROM `{self.project}.nba_raw.nbac_schedule`
         WHERE game_date = '{self.target_date}'
         """
-        result = list(self.client.query(query).result())[0]
+        result = list(self.client.query(query).result(timeout=60))[0]
 
         game_count = result.game_count
         self.stats['scheduled_games'] = game_count
@@ -83,7 +83,7 @@ class TonightDataValidator:
         FROM `{self.project}.nba_raw.espn_team_rosters`
         WHERE roster_date >= DATE_SUB('{self.target_date}', INTERVAL 7 DAY)
         """
-        result = list(self.client.query(query).result())[0]
+        result = list(self.client.query(query).result(timeout=60))[0]
 
         latest_date = result.latest_date
         team_count = result.team_count
@@ -121,7 +121,7 @@ class TonightDataValidator:
         GROUP BY s.game_id, s.home_team_tricode, s.away_team_tricode
         ORDER BY s.game_id
         """
-        results = list(self.client.query(query).result())
+        results = list(self.client.query(query).result(timeout=60))
 
         missing_teams_by_game = {}
         for row in results:
@@ -164,7 +164,7 @@ class TonightDataValidator:
           AND system_id = 'ensemble_v1'
           AND is_active = TRUE
         """
-        result = list(self.client.query(query).result())[0]
+        result = list(self.client.query(query).result(timeout=60))[0]
 
         total_rows = result.total_rows
         unique_players = result.unique_players
@@ -196,7 +196,7 @@ class TonightDataValidator:
         WHERE game_date = '{self.target_date}'
           AND is_active = TRUE
         """
-        result = list(self.client.query(query).result())[0]
+        result = list(self.client.query(query).result(timeout=60))[0]
 
         players = result.players_with_lines
         self.stats['players_with_lines'] = players

@@ -285,7 +285,7 @@ class SystemCircuitBreaker:
             ]
         )
 
-        self.bq_client.query(query, job_config=job_config).result()
+        self.bq_client.query(query, job_config=job_config).result(timeout=60)
         self._cache_timestamp = None  # Invalidate cache
 
     def _open_circuit(self, system_id: str, failure_count: int, error_message: str, error_type: str) -> None:
@@ -312,7 +312,7 @@ class SystemCircuitBreaker:
             ]
         )
 
-        self.bq_client.query(query, job_config=job_config).result()
+        self.bq_client.query(query, job_config=job_config).result(timeout=60)
         self._cache_timestamp = None  # Invalidate cache
 
     def _transition_to_half_open(self, system_id: str) -> None:
@@ -333,7 +333,7 @@ class SystemCircuitBreaker:
             ]
         )
 
-        self.bq_client.query(query, job_config=job_config).result()
+        self.bq_client.query(query, job_config=job_config).result(timeout=60)
         self._cache_timestamp = None  # Invalidate cache
 
     def _close_circuit(self, system_id: str) -> None:
@@ -355,7 +355,7 @@ class SystemCircuitBreaker:
             ]
         )
 
-        self.bq_client.query(query, job_config=job_config).result()
+        self.bq_client.query(query, job_config=job_config).result(timeout=60)
         self._cache_timestamp = None  # Invalidate cache
 
     def _reset_failure_count(self, system_id: str) -> None:
@@ -375,7 +375,7 @@ class SystemCircuitBreaker:
             ]
         )
 
-        self.bq_client.query(query, job_config=job_config).result()
+        self.bq_client.query(query, job_config=job_config).result(timeout=60)
         self._cache_timestamp = None  # Invalidate cache
 
     def _update_failure_count(self, system_id: str, failure_count: int, error_message: str, error_type: str) -> None:
@@ -400,7 +400,7 @@ class SystemCircuitBreaker:
             ]
         )
 
-        self.bq_client.query(query, job_config=job_config).result()
+        self.bq_client.query(query, job_config=job_config).result(timeout=60)
         self._cache_timestamp = None  # Invalidate cache
 
     def _update_success_count(self, system_id: str, success_count: int) -> None:
@@ -421,5 +421,5 @@ class SystemCircuitBreaker:
             ]
         )
 
-        self.bq_client.query(query, job_config=job_config).result()
+        self.bq_client.query(query, job_config=job_config).result(timeout=60)
         self._cache_timestamp = None  # Invalidate cache

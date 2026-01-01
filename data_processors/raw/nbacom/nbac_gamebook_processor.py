@@ -311,7 +311,7 @@ class NbacGamebookProcessor(SmartIdempotencyMixin, ProcessorBase):
             )
 
             load_job = self.bq_client.load_table_from_json(self.resolution_logs, table_id, job_config=job_config)
-            load_job.result()
+            load_job.result(timeout=60)
 
             if load_job.errors:
                 logger.warning(f"BigQuery load had errors: {load_job.errors[:3]}")
@@ -546,7 +546,7 @@ class NbacGamebookProcessor(SmartIdempotencyMixin, ProcessorBase):
             )
 
             load_job = self.bq_client.load_table_from_json([performance_summary], table_id, job_config=job_config)
-            load_job.result()
+            load_job.result(timeout=60)
 
             if load_job.errors:
                 logger.warning(f"BigQuery load had errors: {load_job.errors[:3]}")
@@ -1356,11 +1356,16 @@ class NbacGamebookProcessor(SmartIdempotencyMixin, ProcessorBase):
         """
         rows = self.transformed_data
         if not rows:
+            # Update stats for processor_base tracking
+            self.stats['rows_inserted'] = 0
+            self.stats['rows_processed'] = 0
+            self.stats['rows_failed'] = 0
             return {'rows_processed': 0, 'errors': []}
-        
+
         table_id = f"{self.project_id}.{self.table_name}"
         errors = []
-        
+        rows_saved = 0
+
         try:
             if self.processing_strategy == 'MERGE_UPDATE':
                 # For MERGE_UPDATE, we'll delete existing game data first
@@ -1369,9 +1374,9 @@ class NbacGamebookProcessor(SmartIdempotencyMixin, ProcessorBase):
                 DELETE FROM `{table_id}`
                 WHERE game_id = '{game_id}'
                 """
-                self.bq_client.query(delete_query).result()
+                self.bq_client.query(delete_query).result(timeout=60)
                 logger.info(f"Deleted existing data for game {game_id}")
-            
+
             # Get table reference for schema
             table_ref = self.bq_client.get_table(table_id)
 
@@ -1388,21 +1393,34 @@ class NbacGamebookProcessor(SmartIdempotencyMixin, ProcessorBase):
 
             logger.info(f"Loading {len(rows)} rows to {table_id} using batch load")
             load_job = self.bq_client.load_table_from_json(rows, table_id, job_config=job_config)
-            load_job.result()
+            load_job.result(timeout=60)
 
             if load_job.errors:
                 logger.warning(f"BigQuery load had errors: {load_job.errors[:3]}")
+                errors = load_job.errors
+            else:
+                rows_saved = len(rows)
 
-            logger.info(f"Successfully loaded {len(rows)} gamebook rows")
-                
+            logger.info(f"Successfully loaded {rows_saved} gamebook rows")
+
+            # ✅ FIX: Update stats for processor_base tracking
+            self.stats['rows_inserted'] = rows_saved
+            self.stats['rows_processed'] = rows_saved
+            self.stats['rows_failed'] = len(errors)
+
             # If this is the final batch, finalize processing
             if is_final_batch:
                 self.finalize_processing()
-                
+
         except Exception as e:
             errors.append(str(e))
             logger.error(f"Failed to load data: {e}")
-            
+
+            # Update stats for failure case
+            self.stats['rows_inserted'] = 0
+            self.stats['rows_processed'] = 0
+            self.stats['rows_failed'] = len(rows)
+
             # Notify about database operation failure
             try:
                 notify_error(
@@ -1418,9 +1436,9 @@ class NbacGamebookProcessor(SmartIdempotencyMixin, ProcessorBase):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-        
+
         return {
-            'rows_processed': len(rows) if not errors else 0,
+            'rows_processed': rows_saved,
             'errors': errors
         }
 

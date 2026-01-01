@@ -145,7 +145,7 @@ class BdlActivePlayersProcessor(SmartIdempotencyMixin, ProcessorBase):
             FROM `nba-props-platform.nba_raw.nbac_player_list_current`
             WHERE is_active = TRUE
             """
-            results = self.bq_client.query(query).result()
+            results = self.bq_client.query(query).result(timeout=60)
             
             players = {}
             for row in results:
@@ -375,7 +375,7 @@ class BdlActivePlayersProcessor(SmartIdempotencyMixin, ProcessorBase):
                 # For current-state data, clear existing data before inserting
                 try:
                     delete_query = f"DELETE FROM `{table_id}` WHERE TRUE"
-                    self.bq_client.query(delete_query).result()
+                    self.bq_client.query(delete_query).result(timeout=60)
                     logging.info(f"Cleared existing data from {table_id}")
                 except Exception as delete_error:
                     logging.error(f"Failed to clear existing data: {delete_error}")
@@ -422,7 +422,7 @@ class BdlActivePlayersProcessor(SmartIdempotencyMixin, ProcessorBase):
             )
 
             # Wait for completion
-            load_job.result()
+            load_job.result(timeout=60)
             logging.info(f"Successfully loaded {len(rows)} rows into {table_id}")
 
             # Log validation summary
