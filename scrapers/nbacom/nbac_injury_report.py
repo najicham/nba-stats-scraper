@@ -84,11 +84,13 @@ class GetNbaComInjuryReport(ScraperBase, ScraperFlaskMixin):
     treat_max_retries_as_success = [403]
 
     # Exporters
+    # NOTE: Order matters! First GCS exporter's path is published to Pub/Sub for Phase 2.
+    # JSON exporter must be first so Phase 2 processors receive the correct file path.
     exporters = [
-        {"type": "gcs", "key": GCSPathBuilder.get_path("nba_com_injury_report_pdf_raw"),
-         "export_mode": ExportMode.RAW, "groups": ["prod", "gcs"]},
         {"type": "gcs", "key": GCSPathBuilder.get_path("nba_com_injury_report_data"),
-         "export_mode": ExportMode.DATA, "groups": ["prod", "gcs"]},
+         "export_mode": ExportMode.DATA, "groups": ["prod", "gcs"]},  # PRIMARY: JSON for Phase 2
+        {"type": "gcs", "key": GCSPathBuilder.get_path("nba_com_injury_report_pdf_raw"),
+         "export_mode": ExportMode.RAW, "groups": ["prod", "gcs"]},  # SECONDARY: PDF archive
         {"type": "file", "filename": "/tmp/nbacom_injury_report_%(gamedate)s_%(hour)s.json",
          "export_mode": ExportMode.DATA, "pretty_print": True, "groups": ["dev", "test"]},
         {"type": "file", "filename": "/tmp/raw_%(run_id)s.pdf",
