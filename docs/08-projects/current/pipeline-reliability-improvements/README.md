@@ -12,6 +12,14 @@
 
 This project consolidates all pipeline reliability improvements discovered through comprehensive agent-based exploration. The goal is to achieve a self-healing, well-monitored pipeline that can recover from failures automatically and alert operators before issues impact predictions.
 
+### Recent Additions (Dec 31, 2025)
+
+**BDL Data Quality Issue & Solution**
+- Discovered BDL API reliability issues (Nov-Dec 2025 outages)
+- Backfilled 29 missing games from 4 dates
+- Designed comprehensive 3-layer monitoring architecture
+- See: `BDL-DATA-QUALITY-ISSUE.md` for details
+
 ---
 
 ## Project Structure
@@ -42,13 +50,59 @@ pipeline-reliability-improvements/
 ├── optimization/                          # Processor optimization
 │   └── (5 docs)
 │
+├── data-quality/                          # Data quality & monitoring
+│   ├── BDL-DATA-QUALITY-ISSUE.md          # BDL API reliability issues
+│   ├── BACKFILL-2025-12-31-BDL-GAPS.md    # Backfill execution log
+│   ├── data-completeness-architecture.md  # Comprehensive monitoring design
+│   └── monitoring-architecture-summary.md # Quick reference guide
+│
 └── archive/                               # Historical docs
     └── (session analysis docs)
 ```
 
 ---
 
-## Current Status (Dec 31, 2025 - 6:45 PM ET)
+## Current Status (Jan 1, 2026 - 2:00 AM PST)
+
+### ✅ Completed Jan 1 Session (1 hour) - INJURY DATA FIX!
+
+**AUTOMATIC PIPELINE RESTORED:**
+- 🎯 **Injury Data Pipeline** - Broken since Dec 23, 2025
+  - Root cause: Scraper published PDF path instead of JSON path to Pub/Sub
+  - Impact: Processor couldn't handle PDF paths, data didn't reach BigQuery
+  - See: `2026-01-01-INJURY-FIX-IMPLEMENTATION.md` for full details
+
+**DEPLOYED TO PRODUCTION:**
+1. ✅ **Scraper Fix** - Reordered exporters
+   - File: `scrapers/nbacom/nbac_injury_report.py`
+   - Change: JSON exporter first (published), PDF second (archived)
+   - Deployed: `nba-scrapers` revision `00087-mgr`
+   - Status: JSON path now published to Pub/Sub ✅
+
+2. ✅ **Orchestrator Updated**
+   - Deployed: `nba-phase1-scrapers` revision `00064-pqj`
+   - Configured: SERVICE_URL points to nba-scrapers
+   - Status: Ready for automatic hourly runs ✅
+
+**FIX VERIFIED END-TO-END:**
+- ✅ JSON path published: `.../injury-report-data/.../json`
+- ✅ Processor received JSON (not PDF)
+- ✅ BigQuery updated: 130 records for 2026-01-01
+- ✅ Both files created (JSON + PDF, correct one published)
+
+**TOTAL VALUE:**
+- 🛡️ **Automatic pipeline restored** - No manual intervention needed
+- 🔧 **Root cause fixed** - Simple, maintainable solution
+- 📋 **Documented** - Clear comments prevent future regression
+- ⏰ **Next run**: 2:05 AM - will verify automatic processing works
+
+**COMMIT:** `442d404` - "fix: reorder injury scraper exporters to publish JSON path to Pub/Sub"
+
+**DOCUMENTATION:**
+- `2026-01-01-INJURY-FIX-IMPLEMENTATION.md` - Complete session summary (600+ lines)
+- `2026-01-01-INJURY-FIX-HANDOFF.md` - Original handoff document
+
+---
 
 ### ✅ Completed Dec 31 Evening Session (3 hours) - CRITICAL BUG FIX!
 
