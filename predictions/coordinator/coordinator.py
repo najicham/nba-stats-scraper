@@ -52,6 +52,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 from shared.publishers.unified_pubsub_publisher import UnifiedPubSubPublisher
 from shared.config.orchestration_config import get_orchestration_config
 from shared.utils.env_validation import validate_required_env_vars
+from shared.utils.auth_utils import get_api_key
 
 # Configure logging
 logging.basicConfig(
@@ -76,9 +77,13 @@ PREDICTION_READY_TOPIC = os.environ.get('PREDICTION_READY_TOPIC', 'prediction-re
 BATCH_SUMMARY_TOPIC = os.environ.get('BATCH_SUMMARY_TOPIC', 'prediction-batch-complete')
 
 # API Key authentication (required for /start and /complete endpoints)
-COORDINATOR_API_KEY = os.environ.get('COORDINATOR_API_KEY')
+# Try Secret Manager first, fallback to environment variable for local dev
+COORDINATOR_API_KEY = get_api_key(
+    secret_name='coordinator-api-key',
+    default_env_var='COORDINATOR_API_KEY'
+)
 if not COORDINATOR_API_KEY:
-    logger.warning("COORDINATOR_API_KEY not set - authenticated endpoints will reject all requests")
+    logger.warning("COORDINATOR_API_KEY not available from Secret Manager or environment - authenticated endpoints will reject all requests")
 
 
 def require_api_key(f):
