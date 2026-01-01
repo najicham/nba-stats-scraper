@@ -998,18 +998,40 @@ class NbacGamebookProcessor(SmartIdempotencyMixin, ProcessorBase):
         The NBA.com game_id is stored separately as nba_game_id for reference.
         This ensures consistent JOINs across all analytics tables.
         """
-        # Path format: nba-com/gamebooks-data/2021-10-19/20211019-BKNMIL/20250827_234400.json
-        path_parts = file_path.split('/')
-        date_str = path_parts[-3]  # 2021-10-19
-        game_code = path_parts[-2]  # 20211019-BKNMIL
+        # PRIORITY 1: Extract from JSON data (most reliable)
+        # The JSON file contains: game_code, date, matchup, away_team, home_team
+        if 'date' in data and 'away_team' in data and 'home_team' in data:
+            date_str = data['date']  # e.g., "2025-12-31"
+            away_team = data['away_team']  # e.g., "DEN"
+            home_team = data['home_team']  # e.g., "TOR"
+            game_code = data.get('game_code', '')  # e.g., "20251231/DENTOR"
 
-        # Parse game code
-        date_part = game_code[:8]  # 20211019
-        teams_part = game_code[9:]  # BKNMIL
+            # Extract date_part for backwards compatibility
+            date_part = date_str.replace('-', '')  # "20251231"
+        else:
+            # FALLBACK: Parse from file path (for older files that may not have these fields)
+            # Path format: nba-com/gamebooks-data/2021-10-19/20211019-BKNMIL/20250827_234400.json
+            path_parts = file_path.split('/')
 
-        # Extract teams (first 3 chars = away, last 3 = home)
-        away_team = teams_part[:3] if len(teams_part) >= 6 else None
-        home_team = teams_part[3:6] if len(teams_part) >= 6 else None
+            # Handle both old (4 parts) and new (5 parts) path structures
+            if len(path_parts) >= 5:
+                # New structure: nba-com/gamebooks-data/2025-12-31/20251231-DENTOR/timestamp.json
+                date_str = path_parts[-3]  # 2025-12-31
+                game_code = path_parts[-2]  # 20251231-DENTOR
+            elif len(path_parts) >= 4:
+                # Old structure: nba-com/gamebooks-data/2021-10-19/timestamp.json
+                date_str = path_parts[-2]  # 2021-10-19
+                game_code = data.get('game_code', 'unknown')
+            else:
+                raise ValueError(f"Unexpected file path structure: {file_path}")
+
+            # Parse game code
+            date_part = game_code[:8] if len(game_code) >= 8 else date_str.replace('-', '')
+            teams_part = game_code[9:] if len(game_code) > 9 else ''
+
+            # Extract teams (first 3 chars = away, last 3 = home)
+            away_team = teams_part[:3] if len(teams_part) >= 6 else None
+            home_team = teams_part[3:6] if len(teams_part) >= 6 else None
 
         # Look up official NBA game_id from schedule (e.g., '0022500441')
         # Store this as nba_game_id for reference/debugging
