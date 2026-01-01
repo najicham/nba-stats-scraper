@@ -466,7 +466,7 @@ class EspnBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
                 game_date = rows[0]['game_date']
                 delete_query = f"DELETE FROM `{table_id}` WHERE game_id = '{game_id}' AND game_date = '{game_date}'"
                 logging.info(f"Deleting existing data for game_id: {game_id}, game_date: {game_date}")
-                self.bq_client.query(delete_query).result()
+                self.bq_client.query(delete_query).result(timeout=60)
             
             # Insert new data using batch loading (not streaming insert)
             # This avoids the 20 DML limit and streaming buffer issues
@@ -491,7 +491,7 @@ class EspnBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
             )
 
             # Wait for completion
-            load_job.result()
+            load_job.result(timeout=60)
             logging.info(f"Successfully loaded {len(rows)} rows")
         
         except Exception as e:

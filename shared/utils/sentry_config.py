@@ -5,11 +5,16 @@ from sentry_sdk.integrations.sqlalchemy import SqlAlchemyIntegration
 from sentry_sdk.integrations.logging import LoggingIntegration
 import os
 from .env_utils import is_local
+from .auth_utils import get_api_key
 
 def configure_sentry():
     """Configure Sentry with optimal settings for NBA analytics platform"""
-    
-    sentry_dsn = os.getenv("SENTRY_DSN")
+
+    # Get Sentry DSN from Secret Manager (with env var fallback for local dev)
+    sentry_dsn = get_api_key(
+        secret_name='sentry-dsn',
+        default_env_var='SENTRY_DSN'
+    )
     if not sentry_dsn:
         return
         

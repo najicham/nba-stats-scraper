@@ -28,7 +28,7 @@ class TestEarlySeasonSkipVerification:
         WHERE cache_date BETWEEN '2023-10-24' AND '2023-10-30'
         """
 
-        result = bq_client.query(query).result()
+        result = bq_client.query(query).result(timeout=60)
         row = next(result)
 
         # Should be 0 (processors skipped these dates)
@@ -43,7 +43,7 @@ class TestEarlySeasonSkipVerification:
         WHERE analysis_date BETWEEN '2023-10-24' AND '2023-10-30'
         """
 
-        result = bq_client.query(query).result()
+        result = bq_client.query(query).result(timeout=60)
         row = next(result)
 
         assert row.record_count == 0, \
@@ -57,7 +57,7 @@ class TestEarlySeasonSkipVerification:
         WHERE analysis_date BETWEEN '2023-10-24' AND '2023-10-30'
         """
 
-        result = bq_client.query(query).result()
+        result = bq_client.query(query).result(timeout=60)
         row = next(result)
 
         assert row.record_count == 0, \
@@ -71,7 +71,7 @@ class TestEarlySeasonSkipVerification:
         WHERE analysis_date BETWEEN '2023-10-24' AND '2023-10-30'
         """
 
-        result = bq_client.query(query).result()
+        result = bq_client.query(query).result(timeout=60)
         row = next(result)
 
         assert row.record_count == 0, \
@@ -100,7 +100,7 @@ class TestMLFeatureStorePlaceholders:
         WHERE game_date = '2023-10-24'  # Opening night
         """
 
-        result = bq_client.query(query).result()
+        result = bq_client.query(query).result(timeout=60)
         row = next(result)
 
         # Should have ~450 players with placeholder records
@@ -128,7 +128,7 @@ class TestMLFeatureStorePlaceholders:
         LIMIT 5
         """
 
-        result = bq_client.query(query).result()
+        result = bq_client.query(query).result(timeout=60)
 
         for row in result:
             # Features should be array of NULLs
@@ -156,7 +156,7 @@ class TestRegularSeasonProcessing:
         WHERE cache_date = '2023-10-31'  # Day 7
         """
 
-        result = bq_client.query(query).result()
+        result = bq_client.query(query).result(timeout=60)
         row = next(result)
 
         # Should have ~450 player records
@@ -177,7 +177,7 @@ class TestRegularSeasonProcessing:
         ORDER BY game_date
         """
 
-        result = bq_client.query(query).result()
+        result = bq_client.query(query).result(timeout=60)
         rows = list(result)
 
         # Should have data for all 3 dates
@@ -206,7 +206,7 @@ class TestRegularSeasonProcessing:
         LIMIT 10
         """
 
-        result = bq_client.query(query).result()
+        result = bq_client.query(query).result(timeout=60)
         rows = list(result)
 
         qualities = [row.avg_quality for row in rows]
@@ -247,7 +247,7 @@ class TestProcessorRunHistory:
         ORDER BY data_date, processor_name
         """
 
-        result = bq_client.query(query).result()
+        result = bq_client.query(query).result(timeout=60)
         rows = list(result)
 
         # Should have run history entries

@@ -536,7 +536,7 @@ class UpcomingPlayerGameContextProcessor(
         """
 
         try:
-            result = self.bq_client.query(gamebook_check_query).result()
+            result = self.bq_client.query(gamebook_check_query).result(timeout=60)
             row = next(result, None)
             gamebook_count = row.cnt if row else 0
 
@@ -1471,7 +1471,7 @@ class UpcomingPlayerGameContextProcessor(
         ORDER BY attempt_number DESC LIMIT 1
         """
         try:
-            result = list(self.bq_client.query(query).result())
+            result = list(self.bq_client.query(query).result(timeout=60))
             if not result:
                 return {'active': False, 'attempts': 0, 'until': None}
             row = result[0]
@@ -1507,7 +1507,7 @@ class UpcomingPlayerGameContextProcessor(
                 FALSE, 'Attempt {next_attempt}: {completeness_pct:.1f}% complete')
         """
         try:
-            self.bq_client.query(insert_query).result()
+            self.bq_client.query(insert_query).result(timeout=60)
         except Exception as e:
             logger.warning(f"Failed to record reprocess attempt for {entity_id}: {e}")
 
@@ -2632,7 +2632,7 @@ class UpcomingPlayerGameContextProcessor(
                 temp_table_id,
                 job_config=job_config
             )
-            load_job.result()
+            load_job.result(timeout=60)
             timing['load_temp_table'] = time.time() - step_start
             logger.info(f"Loaded {len(filtered_data)} rows to temp table ({timing['load_temp_table']:.2f}s)")
 
@@ -2667,7 +2667,7 @@ class UpcomingPlayerGameContextProcessor(
             """
 
             merge_job = self.bq_client.query(merge_query)
-            merge_job.result()
+            merge_job.result(timeout=60)
 
             timing['merge_operation'] = time.time() - step_start
             rows_affected = merge_job.num_dml_affected_rows or 0

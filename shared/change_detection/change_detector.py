@@ -107,7 +107,7 @@ class ChangeDetector:
                 ]
             )
 
-            results = self.client.query(query, job_config=job_config).result()
+            results = self.client.query(query, job_config=job_config).result(timeout=60)
             changed_entities = [row.entity_id for row in results]
 
             logger.info(
@@ -271,7 +271,7 @@ class PlayerChangeDetector(ChangeDetector):
             ]
         )
 
-        results = list(self.client.query(query, job_config=job_config).result())
+        results = list(self.client.query(query, job_config=job_config).result(timeout=60))
         return results[0].total if results else 0
 
 
@@ -342,5 +342,5 @@ class TeamChangeDetector(ChangeDetector):
             ]
         )
 
-        results = list(self.client.query(query, job_config=job_config).result())
+        results = list(self.client.query(query, job_config=job_config).result(timeout=60))
         return results[0].total if results else 0

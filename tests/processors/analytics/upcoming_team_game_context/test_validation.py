@@ -74,7 +74,7 @@ def validation_date(bq_client, project_id):
     """
     
     try:
-        result = list(bq_client.query(query).result())
+        result = list(bq_client.query(query).result(timeout=60))
         if result:
             validation_date = result[0].game_date
             print(f"\n📅 Validating data for: {validation_date}")
@@ -617,7 +617,7 @@ class TestRelationships:
           AND game_status IN (1, 3)
         """
         
-        schedule_games = set([row.game_id for row in bq_client.query(query).result()])
+        schedule_games = set([row.game_id for row in bq_client.query(query).result(timeout=60)])
         context_games = set(context_data['game_id'].unique())
         
         # Context should have all scheduled games
@@ -663,7 +663,7 @@ class TestRelationships:
         """
         
         try:
-            result = list(bq_client.query(query).result())
+            result = list(bq_client.query(query).result(timeout=60))
             if result and result[0].count > 0:
                 # Test join
                 join_query = f"""
@@ -675,7 +675,7 @@ class TestRelationships:
                 WHERE t.game_date = '{validation_date}'
                 """
                 
-                join_result = list(bq_client.query(join_query).result())
+                join_result = list(bq_client.query(join_query).result(timeout=60))
                 join_count = join_result[0].join_count if join_result else 0
                 
                 assert join_count > 0, \

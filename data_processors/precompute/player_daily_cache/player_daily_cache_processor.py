@@ -1036,7 +1036,7 @@ class PlayerDailyCacheProcessor(
         """
 
         try:
-            result = list(self.bq_client.query(query).result())
+            result = list(self.bq_client.query(query).result(timeout=60))
 
             if not result:
                 return {'active': False, 'attempts': 0, 'until': None}
@@ -1201,7 +1201,7 @@ class PlayerDailyCacheProcessor(
         """
 
         try:
-            self.bq_client.query(insert_query).result()
+            self.bq_client.query(insert_query).result(timeout=60)
             logger.debug(f"{entity_id}: Recorded reprocess attempt {next_attempt}")
         except Exception as e:
             logger.warning(f"Failed to record reprocess attempt for {entity_id}: {e}")
@@ -1270,7 +1270,7 @@ class PlayerDailyCacheProcessor(
         """
 
         try:
-            self.bq_client.query(batch_query).result()
+            self.bq_client.query(batch_query).result(timeout=60)
             logger.info(f"Batch recorded {len(items)} reprocess attempts ({tripped_count} circuit breakers tripped)")
         except Exception as e:
             logger.warning(f"Failed to batch record reprocess attempts: {e}")

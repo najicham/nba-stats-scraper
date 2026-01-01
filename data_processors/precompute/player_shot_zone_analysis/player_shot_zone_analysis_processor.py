@@ -767,7 +767,7 @@ class PlayerShotZoneAnalysisProcessor(
         """
 
         try:
-            result = list(self.bq_client.query(query).result())
+            result = list(self.bq_client.query(query).result(timeout=60))
 
             if not result:
                 return {'active': False, 'attempts': 0, 'until': None}
@@ -839,7 +839,7 @@ class PlayerShotZoneAnalysisProcessor(
         """
 
         try:
-            self.bq_client.query(insert_query).result()
+            self.bq_client.query(insert_query).result(timeout=60)
             logger.debug(f"{entity_id}: Recorded reprocess attempt {next_attempt}")
         except Exception as e:
             logger.warning(f"Failed to record reprocess attempt for {entity_id}: {e}")
@@ -1721,7 +1721,7 @@ class PlayerShotZoneAnalysisProcessor(
             load_job = self.bq_client.load_table_from_json(
                 failure_records, table_id, job_config=job_config
             )
-            load_job.result()
+            load_job.result(timeout=60)
 
             if load_job.errors:
                 logger.warning(f"BigQuery load had errors: {load_job.errors[:3]}")

@@ -96,7 +96,7 @@ class BackfillValidator:
         FROM `nba_analytics.player_game_summary`
         WHERE game_date = '{game_date.isoformat()}'
         """
-        result = self.bq_client.query(query).result()
+        result = self.bq_client.query(query).result(timeout=60)
         for row in result:
             return {'expected_players': row.expected_players}
         return {'expected_players': 0}
@@ -150,7 +150,7 @@ class BackfillValidator:
         LEFT JOIN failure_records f ON e.player_lookup = f.player_lookup
         """
         try:
-            result = self.bq_client.query(query).result()
+            result = self.bq_client.query(query).result(timeout=60)
             for row in result:
                 return {
                     'total_expected': row.total_expected,
@@ -173,7 +173,7 @@ class BackfillValidator:
         FROM `{config['table']}`
         WHERE {config['date_col']} = '{game_date.isoformat()}'
         """
-        result = self.bq_client.query(query).result()
+        result = self.bq_client.query(query).result(timeout=60)
         for row in result:
             return {'actual_records': row.actual_records}
         return {'actual_records': 0}
@@ -196,7 +196,7 @@ class BackfillValidator:
         ORDER BY count DESC
         """
         try:
-            result = self.bq_client.query(query).result()
+            result = self.bq_client.query(query).result(timeout=60)
             failures = {}
             for row in result:
                 failures[row.failure_category] = {
@@ -216,7 +216,7 @@ class BackfillValidator:
         WHERE game_date BETWEEN '{start_date.isoformat()}' AND '{end_date.isoformat()}'
         ORDER BY game_date
         """
-        result = self.bq_client.query(query).result()
+        result = self.bq_client.query(query).result(timeout=60)
         return [row.game_date for row in result]
 
     def validate_date(self, game_date: date, processors: Optional[List[str]] = None) -> Dict:

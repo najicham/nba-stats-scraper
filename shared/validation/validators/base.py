@@ -191,7 +191,7 @@ def query_table_count(
     )
 
     try:
-        result = client.query(query, job_config=job_config).result()
+        result = client.query(query, job_config=job_config).result(timeout=60)
         row = next(iter(result))
         return row.cnt
     except Exception as e:
@@ -221,7 +221,7 @@ def query_player_count(
     )
 
     try:
-        result = client.query(query, job_config=job_config).result()
+        result = client.query(query, job_config=job_config).result(timeout=60)
         row = next(iter(result))
         return row.cnt
     except Exception as e:
@@ -256,7 +256,7 @@ def query_quality_distribution(
     distribution = QualityDistribution()
 
     try:
-        result = client.query(query, job_config=job_config).result()
+        result = client.query(query, job_config=job_config).result(timeout=60)
         for row in result:
             tier = row.tier.lower() if row.tier else 'unknown'
             if tier == 'gold':
@@ -304,7 +304,7 @@ def query_actual_players(
     )
 
     try:
-        result = client.query(query, job_config=job_config).result()
+        result = client.query(query, job_config=job_config).result(timeout=60)
         return {row[0] for row in result}
     except Exception as e:
         logger.error(f"Error querying players in {dataset}.{table}: {e}")
@@ -387,7 +387,7 @@ def query_duplicate_count(
     )
 
     try:
-        result = client.query(query, job_config=job_config).result()
+        result = client.query(query, job_config=job_config).result(timeout=60)
         row = next(iter(result))
         duplicate_count = row.total_count - row.distinct_count
         if duplicate_count > 0:
@@ -444,7 +444,7 @@ def query_null_critical_fields(
     result_dict = {field: 0 for field in critical_fields}
 
     try:
-        result = client.query(query, job_config=job_config).result()
+        result = client.query(query, job_config=job_config).result(timeout=60)
         row = next(iter(result))
         for field in critical_fields:
             null_count = getattr(row, f'null_{field}', 0) or 0

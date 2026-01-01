@@ -168,7 +168,7 @@ class ReplayValidator:
         """
 
         try:
-            result = self.bq_client.query(query).result()
+            result = self.bq_client.query(query).result(timeout=60)
             row = list(result)[0]
             count = row.count
 
@@ -203,7 +203,7 @@ class ReplayValidator:
         """
 
         try:
-            result = self.bq_client.query(query).result()
+            result = self.bq_client.query(query).result(timeout=60)
             row = list(result)[0]
 
             has_duplicates = row.total != row.unique_count
@@ -242,7 +242,7 @@ class ReplayValidator:
         """
 
         try:
-            result = self.bq_client.query(query).result()
+            result = self.bq_client.query(query).result(timeout=60)
             row = list(result)[0]
 
             # Check reasonable coverage
@@ -296,8 +296,8 @@ class ReplayValidator:
             """
 
             try:
-                test_result = list(self.bq_client.query(test_query).result())[0]
-                prod_result = list(self.bq_client.query(prod_query).result())[0]
+                test_result = list(self.bq_client.query(test_query).result(timeout=60))[0]
+                prod_result = list(self.bq_client.query(prod_query).result(timeout=60))[0]
 
                 test_count = test_result.count
                 prod_count = prod_result.count

@@ -66,7 +66,7 @@ def check_games_scheduled(bq_client, target_date):
     FROM `{PROJECT_ID}.nba_raw.nbac_schedule`
     WHERE game_date = '{target_date}'
     """
-    result = list(bq_client.query(query).result())
+    result = list(bq_client.query(query).result(timeout=60))
     return result[0].games if result else 0
 
 
@@ -77,7 +77,7 @@ def check_predictions_exist(bq_client, target_date):
     FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions`
     WHERE game_date = '{target_date}' AND is_active = TRUE
     """
-    result = list(bq_client.query(query).result())
+    result = list(bq_client.query(query).result(timeout=60))
     if result:
         return result[0].predictions, result[0].players
     return 0, 0
@@ -90,7 +90,7 @@ def check_quality_score(bq_client, target_date):
     FROM `{PROJECT_ID}.nba_predictions.ml_feature_store_v2`
     WHERE game_date = '{target_date}'
     """
-    result = list(bq_client.query(query).result())
+    result = list(bq_client.query(query).result(timeout=60))
     if result and result[0].avg_quality:
         return float(result[0].avg_quality)
     return None

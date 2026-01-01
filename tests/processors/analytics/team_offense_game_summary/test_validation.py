@@ -108,7 +108,7 @@ def recent_data_check(bq_client, table_id, table_exists):
     WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
     """
     
-    result = list(bq_client.query(query).result())[0]
+    result = list(bq_client.query(query).result(timeout=60))[0]
     
     if result.total_records == 0:
         pytest.fail("❌ No data found in last 30 days. Run processor first.")
@@ -220,7 +220,7 @@ class TestDataCompleteness:
         WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL {days_back} DAY)
         """
         
-        result = list(bq_client.query(query).result())[0]
+        result = list(bq_client.query(query).result(timeout=60))[0]
         
         # Only enforce minimums if we have recent data at all (skip during off-season)
         if result.game_count > 0:
@@ -238,7 +238,7 @@ class TestDataCompleteness:
         HAVING COUNT(*) != 2
         """
         
-        result = list(bq_client.query(query).result())
+        result = list(bq_client.query(query).result(timeout=60))
         
         if result:
             bad_games = [(row.game_id, row.team_count) for row in result[:5]]
@@ -258,7 +258,7 @@ class TestDataCompleteness:
         HAVING home_count != 1 OR away_count != 1
         """
         
-        result = list(bq_client.query(query).result())
+        result = list(bq_client.query(query).result(timeout=60))
         
         if result:
             bad_games = [(row.game_id, row.home_count, row.away_count) for row in result[:5]]
@@ -276,7 +276,7 @@ class TestDataCompleteness:
         WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
         """
         
-        result = list(bq_client.query(query).result())[0]
+        result = list(bq_client.query(query).result(timeout=60))[0]
         
         if result.last_processed is None:
             print("⚠️  No recent processing timestamps found")
@@ -302,7 +302,7 @@ class TestDataCompleteness:
         WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
         """
         
-        result = list(bq_client.query(query).result())[0]
+        result = list(bq_client.query(query).result(timeout=60))[0]
         
         assert result.null_game_id == 0, f"game_id has {result.null_game_id} NULLs"
         assert result.null_game_date == 0, f"game_date has {result.null_game_date} NULLs"
@@ -323,7 +323,7 @@ class TestDataCompleteness:
         HAVING COUNT(*) > 1
         """
         
-        result = list(bq_client.query(query).result())
+        result = list(bq_client.query(query).result(timeout=60))
         
         if result:
             duplicates = [(row.game_id, row.team_abbr, row.count) for row in result[:5]]
@@ -351,7 +351,7 @@ class TestDataQuality:
         LIMIT 10
         """
         
-        result = list(bq_client.query(query).result())
+        result = list(bq_client.query(query).result(timeout=60))
         
         if result:
             mismatches = [(row.game_id, row.team_abbr, row.points_scored, row.calculated_points) 
@@ -374,7 +374,7 @@ class TestDataQuality:
         LIMIT 10
         """
         
-        result = list(bq_client.query(query).result())
+        result = list(bq_client.query(query).result(timeout=60))
         
         if result:
             bad_math = [(row.game_id, row.team_abbr, 
@@ -411,7 +411,7 @@ class TestDataQuality:
         LIMIT 10
         """
         
-        result = list(bq_client.query(query).result())
+        result = list(bq_client.query(query).result(timeout=60))
         
         if result:
             inconsistent = [(row.game_id, str(row.teams)) for row in result]
@@ -433,7 +433,7 @@ class TestDataQuality:
         LIMIT 10
         """
         
-        result = list(bq_client.query(query).result())
+        result = list(bq_client.query(query).result(timeout=60))
         
         if result:
             unreasonable = [(row.game_id, row.team_abbr, 
@@ -461,7 +461,7 @@ class TestDataQuality:
         LIMIT 10
         """
         
-        result = list(bq_client.query(query).result())
+        result = list(bq_client.query(query).result(timeout=60))
         
         if result:
             mismatches = [(row.game_id, f"{row[1]}:{row.overtime_periods}", 
@@ -488,7 +488,7 @@ class TestDataQuality:
         LIMIT 10
         """
         
-        result = list(bq_client.query(query).result())
+        result = list(bq_client.query(query).result(timeout=60))
         
         if result:
             mismatches = [(row.game_id, row.team_abbr, 
@@ -518,7 +518,7 @@ class TestSourceTracking:
         WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
         """
         
-        result = list(bq_client.query(query).result())[0]
+        result = list(bq_client.query(query).result(timeout=60))[0]
         
         pct_last_updated = (result.has_last_updated / result.total_rows * 100) if result.total_rows > 0 else 0
         pct_rows_found = (result.has_rows_found / result.total_rows * 100) if result.total_rows > 0 else 0
@@ -549,7 +549,7 @@ class TestSourceTracking:
         LIMIT 10
         """
         
-        result = list(bq_client.query(query).result())
+        result = list(bq_client.query(query).result(timeout=60))
         
         if result:
             out_of_range = [(row.game_id, row.team_abbr, 
@@ -571,7 +571,7 @@ class TestSourceTracking:
             AND source_nbac_boxscore_completeness_pct IS NOT NULL
         """
         
-        result = list(bq_client.query(query).result())[0]
+        result = list(bq_client.query(query).result(timeout=60))[0]
         
         assert result.avg_completeness >= 90, \
             f"Average completeness should be ≥90% (actual: {result.avg_completeness:.1f}%)"
@@ -599,7 +599,7 @@ class TestAdvancedMetrics:
         LIMIT 10
         """
         
-        result = list(bq_client.query(query).result())
+        result = list(bq_client.query(query).result(timeout=60))
         
         if result:
             unreasonable = [(row.game_id, row.team_abbr, 
@@ -621,7 +621,7 @@ class TestAdvancedMetrics:
         LIMIT 10
         """
         
-        result = list(bq_client.query(query).result())
+        result = list(bq_client.query(query).result(timeout=60))
         
         if result:
             unreasonable = [(row.game_id, row.team_abbr, f"TS%:{row.ts_pct:.3f}") 
@@ -641,7 +641,7 @@ class TestAdvancedMetrics:
         LIMIT 10
         """
         
-        result = list(bq_client.query(query).result())
+        result = list(bq_client.query(query).result(timeout=60))
         
         if result:
             unreasonable = [(row.game_id, row.team_abbr, 
@@ -664,7 +664,7 @@ class TestAdvancedMetrics:
         LIMIT 10
         """
         
-        result = list(bq_client.query(query).result())
+        result = list(bq_client.query(query).result(timeout=60))
         
         if result:
             unreasonable = [(row.game_id, row.team_abbr, 
@@ -694,7 +694,7 @@ class TestShotZones:
         ORDER BY shot_zones_available DESC
         """
         
-        result = list(bq_client.query(query).result())
+        result = list(bq_client.query(query).result(timeout=60))
         
         for row in result:
             status = "WITH zones" if row.shot_zones_available else "WITHOUT zones"
@@ -716,7 +716,7 @@ class TestShotZones:
         LIMIT 10
         """
         
-        result = list(bq_client.query(query).result())
+        result = list(bq_client.query(query).result(timeout=60))
         
         if result:
             large_diffs = [(row.game_id, row.team_abbr, 
@@ -741,7 +741,7 @@ class TestShotZones:
         LIMIT 10
         """
         
-        result = list(bq_client.query(query).result())
+        result = list(bq_client.query(query).result(timeout=60))
         
         if result:
             unreasonable = [(row.game_id, row.team_abbr, 
@@ -777,7 +777,7 @@ class TestQualityTiers:
             END
         """
         
-        result = list(bq_client.query(query).result())
+        result = list(bq_client.query(query).result(timeout=60))
         
         print("📊 Quality tier distribution:")
         for row in result:
@@ -816,7 +816,7 @@ class TestQualityTiers:
         LIMIT 10
         """
         
-        result = list(bq_client.query(query).result())
+        result = list(bq_client.query(query).result(timeout=60))
         
         if result:
             wrong_tiers = [(row.game_id, row.team_abbr, 
@@ -844,7 +844,7 @@ class TestQueryPerformance:
         """
         
         start = time.time()
-        result = list(bq_client.query(query).result())
+        result = list(bq_client.query(query).result(timeout=60))
         elapsed = time.time() - start
         
         assert elapsed < 5.0, f"Query took {elapsed:.2f}s (expected <5s)"
@@ -866,7 +866,7 @@ class TestQueryPerformance:
         """
         
         start = time.time()
-        result = list(bq_client.query(query).result())
+        result = list(bq_client.query(query).result(timeout=60))
         elapsed = time.time() - start
         
         assert elapsed < 10.0, f"Aggregation query took {elapsed:.2f}s (expected <10s)"

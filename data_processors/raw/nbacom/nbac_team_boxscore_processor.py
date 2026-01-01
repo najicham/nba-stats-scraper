@@ -580,7 +580,7 @@ class NbacTeamBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
                 )
 
                 delete_job = self.bq_client.query(delete_query, job_config=job_config)
-                delete_job.result()  # Wait for completion
+                delete_job.result(timeout=60)  # Wait for completion
 
                 logger.info(f"Deleted existing records for game {game_id}")
 
@@ -601,7 +601,7 @@ class NbacTeamBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
             # Insert new records using batch loading
             logger.info(f"Loading {len(rows)} rows into {table_id} using batch load")
             load_job = self.bq_client.load_table_from_json(rows, table_id, job_config=job_config)
-            load_job.result()
+            load_job.result(timeout=60)
 
             if load_job.errors:
                 logger.warning(f"BigQuery load had errors: {load_job.errors[:3]}")

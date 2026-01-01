@@ -1019,7 +1019,7 @@ class RegistryReader:
             )
 
             load_job = self.bq_client.load_table_from_json(records, table_id, job_config=job_config)
-            load_job.result()
+            load_job.result(timeout=60)
 
             if load_job.errors:
                 logger.warning(f"BigQuery load had errors: {load_job.errors[:3]}")

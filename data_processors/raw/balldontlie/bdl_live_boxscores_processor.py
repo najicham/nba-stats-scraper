@@ -376,7 +376,7 @@ class BdlLiveBoxscoresProcessor(ProcessorBase):
             )
 
             # Wait for completion
-            load_job.result()
+            load_job.result(timeout=60)
 
             # Get unique game count
             game_ids = set(row['game_id'] for row in rows)

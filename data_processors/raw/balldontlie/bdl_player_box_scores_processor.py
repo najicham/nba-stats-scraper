@@ -355,7 +355,7 @@ class BdlPlayerBoxScoresProcessor(SmartIdempotencyMixin, ProcessorBase):
                       AND game_date = '{game_date}'
                       AND DATETIME_DIFF(CURRENT_DATETIME(), DATETIME(processed_at), MINUTE) >= 90
                     """
-                    self.bq_client.query(delete_query).result()
+                    self.bq_client.query(delete_query).result(timeout=60)
                 except Exception as e:
                     if 'streaming buffer' in str(e).lower():
                         logger.warning(f"Streaming buffer prevents delete for {game_id}")
@@ -381,7 +381,7 @@ class BdlPlayerBoxScoresProcessor(SmartIdempotencyMixin, ProcessorBase):
             )
 
             # Wait for completion
-            load_job.result()
+            load_job.result(timeout=60)
             logger.info(f"Successfully loaded {len(rows)} rows for {len(game_ids)} games")
 
             # Update stats

@@ -326,7 +326,7 @@ class BdlStandingsProcessor(SmartIdempotencyMixin, ProcessorBase):
             logging.info(f"Deleting existing data for {date_recorded}, season {season_year}")
             
             try:
-                self.bq_client.query(delete_query).result()
+                self.bq_client.query(delete_query).result(timeout=60)
             except Exception as delete_error:
                 logging.error(f"Failed to delete existing standings: {delete_error}")
                 
@@ -377,7 +377,7 @@ class BdlStandingsProcessor(SmartIdempotencyMixin, ProcessorBase):
             )
 
             # Wait for completion
-            load_job.result()
+            load_job.result(timeout=60)
             logging.info(f"Successfully loaded {len(rows)} standings for {date_recorded}")
 
             # Calculate summary statistics

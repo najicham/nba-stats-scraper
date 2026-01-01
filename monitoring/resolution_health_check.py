@@ -80,7 +80,7 @@ class ResolutionHealthMonitor:
         )
 
         try:
-            results = list(self.client.query(query, job_config=job_config).result())
+            results = list(self.client.query(query, job_config=job_config).result(timeout=60))
 
             stale_names = []
             for row in results:
@@ -100,7 +100,7 @@ class ResolutionHealthMonitor:
             AND created_at < TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL @hours HOUR)
             """
 
-            count_result = list(self.client.query(count_query, job_config=job_config).result())[0]
+            count_result = list(self.client.query(count_query, job_config=job_config).result(timeout=60))[0]
 
             return {
                 'count': count_result.count,
@@ -142,7 +142,7 @@ class ResolutionHealthMonitor:
         )
 
         try:
-            result = list(self.client.query(query, job_config=job_config).result())[0]
+            result = list(self.client.query(query, job_config=job_config).result(timeout=60))[0]
 
             rate = result.resolution_rate or 0
             status = 'OK' if rate >= 0.9 or result.total < 10 else 'WARNING'
@@ -188,7 +188,7 @@ class ResolutionHealthMonitor:
         )
 
         try:
-            results = list(self.client.query(query, job_config=job_config).result())
+            results = list(self.client.query(query, job_config=job_config).result(timeout=60))
 
             trends = []
             for row in results:
@@ -227,7 +227,7 @@ class ResolutionHealthMonitor:
         """
 
         try:
-            results = list(self.client.query(query).result())
+            results = list(self.client.query(query).result(timeout=60))
 
             by_type = []
             total_active = 0
@@ -275,7 +275,7 @@ class ResolutionHealthMonitor:
         )
 
         try:
-            results = list(self.client.query(query, job_config=job_config).result())
+            results = list(self.client.query(query, job_config=job_config).result(timeout=60))
 
             sources = []
             for row in results:

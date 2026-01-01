@@ -474,7 +474,7 @@ class BdlBoxscoresProcessor(SmartIdempotencyMixin, ProcessorBase):
         
         try:
             delete_job = self.bq_client.query(delete_query)
-            delete_result = delete_job.result()
+            delete_result = delete_job.result(timeout=60)
             
             # Handle empty result when no rows to delete
             try:
@@ -655,7 +655,7 @@ class BdlBoxscoresProcessor(SmartIdempotencyMixin, ProcessorBase):
             )
 
             # Wait for completion
-            load_job.result()
+            load_job.result(timeout=60)
             logger.info(f"Successfully loaded {len(rows)} rows for {len(game_ids)} games")
 
             # Log game ID format compliance

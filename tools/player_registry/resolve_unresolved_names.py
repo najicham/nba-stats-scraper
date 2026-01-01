@@ -114,7 +114,7 @@ class ActionLogger:
             )
 
             load_job = self.bq_client.load_table_from_json([cloud_record], self.log_table, job_config=job_config)
-            load_job.result()
+            load_job.result(timeout=60)
 
             if load_job.errors:
                 logger.warning(f"Failed to write cloud log: {load_job.errors}")
@@ -364,7 +364,7 @@ class UnresolvedNameResolver:
         )
 
         load_job = self.bq_client.load_table_from_json([alias_record], table_id, job_config=job_config)
-        load_job.result()
+        load_job.result(timeout=60)
 
         if load_job.errors:
             print(f"\nError creating alias: {load_job.errors}")
@@ -448,7 +448,7 @@ class UnresolvedNameResolver:
         )
 
         load_job = self.bq_client.load_table_from_json([registry_record], table_id, job_config=job_config)
-        load_job.result()
+        load_job.result(timeout=60)
 
         if load_job.errors:
             print(f"\nError creating registry entry: {load_job.errors}")
@@ -483,7 +483,7 @@ class UnresolvedNameResolver:
         ])
         
         try:
-            self.bq_client.query(update_query, job_config=job_config).result()
+            self.bq_client.query(update_query, job_config=job_config).result(timeout=60)
             return True
         except Exception as e:
             print(f"\nError marking as resolved: {e}")
@@ -550,7 +550,7 @@ class UnresolvedNameResolver:
         ])
         
         try:
-            self.bq_client.query(update_query, job_config=job_config).result()
+            self.bq_client.query(update_query, job_config=job_config).result(timeout=60)
             return True
         except Exception as e:
             print(f"\nError snoozing: {e}")
@@ -594,7 +594,7 @@ class UnresolvedNameResolver:
         job_config = bigquery.QueryJobConfig(query_parameters=params)
         
         try:
-            self.bq_client.query(update_query, job_config=job_config).result()
+            self.bq_client.query(update_query, job_config=job_config).result(timeout=60)
             return True
         except Exception as e:
             print(f"\nError updating status: {e}")

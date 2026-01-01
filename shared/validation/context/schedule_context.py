@@ -174,7 +174,7 @@ def _query_schedule(client: bigquery.Client, game_date: date) -> tuple:
     )
 
     try:
-        result = client.query(query, job_config=job_config).result()
+        result = client.query(query, job_config=job_config).result(timeout=60)
         rows = list(result)
 
         if not rows:

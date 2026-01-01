@@ -453,7 +453,7 @@ class RunHistoryMixin:
                 )
 
                 load_job = bq_client.load_table_from_json([filtered_record], table_id, job_config=job_config)
-                load_job.result()
+                load_job.result(timeout=60)
 
                 if load_job.errors:
                     logger.warning(f"BigQuery load had errors: {load_job.errors[:3]}")
@@ -558,7 +558,7 @@ class RunHistoryMixin:
                 ]
             )
 
-            results = list(bq_client.query(query, job_config=job_config).result())
+            results = list(bq_client.query(query, job_config=job_config).result(timeout=60))
 
             if not results:
                 return False  # No previous runs found

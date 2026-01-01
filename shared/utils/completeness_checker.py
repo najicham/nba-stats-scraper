@@ -701,7 +701,8 @@ class CompletenessChecker:
             ]
         )
 
-        result = self.bq_client.query(query, job_config=job_config).result()
+        # Wait for completion with timeout to prevent indefinite hangs
+        result = self.bq_client.query(query, job_config=job_config).result(timeout=60)
         missing_dates = [row.missing_date for row in result]
 
         expected_days = (end_date - start_date).days + 1
@@ -785,7 +786,8 @@ class CompletenessChecker:
             ]
         )
 
-        result = self.bq_client.query(query, job_config=job_config).result()
+        # Wait for completion with timeout to prevent indefinite hangs
+        result = self.bq_client.query(query, job_config=job_config).result(timeout=60)
         row = next(iter(result), None)
 
         if not row:
@@ -902,7 +904,8 @@ class CompletenessChecker:
         )
 
         logger.debug(f"Fast daily completeness query for {len(entity_ids)} entities on {target_date}")
-        result = self.bq_client.query(query, job_config=job_config).result()
+        # Wait for completion with timeout to prevent indefinite hangs
+        result = self.bq_client.query(query, job_config=job_config).result(timeout=60)
 
         # Build set of entities that have data
         entities_with_data = {row.entity_id for row in result}
@@ -970,7 +973,8 @@ class CompletenessChecker:
         )
 
         try:
-            result = self.bq_client.query(query, job_config=job_config).result()
+            # Wait for completion with timeout to prevent indefinite hangs
+            result = self.bq_client.query(query, job_config=job_config).result(timeout=60)
             row = next(iter(result), None)
             return row.player_in_game if row else False
         except Exception as e:
@@ -1023,7 +1027,8 @@ class CompletenessChecker:
         )
 
         try:
-            result = self.bq_client.query(query, job_config=job_config).result()
+            # Wait for completion with timeout to prevent indefinite hangs
+            result = self.bq_client.query(query, job_config=job_config).result(timeout=60)
 
             # Return results keyed by normalized lookup (what BDL uses)
             player_dates: Dict[str, List[date]] = {p: [] for p in normalized_lookups}
@@ -1359,7 +1364,8 @@ class CompletenessChecker:
                 ]
             )
 
-            actual_result = self.bq_client.query(actual_query, job_config=job_config).result()
+            # Wait for completion with timeout to prevent indefinite hangs
+            actual_result = self.bq_client.query(actual_query, job_config=job_config).result(timeout=60)
 
             actual_games = []
             team_abbr = None
@@ -1391,7 +1397,8 @@ class CompletenessChecker:
                     ]
                 )
 
-                expected_result = self.bq_client.query(expected_query, job_config=expected_config).result()
+                # Wait for completion with timeout to prevent indefinite hangs
+                expected_result = self.bq_client.query(expected_query, job_config=expected_config).result(timeout=60)
                 result['expected_games'] = [row.game_date for row in expected_result]
 
             logger.debug(
@@ -1470,7 +1477,8 @@ class CompletenessChecker:
                 ]
             )
 
-            actual_result = self.bq_client.query(actual_query, job_config=job_config).result()
+            # Wait for completion with timeout to prevent indefinite hangs
+            actual_result = self.bq_client.query(actual_query, job_config=job_config).result(timeout=60)
 
             # Collect teams for each player
             player_teams = {}
@@ -1518,7 +1526,8 @@ class CompletenessChecker:
                     ]
                 )
 
-                expected_result = self.bq_client.query(expected_query, job_config=expected_config).result()
+                # Wait for completion with timeout to prevent indefinite hangs
+                expected_result = self.bq_client.query(expected_query, job_config=expected_config).result(timeout=60)
 
                 # Build team -> game dates mapping
                 team_games = {t: set() for t in unique_teams}

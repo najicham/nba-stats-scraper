@@ -482,7 +482,7 @@ class NbacPlayerBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
                 logging.info(f"Deleting existing records for {len(game_ids)} games on {len(game_dates)} dates")
 
                 try:
-                    self.bq_client.query(delete_query).result()
+                    self.bq_client.query(delete_query).result(timeout=60)
                 except Exception as e:
                     logging.error(f"Error deleting existing data: {e}")
                     raise e
@@ -504,7 +504,7 @@ class NbacPlayerBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
             # Insert new data using batch loading
             logging.info(f"Loading {len(rows)} rows into {table_id} using batch load")
             load_job = self.bq_client.load_table_from_json(rows, table_id, job_config=job_config)
-            load_job.result()
+            load_job.result(timeout=60)
 
             if load_job.errors:
                 logging.warning(f"BigQuery load had errors: {load_job.errors[:3]}")

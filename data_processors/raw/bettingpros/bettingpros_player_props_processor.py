@@ -133,7 +133,7 @@ class BettingPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
         
         try:
             query_job = self.bq_client.query(query, job_config=job_config)
-            results = list(query_job.result())
+            results = list(query_job.result(timeout=60))
             
             if results and results[0]['count'] > 0:
                 logger.info(f"File already processed, skipping: {file_path}")
@@ -432,7 +432,7 @@ class BettingPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
             )
 
             load_job = self.bq_client.load_table_from_json(rows, table_id, job_config=job_config)
-            load_job.result()  # Wait for completion
+            load_job.result(timeout=60)  # Wait for completion
             
             # Check for errors
             if load_job.errors:

@@ -168,7 +168,7 @@ class CascadeContaminationValidator:
         """
 
         try:
-            results = list(self.bq_client.query(query).result())
+            results = list(self.bq_client.query(query).result(timeout=60))
         except Exception as e:
             logger.error(f"Error querying {table}: {e}")
             return None
@@ -292,7 +292,7 @@ class CascadeContaminationValidator:
         """
 
         try:
-            results = list(self.bq_client.query(query).result())
+            results = list(self.bq_client.query(query).result(timeout=60))
             breakdown = []
             for row in results:
                 date_info = {

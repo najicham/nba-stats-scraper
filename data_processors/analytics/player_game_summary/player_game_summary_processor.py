@@ -306,7 +306,7 @@ class PlayerGameSummaryProcessor(
         skip, reason = self.should_skip_processing(start_date)
         if skip:
             logger.info(f"SMART REPROCESSING: Skipping processing - {reason}")
-            self.raw_data = []
+            self.raw_data = pd.DataFrame()
             return
 
         logger.info(f"PROCESSING: {reason}")

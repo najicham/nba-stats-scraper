@@ -135,7 +135,7 @@ class AliasManager:
             )
 
             load_job = self.client.load_table_from_json(new_rows, self.table_id, job_config=job_config)
-            load_job.result()
+            load_job.result(timeout=60)
 
             if load_job.errors:
                 logger.error(f"Errors inserting aliases: {load_job.errors}")
@@ -167,7 +167,7 @@ class AliasManager:
         )
 
         try:
-            results = self.client.query(query, job_config=job_config).result()
+            results = self.client.query(query, job_config=job_config).result(timeout=60)
             return {row.alias_lookup for row in results}
         except Exception as e:
             logger.warning(f"Error checking existing aliases: {e}")
@@ -198,7 +198,7 @@ class AliasManager:
         )
 
         try:
-            results = list(self.client.query(query, job_config=job_config).result())
+            results = list(self.client.query(query, job_config=job_config).result(timeout=60))
 
             if not results:
                 return None
@@ -249,7 +249,7 @@ class AliasManager:
 
         try:
             job = self.client.query(query, job_config=job_config)
-            job.result()
+            job.result(timeout=60)
             logger.info(f"Deactivated alias: {alias_lookup} (reason: {reason})")
             return True
         except Exception as e:
@@ -266,7 +266,7 @@ class AliasManager:
         """
 
         try:
-            results = self.client.query(query).result()
+            results = self.client.query(query).result(timeout=60)
 
             aliases = []
             for row in results:
@@ -309,8 +309,8 @@ class AliasManager:
         """
 
         try:
-            result1 = list(self.client.query(query).result())[0]
-            result2 = list(self.client.query(query2).result())
+            result1 = list(self.client.query(query).result(timeout=60))[0]
+            result2 = list(self.client.query(query2).result(timeout=60))
 
             by_type = {row.alias_type: row.count for row in result2}
 

@@ -262,7 +262,7 @@ class TeamDefenseZoneAnalysisProcessor(
             WHERE game_count >= {min_games}
             """
             
-            result = list(self.bq_client.query(query).result())
+            result = list(self.bq_client.query(query).result(timeout=60))
             
             if not result:
                 return False, {
@@ -560,7 +560,7 @@ class TeamDefenseZoneAnalysisProcessor(
         """
 
         try:
-            result = list(self.bq_client.query(query).result())
+            result = list(self.bq_client.query(query).result(timeout=60))
 
             if not result:
                 return {'active': False, 'attempts': 0, 'until': None}
@@ -636,7 +636,7 @@ class TeamDefenseZoneAnalysisProcessor(
         """
 
         try:
-            self.bq_client.query(insert_query).result()
+            self.bq_client.query(insert_query).result(timeout=60)
             logger.debug(f"{entity_id}: Recorded reprocess attempt {next_attempt}")
         except Exception as e:
             logger.warning(f"Failed to record reprocess attempt for {entity_id}: {e}")
