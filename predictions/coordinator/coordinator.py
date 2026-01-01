@@ -777,7 +777,7 @@ def publish_batch_summary_from_firestore(batch_id: str):
                 game_date=game_date,
                 output_table='player_prop_predictions',
                 output_dataset='nba_predictions',
-                status='complete',
+                status='success',
                 record_count=len(batch_state.completed_players),
                 records_failed=len(batch_state.failed_players),
                 trigger_source='automatic',
