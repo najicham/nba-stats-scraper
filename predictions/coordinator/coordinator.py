@@ -478,15 +478,19 @@ def handle_completion_event():
 
 
 @app.route('/status', methods=['GET'])
+@require_api_key
 def get_batch_status():
     """
-    Get current batch status
-    
+    Get current batch status (REQUIRES AUTHENTICATION)
+
     Query params:
         batch_id: Optional batch ID to check
-    
+
     Returns:
         Current progress and statistics
+
+    Authentication:
+        Requires X-API-Key header or 'key' query parameter
     """
     global current_tracker, current_batch_id
     
@@ -758,13 +762,26 @@ def publish_batch_summary_from_firestore(batch_id: str):
 
         # Step 2: Publish Phase 5 completion event to trigger Phase 6
         try:
+            # Calculate duration if timestamps are available
+            duration_seconds = None
+            if batch_state.start_time and batch_state.completion_time:
+                duration_seconds = (batch_state.completion_time - batch_state.start_time).total_seconds()
+
             unified_publisher = UnifiedPubSubPublisher(project_id=PROJECT_ID)
-            unified_publisher.publish_phase_completion(
-                topic_name=BATCH_SUMMARY_TOPIC,
-                phase="phase5_predictions",
+            unified_publisher.publish_completion(
+                topic='nba-phase5-predictions-complete',
+                processor_name='PredictionCoordinator',
+                phase='phase_5_predictions',
+                execution_id=batch_id,
+                correlation_id=batch_state.correlation_id or batch_id,
                 game_date=game_date,
-                status="complete",
-                correlation_id=batch_state.correlation_id or "",
+                output_table='player_prop_predictions',
+                output_dataset='nba_predictions',
+                status='complete',
+                record_count=len(batch_state.completed_players),
+                records_failed=len(batch_state.failed_players),
+                trigger_source='automatic',
+                duration_seconds=duration_seconds,
                 metadata={
                     'batch_id': batch_id,
                     'expected_players': batch_state.expected_players,
