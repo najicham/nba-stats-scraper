@@ -430,7 +430,9 @@ class BatchConsolidator:
         # Find all staging tables for this batch
         staging_tables = self._find_staging_tables(batch_id)
 
+        print(f"🔍 Found {len(staging_tables)} staging tables for batch={batch_id}", flush=True)
         if not staging_tables:
+            print(f"⚠️  WARNING: No staging tables found for batch={batch_id}", flush=True)
             logger.warning(f"No staging tables found for batch={batch_id}")
             return ConsolidationResult(
                 rows_affected=0,
@@ -444,6 +446,10 @@ class BatchConsolidator:
             # Build and execute the MERGE query
             merge_query = self._build_merge_query(staging_tables, game_date)
 
+            print(
+                f"🔄 Executing MERGE for batch={batch_id} with {len(staging_tables)} staging tables",
+                flush=True
+            )
             logger.info(
                 f"Executing consolidation MERGE for batch={batch_id} "
                 f"with {len(staging_tables)} staging tables"
@@ -455,15 +461,40 @@ class BatchConsolidator:
             rows_affected = merge_job.num_dml_affected_rows or 0
 
             elapsed_ms = (time.time() - start_time) * 1000
+            print(
+                f"✅ MERGE complete: {rows_affected} rows affected in {elapsed_ms:.1f}ms (batch={batch_id})",
+                flush=True
+            )
             logger.info(
                 f"Consolidation MERGE complete: {rows_affected} rows affected "
                 f"in {elapsed_ms:.1f}ms (batch={batch_id})"
             )
 
-            # Clean up staging tables if requested
+            # CRITICAL: Check if MERGE actually wrote data
+            if rows_affected == 0:
+                print(
+                    f"⚠️  WARNING: MERGE returned 0 rows for batch={batch_id}! "
+                    f"Staging tables had {len(staging_tables)} tables. NOT cleaning up for investigation.",
+                    flush=True
+                )
+                logger.error(
+                    f"MERGE returned 0 rows for batch={batch_id} with {len(staging_tables)} staging tables. "
+                    f"This suggests data loss - staging tables NOT cleaned up for investigation."
+                )
+                return ConsolidationResult(
+                    rows_affected=0,
+                    staging_tables_merged=len(staging_tables),
+                    staging_tables_cleaned=0,
+                    success=False,  # Mark as failure
+                    error_message=f"MERGE returned 0 rows but {len(staging_tables)} staging tables exist"
+                )
+
+            # Clean up staging tables if requested AND rows were merged
             cleaned_count = 0
             if cleanup:
+                print(f"🧹 Cleaning up {len(staging_tables)} staging tables...", flush=True)
                 cleaned_count = self._cleanup_staging_tables(batch_id)
+                print(f"✅ Cleaned up {cleaned_count}/{len(staging_tables)} staging tables", flush=True)
 
             return ConsolidationResult(
                 rows_affected=rows_affected,
@@ -475,6 +506,7 @@ class BatchConsolidator:
 
         except gcp_exceptions.BadRequest as e:
             error_msg = f"Invalid MERGE query: {e}"
+            print(f"❌ BadRequest error in MERGE: {error_msg}", flush=True)
             logger.error(error_msg)
             return ConsolidationResult(
                 rows_affected=0,
@@ -486,6 +518,7 @@ class BatchConsolidator:
 
         except gcp_exceptions.Conflict as e:
             error_msg = f"DML conflict during consolidation: {e}"
+            print(f"❌ Conflict error in MERGE: {error_msg}", flush=True)
             logger.error(error_msg)
             return ConsolidationResult(
                 rows_affected=0,
@@ -497,6 +530,7 @@ class BatchConsolidator:
 
         except Exception as e:
             error_msg = f"Unexpected error during consolidation: {type(e).__name__}: {e}"
+            print(f"❌ Unexpected error in consolidation: {error_msg}", flush=True)
             logger.error(error_msg, exc_info=True)
             return ConsolidationResult(
                 rows_affected=0,
