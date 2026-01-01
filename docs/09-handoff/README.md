@@ -11,7 +11,7 @@ Session-by-session development and deployment notes for the NBA Props Platform.
 
 | What You Need | Document |
 |---------------|----------|
-| **🚀 NEW SESSION START HERE** | [NEXT-SESSION-START-HERE.md](./NEXT-SESSION-START-HERE.md) |
+| **🚀 NEW SESSION START HERE** | [2026-01-02-START-HERE.md](./2026-01-02-START-HERE.md) |
 | **Latest Session Summary** | [2026-01-01-COMPLETE-SESSION-FINAL.md](./2026-01-01-COMPLETE-SESSION-FINAL.md) |
 | **Improvement Roadmap** | [COMPREHENSIVE-IMPROVEMENT-PLAN.md](../08-projects/current/pipeline-reliability-improvements/COMPREHENSIVE-IMPROVEMENT-PLAN.md) |
 | **Active Projects** | [../08-projects/current/](../08-projects/current/) |
@@ -37,7 +37,7 @@ Session-by-session development and deployment notes for the NBA Props Platform.
 
 | Document | Description |
 |----------|-------------|
-| **[NEXT-SESSION-START-HERE.md](./NEXT-SESSION-START-HERE.md)** | ⭐ **PRIMARY HANDOFF** - Read this first! |
+| **[2026-01-02-START-HERE.md](./2026-01-02-START-HERE.md)** | ⭐ **PRIMARY HANDOFF** - Read this first! |
 | [2026-01-01-COMPLETE-SESSION-FINAL.md](./2026-01-01-COMPLETE-SESSION-FINAL.md) | Complete session report |
 | [2026-01-01-SESSION-COMPLETE.md](./2026-01-01-SESSION-COMPLETE.md) | Implementation phase summary |
 | [2026-01-01-COMPREHENSIVE-FIX-HANDOFF.md](./2026-01-01-COMPREHENSIVE-FIX-HANDOFF.md) | Fix implementation guide |
