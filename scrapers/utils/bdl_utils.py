@@ -24,8 +24,17 @@ from shared.utils.notification_system import (
     notify_info
 )
 
+# Import Secret Manager utilities
+import sys
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
+from shared.utils.auth_utils import get_api_key
+
 API_ROOT: str = "https://api.balldontlie.io/v1/"
-_API_KEY: Optional[str] = os.getenv("BDL_API_KEY")
+# Try Secret Manager first, fallback to environment variable for local dev
+_API_KEY: Optional[str] = get_api_key(
+    secret_name='BDL_API_KEY',
+    default_env_var='BDL_API_KEY'
+)
 
 if not _API_KEY:
     error_msg = (
