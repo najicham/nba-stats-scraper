@@ -287,30 +287,26 @@ fi
 # Check 9: Staging Table Cleanup
 print_header "9. Staging Table Cleanup"
 
-echo "Checking for orphaned staging tables..."
+echo "Checking for orphaned staging tables (this may take a moment)..."
 
-STAGING_COUNT=$(bq ls --max_results=1000 nba_predictions 2>/dev/null | \
-    grep -c "_staging_batch_$(date +%Y_%m_%d)" || echo "0")
+# Use a simpler, faster query approach
+STAGING_COUNT=$(bq query --use_legacy_sql=false --format=csv --max_rows=1000 \
+    "SELECT table_name FROM nba_predictions.INFORMATION_SCHEMA.TABLES
+     WHERE table_name LIKE '_staging_batch_$(date +%Y_%m_%d)%'" 2>/dev/null | tail -n +2 | wc -l)
+
+STAGING_COUNT=${STAGING_COUNT:-0}
 
 if [[ "$STAGING_COUNT" -eq 0 ]]; then
     print_success "No orphaned staging tables from today"
 else
     print_warning "Found $STAGING_COUNT staging tables from today still present"
     print_info "  This may indicate consolidation hasn't run yet or failed"
-
-    if [[ "$VERBOSE" == "verbose" ]]; then
-        echo "  Listing staging tables:"
-        bq ls nba_predictions 2>/dev/null | grep "_staging_batch_$(date +%Y_%m_%d)" | head -5
-    fi
 fi
 
 # Check 10: Current Revision
 print_header "10. Deployed Revision"
 
-CURRENT_REVISION=$(gcloud run services describe prediction-coordinator \
-    --region=us-west2 \
-    --project="${PROJECT_ID}" \
-    --format="value(status.latestReadyRevisionName)" 2>/dev/null || echo "unknown")
+CURRENT_REVISION=$(gcloud run services describe prediction-coordinator --region=us-west2 --project="${PROJECT_ID}" --format="value(status.latestReadyRevisionName)" 2>/dev/null || echo "unknown")
 
 EXPECTED_REVISION="prediction-coordinator-00029-46t"
 
