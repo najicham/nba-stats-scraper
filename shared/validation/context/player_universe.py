@@ -202,7 +202,7 @@ def _query_gamebook_players(
     )
 
     try:
-        result = client.query(query, job_config=job_config).result()
+        result = client.query(query, job_config=job_config).result(timeout=60)
 
         for row in result:
             player_lookup = row.player_lookup
@@ -257,7 +257,7 @@ def _query_bdl_players(
     )
 
     try:
-        result = client.query(query, job_config=job_config).result()
+        result = client.query(query, job_config=job_config).result(timeout=60)
 
         for row in result:
             player_lookup = row.player_lookup
@@ -344,7 +344,7 @@ def _query_roster_players(
     )
 
     try:
-        result = client.query(query, job_config=job_config).result()
+        result = client.query(query, job_config=job_config).result(timeout=60)
         roster_date_used = None
 
         for row in result:
@@ -420,7 +420,7 @@ def _query_prop_players(
     )
 
     try:
-        result = client.query(query, job_config=job_config).result()
+        result = client.query(query, job_config=job_config).result(timeout=60)
 
         for row in result:
             player_lookup = row.player_lookup

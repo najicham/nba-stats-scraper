@@ -60,7 +60,7 @@ class ReprocessingOrchestrator:
         GROUP BY player_lookup
         ORDER BY dates_count DESC
         """
-        result = self.bq_client.query(query).result()
+        result = self.bq_client.query(query).result(timeout=60)
         return [dict(row) for row in result]
 
     def get_affected_games(self, resolved_since: date) -> List[Dict]:
@@ -101,7 +101,7 @@ class ReprocessingOrchestrator:
         )
 
         try:
-            results = self.client.query(query, job_config=job_config).result()
+            results = self.client.query(query, job_config=job_config).result(timeout=60)
 
             affected_games = []
             for row in results:
@@ -149,7 +149,7 @@ class ReprocessingOrchestrator:
         )
 
         try:
-            results = self.client.query(query, job_config=job_config).result()
+            results = self.client.query(query, job_config=job_config).result(timeout=60)
 
             games = []
             for row in results:
@@ -216,7 +216,7 @@ class ReprocessingOrchestrator:
         )
 
         try:
-            results = list(self.client.query(query, job_config=job_config).result())
+            results = list(self.client.query(query, job_config=job_config).result(timeout=60))
             if results:
                 return results[0].game_date
             return None
@@ -251,7 +251,7 @@ class ReprocessingOrchestrator:
                 bigquery.ScalarQueryParameter("player_lookup", "STRING", player_lookup)
             ]
         )
-        result = self.bq_client.query(query, job_config=job_config).result()
+        result = self.bq_client.query(query, job_config=job_config).result(timeout=60)
         return result.num_dml_affected_rows or 0
 
     def mark_as_reprocessed(self, resolved_since: date) -> int:
@@ -273,7 +273,7 @@ class ReprocessingOrchestrator:
 
         try:
             job = self.client.query(query, job_config=job_config)
-            job.result()
+            job.result(timeout=60)
             return job.num_dml_affected_rows or 0
         except Exception as e:
             logger.error(f"Error marking as reprocessed: {e}")

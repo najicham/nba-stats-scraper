@@ -53,8 +53,9 @@ class BigQueryClient:
             job = self.client.load_table_from_json(
                 data, table_id, job_config=job_config
             )
-            job.result()  # Wait for completion
-            
+            # Wait for completion with timeout to prevent indefinite hangs
+            job.result(timeout=60)
+
             logger.info(f"Loaded {len(data)} rows into {table_id}")
             return True
             

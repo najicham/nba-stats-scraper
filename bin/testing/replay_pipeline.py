@@ -292,7 +292,7 @@ class PipelineReplay:
         WHERE game_date = '{self.replay_date}'
         """
         try:
-            result = self.bq_client.query(query).result()
+            result = self.bq_client.query(query).result(timeout=60)
             row = list(result)[0]
             logger.info(f"Found {row.count} raw boxscore records")
             return row.count

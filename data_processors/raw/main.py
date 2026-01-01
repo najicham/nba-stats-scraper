@@ -51,7 +51,7 @@ class NBADataProcessor:
             "nba_analytics.raw_odds_events",
             job_config=job_config
         )
-        load_job.result()  # Wait for completion
+        load_job.result(timeout=60)  # Wait for completion
     
     def run_player_analysis_sql(self):
         """Run SQL in BigQuery - not Python computation"""
@@ -70,7 +70,7 @@ class NBADataProcessor:
         
         # BigQuery runs the SQL, not Python
         query_job = self.bq_client.query(sql)
-        query_job.result()  # Wait for completion
+        query_job.result(timeout=60)  # Wait for completion
     
     def update_firestore(self, results):
         """Write small results to Firestore for serving"""

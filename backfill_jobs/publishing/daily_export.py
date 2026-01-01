@@ -103,7 +103,7 @@ def get_dates_with_predictions() -> List[str]:
     FROM `nba-props-platform.nba_predictions.prediction_accuracy`
     ORDER BY game_date
     """
-    results = client.query(query).result()
+    results = client.query(query).result(timeout=60)
     return [row['game_date'].strftime('%Y-%m-%d') for row in results]
 
 

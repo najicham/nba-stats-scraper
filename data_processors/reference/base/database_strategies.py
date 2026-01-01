@@ -56,7 +56,7 @@ class DatabaseStrategiesMixin:
             logger.info(f"Step 1: Deleting existing records from {self.table_name}")
             delete_query = f"DELETE FROM `{table_id}` WHERE TRUE"
             delete_job = self.bq_client.query(delete_query)
-            delete_result = delete_job.result()
+            delete_result = delete_job.result(timeout=60)
             deleted_count = delete_job.num_dml_affected_rows or 0
             logger.info(f"Deleted {deleted_count} existing records")
             
@@ -89,7 +89,7 @@ class DatabaseStrategiesMixin:
                 )
 
                 load_job = self.bq_client.load_table_from_json(batch, table_id, job_config=job_config)
-                load_job.result()
+                load_job.result(timeout=60)
 
                 if load_job.errors:
                     error_msg = f"Batch {batch_num} load had errors: {load_job.errors[:3]}"
@@ -181,7 +181,7 @@ class DatabaseStrategiesMixin:
                 )
             )
             
-            load_result = load_job.result()
+            load_result = load_job.result(timeout=60)
             logger.info(f"✅ Data loaded to temp table: {load_job.output_rows} rows")
             
             # Step 3: MERGE from temp table to main table
@@ -190,7 +190,7 @@ class DatabaseStrategiesMixin:
             merge_query = self._build_merge_query(table_id, temp_table_id)
             
             merge_job = self.bq_client.query(merge_query)
-            merge_result = merge_job.result()
+            merge_result = merge_job.result(timeout=60)
             
             num_dml_affected_rows = merge_job.num_dml_affected_rows or 0
             logger.info(f"✅ MERGE completed successfully: {num_dml_affected_rows} rows affected")
@@ -373,7 +373,7 @@ class DatabaseStrategiesMixin:
             logger.info(f"Deleting existing unresolved players from {self.unresolved_table_name}")
             delete_query = f"DELETE FROM `{table_id}` WHERE TRUE"
             delete_job = self.bq_client.query(delete_query)
-            delete_result = delete_job.result()
+            delete_result = delete_job.result(timeout=60)
             deleted_count = delete_job.num_dml_affected_rows or 0
             logger.info(f"Deleted {deleted_count} existing unresolved player records")
             
@@ -396,7 +396,7 @@ class DatabaseStrategiesMixin:
                 )
 
                 load_job = self.bq_client.load_table_from_json(processed_records, table_id, job_config=job_config)
-                load_job.result()
+                load_job.result(timeout=60)
 
                 if load_job.errors:
                     logger.error(f"Unresolved players load had errors: {load_job.errors[:3]}")
@@ -464,7 +464,7 @@ class DatabaseStrategiesMixin:
                 temp_table_id, 
                 job_config=job_config
             )
-            load_result = load_job.result()
+            load_result = load_job.result(timeout=60)
             
             # Execute MERGE
             merge_query = f"""
@@ -500,7 +500,7 @@ class DatabaseStrategiesMixin:
             """
             
             merge_job = self.bq_client.query(merge_query)
-            merge_result = merge_job.result()
+            merge_result = merge_job.result(timeout=60)
             
             num_affected = merge_job.num_dml_affected_rows or 0
             total_duration = time.time() - operation_start

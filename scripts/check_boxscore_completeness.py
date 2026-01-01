@@ -90,7 +90,7 @@ class BoxscoreCompletenessMonitor:
         ORDER BY coverage_pct, t.team
         """
 
-        coverage_result = self.bq_client.query(coverage_query).result()
+        coverage_result = self.bq_client.query(coverage_query).result(timeout=60)
         team_coverage = {}
         for row in coverage_result:
             team_coverage[row.team] = {
@@ -119,7 +119,7 @@ class BoxscoreCompletenessMonitor:
         ORDER BY s.game_date, s.team
         """
 
-        missing_result = self.bq_client.query(missing_query).result()
+        missing_result = self.bq_client.query(missing_query).result(timeout=60)
         missing_games = [
             {'date': row.game_date.isoformat(), 'team': row.team}
             for row in missing_result

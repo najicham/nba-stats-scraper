@@ -41,7 +41,7 @@ def get_latest_graded_date() -> str:
     SELECT MAX(game_date) as max_date
     FROM nba_predictions.prediction_accuracy
     """
-    result = list(client.query(query).result())
+    result = list(client.query(query).result(timeout=60))
     if result and result[0].max_date:
         return result[0].max_date.strftime('%Y-%m-%d')
     return None

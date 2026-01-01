@@ -85,9 +85,10 @@ class ScheduleDatabaseReader:
                     params.append(bigquery.ScalarQueryParameter(f"type{i}", "STRING", gt))
             
             job_config = bigquery.QueryJobConfig(query_parameters=params)
-            result = self.bq_client.query(query, job_config=job_config).result()
+            # Wait for completion with timeout to prevent indefinite hangs
+            result = self.bq_client.query(query, job_config=job_config).result(timeout=60)
             row = next(result)
-            
+
             return row.count > 0
             
         except Exception as e:
@@ -124,7 +125,8 @@ class ScheduleDatabaseReader:
                     params.append(bigquery.ScalarQueryParameter(f"type{i}", "STRING", gt))
             
             job_config = bigquery.QueryJobConfig(query_parameters=params)
-            result = self.bq_client.query(query, job_config=job_config).result()
+            # Wait for completion with timeout to prevent indefinite hangs
+            result = self.bq_client.query(query, job_config=job_config).result(timeout=60)
             row = next(result)
             
             return row.count
@@ -167,7 +169,8 @@ class ScheduleDatabaseReader:
             query += " GROUP BY game_date ORDER BY game_date"
 
             job_config = bigquery.QueryJobConfig(query_parameters=params)
-            result = self.bq_client.query(query, job_config=job_config).result()
+            # Wait for completion with timeout to prevent indefinite hangs
+            result = self.bq_client.query(query, job_config=job_config).result(timeout=60)
 
             date_map = {}
             for row in result:
@@ -213,7 +216,8 @@ class ScheduleDatabaseReader:
 
             params = [bigquery.ScalarQueryParameter("game_date", "DATE", game_date)]
             job_config = bigquery.QueryJobConfig(query_parameters=params)
-            result = self.bq_client.query(query, job_config=job_config).result()
+            # Wait for completion with timeout to prevent indefinite hangs
+            result = self.bq_client.query(query, job_config=job_config).result(timeout=60)
 
             rows = list(result)
             if not rows:
@@ -279,7 +283,8 @@ class ScheduleDatabaseReader:
             ]
 
             job_config = bigquery.QueryJobConfig(query_parameters=params)
-            result = self.bq_client.query(query, job_config=job_config).result()
+            # Wait for completion with timeout to prevent indefinite hangs
+            result = self.bq_client.query(query, job_config=job_config).result(timeout=60)
 
             row = next(result, None)
             if row and row.season_start:

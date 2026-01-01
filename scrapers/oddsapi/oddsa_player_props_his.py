@@ -88,6 +88,9 @@ from shared.utils.notification_system import (
     notify_info
 )
 
+# Authentication utilities
+from shared.utils.auth_utils import get_api_key
+
 logger = logging.getLogger(__name__)
 
 
@@ -221,7 +224,11 @@ class GetOddsApiHistoricalEventOdds(ScraperBase, ScraperFlaskMixin):
     )
 
     def set_url(self) -> None:
-        api_key = self.opts.get("api_key") or os.getenv("ODDS_API_KEY")
+        # Get API key from Secret Manager (with env var fallback for local dev)
+        api_key = get_api_key(
+            secret_name='ODDS_API_KEY',
+            default_env_var='ODDS_API_KEY'
+        )
         if not api_key:
             error_msg = "Missing api_key and env var ODDS_API_KEY not set."
             

@@ -404,7 +404,7 @@ class ProcessorBase(RunHistoryMixin):
         Example (Reference Processor):
             def load_data(self) -> None:
                 query = "SELECT * FROM `dataset.table` WHERE date = @date"
-                self.raw_data = list(self.bq_client.query(query).result())
+                self.raw_data = list(self.bq_client.query(query).result(timeout=60))
         """
         raise NotImplementedError("Child classes must implement load_data()")
     
@@ -539,7 +539,7 @@ class ProcessorBase(RunHistoryMixin):
             
             # Wait for completion with graceful failure
             try:
-                load_job.result()
+                load_job.result(timeout=60)
                 self.stats["rows_inserted"] = len(rows)
                 logger.info(f"✅ Successfully batch loaded {len(rows)} rows")
                 

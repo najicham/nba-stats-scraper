@@ -312,7 +312,7 @@ class PlayerNameResolver:
                     ]
                 )
                 
-                self.bq_client.query(update_query, job_config=job_config).result()
+                self.bq_client.query(update_query, job_config=job_config).result(timeout=60)
                 logger.debug(f"Updated unresolved name: {original_name} (now {existing.iloc[0]['occurrences'] + 1} occurrences)")
                 
             else:
@@ -349,7 +349,7 @@ class PlayerNameResolver:
                 )
 
                 load_job = self.bq_client.load_table_from_json(insert_data, table_id, job_config=job_config)
-                load_job.result()
+                load_job.result(timeout=60)
 
                 errors = load_job.errors
 
@@ -448,7 +448,7 @@ class PlayerNameResolver:
             )
 
             load_job = self.bq_client.load_table_from_json(insert_data, table_id, job_config=job_config)
-            load_job.result()
+            load_job.result(timeout=60)
 
             errors = load_job.errors
 
@@ -607,7 +607,7 @@ class PlayerNameResolver:
                 ]
             )
             
-            result = self.bq_client.query(update_query, job_config=job_config).result()
+            result = self.bq_client.query(update_query, job_config=job_config).result(timeout=60)
             
             if result.num_dml_affected_rows > 0:
                 logger.info(f"Marked '{original_name}' as resolved to '{resolved_to}'")
@@ -674,7 +674,7 @@ class PlayerNameResolver:
             )
 
             load_job = self.bq_client.load_table_from_json(insert_data, table_id, job_config=job_config)
-            load_job.result()
+            load_job.result(timeout=60)
 
             errors = load_job.errors
 

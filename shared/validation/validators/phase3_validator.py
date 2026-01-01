@@ -230,7 +230,7 @@ def _query_prop_line_breakdown(
     )
 
     try:
-        result = client.query(query, job_config=job_config).result()
+        result = client.query(query, job_config=job_config).result(timeout=60)
         row = next(iter(result))
         return {
             'with_prop_line': row.with_prop_line or 0,

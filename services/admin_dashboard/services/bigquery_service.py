@@ -46,7 +46,7 @@ class BigQueryService:
         """
 
         try:
-            result = list(self.client.query(query).result())
+            result = list(self.client.query(query).result(timeout=60))
             if result:
                 row = result[0]
                 return {
@@ -135,7 +135,7 @@ class BigQueryService:
         """
 
         try:
-            result = list(self.client.query(query).result())
+            result = list(self.client.query(query).result(timeout=60))
             return [
                 {
                     'game_id': row.game_id,
@@ -177,7 +177,7 @@ class BigQueryService:
         """
 
         try:
-            result = list(self.client.query(query).result())
+            result = list(self.client.query(query).result(timeout=60))
             return [
                 {
                     'game_date': str(row.game_date),
@@ -230,7 +230,7 @@ class BigQueryService:
         """
 
         try:
-            result = list(self.client.query(query).result())
+            result = list(self.client.query(query).result(timeout=60))
             return [
                 {
                     'processor_name': row.processor_name,
@@ -294,7 +294,7 @@ class BigQueryService:
         """
 
         try:
-            result = list(self.client.query(query).result())
+            result = list(self.client.query(query).result(timeout=60))
             return [
                 {
                     'game_date': str(row.game_date),
@@ -351,7 +351,7 @@ class BigQueryService:
         """
 
         try:
-            result = list(self.client.query(query).result())
+            result = list(self.client.query(query).result(timeout=60))
             return [
                 {
                     'game_date': str(row.game_date),

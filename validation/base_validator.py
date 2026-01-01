@@ -206,7 +206,7 @@ class BaseValidator:
             query = self.partition_handler.ensure_partition_filter(query, start_date, end_date)
         
         try:
-            result = self.bq_client.query(query).result()
+            result = self.bq_client.query(query).result(timeout=60)
             
             # Cache if key provided
             if cache_key:
@@ -814,7 +814,7 @@ class BaseValidator:
         
         try:
             # Freshness check uses direct query (partition filter already in WHERE clause)
-            result = self.bq_client.query(query).result()
+            result = self.bq_client.query(query).result(timeout=60)
             row = next(result)
             
             hours_old = row.hours_old if row.hours_old else 9999
@@ -1262,7 +1262,7 @@ class BaseValidator:
             )
 
             load_job = self.bq_client.load_table_from_json(result_rows, results_table_id, job_config=job_config)
-            load_job.result()
+            load_job.result(timeout=60)
 
             if load_job.errors:
                 logger.warning(f"BigQuery load had errors: {load_job.errors[:3]}")

@@ -329,7 +329,7 @@ class NbacRefereeProcessor(SmartIdempotencyMixin, ProcessorBase):
                 temp_table_id, 
                 job_config=job_config
             )
-            load_job.result()  # Wait for completion
+            load_job.result(timeout=60)  # Wait for completion
             load_duration = (datetime.utcnow() - load_start).total_seconds()
             
             logging.info(f"✅ Data loaded to temp table: {len(rows)} rows ({load_duration:.2f}s)")
@@ -403,7 +403,7 @@ class NbacRefereeProcessor(SmartIdempotencyMixin, ProcessorBase):
             
             merge_start = datetime.utcnow()
             merge_job = self.bq_client.query(merge_query)
-            merge_result = merge_job.result()
+            merge_result = merge_job.result(timeout=60)
             merge_duration = (datetime.utcnow() - merge_start).total_seconds()
             
             logging.info(f"✅ MERGE completed successfully ({merge_duration:.2f}s)")

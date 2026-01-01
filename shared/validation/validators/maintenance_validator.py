@@ -162,7 +162,7 @@ def _validate_roster_source(
             SELECT COUNT(*) as cnt
             FROM `{PROJECT_ID}.{source_config.dataset}.{source_config.table}`
         """
-        result = bq_client.query(query).result()
+        result = bq_client.query(query).result(timeout=60)
         row = next(iter(result))
 
         record_count = row.cnt or 0
@@ -192,7 +192,7 @@ def _check_registry_status(bq_client: bigquery.Client) -> RegistryStatus:
             SELECT COUNT(*) as total
             FROM `{PROJECT_ID}.nba_reference.nba_players_registry`
         """
-        count_result = bq_client.query(count_query).result()
+        count_result = bq_client.query(count_query).result(timeout=60)
         total = next(iter(count_result)).total or 0
 
         # Check last successful sync from processor_run_history
@@ -203,7 +203,7 @@ def _check_registry_status(bq_client: bigquery.Client) -> RegistryStatus:
             WHERE processor_name LIKE '%RosterRegistry%'
               AND status = 'success'
         """
-        sync_result = bq_client.query(sync_query).result()
+        sync_result = bq_client.query(sync_query).result(timeout=60)
         sync_row = next(iter(sync_result))
         last_sync = sync_row.last_sync
 
@@ -213,7 +213,7 @@ def _check_registry_status(bq_client: bigquery.Client) -> RegistryStatus:
                 SELECT MAX(created_at) as last_update
                 FROM `{PROJECT_ID}.nba_reference.nba_players_registry`
             """
-            fallback_result = bq_client.query(fallback_query).result()
+            fallback_result = bq_client.query(fallback_query).result(timeout=60)
             last_sync = next(iter(fallback_result)).last_update
 
         # Calculate staleness (handle timezone-aware datetimes)
@@ -249,7 +249,7 @@ def _count_unresolved_players(bq_client: bigquery.Client) -> int:
             SELECT COUNT(*) as cnt
             FROM `{PROJECT_ID}.nba_reference.unresolved_player_names`
         """
-        result = bq_client.query(query).result()
+        result = bq_client.query(query).result(timeout=60)
         row = next(iter(result))
         return row.cnt or 0
 

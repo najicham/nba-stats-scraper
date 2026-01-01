@@ -109,7 +109,7 @@ class ResolutionCache:
         )
 
         try:
-            results = list(self.client.query(query, job_config=job_config).result())
+            results = list(self.client.query(query, job_config=job_config).result(timeout=60))
 
             if not results:
                 return None
@@ -182,7 +182,7 @@ class ResolutionCache:
             )
 
             load_job = self.client.load_table_from_json([row], self.table_id, job_config=job_config)
-            load_job.result()
+            load_job.result(timeout=60)
 
             if load_job.errors:
                 logger.error(f"Error caching resolution: {load_job.errors}")
@@ -212,7 +212,7 @@ class ResolutionCache:
         )
 
         try:
-            self.client.query(query, job_config=job_config).result()
+            self.client.query(query, job_config=job_config).result(timeout=60)
         except Exception as e:
             logger.warning(f"Failed to increment usage for {unresolved_lookup}: {e}")
 
@@ -243,7 +243,7 @@ class ResolutionCache:
         """
 
         try:
-            results = list(self.client.query(query).result())
+            results = list(self.client.query(query).result(timeout=60))
             if not results:
                 return {}
 
@@ -289,7 +289,7 @@ class ResolutionCache:
 
         try:
             job = self.client.query(query, job_config=job_config)
-            job.result()
+            job.result(timeout=60)
             deleted = job.num_dml_affected_rows or 0
             logger.info(f"Cleared {deleted} cache entries")
             return deleted

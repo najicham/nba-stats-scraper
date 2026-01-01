@@ -315,7 +315,7 @@ class BasketballRefRosterProcessor(SmartIdempotencyMixin, ProcessorBase):
                 )
 
                 # Wait for completion
-                load_job.result()
+                load_job.result(timeout=60)
                 logger.info(f"Successfully loaded {len(new_rows)} new players")
             
             # Update existing players (just update last_scraped_date)
@@ -343,7 +343,7 @@ class BasketballRefRosterProcessor(SmartIdempotencyMixin, ProcessorBase):
 
                 logger.info(f"Updating {len(update_rows)} existing players")
                 query_job = self.bq_client.query(query, job_config=job_config)
-                query_job.result()  # Wait for completion
+                query_job.result(timeout=60)  # Wait for completion
             
             self.stats["rows_inserted"] = len(new_rows)
             self.stats["rows_updated"] = len(update_rows)
@@ -398,7 +398,7 @@ class BasketballRefRosterProcessor(SmartIdempotencyMixin, ProcessorBase):
         """
         
         try:
-            results = self.bq_client.query(query).result()
+            results = self.bq_client.query(query).result(timeout=60)
             return [dict(row) for row in results]
         except Exception as e:
             # Table might not exist yet

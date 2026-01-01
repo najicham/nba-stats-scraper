@@ -186,7 +186,7 @@ class PlayerLoader:
         )
         
         try:
-            results = self.client.query(query, job_config=job_config).result()
+            results = self.client.query(query, job_config=job_config).result(timeout=60)
             row = next(results, None)
             
             if row is None:
@@ -300,7 +300,7 @@ class PlayerLoader:
         )
         
         try:
-            results = self.client.query(query, job_config=job_config).result()
+            results = self.client.query(query, job_config=job_config).result(timeout=60)
             
             players = []
             for row in results:
@@ -495,7 +495,7 @@ class PlayerLoader:
         )
         
         try:
-            results = self.client.query(query, job_config=job_config).result()
+            results = self.client.query(query, job_config=job_config).result(timeout=60)
             row = next(results, None)
             
             if row is not None and row.line_value is not None:
@@ -562,7 +562,7 @@ class PlayerLoader:
         )
 
         try:
-            results = self.client.query(query, job_config=job_config).result()
+            results = self.client.query(query, job_config=job_config).result(timeout=60)
             row = next(results, None)
 
             if row is not None:
@@ -631,7 +631,7 @@ class PlayerLoader:
         )
         
         try:
-            results = self.client.query(query, job_config=job_config).result()
+            results = self.client.query(query, job_config=job_config).result(timeout=60)
             row = next(results, None)
             return row.count > 0 if row else False
         except Exception as e:
@@ -669,7 +669,7 @@ class PlayerLoader:
         )
         
         try:
-            results = self.client.query(query, job_config=job_config).result()
+            results = self.client.query(query, job_config=job_config).result(timeout=60)
             
             players = []
             for row in results:

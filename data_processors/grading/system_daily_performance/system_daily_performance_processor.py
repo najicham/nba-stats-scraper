@@ -146,7 +146,7 @@ class SystemDailyPerformanceProcessor:
         """
 
         try:
-            result = list(self.bq_client.query(query).result())
+            result = list(self.bq_client.query(query).result(timeout=60))
             return result[0].count > 0 if result else False
         except Exception as e:
             logger.error(f"Error checking accuracy data: {e}")
@@ -214,7 +214,7 @@ class SystemDailyPerformanceProcessor:
         """
 
         try:
-            result = list(self.bq_client.query(query).result())
+            result = list(self.bq_client.query(query).result(timeout=60))
             summaries = []
 
             for row in result:
@@ -288,7 +288,7 @@ class SystemDailyPerformanceProcessor:
             WHERE game_date = '{target_date}'
             """
             delete_job = self.bq_client.query(delete_query)
-            delete_job.result()
+            delete_job.result(timeout=60)
             deleted = delete_job.num_dml_affected_rows or 0
             if deleted > 0:
                 logger.info(f"  Deleted {deleted} existing records for {target_date}")
@@ -308,7 +308,7 @@ class SystemDailyPerformanceProcessor:
                 DAILY_PERF_TABLE,
                 job_config=job_config
             )
-            load_job.result()
+            load_job.result(timeout=60)
 
             if load_job.errors:
                 logger.warning(f"BigQuery load had errors: {load_job.errors[:3]}")
@@ -337,7 +337,7 @@ class SystemDailyPerformanceProcessor:
         """
 
         try:
-            result = list(self.bq_client.query(query).result())
+            result = list(self.bq_client.query(query).result(timeout=60))
             return [
                 row.game_date if isinstance(row.game_date, date) else row.game_date.date()
                 for row in result

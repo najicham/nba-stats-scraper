@@ -19,16 +19,24 @@ Created: 2025-11-28
 import json
 import logging
 import os
+import smtplib
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Set
 from collections import defaultdict
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 import requests
+from shared.utils.auth_utils import get_api_key
 
 logger = logging.getLogger(__name__)
 
 # Slack webhook URL for alert delivery
-SLACK_WEBHOOK_URL = os.environ.get('SLACK_WEBHOOK_URL')
+# Get from Secret Manager (with env var fallback for local dev)
+SLACK_WEBHOOK_URL = get_api_key(
+    secret_name='slack-webhook-default',
+    default_env_var='SLACK_WEBHOOK_URL'
+)
 
 
 class AlertManager:
@@ -268,20 +276,100 @@ class AlertManager:
 
     def _send_to_email(self, alert: Dict) -> None:
         """
-        Send alert via email.
-
-        Note: Email sending is not yet implemented. Requires SMTP configuration
-        or integration with SendGrid/AWS SES/GCP Email API.
+        Send alert via email using SMTP (Brevo).
 
         Args:
-            alert: Alert payload
+            alert: Alert payload with severity, title, message, context
         """
-        # Email sending requires SMTP credentials or API integration
-        # For now, log the alert so it's visible in Cloud Logging
-        logger.warning(
-            f"[EMAIL-NOT-CONFIGURED] {alert['severity'].upper()}: {alert['title']} - "
-            f"Configure email sending via SMTP_* or SENDGRID_API_KEY env vars"
+        # Get SMTP configuration
+        smtp_host = os.environ.get('SMTP_HOST', 'smtp-relay.brevo.com')
+        smtp_port = int(os.environ.get('SMTP_PORT', 587))
+        smtp_user = os.environ.get('SMTP_USER')
+        smtp_password = get_api_key(
+            secret_name='brevo-smtp-password',
+            default_env_var='SMTP_PASSWORD'
         )
+        from_email = os.environ.get('ALERT_FROM_EMAIL', 'nba-alerts@nba-props-platform.com')
+        to_emails = os.environ.get('ALERT_RECIPIENTS', '').split(',')
+        to_emails = [email.strip() for email in to_emails if email.strip()]
+
+        # Validate configuration
+        if not all([smtp_host, smtp_user, smtp_password]):
+            logger.warning(
+                f"[EMAIL-NOT-CONFIGURED] {alert['severity'].upper()}: {alert['title']} - "
+                f"Missing SMTP_HOST, SMTP_USER, or SMTP_PASSWORD"
+            )
+            return
+
+        if not to_emails:
+            logger.warning(
+                f"[EMAIL-NO-RECIPIENTS] {alert['severity'].upper()}: {alert['title']} - "
+                f"No recipients configured in ALERT_RECIPIENTS env var"
+            )
+            return
+
+        try:
+            # Build email message
+            msg = MIMEMultipart('alternative')
+            msg['From'] = from_email
+            msg['To'] = ', '.join(to_emails)
+            msg['Subject'] = f"[NBA Alert - {alert['severity'].upper()}] {alert['title']}"
+
+            # Build HTML body
+            severity_colors = {
+                'critical': '#FF0000',
+                'warning': '#FFA500',
+                'info': '#0000FF'
+            }
+            color = severity_colors.get(alert['severity'], '#000000')
+
+            html_body = f"""
+            <html>
+            <body style="font-family: Arial, sans-serif;">
+                <div style="border-left: 4px solid {color}; padding-left: 20px; margin-bottom: 20px;">
+                    <h2 style="color: {color};">{alert['severity'].upper()} Alert</h2>
+                    <p><strong>Title:</strong> {alert['title']}</p>
+                    <p><strong>Message:</strong> {alert['message']}</p>
+                    <p><strong>Time:</strong> {alert.get('timestamp', 'N/A')}</p>
+                    <p><strong>Environment:</strong> {alert.get('environment', 'production')}</p>
+                </div>
+            """
+
+            # Add context if available
+            if alert.get('context'):
+                html_body += "<h3>Context:</h3><ul>"
+                for key, value in alert['context'].items():
+                    html_body += f"<li><strong>{key}:</strong> {value}</li>"
+                html_body += "</ul>"
+
+            html_body += """
+                <hr>
+                <p style="color: #666; font-size: 12px;">
+                    This is an automated alert from the NBA Analytics Platform.
+                </p>
+            </body>
+            </html>
+            """
+
+            # Attach HTML body
+            msg.attach(MIMEText(html_body, 'html'))
+
+            # Send email via SMTP
+            with smtplib.SMTP(smtp_host, smtp_port) as server:
+                server.starttls()
+                server.login(smtp_user, smtp_password)
+                server.send_message(msg)
+
+            logger.info(
+                f"Email alert sent successfully: {alert['severity']} - {alert['title']} "
+                f"to {len(to_emails)} recipients"
+            )
+
+        except Exception as e:
+            logger.error(
+                f"Failed to send email alert: {alert['severity']} - {alert['title']}: {e}",
+                exc_info=True
+            )
 
     def _send_to_slack(self, alert: Dict) -> None:
         """

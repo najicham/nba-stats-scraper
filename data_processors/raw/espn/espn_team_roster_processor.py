@@ -313,7 +313,7 @@ class EspnTeamRosterProcessor(SmartIdempotencyMixin, ProcessorBase):
             """
             
             delete_job = self.bq_client.query(delete_query)
-            delete_job.result()
+            delete_job.result(timeout=60)
             logger.debug(f"Deleted existing records for {team_abbr} on {partition_date}")
             
             # Step 2: INSERT new data using batch loading
@@ -338,7 +338,7 @@ class EspnTeamRosterProcessor(SmartIdempotencyMixin, ProcessorBase):
                 table_id,
                 job_config=job_config
             )
-            load_job.result()
+            load_job.result(timeout=60)
             
             logger.debug(f"Fast partition replace completed for {team_abbr}")
             
@@ -377,7 +377,7 @@ class EspnTeamRosterProcessor(SmartIdempotencyMixin, ProcessorBase):
         
         logger.info(f"Batch deleting {len(partition_keys)} partition slices in one query...")
         delete_job = self.bq_client.query(delete_query)
-        delete_job.result()
+        delete_job.result(timeout=60)
         logger.info(f"✓ Batch delete completed ({len(partition_keys)} teams)")
     
     def _convert_for_json_load(self, record: Dict) -> Dict:
@@ -756,7 +756,7 @@ def batch_process_rosters(bucket: str, date: str, project_id: str, team: str = N
                     table_id,
                     job_config=job_config
                 )
-                load_job.result()
+                load_job.result(timeout=60)
                 
             except Exception as e:
                 logger.error(f"Failed to insert {key}: {e}")

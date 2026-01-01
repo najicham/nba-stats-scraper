@@ -570,7 +570,7 @@ class OddsApiPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
                 table_id,
                 job_config=job_config
             )
-            load_job.result()  # Wait for completion
+            load_job.result(timeout=60)  # Wait for completion
 
             if load_job.errors:
                 errors.extend([str(e) for e in load_job.errors])

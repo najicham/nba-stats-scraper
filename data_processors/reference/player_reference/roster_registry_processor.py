@@ -1493,7 +1493,7 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
             )
 
             load_job = self.bq_client.load_table_from_json(processed_aliases, table_id, job_config=job_config)
-            load_job.result()
+            load_job.result(timeout=60)
 
             if load_job.errors:
                 logger.error(f"Aliases load had errors: {load_job.errors[:3]}")
@@ -1578,7 +1578,7 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
                 )
 
                 load_job = self.bq_client.load_table_from_json(processed_unresolved, table_id, job_config=job_config)
-                load_job.result()
+                load_job.result(timeout=60)
 
                 if load_job.errors:
                     logger.error(f"Unresolved names load had errors: {load_job.errors[:3]}")
@@ -1609,7 +1609,7 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
                     ])
                     
                     try:
-                        self.bq_client.query(update_query, job_config=job_config).result()
+                        self.bq_client.query(update_query, job_config=job_config).result(timeout=60)
                         successful_updates += 1
                     except Exception as e:
                         if 'streaming buffer' in str(e).lower():

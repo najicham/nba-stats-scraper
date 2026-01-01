@@ -549,7 +549,7 @@ class MLFeatureStoreProcessor(
         ORDER BY attempt_number DESC LIMIT 1
         """
         try:
-            result = list(self.bq_client.query(query).result())
+            result = list(self.bq_client.query(query).result(timeout=60))
             if not result:
                 return {'active': False, 'attempts': 0, 'until': None}
             row = result[0]
@@ -585,7 +585,7 @@ class MLFeatureStoreProcessor(
                 FALSE, 'Attempt {next_attempt}: {completeness_pct:.1f}% complete')
         """
         try:
-            self.bq_client.query(insert_query).result()
+            self.bq_client.query(insert_query).result(timeout=60)
         except Exception as e:
             logger.warning(f"Failed to record reprocess attempt for {entity_id}: {e}")
 

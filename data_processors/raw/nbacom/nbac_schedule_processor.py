@@ -614,7 +614,7 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
                     """
                     
                     try:
-                        self.bq_client.query(delete_query).result()
+                        self.bq_client.query(delete_query).result(timeout=60)
                         logging.info(f"Deleted existing records for season {season_year} (date range: {start_date} to {end_date})")
                     except Exception as e:
                         logging.error(f"Error deleting existing data: {e}")
@@ -661,7 +661,7 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
             )
 
             # Wait for completion
-            load_job.result()
+            load_job.result(timeout=60)
             logging.info(f"Successfully loaded {len(rows)} rows to {self.table_name} (source: {self.data_source})")
                 
         except Exception as e:

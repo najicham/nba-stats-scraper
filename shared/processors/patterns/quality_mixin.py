@@ -365,7 +365,7 @@ class QualityMixin:
                     'nba_reference.source_coverage_log',
                     job_config=job_config
                 )
-            load_job.result()
+            load_job.result(timeout=60)
         finally:
             os.unlink(temp_path)
 
@@ -500,7 +500,7 @@ class QualityMixin:
                 LIMIT 1
             """
 
-            result = list(bq_client.query(query).result())
+            result = list(bq_client.query(query).result(timeout=60))
             if result:
                 row = result[0]
                 return {

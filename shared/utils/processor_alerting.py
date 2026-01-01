@@ -25,6 +25,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from typing import Dict, List, Optional, Any
 import requests
+from shared.utils.auth_utils import get_api_key
 
 logger = logging.getLogger(__name__)
 
@@ -226,7 +227,11 @@ class ProcessorAlerting:
         smtp_host = os.environ.get('SMTP_HOST')
         smtp_port = int(os.environ.get('SMTP_PORT', 587))
         smtp_user = os.environ.get('SMTP_USER')
-        smtp_password = os.environ.get('SMTP_PASSWORD')
+        # Get SMTP password from Secret Manager (with env var fallback for local dev)
+        smtp_password = get_api_key(
+            secret_name='brevo-smtp-password',
+            default_env_var='SMTP_PASSWORD'
+        )
         
         if not all([smtp_host, smtp_user, smtp_password]):
             logger.warning("Incomplete SMTP configuration - skipping email")

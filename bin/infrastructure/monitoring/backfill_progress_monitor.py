@@ -108,7 +108,7 @@ class BackfillProgressMonitor:
         WHERE game_status = 3
           AND game_date BETWEEN '{start}' AND '{end}'
         """
-        result = self.client.query(query).result()
+        result = self.client.query(query).result(timeout=60)
         return next(result).total
 
     def get_phase_progress(self, phase: str, tables, date_field: str = 'game_date',
@@ -151,7 +151,7 @@ class BackfillProgressMonitor:
             WHERE {field} BETWEEN '{start}' AND '{end}'
             """
             try:
-                result = self.client.query(query).result()
+                result = self.client.query(query).result(timeout=60)
                 dates = next(result).dates
                 progress['tables'][table] = dates
                 # Use max for overall phase progress (tables should converge)
@@ -177,7 +177,7 @@ class BackfillProgressMonitor:
         ORDER BY started_at DESC
         LIMIT {limit}
         """
-        result = self.client.query(query).result()
+        result = self.client.query(query).result(timeout=60)
         return [dict(row) for row in result]
 
     def get_processing_rate(self, phase: str, hours: int = 1) -> Dict:
@@ -205,7 +205,7 @@ class BackfillProgressMonitor:
         FROM recent_runs
         """
         try:
-            result = self.client.query(query).result()
+            result = self.client.query(query).result(timeout=60)
             row = next(result)
             return {
                 'dates_processed': row.dates_processed,

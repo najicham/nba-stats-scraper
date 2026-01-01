@@ -115,7 +115,7 @@ class EarlyExitMixin:
         """
 
         try:
-            result = list(self.bq_client.query(query).result())
+            result = list(self.bq_client.query(query).result(timeout=60))
             count = int(result[0].cnt) if result else 0
 
             logger.debug(f"Games scheduled on {game_date}: {count}")

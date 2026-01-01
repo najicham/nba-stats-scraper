@@ -401,7 +401,7 @@ class PredictionAccuracyProcessor:
             WHERE game_date = '{game_date}'
             """
             delete_job = self.bq_client.query(delete_query)
-            delete_job.result()
+            delete_job.result(timeout=60)
             deleted_count = delete_job.num_dml_affected_rows or 0
             if deleted_count > 0:
                 logger.info(f"  Deleted {deleted_count} existing graded records for {game_date}")
@@ -423,7 +423,7 @@ class PredictionAccuracyProcessor:
                 self.accuracy_table,
                 job_config=job_config
             )
-            load_job.result()  # Wait for completion
+            load_job.result(timeout=60)  # Wait for completion
 
             if load_job.errors:
                 logger.warning(f"BigQuery load had errors: {load_job.errors[:3]}")

@@ -263,7 +263,7 @@ class ProcessingGapDetector:
         )
         
         try:
-            result = self.bq_client.query(query, job_config=job_config).result()
+            result = self.bq_client.query(query, job_config=job_config).result(timeout=60)
             count = list(result)[0]['count']
             logger.info(f"File processing check: {file_path_normalized} found {count} records")
             return count > 0
@@ -294,7 +294,7 @@ class ProcessingGapDetector:
         )
         
         try:
-            result = self.bq_client.query(query, job_config=job_config).result()
+            result = self.bq_client.query(query, job_config=job_config).result(timeout=60)
             count = list(result)[0]['count']
             return count
         except Exception as e:

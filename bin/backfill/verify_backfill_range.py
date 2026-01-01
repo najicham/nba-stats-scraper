@@ -57,7 +57,7 @@ def run_verification(start_date: date, end_date: date, verbose: bool = False):
     GROUP BY game_date
     ORDER BY game_date
     """
-    result = client.query(query).result()
+    result = client.query(query).result(timeout=60)
     expected_dates = [row.game_date for row in result]
 
     bootstrap_dates = [d for d in expected_dates if is_bootstrap_date(d)]
@@ -94,7 +94,7 @@ def run_verification(start_date: date, end_date: date, verbose: bool = False):
         WHERE {date_col} BETWEEN '{start_date}' AND '{end_date}'
         GROUP BY {date_col}
         """
-        result = client.query(query).result()
+        result = client.query(query).result(timeout=60)
         actual_dates = set(row.game_date for row in result)
 
         missing = set(expected_dates) - actual_dates
@@ -143,7 +143,7 @@ def run_verification(start_date: date, end_date: date, verbose: bool = False):
             WHERE {date_col} BETWEEN '{start_date}' AND '{end_date}'
             GROUP BY {date_col}
             """
-            result = client.query(query).result()
+            result = client.query(query).result(timeout=60)
             actual_dates = set(row.game_date for row in result)
 
             # Phase 4 should only have non-bootstrap dates
@@ -189,7 +189,7 @@ def run_verification(start_date: date, end_date: date, verbose: bool = False):
     """
 
     try:
-        result = client.query(query).result()
+        result = client.query(query).result(timeout=60)
         rows = list(result)
 
         if not rows:
@@ -223,7 +223,7 @@ def run_verification(start_date: date, end_date: date, verbose: bool = False):
     """
 
     try:
-        result = list(client.query(query).result())[0]
+        result = list(client.query(query).result(timeout=60))[0]
 
         print(f"   player_game_summary:")
         print(f"      Total records: {result.total_records}")

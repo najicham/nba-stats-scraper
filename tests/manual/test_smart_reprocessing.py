@@ -68,7 +68,7 @@ def test_smart_reprocessing():
     WHERE game_date = '{test_date}'
     """
 
-    result = list(processor.bq_client.query(query).result())[0]
+    result = list(processor.bq_client.query(query).result(timeout=60))[0]
     print(f"Data Written: {result['row_count']} rows, {result['game_count']} games")
     print(f"Sample Hash: {result['sample_hash'][:16]}..." if result['sample_hash'] else "No hash")
 

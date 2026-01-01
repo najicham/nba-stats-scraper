@@ -479,7 +479,7 @@ class BigDataBallPbpProcessor(SmartIdempotencyMixin, ProcessorBase):
             """
             
             query_job = self.bq_client.query(check_query)
-            result = query_job.result()
+            result = query_job.result(timeout=60)
             existing_rows = next(result).existing_rows
             
             if existing_rows > 0:
@@ -531,7 +531,7 @@ class BigDataBallPbpProcessor(SmartIdempotencyMixin, ProcessorBase):
                 )
 
                 # Wait for completion
-                load_job.result()
+                load_job.result(timeout=60)
                 logging.info(f"Successfully loaded {len(rows)} play-by-play events for game {game_id}")
 
                 # Success - send info notification

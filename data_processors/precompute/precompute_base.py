@@ -1371,7 +1371,7 @@ class PrecomputeProcessorBase(RunHistoryMixin):
                 table_id,
                 job_config=job_config
             )
-            load_job.result()  # Wait for completion
+            load_job.result(timeout=60)  # Wait for completion
             
             # Send notification for high-severity issues
             if severity in ['CRITICAL', 'HIGH']:
@@ -1433,7 +1433,7 @@ class PrecomputeProcessorBase(RunHistoryMixin):
                 table_id,
                 job_config=job_config
             )
-            load_job.result()  # Wait for completion
+            load_job.result(timeout=60)  # Wait for completion
         except Exception as e:
             logger.warning(f"Failed to log processing run: {e}")
     
@@ -1990,7 +1990,7 @@ class PrecomputeProcessorBase(RunHistoryMixin):
             )
 
             load_job = self.bq_client.load_table_from_json([failure_record], table_id, job_config=job_config)
-            load_job.result()
+            load_job.result(timeout=60)
 
             if load_job.errors:
                 logger.warning(f"Error recording date-level failure: {load_job.errors}")

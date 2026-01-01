@@ -95,7 +95,7 @@ def get_unclassified_failures(
     """
 
     logger.info(f"Querying unclassified failures...")
-    result = bq_client.query(query).result()
+    result = bq_client.query(query).result(timeout=60)
     rows = list(result)
     logger.info(f"Found {len(rows)} unclassified failures")
     return rows
@@ -239,7 +239,7 @@ def update_failures_in_bq(
         """
 
         try:
-            bq_client.query(update_query).result()
+            bq_client.query(update_query).result(timeout=60)
             updated += 1
         except Exception as e:
             logger.error(f"Error updating {key}: {e}")

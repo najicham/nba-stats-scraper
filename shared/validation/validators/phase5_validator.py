@@ -141,11 +141,11 @@ def _query_predictions(client: bigquery.Client, game_date: date) -> Dict:
     try:
         # Try with has_prop_line first
         try:
-            query_result = client.query(query_with_prop, job_config=job_config).result()
+            query_result = client.query(query_with_prop, job_config=job_config).result(timeout=60)
             result['has_prop_line_column'] = True
         except Exception:
             # Fall back to simple query
-            query_result = client.query(query_simple, job_config=job_config).result()
+            query_result = client.query(query_simple, job_config=job_config).result(timeout=60)
 
         for row in query_result:
             player = row.player_lookup

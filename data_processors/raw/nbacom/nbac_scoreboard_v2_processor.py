@@ -406,7 +406,7 @@ class NbacScoreboardV2Processor(SmartIdempotencyMixin, ProcessorBase):
             load_job = self.bq_client.load_table_from_json(
                 rows, temp_table_id, job_config=job_config
             )
-            load_job.result()  # Wait for completion
+            load_job.result(timeout=60)  # Wait for completion
             
             if load_job.errors:
                 errors.extend([str(e) for e in load_job.errors])
@@ -474,7 +474,7 @@ class NbacScoreboardV2Processor(SmartIdempotencyMixin, ProcessorBase):
             
             logging.info("Executing MERGE query")
             merge_job = self.bq_client.query(merge_query)
-            merge_job.result()  # Wait for completion
+            merge_job.result(timeout=60)  # Wait for completion
             
             logging.info(f"MERGE completed: {merge_job.num_dml_affected_rows} rows affected")
             

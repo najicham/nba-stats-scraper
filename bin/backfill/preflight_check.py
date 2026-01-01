@@ -73,7 +73,7 @@ def get_game_dates_from_schedule(client: bigquery.Client, start_date: date, end_
     GROUP BY game_date
     ORDER BY game_date
     """
-    result = client.query(query).result()
+    result = client.query(query).result(timeout=60)
     return [(row.game_date, row.games) for row in result]
 
 
@@ -103,7 +103,7 @@ def check_bigquery_table(client: bigquery.Client, table: str, date_col: str,
         GROUP BY {date_col}
         ORDER BY {date_col}
         """
-        result = client.query(query).result()
+        result = client.query(query).result(timeout=60)
         return {row.game_date: row.records for row in result}
     except Exception as e:
         return {"error": str(e)}

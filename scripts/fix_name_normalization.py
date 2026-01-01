@@ -199,7 +199,7 @@ class NameNormalizationFixer:
                 for statement in update_statements:
                     try:
                         job = self.bq_client.query(statement)
-                        result = job.result()
+                        result = job.result(timeout=60)
                         rows_affected = job.num_dml_affected_rows or 0
                         total_updated += rows_affected
                         
