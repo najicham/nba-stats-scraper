@@ -321,10 +321,17 @@ class CleanupProcessor:
         # Prepare missing files details
         missing_files_records = []
         for f in missing_files:
+            # Convert datetime to ISO format string for JSON serialization
+            triggered_at = f['triggered_at']
+            if hasattr(triggered_at, 'isoformat'):
+                triggered_at = triggered_at.isoformat()
+            elif not isinstance(triggered_at, str):
+                triggered_at = str(triggered_at)
+
             missing_files_records.append({
                 'scraper_name': f['scraper_name'],
                 'gcs_path': f['gcs_path'],
-                'triggered_at': f['triggered_at'],
+                'triggered_at': triggered_at,
                 'age_minutes': f['age_minutes'],
                 'republished': True  # Assume success if in this list
             })
