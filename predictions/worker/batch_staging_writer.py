@@ -319,7 +319,7 @@ class BatchConsolidator:
             FROM (
                 SELECT *,
                     ROW_NUMBER() OVER (
-                        PARTITION BY game_id, player_lookup, system_id, COALESCE(current_points_line, -1)
+                        PARTITION BY game_id, player_lookup, system_id, CAST(COALESCE(current_points_line, -1) AS INT64)
                         ORDER BY created_at DESC
                     ) AS row_num
                 FROM ({union_query})
@@ -329,7 +329,7 @@ class BatchConsolidator:
         ON T.game_id = S.game_id
            AND T.player_lookup = S.player_lookup
            AND T.system_id = S.system_id
-           AND COALESCE(T.current_points_line, -1) = COALESCE(S.current_points_line, -1)
+           AND CAST(COALESCE(T.current_points_line, -1) AS INT64) = CAST(COALESCE(S.current_points_line, -1) AS INT64)
         WHEN MATCHED THEN
           UPDATE SET
             prediction_id = S.prediction_id,
