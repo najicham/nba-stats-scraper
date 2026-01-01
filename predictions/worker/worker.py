@@ -378,9 +378,9 @@ def handle_prediction_request():
         write_predictions_to_bigquery(predictions, batch_id=batch_id, dataset_prefix=dataset_prefix)
         write_duration = time.time() - write_start
 
-        # Publish completion event
+        # Publish completion event (include batch_id for Firestore state tracking)
         pubsub_start = time.time()
-        publish_completion_event(player_lookup, game_date_str, len(predictions))
+        publish_completion_event(player_lookup, game_date_str, len(predictions), batch_id=batch_id)
         pubsub_duration = time.time() - pubsub_start
 
         # Log successful execution
@@ -1156,7 +1156,7 @@ def write_predictions_to_bigquery(predictions: List[Dict], batch_id: Optional[st
         # Don't raise - log and continue (graceful degradation)
 
 
-def publish_completion_event(player_lookup: str, game_date: str, prediction_count: int):
+def publish_completion_event(player_lookup: str, game_date: str, prediction_count: int, batch_id: str = None):
     """
     Publish prediction-ready event to Pub/Sub
 
@@ -1166,6 +1166,7 @@ def publish_completion_event(player_lookup: str, game_date: str, prediction_coun
         player_lookup: Player identifier
         game_date: Game date string
         prediction_count: Number of predictions generated
+        batch_id: Batch identifier (REQUIRED for Firestore state tracking)
     """
     pubsub_publisher = get_pubsub_publisher()
     topic_path = pubsub_publisher.topic_path(PROJECT_ID, PUBSUB_READY_TOPIC)
@@ -1174,6 +1175,7 @@ def publish_completion_event(player_lookup: str, game_date: str, prediction_coun
         'player_lookup': player_lookup,
         'game_date': game_date,
         'predictions_generated': prediction_count,
+        'batch_id': batch_id,  # Critical for Firestore state persistence!
         'timestamp': datetime.utcnow().isoformat(),
         'worker_instance': os.environ.get('K_REVISION', 'unknown')
     }

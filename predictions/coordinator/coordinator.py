@@ -39,6 +39,7 @@ from player_loader import PlayerLoader
 from progress_tracker import ProgressTracker
 from run_history import CoordinatorRunHistory
 from coverage_monitor import PredictionCoverageMonitor
+from batch_state_manager import get_batch_state_manager, BatchStateManager, BatchState
 
 # Import batch consolidator for staging table merging
 import sys
@@ -114,8 +115,10 @@ _pubsub_publisher: Optional['pubsub_v1.PublisherClient'] = None
 _run_history: Optional[CoordinatorRunHistory] = None
 _bq_client: Optional['bigquery.Client'] = None
 _batch_consolidator: Optional[BatchConsolidator] = None
+_batch_state_manager: Optional[BatchStateManager] = None
 
-# Global state (in production, use Firestore or Redis for multi-instance support)
+# Global state (DEPRECATED - use BatchStateManager for persistent state)
+# These remain for backwards compatibility but should not be used for new code
 current_tracker: Optional[ProgressTracker] = None
 current_batch_id: Optional[str] = None
 current_correlation_id: Optional[str] = None  # Track correlation_id for this batch
@@ -170,6 +173,16 @@ def get_batch_consolidator() -> BatchConsolidator:
         _batch_consolidator = BatchConsolidator(get_bq_client(), PROJECT_ID)
         logger.info("BatchConsolidator initialized")
     return _batch_consolidator
+
+
+def get_state_manager() -> BatchStateManager:
+    """Lazy-load batch state manager on first use"""
+    global _batch_state_manager
+    if _batch_state_manager is None:
+        logger.info("Initializing BatchStateManager...")
+        _batch_state_manager = get_batch_state_manager(PROJECT_ID)
+        logger.info("BatchStateManager initialized")
+    return _batch_state_manager
 
 
 logger.info("Coordinator initialized successfully (heavy clients will lazy-load on first request)")
@@ -330,8 +343,27 @@ def start_prediction_batch():
             logger.warning(f"Batch historical load failed (workers will use individual queries): {e}")
             batch_historical_games = None
 
-        # Initialize progress tracker
+        # Initialize progress tracker (DEPRECATED - keeping for backward compatibility)
         current_tracker = ProgressTracker(expected_players=len(requests))
+
+        # Create batch state in Firestore (PERSISTENT - survives container restarts!)
+        try:
+            state_manager = get_state_manager()
+            batch_state = state_manager.create_batch(
+                batch_id=batch_id,
+                game_date=game_date.isoformat(),
+                expected_players=len(requests),
+                correlation_id=correlation_id,
+                dataset_prefix=dataset_prefix
+            )
+            logger.info(
+                f"✅ Batch state persisted to Firestore: {batch_id} "
+                f"(expected={len(requests)} players)"
+            )
+        except Exception as e:
+            # This is critical - without persistent state, consolidation won't work after restart
+            logger.error(f"❌ CRITICAL: Failed to persist batch state to Firestore: {e}", exc_info=True)
+            raise
 
         # Log batch start to processor_run_history for unified monitoring
         try:
@@ -406,18 +438,38 @@ def handle_completion_event():
         message_data = base64.b64decode(pubsub_message['data']).decode('utf-8')
         event = json.loads(message_data)
         
-        logger.debug(f"Received completion event: {event.get('player_lookup')}")
-        
-        # Process completion event
-        if current_tracker:
-            batch_complete = current_tracker.process_completion_event(event)
-            
-            # If batch is now complete, publish summary
+        player_lookup = event.get('player_lookup')
+        batch_id = event.get('batch_id')  # Workers should include batch_id in completion events
+        predictions_count = event.get('predictions_generated', 0)
+
+        logger.debug(f"Received completion event: {player_lookup} (batch={batch_id})")
+
+        # Process completion event using Firestore (PERSISTENT - survives restarts!)
+        try:
+            if not batch_id:
+                logger.error("Completion event missing batch_id - cannot process")
+                return ('Bad Request: batch_id required', 400)
+
+            state_manager = get_state_manager()
+            batch_complete = state_manager.record_completion(
+                batch_id=batch_id,
+                player_lookup=player_lookup,
+                predictions_count=predictions_count
+            )
+
+            # BACKWARD COMPATIBILITY: Also update in-memory tracker if it exists
+            if current_tracker and current_batch_id == batch_id:
+                current_tracker.process_completion_event(event)
+
+            # If batch is now complete, publish summary and trigger consolidation
             if batch_complete:
-                publish_batch_summary(current_tracker, current_batch_id)
-        else:
-            logger.warning("Received completion event but no active batch")
-        
+                logger.info(f"🎉 Batch {batch_id} complete! Triggering consolidation...")
+                publish_batch_summary_from_firestore(batch_id)
+        except Exception as e:
+            logger.error(f"Error recording completion to Firestore: {e}", exc_info=True)
+            # Don't fail the request - worker already succeeded
+            # Return 204 so Pub/Sub doesn't retry
+
         return ('', 204)  # Success
         
     except Exception as e:
@@ -658,9 +710,82 @@ def send_prediction_completion_email(summary: Dict, game_date: str, batch_id: st
         logger.error(f"Error sending prediction completion email (non-fatal): {e}")
 
 
+def publish_batch_summary_from_firestore(batch_id: str):
+    """
+    Publish batch summary using persistent state from Firestore
+
+    This function is used when completion events trigger consolidation
+    after a container restart (when in-memory tracker is lost).
+
+    Args:
+        batch_id: Batch identifier
+    """
+    try:
+        # Get batch state from Firestore
+        state_manager = get_state_manager()
+        batch_state = state_manager.get_batch_state(batch_id)
+
+        if not batch_state:
+            logger.error(f"Cannot publish summary - batch state not found: {batch_id}")
+            return
+
+        # Extract game_date and build summary
+        game_date = batch_state.game_date
+
+        logger.info(
+            f"Publishing batch summary from Firestore: {batch_id} "
+            f"({len(batch_state.completed_players)}/{batch_state.expected_players} players)"
+        )
+
+        # Step 1: Consolidate staging tables into main predictions table
+        try:
+            consolidator = get_batch_consolidator()
+            consolidation_result = consolidator.consolidate_batch(
+                batch_id=batch_id,
+                game_date=game_date,
+                cleanup=True  # Delete staging tables after successful merge
+            )
+
+            if consolidation_result.success:
+                logger.info(
+                    f"✅ Consolidation complete: {consolidation_result.rows_affected} rows merged "
+                    f"from {consolidation_result.staging_tables_merged} staging tables"
+                )
+            else:
+                logger.error(f"❌ Consolidation failed: {consolidation_result.error_message}")
+        except Exception as e:
+            logger.error(f"Consolidation failed: {e}", exc_info=True)
+
+        # Step 2: Publish Phase 5 completion event to trigger Phase 6
+        try:
+            unified_publisher = UnifiedPubSubPublisher(project_id=PROJECT_ID)
+            unified_publisher.publish_phase_completion(
+                topic_name=BATCH_SUMMARY_TOPIC,
+                phase="phase5_predictions",
+                game_date=game_date,
+                status="complete",
+                correlation_id=batch_state.correlation_id or "",
+                metadata={
+                    'batch_id': batch_id,
+                    'expected_players': batch_state.expected_players,
+                    'completed_players': len(batch_state.completed_players),
+                    'total_predictions': batch_state.total_predictions,
+                    'completion_percentage': batch_state.get_completion_percentage()
+                }
+            )
+            logger.info(f"Published Phase 5 completion for batch: {batch_id}")
+        except Exception as e:
+            logger.error(f"Failed to publish completion message: {e}", exc_info=True)
+
+        logger.info(f"✅ Batch summary published successfully: {batch_id}")
+
+    except Exception as e:
+        logger.error(f"Error publishing batch summary from Firestore: {e}", exc_info=True)
+
+
 def publish_batch_summary(tracker: ProgressTracker, batch_id: str):
     """
-    Publish unified batch completion summary
+    Publish unified batch completion summary (LEGACY - uses in-memory tracker)
 
     Uses UnifiedPubSubPublisher for consistency with Phases 1-4.
     Also logs to processor_run_history for unified monitoring.
