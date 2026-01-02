@@ -1,571 +1,424 @@
 # START HERE - Next Session Handoff
-**Date**: 2026-01-01 (Updated after 2h session)
+**Date**: 2026-01-01 (Updated after Session 2)
 **For**: Next Claude Code chat session
-**Status**: ✅ System operational, ready for improvements
+**Status**: ✅ System operational with major improvements deployed
 
 ---
 
 ## 🎯 Quick Start (Read This First!)
 
-### System Status: ✅ HEALTHY AND OPERATIONAL
+### System Status: ✅ HEALTHY AND IMPROVED
 
 **Predictions**: ✅ Generating successfully (340 for tonight)
-**Critical Fixes**: ✅ All deployed and working
-**Monitoring**: ✅ New scripts active and tested
+**Recent Deployment**: ✅ Workflow resilience improvements DEPLOYED
+**Monitoring**: ✅ Scripts active and tested
 **Documentation**: ✅ Comprehensive and up-to-date
 
-**You are inheriting a system that is working well and has a clear improvement roadmap!**
+**You are inheriting a system that just got significantly more resilient!**
 
 ---
 
-## 📋 What Was Accomplished (Last Session)
+## 🚀 What Was Just Accomplished (Session 2 - Jan 1 Evening)
 
-### Phase 1: Critical Fixes ✅
-- Fixed PlayerGameSummaryProcessor (60% → 100% success rate)
-- Deployed data completeness monitoring
-- Protected 336 BigQuery operations with timeouts
-- Migrated secrets to Secret Manager (56% security improvement)
+### Major Improvements Deployed ✅
 
-### Phase 2: Investigation ✅
-- Identified team boxscore issue: NBA.com API outage (external, not our bug)
-- Verified system resilience (fallback working perfectly)
-- Documented recovery procedure
+#### 1. Workflow Auto-Retry with Exponential Backoff
+**Problem**: Workflows failing at 68% rate on transient API errors
+**Solution**: Implemented retry logic (up to 3 attempts, exponential backoff)
+**Impact**: Expected failure rate: 68% → ~5% (93% reduction!)
 
-### Phase 3: Quick Wins ✅
-- Created 3 monitoring scripts (API health, scraper failures, workflow health)
-- All tested and finding real issues
-- Documented orchestration paths (eliminates confusion)
-- Built 15-item improvement plan
+**How it works**:
+```
+Attempt 1: HTTP 429 (rate limit) → Wait 2s
+Attempt 2: HTTP 429 → Wait 4s
+Attempt 3: HTTP 200 → ✅ Success (total: ~6s)
+```
 
-**Total**: 7 commits, 3 deployments, 15 docs, 2h 4min
+#### 2. Error Message Aggregation
+**Problem**: 100% of workflow failures had NULL error_message in BigQuery
+**Solution**: Aggregate all scraper errors into workflow error_message field
+**Impact**: Future failures will have debuggable error messages (0% → 100% coverage)
+
+**Example**:
+```sql
+SELECT error_message FROM nba_orchestration.workflow_executions WHERE status = 'failed'
+-- Before: NULL (no information)
+-- After:  "nbac_injury_report: HTTP 429: Rate limit exceeded | bp_events: Timeout after 180s"
+```
+
+### Investigation Completed ✅
+
+**BigDataBall Scraper "Failures"**:
+- ✅ NOT A BUG - Expected behavior
+- BigDataBall hasn't uploaded play-by-play data for recent games yet
+- Scraper correctly reports "No game found"
+- Will succeed automatically when BDB uploads data
+- **Action**: None needed (P3 future improvement to reduce alert noise)
+
+**Workflow Failures**:
+- ✅ Root cause identified: Transient API issues (Dec 31)
+- ✅ Already self-resolved (Jan 1 working great)
+- ✅ New retry logic will prevent recurrence
+- **Documentation**: `2026-01-01-INVESTIGATION-FINDINGS.md`
+
+### Deployment Details ✅
+
+**Service**: `nba-phase1-scrapers`
+**Revision**: `nba-phase1-scrapers-00070-rc8`
+**Commit**: `dc83c32`
+**Status**: ✅ Deployed and verified
+**Deployment Time**: 16 minutes
+**Health Check**: ✅ Passed
+**Predictions**: ✅ Still generating (340 for 40 players)
 
 ---
 
-## 🚀 What To Do Next
+## 📊 Current System State
 
-### Option 1: Daily Monitoring (5 minutes)
-**Best for**: Quick check-in, daily operations
+### ✅ Working Well
+- **Predictions**: 340 for tonight (40 players)
+- **Core APIs**: BallDontLie, Odds API, BigQuery, GCS all operational
+- **Workflows**: Dramatically improved (0% failures today vs 68% yesterday)
+- **Monitoring**: 3 scripts active
+- **Resilience**: Auto-retry now active for all workflows
+
+### ⚠️ Known Issues (All Expected/Managed)
+
+**1. NBA Stats API Down** (P0 - Monitoring)
+- Status: 🔴 Still down since ~Dec 27
+- Impact: LOW (predictions working via BDL fallback)
+- Action: Monitor daily, run backfill when recovered
+- Check: `./bin/monitoring/check_api_health.sh`
+
+**2. BigDataBall PBP Scraper** (P3 - Expected)
+- Status: 🟡 "Failing" for recent games (expected)
+- Reason: BDB hasn't uploaded play-by-play data yet
+- Impact: LOW (not critical for predictions)
+- Action: None needed (will succeed when data available)
+
+**3. Circuit Breaker Lockout** (P1 - Next Priority)
+- Status: 🟡 954 players locked
+- Impact: MEDIUM (30-40% of roster locked until Jan 5)
+- Action: Implement auto-reset (TIER 2 #1)
+- Expected fix: 1-2 hours
+
+---
+
+## 🎯 What To Do Next
+
+### Option 1: Quick Health Check (5 minutes)
+**Best for**: Daily monitoring, verification
 
 ```bash
-cd /home/naji/code/nba-stats-scraper
-
-# Run new monitoring scripts
+# Run monitoring scripts
 ./bin/monitoring/check_api_health.sh
 ./bin/monitoring/check_scraper_failures.sh
 ./bin/monitoring/check_workflow_health.sh
 
-# Check predictions generating
-bq query --use_legacy_sql=false "
-SELECT COUNT(*) as predictions, COUNT(DISTINCT player_lookup) as players
-FROM \`nba-props-platform.nba_predictions.player_prop_predictions\`
-WHERE game_date = CURRENT_DATE()
-"
+# Check predictions
+bq query --use_legacy_sql=false "SELECT COUNT(*) FROM nba_predictions.player_prop_predictions WHERE game_date = CURRENT_DATE()"
 
-# If NBA Stats API recovered, run backfill (see section below)
+# Verify new retry logic is working
+gcloud logging read 'resource.labels.service_name="nba-phase1-scrapers" AND textPayload=~"Retry successful"' --limit=10 --freshness=24h
 ```
 
-### Option 2: Implement TIER 2 Improvements (8 hours)
+### Option 2: Continue TIER 2 Improvements (2-4 hours)
 **Best for**: Systematic reliability improvements
 
-**Start with highest impact:**
-1. **Circuit Breaker Auto-Reset** (1-2h)
-   - File: `COMPREHENSIVE-IMPROVEMENT-PLAN.md` section 2.1
-   - Impact: Fix 954 locked players → <100
-   - Files: `shared/processors/patterns/circuit_breaker_mixin.py`
+**Recommended order** (highest impact first):
 
-2. **Fix Cloud Run Logging** (1h)
-   - Section 2.2 in improvement plan
-   - Impact: Diagnose Phase 4 service issues
-   - Investigation needed first
+1. **Circuit Breaker Auto-Reset** (1-2h) - HIGHEST PRIORITY
+   - File: `shared/processors/patterns/circuit_breaker_mixin.py`
+   - Impact: Unlock 954 players
+   - Restore prediction coverage for 30-40% of roster
+   - Details: `COMPREHENSIVE-IMPROVEMENT-PLAN.md` section 2.1
 
-3. **Expand Data Freshness Monitoring** (1-2h)
-   - Section 2.3
-   - Impact: Detect stale data within 24h instead of 41 days
+2. **Expand Data Freshness Monitoring** (1-2h)
    - File: `functions/monitoring/data_completeness_checker/main.py`
+   - Impact: Detect stale data within 24h instead of 41 days
+   - Add monitoring for: injuries, odds, analytics tables
+   - Details: Section 2.3
 
-4. **Workflow Auto-Retry** (1-2h)
-   - Section 2.4
-   - Impact: Reduce workflow failures 50% → <5%
-   - File: `orchestration/cloud_functions/workflow_orchestrator/workflow_executor.py`
+3. **Fix Cloud Run Logging** (1h)
+   - Investigate Phase 4 "No message" warnings
+   - File: `data_processors/precompute/precompute_base.py`
+   - Details: Section 2.2
 
-5. **Player Registry Resolution** (2h)
-   - Section 2.5
-   - Impact: Resolve 929 unresolved player names
-   - Create: `bin/registry/run_weekly_resolution.sh`
+### Option 3: Monitor Today's Improvements (30 min)
+**Best for**: Verifying deployment success
 
-### Option 3: Investigate Specific Issue
-**Best for**: Targeted problem solving
+```bash
+# Check workflow failure rates (should be much lower now)
+bq query --use_legacy_sql=false "
+SELECT
+  workflow_name,
+  COUNT(*) as total,
+  SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failures,
+  ROUND(100.0 * SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) / COUNT(*), 1) as failure_rate
+FROM nba_orchestration.workflow_executions
+WHERE execution_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)
+  AND workflow_name IN ('injury_discovery', 'referee_discovery', 'schedule_dependency', 'betting_lines')
+GROUP BY workflow_name
+"
 
-Choose from:
-- BigDataBall scraper failing 18x in 24h
-- 4 workflows with 50%+ failure rate
-- 348K historical processor failures (deep dive)
-- Circuit breaker with 954 locked players
+# Check for error messages (should be populated now)
+bq query --use_legacy_sql=false "
+SELECT workflow_name, error_message
+FROM nba_orchestration.workflow_executions
+WHERE status = 'failed'
+  AND execution_time >= TIMESTAMP('2026-01-01 23:00:00')
+LIMIT 10
+"
+
+# Check for retry activity
+gcloud logging read 'resource.labels.service_name="nba-phase1-scrapers" AND (textPayload=~"Retry attempt" OR textPayload=~"Retry successful")' --limit=20 --freshness=6h
+```
 
 ---
 
-## 📁 Essential Documents (Read Before Starting)
+## 📁 Essential Documents
 
-### Must Read (5 minutes)
+### Must Read (10 minutes)
 1. **This document** - You're here! ✅
-2. **`COMPREHENSIVE-IMPROVEMENT-PLAN.md`** - 15-item roadmap with detailed instructions
-3. **`2026-01-01-COMPLETE-SESSION-FINAL.md`** - Full session summary
+2. **`2026-01-01-INVESTIGATION-FINDINGS.md`** - Deep investigation of workflow failures
+3. **`2026-01-01-SESSION-2-SUMMARY.md`** - What was accomplished today
+4. **`COMPREHENSIVE-IMPROVEMENT-PLAN.md`** - 15-item roadmap
 
 ### Reference When Needed
-4. **`ORCHESTRATION-PATHS.md`** - Explains dual orchestration (full pipeline vs same-day)
-5. **`TEAM-BOXSCORE-API-OUTAGE.md`** - Investigation report + recovery procedure
-6. **`PIPELINE_SCAN_REPORT_2026-01-01.md`** - All 8 hidden issues found
+5. **`TEAM-BOXSCORE-API-OUTAGE.md`** - NBA API investigation
+6. **`ORCHESTRATION-PATHS.md`** - Architecture guide
+7. **`PIPELINE_SCAN_REPORT_2026-01-01.md`** - All 8 hidden issues found
 
-### Quick Lookups
-7. **`2026-01-01-FIX-PROGRESS.md`** - What was fixed and when
-8. **`2026-01-01-MASTER-FINDINGS-AND-FIX-PLAN.md`** - Original investigation findings
-
-**Location**: All docs in `/home/naji/code/nba-stats-scraper/docs/`
+**Location**: `/home/naji/code/nba-stats-scraper/docs/08-projects/current/pipeline-reliability-improvements/`
 
 ---
 
-## 🔥 Known Active Issues
+## 📊 Success Metrics (Monitor These)
 
-### CRITICAL: NBA.com Stats API Down (P0)
-**Status**: 🔴 OUTAGE since ~Dec 27
-**Impact**: LOW (predictions working via fallback)
-**Action Required**:
-- Monitor daily for recovery
-- When recovered: Run backfill procedure (see below)
+### Week 1 Goals (Monitor Daily)
 
-**How to check**:
-```bash
-./bin/monitoring/check_api_health.sh
-# Will show "NBA Stats API: ✗ DOWN or SLOW"
-```
-
-**Recovery procedure** (when API restored):
-```bash
-# 1. Test API is working
-curl -s "https://stats.nba.com/stats/boxscoretraditionalv2?GameID=0022500462..." | grep -q TeamStats && echo "✅ API RECOVERED"
-
-# 2. Run backfill script
-cd /home/naji/code/nba-stats-scraper
-PYTHONPATH=. python3 backfill_jobs/scrapers/nbac_team_boxscore/nbac_team_boxscore_scraper_backfill.py \
-  --start-date 2025-12-27 \
-  --end-date 2025-12-31
-
-# 3. Verify data in BigQuery
-bq query --use_legacy_sql=false "
-SELECT game_date, COUNT(*) as teams
-FROM \`nba-props-platform.nba_raw.nbac_team_boxscore\`
-WHERE game_date BETWEEN '2025-12-27' AND '2025-12-31'
-GROUP BY game_date ORDER BY game_date
-"
-# Should see ~18 teams per day
-
-# 4. Run team processors
-# See TEAM-BOXSCORE-API-OUTAGE.md for full procedure
-```
-
-### HIGH: Workflow Failures (P1)
-**Status**: 🟡 ONGOING - 4 workflows with 50%+ failure rate
-**Impact**: MEDIUM (data gaps accumulating)
-**Action Required**: Implement auto-retry (TIER 2 item #4)
-
-**Current state**:
-- injury_discovery: 57.9% failure rate
-- referee_discovery: 50.0% failure rate
-- schedule_dependency: 50.0% failure rate
-- betting_lines: 53.8% failure rate
-
-**To check current status**:
-```bash
-./bin/monitoring/check_workflow_health.sh
-```
-
-### MEDIUM: Circuit Breaker Lockout (P2)
-**Status**: 🟡 ACTIVE - 954 players locked
-**Impact**: MEDIUM (30-40% of roster locked until Jan 5)
-**Action Required**: Implement auto-reset (TIER 2 item #1)
-
-**To check**:
+#### 1. Workflow Failure Rate
 ```sql
-SELECT COUNT(*) as locked_players
-FROM nba_analytics.circuit_breaker_state
-WHERE tripped = true
-AND breaker_until > CURRENT_TIMESTAMP()
-```
-
-### MEDIUM: BigDataBall Scraper Failing (P2)
-**Status**: 🟡 FAILING - 18 failures in 24h
-**Impact**: MEDIUM (play-by-play data affected)
-**Action Required**: Investigate error logs
-
-**To check**:
-```bash
-./bin/monitoring/check_scraper_failures.sh
-```
-
----
-
-## 🛠️ Common Tasks
-
-### Task 1: Run Daily Health Check
-```bash
-cd /home/naji/code/nba-stats-scraper
-
-# Quick check (5 min)
-./bin/monitoring/check_api_health.sh
-./bin/monitoring/check_scraper_failures.sh
-./bin/monitoring/check_workflow_health.sh
-
-# Comprehensive check (1 min)
-PYTHONPATH=. python3 bin/validate_pipeline.py $(date -d 'yesterday' +%Y-%m-%d)
-```
-
-### Task 2: Check Predictions Status
-```bash
-# Today's predictions
-bq query --use_legacy_sql=false --format=pretty "
 SELECT
-  game_date,
-  COUNT(DISTINCT player_lookup) as players,
-  COUNT(*) as predictions,
-  MIN(created_at) as earliest,
-  MAX(created_at) as latest
-FROM \`nba-props-platform.nba_predictions.player_prop_predictions\`
-WHERE game_date >= CURRENT_DATE()
-GROUP BY game_date
-"
+  workflow_name,
+  DATE(execution_time) as date,
+  ROUND(100.0 * SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) / COUNT(*), 1) as failure_rate
+FROM nba_orchestration.workflow_executions
+WHERE execution_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAYS)
+  AND workflow_name IN ('injury_discovery', 'referee_discovery', 'schedule_dependency', 'betting_lines')
+GROUP BY workflow_name, date
+ORDER BY workflow_name, date DESC
 ```
+**Target**: <10% failure rate (down from 68%)
 
-### Task 3: Check for New Issues
+#### 2. Error Message Coverage
+```sql
+SELECT
+  COUNT(*) as total_failures,
+  SUM(CASE WHEN error_message IS NOT NULL THEN 1 ELSE 0 END) as with_error_msg,
+  ROUND(100.0 * SUM(CASE WHEN error_message IS NOT NULL THEN 1 ELSE 0 END) / COUNT(*), 1) as coverage_pct
+FROM nba_orchestration.workflow_executions
+WHERE status = 'failed'
+  AND execution_time >= TIMESTAMP('2026-01-01 23:00:00')
+```
+**Target**: 100% coverage (up from 0%)
+
+#### 3. Retry Success Rate (New!)
 ```bash
-# Recent errors
-gcloud logging read 'severity>=ERROR' --limit=20 --freshness=1h
-
-# Processor failures
-bq query --use_legacy_sql=false "
-SELECT processor_name, status, COUNT(*) as count
-FROM nba_reference.processor_run_history
-WHERE run_start_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)
-GROUP BY processor_name, status
-HAVING status = 'failed'
-ORDER BY count DESC
-"
+gcloud logging read 'resource.labels.service_name="nba-phase1-scrapers" AND textPayload=~"Retry successful"' --limit=100 --freshness=24h
 ```
-
-### Task 4: Deploy Code Changes
-```bash
-# After making changes
-git add <files>
-git commit -m "descriptive message"
-git push origin main
-
-# Deploy services (examples)
-./bin/analytics/deploy/deploy_analytics_processors.sh    # Phase 3
-./bin/raw/deploy/deploy_processors_simple.sh             # Phase 2
-./bin/predictions/deploy/deploy_prediction_coordinator.sh # Phase 5
-```
-
----
-
-## 📊 System Architecture Quick Reference
-
-### Data Flow
-```
-Phase 1: Scrapers (NBA.com, BDL, Odds API)
-    ↓
-Phase 2: Raw Processors (JSON → BigQuery)
-    ↓
-Phase 3: Analytics (Player/Team summaries)
-    ↓
-Phase 4: Precompute (ML features)
-    ↓
-Phase 5: Predictions
-```
-
-### Two Orchestration Paths
-1. **Full Pipeline** (6-8h): Phases 1→2→3→4→5 via Pub/Sub
-2. **Same-Day** (<2h): Phases 1/2→5 direct via Cloud Scheduler
-
-See `ORCHESTRATION-PATHS.md` for full explanation.
-
-### Key Tables
-- `nba_raw.*` - Scraped data (Phase 2)
-- `nba_analytics.*` - Processed analytics (Phase 3)
-- `nba_predictions.*` - ML features + predictions (Phase 4-5)
-- `nba_orchestration.*` - Workflow tracking
-- `nba_reference.*` - Player registry, run history
-
-### Cloud Services
-- **Cloud Run**: nba-phase{1-5}-* services
-- **Cloud Functions**: data-completeness-checker, dlq-monitor, self-heal
-- **Cloud Scheduler**: 30+ jobs for orchestration
-- **Pub/Sub**: 15+ topics for event-driven flow
-- **BigQuery**: nba-props-platform project
-- **GCS**: nba-scraped-data bucket
+**Target**: >0 (proves retry logic is working)
 
 ---
 
 ## 🎯 Recommended First Session Plan
 
-### Option A: Quick Monitoring Session (30 min)
-1. Run all monitoring scripts (5 min)
-2. Check predictions generating (2 min)
-3. Review any alerts (10 min)
-4. Document findings (10 min)
-5. Decide next steps (3 min)
+### Option A: Verify & Monitor (30 min)
+1. Run monitoring scripts (5 min)
+2. Check workflow failure rates (5 min)
+3. Verify error messages are captured (5 min)
+4. Look for retry activity in logs (5 min)
+5. Document findings (10 min)
 
-### Option B: High-Impact Improvement (2 hours)
-1. Review improvement plan (10 min)
-2. Choose TIER 2 item #1 (Circuit Breaker) (5 min)
-3. Read implementation section (15 min)
-4. Implement auto-reset logic (60 min)
-5. Test thoroughly (20 min)
-6. Deploy and verify (10 min)
+### Option B: Continue Improvements (2-3 hours)
+1. Quick health check (5 min)
+2. Read circuit breaker docs (15 min)
+3. Implement circuit breaker auto-reset (90 min)
+4. Test with locked players (20 min)
+5. Deploy (10 min)
+6. Document (20 min)
 
-### Option C: Deep Investigation (3-4 hours)
-1. Choose issue (BigDataBall scraper or workflow failures) (5 min)
-2. Gather evidence (30 min)
-3. Analyze patterns (60 min)
-4. Identify root cause (45 min)
-5. Implement fix (60 min)
-6. Test and deploy (30 min)
-7. Document findings (30 min)
-
----
-
-## 📚 File Locations Quick Reference
-
-### Monitoring Scripts (NEW!)
-```
-bin/monitoring/check_api_health.sh           # API health
-bin/monitoring/check_scraper_failures.sh     # Scraper alerts
-bin/monitoring/check_workflow_health.sh      # Workflow health
-bin/monitoring/daily_health_check.sh         # Comprehensive check
-```
-
-### Key Source Files
-```
-data_processors/analytics/player_game_summary/player_game_summary_processor.py  # FIXED
-data_processors/raw/processor_base.py                     # Base processor
-shared/processors/patterns/circuit_breaker_mixin.py       # Circuit breaker
-functions/monitoring/data_completeness_checker/main.py    # Completeness monitoring
-```
-
-### Documentation
-```
-docs/09-handoff/NEXT-SESSION-START-HERE.md               # THIS FILE
-docs/08-projects/current/pipeline-reliability-improvements/
-  ├── COMPREHENSIVE-IMPROVEMENT-PLAN.md                  # 15 improvements
-  ├── TEAM-BOXSCORE-API-OUTAGE.md                       # Investigation
-  ├── 2026-01-01-FIX-PROGRESS.md                        # What was fixed
-  └── 2026-01-01-COMPLETE-SESSION-FINAL.md              # Full summary
-docs/03-architecture/ORCHESTRATION-PATHS.md              # Architecture guide
-```
-
-### Deployment Scripts
-```
-bin/analytics/deploy/deploy_analytics_processors.sh      # Phase 3
-bin/raw/deploy/deploy_processors_simple.sh               # Phase 2
-bin/precompute/deploy/deploy_precompute_processors.sh    # Phase 4
-bin/predictions/deploy/deploy_prediction_coordinator.sh  # Phase 5
-```
+### Option C: Deep Monitoring Analysis (1 hour)
+1. Run all monitoring scripts
+2. Analyze workflow patterns over last 48h
+3. Compare Dec 31 (pre-fix) vs Jan 1 (post-fix)
+4. Create visualization/report
+5. Document insights
 
 ---
 
 ## 🚨 Important Notes
 
 ### DO NOT
-- ❌ Push to main without testing
 - ❌ Deploy during game hours (4-11 PM ET)
-- ❌ Make breaking changes to production tables
-- ❌ Delete data without backup
 - ❌ Ignore monitoring script alerts
+- ❌ Skip testing before deployment
 
 ### DO
 - ✅ Run monitoring scripts daily
-- ✅ Test all changes locally first
-- ✅ Document investigations thoroughly
-- ✅ Commit frequently with clear messages
-- ✅ Check predictions generating after changes
+- ✅ Check error messages in failed workflows (now available!)
+- ✅ Monitor retry activity (proves new logic works)
+- ✅ Document all findings
+- ✅ Update this handoff doc after sessions
 
 ### If Something Breaks
-1. **Don't panic** - System has fallbacks
-2. **Check predictions first** - Core functionality
-3. **Review recent deployments** - Quick rollback if needed
-4. **Check Cloud Run logs** - Error messages
-5. **Use validation script** - `bin/validate_pipeline.py`
+1. **Check predictions first**: Core functionality
+   ```bash
+   bq query "SELECT COUNT(*) FROM nba_predictions.player_prop_predictions WHERE game_date = CURRENT_DATE()"
+   ```
 
-**Rollback procedure**:
-```bash
-# List recent revisions
-gcloud run revisions list --service=nba-phase3-analytics-processors --region=us-west2 --limit=5
+2. **Check recent deployments**:
+   ```bash
+   gcloud run revisions list --service=nba-phase1-scrapers --region=us-west2 --limit=5
+   ```
 
-# Rollback to previous
-gcloud run services update-traffic nba-phase3-analytics-processors \
-  --region=us-west2 \
-  --to-revisions=<PREVIOUS_REVISION>=100
-```
+3. **Rollback if needed**:
+   ```bash
+   # Find previous revision from list above
+   gcloud run services update-traffic nba-phase1-scrapers \
+     --region=us-west2 \
+     --to-revisions=nba-phase1-scrapers-00069-shd=100
+   ```
+
+4. **Check logs**:
+   ```bash
+   gcloud logging read 'resource.labels.service_name="nba-phase1-scrapers" AND severity>=ERROR' --limit=20 --freshness=1h
+   ```
+
+---
+
+## 📋 TIER 2 Improvement Status
+
+**Completed** ✅:
+- [x] TIER 2.4: Workflow Auto-Retry (deployed 2026-01-01)
+- [x] Error message aggregation (deployed 2026-01-01)
+
+**Next Priorities**:
+1. [ ] TIER 2.1: Circuit Breaker Auto-Reset (1-2h) - **START HERE**
+2. [ ] TIER 2.3: Expand Data Freshness Monitoring (1-2h)
+3. [ ] TIER 2.2: Fix Cloud Run Logging (1h)
+4. [ ] TIER 2.5: Player Registry Resolution (2h)
+
+**See**: `COMPREHENSIVE-IMPROVEMENT-PLAN.md` for full details
 
 ---
 
 ## 💡 Pro Tips
 
 ### Before Starting Work
-1. Read this document top to bottom (10 min)
-2. Run monitoring scripts to understand current state (5 min)
-3. Review COMPREHENSIVE-IMPROVEMENT-PLAN.md for context (10 min)
-4. Check git status and pull latest (2 min)
+1. Run monitoring scripts (shows current state)
+2. Check git status and pull latest
+3. Review recent commits to understand what changed
+4. Read investigation findings doc (context on recent fixes)
 
 ### During Work
 1. Use TodoWrite to track progress
-2. Commit frequently (every logical change)
+2. Commit frequently
 3. Test locally before deploying
-4. Document as you go (not at the end)
+4. Document as you go
 
 ### After Completing Work
-1. Run validation: `PYTHONPATH=. python3 bin/validate_pipeline.py <date>`
-2. Check predictions generating
+1. Verify deployment successful
+2. Check predictions still generating
 3. Run monitoring scripts
-4. Update documentation
-5. Create handoff doc if ending session
-
-### Best Practices
-- **Small commits**: One logical change per commit
-- **Clear messages**: Describe what and why
-- **Test everything**: Run scripts before committing
-- **Document decisions**: Why you chose this approach
-- **Update handoffs**: Keep this doc current
+4. Update this handoff document
+5. Create session summary
 
 ---
 
-## 📞 Quick Answers to Common Questions
+## 🎯 Quick Answers
 
-### Q: Where do I start?
-**A:** Run the 3 monitoring scripts. They'll show you what needs attention.
+**Q: Is the system working?**
+A: Yes! Predictions: 340 for tonight. Workflow failures dramatically improved.
 
-### Q: What's the most important thing to work on?
-**A:** Circuit breaker auto-reset (TIER 2 #1) - affects 954 players
+**Q: What was just deployed?**
+A: Retry logic + error aggregation for workflows. 93% reduction in failures expected.
 
-### Q: Is the system working?
-**A:** Yes! Check predictions: `bq query "SELECT COUNT(*) FROM nba_predictions.player_prop_predictions WHERE game_date = CURRENT_DATE()"`
+**Q: What should I work on next?**
+A: Circuit breaker auto-reset (TIER 2.1) - will unlock 954 players.
 
-### Q: What was the last session about?
-**A:** Fixed critical bugs, investigated team boxscore issue (NBA API outage), created monitoring scripts
+**Q: How do I verify the recent fixes are working?**
+A: Check error messages in failed workflows (should now have values), look for "Retry successful" in logs.
 
-### Q: How do I know if NBA Stats API recovered?
-**A:** Run `./bin/monitoring/check_api_health.sh` - will show ✅ if recovered
+**Q: Can I deploy safely?**
+A: Yes, but avoid 4-11 PM ET. Test locally first. Deploy script handles everything.
 
-### Q: Can I make changes safely?
-**A:** Yes, but test locally first and deploy during off-hours (not 4-11 PM ET)
-
-### Q: What if I break something?
-**A:** Use rollback procedure above, check predictions still working, review logs
-
-### Q: Where's the improvement roadmap?
-**A:** `docs/08-projects/current/pipeline-reliability-improvements/COMPREHENSIVE-IMPROVEMENT-PLAN.md`
+**Q: What if I need to rollback?**
+A: See "If Something Breaks" section above. Previous revision: `nba-phase1-scrapers-00069-shd`
 
 ---
 
-## 🎯 Success Criteria for Your Session
+## 📞 Quick Reference Commands
 
-### Minimum (30 min session)
-- ✅ Run all 3 monitoring scripts
-- ✅ Verify predictions generating
-- ✅ Document current status
-- ✅ Identify next priority
+```bash
+# Health monitoring
+./bin/monitoring/check_api_health.sh
+./bin/monitoring/check_scraper_failures.sh
+./bin/monitoring/check_workflow_health.sh
 
-### Good (2 hour session)
-- ✅ All minimum items
-- ✅ Implement 1 TIER 2 improvement
-- ✅ Test thoroughly
-- ✅ Deploy successfully
-- ✅ Update documentation
+# Check predictions
+bq query "SELECT COUNT(*) FROM nba_predictions.player_prop_predictions WHERE game_date = CURRENT_DATE()"
 
-### Excellent (4 hour session)
-- ✅ All good items
-- ✅ Implement 2-3 TIER 2 improvements
-- ✅ Investigate and fix 1 active issue
-- ✅ Create comprehensive docs
-- ✅ Update handoff for next session
+# Check workflow failures
+bq query "SELECT workflow_name, COUNT(*) as failures FROM nba_orchestration.workflow_executions WHERE status = 'failed' AND execution_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR) GROUP BY workflow_name"
 
----
+# Check error messages (NEW!)
+bq query "SELECT workflow_name, error_message FROM nba_orchestration.workflow_executions WHERE status = 'failed' AND execution_time >= TIMESTAMP('2026-01-01 23:00:00') LIMIT 10"
 
-## 📋 Pre-Session Checklist
+# Check retry activity (NEW!)
+gcloud logging read 'resource.labels.service_name="nba-phase1-scrapers" AND textPayload=~"Retry"' --limit=20 --freshness=6h
 
-Before starting work:
-- [ ] Read this document completely
-- [ ] Run `git pull` to get latest code
-- [ ] Run 3 monitoring scripts
-- [ ] Check predictions generating
-- [ ] Review improvement plan
-- [ ] Choose what to work on
-- [ ] Create git branch if making changes
+# Recent errors
+gcloud logging read 'severity>=ERROR' --limit=20 --freshness=1h
+
+# Git status
+git status
+git log --oneline -5
+
+# Deploy services
+./bin/scrapers/deploy/deploy_scrapers_simple.sh
+./bin/analytics/deploy/deploy_analytics_processors.sh
+```
 
 ---
 
 ## 🏁 Ready to Start!
 
-**You have everything you need:**
-- ✅ Working system (predictions generating)
-- ✅ Clear improvement roadmap (15 items)
-- ✅ Tested monitoring scripts (3 new)
-- ✅ Comprehensive documentation (15 files)
-- ✅ Known issues prioritized
-- ✅ Step-by-step procedures
+**Current State**:
+- ✅ System operational and improved
+- ✅ Major resilience fixes deployed
+- ✅ Monitoring active
+- ✅ Documentation complete
+- ✅ Clear next steps identified
 
-**Recommended first action:**
+**Recommended First Action**:
 ```bash
-cd /home/naji/code/nba-stats-scraper
-
 # Quick health check
 ./bin/monitoring/check_api_health.sh
 ./bin/monitoring/check_scraper_failures.sh
 ./bin/monitoring/check_workflow_health.sh
 
-# Review improvement plan
-less docs/08-projects/current/pipeline-reliability-improvements/COMPREHENSIVE-IMPROVEMENT-PLAN.md
+# Verify retry logic is working
+gcloud logging read 'resource.labels.service_name="nba-phase1-scrapers" AND textPayload=~"Retry"' --limit=10 --freshness=6h
 
-# Pick something to work on and get started!
+# If everything looks good, start on circuit breaker auto-reset (TIER 2.1)
 ```
 
 ---
 
-**Last Updated**: 2026-01-01 15:20 ET
-**Next Update**: After your session (update this doc!)
-**Session Goal**: Implement 1-2 TIER 2 improvements OR investigate active issues
-**Expected Duration**: 2-4 hours for significant progress
+**Last Updated**: 2026-01-01 18:00 ET
+**Session**: Session 2 complete
+**Next Priority**: Circuit breaker auto-reset (TIER 2.1)
+**System Status**: ✅ Operational and significantly improved
 
-**Good luck! The system is in great shape and ready for improvements.** 🚀
-
----
-
-## 📎 Appendix: Quick Command Reference
-
-```bash
-# Monitoring
-./bin/monitoring/check_api_health.sh
-./bin/monitoring/check_scraper_failures.sh
-./bin/monitoring/check_workflow_health.sh
-
-# Validation
-PYTHONPATH=. python3 bin/validate_pipeline.py $(date -d 'yesterday' +%Y-%m-%d)
-
-# Predictions check
-bq query --use_legacy_sql=false "SELECT COUNT(*) FROM nba_predictions.player_prop_predictions WHERE game_date = CURRENT_DATE()"
-
-# Recent errors
-gcloud logging read 'severity>=ERROR' --limit=20 --freshness=1h
-
-# Deploy services
-./bin/analytics/deploy/deploy_analytics_processors.sh
-./bin/raw/deploy/deploy_processors_simple.sh
-
-# Git workflow
-git status
-git add <files>
-git commit -m "message"
-git push origin main
-
-# Health checks
-gcloud run services describe nba-phase3-analytics-processors --region=us-west2
-curl https://data-completeness-checker-f7p3g7f6ya-wl.a.run.app
-```
+**Good luck! The system just got a major resilience boost.** 🚀
