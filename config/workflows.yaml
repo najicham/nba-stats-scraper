@@ -451,8 +451,8 @@ workflows:
     
     schedule:
       discovery_mode: true
-      max_attempts_per_day: 6
-      retry_interval_hours: 1
+      max_attempts_per_day: 12  # Increased from 6 to cover 10 AM-2 PM ET publication window
+      retry_interval_hours: 2   # Increased from 1 to spread attempts across full day
       requires_game_day: true
       discovery_duration_weeks: 2  # Learn optimal timing over 2 weeks
     
