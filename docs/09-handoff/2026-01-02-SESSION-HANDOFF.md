@@ -1,21 +1,22 @@
 # Session Handoff: Firestore Fixes & Observability Restoration
 **Date**: January 2, 2026
-**Status**: ✅ All Critical Fixes Deployed
-**Next Session Priority**: Monitor & Optimize
+**Status**: ✅ All Critical Fixes Deployed + Root Cause Fixed
+**Next Session Priority**: Monitor Production Run
 
 ---
 
 ## Quick Status
 
-🎉 **Pipeline is production-ready!** All critical fixes deployed and tested.
+🎉 **Pipeline is production-ready!** All critical fixes deployed, tested, and root cause fixed.
 
 **What we fixed**:
 1. ✅ Atomic Firestore operations - Zero 409 errors
-2. ✅ Complete observability - Full logging restored
+2. ✅ Complete observability - Full logging restored (print workarounds)
 3. ✅ Data safety - 0-row MERGE protection
 4. ✅ Investigated "data loss" - No actual data lost
+5. ✅ **ROOT CAUSE FIXED** - Gunicorn logging properly configured
 
-**Current revision**: `prediction-coordinator-00029-46t`
+**Current revision**: `prediction-coordinator-00031-97k`
 
 ---
 
@@ -42,7 +43,7 @@
 [HTTP 204 logs only - no application logs]
 ```
 
-**After** (revision 00029):
+**After Temporary Fix** (revision 00029 - print workarounds):
 ```
 📥 Completion: playername (batch=X, predictions=25)
 ✅ Recorded: playername → batch_complete=true
@@ -56,6 +57,22 @@
 📡 Publishing Phase 5 completion to Pub/Sub...
 ✅ Phase 5 completion published
 ```
+
+**After Root Cause Fix** (revision 00031 - gunicorn configured):
+```
+📥 Completion: playername (batch=X, predictions=25)                           ← print()
+2026-01-01 23:53:16 - coordinator - INFO - Received completion event...      ← logger.info()
+✅ Recorded: playername → batch_complete=true                                ← print()
+2026-01-01 23:53:16 - batch_state_manager - INFO - Recorded completion...    ← logger.info()
+[...both print() AND logger statements now visible...]
+```
+
+**What changed in revision 00031**:
+- Added `gunicorn_config.py` with proper `logconfig_dict` configuration
+- Python logging now properly integrated with gunicorn
+- Both `print(flush=True)` AND `logger.info()` statements visible
+- Proper log formatting with timestamps and logger names
+- Root cause fixed permanently
 
 ### 3. The "Data Loss" Was A Red Herring
 
@@ -219,18 +236,23 @@ WHERE DATE(updated_at) = CURRENT_DATE()
 
 ## Known Issues & Workarounds
 
-### Issue 1: Gunicorn Logging (ROOT CAUSE NOT FIXED)
+### ~~Issue 1: Gunicorn Logging~~ ✅ FIXED (Revision 00031)
 
-**Status**: Workaround in place, root cause remains
+**Status**: ✅ ROOT CAUSE FIXED
 
-**Symptom**: `logger.info()` calls don't appear in Cloud Logging
+**What was broken**: `logger.info()` calls didn't appear in Cloud Logging
 
-**Workaround**: Added `print(flush=True)` alongside all logger calls
+**Temporary workaround** (revision 00029): Added `print(flush=True)` alongside all logger calls
 
-**TODO**: Fix gunicorn logging configuration
-- Investigate `--log-config` option
-- Consider structured logging to stdout
-- Test with different gunicorn workers
+**Permanent fix** (revision 00031):
+- Created `predictions/coordinator/gunicorn_config.py`
+- Configured `logconfig_dict` to integrate Python logging with gunicorn
+- All `logger.info()`, `logger.debug()`, `logger.error()` now visible
+- Proper formatting with timestamps and logger names
+
+**Result**: Both `print()` AND `logger.*()` statements now appear in logs
+
+**See**: `/docs/09-handoff/2026-01-02-GUNICORN-LOGGING-FIX.md` for complete details
 
 ### Issue 2: MERGE Updates vs Inserts
 
@@ -279,24 +301,16 @@ gcloud run services describe prediction-coordinator --region=us-west2 \
   --format="value(status.latestReadyRevisionName)"
 ```
 
-**Expected**: `prediction-coordinator-00029-46t` or newer
+**Expected**: `prediction-coordinator-00031-97k` or newer
 
 **If older revision**: Someone redeployed old code
 ```bash
-# Redeploy latest
+# Redeploy latest (with gunicorn logging fix)
 gcloud run deploy prediction-coordinator \
-  --image=gcr.io/nba-props-platform/prediction-coordinator:logging-fix \
+  --image=gcr.io/nba-props-platform/prediction-coordinator:gunicorn-logging-fix \
   --region=us-west2 \
   --platform=managed \
-  --allow-unauthenticated \
-  --port=8080 \
-  --memory=2Gi \
-  --cpu=2 \
-  --timeout=600 \
-  --concurrency=8 \
-  --min-instances=0 \
-  --max-instances=1 \
-  --set-env-vars="GCP_PROJECT_ID=nba-props-platform"
+  --allow-unauthenticated
 ```
 
 ### Scenario 2: "Batch completed but no predictions in BigQuery"
@@ -380,31 +394,24 @@ WHERE game_date = CURRENT_DATE()
 **Expected time**: 10 minutes
 **Deliverable**: Confirm pipeline working in production
 
-### Priority 2: Fix Gunicorn Logging (Root Cause)
+### ~~Priority 2: Fix Gunicorn Logging (Root Cause)~~ ✅ COMPLETE
 
-**Current state**: Workaround with `print(flush=True)` works but not ideal
+**Status**: ✅ FIXED in revision 00031-97k
 
-**Investigation needed**:
-1. Why does gunicorn swallow logger calls in Cloud Run?
-2. Test gunicorn logging configuration options
-3. Consider switching to structured logging
-4. Evaluate Cloud Run startup command options
+**What was done**:
+1. Created `predictions/coordinator/gunicorn_config.py`
+2. Configured `logconfig_dict` to integrate Python logging with gunicorn
+3. Updated Dockerfile to use `--config gunicorn_config.py`
+4. Tested and verified all logger statements now visible
 
-**Files to investigate**:
-- `docker/predictions-coordinator.Dockerfile` - CMD line
-- Gunicorn documentation for `--log-config`
-- Python logging configuration
+**Result**:
+- All `logger.info()`, `logger.debug()`, `logger.error()` appear in Cloud Run logs
+- Proper formatting with timestamps and logger names
+- Both print() and logger statements work
 
-**Test approach**:
-```python
-# Try in coordinator.py startup
-import logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[logging.StreamHandler()]
-)
-```
+**Documentation**: `/docs/09-handoff/2026-01-02-GUNICORN-LOGGING-FIX.md`
+
+**Next step** (optional): Remove `print(flush=True)` workarounds after 1 week of stability
 
 ### Priority 3: Add Monitoring & Alerts
 
@@ -448,10 +455,12 @@ def test_full_batch_flow():
 ```
 predictions/coordinator/coordinator.py           - Main coordinator logic
 predictions/coordinator/batch_state_manager.py   - Firestore state management
+predictions/coordinator/gunicorn_config.py       - Gunicorn logging configuration
 predictions/worker/batch_staging_writer.py       - MERGE consolidation logic
 docker/predictions-coordinator.Dockerfile        - Coordinator image build
 
-docs/09-handoff/2026-01-02-INVESTIGATION-FINDINGS.md - Detailed findings
+docs/09-handoff/2026-01-02-INVESTIGATION-FINDINGS.md  - Detailed findings
+docs/09-handoff/2026-01-02-GUNICORN-LOGGING-FIX.md    - Logging fix details
 ```
 
 ### Important Commands
@@ -505,36 +514,42 @@ EOF
 ## Questions for Next Session
 
 1. **Did the 7 AM automatic run complete successfully?**
-   - Check logs and BigQuery
+   - Check logs and BigQuery with health check script
+   - Verify both print() and logger() statements visible
 
 2. **Are we seeing any unexpected patterns?**
-   - 409 errors (shouldn't happen)
+   - 409 errors (shouldn't happen with atomic operations)
    - 0-row MERGEs (should be caught by validation)
-   - Missing logs (shouldn't happen with print statements)
+   - Any logger statements missing (shouldn't happen with gunicorn fix)
 
-3. **Should we proceed with gunicorn logging fix?**
-   - Or keep workaround and move on to other priorities?
+3. **Should we remove print(flush=True) workarounds?**
+   - Now that logger.info() works, print() statements are redundant
+   - Keep for 1 week to verify stability, then clean up?
 
 4. **Do we need monitoring/alerts immediately?**
-   - Or can this wait a few days?
+   - Or can this wait until after verifying production stability?
 
 ---
 
 ## Session Stats
 
-**Time spent**: ~4 hours
-**Problems solved**: 3 (Firestore contention, logging blackout, data loss investigation)
-**Files modified**: 3
-**Tests run**: 4 batches
+**Time spent**: ~5 hours
+**Problems solved**: 4 (Firestore contention, logging blackout, data loss investigation, gunicorn root cause)
+**Files modified**: 5 (coordinator, batch_state_manager, batch_staging_writer, Dockerfile, gunicorn_config)
+**Tests run**: 5 batches
 **Data loss incidents**: 0 (was false alarm)
-**Production readiness**: ✅ READY
+**Production readiness**: ✅ READY + Root Cause Fixed
+
+**Revisions deployed**:
+- 00029-46t: Atomic operations + print() workarounds
+- 00031-97k: Gunicorn logging root cause fix (CURRENT)
 
 ---
 
-**Handoff created**: 2026-01-02 01:15 UTC
+**Handoff updated**: 2026-01-02 ~23:00 UTC
 **Created by**: Claude Sonnet 4.5
-**Status**: Complete & verified
+**Status**: Complete, tested, root cause fixed
 
-**Next session**: Monitor tomorrow's 7 AM run, then decide on priorities based on results.
+**Next session**: Monitor tomorrow's 7 AM run with health check script. Pipeline has both temporary workarounds AND permanent fixes in place.
 
-Good luck! The pipeline is in great shape. 🚀
+Good luck! The pipeline is in excellent shape with full observability. 🚀
