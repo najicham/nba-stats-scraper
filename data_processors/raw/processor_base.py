@@ -553,43 +553,137 @@ class ProcessorBase(RunHistoryMixin):
         return 0
 
     def _diagnose_zero_rows(self) -> str:
-        """Diagnose why 0 rows were saved."""
-        reasons = []
+        """
+        Diagnose why 0 rows were saved with comprehensive pattern detection.
 
-        # Check if data was loaded
-        if not hasattr(self, 'raw_data') or not self.raw_data:
-            reasons.append("No raw data loaded")
+        Detection hierarchy (6 patterns checked in order):
+        1. Smart Idempotency Skip
+        2. MERGE_UPDATE with only updates (no new records)
+        3. Empty raw data (with schedule checking)
+        4. Transform filters (data loaded but all filtered out)
+        5. Save strategy issues
+        6. Unknown (with debugging context)
 
-        # Check if transform produced output
-        if not hasattr(self, 'transformed_data') or not self.transformed_data:
-            reasons.append("Transform produced empty dataset")
-        elif len(self.transformed_data) == 0:
-            reasons.append("Transformed data is empty array")
+        Returns:
+            str: Human-readable diagnosis with specifics
+        """
 
-        # Check for idempotency/deduplication
-        if hasattr(self, 'idempotency_stats'):
-            skipped = self.idempotency_stats.get('rows_skipped', 0)
-            if skipped > 0:
-                reasons.append(f"Smart idempotency: {skipped} duplicates skipped")
+        # ================================================================
+        # PATTERN 1: Smart Idempotency Skip
+        # ================================================================
+        if self._check_smart_idempotency_skip():
+            stats = self._get_idempotency_stats()
+            skipped = stats.get('rows_skipped', 0)
+            matched = stats.get('hashes_matched', skipped)  # Fallback if not available
+            total = stats.get('total_records', skipped)
 
-        # Check run history
-        if self.stats.get('rows_skipped_by_run_history'):
-            reasons.append("Skipped by run history (already processed)")
+            return (
+                f"Smart idempotency: {skipped} records skipped "
+                f"({matched}/{total} hashes matched existing data)"
+            )
 
-        return " | ".join(reasons) if reasons else "Unknown - needs investigation"
+        # ================================================================
+        # PATTERN 2: MERGE_UPDATE with Only Updates (No New Records)
+        # ================================================================
+        if self._check_merge_update_pattern():
+            updated = self.stats.get('rows_updated', 0)
+            return f"MERGE_UPDATE: 0 new records inserted, {updated} existing records updated"
+
+        # ================================================================
+        # PATTERN 3: Empty Raw Data
+        # ================================================================
+        if not self._has_raw_data():
+            # Sub-check: Is this expected? (No games scheduled, off-season, etc.)
+            schedule_diagnosis = self._check_schedule_expectation()
+            if schedule_diagnosis:
+                return schedule_diagnosis
+
+            return "No raw data loaded from source"
+
+        # ================================================================
+        # PATTERN 4: Transform Produced Empty Dataset
+        # ================================================================
+        if not self._has_transformed_data():
+            # Sub-check: Was data filtered intentionally?
+            filter_reason = self._check_transform_filters()
+            if filter_reason:
+                return filter_reason
+
+            return "Transform produced empty dataset (all records filtered)"
+
+        # ================================================================
+        # PATTERN 5: Deduplication (shouldn't reach here normally)
+        # ================================================================
+        if self.stats.get('early_exit_deduplication'):
+            return "Skipped by run history (already processed)"
+
+        # ================================================================
+        # PATTERN 6: Save Strategy Specific Issues
+        # ================================================================
+        strategy_diagnosis = self._check_save_strategy_issues()
+        if strategy_diagnosis:
+            return strategy_diagnosis
+
+        # ================================================================
+        # FALLBACK: Unknown Issue
+        # ================================================================
+        # Provide context for debugging
+        context = {
+            'raw_data': 'exists' if self._has_raw_data() else 'missing',
+            'transformed_data': 'exists' if self._has_transformed_data() else 'missing',
+            'raw_count': len(self.raw_data) if hasattr(self, 'raw_data') and self.raw_data and isinstance(self.raw_data, (list, dict)) else 0,
+            'transformed_count': len(self.transformed_data) if hasattr(self, 'transformed_data') and self.transformed_data and isinstance(self.transformed_data, (list, dict)) else 0,
+            'strategy': getattr(self, 'processing_strategy', 'unknown'),
+        }
+
+        context_str = ', '.join(f"{k}={v}" for k, v in context.items())
+        return f"Unknown - needs investigation ({context_str})"
 
     def _is_acceptable_zero_rows(self, reason: str) -> bool:
-        """Determine if 0-row result is expected/acceptable."""
+        """
+        Determine if 0-row result is expected/acceptable based on diagnosis.
+
+        Args:
+            reason: Diagnosis string from _diagnose_zero_rows()
+
+        Returns:
+            bool: True if acceptable (don't alert), False if concerning (alert)
+        """
         acceptable_patterns = [
+            # Smart idempotency
             "Smart idempotency",
-            "duplicates skipped",
-            "Preseason",
-            "All-Star",
+            "data_hash matched",
+            "records unchanged",
+            "hashes matched",
+
+            # MERGE_UPDATE strategy
+            "MERGE_UPDATE",
+            "existing records updated",
+            "0 new records",
+
+            # Schedule-based
             "No games scheduled",
-            "Already processed",
-            "Off season"
+            "Off-season",
+            "Off season",
+            "All-Star Break",
+            "Potential All-Star",
+            "Christmas Day",  # Usually has games, but API might be delayed
+
+            # Intentional filters
+            "preseason",
+            "filtered",
+            "invalid",
+
+            # Deduplication
+            "already processed",
+            "run history",
+
+            # Temporary issues (will self-heal)
+            "streaming buffer",
         ]
-        return any(pattern.lower() in reason.lower() for pattern in acceptable_patterns)
+
+        reason_lower = reason.lower()
+        return any(pattern.lower() in reason_lower for pattern in acceptable_patterns)
 
     def _send_zero_row_alert(self, validation_result: dict) -> None:
         """Send immediate alert for unexpected 0-row result."""
@@ -642,6 +736,256 @@ class ProcessorBase(RunHistoryMixin):
         except Exception as e:
             # Don't fail processor if logging fails
             logger.debug(f"Could not log processor metrics: {e}")
+
+    # ================================================================
+    # HELPER METHODS FOR DIAGNOSIS
+    # ================================================================
+
+    def _check_smart_idempotency_skip(self) -> bool:
+        """
+        Check if SmartIdempotencyMixin skipped write due to unchanged data.
+
+        Returns:
+            bool: True if smart idempotency skip detected
+        """
+        # Method 1: Check for private stats (_idempotency_stats)
+        if hasattr(self, '_idempotency_stats'):
+            stats = self._idempotency_stats
+            if stats.get('rows_skipped', 0) > 0:
+                return True
+
+        # Method 2: Check for public stats method
+        if hasattr(self, 'get_idempotency_stats'):
+            try:
+                stats = self.get_idempotency_stats()
+                if stats.get('rows_skipped', 0) > 0:
+                    return True
+            except Exception:
+                pass
+
+        # Method 3: Check self.stats dict for idempotency markers
+        if self.stats.get('idempotency_skipped', 0) > 0:
+            return True
+
+        return False
+
+    def _get_idempotency_stats(self) -> Dict:
+        """Get idempotency statistics for diagnosis message."""
+        if hasattr(self, 'get_idempotency_stats'):
+            try:
+                return self.get_idempotency_stats()
+            except Exception:
+                pass
+
+        if hasattr(self, '_idempotency_stats'):
+            return self._idempotency_stats
+
+        # Fallback: construct from self.stats
+        return {
+            'rows_skipped': self.stats.get('idempotency_skipped', 0),
+            'hashes_matched': self.stats.get('idempotency_skipped', 0),
+            'total_records': self.stats.get('idempotency_skipped', 0)
+        }
+
+    def _check_merge_update_pattern(self) -> bool:
+        """
+        Check if MERGE_UPDATE strategy updated records but inserted 0 new ones.
+
+        Returns:
+            bool: True if this is a MERGE_UPDATE with only updates
+        """
+        strategy = getattr(self, 'processing_strategy', None)
+
+        if strategy == 'MERGE_UPDATE':
+            rows_updated = self.stats.get('rows_updated', 0)
+            rows_inserted = self.stats.get('rows_inserted', 0)
+
+            # If we updated rows but inserted 0, this is expected behavior
+            if rows_updated > 0 and rows_inserted == 0:
+                return True
+
+        return False
+
+    def _has_raw_data(self) -> bool:
+        """Check if raw data was loaded."""
+        if not hasattr(self, 'raw_data'):
+            return False
+
+        if self.raw_data is None:
+            return False
+
+        if isinstance(self.raw_data, (list, dict)) and len(self.raw_data) == 0:
+            return False
+
+        return True
+
+    def _has_transformed_data(self) -> bool:
+        """Check if transformed data was produced."""
+        if not hasattr(self, 'transformed_data'):
+            return False
+
+        if self.transformed_data is None:
+            return False
+
+        if isinstance(self.transformed_data, (list, dict)) and len(self.transformed_data) == 0:
+            return False
+
+        return True
+
+    def _check_schedule_expectation(self) -> Optional[str]:
+        """
+        Check if 0 rows is expected based on game schedule.
+
+        For game-based processors, checks if games were scheduled for this date.
+        For reference processors (rosters, players), returns None.
+
+        Returns:
+            str: Diagnosis if no games expected, None if games expected or N/A
+        """
+        # Only applicable to game-based processors
+        game_date = self.opts.get('game_date') or self.opts.get('date')
+        if not game_date:
+            # Not a game-based processor (e.g., roster, schedule itself)
+            return None
+
+        # Skip schedule check for certain processors
+        processor_name = self.__class__.__name__
+        schedule_exempt = [
+            'BasketballRefRosterProcessor',
+            'NbacScheduleProcessor',
+            'BdlActivePlayersProcessor',
+            'NbacPlayerListProcessor',
+            'BdlStandingsProcessor'
+        ]
+
+        if processor_name in schedule_exempt:
+            return None
+
+        # Query schedule for this date
+        try:
+            games_scheduled = self._query_games_for_date(str(game_date))
+
+            if games_scheduled == 0:
+                # Check if this is a known off-day
+                day_type = self._classify_date(str(game_date))
+                return f"No games scheduled for {game_date} ({day_type})"
+
+            # Games scheduled but got 0 rows - this is a real issue
+            return None
+
+        except Exception as e:
+            logger.debug(f"Could not check schedule: {e}")
+            return None
+
+    def _query_games_for_date(self, game_date: str) -> int:
+        """
+        Query number of games scheduled for a date.
+
+        Args:
+            game_date: Date in YYYY-MM-DD format
+
+        Returns:
+            int: Number of games scheduled (0 if none or query fails)
+        """
+        try:
+            if not hasattr(self, 'bq_client') or not self.bq_client:
+                return 0
+
+            project_id = getattr(self, 'project_id', 'nba-props-platform')
+            query = f"""
+            SELECT COUNT(*) as game_count
+            FROM `{project_id}.nba_raw.nbac_schedule`
+            WHERE game_date = '{game_date}'
+            """
+
+            result = self.bq_client.query(query).result(timeout=30)
+            row = next(iter(result), None)
+
+            return row.game_count if row else 0
+
+        except Exception as e:
+            logger.debug(f"Schedule query failed: {e}")
+            return 0  # Assume games scheduled if query fails
+
+    def _classify_date(self, game_date: str) -> str:
+        """
+        Classify date type for better diagnosis messages.
+
+        Args:
+            game_date: Date in YYYY-MM-DD format
+
+        Returns:
+            str: Date classification (All-Star Break, Off-season, Regular day, etc.)
+        """
+        try:
+            from datetime import datetime
+            dt = datetime.strptime(game_date, '%Y-%m-%d')
+
+            # Check month for season boundaries
+            month = dt.month
+
+            if month in [6, 7, 8, 9]:
+                return "Off-season"
+            elif month == 2 and 15 <= dt.day <= 20:
+                return "Potential All-Star Break"
+            elif month == 12 and dt.day == 25:
+                return "Christmas Day"
+            else:
+                return "Regular season day"
+
+        except Exception:
+            return "Unknown"
+
+    def _check_transform_filters(self) -> Optional[str]:
+        """
+        Check if transform intentionally filtered all records.
+
+        Common filter scenarios:
+        - Preseason games filtered
+        - Invalid data filtered
+        - Duplicate detection filtered
+
+        Returns:
+            str: Reason if filtered, None if no filter detected
+        """
+        # Check stats for filter indicators
+        filters_applied = []
+
+        if self.stats.get('preseason_filtered', 0) > 0:
+            filters_applied.append(f"{self.stats['preseason_filtered']} preseason games")
+
+        if self.stats.get('invalid_filtered', 0) > 0:
+            filters_applied.append(f"{self.stats['invalid_filtered']} invalid records")
+
+        if self.stats.get('duplicate_filtered', 0) > 0:
+            filters_applied.append(f"{self.stats['duplicate_filtered']} duplicates")
+
+        if filters_applied:
+            return f"Transform filtered all records: {', '.join(filters_applied)}"
+
+        return None
+
+    def _check_save_strategy_issues(self) -> Optional[str]:
+        """
+        Check for strategy-specific save issues.
+
+        Returns:
+            str: Diagnosis if issue found, None otherwise
+        """
+        # Check for streaming buffer skip
+        if self.stats.get('skipped_streaming_buffer'):
+            return "Skipped due to streaming buffer conflict (will retry)"
+
+        # Check for batch load with 0 rows
+        strategy = getattr(self, 'processing_strategy', None)
+        if strategy == 'APPEND_ALWAYS':
+            # APPEND_ALWAYS should never skip unless there's an issue
+            if self._has_transformed_data():
+                transformed_len = len(self.transformed_data) if isinstance(self.transformed_data, (list, dict)) else 1
+                if transformed_len > 0:
+                    return "APPEND_ALWAYS strategy with data but 0 rows saved (investigate)"
+
+        return None
 
     def save_data(self) -> None:
         """
