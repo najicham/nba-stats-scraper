@@ -55,14 +55,27 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_orchestration.scraper_executi
   -- ==========================================================================
   -- WORKFLOW CONTEXT (1 field)
   -- ==========================================================================
-  
+
   workflow STRING,
     -- Parent workflow name that triggered this scraper
     -- Examples: 'injury_discovery', 'morning_operations', 'betting_lines'
     -- Special value: 'MANUAL' for direct execution
     -- NULL for: Legacy runs before workflow system
     -- Used for: Workflow success tracking, orchestration debugging
-  
+
+  -- ==========================================================================
+  -- DATA CONTEXT (1 field)
+  -- ==========================================================================
+
+  game_date DATE,
+    -- The game date that data was collected for (extracted from opts.gamedate)
+    -- Format: DATE type (YYYY-MM-DD)
+    -- Example: '2026-01-02'
+    -- NULL for: Scrapers without gamedate parameter, legacy runs
+    -- Used for: Discovery mode tracking to prevent false positives
+    -- CRITICAL: Orchestration checks this to verify we found data for the RIGHT date
+    --           Prevents issue where scraper runs on Jan 2 but finds Jan 1 data
+
   -- ==========================================================================
   -- EXECUTION STATUS (1 field)
   -- ==========================================================================

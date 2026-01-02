@@ -753,21 +753,29 @@ class MasterWorkflowController:
         scraper_name = config['execution_plan']['scraper']
         
         # Check 1: Already succeeded today?
+        # CRITICAL FIX: Check game_date (data date) not triggered_at (execution date)
+        # Prevents false positive where scraper runs on Jan 2 but finds Jan 1 data
         query = f"""
             SELECT MAX(triggered_at) as last_success
             FROM `nba-props-platform.nba_orchestration.scraper_execution_log`
             WHERE scraper_name = '{scraper_name}'
               AND status = 'success'
-              AND DATE(triggered_at) = CURRENT_DATE()
+              AND (
+                -- NEW: Check if we found data for TODAY's date (prevents false positive)
+                game_date = CURRENT_DATE()
+                -- Backward compatibility: Fall back to execution date if game_date is NULL
+                -- (for legacy runs or scrapers that don't use gamedate parameter)
+                OR (game_date IS NULL AND DATE(triggered_at) = CURRENT_DATE())
+              )
         """
-        
+
         result = execute_bigquery(query)
         last_success = result[0]['last_success'] if result and result[0]['last_success'] else None
-        
+
         if last_success:
             return WorkflowDecision(
                 action=DecisionAction.SKIP,
-                reason="Already found data today",
+                reason="Already found data for today's date",
                 workflow_name=workflow_name,
                 priority=config['priority'],
                 context={
