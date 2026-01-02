@@ -18,10 +18,13 @@ import os
 import logging
 import html
 from datetime import datetime
-from typing import Dict, List
+from typing import Dict, List, Optional
 import boto3
 from botocore.exceptions import ClientError
 from dotenv import load_dotenv
+
+# Import alert type system
+from shared.utils.alert_types import get_alert_html_heading, detect_alert_type
 
 # Load .env file for SES credentials (AWS_SES_ACCESS_KEY_ID, etc.)
 load_dotenv()
@@ -122,19 +125,29 @@ class EmailAlerterSES:
             return False
 
     def send_error_alert(self, error_message: str, error_details: Dict = None,
-                        processor_name: str = "Registry Processor") -> bool:
+                        processor_name: str = "Registry Processor",
+                        alert_type: Optional[str] = None) -> bool:
         """
-        Send critical error alert.
+        Send error alert with appropriate heading based on error type.
 
         Args:
             error_message: The error message to send
             error_details: Optional dictionary with error details
             processor_name: Name of the processor that encountered the error
+            alert_type: Optional alert type (auto-detected if not provided)
+                       See shared.utils.alert_types for available types
 
         Returns:
             True if email sent successfully, False otherwise
         """
-        subject = f"{processor_name} - Critical Error"
+        # Auto-detect alert type if not provided
+        if alert_type is None:
+            alert_type = detect_alert_type(error_message, error_details)
+
+        # Get alert heading with appropriate emoji and color
+        alert_heading = get_alert_html_heading(alert_type)
+
+        subject = f"{processor_name} - {alert_type.replace('_', ' ').title()}"
 
         # Escape all user-provided content
         safe_processor = html.escape(processor_name)
@@ -153,7 +166,7 @@ class EmailAlerterSES:
         html_body = f"""
         <html>
         <body>
-            <h2 style="color: #d32f2f;">🚨 Critical Error Alert</h2>
+            {alert_heading}
             <p><strong>Processor:</strong> {safe_processor}</p>
             <p><strong>Time:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}</p>
             <p><strong>Error:</strong> {safe_error_msg}</p>
@@ -163,7 +176,7 @@ class EmailAlerterSES:
             <hr>
             <p style="color: #666; font-size: 12px;">
                 This is an automated alert from the NBA Registry System.
-                Immediate investigation may be required.
+                Investigation may be required.
             </p>
         </body>
         </html>
