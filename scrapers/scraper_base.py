@@ -698,9 +698,10 @@ class ScraperBase:
         """
         try:
             # Get output file path
-            file_path = getattr(self, 'gcs_output_path', None) or self.opts.get('file_path', '')
+            # FIX #1: Check opts['gcs_output_path'] first (where it's actually set in line 1887)
+            file_path = self.opts.get('gcs_output_path') or self.opts.get('file_path', '')
             if not file_path:
-                logger.debug("No file_path for validation - skipping Layer 1")
+                logger.warning("LAYER1_VALIDATION: No file_path found - skipping validation")
                 return
 
             # Extract row count from self.data
@@ -758,7 +759,8 @@ class ScraperBase:
 
         except Exception as e:
             # Don't fail scraper if validation fails
-            logger.debug(f"Scraper output validation failed: {e}")
+            # FIX #3: Change to ERROR level with stack trace for visibility
+            logger.error(f"LAYER1_VALIDATION: Validation failed - {e}", exc_info=True)
 
     def _count_scraper_rows(self) -> int:
         """Count rows in scraper output data."""
@@ -827,19 +829,25 @@ class ScraperBase:
             from google.cloud import bigquery
 
             # Only log if we have valid credentials
+            # FIX #2: Add error logging instead of silent return
             try:
                 bq_client = bigquery.Client()
-            except Exception:
-                return  # Skip if no credentials
+            except Exception as e:
+                logger.error(f"LAYER1_VALIDATION: Cannot create BigQuery client - {e}")
+                return
 
             table_id = "nba-props-platform.nba_orchestration.scraper_output_validation"
 
             errors = bq_client.insert_rows_json(table_id, [validation_result])
             if errors:
-                logger.warning(f"Failed to log scraper validation: {errors}")
+                logger.warning(f"LAYER1_VALIDATION: Failed to insert to BigQuery: {errors}")
+            else:
+                # FIX #4: Add success logging for visibility
+                logger.info(f"LAYER1_VALIDATION: Successfully logged to BigQuery - status: {validation_result.get('validation_status')}, rows: {validation_result.get('row_count')}")
 
         except Exception as e:
-            logger.debug(f"Could not log scraper validation: {e}")
+            # FIX #3: Change to ERROR level for visibility
+            logger.error(f"LAYER1_VALIDATION: Could not log to BigQuery - {e}", exc_info=True)
 
     def _send_scraper_alert(self, validation_result: dict) -> None:
         """Send alert for critical scraper validation issues."""
