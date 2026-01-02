@@ -138,17 +138,20 @@ class ProcessorBase(RunHistoryMixin):
 
             # DEDUPLICATION CHECK - Skip if already processed
             data_date = opts.get('date') or opts.get('game_date')
+            game_code = opts.get('game_code')  # Optional: for game-level deduplication
             if data_date:
                 # Check if already processed (prevents duplicate processing on Pub/Sub retries)
                 already_processed = self.check_already_processed(
                     processor_name=self.__class__.__name__,
                     data_date=data_date,
+                    game_code=game_code,  # Pass game_code if provided
                     stale_threshold_hours=2  # Retry if stuck for > 2 hours
                 )
 
                 if already_processed:
+                    identifier = f"{data_date}/{game_code}" if game_code else data_date
                     logger.info(
-                        f"⏭️  Skipping {self.__class__.__name__} for {data_date} - already processed"
+                        f"⏭️  Skipping {self.__class__.__name__} for {identifier} - already processed"
                     )
                     # Don't start run tracking - this isn't a real run
                     return True  # Return success (not an error)
@@ -158,6 +161,7 @@ class ProcessorBase(RunHistoryMixin):
             self.OUTPUT_DATASET = self.dataset_id
             self.start_run_tracking(
                 data_date=data_date,
+                game_code=game_code,  # Pass game_code if provided
                 trigger_source=opts.get('trigger_source', 'manual'),
                 trigger_message_id=opts.get('trigger_message_id'),
                 parent_processor=opts.get('parent_processor')
