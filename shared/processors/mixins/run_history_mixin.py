@@ -73,6 +73,7 @@ class RunHistoryMixin:
         self._run_history_id: Optional[str] = None
         self._run_start_time: Optional[datetime] = None
         self._run_data_date: Optional[date] = None
+        self._run_game_code: Optional[str] = None  # NEW: For game-level tracking
 
         # Trigger info
         self._trigger_source: str = 'manual'
@@ -104,6 +105,7 @@ class RunHistoryMixin:
     def start_run_tracking(
         self,
         data_date: Optional[Union[date, str]] = None,
+        game_code: Optional[str] = None,
         trigger_source: str = 'manual',
         trigger_message_id: Optional[str] = None,
         trigger_message_data: Optional[Dict] = None,
@@ -115,6 +117,7 @@ class RunHistoryMixin:
 
         Args:
             data_date: The date being processed
+            game_code: Optional game code for game-level deduplication (e.g., "20251231-MINATL")
             trigger_source: What triggered this run (pubsub, scheduler, manual, api)
             trigger_message_id: Pub/Sub message ID for correlation
             trigger_message_data: Raw trigger message data
@@ -141,6 +144,9 @@ class RunHistoryMixin:
         else:
             self._run_data_date = date.today()
 
+        # Store game code for game-level tracking
+        self._run_game_code = game_code
+
         # Store trigger info
         self._trigger_source = trigger_source
         self._trigger_message_id = trigger_message_id
@@ -148,7 +154,7 @@ class RunHistoryMixin:
         self._parent_processor = parent_processor
         self._retry_attempt = retry_attempt
 
-        logger.info(f"Started run tracking: {self._run_history_id} (phase={self.PHASE}, trigger={trigger_source})")
+        logger.info(f"Started run tracking: {self._run_history_id} (phase={self.PHASE}, trigger={trigger_source}, game_code={game_code})")
 
         # CRITICAL: Write 'running' status immediately to prevent duplicate processing
         # If Pub/Sub redelivers message, deduplication check will see this 'running' status
@@ -308,6 +314,7 @@ class RunHistoryMixin:
             'run_id': self._run_history_id,
             'status': status,
             'data_date': str(self._run_data_date),
+            'game_code': self._run_game_code,  # NEW: For game-level tracking
             'started_at': self._run_start_time.isoformat(),
             'processed_at': processed_at.isoformat(),
 
@@ -391,6 +398,7 @@ class RunHistoryMixin:
             'phase': self.PHASE,
             'status': 'running',  # Key field for deduplication
             'data_date': str(self._run_data_date),
+            'game_code': self._run_game_code,  # NEW: For game-level tracking
             'started_at': self._run_start_time.isoformat(),
             'trigger_source': self._trigger_source,
             'trigger_message_id': self._trigger_message_id,
@@ -504,18 +512,21 @@ class RunHistoryMixin:
         self,
         processor_name: str,
         data_date: Union[date, str],
+        game_code: Optional[str] = None,
         stale_threshold_hours: int = 2
     ) -> bool:
         """
-        Check if this processor already processed this date (deduplication).
+        Check if this processor already processed this date/game (deduplication).
 
         Checks processor_run_history for existing runs with:
         - status IN ('running', 'success', 'partial')
         - If status='running', checks if stale (> threshold hours)
+        - If game_code provided, checks specific game instead of just date
 
         Args:
             processor_name: Name of processor to check
             data_date: Date to check
+            game_code: Optional game code for game-level deduplication (e.g., "20251231-MINATL")
             stale_threshold_hours: Hours after which 'running' status is considered stale
 
         Returns:
@@ -536,27 +547,54 @@ class RunHistoryMixin:
             else:
                 check_date = str(data_date)
 
-            # Query for existing runs
-            query = f"""
-            SELECT
-                status,
-                started_at,
-                processed_at,
-                run_id
-            FROM `{project_id}.{self.RUN_HISTORY_TABLE}`
-            WHERE processor_name = @processor_name
-              AND data_date = @data_date
-              AND status IN ('running', 'success', 'partial')
-            ORDER BY started_at DESC
-            LIMIT 1
-            """
+            # Build query with optional game_code filter
+            if game_code:
+                # Game-level deduplication (for gamebook processor)
+                query = f"""
+                SELECT
+                    status,
+                    started_at,
+                    processed_at,
+                    run_id,
+                    game_code
+                FROM `{project_id}.{self.RUN_HISTORY_TABLE}`
+                WHERE processor_name = @processor_name
+                  AND data_date = @data_date
+                  AND game_code = @game_code
+                  AND status IN ('running', 'success', 'partial')
+                ORDER BY started_at DESC
+                LIMIT 1
+                """
 
-            job_config = bigquery.QueryJobConfig(
-                query_parameters=[
-                    bigquery.ScalarQueryParameter("processor_name", "STRING", processor_name),
-                    bigquery.ScalarQueryParameter("data_date", "DATE", check_date)
-                ]
-            )
+                job_config = bigquery.QueryJobConfig(
+                    query_parameters=[
+                        bigquery.ScalarQueryParameter("processor_name", "STRING", processor_name),
+                        bigquery.ScalarQueryParameter("data_date", "DATE", check_date),
+                        bigquery.ScalarQueryParameter("game_code", "STRING", game_code)
+                    ]
+                )
+            else:
+                # Date-level deduplication (for most processors)
+                query = f"""
+                SELECT
+                    status,
+                    started_at,
+                    processed_at,
+                    run_id
+                FROM `{project_id}.{self.RUN_HISTORY_TABLE}`
+                WHERE processor_name = @processor_name
+                  AND data_date = @data_date
+                  AND status IN ('running', 'success', 'partial')
+                ORDER BY started_at DESC
+                LIMIT 1
+                """
+
+                job_config = bigquery.QueryJobConfig(
+                    query_parameters=[
+                        bigquery.ScalarQueryParameter("processor_name", "STRING", processor_name),
+                        bigquery.ScalarQueryParameter("data_date", "DATE", check_date)
+                    ]
+                )
 
             results = list(bq_client.query(query, job_config=job_config).result(timeout=60))
 
@@ -569,21 +607,24 @@ class RunHistoryMixin:
                 # Check if stale
                 age = datetime.now(timezone.utc) - row.started_at
                 if age > timedelta(hours=stale_threshold_hours):
+                    identifier = f"{check_date}/{game_code}" if game_code else check_date
                     logger.warning(
-                        f"Found stale 'running' status for {processor_name} on {check_date} "
+                        f"Found stale 'running' status for {processor_name} on {identifier} "
                         f"(age: {age}, run_id: {row.run_id}). Allowing retry."
                     )
                     return False  # Stale - allow retry
                 else:
+                    identifier = f"{check_date}/{game_code}" if game_code else check_date
                     logger.info(
-                        f"Processor {processor_name} is currently running for {check_date} "
+                        f"Processor {processor_name} is currently running for {identifier} "
                         f"(started {age} ago, run_id: {row.run_id}). Skipping duplicate."
                     )
                     return True  # Currently running - skip
 
             else:  # status is 'success' or 'partial'
+                identifier = f"{check_date}/{game_code}" if game_code else check_date
                 logger.info(
-                    f"Processor {processor_name} already processed {check_date} "
+                    f"Processor {processor_name} already processed {identifier} "
                     f"with status '{row.status}' (run_id: {row.run_id}). Skipping duplicate."
                 )
                 return True  # Already completed successfully

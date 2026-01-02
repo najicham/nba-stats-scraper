@@ -266,7 +266,7 @@ def detect_alert_type(error_msg: str, error_data: Optional[Dict] = None) -> str:
         return 'no_data_saved'
 
     # Database conflicts (BigQuery serialization)
-    if 'could not serialize' in error_msg_lower or 'concurrent update' in error_msg_lower:
+    if any(keyword in error_msg_lower for keyword in ['could not serialize', 'concurrent update', 'serialization error', 'serialization conflict']):
         return 'database_conflict'
 
     # Service failures / crashes
@@ -285,13 +285,13 @@ def detect_alert_type(error_msg: str, error_data: Optional[Dict] = None) -> str:
     if 'stall' in error_msg_lower or 'not progressing' in error_msg_lower:
         return 'pipeline_stalled'
 
-    # Data quality issues
-    if any(keyword in error_msg_lower for keyword in ['data quality', 'incomplete', 'missing data', 'unexpected']):
-        return 'data_quality_issue'
-
-    # Validation warnings
+    # Validation warnings / anomalies (check BEFORE data quality - more specific)
     if 'validation' in error_msg_lower or 'anomaly' in error_msg_lower:
         return 'data_anomaly'
+
+    # Data quality issues (more specific patterns to avoid false positives)
+    if any(keyword in error_msg_lower for keyword in ['data quality', 'incomplete data', 'missing data', 'unexpected null', 'unexpected pattern']):
+        return 'data_quality_issue'
 
     # High unresolved count
     if 'unresolved' in error_msg_lower and 'high' in error_msg_lower:
