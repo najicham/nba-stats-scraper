@@ -99,6 +99,28 @@ class NbacGamebookProcessor(SmartIdempotencyMixin, ProcessorBase):
 
         logger.info(f"Initialized processor with run ID: {self.processing_run_id}")
 
+    def set_opts(self, opts: dict) -> None:
+        """
+        Override to extract game_code from file path for game-level deduplication.
+
+        File path format: gs://bucket/nba-com/gamebooks-data/2025-12-31/20251231-MINATL/file.json
+        Game code: "20251231-MINATL"
+        """
+        super().set_opts(opts)
+
+        # Extract game_code from file path for game-level run history tracking
+        file_path = opts.get('file_path', '')
+        if file_path:
+            try:
+                # Split path and get second-to-last component
+                parts = file_path.strip('/').split('/')
+                if len(parts) >= 2:
+                    game_code = parts[-2]  # e.g., "20251231-MINATL"
+                    self.opts['game_code'] = game_code
+                    logger.debug(f"Extracted game_code from file path: {game_code}")
+            except Exception as e:
+                logger.warning(f"Failed to extract game_code from file_path: {e}")
+
     def load_data(self) -> None:
         """Load gamebook data from GCS with source file metadata."""
         json_data = self.load_json_from_gcs()
