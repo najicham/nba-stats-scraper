@@ -15,6 +15,9 @@ from shared.utils.notification_system import (
     notify_info
 )
 
+# BigQuery retry logic for serialization errors
+from shared.utils.bigquery_retry import SERIALIZATION_RETRY
+
 logger = logging.getLogger(__name__)
 
 
@@ -603,7 +606,13 @@ class OddsGameLinesProcessor(SmartIdempotencyMixin, ProcessorBase):
             """
             
             merge_job = self.bq_client.query(merge_query)
-            merge_result = merge_job.result(timeout=60)
+
+            # Execute with retry logic for serialization errors
+            @SERIALIZATION_RETRY
+            def execute_with_retry():
+                return merge_job.result(timeout=60)
+
+            merge_result = execute_with_retry()
             
             # Get number of rows affected
             rows_affected = merge_result.total_rows if hasattr(merge_result, 'total_rows') else len(rows)

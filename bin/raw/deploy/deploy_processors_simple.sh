@@ -107,9 +107,9 @@ gcloud run deploy $SERVICE_NAME \
     --memory=2Gi \
     --cpu=1 \
     --timeout=540 \
-    --concurrency=20 \
+    --concurrency=10 \
     --min-instances=0 \
-    --max-instances=10 \
+    --max-instances=5 \
     --set-env-vars="$ENV_VARS" \
     --set-secrets="$SECRETS" \
     --labels="commit-sha=$GIT_COMMIT_SHA,git-branch=${GIT_BRANCH//\//-}"
