@@ -558,7 +558,42 @@ class ScraperBase:
             status = 'success'
 
         return status, record_count
-    
+
+    def _extract_game_date(self) -> str | None:
+        """
+        Extract and format game_date from opts.gamedate for orchestration logging.
+
+        Converts gamedate from YYYYMMDD format to YYYY-MM-DD (DATE type).
+        Returns None if gamedate is not present (for scrapers without dates).
+
+        Examples:
+            '20260102' → '2026-01-02'
+            '2026-01-02' → '2026-01-02' (already formatted)
+            None → None (scraper doesn't use gamedate)
+
+        Returns:
+            str | None: Formatted date string (YYYY-MM-DD) or None
+        """
+        gamedate = self.opts.get('gamedate')
+
+        if not gamedate:
+            return None
+
+        # Handle both YYYYMMDD and YYYY-MM-DD formats
+        gamedate_str = str(gamedate)
+
+        # If already formatted (contains dashes), return as-is
+        if '-' in gamedate_str:
+            return gamedate_str
+
+        # Convert YYYYMMDD → YYYY-MM-DD
+        if len(gamedate_str) == 8:
+            return f"{gamedate_str[0:4]}-{gamedate_str[4:6]}-{gamedate_str[6:8]}"
+
+        # Invalid format, log warning and return None
+        logger.warning(f"Invalid gamedate format: {gamedate_str}")
+        return None
+
     def _log_execution_to_bigquery(self):
         """
         Log successful execution to nba_orchestration.scraper_execution_log.
@@ -571,20 +606,24 @@ class ScraperBase:
             
             source, environment, triggered_by = self._determine_execution_source()
             status, record_count = self._determine_execution_status()
-            
+
             now = datetime.now(timezone.utc)
-            
+
             # Get start_time, ensure it's a datetime, then convert to ISO
             start_time = self.stats.get('start_time', now)
             if isinstance(start_time, datetime):
                 triggered_at_iso = start_time.isoformat()
             else:
                 triggered_at_iso = now.isoformat()
-            
+
+            # Extract game_date from opts.gamedate (e.g., '20260102' → '2026-01-02')
+            game_date = self._extract_game_date()
+
             record = {
                 'execution_id': self.run_id,
                 'scraper_name': self._get_scraper_name(),
                 'workflow': self.opts.get('workflow', 'MANUAL'),
+                'game_date': game_date,  # NEW: Track what date's data was found
                 'status': status,
                 'triggered_at': triggered_at_iso,  # ✅ FIXED: ISO string
                 'completed_at': now.isoformat(),   # ✅ FIXED: ISO string
@@ -636,18 +675,22 @@ class ScraperBase:
             
             source, environment, triggered_by = self._determine_execution_source()
             now = datetime.now(timezone.utc)
-            
+
             # Get start_time, ensure it's a datetime, then convert to ISO
             start_time = self.stats.get('start_time', now)
             if isinstance(start_time, datetime):
                 triggered_at_iso = start_time.isoformat()
             else:
                 triggered_at_iso = now.isoformat()
-            
+
+            # Extract game_date from opts.gamedate (e.g., '20260102' → '2026-01-02')
+            game_date = self._extract_game_date()
+
             record = {
                 'execution_id': self.run_id,
                 'scraper_name': self._get_scraper_name(),
                 'workflow': self.opts.get('workflow', 'MANUAL'),
+                'game_date': game_date,  # NEW: Track what date's data was found
                 'status': 'failed',
                 'triggered_at': triggered_at_iso,  # ✅ FIXED: ISO string
                 'completed_at': None,
