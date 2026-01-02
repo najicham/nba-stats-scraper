@@ -662,8 +662,11 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
 
             # Wait for completion
             load_job.result(timeout=60)
+
+            # CRITICAL: Update stats for tracking (required by base class and Layer 5 validation)
+            self.stats["rows_inserted"] = len(rows)
             logging.info(f"Successfully loaded {len(rows)} rows to {self.table_name} (source: {self.data_source})")
-                
+
         except Exception as e:
             error_msg = str(e)
             errors.append(error_msg)
