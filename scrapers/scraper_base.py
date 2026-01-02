@@ -289,6 +289,9 @@ class ScraperBase:
                 self.stats["export_time"] = export_seconds
                 self.step_info("export_complete", "Export completed", extra={"elapsed": export_seconds})
 
+                # ✅ LAYER 1: Validate scraper output (detects gaps at source)
+                self._validate_scraper_output()
+
                 self.post_export()
 
                 total_seconds = self.get_elapsed_seconds("total")
