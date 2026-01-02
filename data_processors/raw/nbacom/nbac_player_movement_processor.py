@@ -400,8 +400,12 @@ class NbacPlayerMovementProcessor(SmartIdempotencyMixin, ProcessorBase):
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
 
+                # Set stats to 0 for failed load
+                self.stats["rows_inserted"] = 0
                 return {'rows_processed': 0, 'errors': errors}
-            
+
+            # CRITICAL: Update stats for tracking (required by base class and Layer 5 validation)
+            self.stats["rows_inserted"] = len(rows)
             logger.info(f"Successfully inserted {len(rows)} new records")
             
             # Send success notification
