@@ -53,6 +53,9 @@ class CircuitBreakerMixin:
         """
         Check if circuit is open.
 
+        Enhanced with auto-reset: checks if upstream data is now available
+        and automatically closes circuit if so.
+
         Returns:
             True if circuit is open (should not process)
             False if circuit is closed or half-open (should try processing)
@@ -76,6 +79,15 @@ class CircuitBreakerMixin:
 
             return False
 
+        # AUTO-RESET LOGIC: Check if upstream data is now available
+        if self._should_auto_reset_circuit(circuit_key):
+            logger.info(
+                f"🔄 Auto-resetting circuit breaker for {circuit_key}: "
+                f"upstream data now available"
+            )
+            self._close_circuit(circuit_key)
+            return False
+
         # Circuit still open
         remaining = self.CIRCUIT_BREAKER_TIMEOUT - time_open
         logger.warning(
@@ -84,6 +96,83 @@ class CircuitBreakerMixin:
         )
 
         return True
+
+    def _should_auto_reset_circuit(self, circuit_key: str) -> bool:
+        """
+        Check if circuit breaker should be automatically reset.
+
+        Calls get_upstream_data_check_query() to verify if upstream data
+        that caused the circuit to open is now available.
+
+        Returns:
+            True if upstream data is available and circuit should reset
+            False if data still unavailable or check not implemented
+        """
+        # Check if processor implements upstream data check
+        if not hasattr(self, 'get_upstream_data_check_query'):
+            # No check implemented - can't auto-reset
+            return False
+
+        # Check if we have BigQuery client
+        if not hasattr(self, 'bq_client') or self.bq_client is None:
+            return False
+
+        try:
+            # Extract date range from circuit key
+            # Format: ProcessorName:start_date:end_date
+            parts = circuit_key.split(':')
+            if len(parts) < 3:
+                return False
+
+            start_date = parts[1]
+            end_date = parts[2]
+
+            # Get upstream data check query from processor
+            check_query = self.get_upstream_data_check_query(start_date, end_date)
+
+            if not check_query:
+                return False
+
+            # Execute query to check if data is available
+            query_job = self.bq_client.query(check_query)
+            results = list(query_job.result())
+
+            if not results:
+                return False
+
+            # Expect query to return row with 'data_available' column (boolean)
+            # or 'cnt' column (int > 0 means available)
+            row = results[0]
+
+            if 'data_available' in row.keys():
+                data_available = row['data_available']
+            elif 'cnt' in row.keys():
+                data_available = row['cnt'] > 0
+            else:
+                # Unknown format - can't determine
+                logger.warning(
+                    f"Upstream check query returned unexpected format for {circuit_key}"
+                )
+                return False
+
+            if data_available:
+                logger.info(
+                    f"✅ Upstream data now available for {circuit_key} "
+                    f"(date range: {start_date} to {end_date})"
+                )
+                return True
+            else:
+                logger.debug(
+                    f"Upstream data still unavailable for {circuit_key}"
+                )
+                return False
+
+        except Exception as e:
+            # Don't fail if check fails - just log and keep circuit open
+            logger.warning(
+                f"Failed to check upstream data availability for {circuit_key}: {e}"
+            )
+            return False
 
     def _open_circuit(self, circuit_key: str):
         """

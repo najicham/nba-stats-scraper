@@ -134,6 +134,27 @@ class UpcomingPlayerGameContextProcessor(
         self.min_games_for_medium_quality = 5
         self.min_bookmakers_required = 3  # For consensus calculations
 
+    def get_upstream_data_check_query(self, start_date: str, end_date: str) -> str:
+        """
+        Return query to check if upstream data is available for circuit breaker auto-reset.
+
+        This processor depends on nba_raw.nbac_gamebook_player_stats for backfill mode.
+        When the circuit breaker trips (due to missing gamebook data), this query
+        checks if the data has since become available, allowing auto-reset.
+
+        Args:
+            start_date: Start date (YYYY-MM-DD)
+            end_date: End date (YYYY-MM-DD)
+
+        Returns:
+            SQL query that returns a row with 'cnt' column (> 0 if data available)
+        """
+        return f"""
+        SELECT COUNT(*) as cnt
+        FROM `{self.project_id}.nba_raw.nbac_gamebook_player_stats`
+        WHERE game_date BETWEEN '{start_date}' AND '{end_date}'
+        """
+
         # Data holders
         self.target_date = None
         self.players_to_process = []  # List of (player_lookup, game_id, team_abbr)
