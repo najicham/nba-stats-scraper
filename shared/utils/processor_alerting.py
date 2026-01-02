@@ -27,6 +27,9 @@ from typing import Dict, List, Optional, Any
 import requests
 from shared.utils.auth_utils import get_api_key
 
+# Import alert type system
+from shared.utils.alert_types import get_alert_html_heading, detect_alert_type, format_alert_heading
+
 logger = logging.getLogger(__name__)
 
 
@@ -298,37 +301,41 @@ class ProcessorAlerting:
             return f"[{env}] NBA Processor Update: {processor}"
     
     def _build_email_body(self, alert_data: Dict[str, Any]) -> str:
-        """Build HTML email body."""
-        level_info = self.alert_levels.get(alert_data['level'], {})
-        color = level_info.get('color', '#000000')
-        
+        """Build HTML email body with intelligent alert type detection."""
+        # Detect alert type from error/warning message and details
+        error_msg = alert_data.get('error_type') or alert_data.get('warning_type') or ''
+        alert_type = detect_alert_type(error_msg, alert_data.get('details'))
+
+        # Get HTML heading with appropriate emoji and color
+        alert_heading = get_alert_html_heading(alert_type)
+
         html = f"""
         <html>
         <body style="font-family: Arial, sans-serif;">
-            <div style="border-left: 4px solid {color}; padding-left: 20px;">
-                <h2 style="color: {color};">{alert_data['level'].title()} Alert</h2>
+            <div style="padding: 20px;">
+                {alert_heading}
                 <p><strong>Processor:</strong> {alert_data['processor']}</p>
                 <p><strong>Time:</strong> {alert_data['timestamp']}</p>
                 <p><strong>Environment:</strong> {alert_data.get('environment', 'production')}</p>
         """
-        
+
         if alert_data['level'] == 'error':
             html += f"<p><strong>Error Type:</strong> {alert_data.get('error_type', 'unknown')}</p>"
         elif alert_data['level'] == 'warning':
             html += f"<p><strong>Warning Type:</strong> {alert_data.get('warning_type', 'unknown')}</p>"
-        
+
         # Add details
         html += "<h3>Details:</h3><ul>"
         for key, value in alert_data.get('details', {}).items():
             html += f"<li><strong>{key}:</strong> {value}</li>"
         html += "</ul>"
-        
+
         html += """
             </div>
         </body>
         </html>
         """
-        
+
         return html
     
     def _build_slack_message(self, alert_data: Dict[str, Any]) -> Dict[str, Any]:

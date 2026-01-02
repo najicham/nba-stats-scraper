@@ -14,6 +14,9 @@ from google.cloud import storage
 from google.cloud.exceptions import NotFound
 from collections import defaultdict
 
+# Import alert type system
+from shared.utils.alert_types import format_alert_heading, detect_alert_type
+
 class SmartAlertManager:
     """
     Intelligent alert system that:
@@ -101,11 +104,18 @@ class SmartAlertManager:
         self._save_alert_state(state)
     
     def _send_immediate_alert(self, error_data):
-        """Send a single error alert via email"""
-        subject = f"🚨 {error_data.get('processor', 'NBA Platform')}: {error_data.get('error_type', 'Error')}"
-        
+        """Send a single error alert via email with appropriate heading"""
+        # Detect alert type from error message
+        error_msg = error_data.get('error', 'No details')
+        alert_type = detect_alert_type(error_msg, error_data.get('details'))
+
+        # Format alert heading (emoji + text)
+        alert_heading = format_alert_heading(alert_type)
+
+        subject = f"{alert_heading} - {error_data.get('processor', 'NBA Platform')}: {error_data.get('error_type', 'Error')}"
+
         body = f"""
-Critical Error Alert
+{alert_heading}
 
 Processor: {error_data.get('processor', 'Unknown')}
 Time: {error_data.get('timestamp', 'Unknown')}
@@ -117,7 +127,7 @@ Error Details:
 ---
 This is an immediate alert. Similar errors within the next 60 minutes will be suppressed.
         """
-        
+
         self._send_email(subject, body)
     
     def enable_backfill_mode(self):
