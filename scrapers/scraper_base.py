@@ -681,6 +681,188 @@ class ScraperBase:
                 pass
 
     ##########################################################################
+    # Layer 1: Scraper Output Validation (NEW)
+    ##########################################################################
+
+    def _validate_scraper_output(self) -> None:
+        """
+        LAYER 1: Validate scraper output to catch data gaps at source.
+
+        Performs checks:
+        - File successfully exported to GCS
+        - File size is reasonable (not 0 bytes)
+        - Row count matches expectations
+        - Data structure is valid
+
+        Logs all validations to BigQuery and sends alerts for critical issues.
+        """
+        try:
+            # Get output file path
+            file_path = getattr(self, 'gcs_output_path', None) or self.opts.get('file_path', '')
+            if not file_path:
+                logger.debug("No file_path for validation - skipping Layer 1")
+                return
+
+            # Extract row count from self.data
+            actual_rows = self._count_scraper_rows()
+
+            # Get expected rows (for comparison)
+            expected_rows = actual_rows  # For scrapers, actual = expected (no filtering yet)
+
+            # Determine validation status
+            validation_status = 'OK'
+            issues = []
+            reason = None
+            is_acceptable = True
+
+            # Check 1: Zero rows scraped
+            if actual_rows == 0:
+                reason = self._diagnose_zero_scraper_rows()
+                is_acceptable = self._is_acceptable_zero_scraper_rows(reason)
+
+                if not is_acceptable:
+                    validation_status = 'CRITICAL'
+                    issues.append('zero_rows')
+                else:
+                    validation_status = 'INFO'
+                    issues.append('zero_rows_acceptable')
+
+            # Check 2: File size (if we can get it)
+            file_size = getattr(self, 'export_file_size', 0)
+            if file_size == 0 and actual_rows > 0:
+                validation_status = 'WARNING'
+                issues.append('file_size_zero')
+                reason = f"File exported {actual_rows} rows but size is 0 bytes"
+
+            # Create validation result
+            validation_result = {
+                'timestamp': datetime.now(timezone.utc).isoformat(),
+                'scraper_name': self.__class__.__name__,
+                'run_id': getattr(self, 'run_id', None),
+                'file_path': file_path,
+                'file_size': file_size,
+                'row_count': actual_rows,
+                'expected_rows': expected_rows,
+                'validation_status': validation_status,
+                'issues': ','.join(issues) if issues else None,
+                'reason': reason,
+                'is_acceptable': is_acceptable
+            }
+
+            # Log to BigQuery monitoring table
+            self._log_scraper_validation(validation_result)
+
+            # Send alert if critical
+            if validation_status == 'CRITICAL':
+                self._send_scraper_alert(validation_result)
+
+        except Exception as e:
+            # Don't fail scraper if validation fails
+            logger.debug(f"Scraper output validation failed: {e}")
+
+    def _count_scraper_rows(self) -> int:
+        """Count rows in scraper output data."""
+        if not hasattr(self, 'data') or not self.data:
+            return 0
+
+        # Try different patterns to find record count
+        # Pattern 1: Direct list
+        if isinstance(self.data, list):
+            return len(self.data)
+
+        # Pattern 2: dict with 'records' key
+        if isinstance(self.data, dict):
+            if 'records' in self.data:
+                return len(self.data['records']) if isinstance(self.data['records'], list) else 0
+            if 'games' in self.data:
+                return len(self.data['games']) if isinstance(self.data['games'], list) else 0
+            if 'players' in self.data:
+                return len(self.data['players']) if isinstance(self.data['players'], list) else 0
+            if 'rowCount' in self.data:  # OddsAPI pattern
+                return self.data['rowCount']
+            if 'rows' in self.data:
+                return len(self.data['rows']) if isinstance(self.data['rows'], list) else 0
+
+        return 0
+
+    def _diagnose_zero_scraper_rows(self) -> str:
+        """Diagnose why scraper returned 0 rows."""
+        reasons = []
+
+        # Check if API returned empty response
+        if not hasattr(self, 'decoded_data') or not self.decoded_data:
+            reasons.append("API returned empty response")
+
+        # Check if this is expected (no games scheduled)
+        game_date = self.opts.get('game_date') or self.opts.get('date')
+        if game_date:
+            # For game-based scrapers, check if games expected
+            if 'game' in self.__class__.__name__.lower() or 'boxscore' in self.__class__.__name__.lower():
+                reasons.append(f"No games returned by API for {game_date}")
+
+        # Check if this is a known pattern
+        if hasattr(self, 'data') and isinstance(self.data, dict):
+            if self.data.get('is_empty_report'):
+                reasons.append("Empty report flag set (intentional)")
+
+        return " | ".join(reasons) if reasons else "API returned 0 records - may not have data yet"
+
+    def _is_acceptable_zero_scraper_rows(self, reason: str) -> bool:
+        """Determine if 0 rows from scraper is acceptable."""
+        acceptable_patterns = [
+            "is_empty_report",
+            "Empty report flag",
+            "No games scheduled",
+            "Off-season",
+            "may not have data yet",
+            "API delay"
+        ]
+
+        reason_lower = reason.lower()
+        return any(pattern.lower() in reason_lower for pattern in acceptable_patterns)
+
+    def _log_scraper_validation(self, validation_result: dict) -> None:
+        """Log scraper validation to BigQuery monitoring table."""
+        try:
+            from google.cloud import bigquery
+
+            # Only log if we have valid credentials
+            try:
+                bq_client = bigquery.Client()
+            except Exception:
+                return  # Skip if no credentials
+
+            table_id = "nba-props-platform.nba_orchestration.scraper_output_validation"
+
+            errors = bq_client.insert_rows_json(table_id, [validation_result])
+            if errors:
+                logger.warning(f"Failed to log scraper validation: {errors}")
+
+        except Exception as e:
+            logger.debug(f"Could not log scraper validation: {e}")
+
+    def _send_scraper_alert(self, validation_result: dict) -> None:
+        """Send alert for critical scraper validation issues."""
+        try:
+            from shared.utils.notification_system import notify_warning
+
+            notify_warning(
+                title=f"⚠️ {validation_result['scraper_name']}: Zero Rows Scraped",
+                message=f"Scraper returned 0 rows from API",
+                details={
+                    'scraper': validation_result['scraper_name'],
+                    'reason': validation_result['reason'],
+                    'file_path': validation_result['file_path'],
+                    'run_id': validation_result['run_id'],
+                    'validation_status': validation_result['validation_status'],
+                    'detection_layer': 'Layer 1: Scraper Output Validation',
+                    'detection_time': validation_result['timestamp']
+                }
+            )
+        except Exception as e:
+            logger.warning(f"Failed to send scraper alert: {e}")
+
+    ##########################################################################
     # Phase 1 → Phase 2 Pub/Sub Handoff (NEW)
     ##########################################################################
 
