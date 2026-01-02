@@ -308,7 +308,7 @@ print_header "10. Deployed Revision"
 
 CURRENT_REVISION=$(gcloud run services describe prediction-coordinator --region=us-west2 --project="${PROJECT_ID}" --format="value(status.latestReadyRevisionName)" 2>/dev/null || echo "unknown")
 
-EXPECTED_REVISION="prediction-coordinator-00029-46t"
+EXPECTED_REVISION="prediction-coordinator-00031-97k"
 
 if [[ "$CURRENT_REVISION" == "$EXPECTED_REVISION" ]]; then
     print_success "Running expected revision: $CURRENT_REVISION"
