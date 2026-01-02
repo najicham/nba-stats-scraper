@@ -27,6 +27,9 @@ from shared.utils.notification_system import (
     notify_info
 )
 
+# BigQuery retry logic for serialization errors
+from shared.utils.bigquery_retry import SERIALIZATION_RETRY
+
 logger = logging.getLogger(__name__)
 
 
@@ -343,7 +346,13 @@ class BasketballRefRosterProcessor(SmartIdempotencyMixin, ProcessorBase):
 
                 logger.info(f"Updating {len(update_rows)} existing players")
                 query_job = self.bq_client.query(query, job_config=job_config)
-                query_job.result(timeout=60)  # Wait for completion
+
+                # Execute with retry logic for serialization errors
+                @SERIALIZATION_RETRY
+                def execute_with_retry():
+                    return query_job.result(timeout=60)
+
+                execute_with_retry()
             
             self.stats["rows_inserted"] = len(new_rows)
             self.stats["rows_updated"] = len(update_rows)
