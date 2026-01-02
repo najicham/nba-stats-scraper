@@ -378,6 +378,9 @@ class BdlLiveBoxscoresProcessor(ProcessorBase):
             # Wait for completion
             load_job.result(timeout=60)
 
+            # CRITICAL: Update stats for tracking (required by base class and Layer 5 validation)
+            self.stats["rows_inserted"] = len(rows)
+
             # Get unique game count
             game_ids = set(row['game_id'] for row in rows)
             poll_id = rows[0].get('poll_id', 'unknown') if rows else 'unknown'
