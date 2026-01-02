@@ -31,7 +31,150 @@ logger = logging.getLogger(__name__)
 # Add project root to path for imports
 sys.path.insert(0, '/workspace')
 
-def send_email_alert(missing_games, check_id):
+# Freshness monitoring configuration
+# Each check monitors when data was last updated
+FRESHNESS_CHECKS = [
+    {
+        'table': 'nba_raw.bdl_injuries',
+        'threshold_hours': 24,
+        'timestamp_column': 'processed_at',
+        'severity': 'CRITICAL',
+        'description': 'Injury data from BallDontLie API'
+    },
+    {
+        'table': 'nba_raw.odds_api_player_points_props',
+        'threshold_hours': 12,
+        'timestamp_column': 'created_at',
+        'severity': 'WARNING',
+        'description': 'Player props from Odds API'
+    },
+    {
+        'table': 'nba_raw.bettingpros_player_points_props',
+        'threshold_hours': 12,
+        'timestamp_column': 'created_at',
+        'severity': 'WARNING',
+        'description': 'Player props from BettingPros'
+    },
+    {
+        'table': 'nba_analytics.player_game_summary',
+        'threshold_hours': 24,
+        'timestamp_column': 'updated_at',
+        'severity': 'WARNING',
+        'description': 'Player analytics summaries'
+    },
+    {
+        'table': 'nba_predictions.player_composite_factors',
+        'threshold_hours': 24,
+        'timestamp_column': 'created_at',
+        'severity': 'WARNING',
+        'description': 'ML feature store for predictions'
+    }
+]
+
+def check_freshness(bq_client, project_id):
+    """
+    Check data freshness for critical tables.
+
+    Returns list of tables with stale data (exceeding freshness threshold).
+
+    Args:
+        bq_client: BigQuery client instance
+        project_id: GCP project ID
+
+    Returns:
+        List of dicts with freshness issues:
+        [{
+            'table': 'nba_raw.bdl_injuries',
+            'hours_stale': 36.5,
+            'threshold_hours': 24,
+            'severity': 'CRITICAL',
+            'description': 'Injury data from BallDontLie API',
+            'last_update': '2026-01-01 10:00:00 UTC'
+        }]
+    """
+    stale_tables = []
+
+    for check in FRESHNESS_CHECKS:
+        try:
+            query = f"""
+            SELECT
+                TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), MAX({check['timestamp_column']}), HOUR) as hours_stale,
+                MAX({check['timestamp_column']}) as last_update
+            FROM `{project_id}.{check['table']}`
+            """
+
+            logger.info(f"Checking freshness for {check['table']}")
+            query_job = bq_client.query(query)
+            results = list(query_job.result(timeout=30))
+
+            if not results:
+                # No data in table at all - critical issue
+                stale_tables.append({
+                    'table': check['table'],
+                    'hours_stale': None,
+                    'threshold_hours': check['threshold_hours'],
+                    'severity': 'CRITICAL',
+                    'description': check['description'],
+                    'last_update': 'NEVER',
+                    'issue': 'NO DATA'
+                })
+                logger.warning(f"Table {check['table']} has NO DATA")
+                continue
+
+            row = results[0]
+            hours_stale = row.hours_stale
+            last_update = row.last_update
+
+            if hours_stale is None:
+                # NULL timestamp column - critical issue
+                stale_tables.append({
+                    'table': check['table'],
+                    'hours_stale': None,
+                    'threshold_hours': check['threshold_hours'],
+                    'severity': 'CRITICAL',
+                    'description': check['description'],
+                    'last_update': 'NULL',
+                    'issue': 'NULL TIMESTAMPS'
+                })
+                logger.warning(f"Table {check['table']} has NULL timestamps")
+                continue
+
+            if hours_stale > check['threshold_hours']:
+                stale_tables.append({
+                    'table': check['table'],
+                    'hours_stale': round(hours_stale, 1),
+                    'threshold_hours': check['threshold_hours'],
+                    'severity': check['severity'],
+                    'description': check['description'],
+                    'last_update': str(last_update),
+                    'issue': 'STALE'
+                })
+                logger.warning(
+                    f"Table {check['table']} is STALE: "
+                    f"{hours_stale:.1f}h old (threshold: {check['threshold_hours']}h)"
+                )
+            else:
+                logger.info(
+                    f"Table {check['table']} is FRESH: "
+                    f"{hours_stale:.1f}h old (threshold: {check['threshold_hours']}h)"
+                )
+
+        except Exception as e:
+            # If check fails, log but continue with other checks
+            logger.error(f"Failed to check freshness for {check['table']}: {e}")
+            stale_tables.append({
+                'table': check['table'],
+                'hours_stale': None,
+                'threshold_hours': check['threshold_hours'],
+                'severity': 'CRITICAL',
+                'description': check['description'],
+                'last_update': 'ERROR',
+                'issue': f'CHECK FAILED: {str(e)[:100]}'
+            })
+
+    return stale_tables
+
+def send_email_alert(missing_games, stale_tables, check_id):
     """Send email with missing games report."""
     try:
         import boto3
@@ -63,8 +206,14 @@ def send_email_alert(missing_games, check_id):
         )
 
         # Build subject and body
-        subject = f"Data Completeness Alert - {len(missing_games)} Missing/Incomplete Games"
-        body_html = format_html_report(missing_games, check_id)
+        total_issues = len(missing_games) + len(stale_tables)
+        subject_parts = []
+        if missing_games:
+            subject_parts.append(f"{len(missing_games)} Missing/Incomplete Games")
+        if stale_tables:
+            subject_parts.append(f"{len(stale_tables)} Stale Tables")
+        subject = f"Data Completeness Alert - {' + '.join(subject_parts)}"
+        body_html = format_html_report(missing_games, stale_tables, check_id)
 
         # Send email
         response = ses_client.send_email(
@@ -95,11 +244,11 @@ def send_email_alert(missing_games, check_id):
         return False
 
 
-def format_html_report(missing_games, check_id):
-    """Format missing games as HTML table."""
+def format_html_report(missing_games, stale_tables, check_id):
+    """Format missing games and stale tables as HTML report."""
     import html
 
-    # Group by date
+    # Group missing games by date
     by_date = {}
     for game in missing_games:
         date = str(game['game_date'])
@@ -111,9 +260,11 @@ def format_html_report(missing_games, check_id):
     total_missing = len(missing_games)
     gamebook_missing = sum(1 for g in missing_games if g['gamebook_status'] != 'OK')
     bdl_missing = sum(1 for g in missing_games if g['bdl_status'] != 'OK')
+    total_stale = len(stale_tables)
+    critical_stale = sum(1 for t in stale_tables if t['severity'] == 'CRITICAL')
 
-    # Build table rows
-    table_rows = ""
+    # Build missing games table rows
+    games_table_rows = ""
     for date in sorted(by_date.keys(), reverse=True):
         for game in by_date[date]:
             gamebook_cell = format_status_cell(
@@ -125,7 +276,7 @@ def format_html_report(missing_games, check_id):
                 game.get('bdl_players', 0)
             )
 
-            table_rows += f"""
+            games_table_rows += f"""
             <tr>
                 <td>{html.escape(date)}</td>
                 <td>{html.escape(game['game_code'])}</td>
@@ -135,20 +286,45 @@ def format_html_report(missing_games, check_id):
             </tr>
             """
 
-    html_body = f"""
-    <html>
-    <body style="font-family: Arial, sans-serif;">
-        <h2 style="color: #ff9800;">🚨 Daily Data Completeness Report</h2>
-        <p><strong>Check Time:</strong> {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}</p>
-        <p><strong>Check ID:</strong> <code>{html.escape(check_id)}</code></p>
+    # Build stale tables section
+    stale_tables_section = ""
+    if stale_tables:
+        stale_table_rows = ""
+        for table in stale_tables:
+            severity_color = '#d32f2f' if table['severity'] == 'CRITICAL' else '#ff9800'
+            stale_hours = f"{table['hours_stale']:.1f}" if table['hours_stale'] is not None else "N/A"
+            issue_icon = "❌" if table['severity'] == 'CRITICAL' else "⚠️"
 
-        <h3>Summary</h3>
-        <ul>
-            <li><strong>Total Issues:</strong> {total_missing} games</li>
-            <li><strong>Gamebook Issues:</strong> {gamebook_missing} games</li>
-            <li><strong>BDL Issues:</strong> {bdl_missing} games</li>
-        </ul>
+            stale_table_rows += f"""
+            <tr>
+                <td>{issue_icon} {html.escape(table['table'])}</td>
+                <td>{html.escape(table['description'])}</td>
+                <td style="color: {severity_color}; font-weight: bold;">{stale_hours}h</td>
+                <td>{table['threshold_hours']}h</td>
+                <td>{html.escape(str(table['last_update']))}</td>
+                <td style="color: {severity_color};">{html.escape(table['issue'])}</td>
+            </tr>
+            """
 
+        stale_tables_section = f"""
+        <h3 style="color: #ff9800;">Data Freshness Issues</h3>
+        <table border="1" cellpadding="8" cellspacing="0" style="border-collapse: collapse; width: 100%;">
+        <tr style="background-color: #f5f5f5;">
+            <th>Table</th>
+            <th>Description</th>
+            <th>Hours Stale</th>
+            <th>Threshold</th>
+            <th>Last Update</th>
+            <th>Issue</th>
+        </tr>
+        {stale_table_rows}
+        </table>
+        """
+
+    # Build missing games section
+    missing_games_section = ""
+    if missing_games:
+        missing_games_section = f"""
         <h3>Missing/Incomplete Games</h3>
         <table border="1" cellpadding="8" cellspacing="0" style="border-collapse: collapse; width: 100%;">
         <tr style="background-color: #f5f5f5;">
@@ -158,12 +334,34 @@ def format_html_report(missing_games, check_id):
             <th>Gamebook</th>
             <th>BDL</th>
         </tr>
-        {table_rows}
+        {games_table_rows}
         </table>
+        """
+
+    html_body = f"""
+    <html>
+    <body style="font-family: Arial, sans-serif;">
+        <h2 style="color: #ff9800;">🚨 Daily Data Completeness & Freshness Report</h2>
+        <p><strong>Check Time:</strong> {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}</p>
+        <p><strong>Check ID:</strong> <code>{html.escape(check_id)}</code></p>
+
+        <h3>Summary</h3>
+        <ul>
+            <li><strong>Missing Games:</strong> {total_missing} games</li>
+            <li><strong>Gamebook Issues:</strong> {gamebook_missing} games</li>
+            <li><strong>BDL Issues:</strong> {bdl_missing} games</li>
+            <li><strong>Stale Tables:</strong> {total_stale} tables</li>
+            <li><strong>Critical Freshness Issues:</strong> {critical_stale} tables</li>
+        </ul>
+
+        {stale_tables_section}
+
+        {missing_games_section}
 
         <h3>Recommended Actions</h3>
         <ol>
-            <li>Check scraper logs for failed executions (Phase 1)</li>
+            <li><strong>For stale data:</strong> Check scraper schedulers and recent execution logs</li>
+            <li><strong>For missing games:</strong> Check scraper logs for failed executions (Phase 1)</li>
             <li>Verify GCS files exist for missing games:
                 <ul>
                     <li><code>gs://nba-scraped-data/nba-com/gamebooks-data/[date]/</code></li>
@@ -174,12 +372,15 @@ def format_html_report(missing_games, check_id):
             <li>Trigger backfill if data exists in GCS but not BigQuery</li>
         </ol>
 
-        <h3>Query Used</h3>
-        <p>Check query: <code>functions/monitoring/data_completeness_checker/check_data_completeness.sql</code></p>
+        <h3>Monitoring Details</h3>
+        <ul>
+            <li>Completeness query: <code>functions/monitoring/data_completeness_checker/check_data_completeness.sql</code></li>
+            <li>Freshness checks: {len(FRESHNESS_CHECKS)} tables monitored</li>
+        </ul>
 
         <hr>
         <p style="color: #666; font-size: 12px;">
-            This is an automated daily report from the NBA Stats Pipeline Data Completeness Checker.
+            This is an automated daily report from the NBA Stats Pipeline Data Completeness & Freshness Checker.
             <br>
             Runs daily at 9 AM ET (14:00 UTC).
         </p>
@@ -278,7 +479,8 @@ def check_completeness(request):
         project_id = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
         bq_client = bigquery.Client(project=project_id)
 
-        # Read and execute completeness query
+        # Check 1: Data completeness (missing games)
+        logger.info("Checking data completeness...")
         sql_path = os.path.join(os.path.dirname(__file__), 'check_data_completeness.sql')
         with open(sql_path, 'r') as f:
             query = f.read()
@@ -286,37 +488,50 @@ def check_completeness(request):
         logger.info("Executing completeness query...")
         query_job = bq_client.query(query)
         results = list(query_job.result(timeout=60))
+        missing_games = [dict(row) for row in results] if results else []
+        missing_count = len(missing_games)
+
+        # Check 2: Data freshness (stale tables)
+        logger.info("Checking data freshness...")
+        stale_tables = check_freshness(bq_client, project_id)
+        stale_count = len(stale_tables)
 
         # Calculate duration
         duration_sec = (datetime.utcnow() - start_time).total_seconds()
 
-        if results:
-            # Missing or incomplete games found
-            missing_games = [dict(row) for row in results]
-            missing_count = len(missing_games)
+        # Determine if we have any issues
+        has_issues = (missing_count > 0) or (stale_count > 0)
 
-            logger.warning(f"Found {missing_count} missing/incomplete games")
+        if has_issues:
+            # Found issues - send alert
+            logger.warning(
+                f"Found {missing_count} missing/incomplete games + "
+                f"{stale_count} stale tables"
+            )
 
             # Send email alert
-            alert_sent = send_email_alert(missing_games, check_id)
+            alert_sent = send_email_alert(missing_games, stale_tables, check_id)
 
             # Log results
             log_check_result(bq_client, check_id, missing_count, alert_sent, duration_sec)
-            log_missing_games(bq_client, check_id, missing_games)
+            if missing_games:
+                log_missing_games(bq_client, check_id, missing_games)
 
             # Return response
             return {
                 'status': 'alert_sent' if alert_sent else 'alert_failed',
                 'check_id': check_id,
                 'missing_games_count': missing_count,
+                'stale_tables_count': stale_count,
                 'alert_sent': alert_sent,
                 'duration_seconds': duration_sec,
-                'games': missing_games
+                'games': missing_games,
+                'stale_tables': stale_tables
             }, 200
 
         else:
-            # All games present - success!
-            logger.info("All games accounted for - no issues found")
+            # All checks passed - success!
+            logger.info("All checks passed - no missing games or stale data")
 
             # Log success
             log_check_result(bq_client, check_id, 0, False, duration_sec)
@@ -324,8 +539,9 @@ def check_completeness(request):
             return {
                 'status': 'ok',
                 'check_id': check_id,
-                'message': 'All games accounted for',
+                'message': 'All checks passed - no issues found',
                 'missing_games_count': 0,
+                'stale_tables_count': 0,
                 'duration_seconds': duration_sec
             }, 200
 
