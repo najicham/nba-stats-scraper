@@ -280,108 +280,141 @@ class BasketballRefRosterProcessor(SmartIdempotencyMixin, ProcessorBase):
     
     def save_data(self) -> None:
         """
-        Override to implement MERGE_UPDATE strategy.
-        Updates existing players, inserts new ones.
+        Save roster data using MERGE pattern (atomic upsert).
+        Eliminates concurrent update errors by using single MERGE operation.
         """
         if not self.transformed_data:
             logger.warning("No transformed data to save")
             return
-        
+
         table_id = f"{self.bq_client.project}.{self.dataset_id}.{self.table_name}"
-        
+        team_abbrev = self.opts["team_abbrev"]
+        temp_table_id = f"{self.bq_client.project}.{self.dataset_id}.br_rosters_temp_{team_abbrev}"
+
         try:
-            # Separate new vs existing players
-            new_rows = [r for r in self.transformed_data if "first_seen_date" in r]
-            update_rows = [r for r in self.transformed_data if "first_seen_date" not in r]
-            
-            # Insert new players using batch loading (not streaming insert)
-            # This avoids the 20 DML limit and streaming buffer issues
-            if new_rows:
-                logger.info(f"Loading {len(new_rows)} new players using batch load")
+            # Step 1: Load all roster data to temp table
+            logger.info(f"Loading {len(self.transformed_data)} players to temp table for {team_abbrev}")
 
-                # Get table schema for load job
-                table = self.bq_client.get_table(table_id)
+            # Clean up any existing temp table first
+            self.bq_client.delete_table(temp_table_id, not_found_ok=True)
 
-                # Configure batch load job
-                job_config = bigquery.LoadJobConfig(
-                    schema=table.schema,
-                    autodetect=False,
-                    write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
-                    create_disposition=bigquery.CreateDisposition.CREATE_IF_NEEDED
-                )
+            # Get table schema
+            target_table = self.bq_client.get_table(table_id)
 
-                # Load using batch job
-                load_job = self.bq_client.load_table_from_json(
-                    new_rows,
-                    table_id,
-                    job_config=job_config
-                )
+            # Configure batch load job (WRITE_TRUNCATE for temp table)
+            job_config = bigquery.LoadJobConfig(
+                schema=target_table.schema,
+                autodetect=False,
+                write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
+                create_disposition=bigquery.CreateDisposition.CREATE_IF_NEEDED
+            )
 
-                # Wait for completion
-                load_job.result(timeout=60)
-                logger.info(f"Successfully loaded {len(new_rows)} new players")
-            
-            # Update existing players (just update last_scraped_date)
-            if update_rows:
-                season_year = self.opts["season_year"]
-                team_abbrev = self.opts["team_abbrev"]
-                player_names = [r["player_full_name"] for r in update_rows]
+            # Load to temp table
+            load_job = self.bq_client.load_table_from_json(
+                self.transformed_data,
+                temp_table_id,
+                job_config=job_config
+            )
+            load_job.result(timeout=120)
+            logger.info(f"Loaded {len(self.transformed_data)} rows to temp table")
 
-                # Use parameterized query to safely handle special characters in names
-                query = f"""
-                UPDATE `{table_id}`
-                SET last_scraped_date = CURRENT_DATE()
-                WHERE season_year = @season_year
-                  AND team_abbrev = @team_abbrev
-                  AND player_full_name IN UNNEST(@player_names)
-                """
+            # Step 2: MERGE from temp table to main table (single atomic DML operation)
+            # Preserve first_seen_date for existing players, set it for new ones
+            merge_query = f"""
+            MERGE `{table_id}` AS target
+            USING `{temp_table_id}` AS source
+            ON target.season_year = source.season_year
+               AND target.team_abbrev = source.team_abbrev
+               AND target.player_lookup = source.player_lookup
+            WHEN MATCHED THEN
+              UPDATE SET
+                player_full_name = source.player_full_name,
+                player_last_name = source.player_last_name,
+                player_normalized = source.player_normalized,
+                position = source.position,
+                jersey_number = source.jersey_number,
+                height = source.height,
+                weight = source.weight,
+                birth_date = source.birth_date,
+                college = source.college,
+                experience_years = source.experience_years,
+                last_scraped_date = source.last_scraped_date,
+                source_file_path = source.source_file_path,
+                processed_at = source.processed_at,
+                data_hash = source.data_hash
+            WHEN NOT MATCHED THEN
+              INSERT (
+                season_year, season_display, team_abbrev,
+                player_full_name, player_last_name, player_normalized, player_lookup,
+                position, jersey_number, height, weight, birth_date, college, experience_years,
+                first_seen_date, last_scraped_date, source_file_path, processed_at, data_hash
+              )
+              VALUES (
+                source.season_year, source.season_display, source.team_abbrev,
+                source.player_full_name, source.player_last_name, source.player_normalized, source.player_lookup,
+                source.position, source.jersey_number, source.height, source.weight,
+                source.birth_date, source.college, source.experience_years,
+                COALESCE(source.first_seen_date, source.last_scraped_date),
+                source.last_scraped_date, source.source_file_path, source.processed_at, source.data_hash
+              )
+            """
 
-                job_config = bigquery.QueryJobConfig(
-                    query_parameters=[
-                        bigquery.ScalarQueryParameter("season_year", "INT64", season_year),
-                        bigquery.ScalarQueryParameter("team_abbrev", "STRING", team_abbrev),
-                        bigquery.ArrayQueryParameter("player_names", "STRING", player_names),
-                    ]
-                )
+            # Execute MERGE with retry logic for serialization errors
+            logger.info(f"Executing MERGE for {team_abbrev}")
 
-                logger.info(f"Updating {len(update_rows)} existing players")
-                query_job = self.bq_client.query(query, job_config=job_config)
+            @SERIALIZATION_RETRY
+            def execute_merge_with_retry():
+                query_job = self.bq_client.query(merge_query)
+                return query_job.result(timeout=120)
 
-                # Execute with retry logic for serialization errors
-                @SERIALIZATION_RETRY
-                def execute_with_retry():
-                    return query_job.result(timeout=60)
+            result = execute_merge_with_retry()
 
-                execute_with_retry()
-            
-            self.stats["rows_inserted"] = len(new_rows)
-            self.stats["rows_updated"] = len(update_rows)
-            
+            # Get DML stats from MERGE result
+            # BigQuery returns num_dml_affected_rows for MERGE operations
+            rows_affected = result.num_dml_affected_rows if hasattr(result, 'num_dml_affected_rows') else 0
+
+            logger.info(f"✅ MERGE complete for {team_abbrev}: {rows_affected} rows affected")
+
+            # Step 3: Clean up temp table
+            self.bq_client.delete_table(temp_table_id, not_found_ok=True)
+
+            # Update stats
+            new_player_count = sum(1 for r in self.transformed_data if "first_seen_date" in r)
+            self.stats["rows_inserted"] = new_player_count
+            self.stats["rows_updated"] = len(self.transformed_data) - new_player_count
+            self.stats["rows_affected"] = rows_affected
+
             # Send success notification
             try:
                 notify_info(
                     title="Basketball Reference Roster Processing Complete",
-                    message=f"Successfully processed {self.stats['total_players']} players for {self.opts.get('team_abbrev')}",
+                    message=f"Successfully processed {self.stats['total_players']} players for {team_abbrev} using MERGE",
                     details={
-                        'team_abbrev': self.opts.get('team_abbrev'),
+                        'team_abbrev': team_abbrev,
                         'season_year': self.opts.get('season_year'),
                         'total_players': self.stats['total_players'],
                         'new_players': self.stats['new_players'],
-                        'rows_inserted': len(new_rows),
-                        'rows_updated': len(update_rows)
+                        'rows_affected': rows_affected,
+                        'method': 'MERGE (atomic upsert)'
                     }
                 )
             except Exception as e:
                 logger.warning(f"Failed to send notification: {e}")
-                
+
         except Exception as e:
+            # Clean up temp table even on failure
+            try:
+                self.bq_client.delete_table(temp_table_id, not_found_ok=True)
+            except Exception:
+                pass
+
             # Notify unexpected error
             try:
                 notify_error(
                     title="Basketball Reference Roster Processing Failed",
-                    message=f"Unexpected error during save: {str(e)}",
+                    message=f"MERGE operation failed: {str(e)}",
                     details={
-                        'team_abbrev': self.opts.get('team_abbrev'),
+                        'team_abbrev': team_abbrev,
                         'season_year': self.opts.get('season_year'),
                         'error_type': type(e).__name__,
                         'total_players': len(self.transformed_data)
