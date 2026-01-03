@@ -1,0 +1,32 @@
+{
+  "model_id": "xgboost_real_v1_20260102",
+  "trained_at": "2026-01-02T18:12:38.273100",
+  "samples": 64285,
+  "features": [
+    "points_avg_last_5",
+    "points_avg_last_10",
+    "points_avg_season",
+    "points_std_last_10",
+    "minutes_avg_last_10",
+    "starter_rate_last_10"
+  ],
+  "train_mae": 4.323116779327393,
+  "val_mae": 4.830558776855469,
+  "test_mae": 4.785783767700195,
+  "mock_mae": 8.4702685886135,
+  "improvement_pct": 43.499031729245544,
+  "hyperparameters": {
+    "max_depth": 6,
+    "learning_rate": 0.1,
+    "n_estimators": 200,
+    "min_child_weight": 1,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "gamma": 0,
+    "reg_alpha": 0,
+    "reg_lambda": 1,
+    "random_state": 42,
+    "objective": "reg:squarederror",
+    "eval_metric": "mae"
+  }
+}

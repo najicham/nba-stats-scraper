@@ -1,0 +1,63 @@
+================================================================================
+ ENHANCED DATA QUALITY REPORT
+================================================================================
+Generated: 2026-01-02 19:39:10
+Samples analyzed: 50,000
+
+================================================================================
+CRITICAL FINDINGS
+================================================================================
+
+1. HIGH NULL RATES DETECTED
+--------------------------------------------------------------------------------
+Found 1 features with >10% missing data:
+  - assisted_rate_last_10: 10.2% NULL
+
+IMPACT: Model learning from imputed defaults, not real patterns
+RECOMMENDATION: Fix precompute pipeline data coverage
+
+2. FEATURE REDUNDANCY DETECTED
+--------------------------------------------------------------------------------
+Found 7 highly correlated feature pairs:
+  - points_avg_last_5 <-> points_avg_last_10: 0.967
+  - points_avg_last_5 <-> points_avg_season: 0.903
+  - points_avg_last_5 <-> actual_points: 0.725
+  - points_avg_last_10 <-> points_avg_season: 0.938
+  - points_avg_last_10 <-> actual_points: 0.739
+
+IMPACT: Redundant features don't add new information
+RECOMMENDATION: Consider removing one feature from each pair
+
+3. STRONGEST PREDICTORS OF ACTUAL POINTS
+--------------------------------------------------------------------------------
+  - points_avg_last_10: 0.739
+  - points_avg_season: 0.726
+  - points_avg_last_5: 0.725
+  - points_std_last_10: 0.492
+  - mid_range_rate_last_10: 0.278
+
+INSIGHT: Recent performance (last 5-10 games) dominates predictions
+RECOMMENDATION: Ensure these features are NEVER NULL
+
+================================================================================
+RECOMMENDATIONS
+================================================================================
+
+Priority 1 (CRITICAL):
+  1. Fix data coverage in precompute tables
+  2. Ensure critical features (points_avg_last_10) are complete
+  3. Investigate why minutes_played is 95.8% NULL
+
+Priority 2 (HIGH):
+  4. Remove redundant features to reduce noise
+  5. Train separate models for different player types
+  6. Use time-aware validation instead of random split
+
+Priority 3 (MEDIUM):
+  7. Hyperparameter tuning with current feature set
+  8. Feature engineering for better context signals
+  9. Collect more historical data (2019-2020 seasons)
+
+================================================================================
+END OF REPORT
+================================================================================

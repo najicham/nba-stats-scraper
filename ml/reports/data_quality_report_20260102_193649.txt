@@ -1,0 +1,118 @@
+================================================================================
+ COMPREHENSIVE DATA QUALITY INVESTIGATION REPORT
+================================================================================
+Generated: 2026-01-02 19:36:49
+
+PURPOSE:
+Understand root causes of ML model failure (4.63 MAE vs 4.33 mock baseline)
+
+================================================================================
+1. MISSING DATA PATTERNS (NULL ANALYSIS)
+================================================================================
+
+Total Training Samples: 82,706
+
+NULL Rates by Feature Category:
+--------------------------------------------------------------------------------
+
+Top 10 Features with Highest NULL Rates:
+Feature                                    NULL Count     NULL %
+--------------------------------------------------------------------------------
+usage_rate_last_10                             82,706     100.0% ████████████████████
+minutes_avg_last_10                            79,202      95.8% ███████████████████
+team_pace_last_10                              30,316      36.7% ███████
+team_off_rating_last_10                        30,316      36.7% ███████
+opponent_def_rating_last_15                    12,031      14.5% ██
+opponent_pace_last_15                          12,031      14.5% ██
+fatigue_score                                   9,597      11.6% ██
+shot_zone_mismatch_score                        9,597      11.6% ██
+pace_score                                      9,597      11.6% ██
+usage_spike_score                               9,597      11.6% ██
+
+================================================================================
+4. TARGET VARIABLE ANALYSIS
+================================================================================
+
+Target Distribution (Actual Points):
+--------------------------------------------------------------------------------
+Total Samples:        82,706
+Mean:                 10.67 points
+Median:               9.00 points
+Std Dev:              8.92 points
+Min:                  0.00 points
+Max:                  73.00 points
+25th Percentile:      4.00 points
+75th Percentile:      16.00 points
+
+Distribution by Point Range:
+--------------------------------------------------------------------------------
+0 points                  9,692 ( 11.7%) █████
+1-5 points               18,527 ( 22.4%) ███████████
+6-10 points              19,088 ( 23.1%) ███████████
+11-20 points             23,522 ( 28.4%) ██████████████
+21-30 points              9,083 ( 11.0%) █████
+30+ points                2,794 (  3.4%) █
+
+================================================================================
+5. PLAYER SEGMENTATION ANALYSIS
+================================================================================
+
+Should we train separate models for different player types?
+
+Player Type                  Samples    Players   Mean Pts    Std Dev        MAE
+--------------------------------------------------------------------------------
+Star (20+ ppg)                 7,990         92      24.67       8.92       6.66
+Starter (12-20 ppg)           19,205        215      15.61       7.70       5.69
+Role Player (6-12 ppg)        33,522        439       8.56       6.14       4.49
+Bench (<6 ppg)                21,989        600       4.50       4.86       3.41
+
+================================================================================
+6. KEY FINDINGS & RECOMMENDATIONS
+================================================================================
+
+CRITICAL ISSUE: High NULL Rates
+--------------------------------------------------------------------------------
+Found 2 features with >50% missing data:
+  - minutes_avg_last_10: 95.8% NULL
+  - usage_rate_last_10: 100.0% NULL
+
+IMPACT: Model is learning from imputed values, not real data
+RECOMMENDATION: Fix data pipeline or remove features with >50% NULL
+
+INSIGHT: Prediction Difficulty Varies by Player Type
+--------------------------------------------------------------------------------
+MAE range across player types: 3.25 points
+RECOMMENDATION: Consider training separate models for:
+  - Stars/Starters (more predictable)
+  - Bench players (more volatile)
+
+SAMPLE SUFFICIENCY
+--------------------------------------------------------------------------------
+Total samples: 82,706
+Features: 25
+Samples per feature: 3,308
+
+STATUS: ✓ Sufficient samples (>2000 per feature)
+
+================================================================================
+RECOMMENDED ACTIONS
+================================================================================
+
+Priority 1 (HIGH IMPACT):
+  1. Fix NULL rates in precompute tables (fatigue_score, team_pace_last_10)
+  2. Verify opponent defense data coverage (seems sparse)
+  3. Ensure points_avg_last_10 is NEVER NULL (most important feature)
+
+Priority 2 (MEDIUM IMPACT):
+  4. Add temporal validation (time-aware splits)
+  5. Consider separate models for starters vs bench players
+  6. Hyperparameter tuning (current settings are default)
+
+Priority 3 (LOW IMPACT):
+  7. Feature engineering for better shot selection metrics
+  8. Collect more historical data (extend to 2019-2020)
+  9. Ensemble methods (combine multiple models)
+
+================================================================================
+END OF REPORT
+================================================================================

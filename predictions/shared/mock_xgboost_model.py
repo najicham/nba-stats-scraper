@@ -126,13 +126,17 @@ class MockXGBoostModel:
         # === STEP 2: Feature-Based Adjustments ===
         # Simulate what XGBoost learned from training data
         
-        # Fatigue impact (non-linear learned pattern)
-        if fatigue < 50:
-            fatigue_adj = -2.5  # Heavy fatigue
+        # Fatigue impact (non-linear learned pattern) - IMPROVED: More gradual 5-level curve
+        if fatigue < 40:
+            fatigue_adj = -3.0  # Extreme fatigue
+        elif fatigue < 55:
+            fatigue_adj = -2.0  # Heavy fatigue
         elif fatigue < 70:
-            fatigue_adj = -1.0  # Moderate fatigue
-        elif fatigue > 85:
-            fatigue_adj = 0.5   # Well-rested boost
+            fatigue_adj = -1.2  # Moderate fatigue
+        elif fatigue < 80:
+            fatigue_adj = -0.5  # Slight fatigue
+        elif fatigue > 90:
+            fatigue_adj = 0.8   # Well-rested boost (increased from 0.5)
         else:
             fatigue_adj = 0.0   # Neutral
         
@@ -145,42 +149,53 @@ class MockXGBoostModel:
         else:  # Lower usage
             pace_adj = pace * 0.08
         
-        # Usage spike (learned non-linear effect)
+        # Usage spike (learned non-linear effect) - IMPROVED: Stronger weight (0.45 from 0.35)
         if abs(usage_spike) > 5:
-            usage_adj = usage_spike * 0.35  # Strong signal
+            usage_adj = usage_spike * 0.45  # Strong signal (increased to catch breakouts)
         else:
-            usage_adj = usage_spike * 0.25  # Weak signal
+            usage_adj = usage_spike * 0.30  # Weak signal (also increased slightly)
         
-        # Opponent defense (learned that elite defense matters)
-        if opp_def_rating < 108:  # Elite defense
-            def_adj = -1.5
-        elif opp_def_rating > 118:  # Weak defense
-            def_adj = 1.0
+        # Opponent defense (learned that elite defense matters) - IMPROVED: 6-level nuanced scale
+        if opp_def_rating < 106:  # Top 3 defense
+            def_adj = -2.0
+        elif opp_def_rating < 110:  # Elite defense
+            def_adj = -1.2
+        elif opp_def_rating < 113:  # Above average defense
+            def_adj = -0.5
+        elif opp_def_rating > 120:  # Bottom 3 defense
+            def_adj = 1.5
+        elif opp_def_rating > 116:  # Below average defense
+            def_adj = 0.8
         else:
-            def_adj = 0.0
+            def_adj = 0.0  # Average defense
         
-        # Back-to-back (learned from historical patterns)
+        # Back-to-back (learned from historical patterns) - IMPROVED: Stronger penalty (-2.5 from -2.2)
         if back_to_back:
-            b2b_adj = -2.2
+            b2b_adj = -2.5  # Increased penalty for fatigue
         else:
             b2b_adj = 0.0
+
+        # Venue (learned home court advantage) - IMPROVED: Higher home boost (1.3 from 1.0)
+        venue_adj = 1.3 if is_home else -0.6  # Increased home advantage
         
-        # Venue (learned home court advantage)
-        venue_adj = 1.0 if is_home else -0.6
-        
-        # Minutes played (more minutes = more points, learned correlation)
+        # Minutes played (more minutes = more points, learned correlation) - IMPROVED: Added mid-range
         if minutes > 36:
-            minutes_adj = 0.8
+            minutes_adj = 0.8  # High minutes
+        elif minutes >= 30:  # NEW: Mid-range boost
+            minutes_adj = 0.4  # Solid starter minutes
         elif minutes < 25:
-            minutes_adj = -1.2
+            minutes_adj = -1.2  # Limited role
         else:
             minutes_adj = 0.0
-        
-        # Shot profile interaction (learned that paint-heavy helps vs weak interior)
-        if paint_rate > 45 and opp_def_rating > 115:
-            shot_adj = 0.8  # Paint scorer vs weak interior
+
+        # Shot profile interaction - IMPROVED: Granular paint-heavy vs weak defense bonus
+        if paint_rate > 40 and opp_def_rating > 110:
+            # Scale bonus by how paint-heavy AND how weak defense is
+            paint_excess = (paint_rate - 40) / 10  # 0-2 range for paint_rate 40-60
+            def_weakness = (opp_def_rating - 110) / 5  # 0-2 range for def_rating 110-120
+            shot_adj = min(paint_excess * def_weakness * 0.4, 1.5)  # Cap at 1.5
         elif three_rate > 40 and opp_def_rating < 110:
-            shot_adj = -0.5  # Perimeter vs elite perimeter
+            shot_adj = -0.5  # Perimeter vs elite perimeter (unchanged)
         else:
             shot_adj = 0.0
         
