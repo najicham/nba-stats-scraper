@@ -448,7 +448,10 @@ class NbacInjuryReportProcessor(SmartIdempotencyMixin, ProcessorBase):
                     logger.warning(f"Failed to send notification: {notify_ex}")
             else:
                 logger.info(f"Successfully appended {len(rows)} injury records")
-                
+
+                # Track stats (required when overriding save_data)
+                self.stats["rows_inserted"] = len(rows)
+
                 # Send success notification
                 try:
                     notify_info(
