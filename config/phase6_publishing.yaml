@@ -140,7 +140,7 @@ pubsub:
   # Optional: Listen for Phase 5 completion to auto-trigger
   # Set enabled=true when real-time triggering is desired
   phase5_completion_listener:
-    enabled: false  # Disabled by default, use scheduler instead
+    enabled: true  # ✅ ENABLED - phase5-to-phase6-orchestrator service is deployed and active
     source_topic: "nba-predictions-complete"
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
