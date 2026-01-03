@@ -178,7 +178,7 @@ class PlayerGameSummaryProcessor(
 
     def get_dependencies(self) -> dict:
         """
-        Define all 6 Phase 2 source requirements.
+        Define all 7 source requirements (6 Phase 2 + 1 Phase 3).
         Per dependency tracking guide v4.0.
         """
         return {
@@ -252,6 +252,18 @@ class PlayerGameSummaryProcessor(
                 'max_age_hours_warn': 12,
                 'max_age_hours_fail': 48,
                 'critical': False  # Backup only
+            },
+
+            # SOURCE 7: Team Offense Analytics (REQUIRED - for usage_rate calculation)
+            'nba_analytics.team_offense_game_summary': {
+                'field_prefix': 'source_team',
+                'description': 'Team offense analytics - for usage_rate calculation',
+                'date_field': 'game_date',
+                'check_type': 'date_range',
+                'expected_count_min': 20,  # ~20-30 team games per day
+                'max_age_hours_warn': 24,
+                'max_age_hours_fail': 72,
+                'critical': False  # Nice to have for usage_rate, but not blocking
             }
         }
 
@@ -493,12 +505,30 @@ class PlayerGameSummaryProcessor(
                     CASE WHEN game_id LIKE '%_%_%' THEN SPLIT(game_id, '_')[SAFE_OFFSET(2)] END
                 ) as home_team_abbr
             FROM combined_data
+        ),
+
+        -- Team stats for usage_rate calculation
+        team_stats AS (
+            SELECT
+                game_id,
+                team_abbr,
+                fg_attempts as team_fg_attempts,
+                ft_attempts as team_ft_attempts,
+                turnovers as team_turnovers,
+                possessions as team_possessions
+            FROM `{self.project_id}.nba_analytics.team_offense_game_summary`
+            WHERE game_date BETWEEN '{start_date}' AND '{end_date}'
         )
 
         SELECT
             wp.*,
             gc.away_team_abbr,
             gc.home_team_abbr,
+            -- Team stats for usage_rate (will be NULL if team_offense_game_summary unavailable)
+            ts.team_fg_attempts,
+            ts.team_ft_attempts,
+            ts.team_turnovers,
+            ts.team_possessions,
             COALESCE(
                 CASE
                     WHEN wp.team_abbr = gc.home_team_abbr THEN gc.away_team_abbr
@@ -513,6 +543,7 @@ class PlayerGameSummaryProcessor(
 
         FROM with_props wp
         LEFT JOIN games_context gc ON wp.game_id = gc.game_id
+        LEFT JOIN team_stats ts ON wp.game_id = ts.game_id AND wp.team_abbr = ts.team_abbr
         ORDER BY wp.game_date DESC, wp.game_id, wp.player_lookup
         """
         
@@ -571,7 +602,8 @@ class PlayerGameSummaryProcessor(
             WITH player_shots AS (
                 SELECT
                     game_id,
-                    player_1_lookup as player_lookup,
+                    -- Strip player_id prefix (format changed in Oct 2024: "1630552jalenjohnson" -> "jalenjohnson")
+                    REGEXP_REPLACE(player_1_lookup, r'^[0-9]+', '') as player_lookup,
                     -- Classify shot zone
                     CASE
                         WHEN shot_distance <= 8.0 THEN 'paint'
@@ -591,7 +623,7 @@ class PlayerGameSummaryProcessor(
             and1_events AS (
                 SELECT
                     game_id,
-                    player_1_lookup as player_lookup,
+                    REGEXP_REPLACE(player_1_lookup, r'^[0-9]+', '') as player_lookup,
                     COUNT(*) as and1_count
                 FROM `{self.project_id}.nba_raw.bigdataball_play_by_play`
                 WHERE event_type = 'free throw'
@@ -604,14 +636,14 @@ class PlayerGameSummaryProcessor(
             block_aggregates AS (
                 SELECT
                     game_id,
-                    player_2_lookup as blocker_lookup,
+                    REGEXP_REPLACE(player_2_lookup, r'^[0-9]+', '') as blocker_lookup,
                     COUNT(CASE WHEN zone = 'paint' THEN 1 END) as paint_blocks,
                     COUNT(CASE WHEN zone = 'mid_range' THEN 1 END) as mid_range_blocks,
                     COUNT(CASE WHEN zone = 'three' THEN 1 END) as three_pt_blocks
                 FROM (
                     SELECT
                         game_id,
-                        player_2_lookup,
+                        REGEXP_REPLACE(player_2_lookup, r'^[0-9]+', '') as player_2_lookup,
                         CASE
                             WHEN shot_distance <= 8.0 THEN 'paint'
                             WHEN event_subtype LIKE '%3pt%' OR shot_distance >= 23.75 THEN 'three'
@@ -1149,6 +1181,34 @@ class PlayerGameSummaryProcessor(
                     if total_shots > 0:
                         ts_pct = row['points'] / (2 * total_shots)
 
+            # Calculate usage_rate (requires team stats)
+            usage_rate = None
+            if (pd.notna(row.get('team_fg_attempts')) and
+                pd.notna(row.get('team_ft_attempts')) and
+                pd.notna(row.get('team_turnovers')) and
+                pd.notna(row['field_goals_attempted']) and
+                pd.notna(row['turnovers']) and
+                minutes_decimal and minutes_decimal > 0):
+
+                # Player usage components
+                player_fga = row['field_goals_attempted']
+                player_fta = row.get('free_throws_attempted', 0) or 0
+                player_to = row['turnovers']
+                player_poss_used = player_fga + 0.44 * player_fta + player_to
+
+                # Team usage components
+                team_fga = row['team_fg_attempts']
+                team_fta = row['team_ft_attempts']
+                team_to = row['team_turnovers']
+                team_poss_used = team_fga + 0.44 * team_fta + team_to
+
+                # Usage Rate formula (assumes 48 min team total / 5 players = 240 min shared)
+                # USG% = 100 × (Player FGA + 0.44 × Player FTA + Player TO) × (Tm Min / 5)
+                #            / (Player Min × (Tm FGA + 0.44 × Tm FTA + Tm TO))
+                # Approximation: Tm Min ≈ 240 (48 min × 5 players)
+                if team_poss_used > 0:
+                    usage_rate = 100.0 * player_poss_used * 48.0 / (minutes_decimal * team_poss_used)
+
             # Build record with source tracking
             record = {
                 # Core identifiers
@@ -1185,7 +1245,7 @@ class PlayerGameSummaryProcessor(
                 **self._get_shot_zone_data(row['game_id'], player_lookup),
 
                 # Efficiency
-                'usage_rate': None,  # Requires team stats
+                'usage_rate': round(usage_rate, 1) if usage_rate else None,
                 'ts_pct': round(ts_pct, 3) if ts_pct else None,
                 'efg_pct': round(efg_pct, 3) if efg_pct else None,
                 'starter_flag': bool(minutes_decimal and minutes_decimal > 20) if minutes_decimal else False,
@@ -1313,6 +1373,34 @@ class PlayerGameSummaryProcessor(
                         if total_shots > 0:
                             ts_pct = row['points'] / (2 * total_shots)
 
+                # Calculate usage_rate (requires team stats)
+                usage_rate = None
+                if (pd.notna(row.get('team_fg_attempts')) and
+                    pd.notna(row.get('team_ft_attempts')) and
+                    pd.notna(row.get('team_turnovers')) and
+                    pd.notna(row['field_goals_attempted']) and
+                    pd.notna(row['turnovers']) and
+                    minutes_decimal and minutes_decimal > 0):
+
+                    # Player usage components
+                    player_fga = row['field_goals_attempted']
+                    player_fta = row.get('free_throws_attempted', 0) or 0
+                    player_to = row['turnovers']
+                    player_poss_used = player_fga + 0.44 * player_fta + player_to
+
+                    # Team usage components
+                    team_fga = row['team_fg_attempts']
+                    team_fta = row['team_ft_attempts']
+                    team_to = row['team_turnovers']
+                    team_poss_used = team_fga + 0.44 * team_fta + team_to
+
+                    # Usage Rate formula (assumes 48 min team total / 5 players = 240 min shared)
+                    # USG% = 100 × (Player FGA + 0.44 × Player FTA + Player TO) × (Tm Min / 5)
+                    #            / (Player Min × (Tm FGA + 0.44 × Tm FTA + Tm TO))
+                    # Approximation: Tm Min ≈ 240 (48 min × 5 players)
+                    if team_poss_used > 0:
+                        usage_rate = 100.0 * player_poss_used * 48.0 / (minutes_decimal * team_poss_used)
+
                 # Build record with source tracking
                 record = {
                     # Core identifiers
@@ -1349,7 +1437,7 @@ class PlayerGameSummaryProcessor(
                     **self._get_shot_zone_data(row['game_id'], player_lookup),
 
                     # Efficiency
-                    'usage_rate': None,  # Requires team stats
+                    'usage_rate': round(usage_rate, 1) if usage_rate else None,
                     'ts_pct': round(ts_pct, 3) if ts_pct else None,
                     'efg_pct': round(efg_pct, 3) if efg_pct else None,
                     'starter_flag': bool(minutes_decimal and minutes_decimal > 20) if minutes_decimal else False,
