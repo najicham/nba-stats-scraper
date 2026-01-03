@@ -604,13 +604,13 @@ class OddsGameLinesProcessor(SmartIdempotencyMixin, ProcessorBase):
                     source.processed_at
                 )
             """
-            
-            merge_job = self.bq_client.query(merge_query)
 
-            # Execute with retry logic for serialization errors
+            # Execute MERGE with retry logic for serialization errors
+            # IMPORTANT: Query submission must be INSIDE retry wrapper
             @SERIALIZATION_RETRY
             def execute_with_retry():
-                return merge_job.result(timeout=60)
+                merge_job = self.bq_client.query(merge_query)
+                return merge_job.result(timeout=120)
 
             merge_result = execute_with_retry()
             
