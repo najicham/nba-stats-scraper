@@ -749,11 +749,13 @@ class PlayerGameSummaryProcessor(
     def _clean_numeric_columns(self) -> None:
         """Ensure numeric columns have consistent data types."""
         numeric_columns = [
-            'points', 'assists', 'minutes', 'field_goals_made', 'field_goals_attempted',
-            'three_pointers_made', 'three_pointers_attempted', 'free_throws_made', 
+            'points', 'assists', 'field_goals_made', 'field_goals_attempted',
+            'three_pointers_made', 'three_pointers_attempted', 'free_throws_made',
             'free_throws_attempted', 'steals', 'blocks', 'turnovers', 'personal_fouls',
             'total_rebounds', 'offensive_rebounds', 'defensive_rebounds', 'season_year'
         ]
+        # NOTE: 'minutes' is NOT included because it's in "MM:SS" format and must be
+        # parsed by _parse_minutes_to_decimal() later, not coerced to numeric here
         
         for col in numeric_columns:
             if col in self.raw_data.columns:
@@ -889,22 +891,70 @@ class PlayerGameSummaryProcessor(
             self.save_registry_failures()
 
     def _parse_minutes_to_decimal(self, minutes_str: str) -> Optional[float]:
-        """Parse minutes string to decimal format (40:11 → 40.18)."""
-        if pd.isna(minutes_str) or not minutes_str or minutes_str == '-':
+        """
+        Parse minutes string to decimal format (40:11 → 40.18).
+
+        Handles multiple formats:
+        - "MM:SS" (e.g., "04:00", "14:21") → decimal (4.0, 14.35)
+        - Integer string (e.g., "32") → float (32.0)
+        - Float string (e.g., "32.5") → float (32.5)
+        - NULL/empty/"-" → None
+
+        Robust handling for whitespace, type issues, encoding problems.
+        """
+        # Handle NULL, None, NaN, empty string
+        if minutes_str is None or pd.isna(minutes_str):
             return None
-            
+
+        # Convert to string and strip whitespace (handles bytes, int, float types)
         try:
-            if ':' in str(minutes_str):
-                parts = str(minutes_str).split(':')
+            minutes_clean = str(minutes_str).strip()
+        except Exception as e:
+            logger.warning(f"Failed to convert minutes to string: {repr(minutes_str)} (type: {type(minutes_str)}): {e}")
+            return None
+
+        # Handle empty or dash
+        if not minutes_clean or minutes_clean == '-' or minutes_clean.lower() == 'null':
+            return None
+
+        try:
+            # Handle "MM:SS" format (e.g., "04:00", "14:21", "40:11")
+            if ':' in minutes_clean:
+                parts = minutes_clean.split(':')
                 if len(parts) == 2:
-                    mins = int(parts[0])
-                    secs = int(parts[1])
+                    # Strip each part to handle " 04 : 00 " cases
+                    mins_str = parts[0].strip()
+                    secs_str = parts[1].strip()
+
+                    # Convert to integers
+                    mins = int(mins_str)
+                    secs = int(secs_str)
+
+                    # Validate ranges
+                    if secs < 0 or secs >= 60:
+                        logger.warning(f"Invalid seconds value in minutes: {repr(minutes_str)} (seconds={secs}, expected 0-59)")
+                        return None
+
+                    if mins < 0 or mins > 60:
+                        logger.warning(f"Suspicious minutes value: {repr(minutes_str)} (mins={mins}, expected 0-60)")
+                        # Don't return None - some overtime games might have > 48 min
+
+                    # Convert to decimal: MM + (SS/60)
                     return round(mins + (secs / 60), 2)
-            
-            return float(minutes_str)
-            
+                else:
+                    logger.warning(f"Unexpected ':' format in minutes (expected MM:SS): {repr(minutes_str)}")
+                    return None
+
+            # Handle plain number (integer or float string)
+            return float(minutes_clean)
+
         except (ValueError, TypeError) as e:
-            logger.debug(f"Could not parse minutes: {minutes_str}: {e}")
+            # This is now a WARNING because it's unexpected - raw data should be clean
+            logger.warning(f"Could not parse minutes: {repr(minutes_str)} (cleaned: {repr(minutes_clean)}), type: {type(minutes_str)}, error: {e}")
+            return None
+        except Exception as e:
+            # Catch any other unexpected exceptions
+            logger.error(f"Unexpected error parsing minutes: {repr(minutes_str)}, error: {e}")
             return None
     
     def _parse_plus_minus(self, plus_minus_str: str) -> Optional[int]:
