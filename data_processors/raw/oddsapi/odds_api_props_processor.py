@@ -597,6 +597,9 @@ class OddsApiPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
 
             logger.info(f"✅ Batch loaded {len(rows)} prop records (no streaming buffer)")
 
+            # CRITICAL: Track rows_inserted for validation (required when overriding save_data)
+            self.stats['rows_inserted'] = len(rows)
+
             # Success - send info notification
             try:
                 notify_info(
@@ -612,7 +615,7 @@ class OddsApiPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-                
+
             # Warn about unknown teams if any were found
             if self.unknown_teams:
                 try:
@@ -626,7 +629,7 @@ class OddsApiPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             return {'rows_processed': len(rows), 'errors': []}
                     
         except Exception as e:
