@@ -621,7 +621,10 @@ class OddsGameLinesProcessor(SmartIdempotencyMixin, ProcessorBase):
                 f"✅ MERGE completed successfully: {rows_affected} rows affected for game {game_id} "
                 f"({away_team_abbr}@{home_team_abbr}) on {game_date} [data_source={data_source}]"
             )
-            
+
+            # CRITICAL: Track rows_inserted for validation (required when overriding save_data)
+            self.stats['rows_inserted'] = len(rows)
+
             # Success notification
             try:
                 notify_info(
