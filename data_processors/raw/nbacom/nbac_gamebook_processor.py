@@ -25,6 +25,8 @@ from datetime import datetime
 from typing import Dict, List, Tuple, Optional
 from collections import defaultdict
 from google.cloud import bigquery
+from google.api_core import retry
+from google.api_core import exceptions as api_exceptions
 from shared.utils.player_name_normalizer import normalize_name_for_lookup, extract_suffix
 from shared.utils.notification_system import (
     notify_error,
@@ -55,6 +57,25 @@ from shared.utils.game_id_converter import to_standard_game_id
 from shared.utils.schedule import NBAScheduleService
 
 logger = logging.getLogger(__name__)
+
+
+def _is_serialization_conflict(exc):
+    """
+    Check if exception is a BigQuery serialization conflict.
+
+    These occur when multiple processes try to access the same table
+    simultaneously (e.g., live scrapers during backfill operations).
+
+    Returns True if we should retry, False otherwise.
+    """
+    if isinstance(exc, api_exceptions.BadRequest):
+        error_msg = str(exc).lower()
+        return (
+            "could not serialize" in error_msg or
+            "concurrent update" in error_msg or
+            "concurrent write" in error_msg
+        )
+    return False
 
 
 class NbacGamebookProcessor(SmartIdempotencyMixin, ProcessorBase):
@@ -1415,7 +1436,26 @@ class NbacGamebookProcessor(SmartIdempotencyMixin, ProcessorBase):
 
             logger.info(f"Loading {len(rows)} rows to {table_id} using batch load")
             load_job = self.bq_client.load_table_from_json(rows, table_id, job_config=job_config)
-            load_job.result(timeout=60)
+
+            # Wait for completion with retry logic for serialization conflicts
+            retry_config = retry.Retry(
+                predicate=_is_serialization_conflict,
+                initial=1.0,      # Start with 1 second
+                maximum=60.0,     # Max 60 seconds between retries
+                multiplier=2.0,   # Double delay each retry
+                deadline=300.0,   # Total max 5 minutes
+                timeout=60.0      # Individual operation timeout
+            )
+
+            try:
+                # Use retry wrapper for serialization conflicts
+                retry_config(load_job.result)(timeout=60)
+            except Exception as retry_exc:
+                # Log if this was a serialization conflict that exhausted retries
+                if _is_serialization_conflict(retry_exc):
+                    logger.error(f"❌ BigQuery serialization conflict - retries exhausted after 5 minutes")
+                    logger.error(f"This may indicate live scrapers running during backfill")
+                raise retry_exc
 
             if load_job.errors:
                 logger.warning(f"BigQuery load had errors: {load_job.errors[:3]}")
