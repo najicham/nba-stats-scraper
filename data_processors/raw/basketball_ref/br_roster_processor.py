@@ -250,7 +250,11 @@ class BasketballRefRosterProcessor(SmartIdempotencyMixin, ProcessorBase):
                 row["first_seen_date"] = date.today().isoformat()
                 new_players.append(player.get("full_name"))
                 logger.info(f"New player on {team_abbrev}: {player.get('full_name')}")
-            
+            else:
+                # Placeholder for temp table load (MERGE won't update this field for existing players)
+                # The actual first_seen_date from the main table is preserved by the MERGE query
+                row["first_seen_date"] = date.today().isoformat()
+
             rows.append(row)
 
         self.transformed_data = rows

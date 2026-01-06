@@ -679,6 +679,13 @@ def process_pubsub():
                         opts['file_path'] = json_file
                         opts['project_id'] = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
 
+                        # Add trigger context for error notifications
+                        opts['trigger_source'] = normalized_message.get('_original_format', 'unknown')
+                        opts['trigger_message_id'] = pubsub_message.get('messageId', 'N/A')
+                        opts['parent_processor'] = normalized_message.get('_scraper_name', 'N/A')
+                        opts['workflow'] = normalized_message.get('_workflow', 'N/A')
+                        opts['execution_id'] = normalized_message.get('_execution_id', 'N/A')
+
                         processor = EspnTeamRosterProcessor()
                         success = processor.run(opts)
 
@@ -775,7 +782,14 @@ def process_pubsub():
         opts['bucket'] = bucket
         opts['file_path'] = file_path
         opts['project_id'] = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
-        
+
+        # Add trigger context for error notifications
+        opts['trigger_source'] = normalized_message.get('_original_format', 'unknown')
+        opts['trigger_message_id'] = pubsub_message.get('messageId', 'N/A')
+        opts['parent_processor'] = normalized_message.get('_scraper_name', 'N/A')
+        opts['workflow'] = normalized_message.get('_workflow', 'N/A')
+        opts['execution_id'] = normalized_message.get('_execution_id', 'N/A')
+
         # Process the file
         processor = processor_class()
         success = processor.run(opts)

@@ -24,6 +24,8 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional, Any
 from google.cloud import bigquery
 from google.cloud import storage
+from google.api_core import retry
+from google.api_core import exceptions as api_exceptions
 import sentry_sdk
 
 # Import notification system
@@ -42,6 +44,25 @@ logging.basicConfig(
     format="%(levelname)s:%(name)s:%(message)s"
 )
 logger = logging.getLogger("processor_base")
+
+
+def _is_serialization_conflict(exc):
+    """
+    Check if exception is a BigQuery serialization conflict.
+
+    These occur when multiple processes try to access the same table
+    simultaneously (e.g., live scrapers during backfill operations).
+
+    Returns True if we should retry, False otherwise.
+    """
+    if isinstance(exc, api_exceptions.BadRequest):
+        error_msg = str(exc).lower()
+        return (
+            "could not serialize" in error_msg or
+            "concurrent update" in error_msg or
+            "concurrent write" in error_msg
+        )
+    return False
 
 
 class ProcessorBase(RunHistoryMixin):
@@ -231,10 +252,18 @@ class ProcessorBase(RunHistoryMixin):
                         'run_id': self.run_id,
                         'error_type': type(e).__name__,
                         'step': self._get_current_step(),
+                        'trigger_source': opts.get('trigger_source', 'unknown'),
+                        'trigger_message_id': opts.get('trigger_message_id', 'N/A'),
+                        'parent_processor': opts.get('parent_processor', 'N/A'),
+                        'workflow': opts.get('workflow', 'N/A'),
+                        'execution_id': opts.get('execution_id', 'N/A'),
                         'opts': {
                             'date': opts.get('date'),
                             'group': opts.get('group'),
-                            'table': self.table_name
+                            'table': self.table_name,
+                            'season_year': opts.get('season_year'),
+                            'team_abbrev': opts.get('team_abbrev'),
+                            'file_path': opts.get('file_path')
                         },
                         'stats': self.stats
                     },
@@ -1070,13 +1099,23 @@ class ProcessorBase(RunHistoryMixin):
                 table_id,
                 job_config=job_config
             )
-            
-            # Wait for completion with graceful failure
+
+            # Wait for completion with retry logic for serialization conflicts
+            retry_config = retry.Retry(
+                predicate=_is_serialization_conflict,
+                initial=1.0,      # Start with 1 second
+                maximum=60.0,     # Max 60 seconds between retries
+                multiplier=2.0,   # Double delay each retry
+                deadline=300.0,   # Total max 5 minutes
+                timeout=60.0      # Individual operation timeout
+            )
+
             try:
-                load_job.result(timeout=60)
+                # Use retry wrapper for serialization conflicts
+                retry_config(load_job.result)(timeout=60)
                 self.stats["rows_inserted"] = len(rows)
                 logger.info(f"✅ Successfully batch loaded {len(rows)} rows")
-                
+
             except Exception as load_e:
                 # Graceful failure for streaming buffer
                 if "streaming buffer" in str(load_e).lower():
@@ -1084,6 +1123,11 @@ class ProcessorBase(RunHistoryMixin):
                     logger.info("Records will be processed on next run")
                     self.stats["rows_skipped"] = len(rows)
                     return  # Graceful failure
+                # Log if this was a serialization conflict that exhausted retries
+                elif _is_serialization_conflict(load_e):
+                    logger.error(f"❌ BigQuery serialization conflict - retries exhausted after 5 minutes")
+                    logger.error(f"This may indicate live scrapers running during backfill")
+                    raise load_e
                 else:
                     raise load_e
             
