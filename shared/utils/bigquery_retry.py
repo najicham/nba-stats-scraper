@@ -1,16 +1,19 @@
 """
-BigQuery Retry Logic for Serialization Errors
+BigQuery Retry Logic for Serialization Errors and Quota Limits
 
-This module provides retry decorators for handling BigQuery serialization errors
-that occur when multiple Cloud Run instances execute concurrent MERGE/UPDATE
-operations on the same BigQuery partition.
+This module provides retry decorators for handling BigQuery errors:
+1. Serialization errors from concurrent MERGE/UPDATE operations
+2. Quota exceeded errors from too many concurrent DML operations
 
-Error Example:
+Error Examples:
     400 Could not serialize access to table nba-props-platform:nba_raw.br_rosters_current
-    due to concurrent update
+        due to concurrent update
+
+    403 Quota exceeded: Your table exceeded quota for total number of dml jobs
+        writing to a table, pending + running
 
 Usage:
-    from shared.utils.bigquery_retry import SERIALIZATION_RETRY
+    from shared.utils.bigquery_retry import SERIALIZATION_RETRY, QUOTA_RETRY
 
     query_job = bq_client.query(query)
 
@@ -22,7 +25,7 @@ Usage:
 """
 
 from google.api_core import retry
-from google.api_core.exceptions import BadRequest
+from google.api_core.exceptions import BadRequest, Forbidden
 import logging
 import re
 from datetime import datetime
@@ -170,6 +173,145 @@ def retry_on_serialization(func):
                     'error_message': error_info[:200],
                     'duration_ms': duration_ms,
                     'timestamp': datetime.utcnow().isoformat()
+                }
+            )
+
+            raise
+
+    return wrapper
+
+
+def is_quota_exceeded_error(exc):
+    """
+    Predicate function to identify BigQuery quota exceeded errors.
+
+    These occur when too many concurrent DML operations target the same table,
+    exceeding BigQuery's per-table concurrent DML operation limit (~10-15).
+
+    Args:
+        exc: Exception to check
+
+    Returns:
+        bool: True if the exception is a quota exceeded error
+    """
+    if not isinstance(exc, Forbidden):
+        return False
+
+    error_message = str(exc)
+    quota_indicators = [
+        "Quota exceeded",
+        "quota for total number of dml jobs",
+        "pending + running"
+    ]
+
+    is_quota_error = any(indicator in error_message for indicator in quota_indicators)
+
+    if is_quota_error:
+        table_name = extract_table_name(error_message)
+
+        # Structured logging for retry metrics
+        logger.warning(
+            "BigQuery quota exceeded - too many concurrent DML operations - will retry",
+            extra={
+                'event_type': 'bigquery_quota_exceeded',
+                'table_name': table_name,
+                'error_message': error_message[:200],
+                'timestamp': datetime.utcnow().isoformat(),
+                'retry_triggered': True,
+                'recommendation': 'Consider implementing table-level semaphore to limit concurrent operations'
+            }
+        )
+
+    return is_quota_error
+
+
+# Retry configuration for BigQuery quota exceeded errors
+#
+# Retry strategy (more aggressive backoff than serialization):
+# - Initial delay: 2 seconds (give time for other operations to complete)
+# - Maximum delay: 120 seconds (2 minutes)
+# - Multiplier: 2.0 (exponential backoff)
+# - Total deadline: 600 seconds (10 minutes)
+#
+# Retry sequence: 2s, 4s, 8s, 16s, 32s, 64s, 120s, 120s... (max ~10min total)
+#
+# Why longer than serialization retry:
+# - Quota errors indicate sustained high load, not just transient conflicts
+# - Need more time for concurrent operations to complete
+# - Operations are queued rather than conflicting
+QUOTA_RETRY = retry.Retry(
+    predicate=is_quota_exceeded_error,
+    initial=2.0,       # 2 second initial delay
+    maximum=120.0,     # 120 seconds maximum delay between retries
+    multiplier=2.0,    # Exponential backoff multiplier
+    deadline=600.0     # 10 minute total timeout
+)
+
+
+def retry_on_quota_exceeded(func):
+    """
+    Decorator to automatically retry a function on BigQuery quota exceeded errors.
+
+    This decorator handles cases where too many concurrent DML operations
+    target the same BigQuery table, causing quota limit errors.
+
+    Usage:
+        @retry_on_quota_exceeded
+        def execute_merge():
+            query_job = bq_client.query(merge_query)
+            return query_job.result(timeout=120)
+
+        result = execute_merge()
+
+    Args:
+        func: Function to wrap with retry logic
+
+    Returns:
+        Wrapped function with retry behavior
+    """
+    def wrapper(*args, **kwargs):
+        start_time = datetime.utcnow()
+        attempt_successful = False
+        error_info = None
+
+        try:
+            @QUOTA_RETRY
+            def _execute():
+                return func(*args, **kwargs)
+
+            result = _execute()
+            attempt_successful = True
+
+            # Log successful execution (may have retried)
+            duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+            logger.info(
+                "BigQuery operation completed successfully after quota retry",
+                extra={
+                    'event_type': 'bigquery_quota_retry_success',
+                    'function_name': func.__name__,
+                    'duration_ms': duration_ms,
+                    'timestamp': datetime.utcnow().isoformat()
+                }
+            )
+
+            return result
+
+        except Exception as e:
+            # Log retry exhaustion or non-retryable error
+            duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+            error_info = str(e)
+            table_name = extract_table_name(error_info) if isinstance(e, (BadRequest, Forbidden)) else None
+
+            logger.error(
+                "BigQuery operation failed after quota retries" if is_quota_exceeded_error(e) else "BigQuery operation failed",
+                extra={
+                    'event_type': 'bigquery_quota_retry_exhausted' if is_quota_exceeded_error(e) else 'bigquery_operation_failed',
+                    'function_name': func.__name__,
+                    'table_name': table_name,
+                    'error_message': error_info[:200],
+                    'duration_ms': duration_ms,
+                    'timestamp': datetime.utcnow().isoformat(),
+                    'recommendation': 'Implement table-level semaphore or reduce concurrent operations' if is_quota_exceeded_error(e) else None
                 }
             )
 
