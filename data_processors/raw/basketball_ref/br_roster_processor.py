@@ -27,8 +27,8 @@ from shared.utils.notification_system import (
     notify_info
 )
 
-# BigQuery retry logic for serialization errors
-from shared.utils.bigquery_retry import SERIALIZATION_RETRY
+# BigQuery retry logic for serialization errors and quota limits
+from shared.utils.bigquery_retry import SERIALIZATION_RETRY, QUOTA_RETRY
 
 logger = logging.getLogger(__name__)
 
@@ -363,9 +363,10 @@ class BasketballRefRosterProcessor(SmartIdempotencyMixin, ProcessorBase):
               )
             """
 
-            # Execute MERGE with retry logic for serialization errors
+            # Execute MERGE with retry logic for serialization errors AND quota limits
             logger.info(f"Executing MERGE for {team_abbrev}")
 
+            @QUOTA_RETRY
             @SERIALIZATION_RETRY
             def execute_merge_with_retry():
                 query_job = self.bq_client.query(merge_query)
