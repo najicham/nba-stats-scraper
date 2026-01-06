@@ -72,7 +72,12 @@ def process_roster_file(processor: BasketballRefRosterProcessor,
         "team_abbrev": team_abbrev,
         "file_path": file_path,
         "bucket": bucket_name,
-        "project_id": os.environ.get("GCP_PROJECT_ID", "nba-props-platform")
+        "project_id": os.environ.get("GCP_PROJECT_ID", "nba-props-platform"),
+        "trigger_source": "backfill",
+        "trigger_message_id": "N/A",
+        "parent_processor": "br_roster_processor_backfill",
+        "workflow": "manual_backfill",
+        "execution_id": "N/A"
     }
     
     logger.info(f"Processing {team_abbrev} for {season_year} season")
