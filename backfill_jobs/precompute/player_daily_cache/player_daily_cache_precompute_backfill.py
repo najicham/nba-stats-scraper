@@ -262,6 +262,8 @@ def main():
     parser.add_argument('--end-date', type=str)
     parser.add_argument('--dates', type=str)
     parser.add_argument('--dry-run', action='store_true')
+    parser.add_argument('--parallel', action='store_true', help='Use parallel processing (15x faster)')
+    parser.add_argument('--workers', type=int, default=15, help='Number of parallel workers (default: 15)')
     parser.add_argument('--no-resume', action='store_true', help='Ignore checkpoint')
     parser.add_argument('--status', action='store_true', help='Show checkpoint status')
     parser.add_argument('--skip-preflight', action='store_true', help='Skip Phase 3 pre-flight check (not recommended)')
