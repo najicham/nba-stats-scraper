@@ -1,0 +1,73 @@
+name: Archive Old Handoffs
+
+on:
+  schedule:
+    # Run every Monday at 2 AM UTC (6 PM PST Sunday)
+    - cron: '0 2 * * 1'
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  archive-handoffs:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name "GitHub Actions Bot"
+          git config user.email "actions@github.com"
+
+      - name: Archive handoffs older than 7 days
+        run: |
+          cd docs/09-handoff
+
+          # Get current year-month for archive directory
+          ARCHIVE_DIR="archive/$(date +%Y-%m)"
+
+          # Create archive directory if it doesn't exist
+          mkdir -p "$ARCHIVE_DIR"
+
+          # Find and move handoffs older than 7 days
+          # Only move dated files (202*.md), not utility files
+          MOVED_COUNT=0
+          for file in $(find . -maxdepth 1 -name "202*.md" -mtime +7 2>/dev/null); do
+            if [ -f "$file" ]; then
+              mv "$file" "$ARCHIVE_DIR/"
+              MOVED_COUNT=$((MOVED_COUNT + 1))
+              echo "Archived: $file → $ARCHIVE_DIR/"
+            fi
+          done
+
+          echo "Total files archived: $MOVED_COUNT"
+          echo "MOVED_COUNT=$MOVED_COUNT" >> $GITHUB_ENV
+
+      - name: Commit and push changes
+        run: |
+          git add docs/09-handoff/
+
+          # Only commit if there are changes
+          if git diff --staged --quiet; then
+            echo "No handoffs to archive this week"
+          else
+            git commit -m "chore: archive handoffs older than 7 days [skip ci]
+
+Automated weekly archival of handoff files.
+Files moved: ${{ env.MOVED_COUNT }}
+Archive location: docs/09-handoff/archive/$(date +%Y-%m)/
+
+This keeps the handoff directory clean and focused on current work."
+            git push
+            echo "✅ Changes committed and pushed"
+          fi
+
+      - name: Create summary comment
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          echo "📦 Handoff Archival Summary"
+          echo "Files archived: ${{ env.MOVED_COUNT }}"
+          echo "Archive location: docs/09-handoff/archive/$(date +%Y-%m)/"
+          echo "Remaining active handoffs: $(ls -1 docs/09-handoff/202*.md 2>/dev/null | wc -l)"
