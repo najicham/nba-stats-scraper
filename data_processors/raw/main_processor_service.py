@@ -56,6 +56,7 @@ from data_processors.raw.nbacom.nbac_play_by_play_processor import NbacPlayByPla
 
 from data_processors.raw.espn.espn_boxscore_processor import EspnBoxscoreProcessor
 from data_processors.raw.espn.espn_team_roster_processor import EspnTeamRosterProcessor
+from data_processors.raw.espn.espn_roster_batch_processor import EspnRosterBatchProcessor
 from data_processors.raw.espn.espn_scoreboard_processor import EspnScoreboardProcessor
 from data_processors.raw.bettingpros.bettingpros_player_props_processor import BettingPropsProcessor
 from data_processors.raw.bigdataball.bigdataball_pbp_processor import BigDataBallPbpProcessor
@@ -643,8 +644,23 @@ def process_pubsub():
             logger.info(f"📦 Batch processing trigger detected: {metadata}")
 
             try:
-                # Use batch processor
-                processor = BasketballRefRosterBatchProcessor()
+                # Determine which batch processor to use
+                scraper_type = metadata.get('scraper_type', '')
+                scraper_name = normalized_message.get('_scraper_name', '')
+
+                # Route to appropriate batch processor
+                if scraper_type == 'espn_roster' or 'espn_roster' in scraper_name:
+                    # ESPN Roster Batch Processor
+                    processor = EspnRosterBatchProcessor()
+                    processor_name = 'espn_roster_batch'
+                    context_key = 'date'
+                    context_value = metadata.get('date', 'unknown')
+                else:
+                    # Default: Basketball Reference Roster Batch Processor
+                    processor = BasketballRefRosterBatchProcessor()
+                    processor_name = 'br_roster_batch'
+                    context_key = 'season'
+                    context_value = metadata.get('season', 'unknown')
 
                 opts = {
                     'bucket': normalized_message.get('bucket', 'nba-scraped-data'),
@@ -654,15 +670,15 @@ def process_pubsub():
                     'workflow': normalized_message.get('_workflow', 'backfill')
                 }
 
-                logger.info(f"🚀 Starting batch processor for season {metadata.get('season')}")
+                logger.info(f"🚀 Starting {processor_name} for {context_key}={context_value}")
                 success = processor.run(opts)
 
                 if success:
-                    logger.info(f"✅ Batch processing complete for season {metadata.get('season')}")
-                    return jsonify({"status": "success", "processor": "br_roster_batch"}), 200
+                    logger.info(f"✅ Batch processing complete: {processor_name} {context_key}={context_value}")
+                    return jsonify({"status": "success", "processor": processor_name}), 200
                 else:
-                    logger.error(f"❌ Batch processing failed for season {metadata.get('season')}")
-                    return jsonify({"status": "error", "processor": "br_roster_batch"}), 500
+                    logger.error(f"❌ Batch processing failed: {processor_name} {context_key}={context_value}")
+                    return jsonify({"status": "error", "processor": processor_name}), 500
 
             except Exception as e:
                 logger.error(f"Batch processing error: {e}", exc_info=True)
