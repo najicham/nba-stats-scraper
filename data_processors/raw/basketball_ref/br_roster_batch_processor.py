@@ -102,8 +102,8 @@ class BasketballRefRosterBatchProcessor(ProcessorBase):
         if team_count < 30:
             logger.warning(f"⚠️ Expected 30 teams, found {team_count}")
 
-        # Set self.data for ProcessorBase validation
-        self.data = self.team_data
+        # Set self.raw_data for ProcessorBase validation
+        self.raw_data = self.team_data
 
         self.stats['teams_loaded'] = team_count
         self.stats['players_loaded'] = len(self.team_data)
