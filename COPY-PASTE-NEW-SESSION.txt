@@ -1,0 +1,37 @@
+MLB Pitcher Strikeouts Pipeline - Check Back Session (Jan 7, ~4 PM PST)
+
+Read docs/09-handoff/2026-01-07-MLB-PIPELINE-FIX-AND-COLLECTION.md for full context.
+
+CURRENT STATUS (as of Jan 7, 1:15 PM PST):
+- Fixed critical data pipeline gap (pitcher stats weren't being stored)
+- Auto-collection running in background (PID in logs/mlb_auto_collection.log)
+- Expected completion: ~4:00 PM PST
+
+QUICK STATUS CHECK:
+```bash
+# 1. Check auto-collection progress
+tail -20 logs/mlb_auto_collection.log
+
+# 2. Check if collections running
+pgrep -f "collect_season"
+
+# 3. Check pitcher stats in BigQuery
+bq query --nouse_legacy_sql 'SELECT COUNT(*) FROM mlb_raw.mlb_pitcher_stats WHERE game_date >= "2024-01-01"'
+```
+
+IF COLLECTIONS COMPLETE (expect ~4,900+ pitcher starts):
+```bash
+# 1. Run analytics pipeline
+PYTHONPATH=. python -m data_processors.analytics.mlb.pitcher_game_summary_processor \
+  --start-date 2024-03-28 --end-date 2025-09-28
+
+# 2. Train ML model
+PYTHONPATH=. python scripts/mlb/train_pitcher_strikeouts.py
+```
+
+TARGET: Beat baseline MAE 1.92
+
+KEY FILES MODIFIED THIS SESSION:
+- scripts/mlb/collect_season.py (added pitcher stats storage)
+- data_processors/analytics/mlb/pitcher_game_summary_processor.py (new source table)
+- scripts/mlb/train_pitcher_strikeouts.py (NEW - ML training script)

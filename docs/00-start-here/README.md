@@ -1,6 +1,6 @@
 # NBA Props Platform Documentation
 
-**Last Updated:** 2025-12-27
+**Last Updated:** 2026-01-06
 **Status:** Production (All 6 Phases Operational)
 
 ---
@@ -13,7 +13,10 @@
 | **Understand the system** | [../01-architecture/quick-reference.md](../01-architecture/quick-reference.md) |
 | **Run daily health check** | [../02-operations/](../02-operations/README.md) |
 | **Fix a production issue** | [../02-operations/troubleshooting-matrix.md](../02-operations/troubleshooting-matrix.md) |
-| **Run a backfill** | [../02-operations/backfill-guide.md](../02-operations/backfill-guide.md) |
+| **Run a backfill** | [../02-operations/backfill/master-guide.md](../02-operations/backfill/master-guide.md) |
+| **Monitor system health** | [../07-monitoring/unified-monitoring-guide.md](../07-monitoring/unified-monitoring-guide.md) |
+| **Train ML model** | [../05-development/ml/training-procedures.md](../05-development/ml/training-procedures.md) |
+| **Documentation guide** | [DOCUMENTATION-GUIDE.md](DOCUMENTATION-GUIDE.md) |
 | **Learn about a phase** | [../03-phases/](../03-phases/README.md) |
 | **Quick processor lookup** | [../06-reference/processor-cards/](../06-reference/processor-cards/README.md) |
 
@@ -40,6 +43,12 @@ docs/
 ├── 08-projects/       # Active work & completed projects
 ├── 09-handoff/        # Session handoffs
 └── archive/           # Historical documentation
+
+## Specialized Collections (non-numbered)
+├── api/                # External-facing API documentation
+├── lessons-learned/    # Cross-project retrospectives
+├── playbooks/          # End-to-end complex workflows
+└── validation-framework/  # Validation system documentation
 ```
 
 ---
@@ -84,5 +93,32 @@ docs/
 |------|---------|
 | [README.md](README.md) | This navigation guide |
 | [SYSTEM_STATUS.md](SYSTEM_STATUS.md) | Current deployment status |
-| [NAVIGATION_GUIDE.md](NAVIGATION_GUIDE.md) | Detailed navigation help |
+| [DOCUMENTATION-GUIDE.md](DOCUMENTATION-GUIDE.md) | How to organize docs (for new chats) |
+
+## Specialized Documentation
+
+Beyond the numbered directories, these specialized collections serve specific needs:
+
+| Directory | Purpose | When to Use |
+|-----------|---------|-------------|
+| [api/](../api/) | External API docs | Frontend developers integrating with JSON API |
+| [lessons-learned/](../lessons-learned/) | Organizational learning | Understanding recurring issues & solutions |
+| [playbooks/](../playbooks/) | Complex workflows | Step-by-step guides for major tasks |
+| [validation-framework/](../validation-framework/) | Validation system | Understanding data quality framework |
+
+---
+
+## Quick Operations
+
+### Daily Tasks
+- **Morning check**: [Unified Monitoring Guide](../07-monitoring/unified-monitoring-guide.md)
+- **Backfill data**: [Backfill Master Guide](../02-operations/backfill/master-guide.md)
+- **Train ML model**: [ML Training Procedures](../05-development/ml/training-procedures.md)
+
+### When Things Break
+- **Pipeline failure**: [Troubleshooting Matrix](../02-operations/troubleshooting-matrix.md) (if exists)
+- **Data quality issue**: [Validation Framework](../validation-framework/README.md)
+- **Recent incidents**: [Postmortems](../02-operations/postmortems/README.md)
+
+---
 
