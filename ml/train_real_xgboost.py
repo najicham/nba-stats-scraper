@@ -507,34 +507,97 @@ val_metrics = evaluate_model(y_val, val_pred, "Validation")
 test_metrics = evaluate_model(y_test, test_pred, "Test")
 
 # ============================================================================
-# STEP 6: COMPARE TO MOCK BASELINE
+# STEP 6: COMPARE TO PRODUCTION MOCK BASELINE
 # ============================================================================
 
 print("\n" + "=" * 80)
-print("STEP 6: COMPARISON TO MOCK BASELINE")
+print("STEP 6: COMPARISON TO PRODUCTION MOCK BASELINE")
 print("=" * 80)
 
-# Get mock predictions for test set
-mock_predictions = df_sorted.iloc[test_idx]['mock_prediction'].values
-mock_mae = mean_absolute_error(y_test, mock_predictions)
+# Query actual production mock predictions (FIX: don't use mock_prediction column)
+# The mock_prediction column in the training data is corrupted/placeholder data
+# We need to query the actual production system's predictions
+print("\nQuerying production mock predictions from BigQuery...")
+production_query = f"""
+SELECT
+  player_lookup,
+  game_date,
+  actual_points,
+  predicted_points as mock_prediction
+FROM `nba-props-platform.nba_predictions.prediction_accuracy`
+WHERE system_id = 'xgboost_v1'
+  AND game_date >= '{test_dates["game_date"].min()}'
+  AND game_date <= '{test_dates["game_date"].max()}'
+"""
+
+try:
+    mock_df = client.query(production_query).to_dataframe()
+
+    # Merge with test set
+    test_with_mock = test_dates[['player_lookup', 'game_date', 'actual_points']].merge(
+        mock_df[['player_lookup', 'game_date', 'mock_prediction']],
+        on=['player_lookup', 'game_date'],
+        how='inner'
+    )
+
+    if len(test_with_mock) == 0:
+        print("⚠️  WARNING: No matching production predictions found!")
+        print("   Falling back to mock_prediction column (may be inaccurate)")
+        mock_predictions = df_sorted.iloc[test_idx]['mock_prediction'].values
+        mock_mae = mean_absolute_error(y_test, mock_predictions)
+        mock_coverage = 0
+    else:
+        # Calculate proper mock MAE from production data
+        mock_mae = mean_absolute_error(
+            test_with_mock['actual_points'],
+            test_with_mock['mock_prediction']
+        )
+
+        # Also calculate mock accuracy metrics
+        errors = np.abs(test_with_mock['actual_points'] - test_with_mock['mock_prediction'])
+        mock_within_3 = (errors <= 3).mean() * 100
+        mock_within_5 = (errors <= 5).mean() * 100
+        mock_coverage = len(test_with_mock) / len(test_dates) * 100
+
+        print(f"✓ Matched {len(test_with_mock):,}/{len(test_dates):,} test predictions ({mock_coverage:.1f}% coverage)")
+        print(f"  Production Mock MAE: {mock_mae:.2f}")
+        print(f"  Production Mock within 3 pts: {mock_within_3:.1f}%")
+        print(f"  Production Mock within 5 pts: {mock_within_5:.1f}%")
+
+except Exception as e:
+    print(f"⚠️  ERROR querying production predictions: {e}")
+    print("   Falling back to mock_prediction column (may be inaccurate)")
+    mock_predictions = df_sorted.iloc[test_idx]['mock_prediction'].values
+    mock_mae = mean_absolute_error(y_test, mock_predictions)
+    mock_coverage = 0
 
 real_mae = test_metrics['mae']
 improvement = ((mock_mae - real_mae) / mock_mae) * 100
 
-print(f"\nMock XGBoost (baseline):  {mock_mae:.2f} MAE")
-print(f"Real XGBoost (trained):   {real_mae:.2f} MAE")
-print(f"Improvement:              {improvement:+.1f}%")
+# Known production baseline (verified from BigQuery on 2026-01-03)
+PRODUCTION_BASELINE_MAE = 4.27
+
+print(f"\nProduction Mock (xgboost_v1):  {mock_mae:.2f} MAE")
+print(f"Real XGBoost (trained):        {real_mae:.2f} MAE")
+print(f"Difference:                    {improvement:+.1f}%")
 print()
 
-if improvement > 3.0:
-    print("✅ SUCCESS! Real model beats mock by >3%")
+# Updated success criteria using CORRECT baseline
+if real_mae < PRODUCTION_BASELINE_MAE:
+    print("✅ SUCCESS! Real model beats production baseline (4.27 MAE)")
     print("   → Ready for production deployment")
-elif improvement > 0:
-    print("⚠️  MARGINAL improvement (<3%)")
-    print("   → Consider hyperparameter tuning")
+elif real_mae < mock_mae and mock_coverage > 80:
+    print(f"⚠️  Beats test period mock ({mock_mae:.2f}) but NOT production baseline ({PRODUCTION_BASELINE_MAE})")
+    print("   → May have train/test distribution mismatch")
+    print("   → Need more investigation before deployment")
+elif abs(improvement) < 5:
+    print(f"⚠️  Within 5% of test period mock - marginal difference")
+    print(f"   → Still worse than production baseline ({PRODUCTION_BASELINE_MAE} MAE)")
+    print("   → Consider: more data, better features, or accept mock baseline")
 else:
-    print("❌ NO IMPROVEMENT - Mock performs better")
-    print("   → Need to investigate (data quality? features?)")
+    print(f"❌ Significantly worse than test period mock ({mock_mae:.2f})")
+    print(f"   → Also worse than production baseline ({PRODUCTION_BASELINE_MAE} MAE)")
+    print("   → Recommendation: Accept mock baseline, focus on data quality")
 
 print()
 

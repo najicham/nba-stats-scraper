@@ -86,7 +86,7 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_analytics.player_game_summary
   -- ADVANCED EFFICIENCY (5 fields)
   -- Calculated from basic stats
   -- ============================================================================
-  usage_rate NUMERIC(5,2),                          -- Percentage of team plays used (future)
+  usage_rate NUMERIC(6,2),                          -- Percentage of team plays used (widened to handle outliers)
   ts_pct NUMERIC(5,3),                              -- True Shooting percentage
   efg_pct NUMERIC(5,3),                             -- Effective Field Goal percentage
   starter_flag BOOLEAN NOT NULL,                    -- Whether player started (minutes > 20)
@@ -157,7 +157,14 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_analytics.player_game_summary
   source_bp_rows_found INT64,                       -- How many prop records found for this player
   source_bp_completeness_pct NUMERIC(5,2),          -- % of expected bookmakers found
   source_bp_hash STRING,                            -- Smart Idempotency: data_hash from bettingpros_player_points_props
-  
+
+  -- SOURCE 7: Team Offense Analytics (REQUIRED - for usage_rate calculation)
+  -- nba_analytics.team_offense_game_summary
+  source_team_last_updated TIMESTAMP,               -- When team offense analytics was last processed
+  source_team_rows_found INT64,                     -- How many team records found for this game
+  source_team_completeness_pct NUMERIC(5,2),        -- % completeness of team data
+  source_team_hash STRING,                          -- Smart Idempotency: data_hash from team_offense_game_summary
+
   -- ============================================================================
   -- DATA QUALITY FLAGS (4 fields)
   -- ============================================================================
@@ -194,7 +201,7 @@ OPTIONS(
 -- Advanced efficiency:        5 fields
 -- Prop betting:               7 fields
 -- Player availability:        2 fields
--- Source tracking:           24 fields (6 sources × 4 fields - includes smart idempotency hashes)
+-- Source tracking:           28 fields (7 sources × 4 fields - includes smart idempotency hashes)
 -- Data quality:               4 fields
 -- Smart reprocessing:         1 field  (data_hash for Phase 4 optimization)
 -- Processing metadata:        2 fields
