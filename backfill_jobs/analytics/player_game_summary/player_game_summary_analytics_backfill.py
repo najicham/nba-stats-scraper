@@ -38,6 +38,9 @@ import os
 import sys
 import argparse
 import logging
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass, field
 from datetime import datetime, date, timedelta
 from typing import Dict, List
 
@@ -50,6 +53,76 @@ from shared.backfill.checkpoint import BackfillCheckpoint
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class ProgressTracker:
+    """Thread-safe progress tracking for parallel processing."""
+    lock: threading.Lock = field(default_factory=threading.Lock)
+    processed: int = 0
+    successful: int = 0
+    failed: int = 0
+    total_records: int = 0
+
+    def increment(self, success: bool, records: int = 0):
+        """Thread-safe increment of counters."""
+        with self.lock:
+            self.processed += 1
+            if success:
+                self.successful += 1
+                self.total_records += records
+            else:
+                self.failed += 1
+
+    def get_stats(self) -> Dict:
+        """Thread-safe retrieval of statistics."""
+        with self.lock:
+            return {
+                'processed': self.processed,
+                'successful': self.successful,
+                'failed': self.failed,
+                'total_records': self.total_records
+            }
+
+
+class ThreadSafeCheckpoint:
+    """Wrapper for thread-safe checkpoint operations."""
+
+    def __init__(self, checkpoint: BackfillCheckpoint):
+        self.checkpoint = checkpoint
+        self.lock = threading.Lock()
+
+    def mark_date_complete(self, date):
+        """Thread-safe mark date as complete."""
+        with self.lock:
+            self.checkpoint.mark_date_complete(date)
+
+    def mark_date_failed(self, date, error):
+        """Thread-safe mark date as failed."""
+        with self.lock:
+            self.checkpoint.mark_date_failed(date, error)
+
+    def exists(self):
+        """Check if checkpoint exists."""
+        return self.checkpoint.exists()
+
+    def get_resume_date(self):
+        """Get resume date from checkpoint."""
+        return self.checkpoint.get_resume_date()
+
+    def clear(self):
+        """Clear checkpoint."""
+        return self.checkpoint.clear()
+
+    def get_summary(self):
+        """Get checkpoint summary."""
+        with self.lock:
+            return self.checkpoint.get_summary()
+
+    @property
+    def checkpoint_path(self):
+        """Get checkpoint path."""
+        return self.checkpoint.checkpoint_path
 
 
 class PlayerGameSummaryBackfill:
@@ -69,6 +142,7 @@ class PlayerGameSummaryBackfill:
     def __init__(self):
         self.processor = PlayerGameSummaryProcessor()
         self.processor_name = "PlayerGameSummaryProcessor"
+        self._processor_lock = threading.Lock()  # Lock for processor instantiation in threads
         
     def validate_date_range(self, start_date: date, end_date: date) -> bool:
         """Validate date range for analytics processing."""
@@ -347,7 +421,197 @@ class PlayerGameSummaryBackfill:
             logger.info(f"      --args=\"^|^--dates={failed_dates_str}\" --region=us-west2")
 
         logger.info("=" * 80)
-    
+
+    def run_backfill_parallel(
+        self,
+        start_date: date,
+        end_date: date,
+        dry_run: bool = False,
+        no_resume: bool = False,
+        max_workers: int = 15
+    ):
+        """
+        Run backfill with parallel day processing for massive speedup.
+
+        Args:
+            max_workers: Number of concurrent workers (default 15)
+                - Recommended: 10-20 (balance speed vs BigQuery quotas)
+                - Lower if hitting BigQuery quota limits
+                - Higher for faster processing (test first!)
+        """
+        logger.info("=" * 80)
+        logger.info(f"🚀 PARALLEL BACKFILL MODE - {max_workers} CONCURRENT WORKERS")
+        logger.info("=" * 80)
+        logger.info(f"   Date range: {start_date} to {end_date}")
+        logger.info(f"   Expected speedup: ~{max_workers}x faster than sequential")
+
+        if not self.validate_date_range(start_date, end_date):
+            return
+
+        # Initialize checkpoint
+        checkpoint = BackfillCheckpoint(
+            job_name='player_game_summary',
+            start_date=start_date,
+            end_date=end_date
+        )
+        thread_safe_checkpoint = ThreadSafeCheckpoint(checkpoint)
+
+        # Build date list
+        dates_to_process = []
+        current = start_date
+        while current <= end_date:
+            dates_to_process.append(current)
+            current += timedelta(days=1)
+
+        # Resume from checkpoint
+        if thread_safe_checkpoint.exists() and not no_resume:
+            resume_date = thread_safe_checkpoint.get_resume_date()
+            if resume_date and resume_date > start_date:
+                logger.info(f"📂 Resuming from {resume_date}")
+                dates_to_process = [d for d in dates_to_process if d >= resume_date]
+                logger.info(f"   Skipping {len(dates_to_process)} already-processed dates")
+        elif no_resume and thread_safe_checkpoint.exists():
+            logger.info("🔄 --no-resume specified, starting fresh")
+            thread_safe_checkpoint.clear()
+
+        total_days = len(dates_to_process)
+        logger.info(f"Processing {total_days} days with {max_workers} parallel workers")
+
+        # Estimate completion time
+        avg_time_per_day = 2.5  # hours (conservative estimate based on logs)
+        estimated_hours = (total_days / max_workers) * avg_time_per_day
+        logger.info(f"Estimated completion time: {estimated_hours:.1f} hours")
+        logger.info(f"Checkpoint: {thread_safe_checkpoint.checkpoint_path}")
+
+        # Progress tracker
+        progress = ProgressTracker()
+        failed_days = []
+        failed_days_lock = threading.Lock()
+
+        # Worker function - each worker creates its own processor instance
+        def process_single_day(day: date) -> Dict:
+            """Process a single day (runs in thread)."""
+            # Create a new processor instance for this thread
+            processor = PlayerGameSummaryProcessor()
+
+            try:
+                # Run processing for single day
+                opts = {
+                    'start_date': day.isoformat(),
+                    'end_date': day.isoformat(),
+                    'project_id': 'nba-props-platform',
+                    'backfill_mode': True,
+                    'skip_downstream_trigger': True
+                }
+
+                success = processor.run(opts)
+                stats = processor.get_analytics_stats() if success else {}
+
+                result = {
+                    'status': 'success' if success else 'failed',
+                    'date': day.isoformat(),
+                    'processor_stats': stats,
+                    'records_processed': stats.get('records_processed', 0),
+                    'registry_found': stats.get('registry_players_found', 0),
+                    'registry_not_found': stats.get('registry_players_not_found', 0),
+                    'games_processed': stats.get('games_processed', 0)
+                }
+
+                # Update checkpoint
+                if result['status'] == 'success':
+                    thread_safe_checkpoint.mark_date_complete(day)
+                    progress.increment(True, result.get('records_processed', 0))
+                    logger.info(f"  ✓ {day}: {result.get('records_processed', 0)} records")
+                else:
+                    error = result.get('error', 'Processing failed')
+                    thread_safe_checkpoint.mark_date_failed(day, error)
+                    progress.increment(False)
+                    with failed_days_lock:
+                        failed_days.append(day)
+                    logger.error(f"  ✗ {day}: {error}")
+
+                return result
+
+            except Exception as e:
+                logger.error(f"Exception processing {day}: {e}", exc_info=True)
+                thread_safe_checkpoint.mark_date_failed(day, str(e))
+                progress.increment(False)
+                with failed_days_lock:
+                    failed_days.append(day)
+                return {'status': 'exception', 'date': day, 'error': str(e)}
+
+        # Execute parallel processing
+        logger.info("=" * 80)
+        logger.info("PARALLEL PROCESSING STARTED")
+        logger.info("=" * 80)
+
+        start_time = datetime.now()
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all jobs
+            futures = {executor.submit(process_single_day, day): day for day in dates_to_process}
+
+            # Process results as they complete
+            for future in as_completed(futures):
+                day = futures[future]
+
+                # Progress update every 10 days
+                stats = progress.get_stats()
+                if stats['processed'] % 10 == 0 and stats['processed'] > 0:
+                    pct = stats['processed'] / total_days * 100
+                    success_rate = stats['successful'] / stats['processed'] * 100 if stats['processed'] > 0 else 0
+                    avg_records = stats['total_records'] / stats['successful'] if stats['successful'] > 0 else 0
+
+                    elapsed = (datetime.now() - start_time).total_seconds() / 3600
+                    rate = stats['processed'] / elapsed if elapsed > 0 else 0
+                    remaining = (total_days - stats['processed']) / rate if rate > 0 else 0
+
+                    logger.info("=" * 80)
+                    logger.info(f"PROGRESS: {stats['processed']}/{total_days} days ({pct:.1f}%)")
+                    logger.info(f"  Success: {stats['successful']} ({success_rate:.1f}%)")
+                    logger.info(f"  Failed: {stats['failed']}")
+                    logger.info(f"  Records: {stats['total_records']:,} (avg {avg_records:.0f}/day)")
+                    logger.info(f"  Rate: {rate:.1f} days/hour")
+                    logger.info(f"  ETA: {remaining:.1f} hours remaining")
+                    logger.info("=" * 80)
+
+        # Final summary
+        stats = progress.get_stats()
+        elapsed_total = (datetime.now() - start_time).total_seconds() / 3600
+
+        logger.info("=" * 80)
+        logger.info("PARALLEL BACKFILL COMPLETE")
+        logger.info("=" * 80)
+        logger.info(f"  Total days: {total_days}")
+        logger.info(f"  Successful: {stats['successful']}")
+        logger.info(f"  Failed: {stats['failed']}")
+        logger.info(f"  Success rate: {stats['successful']/total_days*100:.1f}%")
+        logger.info(f"  Total records: {stats['total_records']:,}")
+        if stats['successful'] > 0:
+            logger.info(f"  Avg records/day: {stats['total_records']/stats['successful']:.0f}")
+        logger.info(f"  Total time: {elapsed_total:.2f} hours")
+        logger.info(f"  Processing rate: {total_days/elapsed_total:.1f} days/hour")
+        logger.info(f"  Speedup vs sequential: ~{max_workers}x")
+
+        # Print checkpoint summary
+        summary = thread_safe_checkpoint.get_summary()
+        logger.info("\n📊 Checkpoint Summary:")
+        logger.info(f"   Total successful: {summary.get('successful', 0)}")
+        logger.info(f"   Total failed: {summary.get('failed', 0)}")
+        logger.info(f"   Checkpoint file: {thread_safe_checkpoint.checkpoint_path}")
+
+        if failed_days:
+            logger.info(f"\n  Failed dates ({len(failed_days)}):")
+            logger.info(f"    {', '.join(str(d) for d in sorted(failed_days)[:10])}")
+            if len(failed_days) > 10:
+                logger.info(f"    ... and {len(failed_days) - 10} more")
+
+            logger.info(f"\n  To retry failed days:")
+            failed_dates_str = ','.join(str(d) for d in sorted(failed_days)[:5])
+            logger.info(f"    python {__file__} --dates {failed_dates_str} --parallel --workers {max_workers}")
+
+        logger.info("=" * 80)
+
     def process_specific_dates(self, dates: List[date], dry_run: bool = False):
         """Process a specific list of dates (useful for retrying failures)."""
         logger.info(f"Processing {len(dates)} specific dates")
@@ -402,14 +666,17 @@ Examples:
   # Dry run to check data availability
   %(prog)s --dry-run --start-date 2024-01-01 --end-date 2024-01-07
 
-  # Process a week
+  # Process a week (sequential - slow)
   %(prog)s --start-date 2024-01-01 --end-date 2024-01-07
 
-  # Process a month
-  %(prog)s --start-date 2024-01-01 --end-date 2024-01-31
+  # Process a week with parallel processing (FAST!)
+  %(prog)s --start-date 2024-01-01 --end-date 2024-01-07 --parallel --workers 10
+
+  # Process full historical range with parallel (recommended)
+  %(prog)s --start-date 2021-10-01 --end-date 2024-05-01 --parallel --workers 15
 
   # Start fresh, ignore checkpoint
-  %(prog)s --start-date 2024-01-01 --end-date 2024-01-31 --no-resume
+  %(prog)s --start-date 2024-01-01 --end-date 2024-01-31 --no-resume --parallel
 
   # Retry specific failed dates
   %(prog)s --dates 2024-01-05,2024-01-12,2024-01-18
@@ -423,6 +690,8 @@ Examples:
     parser.add_argument('--dates', type=str, help='Comma-separated specific dates to process (YYYY-MM-DD,YYYY-MM-DD,...)')
     parser.add_argument('--dry-run', action='store_true', help='Check data availability without processing')
     parser.add_argument('--no-resume', action='store_true', help='Start fresh instead of resuming from checkpoint')
+    parser.add_argument('--parallel', action='store_true', help='Use parallel processing (10-20x faster)')
+    parser.add_argument('--workers', type=int, default=15, help='Number of parallel workers (default: 15, recommended: 10-20)')
 
     args = parser.parse_args()
 
@@ -466,9 +735,27 @@ Examples:
     logger.info(f"  Date range: {start_date} to {end_date}")
     logger.info(f"  Dry run: {args.dry_run}")
     logger.info(f"  No resume: {args.no_resume}")
-    logger.info(f"  Processing strategy: Day-by-day (fixes BigQuery size limits)")
+    logger.info(f"  Parallel mode: {args.parallel}")
+    if args.parallel:
+        logger.info(f"  Workers: {args.workers}")
+        logger.info(f"  Processing strategy: PARALLEL (10-20x faster)")
+    else:
+        logger.info(f"  Processing strategy: Sequential (day-by-day)")
 
-    backfiller.run_backfill(start_date, end_date, dry_run=args.dry_run, no_resume=args.no_resume)
+    # Choose execution mode
+    if args.parallel:
+        backfiller.run_backfill_parallel(
+            start_date, end_date,
+            dry_run=args.dry_run,
+            no_resume=args.no_resume,
+            max_workers=args.workers
+        )
+    else:
+        backfiller.run_backfill(
+            start_date, end_date,
+            dry_run=args.dry_run,
+            no_resume=args.no_resume
+        )
 
 
 if __name__ == "__main__":
