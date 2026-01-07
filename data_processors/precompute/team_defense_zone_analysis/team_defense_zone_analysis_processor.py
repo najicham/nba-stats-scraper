@@ -114,7 +114,10 @@ class TeamDefenseZoneAnalysisProcessor(
         'games_in_sample', 'strongest_zone', 'weakest_zone',
         'data_quality_tier', 'calculation_notes'
     ]
-    
+
+    # Primary key fields for duplicate detection and MERGE operations
+    PRIMARY_KEY_FIELDS = ['analysis_date', 'team_abbr']
+
     def __init__(self):
         super().__init__()
 
