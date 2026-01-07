@@ -129,6 +129,9 @@ class MLFeatureStoreProcessor(
         'data_source', 'early_season_flag', 'insufficient_data_reason'
     ]
 
+    # Primary key fields for duplicate detection and MERGE operations
+    PRIMARY_KEY_FIELDS = ['game_date', 'player_lookup']
+
     def __init__(self):
         """Initialize processor and helper classes."""
         super().__init__()
@@ -999,6 +1002,10 @@ class MLFeatureStoreProcessor(
         record['source_composite_hash'] = self.source_composite_hash
         record['source_shot_zones_hash'] = self.source_shot_zones_hash
         record['source_team_defense_hash'] = self.source_team_defense_hash
+
+        # Add early season fields (required for hash calculation)
+        record['early_season_flag'] = False  # Normal processing, not early season
+        record['insufficient_data_reason'] = None
 
         # Compute and add data hash (Smart Idempotency - Pattern #1)
         record['data_hash'] = self.compute_data_hash(record)
