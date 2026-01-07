@@ -103,54 +103,94 @@ class BasketballRefSeasonRosterBackfill:
     
     def _process_season(self, season_year):
         """Process all teams for a given season."""
+        teams_scraped = []
+
         for team_abbr in self.teams:
             try:
                 if self._should_skip_job(team_abbr, season_year):
                     self.skipped_jobs.append((team_abbr, season_year))
                     logger.info("Skipping %s %d (already exists)", team_abbr, season_year)
                     continue
-                
+
                 self._scrape_team_season(team_abbr, season_year)
+                teams_scraped.append(team_abbr)
                 self.completed_jobs += 1
-                
+
                 # Progress update every 10 jobs
                 if self.completed_jobs % 10 == 0:
                     progress = (self.completed_jobs / self.total_jobs) * 100
                     remaining_jobs = self.total_jobs - self.completed_jobs
                     estimated_remaining = remaining_jobs * 3.5 / 60  # minutes
-                    logger.info("Progress: %.1f%% (%d/%d completed, ~%.1f min remaining)", 
+                    logger.info("Progress: %.1f%% (%d/%d completed, ~%.1f min remaining)",
                               progress, self.completed_jobs, self.total_jobs, estimated_remaining)
-                
+
             except Exception as e:
                 self.failed_jobs.append((team_abbr, season_year, str(e)))
                 logger.error("Failed to scrape %s %d: %s", team_abbr, season_year, e)
-                
+
                 # Continue with other teams rather than stopping
                 continue
+
+        # Publish batch completion message after all teams processed
+        if teams_scraped:
+            self._publish_batch_completion(season_year, teams_scraped)
     
     def _scrape_team_season(self, team_abbr, season_year):
         """Scrape roster data for a specific team and season."""
         logger.debug("Scraping %s %d...", team_abbr, season_year)
-        
+
         # Prepare scraper options
         opts = {
             "teamAbbr": team_abbr,
             "year": season_year,
             "export_groups": [self.group],  # FIXED: Use export_groups not group
+            "skip_pubsub": True,  # Don't publish per-team completion (batch will publish once)
         }
-        
+
         # Add debug if enabled
         if self.debug:
             opts["debug"] = True
-        
+
         # Create and run scraper
         scraper = BasketballRefSeasonRoster()
         success = scraper.run(opts)
-        
+
         if not success:
             raise Exception(f"Scraper returned False for {team_abbr} {season_year}")
-        
+
         logger.debug("Successfully scraped %s %d", team_abbr, season_year)
+
+    def _publish_batch_completion(self, season_year, teams_scraped):
+        """Publish single Pub/Sub message to trigger batch processing for entire season."""
+        try:
+            from scrapers.utils.pubsub_utils import ScraperPubSubPublisher
+
+            season_str = f"{season_year-1}-{str(season_year)[2:]}"  # e.g., 2024 -> "2023-24"
+
+            publisher = ScraperPubSubPublisher()
+            message_id = publisher.publish_completion_event(
+                scraper_name='br_season_roster_batch',
+                execution_id=f'batch_{season_str}_{datetime.now().strftime("%Y%m%d_%H%M%S")}',
+                status='success',
+                gcs_path=f'gs://nba-scraped-data/basketball-ref/season-rosters/{season_str}/',
+                record_count=len(teams_scraped),
+                duration_seconds=0,
+                workflow='backfill',
+                metadata={
+                    'trigger_type': 'batch_processing',
+                    'season': season_str,
+                    'season_year': season_year,
+                    'teams_scraped': len(teams_scraped),
+                    'teams': teams_scraped,
+                }
+            )
+
+            logger.info("✅ Published batch completion: season=%s, teams=%d, message_id=%s",
+                       season_str, len(teams_scraped), message_id)
+
+        except Exception as e:
+            logger.error("Failed to publish batch completion message: %s", e)
+            # Non-blocking - don't fail the entire backfill if Pub/Sub fails
     
     def _should_skip_job(self, team_abbr, season_year):
         """Check if we should skip this team/season (for resume functionality)."""
