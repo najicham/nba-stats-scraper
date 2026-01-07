@@ -387,6 +387,8 @@ IMPORTANT: This processor must run FIRST in Phase 4 (no Phase 4 dependencies).
     parser.add_argument('--end-date', type=str, help='End date (YYYY-MM-DD)')
     parser.add_argument('--dates', type=str, help='Comma-separated specific dates to process (YYYY-MM-DD,YYYY-MM-DD,...)')
     parser.add_argument('--dry-run', action='store_true', help='Check Phase 3 availability without processing')
+    parser.add_argument('--parallel', action='store_true', help='Use parallel processing (15x faster)')
+    parser.add_argument('--workers', type=int, default=15, help='Number of parallel workers (default: 15)')
     parser.add_argument('--no-resume', action='store_true', help='Ignore checkpoint and start from beginning')
     parser.add_argument('--status', action='store_true', help='Show checkpoint status and exit')
     parser.add_argument('--skip-preflight', action='store_true', help='Skip Phase 3 pre-flight check (not recommended)')
