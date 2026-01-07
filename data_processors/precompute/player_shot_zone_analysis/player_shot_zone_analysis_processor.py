@@ -385,6 +385,9 @@ class PlayerShotZoneAnalysisProcessor(
         'data_quality_tier', 'calculation_notes'
     ]
 
+    # Primary key fields for duplicate detection and MERGE operations
+    PRIMARY_KEY_FIELDS = ['analysis_date', 'player_lookup']
+
     # Defensive check configuration (upstream Phase 3 dependency)
     upstream_processor_name = 'PlayerGameSummaryProcessor'
     upstream_table = 'nba_analytics.player_game_summary'

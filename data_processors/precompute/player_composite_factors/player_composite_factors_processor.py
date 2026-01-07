@@ -459,6 +459,9 @@ class PlayerCompositeFactorsProcessor(
         'data_completeness_pct', 'missing_data_fields', 'has_warnings', 'warning_details'
     ]
 
+    # Primary key fields for duplicate detection and MERGE operations
+    PRIMARY_KEY_FIELDS = ['game_date', 'player_lookup']
+
     def __init__(self):
         """Initialize processor."""
         super().__init__()

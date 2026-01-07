@@ -346,6 +346,11 @@ class BdlPlayerBoxScoresProcessor(SmartIdempotencyMixin, ProcessorBase):
             logger.info(f"Loading {len(rows)} rows for {len(game_ids)} games using batch load")
 
             # Delete existing data for these games (MERGE_UPDATE strategy)
+            # Note: No time-based conditions - we want to replace ALL existing records
+            # for this game_id, even if recently inserted. Time-based conditions create
+            # a window for duplicates if processor runs multiple times.
+            # If streaming buffer error occurs, we catch and skip (duplicates will be
+            # cleaned up on next run when buffer clears).
             for game_id in game_ids:
                 game_date = next(row['game_date'] for row in rows if row['game_id'] == game_id)
                 try:
@@ -353,12 +358,11 @@ class BdlPlayerBoxScoresProcessor(SmartIdempotencyMixin, ProcessorBase):
                     DELETE FROM `{table_id}`
                     WHERE game_id = '{game_id}'
                       AND game_date = '{game_date}'
-                      AND DATETIME_DIFF(CURRENT_DATETIME(), DATETIME(processed_at), MINUTE) >= 90
                     """
                     self.bq_client.query(delete_query).result(timeout=60)
                 except Exception as e:
                     if 'streaming buffer' in str(e).lower():
-                        logger.warning(f"Streaming buffer prevents delete for {game_id}")
+                        logger.warning(f"Streaming buffer prevents delete for {game_id} - will have duplicates until buffer clears")
                     else:
                         raise
 

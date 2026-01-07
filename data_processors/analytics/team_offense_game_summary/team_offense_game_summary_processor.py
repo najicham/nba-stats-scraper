@@ -108,6 +108,9 @@ class TeamOffenseGameSummaryProcessor(
         'referee_crew_id'
     ]
 
+    # Primary key fields for duplicate detection and MERGE operations
+    PRIMARY_KEY_FIELDS = ['game_id', 'team_abbr']
+
     def __init__(self):
         super().__init__()
         self.table_name = 'team_offense_game_summary'
@@ -243,6 +246,32 @@ class TeamOffenseGameSummaryProcessor(
 
         logger.info(f"🔄 PROCESSING: {reason}")
 
+        # FIX #3: EMERGENCY OVERRIDE - Force reconstruction (bypasses nbac_team_boxscore entirely)
+        # Use case: When nbac_team_boxscore is known to be unreliable
+        # Set environment variable: export FORCE_TEAM_RECONSTRUCTION=true
+        if os.environ.get('FORCE_TEAM_RECONSTRUCTION', 'false').lower() == 'true':
+            logger.info(
+                "🔧 FORCE_TEAM_RECONSTRUCTION enabled - bypassing nbac_team_boxscore entirely. "
+                "Using reconstruction from player boxscores only."
+            )
+            self.raw_data = self._reconstruct_team_from_players(start_date, end_date)
+
+            if self.raw_data is not None and not self.raw_data.empty:
+                self._source_used = 'reconstructed_team_from_players (forced by env var)'
+                logger.info(f"✅ Reconstructed {len(self.raw_data)} team-game records from players")
+                # Set quality tracking for reconstruction
+                self._fallback_quality_tier = 'silver'
+                self._fallback_quality_score = 85
+                self._fallback_quality_issues = ['forced_reconstruction']
+                self._fallback_handled = False
+                return  # Skip fallback chain entirely
+            else:
+                logger.warning(
+                    "⚠️  FORCE_TEAM_RECONSTRUCTION enabled but reconstruction returned no data. "
+                    "Falling back to normal fallback chain."
+                )
+                # Fall through to normal logic
+
         # Use fallback chain for team boxscore data
         fallback_result = self.try_fallback_chain(
             chain_name='team_boxscores',
@@ -270,6 +299,43 @@ class TeamOffenseGameSummaryProcessor(
             return
 
         self.raw_data = fallback_result.data
+
+        # FIX #2: COMPLETENESS VALIDATION - Reject partial data from nbac_team_boxscore
+        # Investigation 2026-01-04: Fallback chain accepts partial data as "success"
+        # Example: 2 teams out of 18 considered success, reconstruction never tried
+        if fallback_result.source_used == 'nbac_team_boxscore':
+            team_count = len(self.raw_data)
+
+            # Reasonable threshold: 10+ teams (5+ games)
+            # Normal game day: 20-30 teams (10-15 games)
+            MIN_TEAMS_THRESHOLD = 10
+
+            if team_count < MIN_TEAMS_THRESHOLD:
+                logger.warning(
+                    f"⚠️  COMPLETENESS CHECK FAILED: nbac_team_boxscore returned only {team_count} teams "
+                    f"(threshold: {MIN_TEAMS_THRESHOLD}). This is likely incomplete data. "
+                    f"Forcing reconstruction from player boxscores..."
+                )
+
+                # Try reconstruction instead
+                reconstructed_data = self._reconstruct_team_from_players(start_date, end_date)
+
+                if reconstructed_data is not None and not reconstructed_data.empty:
+                    reconstructed_count = len(reconstructed_data)
+                    logger.info(
+                        f"✅ Reconstruction successful: {reconstructed_count} teams "
+                        f"(+{reconstructed_count - team_count} more than nbac_team_boxscore)"
+                    )
+                    self.raw_data = reconstructed_data
+                    self._source_used = 'reconstructed_team_from_players (forced by completeness check)'
+                    # Update quality tracking
+                    self._fallback_quality_tier = 'silver'  # Reconstructed data quality
+                    self._fallback_quality_score = 85
+                else:
+                    logger.warning(
+                        f"⚠️  Reconstruction also failed/empty. Keeping nbac_team_boxscore data "
+                        f"({team_count} teams) despite incompleteness."
+                    )
 
         # Track quality from fallback
         self._fallback_quality_tier = fallback_result.quality_tier
@@ -335,7 +401,25 @@ class TeamOffenseGameSummaryProcessor(
 
         team_boxscores AS (
             SELECT
-                tb.game_id,
+                -- FIX: Standardize game_id to AWAY_HOME format for consistent JOINs
+                -- Player analytics uses AWAY_HOME format, so team analytics must match
+                CASE
+                    WHEN tb.is_home THEN CONCAT(
+                        FORMAT_DATE('%Y%m%d', tb.game_date),
+                        '_',
+                        t2.team_abbr,  -- away team (opponent when we're home)
+                        '_',
+                        tb.team_abbr   -- home team (us)
+                    )
+                    ELSE CONCAT(
+                        FORMAT_DATE('%Y%m%d', tb.game_date),
+                        '_',
+                        tb.team_abbr,  -- away team (us)
+                        '_',
+                        t2.team_abbr   -- home team (opponent when we're away)
+                    )
+                END as game_id,
+                -- tb.game_id as original_game_id,  -- Original from source (not in schema)
                 tb.nba_game_id,
                 tb.game_date,
                 tb.season_year,

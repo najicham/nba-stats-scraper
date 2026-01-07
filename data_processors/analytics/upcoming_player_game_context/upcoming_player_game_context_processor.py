@@ -102,7 +102,10 @@ class UpcomingPlayerGameContextProcessor(
 
     Phase 3 Analytics Processor - depends only on Phase 2 raw tables
     """
-    
+
+    # Primary key fields for duplicate detection and MERGE operations
+    PRIMARY_KEY_FIELDS = ['game_date', 'player_lookup']
+
     def __init__(self):
         super().__init__()
         self.table_name = 'nba_analytics.upcoming_player_game_context'

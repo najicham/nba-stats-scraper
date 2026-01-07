@@ -462,7 +462,12 @@ class BettingPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
                 game_dates = set(row['game_date'] for row in rows)
                 
                 logger.info(f"✅ Batch loaded {len(rows)} rows successfully")
-                
+
+                # Update stats for processor_base tracking (fixes Layer 5 validation false positive)
+                self.stats['rows_inserted'] = len(rows)
+                self.stats['rows_processed'] = len(rows)
+                self.stats['rows_failed'] = 0
+
                 try:
                     notify_info(
                         title="BettingPros Props Processing Complete",
@@ -498,7 +503,12 @@ class BettingPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
             error_msg = str(e)
             errors.append(error_msg)
             logger.error(f"Failed to load to BigQuery: {error_msg}", exc_info=True)
-            
+
+            # Update stats for failure tracking
+            self.stats['rows_inserted'] = 0
+            self.stats['rows_processed'] = 0
+            self.stats['rows_failed'] = len(rows)
+
             try:
                 notify_error(
                     title="BettingPros Props Load Exception",
