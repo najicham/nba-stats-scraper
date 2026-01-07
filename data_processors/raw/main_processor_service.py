@@ -38,6 +38,7 @@ from shared.utils.enhanced_error_notifications import (
 
 # Import processors
 from data_processors.raw.basketball_ref.br_roster_processor import BasketballRefRosterProcessor
+from data_processors.raw.basketball_ref.br_roster_batch_processor import BasketballRefRosterBatchProcessor
 from data_processors.raw.oddsapi.odds_api_props_processor import OddsApiPropsProcessor
 from data_processors.raw.nbacom.nbac_gamebook_processor import NbacGamebookProcessor
 from data_processors.raw.nbacom.nbac_player_list_processor import NbacPlayerListProcessor
@@ -396,7 +397,8 @@ def normalize_message_format(message: dict) -> dict:
             '_duration_seconds': message.get('duration_seconds'),
             '_workflow': metadata.get('workflow'),
             '_timestamp': message.get('timestamp'),
-            '_game_date': message.get('game_date')
+            '_game_date': message.get('game_date'),
+            '_metadata': metadata  # Preserve full metadata for batch processing
         }
 
         logger.info(
@@ -632,10 +634,44 @@ def process_pubsub():
                 logger.warning(f"Failed to send notification: {notify_ex}")
             return jsonify({"error": f"Invalid message format: {str(e)}"}), 400
         
+        # ============================================================
+        # SPECIAL HANDLING: Batch Processing Trigger
+        # Check if this is a batch processing trigger (from scraper backfill)
+        # ============================================================
+        metadata = normalized_message.get('_metadata', {})
+        if metadata.get('trigger_type') == 'batch_processing':
+            logger.info(f"📦 Batch processing trigger detected: {metadata}")
+
+            try:
+                # Use batch processor
+                processor = BasketballRefRosterBatchProcessor()
+
+                opts = {
+                    'bucket': normalized_message.get('bucket', 'nba-scraped-data'),
+                    'project_id': os.environ.get('GCP_PROJECT_ID', 'nba-props-platform'),
+                    'metadata': metadata,
+                    'execution_id': normalized_message.get('_execution_id'),
+                    'workflow': normalized_message.get('_workflow', 'backfill')
+                }
+
+                logger.info(f"🚀 Starting batch processor for season {metadata.get('season')}")
+                success = processor.run(opts)
+
+                if success:
+                    logger.info(f"✅ Batch processing complete for season {metadata.get('season')}")
+                    return jsonify({"status": "success", "processor": "br_roster_batch"}), 200
+                else:
+                    logger.error(f"❌ Batch processing failed for season {metadata.get('season')}")
+                    return jsonify({"status": "error", "processor": "br_roster_batch"}), 500
+
+            except Exception as e:
+                logger.error(f"Batch processing error: {e}", exc_info=True)
+                return jsonify({"status": "error", "message": str(e)}), 500
+
         # Extract file info from normalized message
         bucket = normalized_message.get('bucket', 'nba-scraped-data')
         file_path = normalized_message['name']
-        
+
         # ✅ NEW: Enhanced logging with scraper context
         if normalized_message.get('_original_format') == 'scraper_completion':
             logger.info(
