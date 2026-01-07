@@ -150,7 +150,8 @@ class EspnRostersBatchBackfill:
         try:
             from scrapers.utils.pubsub_utils import ScraperPubSubPublisher
 
-            date_str = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+            # Use local date to match GCS path (GCS exporter uses local date)
+            date_str = datetime.now().strftime('%Y-%m-%d')
 
             publisher = ScraperPubSubPublisher()
             message_id = publisher.publish_completion_event(
