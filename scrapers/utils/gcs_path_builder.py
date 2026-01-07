@@ -94,6 +94,52 @@ class GCSPathBuilder:
         # Big Data Ball
         # "big_data_ball_play_by_play": "big-data-ball/play-by-play/%(date)s/game_%(game_id)s/%(timestamp)s.csv",
         "bigdataball_pbp": "big-data-ball/%(nba_season)s/%(date)s/game_%(game_id)s/%(filename)s.csv",
+
+        # ==========================================================================
+        # MLB Ball Don't Lie API Scrapers
+        # ==========================================================================
+        "mlb_games": "mlb-ball-dont-lie/games/%(date)s/%(timestamp)s.json",
+        "mlb_pitcher_stats": "mlb-ball-dont-lie/pitcher-stats/%(date)s/%(timestamp)s.json",
+        "mlb_batter_stats": "mlb-ball-dont-lie/batter-stats/%(date)s/%(timestamp)s.json",
+        "mlb_season_stats": "mlb-ball-dont-lie/season-stats/%(season)s/%(timestamp)s.json",
+        "mlb_active_players": "mlb-ball-dont-lie/active-players/%(date)s/%(timestamp)s.json",
+        "mlb_injuries": "mlb-ball-dont-lie/injuries/%(date)s/%(timestamp)s.json",
+        "mlb_standings": "mlb-ball-dont-lie/standings/%(season)s/%(timestamp)s.json",
+        "mlb_box_scores": "mlb-ball-dont-lie/box-scores/%(date)s/%(timestamp)s.json",
+        "mlb_live_box_scores": "mlb-ball-dont-lie/live-box-scores/%(date)s/%(timestamp)s.json",
+        "mlb_player_splits": "mlb-ball-dont-lie/player-splits/%(season)s/player_%(player_id)s/%(timestamp)s.json",
+        "mlb_player_versus": "mlb-ball-dont-lie/player-versus/%(season)s/player_%(player_id)s_vs_%(opponent_team_id)s/%(timestamp)s.json",
+        "mlb_teams": "mlb-ball-dont-lie/teams/%(timestamp)s.json",
+        "mlb_team_season_stats": "mlb-ball-dont-lie/team-season-stats/%(season)s/%(timestamp)s.json",
+
+        # ==========================================================================
+        # MLB Stats API Scrapers (Official MLB API)
+        # ==========================================================================
+        "mlb_schedule": "mlb-stats-api/schedule/%(date)s/%(timestamp)s.json",
+        "mlb_lineups": "mlb-stats-api/lineups/%(date)s/%(timestamp)s.json",
+        "mlb_boxscore": "mlb-stats-api/boxscore/%(date)s/game_%(game_pk)s/%(timestamp)s.json",
+        "mlb_game_feed": "mlb-stats-api/game-feed/%(date)s/game_%(game_pk)s/%(timestamp)s.json",
+
+        # ==========================================================================
+        # MLB Statcast (via pybaseball)
+        # ==========================================================================
+        "mlb_statcast_pitcher": "mlb-statcast/pitcher-stats/%(date)s/%(timestamp)s.json",
+
+        # ==========================================================================
+        # MLB Odds API Scrapers (Current)
+        # ==========================================================================
+        "mlb_odds_api_events": "mlb-odds-api/events/%(date)s/%(timestamp)s.json",
+        "mlb_odds_api_game_lines": "mlb-odds-api/game-lines/%(date)s/%(timestamp)s.json",
+        "mlb_odds_api_pitcher_props": "mlb-odds-api/pitcher-props/%(date)s/%(event_id)s-%(teams)s/%(timestamp)s-snap-%(snap)s.json",
+        "mlb_odds_api_batter_props": "mlb-odds-api/batter-props/%(date)s/%(event_id)s-%(teams)s/%(timestamp)s-snap-%(snap)s.json",
+
+        # ==========================================================================
+        # MLB Odds API Scrapers (Historical)
+        # ==========================================================================
+        "mlb_odds_api_events_history": "mlb-odds-api/events-history/%(date)s/%(timestamp)s.json",
+        "mlb_odds_api_game_lines_history": "mlb-odds-api/game-lines-history/%(date)s/%(timestamp)s.json",
+        "mlb_odds_api_pitcher_props_history": "mlb-odds-api/pitcher-props-history/%(date)s/%(event_id)s-%(teams)s/%(timestamp)s-snap-%(snap)s.json",
+        "mlb_odds_api_batter_props_history": "mlb-odds-api/batter-props-history/%(date)s/%(event_id)s-%(teams)s/%(timestamp)s-snap-%(snap)s.json",
     }
     
     

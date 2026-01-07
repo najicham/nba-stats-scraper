@@ -3,9 +3,17 @@ Pub/Sub Topics Configuration - Centralized topic definitions.
 
 All topic names and subscriptions for the event-driven pipeline.
 
-Version: 1.0
+Version: 2.0
 Created: 2025-11-28
+Updated: 2026-01-06 - Added multi-sport support via SportConfig
 """
+
+from shared.config.sport_config import get_current_sport, get_topic
+
+
+def _topic(phase: str) -> str:
+    """Generate sport-specific topic name."""
+    return get_topic(phase)
 
 
 class PubSubTopics:
@@ -24,10 +32,14 @@ class PubSubTopics:
 
     # Published by: Scrapers
     # Consumed by: Phase 2 raw processors
-    PHASE1_SCRAPERS_COMPLETE = 'nba-phase1-scrapers-complete'
+    @property
+    def PHASE1_SCRAPERS_COMPLETE(self) -> str:
+        return _topic('phase1-scrapers-complete')
 
     # Legacy topic (dual publishing during migration)
-    LEGACY_SCRAPER_COMPLETE = 'nba-scraper-complete'
+    @property
+    def LEGACY_SCRAPER_COMPLETE(self) -> str:
+        return _topic('scraper-complete')
 
     # =========================================================================
     # PHASE 2: RAW PROCESSORS
@@ -35,7 +47,9 @@ class PubSubTopics:
 
     # Published by: Phase 2 raw processors
     # Consumed by: Phase 2→3 orchestrator
-    PHASE2_RAW_COMPLETE = 'nba-phase2-raw-complete'
+    @property
+    def PHASE2_RAW_COMPLETE(self) -> str:
+        return _topic('phase2-raw-complete')
 
     # =========================================================================
     # PHASE 2→3 ORCHESTRATION
@@ -43,7 +57,9 @@ class PubSubTopics:
 
     # Published by: Phase 2→3 orchestrator (when all 21 processors complete)
     # Consumed by: Phase 3 analytics processors
-    PHASE3_TRIGGER = 'nba-phase3-trigger'
+    @property
+    def PHASE3_TRIGGER(self) -> str:
+        return _topic('phase3-trigger')
 
     # =========================================================================
     # PHASE 3: ANALYTICS PROCESSORS
@@ -51,7 +67,9 @@ class PubSubTopics:
 
     # Published by: Phase 3 analytics processors
     # Consumed by: Phase 3→4 orchestrator
-    PHASE3_ANALYTICS_COMPLETE = 'nba-phase3-analytics-complete'
+    @property
+    def PHASE3_ANALYTICS_COMPLETE(self) -> str:
+        return _topic('phase3-analytics-complete')
 
     # =========================================================================
     # PHASE 3→4 ORCHESTRATION
@@ -59,7 +77,9 @@ class PubSubTopics:
 
     # Published by: Phase 3→4 orchestrator (when all 5 processors complete)
     # Consumed by: Phase 4 precompute processors
-    PHASE4_TRIGGER = 'nba-phase4-trigger'
+    @property
+    def PHASE4_TRIGGER(self) -> str:
+        return _topic('phase4-trigger')
 
     # =========================================================================
     # PHASE 4: PRECOMPUTE PROCESSORS
@@ -67,11 +87,15 @@ class PubSubTopics:
 
     # Published by: Phase 4 precompute processors
     # Consumed by: Phase 4 internal orchestrator
-    PHASE4_PROCESSOR_COMPLETE = 'nba-phase4-processor-complete'
+    @property
+    def PHASE4_PROCESSOR_COMPLETE(self) -> str:
+        return _topic('phase4-processor-complete')
 
     # Published by: ml_feature_store_v2 (final Phase 4 processor)
     # Consumed by: Phase 5 prediction coordinator
-    PHASE4_PRECOMPUTE_COMPLETE = 'nba-phase4-precompute-complete'
+    @property
+    def PHASE4_PRECOMPUTE_COMPLETE(self) -> str:
+        return _topic('phase4-precompute-complete')
 
     # =========================================================================
     # PHASE 5: PREDICTIONS
@@ -79,7 +103,9 @@ class PubSubTopics:
 
     # Published by: Phase 5 prediction coordinator
     # Consumed by: Phase 5→6 orchestrator
-    PHASE5_PREDICTIONS_COMPLETE = 'nba-phase5-predictions-complete'
+    @property
+    def PHASE5_PREDICTIONS_COMPLETE(self) -> str:
+        return _topic('phase5-predictions-complete')
 
     # =========================================================================
     # PHASE 6: PUBLISHING
@@ -87,18 +113,21 @@ class PubSubTopics:
 
     # Published by: Phase 5→6 orchestrator OR Cloud Scheduler
     # Consumed by: Phase 6 export Cloud Function
-    PHASE6_EXPORT_TRIGGER = 'nba-phase6-export-trigger'
+    @property
+    def PHASE6_EXPORT_TRIGGER(self) -> str:
+        return _topic('phase6-export-trigger')
 
     # Published by: Phase 6 export Cloud Function
     # Consumed by: Monitoring, alerting
-    PHASE6_EXPORT_COMPLETE = 'nba-phase6-export-complete'
+    @property
+    def PHASE6_EXPORT_COMPLETE(self) -> str:
+        return _topic('phase6-export-complete')
 
     # =========================================================================
     # HELPER METHODS
     # =========================================================================
 
-    @classmethod
-    def get_all_topics(cls) -> dict:
+    def get_all_topics(self) -> dict:
         """
         Get all topic definitions.
 
@@ -106,21 +135,20 @@ class PubSubTopics:
             Dictionary of {name: topic_path}
         """
         return {
-            'PHASE1_SCRAPERS_COMPLETE': cls.PHASE1_SCRAPERS_COMPLETE,
-            'LEGACY_SCRAPER_COMPLETE': cls.LEGACY_SCRAPER_COMPLETE,
-            'PHASE2_RAW_COMPLETE': cls.PHASE2_RAW_COMPLETE,
-            'PHASE3_TRIGGER': cls.PHASE3_TRIGGER,
-            'PHASE3_ANALYTICS_COMPLETE': cls.PHASE3_ANALYTICS_COMPLETE,
-            'PHASE4_TRIGGER': cls.PHASE4_TRIGGER,
-            'PHASE4_PROCESSOR_COMPLETE': cls.PHASE4_PROCESSOR_COMPLETE,
-            'PHASE4_PRECOMPUTE_COMPLETE': cls.PHASE4_PRECOMPUTE_COMPLETE,
-            'PHASE5_PREDICTIONS_COMPLETE': cls.PHASE5_PREDICTIONS_COMPLETE,
-            'PHASE6_EXPORT_TRIGGER': cls.PHASE6_EXPORT_TRIGGER,
-            'PHASE6_EXPORT_COMPLETE': cls.PHASE6_EXPORT_COMPLETE,
+            'PHASE1_SCRAPERS_COMPLETE': self.PHASE1_SCRAPERS_COMPLETE,
+            'LEGACY_SCRAPER_COMPLETE': self.LEGACY_SCRAPER_COMPLETE,
+            'PHASE2_RAW_COMPLETE': self.PHASE2_RAW_COMPLETE,
+            'PHASE3_TRIGGER': self.PHASE3_TRIGGER,
+            'PHASE3_ANALYTICS_COMPLETE': self.PHASE3_ANALYTICS_COMPLETE,
+            'PHASE4_TRIGGER': self.PHASE4_TRIGGER,
+            'PHASE4_PROCESSOR_COMPLETE': self.PHASE4_PROCESSOR_COMPLETE,
+            'PHASE4_PRECOMPUTE_COMPLETE': self.PHASE4_PRECOMPUTE_COMPLETE,
+            'PHASE5_PREDICTIONS_COMPLETE': self.PHASE5_PREDICTIONS_COMPLETE,
+            'PHASE6_EXPORT_TRIGGER': self.PHASE6_EXPORT_TRIGGER,
+            'PHASE6_EXPORT_COMPLETE': self.PHASE6_EXPORT_COMPLETE,
         }
 
-    @classmethod
-    def get_topic_for_phase(cls, phase: str) -> str:
+    def get_topic_for_phase(self, phase: str) -> str:
         """
         Get completion topic for a phase.
 
@@ -134,12 +162,12 @@ class PubSubTopics:
             ValueError if phase not recognized
         """
         mapping = {
-            'phase_1_scrapers': cls.PHASE1_SCRAPERS_COMPLETE,
-            'phase_2_raw': cls.PHASE2_RAW_COMPLETE,
-            'phase_3_analytics': cls.PHASE3_ANALYTICS_COMPLETE,
-            'phase_4_precompute': cls.PHASE4_PRECOMPUTE_COMPLETE,
-            'phase_5_predictions': cls.PHASE5_PREDICTIONS_COMPLETE,
-            'phase_6_publishing': cls.PHASE6_EXPORT_COMPLETE,
+            'phase_1_scrapers': self.PHASE1_SCRAPERS_COMPLETE,
+            'phase_2_raw': self.PHASE2_RAW_COMPLETE,
+            'phase_3_analytics': self.PHASE3_ANALYTICS_COMPLETE,
+            'phase_4_precompute': self.PHASE4_PRECOMPUTE_COMPLETE,
+            'phase_5_predictions': self.PHASE5_PREDICTIONS_COMPLETE,
+            'phase_6_publishing': self.PHASE6_EXPORT_COMPLETE,
         }
 
         if phase not in mapping:
@@ -148,6 +176,27 @@ class PubSubTopics:
             )
 
         return mapping[phase]
+
+    @staticmethod
+    def for_sport(sport: str) -> 'PubSubTopics':
+        """
+        Get PubSubTopics configured for a specific sport.
+
+        Note: This creates a new instance that will use the specified sport's
+        topic names. The sport is determined at call time, not import time.
+
+        Args:
+            sport: Sport identifier ('nba', 'mlb', etc.)
+
+        Returns:
+            PubSubTopics instance for specified sport
+        """
+        import os
+        original_sport = os.environ.get('SPORT', 'nba')
+        os.environ['SPORT'] = sport
+        topics = PubSubTopics()
+        os.environ['SPORT'] = original_sport
+        return topics
 
 
 # Singleton instance for easy import
