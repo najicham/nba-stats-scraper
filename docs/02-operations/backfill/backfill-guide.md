@@ -2,7 +2,7 @@
 
 **File:** `docs/02-operations/backfill/backfill-guide.md`
 **Created:** 2025-11-18 14:45 PST
-**Last Updated:** 2025-12-08 01:30 PM PST
+**Last Updated:** 2026-01-05 12:45 PM PST (Added parallel backfilling section)
 **Purpose:** Step-by-step guide for running backfills safely and effectively
 **Status:** Current
 **Audience:** Engineers running backfills, on-call engineers, operators
@@ -1036,6 +1036,133 @@ SELECT "Phase4", COUNT(DISTINCT game_date)
 FROM nba_precompute.player_composite_factors
 WHERE game_date BETWEEN "2024-11-08" AND "2024-11-14"'
 ```
+
+---
+
+## ⚡ Parallel Backfilling (15x Speedup)
+
+**Status**: ✅ Available for Phase 3 analytics (as of January 2026)
+**Performance**: 15x speedup using 15 concurrent workers
+
+### Overview
+
+Phase 3 analytics backfill scripts now support parallel processing using ThreadPoolExecutor, reducing backfill time from ~17 hours to ~1-2 hours.
+
+**Scripts with parallel support:**
+- `team_defense_game_summary_analytics_backfill.py`
+- `upcoming_player_game_context_analytics_backfill.py`
+- `upcoming_team_game_context_analytics_backfill.py`
+
+### Basic Usage
+
+```bash
+export PYTHONPATH=.
+
+# Sequential mode (original, slower)
+python3 backfill_jobs/analytics/team_defense_game_summary/team_defense_game_summary_analytics_backfill.py \
+  --start-date 2022-05-21 --end-date 2026-01-03
+
+# Parallel mode (15x faster)
+python3 backfill_jobs/analytics/team_defense_game_summary/team_defense_game_summary_analytics_backfill.py \
+  --start-date 2022-05-21 --end-date 2026-01-03 --parallel --workers 15
+```
+
+### Running All 3 Scripts in Parallel
+
+For maximum speed, run all 3 scripts concurrently:
+
+```bash
+# Background execution with logging
+nohup python3 backfill_jobs/analytics/team_defense_game_summary/team_defense_game_summary_analytics_backfill.py \
+  --start-date 2022-05-21 --end-date 2026-01-03 --parallel --workers 15 \
+  > /tmp/team_defense_parallel_$(date +%Y%m%d_%H%M%S).log 2>&1 &
+
+nohup python3 backfill_jobs/analytics/upcoming_player_game_context/upcoming_player_game_context_analytics_backfill.py \
+  --start-date 2021-12-04 --end-date 2026-01-03 --parallel --workers 15 \
+  > /tmp/upcoming_player_parallel_$(date +%Y%m%d_%H%M%S).log 2>&1 &
+
+nohup python3 backfill_jobs/analytics/upcoming_team_game_context/upcoming_team_game_context_analytics_backfill.py \
+  --start-date 2021-10-19 --end-date 2026-01-03 --parallel --workers 15 \
+  > /tmp/upcoming_team_parallel_$(date +%Y%m%d_%H%M%S).log 2>&1 &
+```
+
+### Monitoring Parallel Backfills
+
+```bash
+# Check running processes
+ps aux | grep "parallel.*backfill" | grep python3
+
+# Monitor logs
+tail -f /tmp/*_parallel_*.log
+
+# Check BigQuery progress
+bq query --use_legacy_sql=false "
+SELECT
+  'team_defense' as table, COUNT(DISTINCT game_date) as dates
+FROM \`nba-props-platform.nba_analytics.team_defense_game_summary\`
+WHERE game_date >= '2021-10-19'
+UNION ALL
+SELECT 'upcoming_player', COUNT(DISTINCT game_date)
+FROM \`nba-props-platform.nba_analytics.upcoming_player_game_context\`
+WHERE game_date >= '2021-10-19'
+UNION ALL
+SELECT 'upcoming_team', COUNT(DISTINCT game_date)
+FROM \`nba-props-platform.nba_analytics.upcoming_team_game_context\`
+WHERE game_date >= '2021-10-19'
+ORDER BY table
+"
+```
+
+### Checkpoints and Resume
+
+Parallel backfills support automatic resume from checkpoints:
+
+```bash
+# Automatically resumes from checkpoint (default)
+python3 backfill_jobs/analytics/team_defense_game_summary/team_defense_game_summary_analytics_backfill.py \
+  --start-date 2022-05-21 --end-date 2026-01-03 --parallel --workers 15
+
+# Start fresh (clear checkpoint)
+python3 backfill_jobs/analytics/team_defense_game_summary/team_defense_game_summary_analytics_backfill.py \
+  --start-date 2022-05-21 --end-date 2026-01-03 --parallel --workers 15 --no-resume
+```
+
+**Checkpoint location**: `/tmp/backfill_checkpoints/{job_name}_{start_date}_{end_date}.json`
+
+### Performance Comparison
+
+| Mode | Total Time | Dates/Hour | Use Case |
+|------|------------|------------|----------|
+| Sequential | 17 hours | ~25 dates/hour | Testing, small ranges |
+| Parallel (4 workers) | 4 hours | ~100 dates/hour | Medium ranges |
+| Parallel (15 workers) | 1-2 hours | ~400 dates/hour | Production backfills |
+
+### Known Issues
+
+**Non-Critical Warnings** (can be ignored):
+- `WARNING: Quota exceeded: partition modifications` - Metadata table only, no impact
+- `WARNING: Failed to write circuit state` - Circuit breaker tracking, no impact on processing
+
+### When to Use Parallel vs Sequential
+
+**Use Parallel (--parallel --workers 15) when:**
+- Backfilling >100 dates
+- Time is critical
+- System resources available
+
+**Use Sequential (default) when:**
+- Backfilling <20 dates
+- Testing/debugging
+- System under load
+- Troubleshooting issues
+
+### Full Documentation
+
+See `docs/08-projects/current/phase3-phase4-complete-execution-2026-01-05/PARALLEL-BACKFILL-IMPLEMENTATION.md` for:
+- Implementation details
+- Architecture decisions
+- Testing results
+- Troubleshooting guide
 
 ---
 
