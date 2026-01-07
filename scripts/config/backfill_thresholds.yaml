@@ -1,0 +1,30 @@
+# Backfill Validation Thresholds
+# Used by backfill orchestrator to validate data quality
+
+team_offense:
+  min_games: 5600                    # Minimum unique games expected
+  min_success_rate: 95.0             # Minimum % of dates that succeeded
+  min_quality_score: 75.0            # Minimum average quality score (gold/silver)
+  min_production_ready_pct: 80.0     # Minimum % of records production-ready
+  timeout_hours: 8                   # Maximum time before declaring hung
+
+player_game_summary:
+  min_records: 35000                 # Minimum player-game records expected
+  min_success_rate: 95.0             # Minimum % of dates that succeeded
+  minutes_played_pct: 99.0           # Minimum % with minutes_played NOT NULL
+  usage_rate_pct: 45.0               # Minimum % with usage_rate NOT NULL (lowered - feature only available since 2024)
+  shot_zones_pct: 40.0               # Minimum % with shot zone data (lowered for 2024-25)
+  min_quality_score: 75.0            # Minimum average quality score
+  min_production_ready_pct: 95.0     # Minimum % of records production-ready
+  timeout_hours: 5                   # Maximum time before declaring hung
+
+precompute:
+  min_coverage_pct: 88.0             # Minimum % coverage (accounts for 14-day bootstrap)
+  min_success_rate: 95.0             # Minimum % of dates that succeeded
+  timeout_hours: 4                   # Maximum time before declaring hung
+
+# Polling configuration
+polling:
+  interval_seconds: 60               # How often to check process status
+  progress_update_interval: 10       # Report progress every N checks
+  log_tail_lines: 30                 # How many log lines to show on updates

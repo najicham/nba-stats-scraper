@@ -1,0 +1,100 @@
+name: Validate Documentation Structure
+
+on:
+  pull_request:
+    paths:
+      - '**.md'
+  push:
+    branches:
+      - main
+    paths:
+      - '**.md'
+
+jobs:
+  validate-structure:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0  # Get full history for better validation
+
+      - name: Check for unauthorized root markdown files
+        run: |
+          # Define allowed files in root
+          ALLOWED_ROOT="README.md|START-HERE.md|GOOD_MORNING_START_HERE.md|ULTRATHINK-.*.md|DOCUMENTATION-CLEANUP-.*.md|SESSION-SUMMARY-.*.md|HANDOFF-.*.md"
+
+          # Find new markdown files in root (not allowed list)
+          NEW_ROOT_FILES=$(git diff --name-only origin/main...HEAD | grep "^[^/]*\.md$" | grep -Ev "$ALLOWED_ROOT" || true)
+
+          if [ -n "$NEW_ROOT_FILES" ]; then
+            echo "❌ ERROR: New markdown files in root directory not allowed"
+            echo ""
+            echo "Files found:"
+            echo "$NEW_ROOT_FILES"
+            echo ""
+            echo "📖 Please move to appropriate directory:"
+            echo "  - Session handoffs → docs/09-handoff/"
+            echo "  - Project docs → docs/08-projects/"
+            echo "  - Operational guides → docs/02-operations/"
+            echo "  - See: docs/00-start-here/DOCUMENTATION-GUIDE.md"
+            exit 1
+          fi
+
+          echo "✅ No unauthorized root markdown files"
+
+      - name: Check for old handoffs not archived
+        run: |
+          # Check for handoffs older than 7 days in main directory
+          cd docs/09-handoff
+          OLD_HANDOFFS=$(find . -maxdepth 1 -name "202*.md" -mtime +7 2>/dev/null || true)
+
+          if [ -n "$OLD_HANDOFFS" ]; then
+            echo "⚠️  WARNING: Old handoffs should be archived"
+            echo ""
+            echo "Files older than 7 days:"
+            echo "$OLD_HANDOFFS"
+            echo ""
+            echo "📦 To archive automatically, the weekly GitHub Action will handle this."
+            echo "Or manually run: cd docs/09-handoff && mv 202*.md archive/\$(date +%Y-%m)/"
+            echo ""
+            echo "This is a warning, not an error. Workflow continues."
+          else
+            echo "✅ No old handoffs found (all recent or properly archived)"
+          fi
+
+      - name: Validate cross-references exist
+        run: |
+          # Check that key cross-references are in place
+          ERRORS=0
+
+          # Check backfill master guide links to projects
+          if ! grep -q "08-projects/completed" docs/02-operations/backfill/master-guide.md 2>/dev/null; then
+            echo "⚠️  WARNING: Backfill master guide missing links to historical projects"
+            ERRORS=$((ERRORS + 1))
+          fi
+
+          # Check main README links to specialized directories
+          if ! grep -q "lessons-learned" docs/00-start-here/README.md 2>/dev/null; then
+            echo "⚠️  WARNING: Main README missing links to specialized directories"
+            ERRORS=$((ERRORS + 1))
+          fi
+
+          if [ $ERRORS -eq 0 ]; then
+            echo "✅ Key cross-references validated"
+          else
+            echo ""
+            echo "Found $ERRORS cross-reference issues (warnings only)"
+          fi
+
+      - name: Summary
+        if: success()
+        run: |
+          echo ""
+          echo "✅ Documentation structure validation complete"
+          echo ""
+          echo "📊 Statistics:"
+          echo "  Root markdown files: $(ls -1 *.md 2>/dev/null | wc -l)"
+          echo "  Active handoffs: $(ls -1 docs/09-handoff/202*.md 2>/dev/null | wc -l)"
+          echo "  Active projects: $(ls -1d docs/08-projects/current/*/ 2>/dev/null | wc -l)"
