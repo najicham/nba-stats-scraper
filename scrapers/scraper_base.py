@@ -94,6 +94,13 @@ from shared.utils.notification_system import (
     notify_info
 )
 
+# Import sport configuration for multi-sport support
+from shared.config.sport_config import (
+    get_orchestration_dataset,
+    get_project_id,
+    get_current_sport,
+)
+
 ##############################################################################
 # Configure a default logger so INFO messages appear in the console.
 ##############################################################################
@@ -308,7 +315,11 @@ class ScraperBase:
                 self._log_execution_to_bigquery()
 
                 # ✅ NEW: Publish Pub/Sub event for Phase 2 processors
-                self._publish_completion_event_to_pubsub()
+                # (unless skip_pubsub flag is set for batch processing)
+                if not self.opts.get('skip_pubsub', False):
+                    self._publish_completion_event_to_pubsub()
+                else:
+                    logger.info("Skipping Pub/Sub publish (skip_pubsub=True, batch mode)")
                 
                 if self.decode_download_data:
                     return self.get_return_value()
@@ -647,7 +658,8 @@ class ScraperBase:
                 'created_at': now.isoformat()      # ✅ FIXED: ISO string
             }
             
-            insert_bigquery_rows('nba_orchestration.scraper_execution_log', [record])
+            orchestration_dataset = get_orchestration_dataset()
+            insert_bigquery_rows(f'{orchestration_dataset}.scraper_execution_log', [record])
             logger.info(f"✅ Orchestration logged: {status} ({record_count} records) from {source}")
 
         except Exception as e:
@@ -710,7 +722,8 @@ class ScraperBase:
                 'created_at': now.isoformat()      # ✅ FIXED: ISO string
             }
             
-            insert_bigquery_rows('nba_orchestration.scraper_execution_log', [record])
+            orchestration_dataset = get_orchestration_dataset()
+            insert_bigquery_rows(f'{orchestration_dataset}.scraper_execution_log', [record])
             logger.info(f"✅ Orchestration logged failure from {source}: {error.__class__.__name__}")
 
         except Exception as e:
@@ -879,7 +892,9 @@ class ScraperBase:
                 logger.error(f"LAYER1_VALIDATION: Cannot create BigQuery client - {e}")
                 return
 
-            table_id = "nba-props-platform.nba_orchestration.scraper_output_validation"
+            project_id = get_project_id()
+            orchestration_dataset = get_orchestration_dataset()
+            table_id = f"{project_id}.{orchestration_dataset}.scraper_output_validation"
 
             errors = bq_client.insert_rows_json(table_id, [validation_result])
             if errors:
