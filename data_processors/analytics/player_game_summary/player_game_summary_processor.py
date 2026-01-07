@@ -150,6 +150,9 @@ class PlayerGameSummaryProcessor(
         'is_active', 'player_status'
     ]
 
+    # Primary key fields for duplicate detection and MERGE operations
+    PRIMARY_KEY_FIELDS = ['game_id', 'player_lookup']
+
     def __init__(self):
         super().__init__()
         self.table_name = 'player_game_summary'

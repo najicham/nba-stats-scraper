@@ -14,6 +14,10 @@ UPDATED: 2025-11-27
  - Added load_json_from_gcs() helper for raw processors
  - Fixed duplicate error notifications
  - Improved documentation
+
+UPDATED: 2026-01-06
+ - Added multi-sport support via SportConfig
+ - Dataset names now derived from SPORT environment variable
 """
 
 import json
@@ -37,6 +41,15 @@ from shared.utils.notification_system import (
 
 # Import run history mixin
 from shared.processors.mixins import RunHistoryMixin
+
+# Import sport configuration for multi-sport support
+from shared.config.sport_config import (
+    get_raw_dataset,
+    get_orchestration_dataset,
+    get_project_id,
+    get_bucket,
+    get_current_sport,
+)
 
 # Configure logging to match scraper_base pattern
 logging.basicConfig(
@@ -102,8 +115,8 @@ class ProcessorBase(RunHistoryMixin):
     validate_on_load: bool = True
     save_on_error: bool = True
 
-    # BigQuery settings
-    dataset_id: str = "nba_raw"
+    # BigQuery settings - now uses sport_config for multi-sport support
+    dataset_id: str = None  # Will be set from sport_config in __init__
     table_name: str = ""  # Child classes must set
     write_disposition = bigquery.WriteDisposition.WRITE_APPEND
 
@@ -113,7 +126,7 @@ class ProcessorBase(RunHistoryMixin):
     # Run history settings (from RunHistoryMixin)
     PHASE: str = 'phase_2_raw'
     OUTPUT_TABLE: str = ''  # Set to table_name in run()
-    OUTPUT_DATASET: str = 'nba_raw'
+    OUTPUT_DATASET: str = None  # Will be set from sport_config in __init__
     
     def __init__(self):
         """Initialize processor with same pattern as ScraperBase."""
@@ -122,14 +135,23 @@ class ProcessorBase(RunHistoryMixin):
         self.validated_data = {}
         self.transformed_data = {}
         self.stats = {}
-        
+
         # Generate run_id like scrapers
         self.run_id = str(uuid.uuid4())[:8]
         self.stats["run_id"] = self.run_id
-        
+
         # GCP clients
         self.bq_client = None
         self.gcs_client = None
+
+        # Set dataset from sport_config if not overridden by child class
+        if self.dataset_id is None:
+            self.dataset_id = get_raw_dataset()
+        if self.OUTPUT_DATASET is None:
+            self.OUTPUT_DATASET = get_raw_dataset()
+
+        # Store project_id for use throughout
+        self.project_id = get_project_id()
         
     def run(self, opts: Optional[Dict] = None) -> bool:
         """
@@ -353,7 +375,8 @@ class ProcessorBase(RunHistoryMixin):
     def init_clients(self) -> None:
         """Initialize GCP clients with error notification."""
         try:
-            project_id = self.opts.get("project_id", "nba-props-platform")
+            # Use project_id from opts, falling back to sport_config
+            project_id = self.opts.get("project_id", self.project_id)
             self.bq_client = bigquery.Client(project=project_id)
             self.gcs_client = storage.Client(project=project_id)
         except Exception as e:
@@ -366,7 +389,7 @@ class ProcessorBase(RunHistoryMixin):
                     details={
                         'processor': self.__class__.__name__,
                         'run_id': self.run_id,
-                        'project_id': self.opts.get('project_id', 'nba-props-platform'),
+                        'project_id': self.opts.get('project_id', self.project_id),
                         'error_type': type(e).__name__,
                         'error': str(e)
                     },
@@ -745,7 +768,8 @@ class ProcessorBase(RunHistoryMixin):
             if not hasattr(self, 'project_id') or not self.project_id:
                 return
 
-            table_id = f"{self.project_id}.nba_orchestration.processor_output_validation"
+            orchestration_dataset = get_orchestration_dataset()
+            table_id = f"{self.project_id}.{orchestration_dataset}.processor_output_validation"
 
             row = {
                 'timestamp': datetime.now(timezone.utc).isoformat(),
@@ -924,10 +948,16 @@ class ProcessorBase(RunHistoryMixin):
             if not hasattr(self, 'bq_client') or not self.bq_client:
                 return 0
 
-            project_id = getattr(self, 'project_id', 'nba-props-platform')
+            project_id = getattr(self, 'project_id', get_project_id())
+            raw_dataset = get_raw_dataset()
+            sport = get_current_sport()
+
+            # Sport-specific schedule table names
+            schedule_table = 'nbac_schedule' if sport == 'nba' else 'mlb_schedule'
+
             query = f"""
             SELECT COUNT(*) as game_count
-            FROM `{project_id}.nba_raw.nbac_schedule`
+            FROM `{project_id}.{raw_dataset}.{schedule_table}`
             WHERE game_date = '{game_date}'
             """
 

@@ -12,8 +12,9 @@ Base class for Phase 4 precompute processors that handles:
  - Run history logging (via RunHistoryMixin)
  - Matches AnalyticsProcessorBase patterns
 
-Version: 2.1 (with run history logging)
+Version: 2.2 (with run history logging + multi-sport support)
 Updated: November 2025
+Updated: 2026-01-06 - Added multi-sport support via SportConfig
 """
 
 import json
@@ -43,6 +44,14 @@ from shared.publishers.unified_pubsub_publisher import UnifiedPubSubPublisher
 
 # Import season date utilities for early season detection
 from shared.config.nba_season_dates import is_early_season, get_season_year_from_date
+
+# Import sport configuration for multi-sport support
+from shared.config.sport_config import (
+    get_precompute_dataset,
+    get_analytics_dataset,
+    get_project_id,
+    get_current_sport,
+)
 
 # Configure logging
 logging.basicConfig(
@@ -79,8 +88,8 @@ class PrecomputeProcessorBase(RunHistoryMixin):
     validate_on_extract: bool = True
     save_on_error: bool = True
 
-    # BigQuery settings
-    dataset_id: str = "nba_precompute"
+    # BigQuery settings - now uses sport_config for multi-sport support
+    dataset_id: str = None  # Will be set from sport_config in __init__
     table_name: str = ""  # Child classes must set
     date_column: str = "analysis_date"  # Column name for date partitioning (can override in child)
     processing_strategy: str = "MERGE_UPDATE"  # Default for precompute
@@ -92,7 +101,7 @@ class PrecomputeProcessorBase(RunHistoryMixin):
     # Run history settings (from RunHistoryMixin)
     PHASE: str = 'phase_4_precompute'
     OUTPUT_TABLE: str = ''  # Set to table_name in run()
-    OUTPUT_DATASET: str = 'nba_precompute'
+    OUTPUT_DATASET: str = None  # Will be set from sport_config in __init__
     
     def __init__(self):
         """Initialize precompute processor."""
@@ -129,7 +138,13 @@ class PrecomputeProcessorBase(RunHistoryMixin):
         # GCP clients - specify location for regional dataset consistency
         bq_location = os.environ.get('BQ_LOCATION', 'us-west2')
         self.bq_client = bigquery.Client(location=bq_location)
-        self.project_id = os.environ.get('GCP_PROJECT_ID', self.bq_client.project)
+        self.project_id = os.environ.get('GCP_PROJECT_ID', get_project_id())
+
+        # Set dataset from sport_config if not overridden by child class
+        if self.dataset_id is None:
+            self.dataset_id = get_precompute_dataset()
+        if self.OUTPUT_DATASET is None:
+            self.OUTPUT_DATASET = get_precompute_dataset()
 
         # Correlation tracking (for tracing through pipeline)
         self.correlation_id = None
@@ -1174,30 +1189,30 @@ class PrecomputeProcessorBase(RunHistoryMixin):
         if not rows:
             logger.warning("No rows to insert")
             return
-        
-        # Apply processing strategy - delete existing data first
+
+        # Get target table schema (needed for both MERGE and INSERT strategies)
+        try:
+            table = self.bq_client.get_table(table_id)
+            table_schema = table.schema
+            logger.info(f"Using schema with {len(table_schema)} fields")
+        except Exception as schema_e:
+            logger.warning(f"Could not get table schema: {schema_e}")
+            table_schema = None
+
+        # Apply processing strategy
         if self.processing_strategy == 'MERGE_UPDATE':
-            try:
-                self._delete_existing_data_batch(rows)
-            except Exception as e:
-                if "streaming buffer" not in str(e).lower():
-                    logger.error(f"Delete failed with non-streaming error: {e}")
-                    raise
-        
-        # Use batch INSERT via BigQuery load job
+            # Use proper SQL MERGE (prevents duplicates, no streaming buffer issues)
+            self._save_with_proper_merge(rows, table_id, table_schema)
+
+            # Check for duplicates after successful merge
+            self._check_for_duplicates_post_save()
+            return  # MERGE handles everything, we're done
+
+        # For non-MERGE strategies, use batch INSERT via BigQuery load job
         logger.info(f"Inserting {len(rows)} rows to {table_id} using batch INSERT")
-        
+
         try:
             import io
-            
-            # Get target table schema
-            try:
-                table = self.bq_client.get_table(table_id)
-                table_schema = table.schema
-                logger.info(f"Using schema with {len(table_schema)} fields")
-            except Exception as schema_e:
-                logger.warning(f"Could not get table schema: {schema_e}")
-                table_schema = None
             
             # Sanitize rows for JSON serialization
             import math
@@ -1259,7 +1274,10 @@ class PrecomputeProcessorBase(RunHistoryMixin):
                 load_job.result(timeout=300)
                 logger.info(f"✅ Successfully loaded {len(rows)} rows")
                 self.stats["rows_processed"] = len(rows)
-                
+
+                # Check for duplicates after successful save
+                self._check_for_duplicates_post_save()
+
             except Exception as load_e:
                 if "streaming buffer" in str(load_e).lower():
                     logger.warning(f"⚠️ Load blocked by streaming buffer - {len(rows)} rows skipped")
@@ -1292,8 +1310,168 @@ class PrecomputeProcessorBase(RunHistoryMixin):
                 logger.warning(f"Failed to send notification: {notify_ex}")
             raise
 
+    def _save_with_proper_merge(self, rows: List[Dict], table_id: str, table_schema) -> None:
+        """
+        Save data using proper SQL MERGE statement (not DELETE + INSERT).
+
+        This method:
+        1. Loads data into a temporary table
+        2. Executes a SQL MERGE statement to upsert records
+        3. Cleans up the temporary table
+
+        Advantages over DELETE + INSERT:
+        - Single atomic operation (no streaming buffer issues)
+        - No duplicates created
+        - Proper upsert semantics
+        """
+        import io
+        import uuid
+        import math
+        import json
+
+        if not rows:
+            logger.warning("No rows to merge")
+            return
+
+        # Check if PRIMARY_KEY_FIELDS is defined
+        if not hasattr(self.__class__, 'PRIMARY_KEY_FIELDS'):
+            logger.warning(f"PRIMARY_KEY_FIELDS not defined for {self.__class__.__name__} - falling back to DELETE + INSERT")
+            # Fall back to old method
+            self._delete_existing_data_batch(rows)
+            return
+
+        primary_keys = self.__class__.PRIMARY_KEY_FIELDS
+        if not primary_keys or len(primary_keys) == 0:
+            logger.warning(f"PRIMARY_KEY_FIELDS is empty - falling back to DELETE + INSERT")
+            self._delete_existing_data_batch(rows)
+            return
+
+        # Create unique temp table name
+        temp_table_name = f"{self.table_name}_temp_{uuid.uuid4().hex[:8]}"
+        temp_table_id = f"{self.project_id}.{self.get_output_dataset()}.{temp_table_name}"
+
+        logger.info(f"Using proper SQL MERGE with temp table: {temp_table_name}")
+
+        try:
+            # Step 1: Sanitize rows
+            def sanitize_row(row):
+                """Sanitize a single row for JSON serialization."""
+                sanitized = {}
+                for key, value in row.items():
+                    if value is None:
+                        sanitized[key] = None
+                    elif isinstance(value, (int, str, bool)):
+                        sanitized[key] = value
+                    elif isinstance(value, float):
+                        if math.isnan(value) or math.isinf(value):
+                            sanitized[key] = None
+                        else:
+                            sanitized[key] = value
+                    elif isinstance(value, (list, dict)):
+                        sanitized[key] = value
+                    else:
+                        sanitized[key] = str(value)
+                return sanitized
+
+            sanitized_rows = [sanitize_row(row) for row in rows]
+
+            # Validate all rows are JSON serializable
+            for i, row in enumerate(sanitized_rows):
+                try:
+                    json.dumps(row)
+                except (TypeError, ValueError) as e:
+                    logger.warning(f"Skipping row {i} due to JSON error: {e}")
+                    sanitized_rows[i] = None
+
+            sanitized_rows = [r for r in sanitized_rows if r is not None]
+
+            if not sanitized_rows:
+                logger.warning("No valid rows after sanitization")
+                return
+
+            # Step 2: Load data into temp table
+            ndjson_data = "\n".join(json.dumps(row) for row in sanitized_rows)
+            ndjson_bytes = ndjson_data.encode('utf-8')
+
+            job_config = bigquery.LoadJobConfig(
+                schema=table_schema,
+                source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+                write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,  # Overwrite temp table
+                autodetect=(table_schema is None)
+            )
+
+            load_job = self.bq_client.load_table_from_file(
+                io.BytesIO(ndjson_bytes),
+                temp_table_id,
+                job_config=job_config
+            )
+
+            load_job.result(timeout=300)
+            logger.info(f"✅ Loaded {len(sanitized_rows)} rows into temp table")
+
+            # Step 3: Build and execute MERGE statement
+            on_clause = ' AND '.join([f"target.{key} = source.{key}" for key in primary_keys])
+
+            # Get all field names from schema (excluding primary keys for UPDATE)
+            if table_schema:
+                all_fields = [field.name for field in table_schema]
+            else:
+                # Fallback: use fields from first row
+                all_fields = list(sanitized_rows[0].keys()) if sanitized_rows else []
+
+            # Fields to update (all except primary keys)
+            update_fields = [f for f in all_fields if f not in primary_keys]
+
+            # Build UPDATE SET clause
+            update_set = ', '.join([f"{field} = source.{field}" for field in update_fields])
+
+            # Build INSERT clause
+            insert_fields = ', '.join(all_fields)
+            insert_values = ', '.join([f"source.{field}" for field in all_fields])
+
+            merge_query = f"""
+            MERGE `{table_id}` AS target
+            USING `{temp_table_id}` AS source
+            ON {on_clause}
+            WHEN MATCHED THEN
+                UPDATE SET {update_set}
+            WHEN NOT MATCHED THEN
+                INSERT ({insert_fields})
+                VALUES ({insert_values})
+            """
+
+            logger.info(f"Executing MERGE on primary keys: {', '.join(primary_keys)}")
+            merge_job = self.bq_client.query(merge_query)
+            merge_result = merge_job.result(timeout=300)
+
+            # Get stats
+            if merge_job.num_dml_affected_rows is not None:
+                logger.info(f"✅ MERGE completed: {merge_job.num_dml_affected_rows} rows affected")
+            else:
+                logger.info(f"✅ MERGE completed successfully")
+
+            self.stats["rows_processed"] = len(sanitized_rows)
+
+        except Exception as e:
+            error_msg = f"MERGE operation failed: {str(e)}"
+            logger.error(error_msg)
+            raise
+
+        finally:
+            # Step 4: Always clean up temp table
+            try:
+                self.bq_client.delete_table(temp_table_id, not_found_ok=True)
+                logger.debug(f"Cleaned up temp table: {temp_table_name}")
+            except Exception as cleanup_e:
+                logger.warning(f"Could not clean up temp table: {cleanup_e}")
+
     def _delete_existing_data_batch(self, rows: List[Dict]) -> None:
-        """Delete existing data using batch DELETE query."""
+        """
+        Delete existing data using batch DELETE query.
+
+        DEPRECATED: Use _save_with_proper_merge() instead.
+        This method is kept for backwards compatibility.
+        """
         if not rows:
             return
 
@@ -1331,7 +1509,69 @@ class PrecomputeProcessorBase(RunHistoryMixin):
                     return
                 else:
                     raise e
-    
+
+    def _check_for_duplicates_post_save(self, date: str = None) -> None:
+        """
+        Check for duplicate records after save operation.
+
+        Uses PRIMARY_KEY_FIELDS class variable if defined.
+        Logs warnings but does not fail - allows cleanup on next run.
+        """
+        # Check if processor has PRIMARY_KEY_FIELDS defined
+        if not hasattr(self.__class__, 'PRIMARY_KEY_FIELDS'):
+            logger.debug(f"PRIMARY_KEY_FIELDS not defined for {self.__class__.__name__} - skipping duplicate check")
+            return
+
+        primary_keys = self.__class__.PRIMARY_KEY_FIELDS
+        if not primary_keys or len(primary_keys) == 0:
+            logger.debug(f"PRIMARY_KEY_FIELDS is empty for {self.__class__.__name__} - skipping duplicate check")
+            return
+
+        table_id = f"{self.project_id}.{self.get_output_dataset()}.{self.table_name}"
+
+        # Use provided date or fall back to opts
+        check_date = date or self.opts.get('analysis_date') or self.opts.get('cache_date') or self.opts.get('game_date')
+
+        if not check_date:
+            logger.debug("No date available - skipping duplicate check")
+            return
+
+        # Build duplicate detection query
+        group_by_clause = ', '.join(primary_keys)
+
+        duplicate_query = f"""
+        SELECT
+            COUNT(*) as duplicate_groups,
+            SUM(cnt - 1) as extra_duplicates
+        FROM (
+            SELECT
+                {group_by_clause},
+                COUNT(*) as cnt
+            FROM `{table_id}`
+            WHERE {self.date_column} = '{check_date}'
+            GROUP BY {group_by_clause}
+            HAVING COUNT(*) > 1
+        )
+        """
+
+        try:
+            result = self.bq_client.query(duplicate_query).result()
+            for row in result:
+                if row.duplicate_groups and row.duplicate_groups > 0:
+                    logger.warning(f"⚠️  DUPLICATES DETECTED: {row.duplicate_groups} duplicate groups ({row.extra_duplicates} extra records)")
+                    logger.warning(f"   Date: {check_date} ({self.date_column})")
+                    logger.warning(f"   Primary keys: {', '.join(primary_keys)}")
+                    logger.warning(f"   These will be cleaned up on next run or via maintenance script")
+
+                    # Track in stats
+                    self.stats['duplicates_detected'] = row.duplicate_groups
+                    self.stats['duplicate_records'] = row.extra_duplicates
+                else:
+                    logger.debug(f"✅ No duplicates found for {check_date}")
+        except Exception as e:
+            logger.debug(f"Could not check for duplicates: {e}")
+            # Don't fail on duplicate check errors - it's optional validation
+
     # =========================================================================
     # Quality Tracking
     # =========================================================================
@@ -2004,10 +2244,17 @@ class PrecomputeProcessorBase(RunHistoryMixin):
         """
         Build dict of all source tracking fields for output records.
         Extracts from self.source_metadata populated by track_source_usage().
-        
+
+        Note: Returns empty dict in backfill mode since these fields don't exist
+        in the BigQuery schema and would cause MERGE failures.
+
         Returns:
             Dict with source_* fields per v4.0 spec (3 fields per source)
         """
+        # Skip source tracking in backfill mode - fields don't exist in BigQuery schema
+        if getattr(self, 'is_backfill_mode', False):
+            return {}
+
         fields = {}
         
         # Per-source fields (populated by track_source_usage)

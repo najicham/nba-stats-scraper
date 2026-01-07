@@ -139,6 +139,9 @@ class TeamDefenseGameSummaryProcessor(
     # Excluded: data_quality_tier, primary_source_used, processed_with_issues,
     #           all source_* fields, data_hash itself, processed_at, created_at
 
+    # Primary key fields for duplicate detection and MERGE operations
+    PRIMARY_KEY_FIELDS = ['game_id', 'team_abbr']
+
     def __init__(self):
         super().__init__()
         self.table_name = 'team_defense_game_summary'

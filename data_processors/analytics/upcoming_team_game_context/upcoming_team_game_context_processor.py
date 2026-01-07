@@ -145,6 +145,9 @@ class UpcomingTeamGameContextProcessor(
     ]
     # Total: 27 meaningful analytics fields
 
+    # Primary key fields for duplicate detection and MERGE operations
+    PRIMARY_KEY_FIELDS = ['game_date', 'team_abbr']
+
     def __init__(self):
         super().__init__()
         self.table_name = 'nba_analytics.upcoming_team_game_context'

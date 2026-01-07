@@ -501,6 +501,9 @@ class PlayerDailyCacheProcessor(
     upstream_table = 'nba_analytics.player_game_summary'
     lookback_days = 10  # Must match data requirements
 
+    # Primary key fields for duplicate detection and MERGE operations
+    PRIMARY_KEY_FIELDS = ['cache_date', 'player_lookup']
+
     def __init__(self):
         """Initialize the player daily cache processor."""
         super().__init__()
@@ -636,14 +639,17 @@ class PlayerDailyCacheProcessor(
     def build_source_tracking_fields(self) -> Dict:
         """
         Build source tracking fields from tracked source attributes.
-        
+
         This method collects all source tracking data (timestamps, row counts,
         completeness percentages) from processor attributes and returns them
         as a dictionary ready to be included in output records.
-        
+
+        Note: Returns empty dict in backfill mode since these fields don't exist
+        in the BigQuery schema and would cause MERGE failures.
+
         Returns:
             Dict: Source tracking fields for all dependencies
-            
+
         Example output:
             {
                 'source_player_game_last_updated': datetime(2025, 1, 21, 2, 15),
@@ -653,6 +659,10 @@ class PlayerDailyCacheProcessor(
                 ...
             }
         """
+        # Skip source tracking in backfill mode - fields don't exist in BigQuery schema
+        if getattr(self, 'is_backfill_mode', False):
+            return {}
+
         tracking_fields = {}
         
         # Get dependencies to know which sources to track
