@@ -1,40 +1,44 @@
 """
-Scraper Registry - Single Source of Truth for NBA Scrapers
+Scraper Registry - Single Source of Truth for Sports Scrapers
 
 This module provides centralized scraper configuration and instantiation for:
 - Flask scraper service (main_scraper_service.py)
 - Orchestration system (workflow_executor.py)
 - Any other system that needs to dynamically load scrapers
 
+Supports multiple sports via SPORT environment variable:
+- SPORT=nba (default): NBA scrapers
+- SPORT=mlb: MLB scrapers
+
 Usage:
     from scrapers.registry import get_scraper_instance, SCRAPER_REGISTRY
-    
+
     # Get list of available scrapers
     scrapers = list(SCRAPER_REGISTRY.keys())
-    
+
     # Instantiate a scraper
-    scraper = get_scraper_instance('oddsa_events_his')
-    
+    scraper = get_scraper_instance('oddsa_events_his')  # NBA
+    scraper = get_scraper_instance('mlb_schedule')       # MLB (when SPORT=mlb)
+
 Path: scrapers/registry.py
 """
 
+import os
 import logging
 from typing import Optional, Dict, Tuple
 
 logger = logging.getLogger(__name__)
 
+# Get current sport from environment (default to NBA for backward compatibility)
+CURRENT_SPORT = os.environ.get('SPORT', 'nba').lower()
+
 # ============================================================================
-# SCRAPER REGISTRY - Single Source of Truth
+# NBA SCRAPER REGISTRY
 # ============================================================================
 # Format: "scraper_name": ("module.path", "ClassName")
-#
-# When adding new scrapers:
-# 1. Add entry here with correct module path and class name
-# 2. Scraper will be automatically available in Flask app and orchestration
-# 3. No other changes needed!
 # ============================================================================
 
-SCRAPER_REGISTRY: Dict[str, Tuple[str, str]] = {
+NBA_SCRAPER_REGISTRY: Dict[str, Tuple[str, str]] = {
     # ========================================================================
     # Odds API Scrapers (7 total)
     # ========================================================================
@@ -199,10 +203,78 @@ SCRAPER_REGISTRY: Dict[str, Tuple[str, str]] = {
         "GetEspnScoreboard"
     ),
     "espn_game_boxscore": (
-        "scrapers.espn.espn_game_boxscore", 
+        "scrapers.espn.espn_game_boxscore",
         "GetEspnBoxscore"
     ),
 }
+
+
+# ============================================================================
+# MLB SCRAPER REGISTRY
+# ============================================================================
+
+MLB_SCRAPER_REGISTRY: Dict[str, Tuple[str, str]] = {
+    # ========================================================================
+    # Ball Don't Lie Scrapers (13 total)
+    # ========================================================================
+    "mlb_games": ("scrapers.mlb.balldontlie.mlb_games", "MlbGamesScraper"),
+    "mlb_box_scores": ("scrapers.mlb.balldontlie.mlb_box_scores", "MlbBoxScoresScraper"),
+    "mlb_live_box_scores": ("scrapers.mlb.balldontlie.mlb_live_box_scores", "MlbLiveBoxScoresScraper"),
+    "mlb_pitcher_stats": ("scrapers.mlb.balldontlie.mlb_pitcher_stats", "MlbPitcherStatsScraper"),
+    "mlb_batter_stats": ("scrapers.mlb.balldontlie.mlb_batter_stats", "MlbBatterStatsScraper"),
+    "mlb_active_players": ("scrapers.mlb.balldontlie.mlb_active_players", "MlbActivePlayersScraper"),
+    "mlb_injuries": ("scrapers.mlb.balldontlie.mlb_injuries", "MlbInjuriesScraper"),
+    "mlb_player_splits": ("scrapers.mlb.balldontlie.mlb_player_splits", "MlbPlayerSplitsScraper"),
+    "mlb_player_versus": ("scrapers.mlb.balldontlie.mlb_player_versus", "MlbPlayerVersusScraper"),
+    "mlb_season_stats": ("scrapers.mlb.balldontlie.mlb_season_stats", "MlbSeasonStatsScraper"),
+    "mlb_standings": ("scrapers.mlb.balldontlie.mlb_standings", "MlbStandingsScraper"),
+    "mlb_team_season_stats": ("scrapers.mlb.balldontlie.mlb_team_season_stats", "MlbTeamSeasonStatsScraper"),
+    "mlb_teams": ("scrapers.mlb.balldontlie.mlb_teams", "MlbTeamsScraper"),
+
+    # ========================================================================
+    # MLB Stats API Scrapers (3 total)
+    # ========================================================================
+    "mlb_schedule": ("scrapers.mlb.mlbstatsapi.mlb_schedule", "MlbScheduleScraper"),
+    "mlb_lineups": ("scrapers.mlb.mlbstatsapi.mlb_lineups", "MlbLineupsScraper"),
+    "mlb_game_feed": ("scrapers.mlb.mlbstatsapi.mlb_game_feed", "MlbGameFeedScraper"),
+
+    # ========================================================================
+    # Odds API Scrapers (8 total)
+    # ========================================================================
+    "mlb_events": ("scrapers.mlb.oddsapi.mlb_events", "MlbEventsOddsScraper"),
+    "mlb_events_his": ("scrapers.mlb.oddsapi.mlb_events_his", "MlbEventsHistoricalScraper"),
+    "mlb_game_lines": ("scrapers.mlb.oddsapi.mlb_game_lines", "MlbGameLinesScraper"),
+    "mlb_game_lines_his": ("scrapers.mlb.oddsapi.mlb_game_lines_his", "MlbGameLinesHistoricalScraper"),
+    "mlb_pitcher_props": ("scrapers.mlb.oddsapi.mlb_pitcher_props", "MlbPitcherPropsScraper"),
+    "mlb_pitcher_props_his": ("scrapers.mlb.oddsapi.mlb_pitcher_props_his", "MlbPitcherPropsHistoricalScraper"),
+    "mlb_batter_props": ("scrapers.mlb.oddsapi.mlb_batter_props", "MlbBatterPropsScraper"),
+    "mlb_batter_props_his": ("scrapers.mlb.oddsapi.mlb_batter_props_his", "MlbBatterPropsHistoricalScraper"),
+
+    # ========================================================================
+    # External Data Scrapers (3 total)
+    # ========================================================================
+    "mlb_weather": ("scrapers.mlb.external.mlb_weather", "MlbWeatherScraper"),
+    "mlb_ballpark_factors": ("scrapers.mlb.external.mlb_ballpark_factors", "MlbBallparkFactorsScraper"),
+    "mlb_umpire_stats": ("scrapers.mlb.external.mlb_umpire_stats", "MlbUmpireStatsScraper"),
+
+    # ========================================================================
+    # Statcast Scrapers (1 total)
+    # ========================================================================
+    "mlb_statcast_pitcher": ("scrapers.mlb.statcast.mlb_statcast_pitcher", "MlbStatcastPitcherScraper"),
+}
+
+
+# ============================================================================
+# DYNAMIC REGISTRY SELECTION
+# ============================================================================
+# Select registry based on SPORT environment variable
+
+if CURRENT_SPORT == 'mlb':
+    SCRAPER_REGISTRY = MLB_SCRAPER_REGISTRY
+    logger.info(f"Loaded MLB scraper registry ({len(MLB_SCRAPER_REGISTRY)} scrapers)")
+else:
+    SCRAPER_REGISTRY = NBA_SCRAPER_REGISTRY
+    logger.info(f"Loaded NBA scraper registry ({len(NBA_SCRAPER_REGISTRY)} scrapers)")
 
 
 # ============================================================================
