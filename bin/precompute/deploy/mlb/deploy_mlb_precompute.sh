@@ -1,53 +1,41 @@
 #!/bin/bash
-# deploy_mlb_scrapers.sh - Deploy MLB Scrapers to Cloud Run
+# deploy_mlb_precompute.sh - Deploy MLB Phase 4 Precompute Processors
 #
-# WHAT THIS DOES:
-# 1. Builds Docker image with MLB scrapers
-# 2. Pushes to Artifact Registry
-# 3. Deploys mlb-phase1-scrapers Cloud Run service
-# 4. Tests health endpoint
+# Deploys MLB precompute service to Cloud Run.
+# Processors: pitcher_features, lineup_k_analysis
 #
-# USAGE: ./bin/scrapers/deploy/mlb/deploy_mlb_scrapers.sh
-#
-# Created: 2026-01-07
+# Usage: ./bin/precompute/deploy/mlb/deploy_mlb_precompute.sh
 
 set -euo pipefail
 
-SERVICE_NAME="mlb-phase1-scrapers"
+SERVICE_NAME="mlb-phase4-precompute-processors"
 REGION="us-west2"
 PROJECT_ID="nba-props-platform"
 
 # Docker image configuration
-IMAGE_NAME="mlb-scrapers"
+IMAGE_NAME="mlb-precompute-processors"
 IMAGE_TAG="$(date +%Y%m%d-%H%M%S)"
 IMAGE_FULL="${REGION}-docker.pkg.dev/${PROJECT_ID}/nba-props/${IMAGE_NAME}:${IMAGE_TAG}"
 IMAGE_LATEST="${REGION}-docker.pkg.dev/${PROJECT_ID}/nba-props/${IMAGE_NAME}:latest"
 
-# Capture git commit SHA
+# Git tracking
 GIT_COMMIT_SHA=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 GIT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
-
-# Load environment variables from .env file
-if [ -f ".env" ]; then
-    echo "Loading environment variables from .env..."
-    export $(grep -v '^#' .env | grep -v '^$' | xargs)
-fi
 
 DEPLOY_START_TIME=$(date +%s)
 
 echo "========================================"
-echo " Deploying MLB Scrapers to Cloud Run"
+echo " Deploying MLB Phase 4 Precompute"
 echo "========================================"
 echo "Start time: $(date '+%Y-%m-%d %H:%M:%S')"
 echo "Git commit: $GIT_COMMIT_SHA ($GIT_BRANCH)"
 echo "Service: $SERVICE_NAME"
-echo "Region: $REGION"
 echo ""
 
 # Build Docker image
 echo "Building Docker image..."
 docker build \
-    -f docker/scrapers.Dockerfile \
+    -f docker/mlb-precompute-processor.Dockerfile \
     -t "$IMAGE_FULL" \
     -t "$IMAGE_LATEST" \
     .
@@ -59,45 +47,38 @@ docker push "$IMAGE_LATEST"
 
 echo "Image pushed: $IMAGE_FULL"
 
-# Build environment variables string
+# Build environment variables
 ENV_VARS="GCP_PROJECT_ID=$PROJECT_ID"
 ENV_VARS="$ENV_VARS,SPORT=mlb"
-ENV_VARS="$ENV_VARS,GCS_BUCKET=nba-scraped-data"
 ENV_VARS="$ENV_VARS,COMMIT_SHA=$GIT_COMMIT_SHA"
 ENV_VARS="$ENV_VARS,GIT_BRANCH=$GIT_BRANCH"
 ENV_VARS="$ENV_VARS,DEPLOY_TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-# Add API keys if available
-if [[ -n "${BDL_API_KEY:-}" ]]; then
-    ENV_VARS="$ENV_VARS,BDL_API_KEY=$BDL_API_KEY"
-    echo "BDL API key configured"
-fi
-
-if [[ -n "${ODDS_API_KEY:-}" ]]; then
-    ENV_VARS="$ENV_VARS,ODDS_API_KEY=$ODDS_API_KEY"
-    echo "Odds API key configured"
-fi
-
 # Add email alerting configuration if available
 EMAIL_STATUS="DISABLED"
 if [[ -n "${BREVO_SMTP_PASSWORD:-}" && -n "${EMAIL_ALERTS_TO:-}" ]]; then
-    echo "Adding email alerting configuration..."
+    echo "✅ Adding email alerting configuration..."
 
     ENV_VARS="$ENV_VARS,BREVO_SMTP_HOST=${BREVO_SMTP_HOST:-smtp-relay.brevo.com}"
     ENV_VARS="$ENV_VARS,BREVO_SMTP_PORT=${BREVO_SMTP_PORT:-587}"
     ENV_VARS="$ENV_VARS,BREVO_SMTP_USERNAME=${BREVO_SMTP_USERNAME:-}"
     ENV_VARS="$ENV_VARS,BREVO_SMTP_PASSWORD=${BREVO_SMTP_PASSWORD}"
     ENV_VARS="$ENV_VARS,BREVO_FROM_EMAIL=${BREVO_FROM_EMAIL:-}"
-    ENV_VARS="$ENV_VARS,BREVO_FROM_NAME=${BREVO_FROM_NAME:-MLB Scrapers System}"
+    ENV_VARS="$ENV_VARS,BREVO_FROM_NAME=${BREVO_FROM_NAME:-MLB Precompute System}"
     ENV_VARS="$ENV_VARS,EMAIL_ALERTS_TO=${EMAIL_ALERTS_TO}"
     ENV_VARS="$ENV_VARS,EMAIL_CRITICAL_TO=${EMAIL_CRITICAL_TO:-$EMAIL_ALERTS_TO}"
 
+    # Alert thresholds
+    ENV_VARS="$ENV_VARS,EMAIL_ALERT_UNRESOLVED_COUNT_THRESHOLD=${EMAIL_ALERT_UNRESOLVED_COUNT_THRESHOLD:-50}"
+    ENV_VARS="$ENV_VARS,EMAIL_ALERT_SUCCESS_RATE_THRESHOLD=${EMAIL_ALERT_SUCCESS_RATE_THRESHOLD:-90.0}"
+    ENV_VARS="$ENV_VARS,EMAIL_ALERT_MAX_PROCESSING_TIME=${EMAIL_ALERT_MAX_PROCESSING_TIME:-30}"
+
     EMAIL_STATUS="ENABLED"
 else
-    echo "Email alerting not configured (set BREVO_SMTP_PASSWORD and EMAIL_ALERTS_TO)"
+    echo "⚠️  Email alerting not configured (set BREVO_SMTP_PASSWORD and EMAIL_ALERTS_TO)"
 fi
 
-echo "Email Alerting: $EMAIL_STATUS"
+echo "📧 Email Alerting: $EMAIL_STATUS"
 
 echo ""
 echo "Deploying to Cloud Run..."
@@ -107,12 +88,12 @@ gcloud run deploy $SERVICE_NAME \
     --region $REGION \
     --platform managed \
     --allow-unauthenticated \
-    --memory 2Gi \
-    --cpu 2 \
+    --memory 8Gi \
+    --cpu 4 \
     --timeout 300 \
-    --concurrency 10 \
+    --concurrency 5 \
     --min-instances 0 \
-    --max-instances 5 \
+    --max-instances 10 \
     --set-env-vars="$ENV_VARS" \
     --project $PROJECT_ID
 
@@ -129,13 +110,8 @@ echo ""
 # Test health endpoint
 echo "Testing health endpoint..."
 sleep 3
-HEALTH_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" "$SERVICE_URL/health" || echo "000")
-
-if [ "$HEALTH_RESPONSE" = "200" ]; then
-    echo "Health check: PASSED"
-else
-    echo "Health check: FAILED (HTTP $HEALTH_RESPONSE)"
-fi
+HEALTH_RESPONSE=$(curl -s "$SERVICE_URL/health" || echo '{"status": "unknown"}')
+echo "$HEALTH_RESPONSE" | python3 -m json.tool 2>/dev/null || echo "$HEALTH_RESPONSE"
 
 # Calculate deployment time
 DEPLOY_END_TIME=$(date +%s)
@@ -144,11 +120,8 @@ DEPLOY_DURATION=$((DEPLOY_END_TIME - DEPLOY_START_TIME))
 echo ""
 echo "Deployment duration: ${DEPLOY_DURATION}s"
 echo ""
-echo "Available endpoints:"
+echo "Endpoints:"
 echo "  $SERVICE_URL/health"
-echo "  $SERVICE_URL/list-scrapers"
-echo "  $SERVICE_URL/scrape?scraper=mlb_schedule&date=2025-06-15"
-echo ""
-echo "Test with:"
-echo "  curl '$SERVICE_URL/scrape?scraper=mlb_schedule&date=2025-06-15'"
+echo "  $SERVICE_URL/process (POST - Pub/Sub)"
+echo "  $SERVICE_URL/process-date (POST - HTTP)"
 echo ""

@@ -229,11 +229,11 @@ class MlbBatterGameSummaryProcessor(AnalyticsProcessorBase):
                     ROWS BETWEEN 10 PRECEDING AND 1 PRECEDING
                 ) as ab_avg_last_10,
 
-                -- Games in last 30 days
+                -- Games in last 30 days (approximated by recent rows)
                 COUNT(*) OVER (
                     PARTITION BY player_lookup
-                    ORDER BY game_date
-                    RANGE BETWEEN INTERVAL 30 DAY PRECEDING AND INTERVAL 1 DAY PRECEDING
+                    ORDER BY game_date, game_id
+                    ROWS BETWEEN 30 PRECEDING AND 1 PRECEDING
                 ) as games_last_30_days,
 
                 -- Season totals (prior to this game)

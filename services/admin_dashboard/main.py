@@ -348,13 +348,44 @@ API_KEY = os.environ.get('ADMIN_DASHBOARD_API_KEY')
 if not API_KEY:
     logger.warning("ADMIN_DASHBOARD_API_KEY not set - all authenticated requests will be rejected")
 
-# Cloud Run service URLs
+# Cloud Run service URLs (sport-specific)
 SERVICE_URLS = {
-    'prediction_coordinator': 'https://prediction-coordinator-f7p3g7f6ya-wl.a.run.app',
-    'phase3_analytics': 'https://nba-phase3-analytics-processors-f7p3g7f6ya-wl.a.run.app',
-    'phase4_precompute': 'https://nba-phase4-precompute-processors-f7p3g7f6ya-wl.a.run.app',
-    'self_heal': 'https://self-heal-f7p3g7f6ya-wl.a.run.app',
+    'nba': {
+        'prediction_coordinator': 'https://prediction-coordinator-f7p3g7f6ya-wl.a.run.app',
+        'phase3_analytics': 'https://nba-phase3-analytics-processors-f7p3g7f6ya-wl.a.run.app',
+        'phase4_precompute': 'https://nba-phase4-precompute-processors-f7p3g7f6ya-wl.a.run.app',
+        'self_heal': 'https://self-heal-f7p3g7f6ya-wl.a.run.app',
+    },
+    'mlb': {
+        'prediction_worker': 'https://mlb-prediction-worker-f7p3g7f6ya-wl.a.run.app',
+        'phase3_analytics': 'https://mlb-phase3-analytics-processors-f7p3g7f6ya-wl.a.run.app',
+        'phase4_precompute': 'https://mlb-phase4-precompute-processors-f7p3g7f6ya-wl.a.run.app',
+        'phase6_grading': 'https://mlb-phase6-grading-f7p3g7f6ya-wl.a.run.app',
+        'self_heal': 'https://mlb-self-heal-f7p3g7f6ya-wl.a.run.app',
+    }
 }
+
+# Supported sports
+SUPPORTED_SPORTS = ['nba', 'mlb']
+DEFAULT_SPORT = 'nba'
+
+
+def get_sport_from_request() -> str:
+    """Get sport parameter from request, defaulting to NBA."""
+    sport = request.args.get('sport', DEFAULT_SPORT).lower()
+    if sport not in SUPPORTED_SPORTS:
+        sport = DEFAULT_SPORT
+    return sport
+
+
+def get_service_for_sport(sport: str) -> tuple:
+    """
+    Get BigQuery and Firestore services for a specific sport.
+
+    Returns:
+        Tuple of (BigQueryService, FirestoreService)
+    """
+    return BigQueryService(sport=sport), FirestoreService(sport=sport)
 
 
 def get_auth_token(audience: str) -> str:
@@ -380,7 +411,8 @@ def get_auth_token(audience: str) -> str:
 
 
 def call_cloud_run_service(service_key: str, endpoint: str, method: str = 'POST',
-                           payload: dict = None, timeout: int = 120) -> dict:
+                           payload: dict = None, timeout: int = 120,
+                           sport: str = 'nba') -> dict:
     """
     Make an authenticated call to a Cloud Run service.
 
@@ -390,14 +422,16 @@ def call_cloud_run_service(service_key: str, endpoint: str, method: str = 'POST'
         method: HTTP method
         payload: JSON payload for POST requests
         timeout: Request timeout in seconds
+        sport: 'nba' or 'mlb'
 
     Returns:
         Dict with 'success', 'status_code', 'response', and 'error' keys
     """
-    if service_key not in SERVICE_URLS:
-        return {'success': False, 'error': f'Unknown service: {service_key}'}
+    sport_urls = SERVICE_URLS.get(sport, SERVICE_URLS['nba'])
+    if service_key not in sport_urls:
+        return {'success': False, 'error': f'Unknown service: {service_key} for sport: {sport}'}
 
-    base_url = SERVICE_URLS[service_key]
+    base_url = sport_urls[service_key]
     url = f"{base_url}{endpoint}"
 
     # Get auth token
@@ -499,6 +533,7 @@ def health():
     return jsonify({
         'status': 'healthy',
         'service': 'admin-dashboard',
+        'supported_sports': SUPPORTED_SPORTS,
         'timestamp': datetime.utcnow().isoformat() + 'Z'
     })
 
@@ -510,18 +545,25 @@ def health():
 @app.route('/dashboard')
 @rate_limit
 def dashboard():
-    """Main dashboard page."""
+    """Main dashboard page - supports both NBA and MLB via ?sport= parameter."""
     if not check_auth():
         return render_template('auth_required.html'), 401
+
+    sport = get_sport_from_request()
+    bq_svc, fs_svc = get_service_for_sport(sport)
 
     today, tomorrow, now_et = get_et_dates()
 
     # Get pipeline status for today and tomorrow
     try:
-        today_status = bq_service.get_daily_status(today)
-        tomorrow_status = bq_service.get_daily_status(tomorrow)
+        if sport == 'mlb':
+            today_status = bq_svc.get_mlb_daily_status(today)
+            tomorrow_status = bq_svc.get_mlb_daily_status(tomorrow)
+        else:
+            today_status = bq_svc.get_daily_status(today)
+            tomorrow_status = bq_svc.get_daily_status(tomorrow)
     except Exception as e:
-        logger.error(f"Error fetching status: {e}")
+        logger.error(f"Error fetching {sport} status: {e}")
         today_status = None
         tomorrow_status = None
 
@@ -534,6 +576,8 @@ def dashboard():
 
     return render_template(
         'dashboard.html',
+        sport=sport,
+        supported_sports=SUPPORTED_SPORTS,
         today=today,
         tomorrow=tomorrow,
         now_et=now_et,
@@ -550,19 +594,28 @@ def dashboard():
 @app.route('/api/status')
 @rate_limit
 def api_status():
-    """Get current pipeline status for today and tomorrow."""
+    """Get current pipeline status for today and tomorrow - supports ?sport= parameter."""
     if not check_auth():
         return jsonify({'error': 'Unauthorized'}), 401
 
+    sport = get_sport_from_request()
+    bq_svc, _ = get_service_for_sport(sport)
     today, tomorrow, now_et = get_et_dates()
 
     try:
-        today_status = bq_service.get_daily_status(today)
-        tomorrow_status = bq_service.get_daily_status(tomorrow)
-        today_games = bq_service.get_games_detail(today)
-        tomorrow_games = bq_service.get_games_detail(tomorrow)
+        if sport == 'mlb':
+            today_status = bq_svc.get_mlb_daily_status(today)
+            tomorrow_status = bq_svc.get_mlb_daily_status(tomorrow)
+            today_games = bq_svc.get_mlb_games_detail(today)
+            tomorrow_games = bq_svc.get_mlb_games_detail(tomorrow)
+        else:
+            today_status = bq_svc.get_daily_status(today)
+            tomorrow_status = bq_svc.get_daily_status(tomorrow)
+            today_games = bq_svc.get_games_detail(today)
+            tomorrow_games = bq_svc.get_games_detail(tomorrow)
 
         return jsonify({
+            'sport': sport,
             'timestamp': now_et.isoformat(),
             'today': {
                 'date': today.isoformat(),
@@ -576,7 +629,7 @@ def api_status():
             }
         })
     except Exception as e:
-        logger.error(f"Error in api_status: {e}")
+        logger.error(f"Error in api_status for {sport}: {e}")
         return jsonify({'error': str(e)}), 500
 
 
