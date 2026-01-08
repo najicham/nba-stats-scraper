@@ -37,6 +37,29 @@ class MlbPitcherFeaturesProcessor(PrecomputeProcessorBase):
         self.target_table = "mlb_precompute.pitcher_ml_features"
         self.feature_version = FEATURE_VERSION
 
+    def get_dependencies(self) -> dict:
+        """Define upstream data dependencies for this processor."""
+        return {
+            'mlb_analytics.pitcher_game_summary': {
+                'description': 'Pitcher rolling stats',
+                'date_field': 'game_date',
+                'check_type': 'lookback',
+                'lookback_games': 5,
+                'expected_count_min': 1,
+                'max_age_hours': 48,
+                'critical': False  # We can still run with partial data
+            },
+            'mlb_analytics.batter_game_summary': {
+                'description': 'Batter K rates',
+                'date_field': 'game_date',
+                'check_type': 'lookback',
+                'lookback_games': 5,
+                'expected_count_min': 1,
+                'max_age_hours': 48,
+                'critical': False
+            }
+        }
+
     def process_date(self, game_date: date) -> Dict[str, Any]:
         """Process features for all pitchers on a given date."""
         logger.info(f"Processing pitcher features for {game_date}")

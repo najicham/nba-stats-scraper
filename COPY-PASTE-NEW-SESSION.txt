@@ -1,37 +1,44 @@
-MLB Pitcher Strikeouts Pipeline - Check Back Session (Jan 7, ~4 PM PST)
+MLB Pitcher Strikeouts - New Session Handoff
 
-Read docs/09-handoff/2026-01-07-MLB-PIPELINE-FIX-AND-COLLECTION.md for full context.
+READ THIS FIRST:
+docs/09-handoff/2026-01-07-MLB-COLLECTION-HANDOFF-FOR-NEW-SESSION.md
 
-CURRENT STATUS (as of Jan 7, 1:15 PM PST):
-- Fixed critical data pipeline gap (pitcher stats weren't being stored)
-- Auto-collection running in background (PID in logs/mlb_auto_collection.log)
-- Expected completion: ~4:00 PM PST
+QUICK STATUS (as of Jan 7, 2:50 PM PST):
+- Re-collection running with pitcher stats fix
+- 2025: Started 2:47 PM, ETA ~3:40 PM
+- 2024: Auto-starts after 2025, ETA ~4:30 PM
+- Analytics + ML ready after ~4:30 PM
 
-QUICK STATUS CHECK:
+IMMEDIATE CHECK:
 ```bash
-# 1. Check auto-collection progress
-tail -20 logs/mlb_auto_collection.log
+# Is collection still running?
+ps aux | grep "collect_season" | grep -v grep
 
-# 2. Check if collections running
-pgrep -f "collect_season"
+# Check progress
+tail -10 logs/mlb_2025_recollect.log
+tail -10 logs/mlb_2024_recollect.log
 
-# 3. Check pitcher stats in BigQuery
-bq query --nouse_legacy_sql 'SELECT COUNT(*) FROM mlb_raw.mlb_pitcher_stats WHERE game_date >= "2024-01-01"'
+# Check BigQuery data
+bq query --nouse_legacy_sql 'SELECT season_year, COUNT(*) as cnt FROM mlb_raw.mlb_pitcher_stats WHERE game_date >= "2024-01-01" GROUP BY 1'
 ```
 
-IF COLLECTIONS COMPLETE (expect ~4,900+ pitcher starts):
+IF COLLECTION COMPLETE (~9,800+ rows):
 ```bash
-# 1. Run analytics pipeline
+# 1. Run analytics
 PYTHONPATH=. python -m data_processors.analytics.mlb.pitcher_game_summary_processor \
   --start-date 2024-03-28 --end-date 2025-09-28
 
-# 2. Train ML model
+# 2. Train model
 PYTHONPATH=. python scripts/mlb/train_pitcher_strikeouts.py
 ```
 
-TARGET: Beat baseline MAE 1.92
+SUCCESS CRITERIA:
+- mlb_pitcher_stats: ~9,800+ rows
+- pitcher_game_summary: ~9,800+ rows after analytics
+- Model MAE: < 1.92 (baseline)
 
-KEY FILES MODIFIED THIS SESSION:
-- scripts/mlb/collect_season.py (added pitcher stats storage)
-- data_processors/analytics/mlb/pitcher_game_summary_processor.py (new source table)
-- scripts/mlb/train_pitcher_strikeouts.py (NEW - ML training script)
+KEY FIX THIS SESSION:
+- Collection wasn't storing pitcher stats to BigQuery
+- Added load_pitcher_stats() to collect_season.py
+- Created mlb_pitcher_stats table
+- Updated analytics processor to use new table

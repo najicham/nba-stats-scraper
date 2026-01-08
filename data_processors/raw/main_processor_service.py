@@ -65,6 +65,18 @@ from data_processors.raw.oddsapi.odds_game_lines_processor import OddsGameLinesP
 from data_processors.raw.nbacom.nbac_schedule_processor import NbacScheduleProcessor
 from data_processors.raw.nbacom.nbac_injury_report_processor import NbacInjuryReportProcessor
 
+# Import MLB processors
+from data_processors.raw.mlb import (
+    MlbPitcherStatsProcessor,
+    MlbBatterStatsProcessor,
+    MlbScheduleProcessor,
+    MlbLineupsProcessor,
+    MlbPitcherPropsProcessor,
+    MlbBatterPropsProcessor,
+    MlbEventsProcessor,
+    MlbGameLinesProcessor,
+)
+
 
 # from balldontlie.bdl_boxscore_processor import BdlBoxscoreProcessor
 # from nbacom.nbac_schedule_processor import NbacScheduleProcessor
@@ -108,6 +120,18 @@ PROCESSOR_REGISTRY = {
     'bettingpros/player-props': BettingPropsProcessor,
 
     'big-data-ball': BigDataBallPbpProcessor,
+
+    # ============================
+    # MLB Processors
+    # ============================
+    'ball-dont-lie/mlb-pitcher-stats': MlbPitcherStatsProcessor,
+    'ball-dont-lie/mlb-batter-stats': MlbBatterStatsProcessor,
+    'mlb-stats-api/schedule': MlbScheduleProcessor,
+    'mlb-stats-api/lineups': MlbLineupsProcessor,
+    'mlb-odds-api/pitcher-props': MlbPitcherPropsProcessor,
+    'mlb-odds-api/batter-props': MlbBatterPropsProcessor,
+    'mlb-odds-api/events': MlbEventsProcessor,
+    'mlb-odds-api/game-lines': MlbGameLinesProcessor,
 }
 
 # Paths that are intentionally not processed (event IDs, metadata, etc.)
@@ -1294,6 +1318,73 @@ def extract_opts_from_path(file_path: str) -> dict:
                     break
         except ValueError:
             logger.warning(f"Could not parse date from gamebook path: {file_path}")
+
+    # ============================
+    # MLB Path Extraction
+    # ============================
+    elif 'ball-dont-lie/mlb-pitcher-stats' in file_path or 'ball-dont-lie/mlb-batter-stats' in file_path:
+        # Path: ball-dont-lie/mlb-pitcher-stats/{date}/{timestamp}.json
+        # Path: ball-dont-lie/mlb-batter-stats/{date}/{timestamp}.json
+        parts = file_path.split('/')
+        if len(parts) >= 3:
+            date_str = parts[-2]  # "2025-06-15"
+            try:
+                from datetime import datetime
+                game_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+                opts['game_date'] = game_date
+            except ValueError:
+                logger.warning(f"Could not parse date from MLB BDL path: {date_str}")
+
+    elif 'mlb-stats-api/schedule' in file_path or 'mlb-stats-api/lineups' in file_path:
+        # Path: mlb-stats-api/schedule/{date}/{timestamp}.json
+        # Path: mlb-stats-api/lineups/{date}/{timestamp}.json
+        parts = file_path.split('/')
+        if len(parts) >= 3:
+            date_str = parts[-2]  # "2025-06-15"
+            try:
+                from datetime import datetime
+                game_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+                opts['game_date'] = game_date
+            except ValueError:
+                logger.warning(f"Could not parse date from MLB Stats API path: {date_str}")
+
+    elif 'mlb-odds-api/pitcher-props' in file_path or 'mlb-odds-api/batter-props' in file_path:
+        # Path: mlb-odds-api/pitcher-props/{date}/{event_id}-{teams}/{timestamp}-snap-{snap}.json
+        parts = file_path.split('/')
+        if len(parts) >= 4:
+            date_str = parts[-3]  # "2025-06-15"
+            event_teams = parts[-2]  # "abc123-NYY-BOS"
+            try:
+                from datetime import datetime
+                game_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+                opts['game_date'] = game_date
+                opts['event_teams'] = event_teams
+            except ValueError:
+                logger.warning(f"Could not parse date from MLB props path: {date_str}")
+
+    elif 'mlb-odds-api/game-lines' in file_path:
+        # Path: mlb-odds-api/game-lines/{date}/{timestamp}.json
+        parts = file_path.split('/')
+        if len(parts) >= 3:
+            date_str = parts[-2]  # "2025-06-15"
+            try:
+                from datetime import datetime
+                game_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+                opts['game_date'] = game_date
+            except ValueError:
+                logger.warning(f"Could not parse date from MLB game-lines path: {date_str}")
+
+    elif 'mlb-odds-api/events' in file_path:
+        # Path: mlb-odds-api/events/{date}/{timestamp}.json
+        parts = file_path.split('/')
+        if len(parts) >= 3:
+            date_str = parts[-2]  # "2025-06-15"
+            try:
+                from datetime import datetime
+                game_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+                opts['game_date'] = game_date
+            except ValueError:
+                logger.warning(f"Could not parse date from MLB events path: {date_str}")
 
     return opts    
 

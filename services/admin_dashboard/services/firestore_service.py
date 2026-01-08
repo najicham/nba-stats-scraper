@@ -2,24 +2,47 @@
 Firestore Service for Admin Dashboard
 
 Queries Firestore for orchestration state (phase completion tracking).
+Supports both NBA and MLB sports via sport parameter.
 """
 
 import os
 import logging
 from datetime import datetime
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 from google.cloud import firestore
 
 logger = logging.getLogger(__name__)
 
 PROJECT_ID = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
 
+# Sport-specific Firestore collection prefixes
+SPORT_COLLECTIONS = {
+    'nba': {
+        'phase3_completion': 'phase3_completion',
+        'phase4_completion': 'phase4_completion',
+        'run_history': 'run_history',
+    },
+    'mlb': {
+        'phase3_completion': 'mlb_phase3_completion',
+        'phase4_completion': 'mlb_phase4_completion',
+        'run_history': 'mlb_run_history',
+    }
+}
+
 
 class FirestoreService:
     """Service for querying Firestore orchestration state."""
 
-    def __init__(self):
+    def __init__(self, sport: str = 'nba'):
+        """
+        Initialize Firestore service for a specific sport.
+
+        Args:
+            sport: 'nba' or 'mlb' (default: 'nba')
+        """
         self.db = firestore.Client(project=PROJECT_ID)
+        self.sport = sport.lower()
+        self.collections = SPORT_COLLECTIONS.get(self.sport, SPORT_COLLECTIONS['nba'])
 
     def get_phase_completion(self, collection: str, date_key: str) -> Optional[Dict]:
         """
@@ -175,3 +198,71 @@ class FirestoreService:
         except Exception as e:
             logger.error(f"Error querying stuck processors: {e}")
             return []
+
+    # =========================================================================
+    # MLB-specific methods
+    # =========================================================================
+
+    def get_mlb_phase3_status(self, date_key: str) -> Dict:
+        """
+        Get MLB Phase 3 completion status.
+
+        MLB Phase 3 has 2 required processors:
+        - pitcher_game_summary
+        - batter_game_summary
+        """
+        required_processors = [
+            'pitcher_game_summary',
+            'batter_game_summary',
+        ]
+
+        state = self.get_phase_completion('mlb_phase3_completion', date_key)
+
+        completed = []
+        pending = []
+
+        for proc in required_processors:
+            if proc in state.get('processors', {}):
+                completed.append(proc)
+            else:
+                pending.append(proc)
+
+        state['required_processors'] = required_processors
+        state['completed_processors'] = completed
+        state['pending_processors'] = pending
+        state['completion_ratio'] = f"{len(completed)}/{len(required_processors)}"
+        state['is_complete'] = len(pending) == 0
+
+        return state
+
+    def get_mlb_phase4_status(self, date_key: str) -> Dict:
+        """
+        Get MLB Phase 4 completion status.
+
+        MLB Phase 4 has 2 key processors:
+        - pitcher_features
+        - lineup_k_analysis
+        """
+        required_processors = [
+            'pitcher_features',
+            'lineup_k_analysis',
+        ]
+
+        state = self.get_phase_completion('mlb_phase4_completion', date_key)
+
+        completed = []
+        pending = []
+
+        for proc in required_processors:
+            if proc in state.get('processors', {}):
+                completed.append(proc)
+            else:
+                pending.append(proc)
+
+        state['required_processors'] = required_processors
+        state['completed_processors'] = completed
+        state['pending_processors'] = pending
+        state['completion_ratio'] = f"{len(completed)}/{len(required_processors)}"
+        state['is_complete'] = len(pending) == 0
+
+        return state
