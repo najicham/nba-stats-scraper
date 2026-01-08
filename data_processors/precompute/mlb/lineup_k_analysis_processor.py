@@ -34,6 +34,20 @@ class MlbLineupKAnalysisProcessor(PrecomputeProcessorBase):
         self.processor_name = "mlb_lineup_k_analysis"
         self.target_table = "mlb_precompute.lineup_k_analysis"
 
+    def get_dependencies(self) -> dict:
+        """Define upstream data dependencies for this processor."""
+        return {
+            'mlb_analytics.batter_game_summary': {
+                'description': 'Batter rolling K rates',
+                'date_field': 'game_date',
+                'check_type': 'lookback',
+                'lookback_games': 5,
+                'expected_count_min': 1,
+                'max_age_hours': 48,
+                'critical': False
+            }
+        }
+
     def process_date(self, game_date: date) -> Dict[str, Any]:
         """Process lineup analysis for all pitchers on a given date."""
         logger.info(f"Processing lineup K analysis for {game_date}")
