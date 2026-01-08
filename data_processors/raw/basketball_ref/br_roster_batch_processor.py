@@ -108,6 +108,12 @@ class BasketballRefRosterBatchProcessor(ProcessorBase):
         self.stats['teams_loaded'] = team_count
         self.stats['players_loaded'] = len(self.team_data)
 
+    def transform_data(self) -> None:
+        """Transform data - already done during load_data() via _transform_team_roster()."""
+        # Transformation happens during load_data() when we create BigQuery-ready rows
+        # Just set transformed_data to raw_data since it's already in the correct format
+        self.transformed_data = self.raw_data
+
     def _transform_team_roster(self, roster_data: dict, team_abbr: str, season: str):
         """
         Transform Basketball Reference roster data to BigQuery schema.
