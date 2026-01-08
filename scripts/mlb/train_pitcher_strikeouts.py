@@ -102,7 +102,9 @@ WITH pitcher_games AS (
         pgs.rolling_stats_games
 
     FROM `nba-props-platform.mlb_analytics.pitcher_game_summary` pgs
-    WHERE pgs.strikeouts IS NOT NULL
+    WHERE pgs.game_date >= '2024-03-01'
+      AND pgs.game_date <= '2025-12-31'
+      AND pgs.strikeouts IS NOT NULL
       AND pgs.innings_pitched >= 3.0  -- Starter threshold
       AND pgs.rolling_stats_games >= 3  -- Minimum history
       AND pgs.season_year IN (2024, 2025)
@@ -241,7 +243,9 @@ except Exception as e:
         data_completeness_score
 
     FROM `nba-props-platform.mlb_analytics.pitcher_game_summary`
-    WHERE strikeouts IS NOT NULL
+    WHERE game_date >= '2024-03-01'
+      AND game_date <= '2025-12-31'
+      AND strikeouts IS NOT NULL
       AND innings_pitched >= 3.0
       AND rolling_stats_games >= 3
       AND season_year IN (2024, 2025)

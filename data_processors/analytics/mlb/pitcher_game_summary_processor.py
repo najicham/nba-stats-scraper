@@ -259,8 +259,8 @@ class MlbPitcherGameSummaryProcessor(AnalyticsProcessorBase):
                 -- Games in last 30 days (workload)
                 COUNT(*) OVER (
                     PARTITION BY player_lookup
-                    ORDER BY game_date
-                    RANGE BETWEEN INTERVAL 30 DAY PRECEDING AND INTERVAL 1 DAY PRECEDING
+                    ORDER BY UNIX_DATE(game_date)
+                    RANGE BETWEEN 30 PRECEDING AND 1 PRECEDING
                 ) as games_last_30_days,
 
                 -- Season totals
@@ -365,12 +365,21 @@ class MlbPitcherGameSummaryProcessor(AnalyticsProcessorBase):
 
     def _execute_query(self, query: str) -> List[Dict]:
         """Execute query and return results as list of dicts."""
+        from datetime import date as date_type, datetime as datetime_type
+
         job = self.bq_client.query(query)
         results = job.result()
 
         rows = []
         for row in results:
-            rows.append(dict(row))
+            row_dict = dict(row)
+            # Convert date/datetime to string for JSON serialization
+            for key, value in row_dict.items():
+                if isinstance(value, date_type):
+                    row_dict[key] = value.isoformat()
+                elif isinstance(value, datetime_type):
+                    row_dict[key] = value.isoformat()
+            rows.append(row_dict)
 
         return rows
 
