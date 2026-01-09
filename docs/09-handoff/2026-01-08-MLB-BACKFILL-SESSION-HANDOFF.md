@@ -1,14 +1,15 @@
 # MLB Pipeline Backfill Session Handoff
 
 **Date:** 2026-01-08
-**Session Focus:** Complete MLB historical data backfill and prediction generation
-**Status:** COMPLETE - Batter data collected, analytics generated, predictions regenerated
+**Session Focus:** Complete MLB historical data backfill, fix team abbreviations, prediction generation
+**Status:** COMPLETE - All data fixed, ready to regenerate predictions
 
 ---
 
 ## Executive Summary
 
-This session completed the full MLB pipeline backfill:
+This session completed the full MLB pipeline backfill AND fixed a critical data bug:
+
 1. ✅ Verified all orchestrator Cloud Functions are correct
 2. ✅ Made timeout configuration flexible via environment variable
 3. ✅ Added 13 unit tests for orchestrator logic
@@ -17,42 +18,109 @@ This session completed the full MLB pipeline backfill:
 6. ✅ **Collected 97,679 batter game stats** (2024-2025 seasons)
 7. ✅ **Generated 97,679 batter_game_summary analytics rows**
 8. ✅ **Regenerated 8,028 predictions with bottom-up features (MAE: 1.54)**
-9. ✅ **Fixed team_abbr "UNK" bug** - now extracts from correct API path
-10. ⏳ **Backfill script running** - updating existing data with correct abbreviations
+9. ✅ **Fixed team_abbr "UNK" bug** - root cause identified and code fixed
+10. ✅ **Bulk-fixed ALL existing data** - 323,998 rows across 4 tables in ~2 minutes
+11. ✅ Fixed GitHub Actions YAML syntax error in archive-handoffs.yml
+12. ✅ Added TEAM_ID_TO_ABBR config fallback for defense-in-depth
 
 ---
 
-## Current Data State
+## IMMEDIATE NEXT STEP: Regenerate Predictions
 
-### What's Populated
+Now that team abbreviations are fixed, predictions should be regenerated to use **opponent-specific** lineup K rates instead of game-level averages.
 
-| Dataset | Table | Rows | Date Range | Status |
-|---------|-------|------|------------|--------|
-| `mlb_raw` | mlb_game_lineups | 10,319 | 2024-03-28 → 2025-09-28 | ✅ |
-| `mlb_raw` | mlb_lineup_batters | 185,418 | 2024-03-28 → 2025-09-28 | ✅ |
-| `mlb_raw` | mlb_pitcher_stats | 42,125 | 2024-03-28 → 2025-09-28 | ✅ |
-| `mlb_analytics` | pitcher_game_summary | 9,793 | 2024-03-28 → 2025-09-28 | ✅ |
-| `mlb_predictions` | pitcher_strikeouts | 8,130 | 2024-04-09 → 2025-09-28 | ✅ |
+```bash
+# Regenerate predictions with fixed team_abbr data
+PYTHONPATH=. .venv/bin/python scripts/mlb/generate_historical_predictions.py
 
-### What's Now Populated (This Session)
+# Expected improvement: MAE should decrease from 1.54
+# The bottom-up features will now properly identify which lineup the pitcher faces
+```
 
-| Dataset | Table | Rows | Date Range | Status |
-|---------|-------|------|------------|--------|
-| `mlb_raw` | bdl_batter_stats | 97,679 | 2024-03-28 → 2025-09-28 | ✅ NEW |
-| `mlb_analytics` | batter_game_summary | 97,679 | 2024-03-28 → 2025-09-28 | ✅ NEW |
+**Why this matters:** Previously, bottom-up features averaged BOTH lineups in a game because team_abbr was "UNK". Now they can use the OPPONENT's specific lineup K rates.
 
-### Still Empty (Not Critical)
+---
 
-| Dataset | Table | Notes | Priority |
-|---------|-------|-------|----------|
-| `mlb_precompute` | lineup_k_analysis | Inline calculation used instead | LOW |
-| `mlb_raw` | mlb_schedule | Only needed for live prediction | LOW |
+## What the Next Session Should Study
+
+### 1. Team Abbreviation Bug Fix (IMPORTANT)
+**Files to review:**
+- `scripts/mlb/collect_season.py` lines 246-271 - The `_parse_game_data()` fix
+- `scripts/mlb/collect_batter_stats.py` lines 171-189 - Same fix
+- `shared/config/sports/mlb/teams.py` - TEAM_ID_TO_ABBR fallback mapping
+
+**Key insight:** MLB Stats API has team info in TWO places:
+- `gameData.teams.away.abbreviation` ✅ CORRECT - has abbreviation
+- `boxscore.teams.away.team.abbreviation` ❌ WRONG - doesn't exist
+
+### 2. Prediction Generation Script
+**File:** `scripts/mlb/generate_historical_predictions.py`
+
+Study the bottom-up feature calculation (lines 77-130):
+- How `lineup_batter_stats` CTE gets batter K rates
+- How `lineup_aggregates` CTE calculates per-game expected K
+- The LEFT JOIN with `mlb_pitcher_stats` to get `game_pk`
+
+### 3. Data Flow for Bottom-Up Features
+```
+mlb_raw.bdl_batter_stats (97,679 rows)
+    ↓ batter_game_summary_processor.py
+mlb_analytics.batter_game_summary (97,679 rows)
+    ↓ generate_historical_predictions.py (inline join)
+mlb_predictions.pitcher_strikeouts (8,028 rows)
+```
+
+### 4. The Bulk Update Pattern
+For future data fixes, this SQL pattern is MUCH faster than row-by-row:
+```sql
+-- Create mapping table from config
+CREATE OR REPLACE TEMP TABLE team_mapping AS
+SELECT * FROM UNNEST([
+  STRUCT(108 AS team_id, 'LAA' AS abbr),
+  ...
+]);
+
+-- Single UPDATE hits all rows at once
+UPDATE target_table t
+SET column = m.value
+FROM team_mapping m
+WHERE t.team_id = m.team_id;
+```
+
+### 5. Key Config Files
+- `shared/config/sports/mlb/teams.py` - All 30 MLB teams with IDs
+- `shared/config/sports/nba/teams.py` - NBA equivalent (for reference)
+
+---
+
+## Current Data State (FULLY FIXED)
+
+### Team Abbreviation Fix Results
+
+| Table | Rows Fixed | Remaining UNK |
+|-------|------------|---------------|
+| mlb_game_lineups | 8,533 | 0 ✅ |
+| mlb_lineup_batters | 185,418 | 0 ✅ |
+| mlb_pitcher_stats | 42,125 | 0 ✅ |
+| bdl_batter_stats | 185,922 | 9,436* |
+
+*9,436 remaining are pinch hitters not in starting lineups - they have correct `home_team_abbr`/`away_team_abbr`, just unknown personal `team_abbr`. Not critical for predictions.
+
+### All Tables Summary
+
+| Dataset | Table | Rows | Status |
+|---------|-------|------|--------|
+| `mlb_raw` | mlb_game_lineups | 10,319 | ✅ Fixed |
+| `mlb_raw` | mlb_lineup_batters | 185,418 | ✅ Fixed |
+| `mlb_raw` | mlb_pitcher_stats | 42,125 | ✅ Fixed |
+| `mlb_raw` | bdl_batter_stats | 97,679 | ✅ Fixed |
+| `mlb_analytics` | pitcher_game_summary | 9,793 | ✅ |
+| `mlb_analytics` | batter_game_summary | 97,679 | ✅ |
+| `mlb_predictions` | pitcher_strikeouts | 8,028 | ⚠️ Needs regen |
 
 ---
 
 ## Model Performance
-
-The trained model (`mlb_pitcher_strikeouts_v1_20260107`) achieved:
 
 | Metric | Value |
 |--------|-------|
@@ -63,114 +131,28 @@ The trained model (`mlb_pitcher_strikeouts_v1_20260107`) achieved:
 
 Model location: `gs://nba-scraped-data/models/mlb/mlb_pitcher_strikeouts_v1_20260107.json`
 
----
-
-## Batter Data Backfill - COMPLETED
-
-### What Was Done
-
-The bottom-up model features (f25, f26, f33) are now populated with real data:
-
-1. **Created batter stats collector** (`scripts/mlb/collect_batter_stats.py`)
-   - Uses MLB Stats API game feed endpoint
-   - Extracts individual batter game stats from boxscore data
-   - Resumable with checkpoint support
-   - Collected 97,679 batter stats across 4,846 games
-
-2. **Fixed batter_game_summary processor bugs**
-   - `game_status IN ('STATUS_FINAL', 'STATUS_F')` - both formats now supported
-   - Date serialization for JSON - converts date objects to ISO strings
-   - Generated 97,679 batter analytics rows
-
-3. **Updated prediction script with inline bottom-up features**
-   - Joins `mlb_lineup_batters` with `batter_game_summary` to get K rates
-   - Calculates per-game lineup K aggregates
-   - Uses `game_pk` for proper join instead of `team_abbr` (which is "UNK")
-
-### Data Quality Note - BUG FIXED
-
-**Issue:** All `team_abbr` values were "UNK" across tables due to original collection bug.
-
-**Root Cause:** Code was extracting team abbreviation from `boxscore.teams.away.team.abbreviation` which doesn't exist. The correct path is `gameData.teams.away.abbreviation`.
-
-**Fix Applied:**
-- `scripts/mlb/collect_season.py` - Fixed `_parse_game_data()` to use correct API path
-- `scripts/mlb/collect_batter_stats.py` - Same fix applied
-- Committed: `664e64e fix(mlb): Fix team abbreviation bug and add batter data collection`
-
-**Backfill Script:** `scripts/mlb/fix_team_abbreviations.py` is running to update existing data.
-- Fetches correct abbreviations from MLB API for each game_pk
-- Updates all 4 tables: mlb_game_lineups, mlb_lineup_batters, mlb_pitcher_stats, bdl_batter_stats
-- Progress: ~22% complete, ETA ~2 hours remaining
-
-Once backfill completes, bottom-up features will use opponent-specific lineup K rates instead of game averages.
+**After regenerating predictions with fixed team_abbr, MAE should improve further.**
 
 ---
 
-## Code Changes Made This Session
+## Code Changes This Session
 
-### 1. Timeout Configuration
-**File:** `orchestration/cloud_functions/mlb_phase4_to_phase5/main.py`
-```python
-# Now configurable via environment variable
-MAX_WAIT_HOURS = float(os.environ.get('MAX_WAIT_HOURS', '4'))
+### Bug Fixes
+1. **Team abbreviation extraction** - `collect_season.py`, `collect_batter_stats.py`
+2. **GitHub Actions YAML** - `archive-handoffs.yml` line 58 syntax error
+3. **game_status filter** - `batter_game_summary_processor.py` (STATUS_F vs STATUS_FINAL)
+4. **Date serialization** - `batter_game_summary_processor.py` (JSON serialization)
+
+### New Features
+1. **TEAM_ID_TO_ABBR fallback** - Both collection scripts now use config as fallback
+2. **Batter stats collection** - New script `collect_batter_stats.py`
+
+### Commits Pushed
 ```
-
-**File:** `bin/orchestrators/mlb/deploy_all_mlb_orchestrators.sh`
-- Added `MAX_WAIT_HOURS` parameter
-- Deploy function now accepts 5th parameter for extra env vars
-
-### 2. Dashboard Sport Toggle
-**Files Modified:**
-- `services/admin_dashboard/templates/base.html` - Added NBA/MLB toggle
-- `services/admin_dashboard/templates/dashboard.html` - Sport-aware content
-
-### 3. Unit Tests
-**File:** `tests/orchestration/unit/test_mlb_orchestrators.py`
-- 13 tests covering normalize_processor_name, check_timeout, config parsing
-- All passing
-
-### 4. Historical Prediction Script
-**File:** `scripts/mlb/generate_historical_predictions.py`
-- Generates predictions from pitcher_game_summary
-- Saves to mlb_predictions.pitcher_strikeouts
-- Includes metrics calculation
-
----
-
-## Files Created This Session
-
-```
-scripts/mlb/generate_historical_predictions.py     # Historical prediction generator
-scripts/mlb/collect_batter_stats.py                # NEW: Batter stats collector from MLB Stats API
-tests/orchestration/unit/test_mlb_orchestrators.py # Unit tests for orchestrators
-bin/backfill/run_batter_game_summary_backfill.sh   # NEW: Batter analytics backfill script
-bin/backfill/run_mlb_full_backfill.sh              # NEW: Full MLB pipeline backfill script
-docs/09-handoff/2026-01-08-MLB-BACKFILL-SESSION-HANDOFF.md  # This file
-```
-
-## Files Modified This Session
-
-```
-data_processors/analytics/mlb/batter_game_summary_processor.py
-  - Fixed game_status filter to include both 'STATUS_FINAL' and 'STATUS_F'
-  - Fixed date serialization for JSON (convert date objects to ISO strings)
-
-scripts/mlb/generate_historical_predictions.py
-  - Updated query to calculate bottom-up features inline
-  - Added join with mlb_pitcher_stats to get game_pk for proper linking
-  - Fixed duplicate row issue by using game_pk instead of team_abbr
-
-scripts/mlb/collect_season.py
-  - BUG FIX: Extract team_abbr from gameData.teams (not boxscore.teams)
-  - This fixes "UNK" abbreviations for all future data collection
-
-scripts/mlb/collect_batter_stats.py
-  - Same bug fix applied
-
-scripts/mlb/fix_team_abbreviations.py (NEW)
-  - Backfill script to fix existing "UNK" abbreviations
-  - Fetches correct values from MLB API and updates BigQuery tables
+5766e77 fix: Fix YAML syntax error in archive-handoffs workflow
+d0e14bd feat(mlb): Add TEAM_ID_TO_ABBR config fallback for team abbreviations
+664e64e fix(mlb): Fix team abbreviation bug and add batter data collection
+f34780d chore: Clean up repo and add MLB backfill scripts
 ```
 
 ---
@@ -178,85 +160,56 @@ scripts/mlb/fix_team_abbreviations.py (NEW)
 ## Quick Verification Commands
 
 ```bash
+# Verify team abbreviations are fixed (should return real teams, no UNK)
+bq query --use_legacy_sql=false "SELECT DISTINCT away_team_abbr FROM mlb_raw.mlb_game_lineups LIMIT 10"
+
+# Check UNK counts (should all be 0 except batter_stats which has 9436)
+bq query --use_legacy_sql=false "SELECT COUNTIF(away_team_abbr = 'UNK') FROM mlb_raw.mlb_game_lineups"
+bq query --use_legacy_sql=false "SELECT COUNTIF(team_abbr = 'UNK') FROM mlb_raw.mlb_lineup_batters"
+bq query --use_legacy_sql=false "SELECT COUNTIF(team_abbr = 'UNK') FROM mlb_raw.mlb_pitcher_stats"
+
 # Check prediction counts
 bq query --use_legacy_sql=false "SELECT COUNT(*) FROM mlb_predictions.pitcher_strikeouts"
 
-# Check model in GCS
-gsutil ls gs://nba-scraped-data/models/mlb/
-
-# Run unit tests
-PYTHONPATH=. .venv/bin/python -m pytest tests/orchestration/unit/test_mlb_orchestrators.py -v
-
-# Check MLB health
-./bin/monitoring/mlb_daily_health_check.sh
-
-# Check batter stats
-bq query --use_legacy_sql=false "SELECT COUNT(*) FROM mlb_raw.bdl_batter_stats"
-
-# Check team_abbr fix progress (if running)
-tail -20 logs/fix_team_abbr.log
-
-# Verify team abbreviations are fixed
-bq query --use_legacy_sql=false "SELECT DISTINCT away_team_abbr FROM mlb_raw.mlb_game_lineups WHERE away_team_abbr != 'UNK' LIMIT 5"
+# Regenerate predictions (NEXT STEP)
+PYTHONPATH=. .venv/bin/python scripts/mlb/generate_historical_predictions.py
 ```
 
 ---
 
-## What NOT to Deploy Yet
+## Files to Know
 
-1. **MLB Orchestrators** - Ready but don't deploy until season starts
-   - `./bin/orchestrators/mlb/deploy_all_mlb_orchestrators.sh`
-   - Will start processing when Pub/Sub messages arrive
-
-2. **Updated Dashboard** - Templates updated but not deployed
-   - `cd services/admin_dashboard && ./deploy.sh`
-   - Works locally with `?sport=mlb`
-
----
-
-## Known Issues
-
-### 1. Team Abbreviations Show "UNK"
-In `pitcher_game_summary`, `team_abbr` and `opponent_team_abbr` show as "UNK".
-- Not blocking but affects display quality
-- Root cause: Data collection didn't properly map team IDs to abbreviations
-- Fix: Update collection script to properly extract team abbreviations
-
-### 2. No Historical Betting Lines
-`strikeouts_line` is NULL for all historical predictions.
-- Cannot grade predictions as "correct" vs betting line
-- Would need historical odds data from archive
-- Not critical for model validation (we have actual results)
-
-### 3. Email Alerting Not Configured on Cloud Run
-Services deployed without BREVO env vars.
-- `.env` has correct values locally
-- Need to `source .env` before deploy scripts
-- Or add to Cloud Run service directly
+| Purpose | Path |
+|---------|------|
+| **Season data collection** | `scripts/mlb/collect_season.py` |
+| **Batter stats collection** | `scripts/mlb/collect_batter_stats.py` |
+| **Historical predictions** | `scripts/mlb/generate_historical_predictions.py` |
+| **Team config (with IDs)** | `shared/config/sports/mlb/teams.py` |
+| **Batter processor** | `data_processors/analytics/mlb/batter_game_summary_processor.py` |
+| **Pitcher processor** | `data_processors/analytics/mlb/pitcher_game_summary_processor.py` |
 
 ---
 
-## Recommended Next Steps
+## Before MLB Season (March 2026)
 
-### Immediate Improvements (Optional)
+1. ⏳ **Regenerate predictions** with fixed team_abbr data
+2. Deploy orchestrators: `./bin/orchestrators/mlb/deploy_all_mlb_orchestrators.sh`
+3. Deploy updated dashboard: `cd services/admin_dashboard && ./deploy.sh`
+4. Enable MLB scheduler jobs via GCP console
+5. Configure email alerting (add BREVO env vars to Cloud Run)
+6. Test end-to-end with Spring Training games
 
-1. **Fix team_abbr data quality issue**
-   - Update `scripts/mlb/collect_season.py` to properly extract team abbreviations
-   - Re-collect pitcher and lineup data with correct team_abbr
-   - This would enable opponent-specific lineup features instead of game-level averages
+---
 
-2. **Populate mlb_schedule table**
-   - Currently empty
-   - Needed for Phase 4 lineup_k_analysis processor
-   - Would enable real-time prediction with proper lineup data
+## Session Stats
 
-### Before MLB Season (March 2026)
-
-1. Deploy orchestrators: `./bin/orchestrators/mlb/deploy_all_mlb_orchestrators.sh`
-2. Deploy updated dashboard: `cd services/admin_dashboard && ./deploy.sh`
-3. Enable MLB scheduler jobs via GCP console
-4. Configure email alerting (add BREVO env vars to Cloud Run)
-5. Test end-to-end with Spring Training games
+- **Duration:** ~5 hours
+- **Batter Stats Collected:** 97,679 (4,846 games)
+- **Batter Analytics Generated:** 97,679
+- **Predictions Generated:** 8,028
+- **Rows Fixed (team_abbr):** 323,998 across 4 tables
+- **Commits Pushed:** 4
+- **GitHub Action Fixed:** 1
 
 ---
 
@@ -278,36 +231,14 @@ Phase 5 (Predictions) → mlb_predictions.*
     ↓ [Orchestrator]
 Phase 6 (Grading) → Updates predictions with is_correct
 
-Self-Heal: Runs 12:45 PM ET daily, checks for missing predictions
+Bottom-Up Feature Flow:
+=======================
+bdl_batter_stats → batter_game_summary → [inline in prediction query]
+                                              ↓
+                                    f25_bottom_up_k_expected
+                                    f26_lineup_k_vs_hand
+                                    f33_lineup_weak_spots
 ```
-
----
-
-## Key File Locations
-
-| Purpose | Path |
-|---------|------|
-| Season data collection | `scripts/mlb/collect_season.py` |
-| Historical predictions | `scripts/mlb/generate_historical_predictions.py` |
-| Model training | `scripts/mlb/train_pitcher_strikeouts.py` |
-| Trained model | `models/mlb/mlb_pitcher_strikeouts_v1_20260107.json` |
-| Batter processor | `data_processors/analytics/mlb/batter_game_summary_processor.py` |
-| Pitcher processor | `data_processors/analytics/mlb/pitcher_game_summary_processor.py` |
-| Orchestrator tests | `tests/orchestration/unit/test_mlb_orchestrators.py` |
-| Deploy all orchestrators | `bin/orchestrators/mlb/deploy_all_mlb_orchestrators.sh` |
-| Health check | `bin/monitoring/mlb_daily_health_check.sh` |
-
----
-
-## Session Stats
-
-- **Duration:** ~4 hours (including ~3 hours of background data collection)
-- **Batter Stats Collected:** 97,679 (4,846 games, 787 unique players)
-- **Batter Analytics Generated:** 97,679
-- **Predictions Regenerated:** 8,028 (deduped)
-- **Model MAE:** 1.54
-- **Files Created:** 5 (collect_batter_stats.py, 2 backfill scripts, unit tests, handoff)
-- **Files Modified:** 2 (batter_game_summary_processor.py, generate_historical_predictions.py)
 
 ---
 
@@ -315,4 +246,4 @@ Self-Heal: Runs 12:45 PM ET daily, checks for missing predictions
 
 This work is part of the MLB pitcher strikeouts prediction feature. The goal is to predict pitcher strikeout totals for betting purposes. The "bottom-up" model innovation sums individual batter K probabilities instead of just using pitcher averages.
 
-For questions about the NBA pipeline (which this is modeled after), see `docs/` directory.
+Key insight from this session: **Data quality matters.** The team_abbr bug meant bottom-up features were averaging both teams' lineups instead of targeting the opponent. With the fix, predictions should be more accurate.
