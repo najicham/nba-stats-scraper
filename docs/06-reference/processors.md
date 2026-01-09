@@ -1,7 +1,7 @@
 # NBA Processors Reference
 
 **Created:** 2025-11-21 17:12:03 PST
-**Last Updated:** 2025-12-27
+**Last Updated:** 2026-01-09
 
 Quick reference for NBA data processors transforming GCS data to BigQuery.
 
@@ -371,6 +371,14 @@ GCS: /espn/rosters/{date}/team_{team_abbr}/{timestamp}.json
 **Coverage:** Limited (backup source)
 **Processor:** EspnTeamRosterProcessor
 **Deployment:** espn-team-roster-processor-backfill (us-west2)
+
+**Batch Processing Mode (2026-01-09):**
+- Uses Firestore-based distributed lock to process all 30 teams in single batch
+- First Pub/Sub message acquires lock → processes all teams → 1 DELETE + 1 INSERT
+- Other 29 messages detect lock exists → skip (ACK without processing)
+- Eliminates BigQuery serialization conflicts from concurrent writes
+- Lock collection: `batch_processing_locks` with 7-day TTL auto-cleanup
+- Result: 30 individual operations → 1 batch operation
 
 ## Basketball Reference (1 processor)
 
