@@ -1,7 +1,7 @@
 # NBA Scrapers Reference
 
 **Created:** 2025-11-21 17:12:03 PST
-**Last Updated:** 2025-12-27
+**Last Updated:** 2026-01-08
 
 Quick reference for NBA data scrapers - deployment, debugging, and monitoring.
 
@@ -224,6 +224,47 @@ GetBettingProPlayerProps(market_type, date)
 ```
 
 **Auth:** `BETTINGPROS_API_KEY`
+
+### News RSS Feeds (NEW - 2026-01-08)
+
+**Timing:** On-demand (planned: every 15 minutes)
+**Purpose:** Sports news, injury updates, trades, lineup changes
+**Cost:** Free (RSS) + ~$0.54/month (AI summaries)
+
+```python
+from scrapers.news import RSSFetcher, NewsSummarizer, NewsPlayerLinksStorage
+
+# Fetch news from RSS
+fetcher = RSSFetcher()
+articles = fetcher.fetch_all(sports=['nba', 'mlb'])
+
+# Get news for a player (website API)
+storage = NewsPlayerLinksStorage()
+articles = storage.get_player_articles('lebronjames', sport='nba', limit=10)
+
+# Generate AI summary
+summarizer = NewsSummarizer()  # Requires ANTHROPIC_API_KEY
+result = summarizer.summarize(article_id, title, content, sport='NBA')
+```
+
+**Sources:**
+- ESPN NBA/MLB RSS (espn.com/espn/rss/nba/news)
+- CBS Sports NBA/MLB RSS (cbssports.com/rss/headlines/nba/)
+
+**BigQuery Tables:**
+- `nba_raw.news_articles_raw` - Raw articles
+- `nba_analytics.news_insights` - Categories + AI summaries
+- `nba_analytics.news_player_links` - Player-article links
+
+**Auth:** `ANTHROPIC_API_KEY` (for AI summaries only)
+
+**CLI:**
+```bash
+python bin/scrapers/fetch_news.py --dry-run --sport nba
+python bin/scrapers/fetch_news.py --save --dedupe
+```
+
+**See:** [News & AI Analysis Project](../08-projects/current/news-ai-analysis/README.md)
 
 ## Daily Operations
 
