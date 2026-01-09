@@ -38,8 +38,9 @@ logger = logging.getLogger(__name__)
 PROJECT_ID = os.environ.get('GCP_PROJECT', 'nba-props-platform')
 PREDICTION_URL = "https://mlb-prediction-worker-f7p3g7f6ya-wl.a.run.app"
 
-# Timeout configuration
-MAX_WAIT_HOURS = 4  # Maximum hours to wait for all processors
+# Timeout configuration - configurable via environment variable
+# Default: 4 hours, can be overridden with MAX_WAIT_HOURS env var
+MAX_WAIT_HOURS = float(os.environ.get('MAX_WAIT_HOURS', '4'))
 MAX_WAIT_SECONDS = MAX_WAIT_HOURS * 3600
 
 # MLB Phase 4 expected processors
