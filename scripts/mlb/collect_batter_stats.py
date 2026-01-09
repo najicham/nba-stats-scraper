@@ -33,6 +33,12 @@ import requests
 
 from google.cloud import bigquery
 
+# Import MLB team config for ID to abbreviation fallback
+try:
+    from shared.config.sports.mlb.teams import TEAM_ID_TO_ABBR
+except ImportError:
+    TEAM_ID_TO_ABBR = {}
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
@@ -165,17 +171,22 @@ class MLBBatterCollector:
             # Get team abbreviations from gameData.teams (has abbreviation)
             # NOT from boxscore.teams (which lacks abbreviation)
             game_teams = game_data.get('teams', {})
-            home_team_abbr = game_teams.get('home', {}).get('abbreviation', 'UNK')
-            away_team_abbr = game_teams.get('away', {}).get('abbreviation', 'UNK')
+            home_team_id = game_teams.get('home', {}).get('id')
+            away_team_id = game_teams.get('away', {}).get('id')
+            # Use API value with fallback to config
+            home_team_abbr = game_teams.get('home', {}).get('abbreviation') or TEAM_ID_TO_ABBR.get(str(home_team_id), 'UNK')
+            away_team_abbr = game_teams.get('away', {}).get('abbreviation') or TEAM_ID_TO_ABBR.get(str(away_team_id), 'UNK')
 
             # Process both teams
             for team_side in ['away', 'home']:
                 team_data = boxscore_teams.get(team_side, {})
-                team_abbr = game_teams.get(team_side, {}).get('abbreviation', 'UNK')
+                team_id = game_teams.get(team_side, {}).get('id')
+                team_abbr = game_teams.get(team_side, {}).get('abbreviation') or TEAM_ID_TO_ABBR.get(str(team_id), 'UNK')
                 team_name = game_teams.get(team_side, {}).get('name', 'Unknown')
 
                 opponent_side = 'home' if team_side == 'away' else 'away'
-                opponent_abbr = game_teams.get(opponent_side, {}).get('abbreviation', 'UNK')
+                opponent_id = game_teams.get(opponent_side, {}).get('id')
+                opponent_abbr = game_teams.get(opponent_side, {}).get('abbreviation') or TEAM_ID_TO_ABBR.get(str(opponent_id), 'UNK')
 
                 # Scores from linescore
                 linescore = live_data.get('linescore', {}).get('teams', {})
