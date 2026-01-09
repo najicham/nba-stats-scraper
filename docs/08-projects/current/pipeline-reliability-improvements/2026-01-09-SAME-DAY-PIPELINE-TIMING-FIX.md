@@ -598,3 +598,8 @@ Only 108/349 rostered players processed in UPGC. 241 failed completeness checks.
 | 2026-01-09 EVE | V8 predictions now working: 24 OVER, 11 UNDER, avg confidence 53.3% (vs previous 0 OVER/UNDER, all PASS at 50%) |
 | 2026-01-09 EVE | Added props pre-flight check to UPGC (`_check_props_readiness()`) - logs warning if <20 players have props |
 | 2026-01-09 EVE | Added 0% prop coverage alert to UPGC (`_send_prop_coverage_alert()`) - sends critical alert when prop coverage <10% |
+| 2026-01-09 LATE | **CRITICAL FINDING**: Earlier fix (v1_baseline_25) was WRONG. V8 model trained on 33 features, but daily processor still writes 25 features |
+| 2026-01-09 LATE | Root cause: Backfill script created v2_33features (121,416 rows), but ml_feature_store_processor.py still writes v1_baseline_25 |
+| 2026-01-09 LATE | Reverted data_loaders.py back to v2_33features as default |
+| 2026-01-09 LATE | Backfilled Jan 9-10 with v2_33features (187 rows converted from v1 to v2 by adding 8 features) |
+| 2026-01-09 LATE | **TECH DEBT**: ml_feature_store_processor.py must be updated to generate 33 features natively |

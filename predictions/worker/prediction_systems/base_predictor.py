@@ -177,10 +177,10 @@ class BasePredictor(ABC):
             Subclasses can override to add system-specific validation
         """
         required_fields = [
-            'feature_count',      # Should be 25
-            'feature_version',    # Should be 'v1_baseline_25'
+            'feature_count',      # Should be 33 (or 25 for legacy)
+            'feature_version',    # Should be 'v2_33features'
             'data_source',        # 'mock' or 'phase4'
-            'features_array'      # Array of 25 floats
+            'features_array'      # Array of 33 floats (or 25 for legacy)
         ]
         
         # Check all required fields present
