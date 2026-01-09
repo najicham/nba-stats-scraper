@@ -218,10 +218,12 @@ bin/scrapers/
 
 ## Related Documentation
 
+- **[FUTURE-IMPROVEMENTS.md](./FUTURE-IMPROVEMENTS.md)** - Backlog of improvements
 - **[DATA-SOURCES-PLAN.md](./DATA-SOURCES-PLAN.md)** - Detailed source planning
 - **[ULTRATHINK-ANALYSIS.md](./ULTRATHINK-ANALYSIS.md)** - Deep analysis of approach
 - **[IMPLEMENTATION-LOG.md](./IMPLEMENTATION-LOG.md)** - Progress tracking
 - **[NEWS_API_REFERENCE.md](../../api/NEWS_API_REFERENCE.md)** - Frontend integration guide
+- **[Daily Validation Checklist](../../02-operations/daily-validation-checklist.md)** - News validation section
 - `shared/utils/player_registry/ai_resolver.py` - Claude API pattern reference
 
 ---
@@ -254,7 +256,19 @@ gcloud scheduler jobs run news-fetcher --project=nba-props-platform --location=u
 
 ## Future Enhancements
 
-1. **Phase 6 Integration** - Create NewsExporter to publish to website
-2. **ML Integration** - Add news features to prediction models
-3. **More Sources** - RotoWire, The Athletic, Twitter/X
-4. **Real-time Alerts** - Push notifications for injury news
+See **[FUTURE-IMPROVEMENTS.md](./FUTURE-IMPROVEMENTS.md)** for the full backlog.
+
+**High Priority:**
+- MLB player registry (needed before MLB season)
+- News metrics dashboard
+- Automated alerting for failures
+
+**Medium Priority:**
+- Additional news sources (The Athletic, team feeds)
+- Real-time injury alerts via Pub/Sub
+- News impact scoring for ML features
+
+**Completed:**
+- Phase 6 NewsExporter (GCS export)
+- Streaming buffer fix (2026-01-09)
+- Validation added to daily checklist
