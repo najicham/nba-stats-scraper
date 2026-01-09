@@ -1,22 +1,40 @@
 # ML Model v8 Deployment Project
 
-**Status**: Ready for Production
+**Status**: DEPLOYED & BACKFILLED
 **Created**: January 8-9, 2026
-**Best Model**: v8 Stacked Ensemble (3.40 MAE)
+**Best Model**: v8 Stacked Ensemble (3.40 MAE training, 4.11 MAE backfill)
 
 ---
 
 ## Executive Summary
 
-After extensive experimentation, we achieved a **29% improvement over the mock baseline** and **25% better than Vegas** on out-of-sample 2024-25 season data.
+CatBoost V8 is now **live in production** and backfilled across 121,524 historical predictions.
+
+### Training Metrics (Test Set)
 
 | Metric | Value |
 |--------|-------|
 | Test MAE | 3.40 points |
 | vs Mock (4.80) | -29.1% |
-| vs Vegas (4.98) | -31.8% |
 | Betting Accuracy | 71.6% |
-| High-Confidence (>5pt edge) | 91.5% |
+| High-Confidence (≥10pt edge) | 91.5% |
+
+### Backfill Results (All Historical Data)
+
+| Metric | Value |
+|--------|-------|
+| Backfill MAE | 4.11 points |
+| vs Vegas (4.93) | **-0.82 (model wins)** |
+| Betting Accuracy | **74.6%** |
+| High-Confidence (≥10pt edge) | **91.6%** |
+
+### 2025-26 Season (Current)
+
+| Metric | Value |
+|--------|-------|
+| Predictions | 1,626 |
+| Win Rate | 71.8% |
+| High-Confidence (≥10pt edge) | **94.0% (116 picks)** |
 
 ---
 
@@ -24,11 +42,13 @@ After extensive experimentation, we achieved a **29% improvement over the mock b
 
 | Document | Description |
 |----------|-------------|
+| [BACKFILL-RESULTS.md](./BACKFILL-RESULTS.md) | **NEW**: Backfill performance and 2025-26 season results |
+| [PRODUCTION-DEPLOYMENT.md](./PRODUCTION-DEPLOYMENT.md) | Deployment guide and configuration |
 | [MODEL-SUMMARY.md](./MODEL-SUMMARY.md) | Technical details of v8 model architecture |
 | [IMPROVEMENT-JOURNEY.md](./IMPROVEMENT-JOURNEY.md) | Full timeline of ML experiments |
-| [NEXT-STEPS.md](./NEXT-STEPS.md) | Recommendations for deployment and further work |
+| [NEXT-STEPS.md](./NEXT-STEPS.md) | Recommendations for further work |
 | [SHADOW-MODE-GUIDE.md](./SHADOW-MODE-GUIDE.md) | Shadow mode implementation and usage |
-| [ML-EXPERIMENT-ARCHITECTURE.md](./ML-EXPERIMENT-ARCHITECTURE.md) | **NEW**: Multi-model experimentation pipeline |
+| [ML-EXPERIMENT-ARCHITECTURE.md](./ML-EXPERIMENT-ARCHITECTURE.md) | Multi-model experimentation pipeline |
 
 ---
 
@@ -72,12 +92,15 @@ See [NEXT-STEPS.md](./NEXT-STEPS.md) for implementation details.
 
 ---
 
-## Deployment Recommendation
+## Deployment Status
 
-**Deploy immediately in shadow mode**, then gradual rollout:
+**V8 is now LIVE in production** (replaced mock XGBoostV1 on January 9, 2026).
 
-1. Week 1-2: Shadow mode (log v8 predictions alongside mock)
-2. Week 3: 25% traffic to v8
-3. Week 4+: Full rollout if metrics hold
+### What's Deployed
+- Production worker uses CatBoostV8 (33 features)
+- Model uploaded to GCS: `gs://nba-props-platform-ml-models/catboost_v8_33features_20260108_211817.cbm`
+- Feature store upgraded to 33 features
+- 121,524 historical predictions backfilled
+- Phase 6 export complete
 
-See [NEXT-STEPS.md](./NEXT-STEPS.md) for detailed deployment plan.
+See [PRODUCTION-DEPLOYMENT.md](./PRODUCTION-DEPLOYMENT.md) for configuration details.
