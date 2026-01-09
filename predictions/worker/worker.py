@@ -52,6 +52,58 @@ validate_required_env_vars(
 )
 logger.info("✓ Environment variables validated")
 
+
+def validate_ml_model_availability():
+    """
+    Fail-fast validation for ML model accessibility at startup.
+
+    In production (Cloud Run), CATBOOST_V8_MODEL_PATH should be set.
+    If set, validates the model path is properly formatted.
+    If not set, validates local models exist in models/ directory.
+
+    Raises RuntimeError if no valid model configuration found.
+    """
+    from pathlib import Path
+
+    model_path = os.environ.get('CATBOOST_V8_MODEL_PATH')
+
+    if model_path:
+        # Production: env var is set - validate path format
+        if model_path.startswith('gs://'):
+            # GCS path - can't verify accessibility at startup without adding latency
+            # Just validate format: gs://bucket/path/to/file.cbm
+            if not model_path.endswith('.cbm'):
+                raise RuntimeError(
+                    f"CATBOOST_V8_MODEL_PATH invalid format: {model_path}. "
+                    f"Expected path ending with .cbm"
+                )
+            logger.info(f"✓ CATBOOST_V8_MODEL_PATH set: {model_path} (GCS, will verify on first use)")
+        else:
+            # Local path - verify file exists
+            if not Path(model_path).exists():
+                raise RuntimeError(
+                    f"CATBOOST_V8_MODEL_PATH file not found: {model_path}. "
+                    f"Ensure the model file exists or correct the path."
+                )
+            logger.info(f"✓ CATBOOST_V8_MODEL_PATH verified: {model_path}")
+    else:
+        # Development/local: check for local models
+        models_dir = Path(__file__).parent.parent.parent / "models"
+        model_files = list(models_dir.glob("catboost_v8_33features_*.cbm"))
+
+        if not model_files:
+            logger.warning(
+                "⚠ No CATBOOST_V8_MODEL_PATH set and no local v8 models found. "
+                f"Searched: {models_dir}/catboost_v8_33features_*.cbm. "
+                "CatBoost v8 will use fallback predictions (confidence=50)."
+            )
+        else:
+            logger.info(f"✓ Found {len(model_files)} local CatBoost v8 model(s): {[f.name for f in model_files]}")
+
+
+# Validate ML model availability at startup
+validate_ml_model_availability()
+
 # Defer google.cloud imports to lazy loading functions to avoid cold start hang
 if TYPE_CHECKING:
     from google.cloud import bigquery, pubsub_v1

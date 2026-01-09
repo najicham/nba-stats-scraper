@@ -207,6 +207,15 @@ class CatBoostV8:
         if self.model is None:
             return self._fallback_prediction(player_lookup, features, betting_line)
 
+        # FAIL-FAST: Assert correct feature version (v2_33features required for V8 model)
+        feature_version = features.get('feature_version')
+        if feature_version != 'v2_33features':
+            raise ValueError(
+                f"CatBoost V8 requires feature_version='v2_33features', got '{feature_version}'. "
+                f"This model is trained on 33 features from ML Feature Store v2. "
+                f"Ensure ml_feature_store_processor.py is upgraded to v2_33features."
+            )
+
         # Prepare 33-feature vector
         feature_vector = self._prepare_feature_vector(
             features=features,
