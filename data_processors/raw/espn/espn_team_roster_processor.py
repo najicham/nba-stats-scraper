@@ -668,7 +668,7 @@ def batch_process_rosters(bucket: str, date: str, project_id: str, team: str = N
             # ✅ REUSE shared clients (not create new ones)
             processor.registry = shared_registry
             processor.bq_client = bq_client
-            processor.storage_client = storage_client
+            processor.gcs_client = storage_client  # ProcessorBase uses gcs_client
             
             # Load, validate, transform (I/O bound - good for threading)
             processor.load_data()
