@@ -165,6 +165,27 @@ lineup_aggregates AS (
     FROM lineup_batter_stats
     GROUP BY game_pk, game_date, pitcher_lookup
 ),
+pitcher_vs_opponent AS (
+    -- Calculate pitcher's historical K average vs each opponent
+    SELECT
+        pr1.player_lookup,
+        pr1.game_date,
+        pr1.opponent_team,
+        -- Historical average Ks vs this opponent (games before current date)
+        AVG(pgs2.strikeouts) as avg_k_vs_opponent,
+        COUNT(pgs2.strikeouts) as games_vs_opponent
+    FROM pitcher_raw pr1
+    LEFT JOIN `nba-props-platform.mlb_analytics.pitcher_game_summary` pgs2
+        ON pr1.player_lookup = pgs2.player_lookup
+        AND pgs2.game_date < pr1.game_date  -- Only historical games
+        AND pgs2.game_date >= DATE_SUB(pr1.game_date, INTERVAL 3 YEAR)  -- Last 3 years
+        AND pgs2.strikeouts IS NOT NULL
+    LEFT JOIN pitcher_raw pr2
+        ON pgs2.player_lookup = pr2.player_lookup
+        AND pgs2.game_date = pr2.game_date
+    WHERE pr2.opponent_team = pr1.opponent_team  -- Same opponent
+    GROUP BY pr1.player_lookup, pr1.game_date, pr1.opponent_team
+),
 pitcher_games AS (
     -- Get pitcher game stats with rolling features from analytics
     SELECT
@@ -218,6 +239,10 @@ pitcher_games AS (
         la.weak_spots as f33_lineup_weak_spots,
         la.batters_in_lineup as lineup_data_quality,
 
+        -- Pitcher vs opponent history (NEW FEATURES)
+        pvo.avg_k_vs_opponent as f27_avg_k_vs_opponent,
+        pvo.games_vs_opponent as f28_games_vs_opponent,
+
         -- Data quality
         pgs.data_completeness_score,
         pgs.rolling_stats_games
@@ -229,6 +254,11 @@ pitcher_games AS (
     -- Join lineup aggregates for opponent-specific bottom-up features
     LEFT JOIN lineup_aggregates la
         ON pr.game_pk = la.game_pk AND pr.player_lookup = la.pitcher_lookup
+    -- Join pitcher vs opponent history
+    LEFT JOIN pitcher_vs_opponent pvo
+        ON pr.player_lookup = pvo.player_lookup
+        AND pr.game_date = pvo.game_date
+        AND pr.opponent_team = pvo.opponent_team
     WHERE pgs.game_date >= '2024-03-01'
       AND pgs.game_date <= '2025-12-31'
       AND pgs.strikeouts IS NOT NULL
@@ -281,6 +311,10 @@ SELECT
     -- Bottom-up model (f25) - KEY FEATURE (now opponent-specific!)
     COALESCE(f25_bottom_up_k_expected, 5.0) as f25_bottom_up_k_expected,
     COALESCE(f26_lineup_k_vs_hand, 0.22) as f26_lineup_k_vs_hand,
+
+    -- Pitcher vs opponent history (f27-f28) - NEW
+    COALESCE(f27_avg_k_vs_opponent, f02_k_avg_last_10) as f27_avg_k_vs_opponent,
+    COALESCE(f28_games_vs_opponent, 0) as f28_games_vs_opponent,
 
     -- Weak spots (f33)
     COALESCE(f33_lineup_weak_spots, 2) as f33_lineup_weak_spots,
@@ -410,6 +444,10 @@ feature_cols = [
     # Bottom-up model (f25-f26) - KEY FEATURES
     'f25_bottom_up_k_expected',
     'f26_lineup_k_vs_hand',
+
+    # Pitcher vs opponent history (f27-f28) - NEW
+    'f27_avg_k_vs_opponent',
+    'f28_games_vs_opponent',
 
     # Lineup analysis (f33)
     'f33_lineup_weak_spots',
@@ -594,7 +632,7 @@ print("\n" + "=" * 80)
 print("STEP 7: SAVING MODEL")
 print("=" * 80)
 
-model_id = f"mlb_pitcher_strikeouts_v2_{datetime.now().strftime('%Y%m%d')}"
+model_id = f"mlb_pitcher_strikeouts_v4_{datetime.now().strftime('%Y%m%d')}"
 model_path = MODEL_OUTPUT_DIR / f"{model_id}.json"
 
 model.get_booster().save_model(str(model_path))
