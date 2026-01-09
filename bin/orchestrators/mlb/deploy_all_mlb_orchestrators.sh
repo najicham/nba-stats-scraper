@@ -17,6 +17,9 @@ PROJECT_ID="${GCP_PROJECT_ID:-nba-props-platform}"
 REGION="us-west2"
 RUNTIME="python311"
 
+# Configurable timeout for Phase 4→5 orchestrator (hours to wait before triggering with partial data)
+MAX_WAIT_HOURS="${MAX_WAIT_HOURS:-4}"
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 FUNCTIONS_DIR="$PROJECT_ROOT/orchestration/cloud_functions"
@@ -29,11 +32,19 @@ echo "Region: $REGION"
 echo ""
 
 # Function to deploy a Cloud Function
+# Args: FUNCTION_NAME ENTRY_POINT TRIGGER_TOPIC SOURCE_DIR [EXTRA_ENV_VARS]
 deploy_function() {
     local FUNCTION_NAME=$1
     local ENTRY_POINT=$2
     local TRIGGER_TOPIC=$3
     local SOURCE_DIR=$4
+    local EXTRA_ENV_VARS=${5:-}
+
+    # Build env vars string
+    local ENV_VARS="GCP_PROJECT=$PROJECT_ID"
+    if [ -n "$EXTRA_ENV_VARS" ]; then
+        ENV_VARS="$ENV_VARS,$EXTRA_ENV_VARS"
+    fi
 
     echo "Deploying $FUNCTION_NAME..."
 
@@ -50,7 +61,7 @@ deploy_function() {
             --timeout=300s \
             --min-instances=0 \
             --max-instances=5 \
-            --set-env-vars="GCP_PROJECT=$PROJECT_ID" \
+            --set-env-vars="$ENV_VARS" \
             --project="$PROJECT_ID" \
             --quiet
     else
@@ -67,7 +78,7 @@ deploy_function() {
             --timeout=300s \
             --min-instances=0 \
             --max-instances=1 \
-            --set-env-vars="GCP_PROJECT=$PROJECT_ID" \
+            --set-env-vars="$ENV_VARS" \
             --project="$PROJECT_ID" \
             --quiet
     fi
@@ -84,14 +95,16 @@ deploy_function \
     "mlb-phase3-analytics-complete" \
     "$FUNCTIONS_DIR/mlb_phase3_to_phase4"
 
-# Deploy Phase 4 → Phase 5 Orchestrator
+# Deploy Phase 4 → Phase 5 Orchestrator (with configurable timeout)
 echo ""
 echo "=== Phase 4 → Phase 5 Orchestrator ==="
+echo "  Timeout: ${MAX_WAIT_HOURS} hours"
 deploy_function \
     "mlb-phase4-to-phase5" \
     "orchestrate_mlb_phase4_to_phase5" \
     "mlb-phase4-precompute-complete" \
-    "$FUNCTIONS_DIR/mlb_phase4_to_phase5"
+    "$FUNCTIONS_DIR/mlb_phase4_to_phase5" \
+    "MAX_WAIT_HOURS=$MAX_WAIT_HOURS"
 
 # Deploy Phase 5 → Phase 6 Orchestrator
 echo ""

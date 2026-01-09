@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 
-{% block title %}Dashboard | NBA Pipeline Admin{% endblock %}
+{% block title %}Dashboard | {{ sport|upper if sport else 'NBA' }} Pipeline Admin{% endblock %}
 
 {% block content %}
 <div x-data="{ activeTab: 'today', showActions: false }">
 
     <!-- Status Cards -->
     <div id="status-cards"
-         hx-get="/partials/status-cards"
+         hx-get="/partials/status-cards?sport={{ sport or 'nba' }}"
          hx-trigger="refresh"
          hx-swap="innerHTML">
         {% include "components/status_cards.html" %}
@@ -78,10 +78,10 @@
             <div class="bg-white rounded-lg shadow p-6">
                 <div class="flex justify-between items-center mb-4">
                     <h3 class="text-lg font-medium text-gray-900">
-                        Games for {{ today }} (Today)
+                        {{ 'Pitchers' if sport == 'mlb' else 'Games' }} for {{ today }} (Today)
                     </h3>
                     <button
-                        hx-get="/partials/games-table/{{ today }}"
+                        hx-get="/partials/games-table/{{ today }}?sport={{ sport or 'nba' }}"
                         hx-target="#today-games-table"
                         hx-swap="innerHTML"
                         class="text-sm text-blue-600 hover:text-blue-800"
@@ -90,9 +90,9 @@
                     </button>
                 </div>
                 <div id="today-games-table"
-                     hx-get="/partials/games-table/{{ today }}"
+                     hx-get="/partials/games-table/{{ today }}?sport={{ sport or 'nba' }}"
                      hx-trigger="load">
-                    <div class="text-gray-500 text-center py-8">Loading games...</div>
+                    <div class="text-gray-500 text-center py-8">Loading {{ 'pitchers' if sport == 'mlb' else 'games' }}...</div>
                 </div>
             </div>
         </div>
@@ -102,11 +102,11 @@
             <div class="bg-white rounded-lg shadow p-6">
                 <div class="flex justify-between items-center mb-4">
                     <h3 class="text-lg font-medium text-gray-900">
-                        Games for {{ tomorrow }} (Tomorrow)
+                        {{ 'Pitchers' if sport == 'mlb' else 'Games' }} for {{ tomorrow }} (Tomorrow)
                     </h3>
                     <div class="flex space-x-2">
                         <button
-                            hx-get="/partials/games-table/{{ tomorrow }}"
+                            hx-get="/partials/games-table/{{ tomorrow }}?sport={{ sport or 'nba' }}"
                             hx-target="#tomorrow-games-table"
                             hx-swap="innerHTML"
                             class="text-sm text-blue-600 hover:text-blue-800"
@@ -128,23 +128,23 @@
                     <div class="flex space-x-2">
                         <button
                             hx-post="/api/actions/retry-phase"
-                            hx-vals='{"date": "{{ tomorrow }}", "phase": "phase3"}'
-                            hx-confirm="Retry Phase 3 (context generation) for {{ tomorrow }}?"
+                            hx-vals='{"date": "{{ tomorrow }}", "phase": "phase3", "sport": "{{ sport or 'nba' }}"}'
+                            hx-confirm="Retry Phase 3 ({{ 'analytics' if sport == 'mlb' else 'context generation' }}) for {{ tomorrow }}?"
                             class="px-3 py-1 bg-blue-500 text-white text-sm rounded hover:bg-blue-600"
                         >
                             Retry Phase 3
                         </button>
                         <button
                             hx-post="/api/actions/retry-phase"
-                            hx-vals='{"date": "{{ tomorrow }}", "phase": "phase4"}'
-                            hx-confirm="Retry Phase 4 (ML features) for {{ tomorrow }}?"
+                            hx-vals='{"date": "{{ tomorrow }}", "phase": "phase4", "sport": "{{ sport or 'nba' }}"}'
+                            hx-confirm="Retry Phase 4 ({{ 'precompute' if sport == 'mlb' else 'ML features' }}) for {{ tomorrow }}?"
                             class="px-3 py-1 bg-blue-500 text-white text-sm rounded hover:bg-blue-600"
                         >
                             Retry Phase 4
                         </button>
                         <button
                             hx-post="/api/actions/force-predictions"
-                            hx-vals='{"date": "{{ tomorrow }}"}'
+                            hx-vals='{"date": "{{ tomorrow }}", "sport": "{{ sport or 'nba' }}"}'
                             hx-confirm="Force predictions for {{ tomorrow }}? This will regenerate all predictions."
                             class="px-3 py-1 bg-green-500 text-white text-sm rounded hover:bg-green-600"
                         >
@@ -154,9 +154,9 @@
                 </div>
 
                 <div id="tomorrow-games-table"
-                     hx-get="/partials/games-table/{{ tomorrow }}"
+                     hx-get="/partials/games-table/{{ tomorrow }}?sport={{ sport or 'nba' }}"
                      hx-trigger="load">
-                    <div class="text-gray-500 text-center py-8">Loading games...</div>
+                    <div class="text-gray-500 text-center py-8">Loading {{ 'pitchers' if sport == 'mlb' else 'games' }}...</div>
                 </div>
             </div>
         </div>
@@ -167,7 +167,7 @@
                 <div class="flex justify-between items-center mb-4">
                     <h3 class="text-lg font-medium text-gray-900">Recent Errors (Last 6 Hours)</h3>
                     <button
-                        hx-get="/partials/error-feed"
+                        hx-get="/partials/error-feed?sport={{ sport or 'nba' }}"
                         hx-target="#error-feed"
                         hx-swap="innerHTML"
                         class="text-sm text-blue-600 hover:text-blue-800"
@@ -176,7 +176,7 @@
                     </button>
                 </div>
                 <div id="error-feed"
-                     hx-get="/partials/error-feed"
+                     hx-get="/partials/error-feed?sport={{ sport or 'nba' }}"
                      hx-trigger="load">
                     <div class="text-gray-500 text-center py-8">Loading errors...</div>
                 </div>
@@ -188,7 +188,7 @@
             <div class="bg-white rounded-lg shadow p-6">
                 <h3 class="text-lg font-medium text-gray-900 mb-4">Scheduler History (Last 12 Hours)</h3>
                 <div id="scheduler-timeline"
-                     hx-get="/api/schedulers"
+                     hx-get="/api/schedulers?sport={{ sport or 'nba' }}"
                      hx-trigger="load"
                      hx-swap="innerHTML">
                     <div class="text-gray-500 text-center py-8">Loading scheduler history...</div>
@@ -201,7 +201,7 @@
             <div class="bg-white rounded-lg shadow p-6">
                 <h3 class="text-lg font-medium text-gray-900 mb-4">7-Day Pipeline History</h3>
                 <div id="history-table"
-                     hx-get="/api/history"
+                     hx-get="/api/history?sport={{ sport or 'nba' }}"
                      hx-trigger="load"
                      hx-swap="innerHTML">
                     <div class="text-gray-500 text-center py-8">Loading history...</div>
@@ -215,7 +215,7 @@
                 <div class="flex justify-between items-center mb-4">
                     <h3 class="text-lg font-medium text-gray-900">Processor Failures (Last 24 Hours)</h3>
                     <button
-                        hx-get="/partials/processor-failures"
+                        hx-get="/partials/processor-failures?sport={{ sport or 'nba' }}"
                         hx-target="#processor-failures"
                         hx-swap="innerHTML"
                         class="text-sm text-blue-600 hover:text-blue-800"
@@ -224,7 +224,7 @@
                     </button>
                 </div>
                 <div id="processor-failures"
-                     hx-get="/partials/processor-failures"
+                     hx-get="/partials/processor-failures?sport={{ sport or 'nba' }}"
                      hx-trigger="load">
                     <div class="text-gray-500 text-center py-8">Loading processor failures...</div>
                 </div>
@@ -237,7 +237,7 @@
                 <div class="flex justify-between items-center mb-4">
                     <h3 class="text-lg font-medium text-gray-900">Coverage & Grading Metrics</h3>
                     <button
-                        hx-get="/partials/coverage-metrics"
+                        hx-get="/partials/coverage-metrics?sport={{ sport or 'nba' }}"
                         hx-target="#coverage-metrics"
                         hx-swap="innerHTML"
                         class="text-sm text-blue-600 hover:text-blue-800"
@@ -246,7 +246,7 @@
                     </button>
                 </div>
                 <div id="coverage-metrics"
-                     hx-get="/partials/coverage-metrics"
+                     hx-get="/partials/coverage-metrics?sport={{ sport or 'nba' }}"
                      hx-trigger="load">
                     <div class="text-gray-500 text-center py-8">Loading coverage metrics...</div>
                 </div>
