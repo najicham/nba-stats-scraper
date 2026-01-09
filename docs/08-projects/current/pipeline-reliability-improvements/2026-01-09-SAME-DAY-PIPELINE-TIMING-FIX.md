@@ -602,4 +602,6 @@ Only 108/349 rostered players processed in UPGC. 241 failed completeness checks.
 | 2026-01-09 LATE | Root cause: Backfill script created v2_33features (121,416 rows), but ml_feature_store_processor.py still writes v1_baseline_25 |
 | 2026-01-09 LATE | Reverted data_loaders.py back to v2_33features as default |
 | 2026-01-09 LATE | Backfilled Jan 9-10 with v2_33features (187 rows converted from v1 to v2 by adding 8 features) |
-| 2026-01-09 LATE | **TECH DEBT**: ml_feature_store_processor.py must be updated to generate 33 features natively |
+| 2026-01-09 LATE | **COMPLETED**: Updated ml_feature_store_processor.py to generate 33 features natively |
+| 2026-01-09 LATE | Added 3 new batch extraction methods: vegas_lines, opponent_history, minutes_ppm |
+| 2026-01-09 LATE | Feature version upgraded: v1_baseline_25 → v2_33features (permanent fix) |
