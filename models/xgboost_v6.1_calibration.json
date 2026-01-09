@@ -1,0 +1,16 @@
+{
+  "version": "v6.1",
+  "base_model": "models/xgboost_v6_25features_20260108_193546.json",
+  "calibration_type": "linear_high_scorer_boost",
+  "threshold": 15.0,
+  "slope": 0.010325248308578387,
+  "intercept": -1.1802114721732515,
+  "max_boost": 5.0,
+  "created_at": "2026-01-08T19:54:16.974511",
+  "validation_results": {
+    "original_mae": 4.144954288831647,
+    "calibrated_mae": 4.144954288831647,
+    "improvement_pct": 0.0,
+    "samples": 38766
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "timestamp": "20260108_211305",
+  "results": {
+    "Single-stage (baseline)": 3.4314842144954913,
+    "Two-stage (min \u00d7 ppm)": 3.5412540904479606,
+    "Hybrid (simple avg)": 3.4694843815713434,
+    "Hybrid (blend w=1.00)": 3.4314842144954913,
+    "Minutes-augmented": 3.4657624047352096
+  },
+  "best_model": "Single-stage (baseline)",
+  "best_mae": 3.4314842144954913,
+  "minutes_mae": 4.641140308428797,
+  "ppm_mae": 0.17088971242190995,
+  "v6_baseline": 4.14,
+  "v7_ensemble_baseline": 3.881,
+  "optimal_blend_weight": 1.0
+}
