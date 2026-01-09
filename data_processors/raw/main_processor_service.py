@@ -16,7 +16,7 @@ import os
 import json
 import logging
 from flask import Flask, request, jsonify
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import base64
 import re
 
@@ -748,7 +748,8 @@ def process_pubsub():
                         'status': 'processing',
                         'started_at': datetime.now(timezone.utc),
                         'trigger_file': file_path,
-                        'execution_id': normalized_message.get('_execution_id', 'unknown')
+                        'execution_id': normalized_message.get('_execution_id', 'unknown'),
+                        'expireAt': datetime.now(timezone.utc) + timedelta(days=7)  # TTL for auto-cleanup
                     }
 
                     # Use create() which fails if document exists
