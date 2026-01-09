@@ -257,7 +257,13 @@ WHERE game_date = '2026-01-09'"
 - [x] Deploy data_loaders fix
 - [x] Add props pre-flight check to UPGC (`_check_props_readiness()`)
 - [x] Add 0% prop coverage alert to UPGC (`_send_prop_coverage_alert()`)
-- [ ] Deploy UPGC changes (pending commit)
+- [x] Deploy UPGC changes
+
+### P1 - COMPLETED (LATE Session)
+- [x] **CRITICAL FIX**: Update ml_feature_store_processor.py to generate 33 features natively
+- [x] Add 3 new batch extraction methods (vegas_lines, opponent_history, minutes_ppm)
+- [x] Feature version permanently upgraded: v1_baseline_25 → v2_33features
+- [x] All commits pushed to main
 
 ### P2 - Medium (This Week)
 - [ ] Create self-healing Cloud Function
@@ -271,12 +277,15 @@ WHERE game_date = '2026-01-09'"
 
 ---
 
-## Files to Modify
+## Files Modified
 
 | File | Change |
 |------|--------|
-| `predictions/worker/data_loaders.py` | Add `catboost_v8` to normalize_confidence() |
-| `data_processors/analytics/upcoming_player_game_context/upcoming_player_game_context_processor.py` | Add props pre-flight check and 0% alert |
+| `predictions/worker/data_loaders.py` | Changed default feature_version to v2_33features, added catboost_v8 to normalize_confidence() |
+| `predictions/worker/prediction_systems/*.py` | Updated feature_version defaults to v2_33features |
+| `data_processors/analytics/upcoming_player_game_context/upcoming_player_game_context_processor.py` | Added props pre-flight check and 0% alert |
+| `data_processors/precompute/ml_feature_store/ml_feature_store_processor.py` | **MAJOR**: Upgraded to 33 features (v2_33features) |
+| `data_processors/precompute/ml_feature_store/feature_extractor.py` | Added 3 new batch extraction methods for V8 features |
 
 ---
 
@@ -293,10 +302,13 @@ WHERE game_date = '2026-01-09'"
 
 | Commit | Description |
 |--------|-------------|
-| (none) | Recovery only - no code changes committed |
+| `a3e6e94` | UPGC timing safeguards (props pre-flight check, 0% alert) |
+| `b30c8e2` | Feature version fix (reverted v1→v2_33features in prediction worker) |
+| (pending) | ML feature store processor upgrade to 33 features |
 
-Documentation created:
+Documentation updated:
 - `docs/08-projects/current/pipeline-reliability-improvements/2026-01-09-SAME-DAY-PIPELINE-TIMING-FIX.md`
+- `docs/09-handoff/2026-01-09-SAME-DAY-PIPELINE-FIX-HANDOFF.md` (this file)
 - `docs/09-handoff/2026-01-09-SAME-DAY-PIPELINE-FIX-HANDOFF.md` (this file)
 
 ---
