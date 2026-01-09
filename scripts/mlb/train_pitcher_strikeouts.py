@@ -48,16 +48,131 @@ print("=" * 80)
 client = bigquery.Client(project=PROJECT_ID)
 
 # Query to get training data with actual strikeout outcomes
-# We join pitcher game summary (features) with raw stats (actual Ks)
+# Calculate bottom-up features inline using opponent-specific lineup data
 query = """
-WITH pitcher_games AS (
-    -- Get pitcher game stats with rolling features
+WITH game_teams AS (
+    -- Get distinct game_pk with home/away teams (dedupe mlb_game_lineups)
+    SELECT DISTINCT
+        game_pk,
+        home_team_abbr,
+        away_team_abbr
+    FROM `nba-props-platform.mlb_raw.mlb_game_lineups`
+    WHERE game_date >= '2024-03-01'
+      AND game_date <= '2025-12-31'
+),
+pitcher_raw AS (
+    -- Get pitcher game info including team_abbr from raw data (which is fixed)
+    -- Dedupe using ROW_NUMBER since raw data may have duplicate rows per pitcher per game
+    SELECT
+        game_pk,
+        game_date,
+        player_lookup,
+        pitcher_team,
+        opponent_team
+    FROM (
+        SELECT
+            ps.game_pk,
+            ps.game_date,
+            ps.player_lookup,
+            ps.team_abbr as pitcher_team,
+            -- Opponent is the OTHER team in the game
+            CASE
+                WHEN ps.team_abbr = gt.home_team_abbr THEN gt.away_team_abbr
+                ELSE gt.home_team_abbr
+            END as opponent_team,
+            ROW_NUMBER() OVER (PARTITION BY ps.game_pk, ps.player_lookup ORDER BY ps.game_date) as rn
+        FROM `nba-props-platform.mlb_raw.mlb_pitcher_stats` ps
+        JOIN game_teams gt
+            ON ps.game_pk = gt.game_pk
+        WHERE ps.is_starter = TRUE
+          AND ps.game_date >= '2024-03-01'
+          AND ps.game_date <= '2025-12-31'
+    )
+    WHERE rn = 1
+),
+batter_latest_stats AS (
+    -- Get each batter's most recent K rate before each date
+    SELECT
+        player_lookup,
+        game_date as stats_date,
+        k_rate_last_10,
+        season_k_rate
+    FROM `nba-props-platform.mlb_analytics.batter_game_summary`
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY player_lookup
+        ORDER BY game_date DESC
+    ) = 1
+),
+lineup_batters_deduped AS (
+    -- Dedupe lineup batters (raw data has duplicates)
+    SELECT
+        game_pk,
+        game_date,
+        team_abbr,
+        player_lookup,
+        batting_order
+    FROM (
+        SELECT
+            game_pk,
+            game_date,
+            team_abbr,
+            player_lookup,
+            batting_order,
+            ROW_NUMBER() OVER (PARTITION BY game_pk, team_abbr, player_lookup ORDER BY batting_order) as rn
+        FROM `nba-props-platform.mlb_raw.mlb_lineup_batters`
+        WHERE game_date >= '2024-03-01'
+          AND game_date <= '2025-12-31'
+    )
+    WHERE rn = 1
+),
+lineup_batter_stats AS (
+    -- Get batter K rates for each game's OPPONENT lineup only
+    SELECT
+        pr.game_pk,
+        pr.game_date,
+        pr.player_lookup as pitcher_lookup,
+        lb.team_abbr as batter_team,
+        lb.player_lookup as batter_lookup,
+        lb.batting_order,
+        -- Use batter's K rate (fallback to league average)
+        COALESCE(bs.k_rate_last_10, bs.season_k_rate, 0.22) as batter_k_rate,
+        -- Expected plate appearances by batting order
+        CASE lb.batting_order
+            WHEN 1 THEN 4.5 WHEN 2 THEN 4.3 WHEN 3 THEN 4.2 WHEN 4 THEN 4.0
+            WHEN 5 THEN 3.9 WHEN 6 THEN 3.8 WHEN 7 THEN 3.7 WHEN 8 THEN 3.6
+            ELSE 3.5
+        END as expected_pa
+    FROM pitcher_raw pr
+    JOIN lineup_batters_deduped lb
+        ON pr.game_pk = lb.game_pk
+        AND lb.team_abbr = pr.opponent_team  -- KEY: Only opponent's batters
+    LEFT JOIN batter_latest_stats bs
+        ON lb.player_lookup = bs.player_lookup
+),
+lineup_aggregates AS (
+    -- Aggregate batter stats per pitcher per game (opponent-specific!)
+    SELECT
+        game_pk,
+        game_date,
+        pitcher_lookup,
+        -- Bottom-up expected K: sum of individual batter expected Ks
+        SUM(batter_k_rate * expected_pa) as bottom_up_k,
+        -- Average lineup K rate
+        AVG(batter_k_rate) as lineup_avg_k_rate,
+        -- Count of weak spots (K rate > 0.28)
+        COUNTIF(batter_k_rate > 0.28) as weak_spots,
+        COUNT(*) as batters_in_lineup
+    FROM lineup_batter_stats
+    GROUP BY game_pk, game_date, pitcher_lookup
+),
+pitcher_games AS (
+    -- Get pitcher game stats with rolling features from analytics
     SELECT
         pgs.player_lookup,
         pgs.game_date,
         pgs.game_id,
-        pgs.team_abbr,
-        pgs.opponent_team_abbr,
+        pr.pitcher_team as team_abbr,
+        pr.opponent_team as opponent_team_abbr,
         pgs.season_year,
 
         -- Target variable (WHAT WE PREDICT)
@@ -97,34 +212,29 @@ WITH pitcher_games AS (
         pgs.season_innings as f23_season_ip_total,
         IF(pgs.is_postseason, 1.0, 0.0) as f24_is_postseason,
 
+        -- Bottom-up features (calculated from opponent lineup)
+        la.bottom_up_k as f25_bottom_up_k_expected,
+        la.lineup_avg_k_rate as f26_lineup_k_vs_hand,
+        la.weak_spots as f33_lineup_weak_spots,
+        la.batters_in_lineup as lineup_data_quality,
+
         -- Data quality
         pgs.data_completeness_score,
         pgs.rolling_stats_games
 
     FROM `nba-props-platform.mlb_analytics.pitcher_game_summary` pgs
+    -- Join with pitcher_raw to get fixed team_abbr and opponent
+    JOIN pitcher_raw pr
+        ON pgs.player_lookup = pr.player_lookup AND pgs.game_date = pr.game_date
+    -- Join lineup aggregates for opponent-specific bottom-up features
+    LEFT JOIN lineup_aggregates la
+        ON pr.game_pk = la.game_pk AND pr.player_lookup = la.pitcher_lookup
     WHERE pgs.game_date >= '2024-03-01'
       AND pgs.game_date <= '2025-12-31'
       AND pgs.strikeouts IS NOT NULL
       AND pgs.innings_pitched >= 3.0  -- Starter threshold
       AND pgs.rolling_stats_games >= 3  -- Minimum history
       AND pgs.season_year IN (2024, 2025)
-),
-
--- Join with lineup K analysis for bottom-up features
-lineup_features AS (
-    SELECT
-        pg.*,
-
-        -- Bottom-up model features (f25-f29) - THE KEY INNOVATION
-        lka.bottom_up_expected_k as f25_bottom_up_k_expected,
-        lka.lineup_k_rate_vs_hand as f26_lineup_k_vs_hand,
-        COALESCE(lka.weak_spot_count, 0) as f33_lineup_weak_spots,
-        lka.data_completeness_pct as lineup_data_completeness
-
-    FROM pitcher_games pg
-    LEFT JOIN `nba-props-platform.mlb_precompute.lineup_k_analysis` lka
-        ON pg.player_lookup = lka.pitcher_lookup
-        AND pg.game_date = lka.game_date
 )
 
 SELECT
@@ -168,7 +278,7 @@ SELECT
     COALESCE(f23_season_ip_total, 50.0) as f23_season_ip_total,
     f24_is_postseason,
 
-    -- Bottom-up model (f25) - KEY FEATURE
+    -- Bottom-up model (f25) - KEY FEATURE (now opponent-specific!)
     COALESCE(f25_bottom_up_k_expected, 5.0) as f25_bottom_up_k_expected,
     COALESCE(f26_lineup_k_vs_hand, 0.22) as f26_lineup_k_vs_hand,
 
@@ -177,9 +287,9 @@ SELECT
 
     -- Data quality
     data_completeness_score,
-    lineup_data_completeness
+    lineup_data_quality
 
-FROM lineup_features
+FROM pitcher_games
 WHERE actual_strikeouts IS NOT NULL
 ORDER BY game_date, player_lookup
 """
@@ -484,7 +594,7 @@ print("\n" + "=" * 80)
 print("STEP 7: SAVING MODEL")
 print("=" * 80)
 
-model_id = f"mlb_pitcher_strikeouts_v1_{datetime.now().strftime('%Y%m%d')}"
+model_id = f"mlb_pitcher_strikeouts_v2_{datetime.now().strftime('%Y%m%d')}"
 model_path = MODEL_OUTPUT_DIR / f"{model_id}.json"
 
 model.get_booster().save_model(str(model_path))

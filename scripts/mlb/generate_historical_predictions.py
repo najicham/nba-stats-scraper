@@ -28,7 +28,7 @@ from google.cloud import bigquery
 
 # Configuration
 PROJECT_ID = "nba-props-platform"
-MODEL_PATH = Path("models/mlb/mlb_pitcher_strikeouts_v1_20260107.json")
+MODEL_PATH = Path("models/mlb/mlb_pitcher_strikeouts_v2_20260108.json")
 PREDICTIONS_TABLE = "mlb_predictions.pitcher_strikeouts"
 
 # Feature columns in the order expected by the model
@@ -74,8 +74,49 @@ def get_historical_data(
     limit_clause = f"LIMIT {limit}" if limit else ""
 
     # Calculate bottom-up features by joining lineup batters with batter analytics
+    # Now that team_abbr is fixed, we can properly filter to opponent lineup only
     query = f"""
-    WITH batter_latest_stats AS (
+    WITH game_teams AS (
+        -- Get distinct game_pk with home/away teams (dedupe mlb_game_lineups)
+        SELECT DISTINCT
+            game_pk,
+            home_team_abbr,
+            away_team_abbr
+        FROM `{PROJECT_ID}.mlb_raw.mlb_game_lineups`
+        WHERE game_date >= '{start_date}'
+          AND game_date <= '{end_date}'
+    ),
+    pitcher_games AS (
+        -- Get pitcher game info including team_abbr from raw data (which is fixed)
+        -- Dedupe using ROW_NUMBER since raw data may have duplicate rows per pitcher per game
+        SELECT
+            game_pk,
+            game_date,
+            player_lookup,
+            pitcher_team,
+            opponent_team
+        FROM (
+            SELECT
+                ps.game_pk,
+                ps.game_date,
+                ps.player_lookup,
+                ps.team_abbr as pitcher_team,
+                -- Opponent is the OTHER team in the game
+                CASE
+                    WHEN ps.team_abbr = gt.home_team_abbr THEN gt.away_team_abbr
+                    ELSE gt.home_team_abbr
+                END as opponent_team,
+                ROW_NUMBER() OVER (PARTITION BY ps.game_pk, ps.player_lookup ORDER BY ps.game_date) as rn
+            FROM `{PROJECT_ID}.mlb_raw.mlb_pitcher_stats` ps
+            JOIN game_teams gt
+                ON ps.game_pk = gt.game_pk
+            WHERE ps.is_starter = TRUE
+              AND ps.game_date >= '{start_date}'
+              AND ps.game_date <= '{end_date}'
+        )
+        WHERE rn = 1
+    ),
+    batter_latest_stats AS (
         -- Get each batter's most recent K rate before each date
         -- Use QUALIFY to get latest per batter per date range
         SELECT
@@ -89,13 +130,35 @@ def get_historical_data(
             ORDER BY game_date DESC
         ) = 1
     ),
-    lineup_batter_stats AS (
-        -- Get batter K rates for each game's opponent lineup
+    lineup_batters_deduped AS (
+        -- Dedupe lineup batters (raw data has duplicates)
         SELECT
-            lb.game_pk,
-            lb.game_date,
+            game_pk,
+            game_date,
+            team_abbr,
+            player_lookup,
+            batting_order
+        FROM (
+            SELECT
+                game_pk,
+                game_date,
+                team_abbr,
+                player_lookup,
+                batting_order,
+                ROW_NUMBER() OVER (PARTITION BY game_pk, team_abbr, player_lookup ORDER BY batting_order) as rn
+            FROM `{PROJECT_ID}.mlb_raw.mlb_lineup_batters`
+            WHERE game_date >= '{start_date}'
+              AND game_date <= '{end_date}'
+        )
+        WHERE rn = 1
+    ),
+    lineup_batter_stats AS (
+        -- Get batter K rates for each game's OPPONENT lineup only (filtered by pitcher's opponent)
+        SELECT
+            pg.game_pk,
+            pg.game_date,
+            pg.player_lookup as pitcher_lookup,
             lb.team_abbr as batter_team,
-            lb.opponent_team_abbr as pitcher_team,
             lb.player_lookup as batter_lookup,
             lb.batting_order,
             -- Use batter's K rate (fallback to league average)
@@ -106,35 +169,37 @@ def get_historical_data(
                 WHEN 5 THEN 3.9 WHEN 6 THEN 3.8 WHEN 7 THEN 3.7 WHEN 8 THEN 3.6
                 ELSE 3.5
             END as expected_pa
-        FROM `{PROJECT_ID}.mlb_raw.mlb_lineup_batters` lb
+        FROM pitcher_games pg
+        JOIN lineup_batters_deduped lb
+            ON pg.game_pk = lb.game_pk
+            AND lb.team_abbr = pg.opponent_team  -- KEY FIX: Only opponent's batters
         LEFT JOIN batter_latest_stats bs
             ON lb.player_lookup = bs.player_lookup
-        WHERE lb.game_date >= '{start_date}'
-          AND lb.game_date <= '{end_date}'
     ),
     lineup_aggregates AS (
-        -- Aggregate batter stats per game (all batters in game - both lineups)
-        -- Since team_abbr data is "UNK", we use game-level aggregates as proxy
+        -- Aggregate batter stats per pitcher per game (now opponent-specific!)
         SELECT
             game_pk,
             game_date,
-            -- Bottom-up expected K: average per-lineup expected K (divide by 2 since both teams)
-            SUM(batter_k_rate * expected_pa) / 2 as bottom_up_k,
+            pitcher_lookup,
+            -- Bottom-up expected K: sum of individual batter expected Ks
+            SUM(batter_k_rate * expected_pa) as bottom_up_k,
             -- Average lineup K rate
             AVG(batter_k_rate) as lineup_avg_k_rate,
-            -- Count of weak spots (K rate > 0.28) per lineup (divide by 2)
-            COUNTIF(batter_k_rate > 0.28) / 2 as weak_spots,
-            COUNT(*) / 2 as batters_in_lineup
+            -- Count of weak spots (K rate > 0.28)
+            COUNTIF(batter_k_rate > 0.28) as weak_spots,
+            COUNT(*) as batters_in_lineup
         FROM lineup_batter_stats
-        GROUP BY game_pk, game_date
+        GROUP BY game_pk, game_date, pitcher_lookup
     )
     SELECT
         p.player_lookup,
         p.player_full_name as pitcher_name,
         p.game_date,
         p.game_id,
-        p.team_abbr,
-        p.opponent_team_abbr,
+        -- Pull team_abbr from raw data (which is fixed), not from analytics table (which has UNK)
+        pg.pitcher_team as team_abbr,
+        pg.opponent_team as opponent_team_abbr,
         p.season_year,
         p.is_home,
 
@@ -166,7 +231,7 @@ def get_historical_data(
         COALESCE(p.season_innings, 50.0) as f23_season_ip_total,
         IF(p.is_postseason, 1.0, 0.0) as f24_is_postseason,
 
-        -- Features (f25-f33: Bottom-up model from lineup data)
+        -- Features (f25-f33: Bottom-up model from lineup data - now opponent-specific!)
         COALESCE(la.bottom_up_k, 5.0) as f25_bottom_up_k_expected,
         COALESCE(la.lineup_avg_k_rate, 0.22) as f26_lineup_k_vs_hand,
         COALESCE(la.weak_spots, 2) as f33_lineup_weak_spots,
@@ -181,15 +246,12 @@ def get_historical_data(
         la.batters_in_lineup as lineup_data_quality
 
     FROM `{PROJECT_ID}.mlb_analytics.pitcher_game_summary` p
-    -- Get game_pk by joining with raw pitcher stats
-    LEFT JOIN (
-        SELECT DISTINCT game_pk, game_date, player_lookup
-        FROM `{PROJECT_ID}.mlb_raw.mlb_pitcher_stats`
-        WHERE is_starter = TRUE
-    ) ps ON p.player_lookup = ps.player_lookup AND p.game_date = ps.game_date
-    -- Join lineup aggregates using game_pk
+    -- Join with pitcher_games CTE to get fixed team_abbr and opponent
+    JOIN pitcher_games pg
+        ON p.player_lookup = pg.player_lookup AND p.game_date = pg.game_date
+    -- Join lineup aggregates using game_pk and pitcher_lookup for opponent-specific data
     LEFT JOIN lineup_aggregates la
-        ON ps.game_pk = la.game_pk
+        ON pg.game_pk = la.game_pk AND pg.player_lookup = la.pitcher_lookup
     WHERE p.game_date >= '{start_date}'
       AND p.game_date <= '{end_date}'
       AND p.strikeouts IS NOT NULL
