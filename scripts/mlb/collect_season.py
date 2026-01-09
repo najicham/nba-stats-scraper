@@ -236,27 +236,34 @@ class MLBDataCollector:
             datetime_info = game_data.get('datetime', {})
             venue = game_data.get('venue', {})
             status = game_data.get('status', {})
-            teams = boxscore.get('teams', {})
 
-            away = teams.get('away', {})
-            home = teams.get('home', {})
+            # Get team info from gameData.teams (has abbreviation)
+            # NOT from boxscore.teams (which lacks abbreviation)
+            game_teams = game_data.get('teams', {})
+            away_team_info = game_teams.get('away', {})
+            home_team_info = game_teams.get('home', {})
+
+            # Get boxscore data for lineups/stats
+            boxscore_teams = boxscore.get('teams', {})
+            away_boxscore = boxscore_teams.get('away', {})
+            home_boxscore = boxscore_teams.get('home', {})
 
             return GameData(
                 game_pk=game_pk,
                 game_date=datetime_info.get('originalDate'),
                 game_time_utc=datetime_info.get('dateTime'),
-                away_team_id=away.get('team', {}).get('id'),
-                away_team_abbr=away.get('team', {}).get('abbreviation', 'UNK'),
-                away_team_name=away.get('team', {}).get('name', 'Unknown'),
-                home_team_id=home.get('team', {}).get('id'),
-                home_team_abbr=home.get('team', {}).get('abbreviation', 'UNK'),
-                home_team_name=home.get('team', {}).get('name', 'Unknown'),
+                away_team_id=away_team_info.get('id'),
+                away_team_abbr=away_team_info.get('abbreviation', 'UNK'),
+                away_team_name=away_team_info.get('name', 'Unknown'),
+                home_team_id=home_team_info.get('id'),
+                home_team_abbr=home_team_info.get('abbreviation', 'UNK'),
+                home_team_name=home_team_info.get('name', 'Unknown'),
                 venue_name=venue.get('name', 'Unknown'),
                 status_code=status.get('statusCode', 'F'),
-                away_lineup=self._extract_lineup(away, game_data),
-                home_lineup=self._extract_lineup(home, game_data),
-                away_pitchers=self._extract_pitchers(away, game_data),
-                home_pitchers=self._extract_pitchers(home, game_data),
+                away_lineup=self._extract_lineup(away_boxscore, game_data),
+                home_lineup=self._extract_lineup(home_boxscore, game_data),
+                away_pitchers=self._extract_pitchers(away_boxscore, game_data),
+                home_pitchers=self._extract_pitchers(home_boxscore, game_data),
             )
         except Exception as e:
             logger.error(f"Error parsing game data: {e}")

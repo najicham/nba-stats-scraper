@@ -161,7 +161,7 @@ class MlbBatterGameSummaryProcessor(AnalyticsProcessorBase):
             FROM `{self.project_id}.{self.raw_dataset}.bdl_batter_stats`
             WHERE game_date <= '{date_str}'
               AND at_bats > 0  -- Filter to batters who had at-bats
-              AND game_status = 'STATUS_FINAL'
+              AND game_status IN ('STATUS_FINAL', 'STATUS_F')  -- Both formats
         ),
 
         rolling_stats AS (
@@ -349,7 +349,12 @@ class MlbBatterGameSummaryProcessor(AnalyticsProcessorBase):
 
         rows = []
         for row in results:
-            rows.append(dict(row))
+            row_dict = dict(row)
+            # Convert date/datetime objects to strings for JSON serialization
+            for key, value in row_dict.items():
+                if isinstance(value, (date, datetime)):
+                    row_dict[key] = value.isoformat()
+            rows.append(row_dict)
 
         return rows
 
