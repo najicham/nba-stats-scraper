@@ -93,18 +93,27 @@ class CatBoostV8:
 
         Args:
             model_path: Path to CatBoost model file (local or GCS)
-            use_local: If True, load from local models/ directory
+            use_local: If True, load from local models/ directory.
+                       If CATBOOST_V8_MODEL_PATH env var is set, uses that instead.
         """
+        import os
+
         self.system_id = 'catboost_v8'
         self.model_version = 'v8'
         self.model = None
         self.metadata = None
 
-        # Load model
-        if use_local:
-            self._load_local_model()
-        elif model_path:
+        # Check for GCS path in environment (production)
+        gcs_path = os.environ.get('CATBOOST_V8_MODEL_PATH')
+
+        # Load model - priority: explicit path > env var > local
+        if model_path:
             self._load_model_from_path(model_path)
+        elif gcs_path:
+            logger.info(f"Loading CatBoost v8 from env var: {gcs_path}")
+            self._load_model_from_path(gcs_path)
+        elif use_local:
+            self._load_local_model()
 
     def _load_local_model(self):
         """Load model from local models/ directory"""
