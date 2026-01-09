@@ -20,6 +20,7 @@ from shared.utils.notification_system import (
     notify_info
 )
 from shared.utils.player_registry import RegistryReader, PlayerNotFoundError
+from shared.utils.bigquery_retry import SERIALIZATION_RETRY
 
 logger = logging.getLogger(__name__)
 
@@ -304,16 +305,20 @@ class EspnTeamRosterProcessor(SmartIdempotencyMixin, ProcessorBase):
             
             # Step 1: DELETE existing data for this partition slice
             logger.debug(f"Deleting partition slice: {partition_date}/{scrape_hour}/{team_abbr}")
-            
+
             delete_query = f"""
             DELETE FROM `{table_id}`
             WHERE roster_date = '{partition_date}'
               AND scrape_hour = {scrape_hour}
               AND team_abbr = '{team_abbr}'
             """
-            
-            delete_job = self.bq_client.query(delete_query)
-            delete_job.result(timeout=60)
+
+            @SERIALIZATION_RETRY
+            def execute_delete_with_retry():
+                delete_job = self.bq_client.query(delete_query)
+                return delete_job.result(timeout=60)
+
+            execute_delete_with_retry()
             logger.debug(f"Deleted existing records for {team_abbr} on {partition_date}")
             
             # Step 2: INSERT new data using batch loading
@@ -331,15 +336,18 @@ class EspnTeamRosterProcessor(SmartIdempotencyMixin, ProcessorBase):
             
             # Convert types for JSON loading
             validated_rows = [self._convert_for_json_load(row) for row in rows]
-            
-            # Batch load (NO streaming buffer)
-            load_job = self.bq_client.load_table_from_json(
-                validated_rows,
-                table_id,
-                job_config=job_config
-            )
-            load_job.result(timeout=60)
-            
+
+            # Batch load (NO streaming buffer) with retry for serialization errors
+            @SERIALIZATION_RETRY
+            def execute_insert_with_retry():
+                load_job = self.bq_client.load_table_from_json(
+                    validated_rows,
+                    table_id,
+                    job_config=job_config
+                )
+                return load_job.result(timeout=60)
+
+            execute_insert_with_retry()
             logger.debug(f"Fast partition replace completed for {team_abbr}")
             
         except Exception as e:
@@ -374,10 +382,15 @@ class EspnTeamRosterProcessor(SmartIdempotencyMixin, ProcessorBase):
         DELETE FROM `{table_id}`
         WHERE {where_clause}
         """
-        
+
         logger.info(f"Batch deleting {len(partition_keys)} partition slices in one query...")
-        delete_job = self.bq_client.query(delete_query)
-        delete_job.result(timeout=60)
+
+        @SERIALIZATION_RETRY
+        def execute_batch_delete_with_retry():
+            delete_job = self.bq_client.query(delete_query)
+            return delete_job.result(timeout=60)
+
+        execute_batch_delete_with_retry()
         logger.info(f"✓ Batch delete completed ({len(partition_keys)} teams)")
     
     def _convert_for_json_load(self, record: Dict) -> Dict:
@@ -750,14 +763,18 @@ def batch_process_rosters(bucket: str, date: str, project_id: str, team: str = N
                 )
                 
                 validated_rows = [save_processor._convert_for_json_load(row) for row in rows]
-                
-                load_job = bq_client.load_table_from_json(
-                    validated_rows,
-                    table_id,
-                    job_config=job_config
-                )
-                load_job.result(timeout=60)
-                
+
+                @SERIALIZATION_RETRY
+                def execute_batch_insert_with_retry():
+                    load_job = bq_client.load_table_from_json(
+                        validated_rows,
+                        table_id,
+                        job_config=job_config
+                    )
+                    return load_job.result(timeout=60)
+
+                execute_batch_insert_with_retry()
+
             except Exception as e:
                 logger.error(f"Failed to insert {key}: {e}")
                 errors += 1
