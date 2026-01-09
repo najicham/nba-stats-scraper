@@ -384,6 +384,7 @@ class BettingProsEvents(ScraperBase, ScraperFlaskMixin):
             "source": "bettingpros_api",
             "api_response_params": self.decoded_data.get("_parameters", {}),
             "event_count": len(processed_events),
+            "rowCount": len(processed_events),  # Standard field for workflow executor
             "events": processed_events,
             # "raw_events": events_data,  # Keep original data for debugging
         }
@@ -412,10 +413,12 @@ class BettingProsEvents(ScraperBase, ScraperFlaskMixin):
     
     def get_scraper_stats(self) -> dict:
         """Return scraper statistics"""
+        event_count = self.data.get("event_count", 0) if hasattr(self, 'data') and isinstance(self.data, dict) else 0
         return {
             "date": self.opts["date"],
             "sport": self.opts["sport"],
-            "event_count": self.data.get("event_count", 0),
+            "event_count": event_count,
+            "rowCount": event_count,  # Standard field for workflow executor
             "timestamp": self.opts["timestamp"]
         }
 
