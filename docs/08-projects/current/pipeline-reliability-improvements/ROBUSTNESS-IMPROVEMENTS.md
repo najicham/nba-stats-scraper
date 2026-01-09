@@ -1,7 +1,8 @@
 # Pipeline Robustness Improvements Plan
 
 **Created:** 2026-01-09 (Post-incident analysis)
-**Status:** Planning
+**Updated:** 2026-01-09 (Quick wins implemented)
+**Status:** In Progress
 
 ---
 
@@ -16,11 +17,21 @@ Five separate issues combined to cause 0% actionable predictions:
 
 ---
 
+## Quick Wins Completed (2026-01-09)
+
+| Item | Status | Commit |
+|------|--------|--------|
+| Feature version assertion in catboost_v8.py | ✅ Done | 8030007 |
+| Startup model path validation in worker.py | ✅ Done | 8030007 |
+| Daily health monitoring queries (Query 9-13) | ✅ Done | 8030007 |
+
+---
+
 ## Priority 1: Fail-Fast Validation
 
 ### 1.1 Startup Environment Validation
-**Status:** Partially exists (env_validation.py)
-**Gap:** Doesn't validate ML model paths
+**Status:** ✅ IMPLEMENTED (worker.py:56-105)
+**Validates:** Model path format, local model existence
 
 ```python
 # predictions/worker/startup_checks.py
@@ -39,8 +50,8 @@ def validate_ml_model_availability():
 ```
 
 ### 1.2 Feature Version Assertion
-**Status:** Not implemented
-**Gap:** Model silently receives wrong features
+**Status:** ✅ IMPLEMENTED (catboost_v8.py:210-217)
+**Validates:** feature_version == 'v2_33features'
 
 ```python
 # predictions/worker/prediction_systems/catboost_v8.py
@@ -238,29 +249,266 @@ def test_feature_count_matches_model():
 
 ---
 
-## Implementation Timeline
+## Implementation Timeline (Updated)
 
-| Priority | Item | Effort | Impact |
-|----------|------|--------|--------|
-| P1 | Startup validation | Low | High - prevents silent failures |
-| P1 | Feature version assertion | Low | High - catches mismatches |
-| P2 | Self-healing Cloud Function | Medium | High - auto-recovers |
-| P2 | Prediction quality monitor | Low | High - early detection |
-| P3 | Daily health dashboard | Medium | Medium - visibility |
-| P3 | Structured logging | Medium | Medium - observability |
-| P4 | Event-driven pipeline | High | High - eliminates timing issues |
-| P4 | Model registry | High | Medium - better management |
-| P5 | Integration tests | Medium | Medium - confidence |
-| P5 | Deployment validation | Low | Medium - catch regressions |
+| Priority | Item | Effort | Impact | Status |
+|----------|------|--------|--------|--------|
+| P1 | Startup validation | Low | High | ✅ Done |
+| P1 | Feature version assertion | Low | High | ✅ Done |
+| P1 | Health monitoring queries | Low | High | ✅ Done |
+| P2 | Feature count validation (33) | Low | High | 🔲 Todo |
+| P2 | Props availability Cloud Function | Medium | High | 🔲 Todo |
+| P2 | Dependency health checks | Medium | High | 🔲 Todo |
+| P3 | Structured logging (model_type) | Low | Medium | 🔲 Todo |
+| P3 | AlertManager integration | Medium | Medium | 🔲 Todo |
+| P3 | Degraded mode flag | Low | Medium | 🔲 Todo |
+| P4 | Event-driven pipeline | High | High | 🔲 Todo |
+| P4 | Feature store config | Medium | Medium | 🔲 Todo |
+| P5 | E2E integration tests | Medium | Medium | 🔲 Todo |
+| P5 | Deployment validation | Low | Medium | 🔲 Todo |
 
 ---
 
-## Quick Wins (Can Do Immediately)
+## Remaining Improvements (Detailed)
 
-1. **Add feature version check in catboost_v8.py** (~5 lines)
-2. **Add startup model path validation** (~10 lines)
-3. **Add daily health query to monitoring** (~SQL only)
-4. **Document scheduler ordering requirements** (~docs only)
+### P2: High Priority, Medium Effort
+
+#### 2.1 Feature Count Validation
+**File:** `predictions/worker/prediction_systems/catboost_v8.py`
+**Why:** Feature version check alone doesn't catch truncated feature arrays
+
+```python
+# Add after feature_version check (line 217)
+features_array = features.get('features_array', [])
+if len(features_array) != 33:
+    raise ValueError(
+        f"CatBoost V8 requires 33 features, got {len(features_array)}. "
+        f"Check ml_feature_store_processor.py feature extraction."
+    )
+```
+
+#### 2.2 Props Availability Cloud Function
+**File:** `orchestration/cloud_functions/props_availability_monitor/main.py`
+**Why:** Detect when props scraper fails before UPGC runs
+
+```python
+# Trigger: Cloud Scheduler at 1:00 PM ET (after expected props scrape)
+# Action:
+# 1. Query upcoming_player_game_context for today
+# 2. Count players with points_prop_line IS NOT NULL
+# 3. If < 20 players have props:
+#    - Send CRITICAL alert
+#    - Optionally trigger re-scrape
+```
+
+#### 2.3 Dependency Health Checks
+**File:** `predictions/worker/dependency_health.py`
+**Why:** Fail fast if infrastructure is unhealthy before processing predictions
+
+```python
+def check_dependencies() -> Dict[str, bool]:
+    """Pre-flight check before prediction batch."""
+    return {
+        'bigquery': _check_bigquery_connection(),
+        'pubsub': _check_pubsub_topic_exists(),
+        'feature_store': _check_feature_store_has_today(),
+        'props': _check_props_available_today(),
+    }
+
+# Call from coordinator before starting batch
+health = check_dependencies()
+if not all(health.values()):
+    raise DependencyError(f"Dependencies unhealthy: {health}")
+```
+
+### P3: Medium Priority
+
+#### 3.1 Structured Logging with model_type
+**File:** `predictions/worker/prediction_systems/catboost_v8.py`
+**Why:** Enable log-based detection of fallback predictions
+
+```python
+# In predict() and _fallback_prediction() methods
+logger.info(
+    "prediction_generated",
+    extra={
+        "player_lookup": player_lookup,
+        "system_id": self.system_id,
+        "model_type": "real",  # or "fallback"
+        "confidence": confidence,
+        "recommendation": recommendation,
+        "feature_version": features.get('feature_version'),
+    }
+)
+```
+
+#### 3.2 AlertManager Integration
+**File:** `monitoring/health_alerts/prediction_health_alert.py`
+**Why:** Turn health queries into actionable PagerDuty alerts
+
+```python
+# Run as Cloud Function hourly after predictions complete
+from shared.alerts.alert_manager import AlertManager
+
+def check_prediction_health():
+    results = run_health_query()  # Query 13 from pipeline_health_queries.sql
+
+    if results['health_status'].startswith('CRITICAL'):
+        AlertManager.send(
+            severity='critical',
+            title='Prediction System Failure',
+            message=results['health_status'],
+            channel='pagerduty'
+        )
+```
+
+#### 3.3 Degraded Mode Flag
+**File:** `predictions/worker/prediction_systems/catboost_v8.py`
+**Why:** Make fallback status explicit in prediction output
+
+```python
+# In prediction output dict
+return {
+    'system_id': self.system_id,
+    'predicted_points': predicted,
+    'confidence_score': confidence,
+    'recommendation': recommendation,
+    'degraded_mode': self.model is None,  # NEW: explicit flag
+    'model_type': 'fallback' if self.model is None else 'catboost_v8_real',
+}
+```
+
+### P4: Architectural Improvements
+
+#### 4.1 Event-Driven Pipeline
+**Why:** Eliminate timing races completely
+**Approach:**
+1. Props scraper publishes completion event to `props-complete` topic
+2. UPGC processor subscribes and triggers on event
+3. Add Pub/Sub topic and subscription for orchestration
+4. Update Cloud Scheduler to not run UPGC on fixed schedule
+
+```yaml
+# pubsub_topics.yaml
+- name: props-complete
+  subscribers:
+    - upgc-processor  # Triggers Phase 3 UPGC
+
+# props_scraper completion:
+publisher.publish('props-complete', {'game_date': date, 'players': count})
+```
+
+#### 4.2 Feature Store Configuration
+**File:** `config/feature_store_config.yaml`
+**Why:** Centralize version management, prevent mismatches
+
+```yaml
+feature_store:
+  current_version: v2_33features
+  feature_count: 33
+  table: nba_predictions.ml_feature_store_v2
+
+consumers:
+  catboost_v8:
+    required_version: v2_33features
+    required_count: 33
+  moving_average:
+    compatible_versions: [v1_baseline_25, v2_33features]
+  zone_matchup:
+    compatible_versions: [v1_baseline_25, v2_33features]
+```
+
+### P5: Testing Improvements
+
+#### 5.1 E2E Integration Test
+**File:** `tests/integration/test_prediction_pipeline.py`
+
+```python
+@pytest.mark.integration
+def test_full_prediction_flow():
+    """E2E: features → predictions → BigQuery"""
+    test_date = date.today()
+    test_player = 'lebron-james'
+
+    # 1. Verify features exist
+    features = load_features(test_player, test_date)
+    assert features['feature_version'] == 'v2_33features'
+    assert len(features['features_array']) == 33
+
+    # 2. Generate prediction
+    system = CatBoostV8()
+    result = system.predict(test_player, features, betting_line=25.5)
+
+    # 3. Validate output
+    assert result['confidence_score'] != 50.0  # Not fallback
+    assert result['recommendation'] in ['OVER', 'UNDER', 'PASS']
+    assert result['model_type'] == 'catboost_v8_real'
+```
+
+#### 5.2 Deployment Validation Script
+**File:** `bin/validate-deployment.sh`
+
+```bash
+#!/bin/bash
+# Run after Cloud Run deployment
+
+SERVICE_URL=$(gcloud run services describe prediction-worker --format='value(status.url)')
+
+# 1. Health check
+curl -f "$SERVICE_URL/health" || exit 1
+
+# 2. Test prediction (dry run)
+curl -X POST "$SERVICE_URL/test-predict" \
+  -H "Content-Type: application/json" \
+  -d '{"player_lookup": "test-player", "dry_run": true}' || exit 1
+
+# 3. Check model loaded
+RESPONSE=$(curl -s "$SERVICE_URL/")
+echo "$RESPONSE" | jq '.systems.xgboost' | grep -q "CatBoostV8" || exit 1
+
+echo "✅ Deployment validation passed"
+```
+
+---
+
+## New Improvements Identified (Beyond Original Plan)
+
+### Circuit Breaker Enhancements
+**Current:** Per-system circuit breakers (5 independent)
+**Improvement:** Add global circuit breaker for infrastructure failures
+
+```python
+# If BigQuery or Pub/Sub is down, open global breaker
+# Prevents wasting compute on doomed requests
+```
+
+### Data Lineage Tracking
+**Why:** For debugging, track which feature store rows fed predictions
+
+```python
+# Add to prediction output
+'lineage': {
+    'feature_store_row_id': row_id,
+    'props_scrape_time': scrape_timestamp,
+    'correlation_id': correlation_id,
+}
+```
+
+### Model Staleness Detection
+**Why:** Alert if model hasn't been retrained recently
+
+```python
+# Check model metadata for training date
+# Alert if > 30 days old or if accuracy degrading
+```
+
+### Feature Drift Detection
+**Why:** Detect when production features diverge from training distribution
+
+```python
+# Compare current feature distributions to training baseline
+# Alert on significant drift in key features
+```
 
 ---
 
@@ -271,3 +519,5 @@ def test_feature_count_matches_model():
 3. **Feature versions must be validated end-to-end** - From processor to model
 4. **Backfill ≠ production fix** - Must update daily processors too
 5. **Monitoring gaps compound** - Multiple missing alerts let issues cascade
+6. **Assertions at boundaries** - Validate at every system interface
+7. **Existing infrastructure helps** - Circuit breakers and AlertManager already available
