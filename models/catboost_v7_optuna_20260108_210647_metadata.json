@@ -1,0 +1,14 @@
+{
+  "model_id": "catboost_v7_optuna_20260108_210647",
+  "test_mae": 3.8877438066650374,
+  "val_mae": 3.9073948232440485,
+  "best_params": {
+    "depth": 6,
+    "learning_rate": 0.07007887145411591,
+    "l2_leaf_reg": 3.787712722209327,
+    "subsample": 0.7180668293719681,
+    "min_data_in_leaf": 16
+  },
+  "n_trials": 50,
+  "best_iteration": 637
+}
