@@ -1,0 +1,150 @@
+{
+  "baseline_mae": 4.144954288831647,
+  "samples": 38766,
+  "dnp_analysis": {
+    "dnp_count": 7550,
+    "dnp_pct": 19.475829334984265,
+    "mae_without_dnp": 4.077087944815998,
+    "potential_improvement": 0.06786634401564928
+  },
+  "position_analysis": {
+    "MAE": {
+      "Forward": 1.541,
+      "Guard": 2.989,
+      "PF": 3.058,
+      "SF": 3.12,
+      "C": 3.598,
+      "PG": 3.757,
+      "SG": 3.772,
+      "F": 3.808,
+      "Unknown": 4.141,
+      "F-C": 4.289,
+      "G": 4.328,
+      "G-F": 4.474,
+      "C-F": 4.659,
+      "F-G": 5.078,
+      "Shooting Guard": 5.873
+    },
+    "Std": {
+      "Forward": 0.775,
+      "Guard": 2.904,
+      "PF": 2.751,
+      "SF": 2.478,
+      "C": 3.279,
+      "PG": 3.1,
+      "SG": 3.058,
+      "F": 3.409,
+      "Unknown": 4.133,
+      "F-C": 4.074,
+      "G": 3.94,
+      "G-F": 3.996,
+      "C-F": 4.463,
+      "F-G": 4.578,
+      "Shooting Guard": 4.441
+    },
+    "Count": {
+      "Forward": 30,
+      "Guard": 45,
+      "PF": 235,
+      "SF": 202,
+      "C": 3151,
+      "PG": 528,
+      "SG": 658,
+      "F": 10359,
+      "Unknown": 190,
+      "F-C": 1963,
+      "G": 15397,
+      "G-F": 3099,
+      "C-F": 1583,
+      "F-G": 1229,
+      "Shooting Guard": 97
+    },
+    "Bias": {
+      "Forward": -1.451,
+      "Guard": -1.258,
+      "PF": -0.507,
+      "SF": -0.232,
+      "C": -0.447,
+      "PG": -0.237,
+      "SG": -0.126,
+      "F": -0.408,
+      "Unknown": -0.852,
+      "F-C": -0.646,
+      "G": -0.496,
+      "G-F": -0.505,
+      "C-F": -0.698,
+      "F-G": -0.472,
+      "Shooting Guard": -0.127
+    }
+  },
+  "usage_analysis": {
+    "MAE": {
+      "<15%": 3.301,
+      "15-20%": 4.158,
+      "20-25%": 4.412,
+      "25-30%": 4.767,
+      ">30%": 5.4
+    },
+    "Count": {
+      "<15%": 9108,
+      "15-20%": 17475,
+      "20-25%": 5660,
+      "25-30%": 3505,
+      ">30%": 3004
+    },
+    "Bias": {
+      "<15%": -1.622,
+      "15-20%": -1.217,
+      "20-25%": 0.8,
+      "25-30%": 1.38,
+      ">30%": 2.733
+    }
+  },
+  "minutes_analysis": {
+    "MAE": {
+      "0-10": 2.783,
+      "10-20": 3.373,
+      "20-30": 4.26,
+      "30-40": 5.041,
+      "40+": 6.235
+    },
+    "Count": {
+      "0-10": 5772,
+      "10-20": 8516,
+      "20-30": 11252,
+      "30-40": 9087,
+      "40+": 665
+    },
+    "Bias": {
+      "0-10": -2.049,
+      "10-20": -0.9,
+      "20-30": 0.168,
+      "30-40": 1.605,
+      "40+": 3.889
+    }
+  },
+  "ensemble": {
+    "error": "'dict' object has no attribute 'ndim'"
+  },
+  "recommendations": [
+    {
+      "priority": 1,
+      "action": "Integrate injury/lineup data to filter DNPs",
+      "expected_impact": "-0.068 MAE",
+      "effort": "Medium (4-6 hours)"
+    },
+    {
+      "priority": 3,
+      "action": "Train position-specific models for high-variance positions",
+      "expected_impact": "-0.05 to -0.10 MAE (estimated)",
+      "effort": "Medium (3-4 hours)"
+    },
+    {
+      "priority": 4,
+      "action": "Build two-stage model (minutes \u2192 points)",
+      "expected_impact": "-0.05 to -0.15 MAE (estimated)",
+      "effort": "Medium (3-4 hours)"
+    }
+  ],
+  "timestamp": "2026-01-08T20:03:35.829821"
+}
