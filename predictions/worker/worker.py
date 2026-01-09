@@ -62,7 +62,7 @@ if TYPE_CHECKING:
     from prediction_systems.moving_average_baseline import MovingAverageBaseline
     from prediction_systems.zone_matchup_v1 import ZoneMatchupV1
     from prediction_systems.similarity_balanced_v1 import SimilarityBalancedV1
-    from prediction_systems.xgboost_v1 import XGBoostV1
+    from prediction_systems.catboost_v8 import CatBoostV8  # v8 ML model (3.40 MAE)
     from prediction_systems.ensemble_v1 import EnsembleV1
     from data_loaders import PredictionDataLoader, normalize_confidence, validate_features
     from system_circuit_breaker import SystemCircuitBreaker
@@ -155,7 +155,7 @@ def get_prediction_systems() -> tuple:
     from prediction_systems.moving_average_baseline import MovingAverageBaseline
     from prediction_systems.zone_matchup_v1 import ZoneMatchupV1
     from prediction_systems.similarity_balanced_v1 import SimilarityBalancedV1
-    from prediction_systems.xgboost_v1 import XGBoostV1
+    from prediction_systems.catboost_v8 import CatBoostV8  # v8 replaces mock XGBoostV1
     from prediction_systems.ensemble_v1 import EnsembleV1
 
     global _moving_average, _zone_matchup, _similarity, _xgboost, _ensemble
@@ -164,14 +164,14 @@ def get_prediction_systems() -> tuple:
         _moving_average = MovingAverageBaseline()
         _zone_matchup = ZoneMatchupV1()
         _similarity = SimilarityBalancedV1()
-        _xgboost = XGBoostV1()
+        _xgboost = CatBoostV8()  # CatBoost v8: 3.40 MAE (vs mock's 4.80)
         _ensemble = EnsembleV1(
             moving_average_system=_moving_average,
             zone_matchup_system=_zone_matchup,
             similarity_system=_similarity,
             xgboost_system=_xgboost
         )
-        logger.info("All prediction systems initialized")
+        logger.info("All prediction systems initialized (using CatBoost v8)")
     return _moving_average, _zone_matchup, _similarity, _xgboost, _ensemble
 
 _circuit_breaker: Optional['SystemCircuitBreaker'] = None
@@ -777,8 +777,8 @@ def process_player_predictions(
             metadata['system_errors'][system_id] = error_msg
             system_predictions['similarity_balanced_v1'] = None
         
-        # System 4: XGBoost V1
-        system_id = 'xgboost_v1'
+        # System 4: CatBoost V8 (replaced XGBoost V1 mock)
+        system_id = 'catboost_v8'
         metadata['systems_attempted'].append(system_id)
         try:
             # Check circuit breaker
@@ -802,7 +802,7 @@ def process_player_predictions(
                     circuit_breaker.record_success(system_id)
                     metadata['systems_succeeded'].append(system_id)
 
-                    system_predictions['xgboost_v1'] = {
+                    system_predictions['catboost_v8'] = {
                         'predicted_points': result['predicted_points'],
                         'confidence': result['confidence_score'],
                         'recommendation': result['recommendation'],
@@ -810,19 +810,19 @@ def process_player_predictions(
                         'metadata': result
                     }
                 else:
-                    logger.warning(f"XGBoost returned None for {player_lookup}")
+                    logger.warning(f"CatBoost v8 returned None for {player_lookup}")
                     metadata['systems_failed'].append(system_id)
                     metadata['system_errors'][system_id] = 'Prediction returned None'
-                    system_predictions['xgboost_v1'] = None
+                    system_predictions['catboost_v8'] = None
         except Exception as e:
             # Record failure
             error_msg = str(e)
             circuit_breaker.record_failure(system_id, error_msg, type(e).__name__)
 
-            logger.error(f"XGBoost failed for {player_lookup}: {e}")
+            logger.error(f"CatBoost v8 failed for {player_lookup}: {e}")
             metadata['systems_failed'].append(system_id)
             metadata['system_errors'][system_id] = error_msg
-            system_predictions['xgboost_v1'] = None
+            system_predictions['catboost_v8'] = None
         
         # System 5: Ensemble V1 (combines all 4 systems)
         system_id = 'ensemble_v1'
@@ -1012,10 +1012,14 @@ def format_prediction_for_bigquery(
             'home_away_adjustment': adjustments.get('venue')
         })
     
-    elif system_id == 'xgboost_v1' and 'metadata' in prediction:
+    elif system_id == 'catboost_v8' and 'metadata' in prediction:
         metadata = prediction['metadata']
         record.update({
-            'model_version': metadata.get('model_version', 'xgboost_v1')
+            'model_version': metadata.get('model_version', 'catboost_v8'),
+            'feature_importance': json.dumps({
+                'model_type': metadata.get('model_type'),
+                'feature_count': metadata.get('feature_count', 33),
+            }) if metadata.get('model_type') else None
         })
     
     elif system_id == 'ensemble_v1' and 'metadata' in prediction:
