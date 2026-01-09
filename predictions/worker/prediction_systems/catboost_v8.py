@@ -115,6 +115,20 @@ class CatBoostV8:
         elif use_local:
             self._load_local_model()
 
+        # CRITICAL: Log final model load status for observability
+        if self.model is not None:
+            logger.info(
+                f"✓ CatBoost V8 model loaded successfully. "
+                f"Ready to generate real predictions with 33 features."
+            )
+        else:
+            logger.error(
+                f"✗ CatBoost V8 model FAILED to load! All predictions will use fallback "
+                f"(weighted average, confidence=50, recommendation=PASS). "
+                f"Check: 1) CATBOOST_V8_MODEL_PATH env var, 2) catboost library installed, "
+                f"3) model file exists and is accessible."
+            )
+
     def _load_local_model(self):
         """Load model from local models/ directory"""
         try:
@@ -216,6 +230,17 @@ class CatBoostV8:
                 f"Ensure ml_feature_store_processor.py is upgraded to v2_33features."
             )
 
+        # FAIL-FAST: Assert correct feature count (defense-in-depth)
+        feature_count = features.get('feature_count')
+        features_array = features.get('features_array', [])
+        actual_count = feature_count if feature_count else len(features_array)
+        if actual_count != 33 and actual_count != 0:  # 0 means field not present, allow that
+            raise ValueError(
+                f"CatBoost V8 requires 33 features, got {actual_count}. "
+                f"Feature version is '{feature_version}' but count doesn't match. "
+                f"Check ml_feature_store_processor.py feature extraction."
+            )
+
         # Prepare 33-feature vector
         feature_vector = self._prepare_feature_vector(
             features=features,
@@ -246,6 +271,22 @@ class CatBoostV8:
         # Generate recommendation
         recommendation = self._generate_recommendation(
             predicted_points, betting_line, confidence
+        )
+
+        # Structured logging for monitoring and alerting
+        # This enables log-based detection of prediction quality issues
+        logger.info(
+            "prediction_generated",
+            extra={
+                "player_lookup": player_lookup,
+                "system_id": self.system_id,
+                "model_type": "real",
+                "predicted_points": round(predicted_points, 2),
+                "confidence": round(confidence, 2),
+                "recommendation": recommendation,
+                "feature_version": feature_version,
+                "betting_line": betting_line,
+            }
         )
 
         return {
@@ -397,6 +438,14 @@ class CatBoostV8:
         betting_line: Optional[float]
     ) -> Dict:
         """Fallback when model not available - use simple average"""
+        # CRITICAL: Log fallback usage so it's visible in Cloud Logging
+        # This addresses the "silent fallback" issue from Jan 9, 2026
+        logger.warning(
+            f"FALLBACK_PREDICTION: CatBoost V8 model not loaded, using weighted average "
+            f"for {player_lookup}. Confidence will be 50.0, recommendation will be PASS. "
+            f"Check CATBOOST_V8_MODEL_PATH env var and model file accessibility."
+        )
+
         season_avg = features.get('points_avg_season', 10.0)
         last_5 = features.get('points_avg_last_5', season_avg)
         last_10 = features.get('points_avg_last_10', season_avg)
