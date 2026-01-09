@@ -15,51 +15,53 @@ This session improved the MLB pitcher strikeouts model:
 3. ✅ Ran hyperparameter tuning (confirmed v2 params near-optimal)
 4. ✅ Added pitcher-vs-opponent history features (v4)
 5. ✅ Final model v4 deployed (MAE 1.459, 24% better than baseline)
-6. ⏳ **MLB Vegas scraper needs implementation** (scraper exists, processor doesn't)
+6. ⏳ **MLB Vegas scraper ready** (scraper + processor exist, needs deployment in Feb)
 
 ---
 
-## IMMEDIATE NEXT TASK: MLB Vegas Scraper
+## NEXT TASK: MLB Vegas Scraper (WAIT UNTIL FEB 2026)
 
-The scraper exists but data isn't being collected. Need to:
+**Decision:** Wait until ~2-3 weeks before MLB season (late Feb) to deploy.
+- No games to scrape until Spring Training
+- Avoid 2 months of idle Cloud Run costs
+- Infrastructure is ready, just needs deployment
 
-### 1. Create Raw Processor for Pitcher Props
+**What's already done:**
+- ✅ Scraper: `scrapers/mlb/oddsapi/mlb_pitcher_props.py`
+- ✅ Processor: `data_processors/raw/mlb/mlb_pitcher_props_processor.py`
+- ✅ BigQuery table: `mlb_raw.oddsa_pitcher_props` (schema exists)
+- ✅ Deploy script: `bin/scrapers/deploy/mlb/deploy_mlb_scrapers.sh`
 
-**File to create:** `data_processors/raw/mlb/oddsa_pitcher_props_processor.py`
+**When ready to deploy (Feb 2026), need to:**
 
-**Reference:**
-- NBA equivalent: `data_processors/raw/oddsa_player_props_processor.py`
-- Scraper output: `scrapers/mlb/oddsapi/mlb_pitcher_props.py`
+### 1. Add MLB to workflows.yaml
 
-**Target table:** `mlb_raw.oddsa_pitcher_k_lines`
+Add scraper definitions to `config/workflows.yaml`:
+```yaml
+# MLB Odds Scrapers
+mlb_events:
+  name: "mlb_events"
+  module: "scrapers.mlb.oddsapi.mlb_events"
+  processor_name: "mlb_events_processor"
 
-**Key fields to extract:**
-```sql
-- game_date
-- event_id
-- pitcher_name
-- pitcher_lookup (normalize name)
-- team_abbr
-- strikeouts_line (the over/under number)
-- over_odds
-- under_odds
-- bookmaker
-- processed_at
+mlb_pitcher_props:
+  name: "mlb_pitcher_props"
+  module: "scrapers.mlb.oddsapi.mlb_pitcher_props"
+  depends_on: "mlb_events"
+  processor_name: "mlb_pitcher_props_processor"
 ```
 
-### 2. Set Up Orchestration
+### 2. Deploy MLB Scrapers Service
 
-**File to create:** Cloud Function or orchestrator entry
+```bash
+./bin/scrapers/deploy/mlb/deploy_mlb_scrapers.sh
+```
 
-**Pattern:** Similar to NBA odds collection
-- Run daily ~2 hours before first game
-- Fetch events list first (`mlb_events.py`)
-- Then fetch pitcher props for each event
+Requires `ODDS_API_KEY` in `.env` file.
 
-### 3. Deploy
+### 3. Set Up Scheduler
 
-- Deploy scraper as Cloud Run service or Cloud Function
-- Add scheduler job for daily execution
+Add Cloud Scheduler job to trigger daily ~2 hours before first game.
 
 ---
 
