@@ -28,7 +28,7 @@ from google.cloud import bigquery
 
 # Configuration
 PROJECT_ID = "nba-props-platform"
-MODEL_PATH = Path("models/mlb/mlb_pitcher_strikeouts_v2_20260108.json")
+MODEL_PATH = Path("models/mlb/mlb_pitcher_strikeouts_v4_20260108.json")
 PREDICTIONS_TABLE = "mlb_predictions.pitcher_strikeouts"
 
 # Feature columns in the order expected by the model
@@ -51,6 +51,8 @@ FEATURE_COLUMNS = [
     "f24_is_postseason",
     "f25_bottom_up_k_expected",
     "f26_lineup_k_vs_hand",
+    "f27_avg_k_vs_opponent",
+    "f28_games_vs_opponent",
     "f33_lineup_weak_spots",
 ]
 
@@ -191,6 +193,27 @@ def get_historical_data(
             COUNT(*) as batters_in_lineup
         FROM lineup_batter_stats
         GROUP BY game_pk, game_date, pitcher_lookup
+    ),
+    pitcher_vs_opponent AS (
+        -- Calculate pitcher's historical K average vs each opponent
+        SELECT
+            pg1.player_lookup,
+            pg1.game_date,
+            pg1.opponent_team,
+            -- Historical average Ks vs this opponent (games before current date)
+            AVG(pgs2.strikeouts) as avg_k_vs_opponent,
+            COUNT(pgs2.strikeouts) as games_vs_opponent
+        FROM pitcher_games pg1
+        LEFT JOIN `{PROJECT_ID}.mlb_analytics.pitcher_game_summary` pgs2
+            ON pg1.player_lookup = pgs2.player_lookup
+            AND pgs2.game_date < pg1.game_date
+            AND pgs2.game_date >= DATE_SUB(pg1.game_date, INTERVAL 3 YEAR)
+            AND pgs2.strikeouts IS NOT NULL
+        LEFT JOIN pitcher_games pg2
+            ON pgs2.player_lookup = pg2.player_lookup
+            AND pgs2.game_date = pg2.game_date
+        WHERE pg2.opponent_team = pg1.opponent_team
+        GROUP BY pg1.player_lookup, pg1.game_date, pg1.opponent_team
     )
     SELECT
         p.player_lookup,
@@ -234,6 +257,11 @@ def get_historical_data(
         -- Features (f25-f33: Bottom-up model from lineup data - now opponent-specific!)
         COALESCE(la.bottom_up_k, 5.0) as f25_bottom_up_k_expected,
         COALESCE(la.lineup_avg_k_rate, 0.22) as f26_lineup_k_vs_hand,
+
+        -- Features (f27-f28: Pitcher vs opponent history)
+        COALESCE(pvo.avg_k_vs_opponent, p.k_avg_last_10, 5.0) as f27_avg_k_vs_opponent,
+        COALESCE(pvo.games_vs_opponent, 0) as f28_games_vs_opponent,
+
         COALESCE(la.weak_spots, 2) as f33_lineup_weak_spots,
 
         -- Betting lines (if available)
@@ -252,6 +280,11 @@ def get_historical_data(
     -- Join lineup aggregates using game_pk and pitcher_lookup for opponent-specific data
     LEFT JOIN lineup_aggregates la
         ON pg.game_pk = la.game_pk AND pg.player_lookup = la.pitcher_lookup
+    -- Join pitcher vs opponent history
+    LEFT JOIN pitcher_vs_opponent pvo
+        ON pg.player_lookup = pvo.player_lookup
+        AND pg.game_date = pvo.game_date
+        AND pg.opponent_team = pvo.opponent_team
     WHERE p.game_date >= '{start_date}'
       AND p.game_date <= '{end_date}'
       AND p.strikeouts IS NOT NULL
