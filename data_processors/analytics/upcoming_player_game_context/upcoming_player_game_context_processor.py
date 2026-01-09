@@ -431,12 +431,27 @@ class UpcomingPlayerGameContextProcessor(
             logger.info(f"Successfully processed {len(self.transformed_data)} players")
             if self.failed_entities:
                 logger.warning(f"Failed to process {len(self.failed_entities)} players")
-            
+
+            # Calculate prop coverage and send alert if critically low (2026-01-09 timing fix)
+            total_players = len(self.transformed_data)
+            players_with_props = sum(
+                1 for p in self.transformed_data if p.get('has_prop_line', False)
+            )
+            prop_pct = (players_with_props / total_players * 100) if total_players > 0 else 0
+
+            logger.info(f"Prop coverage: {players_with_props}/{total_players} ({prop_pct:.1f}%)")
+
+            # Alert on 0% or very low (<10%) prop coverage when we have significant players
+            if total_players >= 50 and prop_pct < 10:
+                self._send_prop_coverage_alert(target_date, total_players, players_with_props, prop_pct)
+
             return {
                 'status': 'success' if success else 'failed',
                 'date': target_date.isoformat(),
                 'players_processed': len(self.transformed_data),
                 'players_failed': len(self.failed_entities),
+                'players_with_props': players_with_props,
+                'prop_coverage_pct': round(prop_pct, 1),
                 'errors': [e['reason'] for e in self.failed_entities]
             }
             
@@ -488,6 +503,16 @@ class UpcomingPlayerGameContextProcessor(
             return
 
         logger.info(f"🔄 PROCESSING: {reason}")
+
+        # PRE-FLIGHT CHECK: Verify props are available (2026-01-09 timing fix)
+        # This prevents 0% prop coverage issues when UPGC runs before props are scraped
+        props_check = self._check_props_readiness(self.target_date)
+        if not props_check['ready']:
+            logger.warning(f"⚠️ PROPS PRE-FLIGHT: {props_check['message']}")
+            # Don't fail - continue processing but log warning
+            # The 0% coverage alert at the end will catch actual problems
+        else:
+            logger.info(f"✅ PROPS PRE-FLIGHT: {props_check['message']}")
 
         # Step 1: Get ALL players with games (DRIVER)
         # Changed in v3.2: Now gets all players, not just those with props
@@ -2791,6 +2816,105 @@ class UpcomingPlayerGameContextProcessor(
             return 'late'
         else:
             return 'playoffs'
+
+    # ============================================================
+    # TIMING ISSUE PREVENTION (2026-01-09)
+    # Pre-flight check for props availability and 0% coverage alert
+    # ============================================================
+
+    def _check_props_readiness(self, target_date: date, min_players: int = 20) -> Dict:
+        """
+        Pre-flight check: Are betting props available for this date?
+
+        This prevents the timing race condition where UPGC runs before
+        BettingPros props are scraped, resulting in 0% prop coverage.
+
+        Args:
+            target_date: Date to check for props
+            min_players: Minimum players with props required (default: 20)
+
+        Returns:
+            Dict with 'ready' (bool), 'player_count' (int), 'message' (str)
+        """
+        query = f"""
+        SELECT COUNT(DISTINCT player_lookup) as player_count
+        FROM `{self.project_id}.nba_raw.bettingpros_player_points_props`
+        WHERE game_date = @target_date AND is_active = TRUE
+        """
+
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("target_date", "DATE", target_date)
+            ]
+        )
+
+        try:
+            result = self.bq_client.query(query, job_config=job_config).result()
+            row = list(result)[0]
+            player_count = row.player_count
+
+            if player_count >= min_players:
+                return {
+                    'ready': True,
+                    'player_count': player_count,
+                    'message': f'Props ready: {player_count} players have props'
+                }
+            else:
+                return {
+                    'ready': False,
+                    'player_count': player_count,
+                    'message': f'Props NOT ready: only {player_count}/{min_players} players have props'
+                }
+        except Exception as e:
+            logger.warning(f"Props readiness check failed: {e}")
+            return {
+                'ready': True,  # Don't block on check failure
+                'player_count': 0,
+                'message': f'Props check failed (proceeding anyway): {e}'
+            }
+
+    def _send_prop_coverage_alert(self, target_date: date, total_players: int,
+                                   players_with_props: int, prop_pct: float) -> None:
+        """
+        Send alert when prop coverage is critically low (0% or near-0%).
+
+        This alerts operations when the timing race condition has occurred,
+        allowing for manual intervention or automated re-processing.
+
+        Args:
+            target_date: Date being processed
+            total_players: Total players processed
+            players_with_props: Players with prop lines
+            prop_pct: Percentage of players with props
+        """
+        try:
+            from shared.alerts.alert_manager import AlertManager
+
+            alert_mgr = AlertManager()
+            alert_mgr.send_alert(
+                severity='critical' if prop_pct == 0 else 'warning',
+                title=f'UPGC: {"0%" if prop_pct == 0 else "Low"} Prop Coverage - Timing Issue',
+                message=(
+                    f'UPGC completed for {target_date} with only {prop_pct:.1f}% prop coverage. '
+                    f'({players_with_props}/{total_players} players have props). '
+                    f'This typically indicates a timing race condition where UPGC ran before '
+                    f'BettingPros props were scraped. Consider re-running UPGC.'
+                ),
+                category='upgc_prop_coverage',
+                context={
+                    'game_date': target_date.isoformat(),
+                    'total_players': total_players,
+                    'players_with_props': players_with_props,
+                    'prop_coverage_pct': prop_pct
+                }
+            )
+            logger.warning(
+                f"🚨 ALERT SENT: {prop_pct:.1f}% prop coverage for {target_date} "
+                f"({players_with_props}/{total_players})"
+            )
+        except Exception as e:
+            # Don't fail processing if alert fails
+            logger.error(f"Failed to send prop coverage alert: {e}")
 
 
 # Entry point for script execution

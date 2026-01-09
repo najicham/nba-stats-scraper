@@ -178,7 +178,7 @@ class BasePredictor(ABC):
         """
         required_fields = [
             'feature_count',      # Should be 25
-            'feature_version',    # Should be 'v2_33features'
+            'feature_version',    # Should be 'v1_baseline_25'
             'data_source',        # 'mock' or 'phase4'
             'features_array'      # Array of 25 floats
         ]
