@@ -533,13 +533,16 @@ Only 108/349 rostered players processed in UPGC. 241 failed completeness checks.
 
 ### P0 - Critical (Do Today)
 
-- [ ] **Fix V8 model loading** - Set CATBOOST_V8_MODEL_PATH env var on prediction-worker
-- [ ] **Re-run predictions after V8 fix** - Get actual V8 predictions with proper confidence
-- [ ] **Verify V8 fix** - Check predictions have confidence > 50 and OVER/UNDER recommendations
+- [x] **Fix V8 model loading** - Set CATBOOST_V8_MODEL_PATH env var on prediction-worker (DONE)
+- [x] **Add catboost library** - Added `catboost==1.2.2` to requirements.txt (DONE)
+- [x] **Grant GCS permissions** - Gave prediction-worker objectViewer on ml-models bucket (DONE)
+- [x] **Re-run predictions after V8 fix** - Triggered predictions (DONE)
+- [x] **Verify V8 model loading** - Logs confirm: "Loaded CatBoost v8 model from /tmp/catboost_v8.cbm" (DONE)
+- [x] **Investigate ml_feature_store_v2 missing** - Root cause: feature_version mismatch (`v1_baseline_25` vs `v2_33features`) - FIXED
 
 ### P1 - High (This Week)
 
-- [ ] **Fix V8 confidence normalization** - Add `catboost_v8` to normalize_confidence()
+- [x] **Fix V8 confidence normalization** - Added `catboost_v8` to normalize_confidence() (DONE)
 - [ ] **Add props pre-flight check** - UPGC fails fast if props not available
 - [ ] **Add 0% prop coverage alert** - Email alert when UPGC completes with 0% props
 - [ ] **Reorder schedulers** - Ensure props scrape before Phase 3 (add 10 AM props job)
@@ -587,3 +590,11 @@ Only 108/349 rostered players processed in UPGC. 241 failed completeness checks.
 | 2026-01-09 PM | Recovery executed - 44% prop coverage restored |
 | 2026-01-09 PM | V8 model issue discovered - env var missing |
 | 2026-01-09 PM | Comprehensive fix plan created |
+| 2026-01-09 EVE | V8 P0 fixes completed: env var set, catboost added to requirements, GCS permissions granted, confidence normalization fixed, prediction-worker redeployed |
+| 2026-01-09 EVE | V8 model now loading successfully (confirmed in logs) |
+| 2026-01-09 EVE | New blocker discovered: `ml_feature_store_v2` table not found - coordinator uses `dataset_prefix: production` but `production_nba_predictions.ml_feature_store_v2` doesn't exist |
+| 2026-01-09 EVE | Root cause identified: feature_version mismatch - feature store has `v1_baseline_25` but data_loaders expected `v2_33features` |
+| 2026-01-09 EVE | Fixed feature_version in data_loaders.py and prediction_systems - rebuilding prediction-worker |
+| 2026-01-09 EVE | V8 predictions now working: 24 OVER, 11 UNDER, avg confidence 53.3% (vs previous 0 OVER/UNDER, all PASS at 50%) |
+| 2026-01-09 EVE | Added props pre-flight check to UPGC (`_check_props_readiness()`) - logs warning if <20 players have props |
+| 2026-01-09 EVE | Added 0% prop coverage alert to UPGC (`_send_prop_coverage_alert()`) - sends critical alert when prop coverage <10% |
