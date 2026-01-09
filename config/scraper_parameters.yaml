@@ -59,7 +59,16 @@ simple_scrapers:
   oddsa_game_lines:
     sport: "basketball_nba"
     game_date: context.execution_date
-  
+
+  # BettingPros scrapers
+  bp_events:
+    date: context.execution_date
+    sport: "NBA"
+
+  bp_player_props:
+    date: context.execution_date
+    sport: "NBA"
+
   # ────────────────────────────────────────────────────────────
   # Box Scores
   # ────────────────────────────────────────────────────────────
