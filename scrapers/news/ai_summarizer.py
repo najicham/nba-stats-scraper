@@ -28,6 +28,7 @@ class SummaryResult:
     """Result from AI summarization."""
     article_id: str
     summary: str
+    headline: str  # Short headline, max 50 chars
     key_facts: List[str]
     fantasy_impact: Optional[str]
     input_tokens: int
@@ -40,6 +41,7 @@ class SummaryResult:
         return {
             'article_id': self.article_id,
             'summary': self.summary,
+            'headline': self.headline,
             'key_facts': self.key_facts,
             'fantasy_impact': self.fantasy_impact,
             'input_tokens': self.input_tokens,
@@ -67,13 +69,13 @@ class NewsSummarizer:
     """
 
     # Minimal prompt template - optimized for token efficiency
-    PROMPT_TEMPLATE = """Summarize this {sport} news in 1-2 sentences. Extract key facts.
+    PROMPT_TEMPLATE = """Summarize this {sport} news. Create a short headline (max 50 chars) and 1-2 sentence summary.
 
 Title: {title}
 Content: {content}
 
 Respond in JSON:
-{{"summary": "1-2 sentence summary", "facts": ["fact1", "fact2"], "impact": "fantasy/betting impact or null"}}"""
+{{"headline": "Short headline max 50 chars", "summary": "1-2 sentence summary", "facts": ["fact1", "fact2"], "impact": "fantasy/betting impact or null"}}"""
 
     def __init__(
         self,
@@ -182,6 +184,7 @@ Respond in JSON:
             return SummaryResult(
                 article_id=article_id,
                 summary=f"Summary unavailable: {title[:100]}",
+                headline=self._create_headline_from_title(article_id, title),
                 key_facts=[],
                 fantasy_impact=None,
                 input_tokens=0,
@@ -253,17 +256,27 @@ Respond in JSON:
 
             data = json.loads(content.strip())
             summary = data.get('summary', content[:200])
+            headline = data.get('headline', '')
             facts = data.get('facts', [])
             impact = data.get('impact')
         except (json.JSONDecodeError, IndexError):
             # Fallback: use raw response as summary
             summary = content[:200]
+            headline = ''
             facts = []
             impact = None
+
+        # Ensure headline is max 50 chars, generate fallback if missing
+        if not headline:
+            # Create headline from title - truncate at word boundary
+            headline = self._create_headline_from_title(article_id, summary)
+        elif len(headline) > 50:
+            headline = headline[:47] + '...'
 
         return SummaryResult(
             article_id=article_id,
             summary=summary,
+            headline=headline,
             key_facts=facts if isinstance(facts, list) else [],
             fantasy_impact=impact if impact and impact != 'null' else None,
             input_tokens=input_tokens,
@@ -272,6 +285,17 @@ Respond in JSON:
             model=self.model,
             generated_at=datetime.now(timezone.utc)
         )
+
+    def _create_headline_from_title(self, article_id: str, title: str) -> str:
+        """Create a short headline from title, max 50 chars, truncated at word boundary."""
+        if len(title) <= 50:
+            return title
+        # Truncate at word boundary
+        truncated = title[:47]
+        last_space = truncated.rfind(' ')
+        if last_space > 30:
+            truncated = truncated[:last_space]
+        return truncated + '...'
 
     def _track_usage(self, input_tokens: int, output_tokens: int):
         """Track cumulative token usage."""
