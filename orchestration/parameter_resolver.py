@@ -86,6 +86,7 @@ class ParameterResolver:
             'nbac_team_boxscore': self._resolve_game_specific_with_game_date,  # Per-game (returns list)
             'bigdataball_pbp': self._resolve_bigdataball_pbp,      # Per-game (returns list)
             'br_season_roster': self._resolve_br_season_roster,
+            'espn_roster': self._resolve_espn_roster,              # Per-team (returns list)
             'nbac_gamebook_pdf': self._resolve_nbac_gamebook_pdf,  # Per-game (returns list)
             'nbac_injury_report': self._resolve_nbac_injury_report,
             'oddsa_player_props': self._resolve_odds_props,
@@ -518,6 +519,43 @@ class ParameterResolver:
             })
 
         logger.info(f"Resolved br_season_roster for {len(team_params)} teams")
+        return team_params
+
+    def _resolve_espn_roster(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        Resolver for ESPN team rosters.
+
+        Returns list of parameter sets for all 30 NBA teams.
+        Uses ESPN team abbreviations which differ from NBA.com codes for some teams.
+
+        ESPN codes that differ from NBA.com:
+        - GS (not GSW) - Golden State Warriors
+        - NO (not NOP) - New Orleans Pelicans
+        - NY (not NYK) - New York Knicks
+        - SA (not SAS) - San Antonio Spurs
+        - UTAH (not UTA) - Utah Jazz
+
+        Params needed:
+        - team_abbr: ESPN team code (e.g., "GS", "LAL")
+        """
+        # ESPN team abbreviations (all 30 teams)
+        ESPN_TEAM_ABBRS = [
+            "ATL", "BOS", "BKN", "CHA", "CHI",
+            "CLE", "DAL", "DEN", "DET", "GS",      # Note: GS not GSW
+            "HOU", "IND", "LAC", "LAL", "MEM",
+            "MIA", "MIL", "MIN", "NO", "NY",       # Note: NO not NOP, NY not NYK
+            "OKC", "ORL", "PHI", "PHX", "POR",
+            "SAC", "SA", "TOR", "UTAH", "WAS"      # Note: SA not SAS, UTAH not UTA
+        ]
+
+        # Return parameter set for all 30 teams
+        team_params = []
+        for team_abbr in ESPN_TEAM_ABBRS:
+            team_params.append({
+                'team_abbr': team_abbr
+            })
+
+        logger.info(f"Resolved espn_roster for {len(team_params)} teams")
         return team_params
 
     def _resolve_nbac_injury_report(self, context: Dict[str, Any]) -> Dict[str, Any]:
