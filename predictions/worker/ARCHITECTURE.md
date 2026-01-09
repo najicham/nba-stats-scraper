@@ -161,7 +161,7 @@ SELECT features, feature_names, feature_quality_score
 FROM nba_predictions.ml_feature_store_v2
 WHERE player_lookup = 'lebron-james'
   AND game_date = '2025-11-08'
-  AND feature_version = 'v1_baseline_25'
+  AND feature_version = 'v2_33features'
 ```
 
 Returns:

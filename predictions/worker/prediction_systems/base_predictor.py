@@ -178,7 +178,7 @@ class BasePredictor(ABC):
         """
         required_fields = [
             'feature_count',      # Should be 25
-            'feature_version',    # Should be 'v1_baseline_25'
+            'feature_version',    # Should be 'v2_33features'
             'data_source',        # 'mock' or 'phase4'
             'features_array'      # Array of 25 floats
         ]
@@ -189,14 +189,14 @@ class BasePredictor(ABC):
                 logger.error(f"Missing required field: {field}")
                 return False
         
-        # Validate feature count
-        if features['feature_count'] != 25:
-            logger.error(f"Invalid feature count: {features['feature_count']}, expected 25")
+        # Validate feature count (accepts 25 or 33 features)
+        if features['feature_count'] not in (25, 33):
+            logger.error(f"Invalid feature count: {features['feature_count']}, expected 25 or 33")
             return False
-        
-        # Validate array length
-        if len(features['features_array']) != 25:
-            logger.error(f"Invalid array length: {len(features['features_array'])}, expected 25")
+
+        # Validate array length (accepts 25 or 33 features)
+        if len(features['features_array']) not in (25, 33):
+            logger.error(f"Invalid array length: {len(features['features_array'])}, expected 25 or 33")
             return False
         
         return True

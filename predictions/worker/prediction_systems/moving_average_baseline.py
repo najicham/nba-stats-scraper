@@ -303,17 +303,17 @@ class MovingAverageBaseline:
         """Validate feature dictionary"""
         # Metadata fields are optional - use defaults if not present
         feature_count = features.get('feature_count', 25)
-        feature_version = features.get('feature_version', 'v1_baseline_25')
+        feature_version = features.get('feature_version', 'v2_33features')
         data_source = features.get('data_source', 'unknown')
         features_array = features.get('features_array', [])
         
-        # Validate feature count if provided
-        if feature_count != 25:
+        # Validate feature count if provided (accepts 25 or 33 features)
+        if feature_count not in (25, 33):
             logger.error(f"Invalid feature count: {feature_count}")
             return False
-        
+
         # Only validate array length if array exists and is non-empty
-        if features_array and len(features_array) != 25:
+        if features_array and len(features_array) not in (25, 33):
             logger.error(f"Invalid array length: {len(features_array)}")
             return False
         
