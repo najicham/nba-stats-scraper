@@ -247,35 +247,45 @@ Respond in JSON:
         )
 
         # Try to parse JSON response
-        try:
-            # Handle potential markdown code blocks
-            if '```' in content:
-                content = content.split('```')[1]
-                if content.startswith('json'):
-                    content = content[4:]
+        summary = None
+        headline = ''
+        facts = []
+        impact = None
 
-            data = json.loads(content.strip())
-            summary = data.get('summary', content[:200])
-            headline = data.get('headline', '')
-            facts = data.get('facts', [])
-            impact = data.get('impact')
-        except (json.JSONDecodeError, IndexError):
-            # Fallback: use raw response as summary
-            summary = content[:200]
-            headline = ''
-            facts = []
-            impact = None
+        try:
+            json_str = self._extract_json(content)
+            if json_str:
+                data = json.loads(json_str)
+                summary = data.get('summary')
+                headline = data.get('headline', '')
+                facts = data.get('facts', [])
+                impact = data.get('impact')
+        except (json.JSONDecodeError, IndexError, TypeError) as e:
+            logger.debug(f"JSON parsing failed for {article_id}: {e}")
+
+        # If parsing failed or summary is empty, don't use raw JSON as fallback
+        if not summary:
+            # Check if content looks like JSON (don't use it as summary)
+            if content.strip().startswith('{'):
+                logger.warning(f"Failed to parse JSON response for {article_id}, using title fallback")
+                summary = None  # Will trigger fallback headline generation
+            else:
+                # Plain text response - use it
+                summary = content[:200].strip()
 
         # Ensure headline is max 50 chars, generate fallback if missing
         if not headline:
-            # Create headline from title - truncate at word boundary
-            headline = self._create_headline_from_title(article_id, summary)
+            # Create headline from summary or use generic fallback
+            if summary:
+                headline = self._create_headline_from_title(article_id, summary)
+            else:
+                headline = "News Update"
         elif len(headline) > 50:
             headline = headline[:47] + '...'
 
         return SummaryResult(
             article_id=article_id,
-            summary=summary,
+            summary=summary if summary else "Summary unavailable",
             headline=headline,
             key_facts=facts if isinstance(facts, list) else [],
             fantasy_impact=impact if impact and impact != 'null' else None,
@@ -285,6 +295,60 @@ Respond in JSON:
             model=self.model,
             generated_at=datetime.now(timezone.utc)
         )
+
+    def _extract_json(self, content: str) -> Optional[str]:
+        """
+        Extract JSON from Claude response, handling various formats.
+
+        Handles:
+        - Plain JSON: {"key": "value"}
+        - Markdown code blocks: ```json\n{...}\n```
+        - JSON with leading/trailing text
+        """
+        content = content.strip()
+
+        # Try 1: Handle markdown code blocks
+        if '```' in content:
+            parts = content.split('```')
+            for part in parts:
+                part = part.strip()
+                # Remove 'json' language identifier
+                if part.startswith('json'):
+                    part = part[4:].strip()
+                # Try to parse this part
+                if part.startswith('{'):
+                    try:
+                        json.loads(part)
+                        return part
+                    except json.JSONDecodeError:
+                        continue
+
+        # Try 2: Find JSON object in content using brace matching
+        start_idx = content.find('{')
+        if start_idx != -1:
+            # Find matching closing brace
+            brace_count = 0
+            for i, char in enumerate(content[start_idx:], start_idx):
+                if char == '{':
+                    brace_count += 1
+                elif char == '}':
+                    brace_count -= 1
+                    if brace_count == 0:
+                        json_str = content[start_idx:i + 1]
+                        try:
+                            json.loads(json_str)
+                            return json_str
+                        except json.JSONDecodeError:
+                            break
+
+        # Try 3: Direct parse (content is plain JSON)
+        try:
+            json.loads(content)
+            return content
+        except json.JSONDecodeError:
+            pass
+
+        return None
 
     def _create_headline_from_title(self, article_id: str, title: str) -> str:
         """Create a short headline from title, max 50 chars, truncated at word boundary."""
