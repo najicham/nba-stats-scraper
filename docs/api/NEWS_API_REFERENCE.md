@@ -91,8 +91,6 @@ When querying news for a player, you receive:
 | `espn_mlb` | ESPN | MLB |
 | `cbs_nba` | CBS Sports | NBA |
 | `cbs_mlb` | CBS Sports | MLB |
-| `rotowire_nba` | RotoWire | NBA |
-| `rotowire_mlb` | RotoWire | MLB |
 | `yahoo_nba` | Yahoo Sports | NBA |
 | `yahoo_mlb` | Yahoo Sports | MLB |
 
@@ -103,8 +101,6 @@ const sourceDisplay = {
   'espn_mlb': 'ESPN',
   'cbs_nba': 'CBS Sports',
   'cbs_mlb': 'CBS Sports',
-  'rotowire_nba': 'RotoWire',
-  'rotowire_mlb': 'RotoWire',
   'yahoo_nba': 'Yahoo Sports',
   'yahoo_mlb': 'Yahoo Sports'
 };
