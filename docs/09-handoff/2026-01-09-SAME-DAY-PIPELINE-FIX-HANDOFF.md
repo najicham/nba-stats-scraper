@@ -4,10 +4,12 @@
 
 Thorough validation of daily orchestration discovered **4 critical issues** affecting V8 predictions. Partial recovery completed - full fix requires additional steps.
 
-**Current State:**
+**Current State (Updated EVE Session):**
 - Timing issue: FIXED (for today)
-- V8 model loading: NOT FIXED (env var missing)
-- V8 confidence normalization: NOT FIXED (code bug)
+- V8 model loading: FIXED (env var set, catboost library added, GCS permissions granted)
+- V8 confidence normalization: FIXED (added catboost_v8 to normalize_confidence)
+- Feature version mismatch: FIXED (changed v2_33features to v1_baseline_25)
+- V8 predictions: WORKING (24 OVER, 11 UNDER, avg confidence 53.3%)
 - 241 player failures: NOT INVESTIGATED
 
 ---
@@ -230,29 +232,32 @@ WHERE game_date = '2026-01-09'"
 
 ## Today's Recovery Summary
 
-| Metric | Before Recovery | After Recovery |
-|--------|-----------------|----------------|
-| UPGC Prop Coverage | 0% | 44.4% |
-| Total Predictions | 305 | 473 |
-| Actionable Picks | 0 | 59 |
-| V8 Confidence | 50.0 (fallback) | 50.0 (still fallback) |
-| V8 OVER/UNDER | 0 | 0 (need env var fix) |
+| Metric | Before Recovery | After PM Recovery | After EVE Fixes |
+|--------|-----------------|-------------------|-----------------|
+| UPGC Prop Coverage | 0% | 44.4% | 44.4% |
+| Total Predictions | 305 | 473 | 473 |
+| Actionable Picks | 0 | 59 | 59 |
+| V8 Confidence | 50.0 (fallback) | 50.0 (still fallback) | 53.3 (real model) |
+| V8 OVER/UNDER | 0 | 0 | 35 (24+11) |
 
 ---
 
 ## Priority Checklist for Next Session
 
-### P0 - Do First (5 min)
-- [ ] Set V8 model env var on prediction-worker
-- [ ] Re-run predictions
-- [ ] Verify V8 generating proper recommendations
+### P0 - COMPLETED (EVE Session)
+- [x] Set V8 model env var on prediction-worker
+- [x] Add catboost library to requirements.txt
+- [x] Grant GCS permissions for prediction-worker
+- [x] Fix feature_version mismatch (v2_33features → v1_baseline_25)
+- [x] Re-run predictions
+- [x] Verify V8 generating proper recommendations (24 OVER, 11 UNDER)
 
-### P1 - High (This Session)
-- [ ] Fix V8 confidence normalization in data_loaders.py
-- [ ] Deploy data_loaders fix
-- [ ] Add props pre-flight check to UPGC
-- [ ] Add 0% prop coverage alert to UPGC
-- [ ] Deploy UPGC changes
+### P1 - COMPLETED (EVE Session)
+- [x] Fix V8 confidence normalization in data_loaders.py
+- [x] Deploy data_loaders fix
+- [x] Add props pre-flight check to UPGC (`_check_props_readiness()`)
+- [x] Add 0% prop coverage alert to UPGC (`_send_prop_coverage_alert()`)
+- [ ] Deploy UPGC changes (pending commit)
 
 ### P2 - Medium (This Week)
 - [ ] Create self-healing Cloud Function

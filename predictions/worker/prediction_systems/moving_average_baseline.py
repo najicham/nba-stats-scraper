@@ -303,7 +303,7 @@ class MovingAverageBaseline:
         """Validate feature dictionary"""
         # Metadata fields are optional - use defaults if not present
         feature_count = features.get('feature_count', 25)
-        feature_version = features.get('feature_version', 'v2_33features')
+        feature_version = features.get('feature_version', 'v1_baseline_25')
         data_source = features.get('data_source', 'unknown')
         features_array = features.get('features_array', [])
         
