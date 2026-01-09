@@ -129,10 +129,14 @@ class PlayerProfileExporter(BaseExporter):
         # Get next game info
         next_game = self._query_next_game(player_lookup)
 
+        # Get recent news
+        recent_news = self._query_recent_news(player_lookup)
+
         return {
             'player_lookup': player_lookup,
             'player_full_name': summary.get('player_full_name', player_lookup),
             'generated_at': self.get_generated_at(),
+            'recent_news': recent_news,
             'summary': {
                 'team': summary.get('team_abbr'),
                 'games_predicted': summary['games_predicted'],
@@ -555,6 +559,68 @@ class PlayerProfileExporter(BaseExporter):
             'within_5_pts': self._safe_float(r.get('within_5_pts'))
         }
 
+    def _query_recent_news(self, player_lookup: str, limit: int = 5) -> List[Dict]:
+        """Query recent news articles for a player."""
+        query = """
+        SELECT
+            l.article_id,
+            a.title,
+            a.source,
+            a.source_url,
+            a.published_at,
+            i.category,
+            i.headline,
+            i.ai_summary
+        FROM `nba-props-platform.nba_analytics.news_player_links` l
+        JOIN `nba-props-platform.nba_raw.news_articles_raw` a
+            ON l.article_id = a.article_id
+        LEFT JOIN `nba-props-platform.nba_analytics.news_insights` i
+            ON l.article_id = i.article_id
+        WHERE l.player_lookup = @player_lookup
+        ORDER BY a.published_at DESC
+        LIMIT @limit
+        """
+        params = [
+            bigquery.ScalarQueryParameter('player_lookup', 'STRING', player_lookup),
+            bigquery.ScalarQueryParameter('limit', 'INT64', limit)
+        ]
+
+        try:
+            results = self.query_to_list(query, params)
+        except Exception as e:
+            logger.warning(f"Failed to query news for {player_lookup}: {e}")
+            return []
+
+        # Source display name mapping
+        source_names = {
+            'espn_nba': 'ESPN',
+            'espn_mlb': 'ESPN',
+            'cbs_nba': 'CBS Sports',
+            'cbs_mlb': 'CBS Sports',
+            'rotowire_nba': 'RotoWire',
+            'rotowire_mlb': 'RotoWire',
+            'yahoo_nba': 'Yahoo Sports',
+            'yahoo_mlb': 'Yahoo Sports',
+        }
+
+        formatted = []
+        for r in results:
+            # Create headline from title if not present
+            headline = r.get('headline')
+            if not headline:
+                title = r.get('title', '')
+                headline = title[:47] + '...' if len(title) > 50 else title
+
+            formatted.append({
+                'headline': headline,
+                'category': r.get('category', 'other'),
+                'source': source_names.get(r['source'], r['source']),
+                'source_url': r.get('source_url'),
+                'published_at': r['published_at'].isoformat() if r.get('published_at') else None,
+            })
+
+        return formatted
+
     def _query_next_game(self, player_lookup: str) -> Optional[Dict]:
         """Query next scheduled game for the player."""
         query = """
@@ -678,6 +744,7 @@ class PlayerProfileExporter(BaseExporter):
             'player_lookup': player_lookup,
             'player_full_name': player_lookup,
             'generated_at': self.get_generated_at(),
+            'recent_news': [],
             'summary': None,
             'interpretation': {'error': 'No prediction data found for this player'},
             'game_log': [],
