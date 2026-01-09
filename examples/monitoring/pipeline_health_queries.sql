@@ -156,3 +156,119 @@ SELECT
     MIN(TIMESTAMP_DIFF(pipeline_end, pipeline_start, SECOND)) as min_latency_seconds,
     MAX(TIMESTAMP_DIFF(pipeline_end, pipeline_start, SECOND)) as max_latency_seconds
 FROM pipeline_times;
+
+
+-- =============================================================================
+-- PREDICTION SYSTEM HEALTH MONITORING
+-- =============================================================================
+-- These queries detect prediction system failures that can cause 0% actionable
+-- predictions (as occurred on 2026-01-09).
+
+
+-- Query 9: Fallback Prediction Detection (CRITICAL ALERT)
+-- Avg confidence of 50.0 indicates fallback predictions were used
+-- This means the ML model failed to load or generate real predictions
+SELECT
+    system_id,
+    game_date,
+    COUNT(*) as total_predictions,
+    COUNTIF(recommendation = 'OVER') as over_count,
+    COUNTIF(recommendation = 'UNDER') as under_count,
+    COUNTIF(recommendation = 'PASS') as pass_count,
+    ROUND(AVG(confidence_score), 2) as avg_confidence,
+    COUNTIF(confidence_score = 50.0) as fallback_count,
+    ROUND(100.0 * COUNTIF(confidence_score = 50.0) / COUNT(*), 1) as fallback_pct
+FROM `nba-props-platform.nba_predictions.player_prop_predictions`
+WHERE game_date = CURRENT_DATE()
+  AND system_id = 'catboost_v8'
+GROUP BY system_id, game_date
+HAVING avg_confidence = 50.0  -- CRITICAL: All predictions are fallbacks
+    OR over_count = 0  -- CRITICAL: No OVER recommendations
+    OR under_count = 0;  -- CRITICAL: No UNDER recommendations
+
+
+-- Query 10: Prediction System Comparison (Today)
+-- Compare performance across all 5 prediction systems
+SELECT
+    system_id,
+    COUNT(*) as total_predictions,
+    COUNTIF(recommendation = 'OVER') as overs,
+    COUNTIF(recommendation = 'UNDER') as unders,
+    COUNTIF(recommendation = 'PASS') as passes,
+    COUNTIF(recommendation = 'NO_LINE') as no_lines,
+    ROUND(AVG(confidence_score), 2) as avg_confidence,
+    ROUND(STDDEV(confidence_score), 2) as stddev_confidence,
+    MIN(confidence_score) as min_confidence,
+    MAX(confidence_score) as max_confidence
+FROM `nba-props-platform.nba_predictions.player_prop_predictions`
+WHERE game_date = CURRENT_DATE()
+GROUP BY system_id
+ORDER BY system_id;
+
+
+-- Query 11: Actionable Prediction Rate (Daily Trend)
+-- Track OVER/UNDER recommendation rates over time
+SELECT
+    game_date,
+    system_id,
+    COUNT(*) as total,
+    ROUND(100.0 * COUNTIF(recommendation IN ('OVER', 'UNDER')) / COUNT(*), 1) as actionable_pct,
+    ROUND(AVG(confidence_score), 2) as avg_confidence
+FROM `nba-props-platform.nba_predictions.player_prop_predictions`
+WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+  AND system_id = 'catboost_v8'
+GROUP BY game_date, system_id
+ORDER BY game_date DESC;
+
+
+-- Query 12: Feature Version Validation
+-- Verify ML Feature Store is producing correct version
+SELECT
+    game_date,
+    feature_version,
+    COUNT(*) as row_count,
+    AVG(ARRAY_LENGTH(features)) as avg_feature_count,
+    COUNTIF(ARRAY_LENGTH(features) = 33) as correct_count,
+    COUNTIF(ARRAY_LENGTH(features) != 33) as incorrect_count
+FROM `nba-props-platform.nba_predictions.ml_feature_store_v2`
+WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 3 DAY)
+GROUP BY game_date, feature_version
+ORDER BY game_date DESC;
+
+
+-- Query 13: Prediction Worker Health (Today)
+-- Single-row summary for alerting dashboard
+SELECT
+    CURRENT_DATE() as check_date,
+    -- Overall prediction count
+    (SELECT COUNT(DISTINCT universal_player_id)
+     FROM `nba-props-platform.nba_predictions.player_prop_predictions`
+     WHERE game_date = CURRENT_DATE() AND system_id = 'catboost_v8') as players_predicted,
+    -- Actionable predictions
+    (SELECT COUNTIF(recommendation IN ('OVER', 'UNDER'))
+     FROM `nba-props-platform.nba_predictions.player_prop_predictions`
+     WHERE game_date = CURRENT_DATE() AND system_id = 'catboost_v8') as actionable_predictions,
+    -- Fallback detection
+    (SELECT ROUND(AVG(confidence_score), 2)
+     FROM `nba-props-platform.nba_predictions.player_prop_predictions`
+     WHERE game_date = CURRENT_DATE() AND system_id = 'catboost_v8') as catboost_avg_confidence,
+    -- Feature store health
+    (SELECT COUNT(*)
+     FROM `nba-props-platform.nba_predictions.ml_feature_store_v2`
+     WHERE game_date = CURRENT_DATE() AND feature_version = 'v2_33features') as feature_store_rows,
+    -- Alert conditions
+    CASE
+        WHEN (SELECT AVG(confidence_score)
+              FROM `nba-props-platform.nba_predictions.player_prop_predictions`
+              WHERE game_date = CURRENT_DATE() AND system_id = 'catboost_v8') = 50.0
+        THEN 'CRITICAL: CatBoost using fallback predictions'
+        WHEN (SELECT COUNTIF(recommendation IN ('OVER', 'UNDER'))
+              FROM `nba-props-platform.nba_predictions.player_prop_predictions`
+              WHERE game_date = CURRENT_DATE() AND system_id = 'catboost_v8') = 0
+        THEN 'CRITICAL: No actionable predictions'
+        WHEN (SELECT COUNT(*)
+              FROM `nba-props-platform.nba_predictions.ml_feature_store_v2`
+              WHERE game_date = CURRENT_DATE() AND feature_version = 'v2_33features') = 0
+        THEN 'WARNING: No v2_33features in feature store today'
+        ELSE 'OK'
+    END as health_status;
