@@ -1,0 +1,147 @@
+# File: validation/configs/raw/news_pipeline.yaml
+# Description: News Pipeline Validation Config - Validates news scraping, AI summarization, and GCS export
+
+processor:
+  name: "news_pipeline"
+  description: "Validates news RSS fetching, AI summarization, player linking, and GCS export"
+  table: "nba_raw.news_articles_raw"
+  partition_required: false  # News uses scraped_at timestamp, not date partitions
+  layers:
+    - gcs
+    - bigquery
+    - schedule
+
+# GCS Layer Validations
+gcs_validations:
+  enabled: true
+
+  # Check tonight summary exists for each sport
+  file_presence:
+    bucket: "nba-props-platform-api"
+    paths:
+      - pattern: "v1/player-news/nba/tonight-summary.json"
+        description: "NBA tonight summary"
+        severity: "error"
+      - pattern: "v1/player-news/mlb/tonight-summary.json"
+        description: "MLB tonight summary"
+        severity: "warning"  # MLB may not always have news
+
+  file_quality:
+    min_size_bytes: 50         # Minimum valid JSON size
+    max_size_bytes: 100000     # Alert on unusually large files
+    check_corrupted: true
+    severity: "error"
+
+# BigQuery Layer Validations
+bigquery_validations:
+  enabled: true
+
+  # Check 1: Articles are being scraped
+  articles_freshness:
+    table: "nba_raw.news_articles_raw"
+    timestamp_field: "scraped_at"
+    max_age_hours: 1  # Should have articles within last hour (runs every 15 min)
+    min_count_24h: 10  # Expect at least 10 articles per day
+    severity: "error"
+
+  # Check 2: AI summaries are being generated
+  ai_summaries:
+    table: "nba_analytics.news_insights"
+    check_field: "ai_summary"
+    not_null_percentage: 80  # At least 80% should have AI summaries
+    severity: "warning"
+
+  # Check 3: Headlines are being generated
+  headlines:
+    table: "nba_analytics.news_insights"
+    check_field: "headline"
+    not_null_percentage: 80  # At least 80% should have headlines
+    severity: "warning"
+
+  # Check 4: Player links are being created
+  player_links:
+    table: "nba_analytics.news_player_links"
+    timestamp_field: "created_at"
+    max_age_hours: 24
+    min_count_24h: 5  # Expect at least 5 player links per day
+    severity: "warning"
+
+  # Check 5: Required fields validation
+  field_validation:
+    target_table: "nba_raw.news_articles_raw"
+    required_not_null:
+      - article_id
+      - source
+      - title
+      - scraped_at
+      - sport
+    severity: "error"
+
+# Schedule Validations
+schedule_validations:
+  enabled: true
+
+  # News fetcher runs every 15 minutes
+  data_freshness:
+    target_table: "nba_raw.news_articles_raw"
+    timestamp_field: "scraped_at"
+    max_age_hours: 1  # Alert if no data in last hour
+    severity: "error"
+
+  # Cloud Function should run regularly
+  cloud_function:
+    name: "news-fetcher"
+    region: "us-west2"
+    expected_frequency_minutes: 15
+    max_silence_minutes: 30
+    severity: "error"
+
+# Custom Validations
+custom_validations:
+  - name: "source_diversity"
+    description: "Check that multiple RSS sources are providing data"
+    expected_sources:
+      - espn_nba
+      - cbs_nba
+      - rotowire_nba
+      - yahoo_nba
+    min_sources: 2
+    severity: "warning"
+
+  - name: "category_distribution"
+    description: "Check article categories are being assigned"
+    table: "nba_analytics.news_insights"
+    check_field: "category"
+    not_null_percentage: 90
+    severity: "warning"
+
+  - name: "gcs_export_freshness"
+    description: "Check GCS files are being updated"
+    bucket: "nba-props-platform-api"
+    path: "v1/player-news/nba/tonight-summary.json"
+    max_age_hours: 1
+    severity: "error"
+
+# Remediation Commands
+remediation:
+  manual_trigger: |
+    curl -X POST 'https://us-west2-nba-props-platform.cloudfunctions.net/news-fetcher' \
+      -H 'Content-Type: application/json' \
+      -d '{"sports": ["nba", "mlb"], "generate_summaries": true}'
+
+  backfill_export: |
+    python scripts/news/backfill_news_export.py --sport nba
+
+  backfill_headlines: |
+    ANTHROPIC_API_KEY=$(gcloud secrets versions access latest --secret=anthropic-api-key) \
+    python scripts/news/backfill_headlines.py --limit 50
+
+  check_logs: |
+    gcloud functions logs read news-fetcher --project=nba-props-platform --region=us-west2 --limit=50
+
+# Notifications
+notifications:
+  enabled: true
+  channels: ["slack"]
+  on_failure: true
+  on_success: false
