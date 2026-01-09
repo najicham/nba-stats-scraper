@@ -36,6 +36,7 @@ show_usage() {
     echo "  gcs-bq DATE [END]      - Validate GCS to BigQuery completeness"
     echo "  scrapers               - Validate scraper data freshness"
     echo "  processors             - Validate processor outputs"
+    echo "  news                   - Validate news pipeline"
     echo "  quick                  - Quick validation (last 24h)"
     echo "  summary                - Show validation summary"
     echo ""
@@ -47,6 +48,7 @@ show_usage() {
     echo "  $0 all                           # Run all validations"
     echo "  $0 gcs-bq 2024-01-15             # Validate specific date"
     echo "  $0 gcs-bq 2024-01-01 2024-01-31  # Validate date range"
+    echo "  $0 news                          # Validate news pipeline"
     echo "  $0 quick --verbose               # Quick check with details"
 }
 
@@ -106,6 +108,101 @@ SELECT
 FROM scraper_freshness
 ORDER BY source;
 SQL
+}
+
+# Validate news pipeline
+cmd_news() {
+    echo -e "${BLUE}Validating news pipeline...${NC}"
+    echo ""
+
+    # Check 1: BigQuery tables freshness
+    echo "1. Checking BigQuery data freshness..."
+    bq query --use_legacy_sql=false --format=pretty <<SQL
+WITH news_status AS (
+    -- Articles raw
+    SELECT 'news_articles_raw' as component,
+           COUNT(*) as count_24h,
+           MAX(scraped_at) as latest,
+           TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), MAX(scraped_at), MINUTE) as minutes_stale
+    FROM \`${PROJECT_ID}.nba_raw.news_articles_raw\`
+    WHERE scraped_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)
+
+    UNION ALL
+
+    -- Insights with AI summaries
+    SELECT 'news_insights (with AI)',
+           COUNTIF(ai_summary IS NOT NULL),
+           MAX(ai_summary_generated_at),
+           TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), MAX(ai_summary_generated_at), MINUTE)
+    FROM \`${PROJECT_ID}.nba_analytics.news_insights\`
+    WHERE extracted_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)
+
+    UNION ALL
+
+    -- Player links
+    SELECT 'news_player_links',
+           COUNT(*),
+           MAX(created_at),
+           TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), MAX(created_at), MINUTE)
+    FROM \`${PROJECT_ID}.nba_analytics.news_player_links\`
+    WHERE created_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)
+)
+SELECT
+    component,
+    count_24h,
+    FORMAT_TIMESTAMP('%Y-%m-%d %H:%M', latest) as latest_update,
+    minutes_stale,
+    CASE
+        WHEN minutes_stale <= 30 THEN 'FRESH'
+        WHEN minutes_stale <= 60 THEN 'OK'
+        WHEN minutes_stale <= 120 THEN 'STALE'
+        ELSE 'CRITICAL'
+    END as status
+FROM news_status
+ORDER BY component;
+SQL
+
+    echo ""
+    echo "2. Checking RSS source diversity..."
+    bq query --use_legacy_sql=false --format=pretty <<SQL
+SELECT
+    source,
+    sport,
+    COUNT(*) as articles_24h,
+    MAX(scraped_at) as latest
+FROM \`${PROJECT_ID}.nba_raw.news_articles_raw\`
+WHERE scraped_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)
+GROUP BY source, sport
+ORDER BY sport, articles_24h DESC;
+SQL
+
+    echo ""
+    echo "3. Checking GCS export freshness..."
+    # Check if tonight-summary.json exists and is recent
+    local gcs_file="gs://nba-props-platform-api/v1/player-news/nba/tonight-summary.json"
+    local gcs_stat=$(gsutil stat "$gcs_file" 2>/dev/null | grep "Update time" | cut -d':' -f2- | xargs)
+
+    if [[ -n "$gcs_stat" ]]; then
+        echo -e "  ${GREEN}NBA tonight-summary.json exists${NC}"
+        echo "  Last updated: $gcs_stat"
+
+        # Check content
+        local player_count=$(gsutil cat "$gcs_file" 2>/dev/null | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('total_players', 0))" 2>/dev/null || echo "0")
+        echo "  Players with news: $player_count"
+    else
+        echo -e "  ${RED}NBA tonight-summary.json NOT FOUND${NC}"
+    fi
+
+    echo ""
+    echo "4. Checking Cloud Function logs (last 5 runs)..."
+    gcloud functions logs read news-fetcher \
+        --project="${PROJECT_ID}" \
+        --region=us-west2 \
+        --limit=10 2>/dev/null | grep -E "(triggered|complete|error|articles)" | head -5 || \
+        echo -e "  ${YELLOW}Could not fetch logs${NC}"
+
+    echo ""
+    echo -e "${GREEN}News pipeline validation complete!${NC}"
 }
 
 # Validate processor outputs
@@ -170,7 +267,11 @@ cmd_quick() {
     cmd_processors
 
     echo ""
-    echo "3. GCS to BigQuery check (yesterday)..."
+    echo "3. Checking news pipeline..."
+    cmd_news
+
+    echo ""
+    echo "4. GCS to BigQuery check (yesterday)..."
     python3 "${SCRIPT_DIR}/validate_gcs_bq_completeness.py" "$yesterday" --quick 2>/dev/null || \
         echo -e "  ${YELLOW}Skipped (script not available or no data)${NC}"
 
@@ -200,7 +301,13 @@ cmd_all() {
 
     echo ""
     echo "=========================================="
-    echo "3. GCS TO BIGQUERY COMPLETENESS (7 days)"
+    echo "3. NEWS PIPELINE"
+    echo "=========================================="
+    cmd_news
+
+    echo ""
+    echo "=========================================="
+    echo "4. GCS TO BIGQUERY COMPLETENESS (7 days)"
     echo "=========================================="
     python3 "${SCRIPT_DIR}/validate_gcs_bq_completeness.py" "$week_ago" "$yesterday" 2>/dev/null || \
         echo -e "  ${YELLOW}GCS-BQ validation skipped${NC}"
@@ -259,6 +366,10 @@ case "${1:-help}" in
     "processors")
         print_header
         cmd_processors
+        ;;
+    "news")
+        print_header
+        cmd_news
         ;;
     "quick")
         shift
