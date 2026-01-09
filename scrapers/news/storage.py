@@ -339,25 +339,35 @@ class NewsInsightsStorage:
             logger.error(f"Failed to create table: {e}")
             return False
 
-    def save_insights(self, results: List[dict]) -> int:
+    def save_insights(self, results: List[dict], summaries: Optional[dict] = None) -> int:
         """
         Save extraction results to BigQuery.
 
         Args:
             results: List of ExtractionResult.to_dict() outputs
+            summaries: Optional dict mapping article_id -> {summary, headline} from AI
 
         Returns:
             Number of rows saved
+
+        Note:
+            AI summaries are included in the initial insert to avoid BigQuery
+            streaming buffer issues. See docs/05-development/guides/bigquery-best-practices.md
         """
         if not results:
             return 0
+
+        summaries = summaries or {}
 
         # Add timestamp
         now = datetime.now(timezone.utc).isoformat()
         rows = []
         for result in results:
+            article_id = result['article_id']
+            summary_data = summaries.get(article_id, {})
+
             row = {
-                'article_id': result['article_id'],
+                'article_id': article_id,
                 'category': result['category'],
                 'subcategory': result.get('subcategory'),
                 'confidence': result['confidence'],
@@ -365,6 +375,10 @@ class NewsInsightsStorage:
                 'teams_mentioned': result.get('teams_mentioned', []),
                 'keywords_matched': result.get('keywords_matched', []),
                 'extracted_at': now,
+                # Include AI summary fields in initial insert (avoids streaming buffer UPDATE issues)
+                'ai_summary': summary_data.get('summary'),
+                'headline': summary_data.get('headline'),
+                'ai_summary_generated_at': summary_data.get('generated_at'),
             }
             rows.append(row)
 

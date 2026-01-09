@@ -119,6 +119,7 @@ def run_news_fetch(sports: list = None, generate_summaries: bool = True, max_art
         # Step 4: Extract keywords and categorize
         insights_to_save = []
         player_links_to_save = []
+        article_extractions = {}  # Map article_id -> extraction for player linking
 
         for article in new_articles:
             # Extract keywords
@@ -142,39 +143,13 @@ def run_news_fetch(sports: list = None, generate_summaries: bool = True, max_art
                 'keywords_matched': extraction.keywords_matched,
             }
             insights_to_save.append(insight)
+            article_extractions[article.article_id] = (extraction, player_mention_names, article)
 
-            # Link players to registry
-            if player_mention_names:
-                try:
-                    linker = PlayerLinker(sport=article.sport)
-                    for i, player_name in enumerate(player_mention_names[:5]):  # Limit to first 5
-                        link_result = linker.link_player(player_name)
-                        if link_result and link_result.player_lookup:
-                            player_links_to_save.append({
-                                'player_lookup': link_result.player_lookup,
-                                'article_id': article.article_id,
-                                'sport': article.sport,
-                                'mention_role': 'primary' if i == 0 else 'mentioned',
-                                'link_confidence': link_result.confidence,
-                                'link_method': link_result.method,
-                                'article_category': extraction.category.value,
-                                'article_published_at': article.published_at.isoformat() if article.published_at else None,
-                            })
-                except Exception as e:
-                    logger.warning(f"Player linking failed for article {article.article_id}: {e}")
+        # Step 5: Generate AI summaries BEFORE saving insights
+        # This avoids BigQuery streaming buffer UPDATE issues
+        # See docs/05-development/guides/bigquery-best-practices.md
+        summaries_dict = {}  # Map article_id -> {summary, headline, generated_at}
 
-        # Save insights
-        insights_saved = insights_storage.save_insights(insights_to_save)
-        result['insights_saved'] = insights_saved
-        logger.info(f"Saved {insights_saved} insights")
-
-        # Save player links
-        if player_links_to_save:
-            links_saved = links_storage.save_links(player_links_to_save)
-            result['player_links_saved'] = links_saved
-            logger.info(f"Saved {links_saved} player links")
-
-        # Step 5: Generate AI summaries (if enabled)
         if generate_summaries and new_articles:
             try:
                 from scrapers.news import NewsSummarizer
@@ -194,43 +169,52 @@ def run_news_fetch(sports: list = None, generate_summaries: bool = True, max_art
                 result['summaries_generated'] = len(summaries)
                 result['summary_cost_usd'] = stats.get('total_cost_usd', 0)
 
-                # Save summaries to insights table
-                from google.cloud import bigquery
-                client = bigquery.Client()
-
+                # Build summaries dict for passing to save_insights
                 for summary_result in summaries:
                     if summary_result.summary and not summary_result.summary.startswith("Summary unavailable"):
-                        query = """
-                        UPDATE `nba-props-platform.nba_analytics.news_insights`
-                        SET ai_summary = @summary,
-                            headline = @headline,
-                            ai_summary_generated_at = CURRENT_TIMESTAMP()
-                        WHERE article_id = @article_id
-                        """
-                        job_config = bigquery.QueryJobConfig(query_parameters=[
-                            bigquery.ScalarQueryParameter("summary", "STRING", summary_result.summary),
-                            bigquery.ScalarQueryParameter("headline", "STRING", summary_result.headline),
-                            bigquery.ScalarQueryParameter("article_id", "STRING", summary_result.article_id),
-                        ])
-                        client.query(query, job_config=job_config).result()
-
-                # Mark articles as AI processed
-                for article in new_articles[:max_articles]:
-                    query = """
-                    UPDATE `nba-props-platform.nba_raw.news_articles_raw`
-                    SET ai_processed = TRUE, ai_processed_at = CURRENT_TIMESTAMP()
-                    WHERE article_id = @article_id
-                    """
-                    job_config = bigquery.QueryJobConfig(query_parameters=[
-                        bigquery.ScalarQueryParameter("article_id", "STRING", article.article_id),
-                    ])
-                    client.query(query, job_config=job_config).result()
+                        summaries_dict[summary_result.article_id] = {
+                            'summary': summary_result.summary,
+                            'headline': summary_result.headline,
+                            'generated_at': summary_result.generated_at.isoformat(),
+                        }
 
                 logger.info(f"Generated {len(summaries)} AI summaries (cost: ${stats.get('total_cost_usd', 0):.4f})")
 
             except Exception as e:
                 logger.error(f"AI summarization failed: {e}", exc_info=True)
                 result['errors'].append(f"ai_summarization: {str(e)}")
+
+        # Save insights with AI summaries included (single insert, no UPDATE needed)
+        insights_saved = insights_storage.save_insights(insights_to_save, summaries=summaries_dict)
+        result['insights_saved'] = insights_saved
+        logger.info(f"Saved {insights_saved} insights")
+
+        # Link players to registry
+        for article_id, (extraction, player_mention_names, article) in article_extractions.items():
+            if player_mention_names:
+                try:
+                    linker = PlayerLinker(sport=article.sport)
+                    for i, player_name in enumerate(player_mention_names[:5]):  # Limit to first 5
+                        link_result = linker.link_player(player_name)
+                        if link_result and link_result.player_lookup:
+                            player_links_to_save.append({
+                                'player_lookup': link_result.player_lookup,
+                                'article_id': article.article_id,
+                                'sport': article.sport,
+                                'mention_role': 'primary' if i == 0 else 'mentioned',
+                                'link_confidence': link_result.confidence,
+                                'link_method': link_result.method,
+                                'article_category': extraction.category.value,
+                                'article_published_at': article.published_at.isoformat() if article.published_at else None,
+                            })
+                except Exception as e:
+                    logger.warning(f"Player linking failed for article {article.article_id}: {e}")
+
+        # Save player links
+        if player_links_to_save:
+            links_saved = links_storage.save_links(player_links_to_save)
+            result['player_links_saved'] = links_saved
+            logger.info(f"Saved {links_saved} player links")
 
         # Step 6: Export to GCS for frontend consumption
         # Use incremental export (only players with new articles) for efficiency
