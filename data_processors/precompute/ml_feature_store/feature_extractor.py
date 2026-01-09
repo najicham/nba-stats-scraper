@@ -46,6 +46,11 @@ class FeatureExtractor:
         self._last_10_games_lookup: Dict[str, List[Dict]] = {}
         self._season_stats_lookup: Dict[str, Dict] = {}
         self._team_games_lookup: Dict[str, List[Dict]] = {}
+
+        # V8 Model Features (added Jan 2026)
+        self._vegas_lines_lookup: Dict[str, Dict] = {}
+        self._opponent_history_lookup: Dict[str, Dict] = {}
+        self._minutes_ppm_lookup: Dict[str, Dict] = {}
     
     # ========================================================================
     # PLAYER LIST
@@ -194,8 +199,9 @@ class FeatureExtractor:
         all_opponents = list(set(p.get('opponent_team_abbr') for p in players_with_games if p.get('opponent_team_abbr')))
         all_teams = list(set(p.get('team_abbr') for p in players_with_games if p.get('team_abbr')))
 
-        # Run ALL 8 batch extractions in PARALLEL using ThreadPoolExecutor
+        # Run ALL 11 batch extractions in PARALLEL using ThreadPoolExecutor
         # Each query is independent and can run concurrently
+        # V8 Model: Added vegas_lines, opponent_history, minutes_ppm (Jan 2026)
         extraction_tasks = [
             ('daily_cache', lambda: self._batch_extract_daily_cache(game_date)),
             ('composite_factors', lambda: self._batch_extract_composite_factors(game_date)),
@@ -205,6 +211,10 @@ class FeatureExtractor:
             ('last_10_games', lambda: self._batch_extract_last_10_games(game_date, all_players)),
             ('season_stats', lambda: self._batch_extract_season_stats(game_date, all_players)),
             ('team_games', lambda: self._batch_extract_team_games(game_date, all_teams)),
+            # V8 Model Features (Jan 2026)
+            ('vegas_lines', lambda: self._batch_extract_vegas_lines(game_date, all_players)),
+            ('opponent_history', lambda: self._batch_extract_opponent_history(game_date, players_with_games)),
+            ('minutes_ppm', lambda: self._batch_extract_minutes_ppm(game_date, all_players)),
         ]
 
         # Auto-retry logic for transient network/BigQuery errors
@@ -219,7 +229,7 @@ class FeatureExtractor:
                     self._clear_batch_cache()
                     self._batch_cache_date = game_date
 
-                with ThreadPoolExecutor(max_workers=8) as executor:
+                with ThreadPoolExecutor(max_workers=11) as executor:
                     futures = {executor.submit(task[1]): task[0] for task in extraction_tasks}
                     for future in as_completed(futures):
                         task_name = futures[future]
@@ -265,7 +275,10 @@ class FeatureExtractor:
             f"{len(self._shot_zone_lookup)} shot_zone, "
             f"{len(self._team_defense_lookup)} team_defense, "
             f"{len(self._player_context_lookup)} player_context, "
-            f"{len(self._last_10_games_lookup)} last_10_games"
+            f"{len(self._last_10_games_lookup)} last_10_games, "
+            f"{len(self._vegas_lines_lookup)} vegas, "
+            f"{len(self._opponent_history_lookup)} opponent_hist, "
+            f"{len(self._minutes_ppm_lookup)} mins_ppm"
         )
 
     def _clear_batch_cache(self) -> None:
@@ -279,6 +292,10 @@ class FeatureExtractor:
         self._last_10_games_lookup = {}
         self._season_stats_lookup = {}
         self._team_games_lookup = {}
+        # V8 Model Features
+        self._vegas_lines_lookup = {}
+        self._opponent_history_lookup = {}
+        self._minutes_ppm_lookup = {}
 
     def _batch_extract_daily_cache(self, game_date: date) -> None:
         """Batch extract player_daily_cache for all players."""
@@ -505,6 +522,155 @@ class FeatureExtractor:
                 self._team_games_lookup[team_abbr] = group_df.to_dict('records')
 
         logger.debug(f"Batch team_games: {len(self._team_games_lookup)} teams (season {season_year})")
+
+    # ========================================================================
+    # V8 MODEL FEATURE EXTRACTION (Jan 2026)
+    # ========================================================================
+
+    def _batch_extract_vegas_lines(self, game_date: date, player_lookups: List[str]) -> None:
+        """
+        Batch extract Vegas betting lines for all players.
+
+        Features extracted:
+        - vegas_points_line: Current consensus points line
+        - vegas_opening_line: Opening line
+        - vegas_line_move: Line movement (current - opening)
+        - has_vegas_line: Boolean flag
+
+        Source: bettingpros_player_points_props (Phase 2 raw data)
+        """
+        if not player_lookups:
+            return
+
+        query = f"""
+        SELECT
+            player_lookup,
+            AVG(points_line) as vegas_points_line,
+            AVG(opening_line) as vegas_opening_line,
+            1.0 as has_vegas_line
+        FROM `{self.project_id}.nba_raw.bettingpros_player_points_props`
+        WHERE game_date = '{game_date}'
+          AND bet_side = 'over'
+          AND points_line IS NOT NULL
+          AND is_active = TRUE
+        GROUP BY player_lookup
+        """
+        result = self.bq_client.query(query).to_dataframe()
+
+        if not result.empty:
+            for record in result.to_dict('records'):
+                # Calculate line move
+                record['vegas_line_move'] = (
+                    (record['vegas_points_line'] or 0) -
+                    (record['vegas_opening_line'] or record['vegas_points_line'] or 0)
+                )
+                self._vegas_lines_lookup[record['player_lookup']] = record
+
+        logger.debug(f"Batch vegas_lines: {len(self._vegas_lines_lookup)} players")
+
+    def _batch_extract_opponent_history(self, game_date: date, players_with_games: List[Dict]) -> None:
+        """
+        Batch extract player performance vs specific opponent.
+
+        Features extracted:
+        - avg_points_vs_opponent: Average points scored vs this opponent (last 3 years)
+        - games_vs_opponent: Number of games played vs this opponent
+
+        Source: player_game_summary (Phase 3)
+        """
+        if not players_with_games:
+            return
+
+        # Build player/opponent pairs
+        pairs = [
+            (p['player_lookup'], p.get('opponent_team_abbr'))
+            for p in players_with_games
+            if p.get('opponent_team_abbr')
+        ]
+        if not pairs:
+            return
+
+        # Use UNNEST for efficient batch query
+        pairs_json = ', '.join([
+            f"STRUCT('{p}' AS player_lookup, '{o}' AS opponent)"
+            for p, o in pairs
+        ])
+
+        query = f"""
+        WITH pairs AS (
+            SELECT * FROM UNNEST([{pairs_json}])
+        )
+        SELECT
+            p.player_lookup,
+            p.opponent,
+            COUNT(g.game_date) as games_vs_opponent,
+            AVG(g.points) as avg_points_vs_opponent
+        FROM pairs p
+        LEFT JOIN `{self.project_id}.nba_analytics.player_game_summary` g
+            ON p.player_lookup = g.player_lookup
+            AND g.opponent_team_abbr = p.opponent
+            AND g.game_date < '{game_date}'
+            AND g.game_date >= DATE_SUB('{game_date}', INTERVAL 3 YEAR)
+        GROUP BY p.player_lookup, p.opponent
+        """
+        result = self.bq_client.query(query).to_dataframe()
+
+        if not result.empty:
+            for record in result.to_dict('records'):
+                key = f"{record['player_lookup']}_{record['opponent']}"
+                self._opponent_history_lookup[key] = record
+
+        logger.debug(f"Batch opponent_history: {len(self._opponent_history_lookup)} player-opponent pairs")
+
+    def _batch_extract_minutes_ppm(self, game_date: date, player_lookups: List[str]) -> None:
+        """
+        Batch extract minutes and points-per-minute for all players.
+
+        Features extracted:
+        - minutes_avg_last_10: Average minutes played (last ~10 games / 30 days)
+        - ppm_avg_last_10: Points per minute (last ~10 games / 30 days)
+
+        Source: player_game_summary (Phase 3)
+        Note: Uses 30-day window as approximation for last 10 games
+
+        These features have HIGH importance in V8 model:
+        - ppm_avg_last_10: 14.6% importance (captures efficiency trends)
+        - minutes_avg_last_10: 10.9% importance (captures coach rotation decisions)
+        """
+        if not player_lookups:
+            return
+
+        query = f"""
+        SELECT
+            player_lookup,
+            AVG(minutes_played) as minutes_avg_last_10,
+            AVG(SAFE_DIVIDE(points, NULLIF(minutes_played, 0))) as ppm_avg_last_10
+        FROM `{self.project_id}.nba_analytics.player_game_summary`
+        WHERE game_date < '{game_date}'
+          AND game_date >= DATE_SUB('{game_date}', INTERVAL 30 DAY)
+          AND minutes_played > 0
+        GROUP BY player_lookup
+        """
+        result = self.bq_client.query(query).to_dataframe()
+
+        if not result.empty:
+            for record in result.to_dict('records'):
+                self._minutes_ppm_lookup[record['player_lookup']] = record
+
+        logger.debug(f"Batch minutes_ppm: {len(self._minutes_ppm_lookup)} players")
+
+    def get_vegas_lines(self, player_lookup: str) -> Dict:
+        """Get cached Vegas lines for a player."""
+        return self._vegas_lines_lookup.get(player_lookup, {})
+
+    def get_opponent_history(self, player_lookup: str, opponent: str) -> Dict:
+        """Get cached opponent history for a player-opponent pair."""
+        key = f"{player_lookup}_{opponent}"
+        return self._opponent_history_lookup.get(key, {})
+
+    def get_minutes_ppm(self, player_lookup: str) -> Dict:
+        """Get cached minutes/PPM data for a player."""
+        return self._minutes_ppm_lookup.get(player_lookup, {})
 
     # ========================================================================
     # PHASE 4 EXTRACTION (PREFERRED)

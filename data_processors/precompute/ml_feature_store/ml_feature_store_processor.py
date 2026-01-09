@@ -59,28 +59,41 @@ from shared.validation.config import BOOTSTRAP_DAYS
 logger = logging.getLogger(__name__)
 
 # Feature version and names
-FEATURE_VERSION = 'v1_baseline_25'
-FEATURE_COUNT = 25
+# v2_33features: Added 8 new features for V8 CatBoost model (Jan 2026)
+# - Vegas lines (4): betting context for value detection
+# - Opponent history (2): player performance vs specific opponent
+# - Minutes/efficiency (2): playing time and scoring rate trends
+FEATURE_VERSION = 'v2_33features'
+FEATURE_COUNT = 33
 
 FEATURE_NAMES = [
     # Recent Performance (0-4)
     'points_avg_last_5', 'points_avg_last_10', 'points_avg_season',
     'points_std_last_10', 'games_in_last_7_days',
-    
+
     # Composite Factors (5-8)
     'fatigue_score', 'shot_zone_mismatch_score', 'pace_score', 'usage_spike_score',
-    
+
     # Derived Factors (9-12)
     'rest_advantage', 'injury_risk', 'recent_trend', 'minutes_change',
-    
+
     # Matchup Context (13-17)
     'opponent_def_rating', 'opponent_pace', 'home_away', 'back_to_back', 'playoff_game',
-    
+
     # Shot Zones (18-21)
     'pct_paint', 'pct_mid_range', 'pct_three', 'pct_free_throw',
-    
+
     # Team Context (22-24)
-    'team_pace', 'team_off_rating', 'team_win_pct'
+    'team_pace', 'team_off_rating', 'team_win_pct',
+
+    # NEW: Vegas Lines (25-28) - V8 Model Features
+    'vegas_points_line', 'vegas_opening_line', 'vegas_line_move', 'has_vegas_line',
+
+    # NEW: Opponent History (29-30) - V8 Model Features
+    'avg_points_vs_opponent', 'games_vs_opponent',
+
+    # NEW: Minutes/Efficiency (31-32) - V8 Model Features (14.6% + 10.9% importance)
+    'minutes_avg_last_10', 'ppm_avg_last_10'
 ]
 
 
@@ -92,17 +105,21 @@ class MLFeatureStoreProcessor(
     PrecomputeProcessorBase
 ):
     """
-    Generate and cache 25 ML features for all active NBA players.
+    Generate and cache 33 ML features for all active NBA players.
 
     This is a Phase 4 processor that:
     1. Checks Phase 4 dependencies (hard requirements)
     2. Queries Phase 4 tables for player data (preferred)
     3. Falls back to Phase 3 if Phase 4 incomplete
     4. Calculates 6 derived features
-    5. Scores feature quality (0-100)
-    6. Writes to nba_predictions.ml_feature_store_v2 in batches
+    5. Extracts 8 V8 model features (Vegas, opponent, minutes/efficiency)
+    6. Scores feature quality (0-100)
+    7. Writes to nba_predictions.ml_feature_store_v2 in batches
 
-    Consumers: All 5 Phase 5 prediction systems
+    v2.0 (Nov 2025): Added v4.0 dependency tracking
+    v3.0 (Jan 2026): Upgraded to 33 features for V8 CatBoost model
+
+    Consumers: All 5 Phase 5 prediction systems (especially CatBoost V8)
     """
     
     # Processor configuration
@@ -921,23 +938,27 @@ class MLFeatureStoreProcessor(
         
         # Extract Phase 3 data (fallback + calculated features)
         phase3_data = self.feature_extractor.extract_phase3_data(player_lookup, game_date)
-        
-        # Generate 25 features
-        features, feature_sources = self._extract_all_features(phase4_data, phase3_data)
-        
+
+        # Generate 33 features (v2_33features for V8 model)
+        features, feature_sources = self._extract_all_features(
+            phase4_data, phase3_data,
+            player_lookup=player_lookup,
+            opponent=opponent_team_abbr
+        )
+
         # Calculate quality score
         quality_score = self.quality_scorer.calculate_quality_score(feature_sources)
         data_source = self.quality_scorer.determine_primary_source(feature_sources)
-        
+
         # Build output record with v4.0 source tracking
         record = {
             'player_lookup': player_lookup,
             'universal_player_id': player_row.get('universal_player_id'),
             'game_date': game_date.isoformat(),
             'game_id': player_row['game_id'],
-            
+
             # Features
-            'features': features,  # List of 25 floats
+            'features': features,  # List of 33 floats (v2_33features)
             'feature_names': FEATURE_NAMES,
             'feature_count': FEATURE_COUNT,
             'feature_version': FEATURE_VERSION,
@@ -1012,17 +1033,20 @@ class MLFeatureStoreProcessor(
 
         return record
     
-    def _extract_all_features(self, phase4_data: Dict, phase3_data: Dict) -> tuple:
+    def _extract_all_features(self, phase4_data: Dict, phase3_data: Dict,
+                               player_lookup: str = None, opponent: str = None) -> tuple:
         """
-        Extract all 25 features with Phase 4 → Phase 3 → Default fallback.
-        
+        Extract all 33 features with Phase 4 → Phase 3 → Default fallback.
+
         Args:
             phase4_data: Dict with Phase 4 table data
             phase3_data: Dict with Phase 3 table data
-            
+            player_lookup: Player identifier (for V8 features)
+            opponent: Opponent team abbreviation (for V8 features)
+
         Returns:
             tuple: (features_list, feature_sources_dict)
-                features_list: List of 25 float values
+                features_list: List of 33 float values
                 feature_sources_dict: Dict mapping feature index to source
         """
         features = []
@@ -1082,7 +1106,53 @@ class MLFeatureStoreProcessor(
         
         features.append(self.feature_calculator.calculate_team_win_pct(phase3_data))
         feature_sources[24] = 'calculated'
-        
+
+        # ============================================================
+        # V8 MODEL FEATURES (25-32) - Added Jan 2026
+        # ============================================================
+
+        # Features 25-28: Vegas Lines
+        vegas_data = self.feature_extractor.get_vegas_lines(player_lookup) if player_lookup else {}
+        fallback_line = phase4_data.get('points_avg_season', phase3_data.get('points_avg_season', 15.0))
+
+        vegas_points_line = vegas_data.get('vegas_points_line', fallback_line)
+        features.append(float(vegas_points_line) if vegas_points_line is not None else float(fallback_line))
+        feature_sources[25] = 'vegas' if vegas_data else 'fallback'
+
+        vegas_opening_line = vegas_data.get('vegas_opening_line', fallback_line)
+        features.append(float(vegas_opening_line) if vegas_opening_line is not None else float(fallback_line))
+        feature_sources[26] = 'vegas' if vegas_data else 'fallback'
+
+        vegas_line_move = vegas_data.get('vegas_line_move', 0.0)
+        features.append(float(vegas_line_move) if vegas_line_move is not None else 0.0)
+        feature_sources[27] = 'vegas' if vegas_data else 'fallback'
+
+        has_vegas_line = vegas_data.get('has_vegas_line', 0.0)
+        features.append(float(has_vegas_line) if has_vegas_line is not None else 0.0)
+        feature_sources[28] = 'vegas' if vegas_data else 'fallback'
+
+        # Features 29-30: Opponent History
+        opponent_data = self.feature_extractor.get_opponent_history(player_lookup, opponent) if player_lookup and opponent else {}
+
+        avg_points_vs_opp = opponent_data.get('avg_points_vs_opponent', fallback_line)
+        features.append(float(avg_points_vs_opp) if avg_points_vs_opp is not None else float(fallback_line))
+        feature_sources[29] = 'opponent_history' if opponent_data else 'fallback'
+
+        games_vs_opp = opponent_data.get('games_vs_opponent', 0.0)
+        features.append(float(games_vs_opp) if games_vs_opp is not None else 0.0)
+        feature_sources[30] = 'opponent_history' if opponent_data else 'fallback'
+
+        # Features 31-32: Minutes/PPM (HIGH IMPORTANCE: 14.6% + 10.9%)
+        minutes_ppm_data = self.feature_extractor.get_minutes_ppm(player_lookup) if player_lookup else {}
+
+        minutes_avg = minutes_ppm_data.get('minutes_avg_last_10', 28.0)
+        features.append(float(minutes_avg) if minutes_avg is not None else 28.0)
+        feature_sources[31] = 'minutes_ppm' if minutes_ppm_data else 'fallback'
+
+        ppm_avg = minutes_ppm_data.get('ppm_avg_last_10', 0.4)
+        features.append(float(ppm_avg) if ppm_avg is not None else 0.4)
+        feature_sources[32] = 'minutes_ppm' if minutes_ppm_data else 'fallback'
+
         return features, feature_sources
     
     def _get_feature_with_fallback(self, index: int, field_name: str, 
