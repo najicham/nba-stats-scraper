@@ -103,7 +103,6 @@ custom_validations:
     expected_sources:
       - espn_nba
       - cbs_nba
-      - rotowire_nba
       - yahoo_nba
     min_sources: 2
     severity: "warning"

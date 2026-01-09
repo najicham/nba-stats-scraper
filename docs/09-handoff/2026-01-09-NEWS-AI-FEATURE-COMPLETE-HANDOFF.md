@@ -54,7 +54,7 @@ This session completed the entire News & AI Analysis feature from testing throug
 │         ▼                                                                │
 │  Cloud Function: news-fetcher                                           │
 │         │                                                                │
-│         ├──▶ RSSFetcher (ESPN, CBS Sports, RotoWire, Yahoo)             │
+│         ├──▶ RSSFetcher (ESPN, CBS Sports, Yahoo Sports)                │
 │         │         │                                                      │
 │         │         ▼                                                      │
 │         │    news_articles_raw (BigQuery)                               │
@@ -316,11 +316,11 @@ All previously pending items have been completed:
 |------|--------|
 | GCS Export Automation | ✅ Integrated into Cloud Function (incremental export) |
 | Headline Regeneration | ✅ Backfilled 100 articles ($0.02) |
-| RotoWire RSS Feeds | ✅ Added (NBA + MLB) |
 | Yahoo Sports RSS Feeds | ✅ Enabled (NBA + MLB) |
 | Sport-specific Paths | ✅ `/player-news/{sport}/` to prevent overwrites |
 | News in Player Profiles | ✅ Integrated into PlayerProfileExporter |
 | Incremental Export | ✅ Only exports players with new articles |
+| RotoWire RSS Feeds | ❌ Discontinued by RotoWire (Jan 2026) |
 
 ---
 
