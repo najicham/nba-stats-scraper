@@ -1,0 +1,81 @@
+{
+  "timestamp": "20260108_205901",
+  "features": [
+    "points_avg_last_5",
+    "points_avg_last_10",
+    "points_avg_season",
+    "points_std_last_10",
+    "games_in_last_7_days",
+    "fatigue_score",
+    "shot_zone_mismatch_score",
+    "pace_score",
+    "usage_spike_score",
+    "rest_advantage",
+    "injury_risk",
+    "recent_trend",
+    "minutes_change",
+    "opponent_def_rating",
+    "opponent_pace",
+    "home_away",
+    "back_to_back",
+    "playoff_game",
+    "pct_paint",
+    "pct_mid_range",
+    "pct_three",
+    "pct_free_throw",
+    "team_pace",
+    "team_off_rating",
+    "team_win_pct",
+    "vegas_points_line",
+    "vegas_opening_line",
+    "vegas_line_move",
+    "has_vegas_line",
+    "avg_points_vs_opponent",
+    "games_vs_opponent"
+  ],
+  "feature_count": 31,
+  "results": {
+    "XGBoost": {
+      "mae": 3.9062438520367957,
+      "vs_v6_pct": 5.64628376722715,
+      "best_iteration": 475
+    },
+    "LightGBM": {
+      "mae": 3.901186873185091,
+      "vs_v6_pct": 5.768433014852869,
+      "best_iteration": 409
+    },
+    "CatBoost": {
+      "mae": 3.8986583533797603,
+      "vs_v6_pct": 5.829508372469551,
+      "best_iteration": 997
+    },
+    "Simple Average": {
+      "mae": 3.8959163402453414,
+      "vs_v6_pct": 5.895740573784017
+    },
+    "Weighted Average": {
+      "mae": 3.895914011314449,
+      "vs_v6_pct": 5.8957968281534034,
+      "weights": [
+        0.3329735070950926,
+        0.33340512958288776,
+        0.33362136332201964
+      ]
+    },
+    "Stacked (Ridge)": {
+      "mae": 3.8809669884687237,
+      "vs_v6_pct": 6.256836027325507,
+      "meta_coefs": [
+        0.5568243600754751,
+        -0.21245822200993345,
+        0.6607265768797292
+      ],
+      "meta_intercept": -0.23103736603459168
+    }
+  },
+  "best_model": "Stacked (Ridge)",
+  "best_mae": 3.8809669884687237,
+  "v6_baseline": 4.14,
+  "mock_baseline": 4.8
+}
