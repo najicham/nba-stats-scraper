@@ -36,6 +36,12 @@ from typing import Dict, List, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
 
+# Import MLB team config for ID to abbreviation fallback
+try:
+    from shared.config.sports.mlb.teams import TEAM_ID_TO_ABBR
+except ImportError:
+    TEAM_ID_TO_ABBR = {}
+
 # Setup logging
 logging.basicConfig(
     level=logging.INFO,
@@ -248,15 +254,21 @@ class MLBDataCollector:
             away_boxscore = boxscore_teams.get('away', {})
             home_boxscore = boxscore_teams.get('home', {})
 
+            # Resolve team abbreviations with fallback to config
+            away_team_id = away_team_info.get('id')
+            home_team_id = home_team_info.get('id')
+            away_abbr = away_team_info.get('abbreviation') or TEAM_ID_TO_ABBR.get(str(away_team_id), 'UNK')
+            home_abbr = home_team_info.get('abbreviation') or TEAM_ID_TO_ABBR.get(str(home_team_id), 'UNK')
+
             return GameData(
                 game_pk=game_pk,
                 game_date=datetime_info.get('originalDate'),
                 game_time_utc=datetime_info.get('dateTime'),
-                away_team_id=away_team_info.get('id'),
-                away_team_abbr=away_team_info.get('abbreviation', 'UNK'),
+                away_team_id=away_team_id,
+                away_team_abbr=away_abbr,
                 away_team_name=away_team_info.get('name', 'Unknown'),
-                home_team_id=home_team_info.get('id'),
-                home_team_abbr=home_team_info.get('abbreviation', 'UNK'),
+                home_team_id=home_team_id,
+                home_team_abbr=home_abbr,
                 home_team_name=home_team_info.get('name', 'Unknown'),
                 venue_name=venue.get('name', 'Unknown'),
                 status_code=status.get('statusCode', 'F'),
