@@ -467,6 +467,84 @@ PYTHONPATH=. .venv/bin/python scripts/backfill_odds_game_lines.py --date YYYY-MM
 
 ---
 
+## News Pipeline Validation
+
+The news fetcher runs every 15 minutes via Cloud Scheduler, fetching RSS feeds, generating AI summaries, and exporting to GCS.
+
+### Quick Health Check
+
+```bash
+# Check recent news-fetcher runs
+gcloud functions logs read news-fetcher --project=nba-props-platform --region=us-west2 --limit=20 \
+  --format="table(time_utc,log)"
+
+# Check for errors in last hour
+gcloud functions logs read news-fetcher --project=nba-props-platform --region=us-west2 --limit=50 \
+  --format="table(time_utc,severity,log)" | grep -E "ERROR|WARNING|partial|failed"
+```
+
+### Verify AI Summaries Being Saved
+
+```bash
+# Check recent insights have AI summaries (should be populated, not NULL)
+bq query --use_legacy_sql=false --format=pretty "
+SELECT
+  article_id,
+  category,
+  SUBSTR(ai_summary, 1, 40) as ai_summary_preview,
+  SUBSTR(headline, 1, 30) as headline_preview,
+  ai_summary_generated_at IS NOT NULL as has_timestamp
+FROM nba-props-platform.nba_analytics.news_insights
+WHERE extracted_at > TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 2 HOUR)
+ORDER BY extracted_at DESC
+LIMIT 10"
+
+# Count summaries vs total (should be ~100% match)
+bq query --use_legacy_sql=false --format=pretty "
+SELECT
+  COUNT(*) as total_insights,
+  COUNTIF(ai_summary IS NOT NULL) as with_ai_summary,
+  COUNTIF(headline IS NOT NULL) as with_headline,
+  ROUND(100.0 * COUNTIF(ai_summary IS NOT NULL) / COUNT(*), 1) as pct_with_summary
+FROM nba-props-platform.nba_analytics.news_insights
+WHERE extracted_at > TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)"
+```
+
+### Verify GCS Exports
+
+```bash
+# Check tonight-summary endpoint
+curl -s "https://storage.googleapis.com/nba-props-platform-api/v1/player-news/nba/tonight-summary.json" | \
+  jq '{updated_at, total_players, critical_count: [.players[] | select(.has_critical_news)] | length}'
+
+# Check a player news file
+curl -s "https://storage.googleapis.com/nba-props-platform-api/v1/player-news/nba/lebronjames.json" | \
+  jq '{player: .player_name, news_count, has_critical_news, updated_at}'
+```
+
+### Red Flags - News Pipeline
+
+| Issue | How to Detect | Fix |
+|-------|--------------|-----|
+| AI summaries NULL | BigQuery query shows `with_ai_summary < total_insights` | Check Anthropic API key, Cloud Function logs |
+| Streaming buffer errors | Logs show "streaming buffer" errors | Fixed in commit 8b051e7 - redeploy if needed |
+| GCS export stale | `updated_at` > 30 min old | Check Cloud Function logs, trigger manually |
+| No new articles | `articles_new: 0` in every run | Normal if no new news; check RSS feeds if prolonged |
+
+### Manual Trigger
+
+```bash
+# Trigger news fetch manually
+gcloud scheduler jobs run news-fetcher --project=nba-props-platform --location=us-west2
+
+# Or call the function directly
+curl -X POST 'https://us-west2-nba-props-platform.cloudfunctions.net/news-fetcher' \
+  -H 'Content-Type: application/json' \
+  -d '{"sports": ["nba"], "generate_summaries": true}'
+```
+
+---
+
 ## Known Observability Gaps
 
 See `docs/07-monitoring/observability-gaps.md` for full details. Key gaps:
@@ -483,4 +561,4 @@ See `docs/07-monitoring/observability-gaps.md` for full details. Key gaps:
 ---
 
 *Created: December 27, 2025*
-*Last Updated: December 27, 2025 (Session 174 - added Firestore, Pub/Sub, DLQ checks)*
+*Last Updated: January 9, 2026 (added News Pipeline Validation section)*
