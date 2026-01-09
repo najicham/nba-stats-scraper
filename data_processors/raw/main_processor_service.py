@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 import base64
 import re
 
-from google.cloud import storage
+from google.cloud import storage, firestore
 
 # Import notification system
 from shared.utils.notification_system import (
@@ -725,74 +725,136 @@ def process_pubsub():
             logger.info(f"📥 Processing file: gs://{bucket}/{file_path}")
 
         # ============================================================
+        # SPECIAL HANDLING: ESPN roster files - BATCH MODE WITH LOCK
+        # Instead of processing each team file individually (30 concurrent writes),
+        # use a Firestore lock to ensure only ONE processor runs the batch.
+        # This eliminates BigQuery serialization conflicts.
+        # ============================================================
+        if 'espn/rosters' in file_path and not file_path.endswith('/'):
+            # Extract date from path: espn/rosters/2026-01-08/team_GS/timestamp.json
+            date_match = re.search(r'espn/rosters/(\d{4}-\d{2}-\d{2})/', file_path)
+            if date_match:
+                roster_date = date_match.group(1)
+                lock_id = f"espn_roster_batch_{roster_date}"
+
+                try:
+                    # Initialize Firestore client
+                    db = firestore.Client()
+                    lock_ref = db.collection('batch_processing_locks').document(lock_id)
+
+                    # Try to create lock document (atomic operation)
+                    # If document already exists, this will raise an exception
+                    lock_data = {
+                        'status': 'processing',
+                        'started_at': datetime.now(timezone.utc),
+                        'trigger_file': file_path,
+                        'execution_id': normalized_message.get('_execution_id', 'unknown')
+                    }
+
+                    # Use create() which fails if document exists
+                    lock_ref.create(lock_data)
+
+                    # We got the lock - run batch processor for ALL teams
+                    logger.info(f"🔒 Acquired batch lock for ESPN rosters {roster_date}, running batch processor...")
+
+                    try:
+                        batch_processor = EspnRosterBatchProcessor()
+                        success = batch_processor.run({
+                            'bucket': bucket,
+                            'project_id': os.environ.get('GCP_PROJECT_ID', 'nba-props-platform'),
+                            'metadata': {'date': roster_date}
+                        })
+
+                        # Update lock with completion status
+                        lock_ref.update({
+                            'status': 'complete' if success else 'failed',
+                            'completed_at': datetime.now(timezone.utc),
+                            'stats': batch_processor.get_processor_stats()
+                        })
+
+                        if success:
+                            logger.info(f"✅ ESPN roster batch complete for {roster_date}")
+                            return jsonify({
+                                "status": "success",
+                                "mode": "batch",
+                                "date": roster_date,
+                                "stats": batch_processor.get_processor_stats()
+                            }), 200
+                        else:
+                            logger.error(f"❌ ESPN roster batch failed for {roster_date}")
+                            return jsonify({
+                                "status": "error",
+                                "mode": "batch",
+                                "date": roster_date
+                            }), 500
+
+                    except Exception as batch_error:
+                        # Update lock with error status
+                        lock_ref.update({
+                            'status': 'error',
+                            'completed_at': datetime.now(timezone.utc),
+                            'error': str(batch_error)
+                        })
+                        raise
+
+                except Exception as lock_error:
+                    # Check if it's an "already exists" error (another processor got the lock)
+                    error_str = str(lock_error)
+                    if 'already exists' in error_str.lower() or 'ALREADY_EXISTS' in error_str:
+                        logger.info(f"🔓 ESPN roster batch for {roster_date} already being processed by another instance, skipping")
+                        return jsonify({
+                            "status": "skipped",
+                            "reason": "batch_already_processing",
+                            "date": roster_date
+                        }), 200
+                    else:
+                        # Some other Firestore error - log and fall through to individual processing
+                        logger.warning(f"⚠️ Failed to acquire batch lock for {roster_date}: {lock_error}")
+                        logger.warning("Falling back to individual file processing")
+                        # Continue to normal processing below
+
+        # ============================================================
         # SPECIAL HANDLING: ESPN roster folder paths
         # The ESPN roster scraper publishes a folder path like:
         #   espn/rosters/2025-12-28/
-        # But individual files are in subfolders:
-        #   espn/rosters/2025-12-28/team_ATL/timestamp.json
-        # We need to iterate over all files and process each one.
+        # Use the batch processor directly for folders too.
         # ============================================================
         if 'espn/rosters' in file_path and file_path.endswith('/'):
-            logger.info(f"🔄 ESPN roster folder detected, listing files...")
+            logger.info(f"🔄 ESPN roster folder detected, using batch processor...")
             try:
-                storage_client = storage.Client()
-                bucket_obj = storage_client.bucket(bucket)
-                blobs = list(bucket_obj.list_blobs(prefix=file_path))
+                # Extract date from folder path: espn/rosters/2025-12-28/
+                date_match = re.search(r'espn/rosters/(\d{4}-\d{2}-\d{2})/', file_path)
+                if date_match:
+                    roster_date = date_match.group(1)
 
-                json_files = [b.name for b in blobs if b.name.endswith('.json')]
-                logger.info(f"Found {len(json_files)} JSON files in {file_path}")
+                    batch_processor = EspnRosterBatchProcessor()
+                    success = batch_processor.run({
+                        'bucket': bucket,
+                        'project_id': os.environ.get('GCP_PROJECT_ID', 'nba-props-platform'),
+                        'metadata': {'date': roster_date}
+                    })
 
-                if not json_files:
-                    logger.warning(f"No JSON files found in folder: {file_path}")
-                    return jsonify({"status": "skipped", "reason": "No files in folder"}), 200
+                    stats = batch_processor.get_processor_stats()
 
-                # Process each file
-                results = {"processed": 0, "failed": 0, "files": []}
-                for json_file in json_files:
-                    try:
-                        opts = extract_opts_from_path(json_file)
-                        opts['bucket'] = bucket
-                        opts['file_path'] = json_file
-                        opts['project_id'] = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
-
-                        # Add trigger context for error notifications
-                        opts['trigger_source'] = normalized_message.get('_original_format', 'unknown')
-                        opts['trigger_message_id'] = pubsub_message.get('messageId', 'N/A')
-                        opts['parent_processor'] = normalized_message.get('_scraper_name', 'N/A')
-                        opts['workflow'] = normalized_message.get('_workflow', 'N/A')
-                        opts['execution_id'] = normalized_message.get('_execution_id', 'N/A')
-
-                        processor = EspnTeamRosterProcessor()
-                        success = processor.run(opts)
-
-                        if success:
-                            results["processed"] += 1
-                            logger.info(f"✅ Processed ESPN roster: {json_file}")
-                        else:
-                            results["failed"] += 1
-                            logger.error(f"❌ Failed to process ESPN roster: {json_file}")
-
-                        results["files"].append({
-                            "file": json_file,
-                            "status": "success" if success else "error"
-                        })
-
-                    except Exception as file_error:
-                        results["failed"] += 1
-                        logger.error(f"❌ Error processing {json_file}: {file_error}")
-                        results["files"].append({
-                            "file": json_file,
+                    if success:
+                        logger.info(f"✅ ESPN roster folder batch complete for {roster_date}: {stats}")
+                        return jsonify({
+                            "status": "success",
+                            "mode": "batch_folder",
+                            "date": roster_date,
+                            "stats": stats
+                        }), 200
+                    else:
+                        logger.error(f"❌ ESPN roster folder batch failed for {roster_date}")
+                        return jsonify({
                             "status": "error",
-                            "error": str(file_error)
-                        })
-
-                logger.info(f"📊 ESPN roster batch: {results['processed']} processed, {results['failed']} failed")
-                return jsonify({
-                    "status": "success" if results["failed"] == 0 else "partial",
-                    "processed": results["processed"],
-                    "failed": results["failed"],
-                    "files": results["files"][:10]  # Limit response size
-                }), 200 if results["failed"] == 0 else 207
+                            "mode": "batch_folder",
+                            "date": roster_date,
+                            "stats": stats
+                        }), 500
+                else:
+                    logger.warning(f"Could not extract date from ESPN roster folder path: {file_path}")
+                    return jsonify({"status": "skipped", "reason": "Could not extract date"}), 200
 
             except Exception as folder_error:
                 logger.error(f"❌ Error processing ESPN roster folder: {folder_error}", exc_info=True)
