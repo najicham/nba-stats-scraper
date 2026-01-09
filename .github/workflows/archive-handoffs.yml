@@ -46,6 +46,8 @@ jobs:
           echo "MOVED_COUNT=$MOVED_COUNT" >> $GITHUB_ENV
 
       - name: Commit and push changes
+        env:
+          MOVED_COUNT: ${{ env.MOVED_COUNT }}
         run: |
           git add docs/09-handoff/
 
@@ -53,13 +55,14 @@ jobs:
           if git diff --staged --quiet; then
             echo "No handoffs to archive this week"
           else
+            ARCHIVE_DATE=$(date +%Y-%m)
             git commit -m "chore: archive handoffs older than 7 days [skip ci]
 
-Automated weekly archival of handoff files.
-Files moved: ${{ env.MOVED_COUNT }}
-Archive location: docs/09-handoff/archive/$(date +%Y-%m)/
+          Automated weekly archival of handoff files.
+          Files moved: ${MOVED_COUNT}
+          Archive location: docs/09-handoff/archive/${ARCHIVE_DATE}/
 
-This keeps the handoff directory clean and focused on current work."
+          This keeps the handoff directory clean and focused on current work."
             git push
             echo "✅ Changes committed and pushed"
           fi
