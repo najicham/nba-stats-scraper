@@ -88,7 +88,8 @@ def create_extra_features_table(client: bigquery.Client):
         GROUP BY f.player_lookup, f.game_date, f.opponent_team_abbr
     ),
 
-    -- Get minutes and PPM history (last 10 games before each game)
+    -- Get minutes and PPM history (last ~10 games before each game)
+    -- Fixed: Use date range to approximate last 10 games (30 days ≈ 10-12 games)
     minutes_history AS (
         SELECT
             f.player_lookup,
@@ -96,19 +97,11 @@ def create_extra_features_table(client: bigquery.Client):
             AVG(g.minutes_played) as minutes_avg_last_10,
             AVG(SAFE_DIVIDE(g.points, NULLIF(g.minutes_played, 0))) as ppm_avg_last_10
         FROM `nba_predictions.ml_feature_store_v2` f
-        LEFT JOIN (
-            SELECT
-                player_lookup,
-                game_date,
-                minutes_played,
-                points,
-                ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY game_date DESC) as rn
-            FROM `nba_analytics.player_game_summary`
-            WHERE minutes_played > 0
-        ) g
+        LEFT JOIN `nba_analytics.player_game_summary` g
             ON f.player_lookup = g.player_lookup
-            AND g.game_date < f.game_date  -- Only games BEFORE current
-            AND g.rn <= 10  -- Last 10 games
+            AND g.game_date < f.game_date  -- Games BEFORE target
+            AND g.game_date >= DATE_SUB(f.game_date, INTERVAL 30 DAY)  -- Last 30 days ≈ 10 games
+            AND g.minutes_played > 0
         GROUP BY f.player_lookup, f.game_date
     )
 
