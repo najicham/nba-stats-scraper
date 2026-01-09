@@ -923,7 +923,7 @@ def normalize_confidence(confidence: float, system_id: str) -> float:
     if system_id in ['moving_average', 'zone_matchup_v1', 'ensemble_v1']:
         # Already 0-1 scale, keep as-is
         return confidence
-    elif system_id in ['similarity_balanced_v1', 'xgboost_v1']:
+    elif system_id in ['similarity_balanced_v1', 'xgboost_v1', 'catboost_v8']:
         # Convert 0-100 to 0-1
         return confidence / 100.0
     else:
