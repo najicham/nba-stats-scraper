@@ -1,8 +1,9 @@
 # News & AI Analysis Feature
 
 **Created:** 2026-01-08
-**Status:** Implemented (Phase 1-3 Complete)
+**Status:** Fully Operational (Phase 1-3 Complete, AI Summaries Generated)
 **Priority:** Active
+**Last Verified:** 2026-01-08
 
 ---
 
@@ -17,8 +18,20 @@ This feature scrapes sports news from RSS feeds, extracts player mentions, links
 | Phase 1 | Complete | RSS fetching from ESPN + CBS Sports |
 | Phase 2 | Complete | Keyword extraction and categorization |
 | Phase 2.5 | Complete | Player registry linking |
-| Phase 3 | Complete | AI summarization with Claude Haiku |
+| Phase 3 | Complete | AI summarization with Claude Haiku (100/100 articles) |
 | Phase 4 | Not Started | ML feature integration |
+
+## Current Data Stats (2026-01-08)
+
+| Table | Records | AI Summaries |
+|-------|---------|--------------|
+| `news_articles_raw` | 100 | N/A |
+| `news_insights` | 100 | 100 (100%) |
+| `news_player_links` | 41 | N/A |
+
+**Categories:** trade (30), signing (21), other (19), preview (11), injury (10), lineup (4), performance (4), recap (1)
+
+**Top Players:** traeyoung (13), anthonydavis (3), giannisantetokounmpo (2), cooperflagg (2), konknueppel (2)
 
 ---
 
@@ -148,9 +161,9 @@ bin/scrapers/
 ### AI Summarization (Claude Haiku)
 - Input: $0.25 per 1M tokens
 - Output: $1.25 per 1M tokens
-- ~200 input + ~80 output tokens per article
-- **~$0.01 per 100 articles**
-- **~$0.30/month for 3000 articles**
+- ~180 input + ~100 output tokens per article (actual observed)
+- **Actual cost: $0.018 for 100 articles** ($0.00018/article)
+- **~$0.54/month for 3000 articles**
 
 ### BigQuery Storage
 - ~$0.10/month
@@ -208,13 +221,40 @@ bin/scrapers/
 - **[DATA-SOURCES-PLAN.md](./DATA-SOURCES-PLAN.md)** - Detailed source planning
 - **[ULTRATHINK-ANALYSIS.md](./ULTRATHINK-ANALYSIS.md)** - Deep analysis of approach
 - **[IMPLEMENTATION-LOG.md](./IMPLEMENTATION-LOG.md)** - Progress tracking
+- **[NEWS_API_REFERENCE.md](../../api/NEWS_API_REFERENCE.md)** - Frontend integration guide
 - `shared/utils/player_registry/ai_resolver.py` - Claude API pattern reference
+
+---
+
+## Deployment
+
+### Cloud Function
+```bash
+# Deploy function and scheduler
+./bin/deploy/deploy_news_fetcher.sh
+
+# Deploy function only
+./bin/deploy/deploy_news_fetcher.sh --function-only
+
+# Deploy scheduler only
+./bin/deploy/deploy_news_fetcher.sh --scheduler-only
+```
+
+### Cloud Scheduler
+- **Job name:** `news-fetcher`
+- **Schedule:** Every 15 minutes (`*/15 * * * *`)
+- **Timezone:** America/New_York
+
+### Manual Trigger
+```bash
+gcloud scheduler jobs run news-fetcher --project=nba-props-platform --location=us-west2
+```
 
 ---
 
 ## Future Enhancements
 
-1. **Scheduled Jobs** - Auto-run news fetching every 15 minutes
+1. **Phase 6 Integration** - Create NewsExporter to publish to website
 2. **ML Integration** - Add news features to prediction models
 3. **More Sources** - RotoWire, The Athletic, Twitter/X
 4. **Real-time Alerts** - Push notifications for injury news
