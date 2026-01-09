@@ -26,10 +26,9 @@ SOURCE_DISPLAY_NAMES = {
     'espn_mlb': 'ESPN',
     'cbs_nba': 'CBS Sports',
     'cbs_mlb': 'CBS Sports',
-    'rotowire_nba': 'RotoWire',
-    'rotowire_mlb': 'RotoWire',
     'yahoo_nba': 'Yahoo Sports',
     'yahoo_mlb': 'Yahoo Sports',
+    # RotoWire disabled - RSS feeds discontinued Jan 2026
 }
 
 # Impact level mapping based on category

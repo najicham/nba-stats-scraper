@@ -91,17 +91,19 @@ DEFAULT_FEEDS = [
         url='https://www.cbssports.com/rss/headlines/mlb/',
         sport='mlb',
     ),
-    # RotoWire Feeds - excellent for injury/lineup news
-    RSSFeedConfig(
-        name='rotowire_nba',
-        url='https://www.rotowire.com/basketball/news.php?format=rss',
-        sport='nba',
-    ),
-    RSSFeedConfig(
-        name='rotowire_mlb',
-        url='https://www.rotowire.com/baseball/news.php?format=rss',
-        sport='mlb',
-    ),
+    # RotoWire Feeds - DISABLED: RSS feeds discontinued as of Jan 2026
+    # RSSFeedConfig(
+    #     name='rotowire_nba',
+    #     url='https://www.rotowire.com/basketball/news.php?format=rss',
+    #     sport='nba',
+    #     enabled=False,
+    # ),
+    # RSSFeedConfig(
+    #     name='rotowire_mlb',
+    #     url='https://www.rotowire.com/baseball/news.php?format=rss',
+    #     sport='mlb',
+    #     enabled=False,
+    # ),
     # Yahoo Sports Feeds
     RSSFeedConfig(
         name='yahoo_nba',
