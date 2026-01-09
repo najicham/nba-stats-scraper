@@ -52,15 +52,20 @@ BETTING_PROPS_TABLE = 'nba_raw.bettingpros_player_points_props'
 PREDICTIONS_TABLE = 'nba_predictions.player_prop_predictions'
 BATCH_SIZE = 500  # Insert batch size
 
-# Feature names in the feature store (must match order)
+# Feature names in the feature store (must match order) - now 33 features
 FEATURE_NAMES = [
+    # Base 25 features
     "points_avg_last_5", "points_avg_last_10", "points_avg_season",
     "points_std_last_10", "games_in_last_7_days", "fatigue_score",
     "shot_zone_mismatch_score", "pace_score", "usage_spike_score",
     "rest_advantage", "injury_risk", "recent_trend", "minutes_change",
     "opponent_def_rating", "opponent_pace", "home_away", "back_to_back",
     "playoff_game", "pct_paint", "pct_mid_range", "pct_three",
-    "pct_free_throw", "team_pace", "team_off_rating", "team_win_pct"
+    "pct_free_throw", "team_pace", "team_off_rating", "team_win_pct",
+    # Extra 8 features (v33)
+    "vegas_points_line", "vegas_opening_line", "vegas_line_move", "has_vegas_line",
+    "avg_points_vs_opponent", "games_vs_opponent",
+    "minutes_avg_last_10", "ppm_avg_last_10"
 ]
 
 
@@ -183,11 +188,18 @@ def run_prediction(
         if betting_line is None:
             betting_line = features.get('points_avg_season', 15.0)
 
-        # Run prediction
+        # Run prediction with all 33 features
         result = model.predict(
             player_lookup=player_data['player_lookup'],
             features=features,
-            betting_line=betting_line
+            betting_line=betting_line,
+            # Pass extra features explicitly (from feature store v33)
+            vegas_line=features.get('vegas_points_line'),
+            vegas_opening=features.get('vegas_opening_line'),
+            opponent_avg=features.get('avg_points_vs_opponent'),
+            games_vs_opponent=int(features.get('games_vs_opponent', 0)),
+            minutes_avg_last_10=features.get('minutes_avg_last_10'),
+            ppm_avg_last_10=features.get('ppm_avg_last_10'),
         )
 
         if result.get('predicted_points') is None:
