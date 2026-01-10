@@ -12,6 +12,7 @@ Monitored DLQ Topics/Subscriptions:
 - nba-phase2-raw-complete-dlq-sub: Phase 2 -> Phase 3 failures
 - analytics-ready-dead-letter-sub: Phase 3 -> Phase 4 failures
 - line-changed-dead-letter-sub: Real-time line change failures
+- prediction-request-dlq-sub: Phase 5 Coordinator -> Prediction Worker failures
 
 Deployment:
     gcloud functions deploy dlq-monitor \
@@ -103,6 +104,14 @@ DLQ_SUBSCRIPTIONS = {
         'phase_to': 'Phase 4 (Real-time Updates)',
         'severity': 'warning',
         'recovery_command': 'Check Phase 4 line processing logs',
+    },
+    # Phase 5: Prediction worker failures
+    'prediction-request-dlq-sub': {
+        'description': 'Prediction Worker Failures',
+        'phase_from': 'Coordinator',
+        'phase_to': 'Prediction Worker',
+        'severity': 'warning',
+        'recovery_command': 'Check prediction_worker_runs for skip_reason, verify feature store for missing players',
     },
 }
 

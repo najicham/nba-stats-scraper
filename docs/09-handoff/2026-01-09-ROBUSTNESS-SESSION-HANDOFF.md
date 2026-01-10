@@ -348,7 +348,7 @@ gcloud run services update shadow-performance-report \
 ### Known Issues
 
 1. **Slack webhook invalid** - Returns 404, need new webhook from Slack
-2. **Retry storm** - `treymurphyiii`, `jaimejaquezjr` missing features for Jan 4
+2. ~~**Retry storm** - `treymurphyiii`, `jaimejaquezjr` missing features for Jan 4~~ **FIXED** - Messages now in DLQ
 3. **Jan 8 feature gap** - No feature store data (verify if games existed)
 
 ---
@@ -372,5 +372,110 @@ orchestration/cloud_functions/shadow_performance_report/requirements.txt (NEW)
 
 1. **Get new Slack webhook URL** - Update both functions
 2. **Monitor shadow performance** - Weekly reports starting next Monday
-3. **Investigate retry storm** - Consider dead-letter queue for `no_features` errors
+3. ~~**Investigate retry storm** - Consider dead-letter queue for `no_features` errors~~ **DONE** (see below)
 4. **Review in 4 weeks** - Check if 88-90 tier should be re-enabled
+
+---
+
+## 2026-01-10 Session: Retry Storm Prevention
+
+### Summary
+
+Implemented two-pronged solution to prevent infinite Pub/Sub retry storms when predictions fail due to permanent issues (like missing features).
+
+### The Problem
+
+The worker returned HTTP 500 for **all** empty predictions, triggering Pub/Sub retries. This worked for transient failures but caused **infinite retry storms** for permanent failures:
+
+```
+Message → Features missing → 500 → Retry → Still missing → 500 → Retry... (7 days)
+```
+
+Players `treymurphyiii` and `jaimejaquezjr` were stuck in this loop since Jan 4.
+
+### Solution Implemented
+
+| Component | Status | Details |
+|-----------|--------|---------|
+| Failure classification | ✅ DEPLOYED | worker.py now distinguishes permanent vs transient failures |
+| DLQ topic | ✅ CREATED | `prediction-request-dlq` |
+| DLQ subscription | ✅ CREATED | `prediction-request-dlq-sub` |
+| Dead-letter policy | ✅ CONFIGURED | Max 5 delivery attempts, then moves to DLQ |
+| DLQ monitoring | ✅ DEPLOYED | Added to `dlq-monitor` Cloud Function |
+
+### How It Works Now
+
+**Permanent failures** (return 204, stop retries):
+- `no_features` - Player not in feature store
+- `player_not_found` - Invalid player lookup
+- `no_prop_lines` - No betting lines scraped
+- `game_not_found` - Game doesn't exist
+- `player_inactive` - Player not playing
+- `no_historical_data` - No historical games
+
+**Transient failures** (return 500, trigger retry):
+- `feature_store_timeout` - Temporary BQ issue
+- `model_load_error` - Model loading failed
+- `bigquery_timeout` - Temporary query timeout
+- `rate_limited` - API rate limit
+- `circuit_breaker_open` - Systems tripped
+
+### Verification
+
+DLQ monitor immediately caught the stuck messages:
+```json
+{
+  "subscription": "prediction-request-dlq-sub",
+  "message_count": 2,
+  "sample_messages": [
+    {"player_lookup": "jaimejaquezjr", "game_date": "2026-01-04", "delivery_count": 5}
+  ]
+}
+```
+
+### Files Modified
+
+```
+predictions/worker/worker.py (+22 lines)
+  - Added PERMANENT_SKIP_REASONS and TRANSIENT_SKIP_REASONS constants
+  - Modified retry logic to classify failures
+
+orchestration/cloud_functions/dlq_monitor/main.py (+8 lines)
+  - Added prediction-request-dlq-sub to monitored DLQs
+
+docs/08-projects/current/pipeline-reliability-improvements/ROBUSTNESS-IMPROVEMENTS.md (+100 lines)
+  - Added Priority 6: Retry Storm Prevention section
+```
+
+### GCP Resources Created
+
+```bash
+# Topic
+gcloud pubsub topics create prediction-request-dlq
+
+# Subscription
+gcloud pubsub subscriptions create prediction-request-dlq-sub \
+    --topic prediction-request-dlq
+
+# Dead-letter policy on main subscription
+gcloud pubsub subscriptions update prediction-request-prod \
+    --dead-letter-topic=projects/nba-props-platform/topics/prediction-request-dlq \
+    --max-delivery-attempts=5
+```
+
+### Recovery Workflow for DLQ Messages
+
+1. Check `prediction_worker_runs` for `skip_reason`
+2. Common causes:
+   - `no_features`: Run feature store backfill for date
+   - `player_not_found`: Fix player lookup mapping
+   - `no_prop_lines`: Props weren't scraped (timing issue)
+3. If resolved, republish message to `prediction-request-prod`
+4. If expected (no games), discard message
+
+### Next Steps (Updated)
+
+1. **Get new Slack webhook URL** - Update both functions
+2. **Monitor shadow performance** - Weekly reports starting next Monday
+3. **Review in 4 weeks** - Check if 88-90 tier should be re-enabled
+4. **Monitor DLQ** - Check prediction-request-dlq-sub periodically
