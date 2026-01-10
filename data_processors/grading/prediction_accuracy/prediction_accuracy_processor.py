@@ -188,16 +188,17 @@ class PredictionAccuracyProcessor:
         Determine if OVER/UNDER recommendation was correct.
 
         Args:
-            recommendation: 'OVER', 'UNDER', 'PASS', or 'HOLD'
+            recommendation: 'OVER', 'UNDER', 'PASS', 'HOLD', or 'NO_LINE'
             line_value: The betting line
             actual_points: Actual points scored
 
         Returns:
             True if correct, False if wrong, None if can't be evaluated
-            (PASS/HOLD recommendations or missing line)
+            (PASS/HOLD/NO_LINE recommendations or missing line)
         """
-        # Can't evaluate PASS or HOLD recommendations
-        if recommendation in ('PASS', 'HOLD', None):
+        # Can't evaluate PASS, HOLD, or NO_LINE recommendations
+        # NO_LINE means there was no real prop line - can't evaluate betting performance
+        if recommendation in ('PASS', 'HOLD', 'NO_LINE', None):
             return None
 
         # Need a line to evaluate against
@@ -283,6 +284,12 @@ class PredictionAccuracyProcessor:
                 return None
             return round(float(val), decimals)
 
+        # Normalize confidence_score to 0-1 range
+        # CatBoost V8 uses 0-100 percentage format, other systems use 0-1
+        normalized_confidence = confidence_score
+        if confidence_score is not None and confidence_score > 1:
+            normalized_confidence = confidence_score / 100.0
+
         return {
             'player_lookup': self._safe_string(prediction['player_lookup']),
             'game_id': self._safe_string(prediction['game_id']),
@@ -295,8 +302,8 @@ class PredictionAccuracyProcessor:
 
             # Prediction snapshot - round for NUMERIC compatibility
             'predicted_points': round_numeric(predicted_points, 2),
-            'confidence_score': round_numeric(confidence_score, 4),
-            'confidence_decile': self.compute_confidence_decile(confidence_score),  # new in v3
+            'confidence_score': round_numeric(normalized_confidence, 4),  # Normalized to 0-1 range
+            'confidence_decile': self.compute_confidence_decile(normalized_confidence),  # new in v3
             'recommendation': self._safe_string(recommendation),
             'line_value': round_numeric(line_value, 2),
 
