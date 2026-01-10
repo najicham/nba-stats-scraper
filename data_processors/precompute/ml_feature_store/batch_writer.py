@@ -204,6 +204,77 @@ class BatchWriter:
 
         return validated
 
+    def _sanitize_row(self, row: Dict) -> Dict:
+        """
+        Sanitize row data to ensure valid JSON serialization.
+
+        Handles:
+        - Control characters in strings
+        - datetime.date objects -> ISO format strings
+        - Decimal objects -> floats
+        - NaN/Inf float values -> None (BigQuery rejects these)
+        - Other non-serializable types
+
+        Args:
+            row: Row dict to sanitize
+
+        Returns:
+            Sanitized row dict
+        """
+        import re
+        import math
+        from decimal import Decimal
+        from datetime import date as date_type, datetime as datetime_type
+
+        # Try to import numpy for handling numpy types
+        try:
+            import numpy as np
+            HAS_NUMPY = True
+        except ImportError:
+            HAS_NUMPY = False
+            np = None
+
+        # Pattern to match control characters except newline, tab, carriage return
+        control_chars = re.compile(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]')
+
+        def sanitize_value(value):
+            """Recursively sanitize a single value."""
+            if value is None:
+                return None
+            # Handle numpy arrays first (convert to list)
+            elif HAS_NUMPY and isinstance(value, np.ndarray):
+                return [sanitize_value(item) for item in value.tolist()]
+            # Handle numpy floating point types
+            elif HAS_NUMPY and isinstance(value, (np.floating, np.integer)):
+                f = float(value)
+                if math.isnan(f) or math.isinf(f):
+                    return None
+                return f
+            elif isinstance(value, str):
+                return control_chars.sub('', value)
+            elif isinstance(value, float):
+                # Handle NaN and Inf which are not valid JSON
+                if math.isnan(value) or math.isinf(value):
+                    return None
+                return value
+            elif isinstance(value, date_type) and not isinstance(value, datetime_type):
+                return value.isoformat()
+            elif isinstance(value, datetime_type):
+                return value.isoformat()
+            elif isinstance(value, Decimal):
+                f = float(value)
+                if math.isnan(f) or math.isinf(f):
+                    return None
+                return f
+            elif isinstance(value, dict):
+                return {k: sanitize_value(v) for k, v in value.items()}
+            elif isinstance(value, (list, tuple)):
+                return [sanitize_value(item) for item in value]
+            else:
+                return value
+
+        return {key: sanitize_value(value) for key, value in row.items()}
+
     def _load_to_temp_table(self, temp_table_id: str, rows: List[Dict],
                            schema: List) -> bool:
         """
@@ -219,8 +290,11 @@ class BatchWriter:
         """
         for attempt in range(self.MAX_RETRIES):
             try:
+                # Sanitize rows to prevent JSON parsing errors
+                sanitized_rows = [self._sanitize_row(row) for row in rows]
+
                 # Convert to NDJSON
-                ndjson_data = "\n".join(json.dumps(row) for row in rows)
+                ndjson_data = "\n".join(json.dumps(row) for row in sanitized_rows)
                 ndjson_bytes = ndjson_data.encode('utf-8')
 
                 # Configure load job with schema enforcement
