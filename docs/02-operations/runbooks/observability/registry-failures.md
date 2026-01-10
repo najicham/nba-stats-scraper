@@ -1,8 +1,8 @@
 # Registry Failures Runbook
 
 **Created:** 2025-12-06
-**Last Updated:** 2025-12-06
-**Status:** Active
+**Last Updated:** 2026-01-10
+**Status:** Active (Updated with auto-reprocessing)
 
 ---
 
@@ -437,15 +437,98 @@ CLUSTER BY player_lookup, processor_name
 
 ---
 
+## Auto-Reprocessing (NEW - Jan 2026)
+
+As of January 2026, the resolution script now includes **auto-reprocessing**:
+
+```bash
+# Full flow: AI resolve + auto-reprocess affected games
+python tools/player_registry/resolve_unresolved_batch.py
+
+# Skip reprocessing (just create aliases)
+python tools/player_registry/resolve_unresolved_batch.py --skip-reprocessing
+
+# Only reprocess (skip AI resolution)
+python tools/player_registry/resolve_unresolved_batch.py --reprocess-only
+```
+
+### What Auto-Reprocessing Does
+
+1. After AI creates aliases, automatically reprocesses affected games
+2. Uses circuit breaker (stops after 5 consecutive failures)
+3. Logs runs to `nba_processing.reprocessing_runs` for observability
+4. Sends alerts if failure rate > 20%
+
+### Monitoring Reprocessing Runs
+
+```bash
+bq query --use_legacy_sql=false "
+SELECT
+  DATE(started_at) as date,
+  run_type,
+  games_attempted,
+  games_succeeded,
+  games_failed,
+  success_rate,
+  circuit_breaker_triggered
+FROM \`nba_processing.reprocessing_runs\`
+WHERE started_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAY)
+ORDER BY started_at DESC"
+```
+
+---
+
+## Backfill Recovery Tool (NEW - Jan 2026)
+
+For historical backfills where players were marked as unresolved but now exist in the registry:
+
+```bash
+# Dry run - see what would be fixed
+python tools/player_registry/recover_backfill_failures.py --dry-run
+
+# Execute recovery (marks resolved, triggers reprocessing)
+python tools/player_registry/recover_backfill_failures.py
+```
+
+---
+
+## Prediction Coverage Monitoring (NEW - Jan 2026)
+
+To identify players with betting lines but no predictions (indicates name resolution issues):
+
+```bash
+# Check yesterday's coverage
+python tools/monitoring/check_prediction_coverage.py --date $(date -d 'yesterday' +%Y-%m-%d)
+
+# Detailed output with individual gaps
+python tools/monitoring/check_prediction_coverage.py --detailed
+
+# Export gaps to CSV
+python tools/monitoring/check_prediction_coverage.py --export gaps.csv
+```
+
+### Gap Reasons
+
+| Reason | Meaning | Action |
+|--------|---------|--------|
+| `NOT_IN_REGISTRY` | Player lookup doesn't exist | Run AI resolution |
+| `NAME_UNRESOLVED` | Player in pending queue | Run AI resolution |
+| `NOT_IN_PLAYER_CONTEXT` | Phase 3 didn't process | Check Phase 3 logs |
+| `NO_FEATURES` | Phase 4 didn't process | Check Phase 4 logs |
+| `LOW_QUALITY_FEATURES` | Feature quality < 50% | May need more history |
+
+---
+
 ## Related Scripts
 
 | Script | Purpose |
 |--------|---------|
-| `tools/player_registry/resolve_unresolved_batch.py` | Create aliases via AI (sets `resolved_at`) |
+| `tools/player_registry/resolve_unresolved_batch.py` | Create aliases via AI (sets `resolved_at`) + auto-reprocess |
 | `tools/player_registry/reprocess_resolved.py` | Reprocess dates (sets `reprocessed_at`) |
-| `monitoring/resolution_health_check.py` | Overall health check |
+| `tools/player_registry/recover_backfill_failures.py` | Recover historical backfill failures |
+| `tools/monitoring/check_prediction_coverage.py` | Check for prediction gaps |
 
 ---
 
-**Last Verified:** 2025-12-06
+**Last Verified:** 2026-01-10
 **Maintained By:** NBA Platform Team

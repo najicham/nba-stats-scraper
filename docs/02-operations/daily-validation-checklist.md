@@ -419,6 +419,63 @@ gcloud run services logs read <SERVICE_NAME> --region=us-west2 --limit=50
 
 ---
 
+## Step 9: Check Player Registry Health (NEW)
+
+### 9.1 Registry Failures Status
+
+```bash
+# Overall registry failure status
+bq query --use_legacy_sql=false "
+SELECT
+  CASE
+    WHEN reprocessed_at IS NOT NULL THEN 'complete'
+    WHEN resolved_at IS NOT NULL THEN 'ready_to_reprocess'
+    ELSE 'pending_resolution'
+  END as status,
+  COUNT(DISTINCT player_lookup) as players,
+  COUNT(*) as total_records
+FROM \`nba_processing.registry_failures\`
+GROUP BY status"
+```
+
+**Expected:** `pending_resolution` should be < 10 players. If > 10, run AI resolution.
+
+### 9.2 Prediction Coverage Check (CRITICAL)
+
+This identifies players with betting lines but no predictions made:
+
+```bash
+# Run prediction coverage check for yesterday
+python tools/monitoring/check_prediction_coverage.py --date $(date -d 'yesterday' +%Y-%m-%d)
+
+# Or for today on game days
+python tools/monitoring/check_prediction_coverage.py --detailed
+```
+
+**What to look for:**
+| Gap Reason | Meaning | Action |
+|------------|---------|--------|
+| `NOT_IN_REGISTRY` | Player not in registry | Run AI resolution |
+| `NAME_UNRESOLVED` | Player in pending queue | Run AI resolution |
+| `NOT_IN_PLAYER_CONTEXT` | Phase 3 didn't process | Check Phase 3 logs |
+| `NO_FEATURES` | Phase 4 didn't process | Check Phase 4 logs |
+
+### 9.3 Quick Fix for Name Resolution Issues
+
+```bash
+# 1. Run AI resolution (creates aliases, auto-reprocesses)
+python tools/player_registry/resolve_unresolved_batch.py
+
+# 2. Or just reprocess already-resolved names
+python tools/player_registry/resolve_unresolved_batch.py --reprocess-only
+
+# 3. Recover backfill failures where player now exists in registry
+python tools/player_registry/recover_backfill_failures.py --dry-run
+python tools/player_registry/recover_backfill_failures.py
+```
+
+---
+
 ## Red Flags - Escalate If:
 
 1. **Multiple phases failing** - Check Cloud Run quotas, IAM
@@ -426,6 +483,7 @@ gcloud run services logs read <SERVICE_NAME> --region=us-west2 --limit=50
 3. **Services unhealthy for > 30 min** - Deployment issue
 4. **Predictions not generating on game days** - Blocks product
 5. **BigQuery permission errors** - IAM misconfiguration
+6. **Prediction coverage < 80%** - Name resolution or processing issue (NEW)
 
 ---
 
