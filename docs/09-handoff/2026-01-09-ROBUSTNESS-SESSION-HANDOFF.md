@@ -171,4 +171,69 @@ examples/monitoring/pipeline_health_queries.sql       (+116 lines)
 orchestration/cloud_functions/prediction_health_alert/main.py (NEW)
 orchestration/cloud_functions/prediction_health_alert/requirements.txt (NEW)
 docs/08-projects/current/pipeline-reliability-improvements/ROBUSTNESS-IMPROVEMENTS.md (updated)
+data_processors/grading/prediction_accuracy/prediction_accuracy_processor.py (fixed)
+docs/08-projects/current/pipeline-reliability-improvements/EVALUATION-METHODOLOGY.md (NEW)
 ```
+
+---
+
+## Evaluation Framework Update (2026-01-09 Evening)
+
+### Critical Finding: Previous Performance Numbers Were Invalid
+
+The previously reported 90%+ hit rates were **INCORRECT** due to:
+1. Historical data used default `line_value = 20` instead of real Vegas props
+2. `NO_LINE` recommendations were incorrectly marked as "correct"
+3. CatBoost V8 was not being graded at all
+
+### Verified CatBoost V8 Performance (REAL Vegas Lines)
+
+| Season | Picks | Wins | Losses | Hit Rate | ROI |
+|--------|-------|------|--------|----------|-----|
+| 2021-22 | 10,643 | 8,137 | 2,500 | **76.5%** | +46.1% |
+| 2022-23 | 10,613 | 8,051 | 2,550 | **75.9%** | +45.1% |
+| 2023-24 | 11,415 | 8,327 | 3,063 | **73.1%** | +39.6% |
+| 2024-25 | 13,373 | 9,893 | 3,428 | **74.3%** | +41.8% |
+| 2025-26 | 1,626 | 1,167 | 454 | **72.0%** | +37.5% |
+
+### Last 4 Weeks Performance (2025-12-12 to 2026-01-09)
+
+```
+Total Picks: 1,626
+Wins: 1,167
+Losses: 454
+Hit Rate: 72.0%
+ROI: +37.5%
+```
+
+### High Confidence (90+) Performance
+
+```
+Picks: 1,192
+Wins: 898
+Losses: 289
+Hit Rate: 75.7%
+ROI: +44.5%
+```
+
+### Fixes Applied
+
+1. **Grading processor** (`prediction_accuracy_processor.py`):
+   - Added `NO_LINE` to non-evaluable recommendations
+   - Normalize confidence scores from 0-100 to 0-1 range
+
+2. **Backfilled grading** for Dec 20, 2025 - Jan 8, 2026
+
+3. **New documentation**: `EVALUATION-METHODOLOGY.md`
+   - Defines two evaluation frameworks (points accuracy vs betting performance)
+   - Query templates for correct evaluation
+   - Data quality notes
+
+### Key Insight: Two Evaluation Frameworks
+
+| Framework | Question | Data Filter |
+|-----------|----------|-------------|
+| Points Accuracy | How well predict points? | ALL predictions |
+| Betting Performance | How often beat Vegas? | `has_prop_line = true` AND `recommendation IN ('OVER', 'UNDER')` |
+
+See `docs/08-projects/current/pipeline-reliability-improvements/EVALUATION-METHODOLOGY.md` for full details.
