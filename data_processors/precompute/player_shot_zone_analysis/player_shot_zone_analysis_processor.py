@@ -309,7 +309,7 @@ def _process_single_player_worker(
             'data_quality_tier': quality_tier,
             'calculation_notes': None,
 
-            'source_player_game_timestamp': opts.get('analysis_date').isoformat() if opts.get('analysis_date') else None,
+            'source_player_game_last_updated': f"{opts.get('analysis_date').isoformat()} 00:00:00" if opts.get('analysis_date') else None,
             'source_player_game_hash': source_hash,
 
             'early_season_flag': False,
