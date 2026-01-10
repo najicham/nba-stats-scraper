@@ -102,7 +102,7 @@ class BestBetsExporter(BaseExporter):
                 COUNT(*) as sample_size,
                 ROUND(AVG(CASE WHEN prediction_correct THEN 1.0 ELSE 0.0 END), 3) as historical_accuracy
             FROM `nba-props-platform.nba_predictions.prediction_accuracy`
-            WHERE system_id = 'ensemble_v1'
+            WHERE system_id = 'catboost_v8'
               AND game_date < @target_date
               AND recommendation IN ('OVER', 'UNDER')
             GROUP BY player_lookup
@@ -145,7 +145,7 @@ class BestBetsExporter(BaseExporter):
             LEFT JOIN player_names pn ON p.player_lookup = pn.player_lookup
             LEFT JOIN fatigue_data f ON p.player_lookup = f.player_lookup
             WHERE p.game_date = @target_date
-              AND p.system_id = 'ensemble_v1'
+              AND p.system_id = 'catboost_v8'
               AND p.recommendation IN ('OVER', 'UNDER')
         ),
         scored AS (

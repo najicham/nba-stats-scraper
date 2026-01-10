@@ -121,7 +121,7 @@ class LiveGradingExporter(BaseExporter):
     def _query_predictions(self, target_date: str) -> List[Dict]:
         """
         Query tonight's predictions from BigQuery.
-        Uses the ensemble_v1 system (production system).
+        Uses the catboost_v8 system (production system).
 
         NOTE: Handles two game_id formats for backward compatibility:
         1. Official NBA format: '0022500441' (nbac_schedule)
@@ -145,7 +145,7 @@ class LiveGradingExporter(BaseExporter):
                 p.line_source
             FROM `nba-props-platform.nba_predictions.player_prop_predictions` p
             WHERE p.game_date = @target_date
-              AND p.system_id = 'ensemble_v1'
+              AND p.system_id = 'catboost_v8'
               AND p.is_active = TRUE
             QUALIFY ROW_NUMBER() OVER (
                 PARTITION BY p.player_lookup
