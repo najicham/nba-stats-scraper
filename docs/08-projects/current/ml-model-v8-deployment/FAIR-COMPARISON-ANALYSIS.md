@@ -1,7 +1,7 @@
 # Analysis: Fair System Comparison
 
 **Date:** 2026-01-10
-**Status:** COMPLETE
+**Status:** COMPLETE - Full Historical Comparison Available
 
 ---
 
@@ -13,20 +13,28 @@ Initial system performance comparison showed misleading pick counts:
 
 This made comparisons appear invalid. Investigation was needed to understand why and produce a fair comparison.
 
+**Resolution:** Phase 5B grading backfill was run on Jan 10, 2026, grading all 485K predictions. Full historical comparison is now available.
+
 ---
 
-## Root Causes Identified
+## Root Causes Identified (Now Resolved)
 
-### 1. Different Time Periods
+### 1. Different Time Periods (FIXED)
 
+**Before Fix:**
 | System | First Graded | Last Graded | Days |
 |--------|--------------|-------------|------|
 | catboost_v8 | 2025-12-20 | 2026-01-07 | 15 |
-| ensemble_v1 | 2024-11-19 | 2026-01-04 | 171 |
-| xgboost_v1 | 2024-11-19 | 2025-06-19 | 158 |
 | Other systems | 2024-11-19 | 2026-01-04 | ~170 |
 
-**Issue:** CatBoost v8 backfill (Jan 8-9, 2026) wrote to `player_prop_predictions` but only 15 days have been graded in `prediction_accuracy`. Old systems have 6 months of graded data.
+**After Fix (Jan 10, 2026):**
+| System | First Graded | Last Graded | Graded Predictions |
+|--------|--------------|-------------|-------------------|
+| catboost_v8 | 2021-11-02 | 2026-01-07 | 116,356 |
+| ensemble_v1 | 2021-11-06 | 2026-01-07 | 101,969 |
+| Other systems | 2021-11-06 | 2026-01-07 | 62K-102K |
+
+**Issue was:** CatBoost v8 backfill (Jan 8-9, 2026) wrote to `player_prop_predictions` but grading (Phase 5B) was never run. Old systems had 6 months of graded data.
 
 ### 2. Different Edge Thresholds (Before Normalization)
 
@@ -98,53 +106,71 @@ ORDER BY win_rate_pct DESC;
 
 ---
 
-## Results: Fair Comparison (Dec 20 - Jan 7, 2026)
+## Results: Full Historical Comparison (2021-11-06 to 2026-01-07)
+
+After running Phase 5B grading backfill, we now have a true apples-to-apples comparison with **comparable pick counts**.
+
+### Final Results (Uniform 1.0 Edge Threshold)
 
 | System | Predictions | Picks | Wins | Win Rate | MAE |
 |--------|-------------|-------|------|----------|-----|
-| **catboost_v8** | 1,998 | 1,602 | 1,150 | **71.8%** | **4.15** |
-| moving_average_baseline_v1 | 1,616 | 1,282 | 763 | 59.5% | 5.02 |
-| ensemble_v1 | 1,686 | 1,285 | 743 | 57.8% | 5.08 |
-| zone_matchup_v1 | 1,686 | 1,490 | 793 | 53.2% | 6.49 |
-| similarity_balanced_v1 | 1,210 | 886 | 447 | 50.5% | 5.69 |
-| moving_average | 70 | 56 | 27 | 48.2% | 5.01 |
+| **catboost_v8** | 61,220 | 47,995 | 35,689 | **74.4%** | **4.00** |
+| moving_average_baseline_v1 | 55,539 | 45,132 | 26,931 | 59.7% | 5.00 |
+| ensemble_v1 | 55,610 | 39,617 | 23,217 | 58.6% | 5.03 |
+| zone_matchup_v1 | 55,610 | 48,838 | 25,060 | 51.3% | 6.64 |
+| similarity_balanced_v1 | 36,833 | 26,165 | 13,303 | 50.8% | 5.41 |
 
 **Note:** xgboost_v1 not included - stopped generating predictions in June 2025.
+
+### Previous Limited Comparison (Dec 20 - Jan 7, 2026 only)
+
+| System | Picks | Win Rate | MAE |
+|--------|-------|----------|-----|
+| catboost_v8 | 1,602 | 71.8% | 4.15 |
+| moving_average_baseline_v1 | 1,282 | 59.5% | 5.02 |
+| ensemble_v1 | 1,285 | 57.8% | 5.08 |
 
 ---
 
 ## Key Insights
 
 ### 1. Pick Counts Are Now Comparable
-With same date range, picks are 1,282-1,602 (not 1,500 vs 50,000).
+With full grading backfill, picks are 26K-49K for each system (not 1,500 vs 50,000).
 
 ### 2. CatBoost V8 Decisively Outperforms
-- **Win rate:** 71.8% vs 59.5% (12.3 percentage points better than second place)
-- **MAE:** 4.15 vs 5.02 (17% lower error than second place)
+- **Win rate:** 74.4% vs 59.7% (**14.7 percentage points better** than second place)
+- **MAE:** 4.00 vs 5.00 (20% lower error than second place)
+- **35,689 wins** on 47,995 picks - massive sample size
 
-### 3. All Old Systems Beat 50% (Barely)
-With uniform threshold, old systems range from 48.2% to 59.5% - better than random but not profitable after vig.
+### 3. Old Systems Are Marginally Better Than Random
+With uniform threshold, old systems range from 50.8% to 59.7% - some profitable, most not after vig.
 
-### 4. CatBoost V8 Is Profitable
-At 71.8% win rate, catboost_v8 is profitable even with standard -110 juice (break-even ~52.4%).
+### 4. CatBoost V8 Is Highly Profitable
+At 74.4% win rate, catboost_v8 is extremely profitable with standard -110 juice (break-even ~52.4%).
+Expected profit: ~22% ROI on each bet.
 
 ---
 
 ## Recommendations
 
-### Immediate Actions
+### Completed Actions
 
-1. **Keep catboost_v8 as production system** - Clearly the best performer
-2. **Grade backfilled predictions** - Run grading job on historical catboost_v8 predictions to get more comparison data
-3. **Filter old systems from reports** - They add noise without value
+1. ✅ **Keep catboost_v8 as production system** - Clearly the best performer (74.4% win rate)
+2. ✅ **Grade backfilled predictions** - Completed Jan 10, 2026 (485K predictions graded)
+3. ✅ **Document grading steps** - Added to CHAMPION-CHALLENGER-FRAMEWORK.md
+
+### Remaining Actions
+
+1. **Filter old systems from reports** - They add noise without value (optional)
+2. **Deploy system_performance_alert** - Monitor champion vs challengers
 
 ### Future Comparisons
 
 When comparing systems, always:
-1. Use the same date range for all systems
-2. Apply uniform edge thresholds
-3. Filter to real Vegas lines only (`has_prop_line = TRUE`)
-4. Note the sample size (15 days is limited)
+1. Run Phase 5B grading backfill after prediction backfill
+2. Use the same date range for all systems
+3. Apply uniform edge thresholds
+4. Filter to real Vegas lines only (`has_prop_line = TRUE`)
 
 ### Data Cleanup Options
 
