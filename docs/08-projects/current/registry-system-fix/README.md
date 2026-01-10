@@ -1,172 +1,136 @@
 # Registry System Fix Project
 
 **Date Started:** 2026-01-10
-**Status:** In Progress
+**Last Updated:** 2026-01-10
+**Status:** In Progress (Phase 2)
 **Priority:** Critical
 
 ## Problem Statement
 
-The player name registry system was not functioning properly:
-- 2,099 names stuck in "pending" status since October 2025
-- AI resolver never being called automatically
-- Registry not being updated
-- No automation for name resolution
+The player name registry system had multiple issues preventing proper player identification:
 
-## Root Cause
+1. **2,099 names stuck in "pending"** since October 2025 - AI resolver never called
+2. **Reprocessing completely broken** - `process_single_game()` method didn't exist
+3. **Inconsistent name normalization** - 10+ scrapers with different implementations
+4. **No automatic recovery** - Manual intervention required at every step
 
-The system design was sound, but **operational gaps** existed:
-1. AI resolver existed but was never triggered automatically
-2. No Cloud Scheduler jobs for registry updates
-3. Cache lookup not integrated into main resolver flow
+## Project Phases
 
-## Changes Made
+| Phase | Status | Description |
+|-------|--------|-------------|
+| Phase 1: AI Resolution | ✅ Complete | Batch resolve pending names, add cache lookup |
+| Phase 2: Reprocessing | ✅ Complete | Implement `process_single_game()` method |
+| Phase 3: Automation | 🔄 In Progress | Auto-trigger reprocessing after resolution |
+| Phase 4: Standardization | 📋 Planned | Standardize all scraper normalization |
 
-### 1. Batch AI Resolution (Completed)
-- Ran `tools/player_registry/resolve_unresolved_batch.py`
-- Processed 142 pending names
-- Created 32 new aliases
-- Total cost: $0.014 (~1.4 cents)
+## Changes Made (This Session)
 
-**Result:** All 2,816 unresolved names now resolved (2 snoozed)
+### 1. Implemented `process_single_game()` (CRITICAL FIX)
 
-### 2. Cache Lookup Integration (Completed)
-**File:** `shared/utils/player_name_resolver.py`
+**File:** `data_processors/analytics/player_game_summary/player_game_summary_processor.py`
 
-Added cache lookup to `handle_player_name()` method:
-- After alias/registry lookup fails
-- Checks AI resolution cache for prior MATCH decisions
-- Auto-creates alias on cache hit
-- Returns resolved name immediately
+The reprocessing tool was calling a method that **didn't exist**, causing all reprocessing attempts to fail silently with `AttributeError`.
 
-```python
-# New flow in handle_player_name():
-# 1. Try alias resolution
-# 2. Validate against registry
-# 3. Check AI resolution cache  <-- NEW
-# 4. If cache hit with MATCH -> create alias, return resolved name
-# 5. If cache miss -> add to unresolved queue, return None
-```
+**Added:**
+- `process_single_game(game_id, game_date, season)` - Main entry point
+- `_extract_single_game_data()` - Parameterized query for single game
+- `_save_single_game_records()` - Atomic MERGE upsert
 
-### 3. Reprocessing Tool Bug (Needs Fix)
+**Commit:** `56cf1a7` - feat(registry): Implement process_single_game() for reprocessing
+
+### 2. Fixed Date Conversion in Reprocessing Tool
+
 **File:** `tools/player_registry/reprocess_resolved.py`
 
-The tool references a non-existent table `nba_raw.game_boxscores`. Should use:
-- `nba_raw.bdl_player_boxscores` or
-- `nba_raw.nbac_player_boxscores`
+Fixed `reprocess_game()` to convert date object to string before passing to processor.
 
-### 4. Automation (Pending)
-Need to add Cloud Scheduler jobs for:
-- Nightly AI resolution (4:30 AM ET)
-- Nightly reprocessing (5:00 AM ET)
+### 3. Enhanced Cache Handling (Previous Session)
 
-## Current State
+**File:** `shared/utils/player_name_resolver.py`
 
-### Registry Failures by Season
-| Season | Total Failures | Resolved | Reprocessed |
-|--------|---------------|----------|-------------|
-| 2021-22 | 121 | 0 | 0 |
-| 2022-23 | 256 | 6 | 0 |
-| 2023-24 | 139 | 0 | 0 |
-| 2024-25 | 395 | 0 | 0 |
-| 2025-26 | 3,364 | 2,132 | 0 |
+- Added `DATA_ERROR` cache hit handling (skip re-queuing known bad names)
+- Added alias creation failure handling with warning log
+- Added comprehensive unit tests (11 tests)
 
-### What Happens Now (After Cache Integration)
+**Commit:** `e5225b2` - fix(registry): Improve cache handling and add comprehensive tests
 
-**Scenario: Morning roster processing encounters unknown name**
-
-1. `handle_player_name("T.J. McConnell", "espn", {...})` called
-2. Alias lookup: Not found (no alias yet)
-3. Registry check: Not found (name variant)
-4. **NEW: Cache check**:
-   - If cached MATCH exists: Create alias, return resolved name
-   - If no cache: Add to unresolved queue, return None
-5. Analytics processor records failure to `registry_failures` table
-
-**Scenario: Same name encountered again (after AI batch ran)**
-
-1. `handle_player_name("T.J. McConnell", ...)` called
-2. Alias lookup: FOUND (created by cache lookup or AI batch)
-3. Return resolved name immediately
-
-## How Resolution Works End-to-End
+## Current Architecture
 
 ```
-Player name from data source
-        |
-        v
-handle_player_name()
-        |
-        +---> Alias lookup -----> FOUND? ---> Return resolved name
-        |
-        +---> Registry check ---> VALID? ---> Return name
-        |
-        +---> Cache lookup ------> MATCH? ---> Create alias, return resolved
-        |
-        v
-Add to unresolved_player_names (status='pending')
-Add to registry_failures
-Return None (processor handles failure)
-        |
-        v
-[Nightly Batch]
-resolve_unresolved_batch.py
-        |
-        +---> AI resolver calls Claude API
-        +---> Creates aliases for MATCH decisions
-        +---> Caches all decisions
-        +---> Marks failures as resolved
-        |
-        v
-[Next Processing Cycle]
-        |
-        +---> Alias lookup now finds the name
-        +---> OR cache lookup finds MATCH decision
-        |
-        v
-Name resolution succeeds!
+Phase 2 Raw Data (scrapers)
+    ↓ player names with varying formats
+Phase 3 Analytics (processors)
+    ↓ names resolved via registry/alias/cache
+    ↓ failures → registry_failures table
+    ↓
+[4:30 AM] AI Batch Resolution
+    ↓ creates aliases, caches decisions
+    ↓ marks registry_failures.resolved_at
+    ↓
+[MANUAL] Reprocessing ← NOW WORKS!
+    ↓ process_single_game() re-runs failed games
+    ↓ marks registry_failures.reprocessed_at
+    ↓
+Data Complete in player_game_summary
 ```
 
-## Automation Added
+## Known Gaps (Prioritized)
 
-### Cloud Scheduler Jobs
+| Priority | Gap | Impact | Status |
+|----------|-----|--------|--------|
+| HIGH | No auto-reprocessing after alias creation | Data stays incomplete until manual run | Planned |
+| HIGH | Manual alias creation doesn't update registry_failures | Orphaned records | Planned |
+| MEDIUM | Inconsistent normalization in scrapers | Name mismatches possible | Documented |
+| LOW | No AI cache TTL | Bad decisions persist | Monitoring needed |
+| LOW | No automatic health alerts | Silent failures | Planned |
 
-Created script: `bin/orchestration/add_registry_scheduler_jobs.sh`
+## Files Modified (All Sessions)
 
-| Job | Schedule | Endpoint | Purpose |
-|-----|----------|----------|---------|
-| `registry-ai-resolution` | 4:30 AM ET | `/resolve-pending` | Nightly AI resolution of pending names |
-| `registry-health-check` | 5:00 AM ET | `/health-check` | Daily health check with alerts |
+| File | Change | Commit |
+|------|--------|--------|
+| `player_game_summary_processor.py` | Added `process_single_game()` method | `56cf1a7` |
+| `reprocess_resolved.py` | Fixed date conversion, table reference | `56cf1a7` |
+| `player_name_resolver.py` | Added cache lookup + DATA_ERROR handling | `e5225b2` |
+| `test_player_name_resolver.py` | 11 comprehensive unit tests | `e5225b2` |
+| `main_reference_service.py` | Added /resolve-pending, /health-check | `174c33d` |
+| `add_registry_scheduler_jobs.sh` | Cloud Scheduler setup script | `174c33d` |
 
-### Reference Service Endpoints Added
+## Documentation
 
-**POST /resolve-pending**
-- Runs AI batch resolution on pending unresolved names
-- Optional params: `limit`, `dry_run`
-- Sends error notifications on failure
+| Document | Purpose |
+|----------|---------|
+| [01-investigation-findings.md](./01-investigation-findings.md) | Complete analysis of all scrapers and failure scenarios |
+| [02-implementation-plan.md](./02-implementation-plan.md) | Prioritized implementation plan |
+| [03-data-flow.md](./03-data-flow.md) | How names flow through the system |
+| [04-gaps-and-risks.md](./04-gaps-and-risks.md) | Known issues and mitigation strategies |
 
-**POST|GET /health-check**
-- Runs full health check
-- Sends CRITICAL/WARNING alerts based on status
-- Returns metrics on pending names, resolution rate, etc.
+## Testing the Fix
+
+```bash
+# Verify process_single_game exists
+python -c "
+from data_processors.analytics.player_game_summary.player_game_summary_processor import PlayerGameSummaryProcessor
+p = PlayerGameSummaryProcessor()
+print('Method exists:', hasattr(p, 'process_single_game'))
+"
+
+# Dry run reprocessing
+python tools/player_registry/reprocess_resolved.py --resolved-since 2025-01-01 --dry-run
+
+# Actually reprocess
+python tools/player_registry/reprocess_resolved.py --resolved-since 2025-01-01
+```
 
 ## Remaining Work
 
-1. **Process older seasons** - 911 failures from 2021-2024 seasons need aliases
-2. **Deploy reference service** - Service needs to be deployed to Cloud Run
-3. **Run scheduler setup** - After deployment, run `add_registry_scheduler_jobs.sh`
-
-## Files Modified
-
-| File | Change |
-|------|--------|
-| `shared/utils/player_name_resolver.py` | Added cache lookup + auto-alias creation |
-| `tools/player_registry/reprocess_resolved.py` | Fixed table reference (game_boxscores → bdl_player_boxscores) |
-| `data_processors/reference/main_reference_service.py` | Added /resolve-pending and /health-check endpoints |
-| `bin/orchestration/add_registry_scheduler_jobs.sh` | New script for Cloud Scheduler setup |
-| `shared/utils/tests/test_player_name_resolver.py` | New unit tests for cache lookup |
+1. **Deploy reference service** with new endpoints
+2. **Run scheduler setup**: `./bin/orchestration/add_registry_scheduler_jobs.sh`
+3. **Implement auto-reprocessing** trigger after AI resolution
+4. **Process older seasons** (911 failures from 2021-2024)
+5. **Standardize scraper normalization** (10+ files need updates)
 
 ## Related Documentation
 
-- `/docs/06-reference/player-registry.md` - Registry system reference
-- `/docs/02-operations/runbooks/observability/registry-failures.md` - Failure monitoring
-- `/docs/02-operations/backfill/runbooks/name-resolution.md` - Name resolution backfill guide
+- [Player Registry Reference](/docs/06-reference/player-registry.md)
+- [Registry Failures Runbook](/docs/02-operations/runbooks/observability/registry-failures.md)
+- [Name Resolution Backfill Guide](/docs/02-operations/backfill/runbooks/name-resolution.md)
