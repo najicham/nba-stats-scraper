@@ -473,7 +473,8 @@ class RegistryReader:
         try:
             self.get_universal_id(player_lookup, required=False)
             return True
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Player lookup check failed for '{player_lookup}': {e}")
             return False
     
     # =========================================================================

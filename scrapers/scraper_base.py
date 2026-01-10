@@ -668,9 +668,10 @@ class ScraperBase:
             # Still capture in Sentry for alerting
             try:
                 sentry_sdk.capture_exception(e)
-            except Exception:
-                # Sentry SDK not initialized or network error - safe to ignore
-                pass
+            except ImportError:
+                logger.debug("Sentry SDK not installed, skipping exception capture")
+            except Exception as sentry_error:
+                logger.debug(f"Sentry capture failed (non-critical): {sentry_error}")
 
     def _log_failed_execution_to_bigquery(self, error: Exception):
         """
@@ -732,9 +733,10 @@ class ScraperBase:
             # Still capture in Sentry
             try:
                 sentry_sdk.capture_exception(e)
-            except Exception:
-                # Sentry SDK not initialized or network error - safe to ignore
-                pass
+            except ImportError:
+                logger.debug("Sentry SDK not installed, skipping exception capture")
+            except Exception as sentry_error:
+                logger.debug(f"Sentry capture failed (non-critical): {sentry_error}")
 
     ##########################################################################
     # Layer 1: Scraper Output Validation (NEW)
@@ -981,9 +983,10 @@ class ScraperBase:
             # Still capture in Sentry for alerting
             try:
                 sentry_sdk.capture_exception(e)
-            except Exception:
-                # Sentry SDK not initialized or network error - safe to ignore
-                pass
+            except ImportError:
+                logger.debug("Sentry SDK not installed, skipping exception capture")
+            except Exception as sentry_error:
+                logger.debug(f"Sentry capture failed (non-critical): {sentry_error}")
 
     def _publish_failed_event_to_pubsub(self, error: Exception):
         """

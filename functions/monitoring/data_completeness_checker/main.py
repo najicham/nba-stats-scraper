@@ -552,8 +552,9 @@ def check_completeness(request):
 
         try:
             log_check_result(bq_client, check_id, 0, False, duration_sec, status="error")
-        except:
-            pass
+        except Exception as log_error:
+            # Don't mask the original error - just log the secondary failure
+            logger.debug(f"Failed to log check result to BigQuery: {log_error}")
 
         return {
             'status': 'error',

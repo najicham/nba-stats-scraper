@@ -13,6 +13,7 @@ import json
 import logging
 from typing import Optional, Dict, List
 from google.cloud import bigquery
+import google.api_core.exceptions
 from datetime import datetime
 from dataclasses import asdict
 
@@ -80,10 +81,12 @@ class ResolutionCache:
         """Create the cache table if it doesn't exist."""
         try:
             self.client.get_table(self.table_id)
-        except Exception:
+        except google.api_core.exceptions.NotFound:
             logger.info(f"Creating cache table: {self.table_id}")
             table = bigquery.Table(self.table_id, schema=self.TABLE_SCHEMA)
             self.client.create_table(table, exists_ok=True)
+        except Exception as e:
+            logger.warning(f"Could not check/create table {self.table_id}: {e}")
 
     def get_cached(self, unresolved_lookup: str) -> Optional[AIResolution]:
         """
