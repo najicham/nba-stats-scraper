@@ -674,21 +674,25 @@ class UpcomingPlayerGameContextProcessor(
             UNION DISTINCT
             SELECT DISTINCT away_team_abbr as team_abbr FROM games_today
         ),
-        latest_roster AS (
-            -- Find the most recent roster within partition range
-            SELECT MAX(roster_date) as roster_date
+        latest_roster_per_team AS (
+            -- Find the most recent roster PER TEAM within partition range
+            -- FIX: Previous query found global MAX, but different teams may have different latest dates
+            SELECT team_abbr, MAX(roster_date) as roster_date
             FROM `{self.project_id}.nba_raw.espn_team_rosters`
             WHERE roster_date >= '{roster_start}'
               AND roster_date <= '{roster_end}'
+            GROUP BY team_abbr
         ),
         roster_players AS (
             -- Get all players from rosters of teams playing today
-            -- Using date range for partition elimination, then filter to latest
+            -- Using date range for partition elimination, then filter to latest per team
             SELECT DISTINCT
                 r.player_lookup,
                 r.team_abbr
             FROM `{self.project_id}.nba_raw.espn_team_rosters` r
-            INNER JOIN latest_roster lr ON r.roster_date = lr.roster_date
+            INNER JOIN latest_roster_per_team lr
+                ON r.team_abbr = lr.team_abbr
+                AND r.roster_date = lr.roster_date
             WHERE r.roster_date >= '{roster_start}'
               AND r.roster_date <= '{roster_end}'
               AND r.team_abbr IN (SELECT team_abbr FROM teams_playing)
@@ -1823,8 +1827,11 @@ class UpcomingPlayerGameContextProcessor(
                 completeness_l30d['is_production_ready']
             )
 
+            # RECOVERY MODE: Skip completeness checks via environment variable
+            skip_completeness = os.environ.get('SKIP_COMPLETENESS_CHECK', 'false').lower() == 'true'
+
             # Allow processing during bootstrap mode OR season boundary (early season dates)
-            if not all_windows_ready and not is_bootstrap and not is_season_boundary:
+            if not all_windows_ready and not is_bootstrap and not is_season_boundary and not skip_completeness:
                 # Calculate average completeness across all windows
                 avg_completeness = (
                     completeness_l5['completeness_pct'] +
@@ -1920,8 +1927,11 @@ class UpcomingPlayerGameContextProcessor(
                     completeness_l30d['is_production_ready']
                 )
 
+                # RECOVERY MODE: Skip completeness checks via environment variable
+                skip_completeness = os.environ.get('SKIP_COMPLETENESS_CHECK', 'false').lower() == 'true'
+
                 # Allow processing during bootstrap mode OR season boundary (early season dates)
-                if not all_windows_ready and not is_bootstrap and not is_season_boundary:
+                if not all_windows_ready and not is_bootstrap and not is_season_boundary and not skip_completeness:
                     # Calculate average completeness across all windows
                     avg_completeness = (
                         completeness_l5['completeness_pct'] +

@@ -317,7 +317,7 @@ class MasterWorkflowController:
         
         # Check timing
         current_hour = current_time.hour
-        
+
         if current_hour < ideal_start:
             return WorkflowDecision(
                 action=DecisionAction.SKIP,
@@ -326,7 +326,18 @@ class MasterWorkflowController:
                 priority=config['priority'],
                 next_check_time=current_time.replace(hour=ideal_start, minute=0)
             )
-        
+
+        if current_hour > ideal_end:
+            # Too late - schedule for tomorrow morning
+            tomorrow = current_time + timedelta(days=1)
+            return WorkflowDecision(
+                action=DecisionAction.SKIP,
+                reason=f"Too late (ideal window: {ideal_start}-{ideal_end} ET)",
+                workflow_name=workflow_name,
+                priority=config['priority'],
+                next_check_time=tomorrow.replace(hour=ideal_start, minute=0)
+            )
+
         # Extract scrapers from execution plan
         scrapers = self._extract_scrapers_from_plan(config['execution_plan'])
         
