@@ -130,11 +130,15 @@ def bettingpros_headers() -> dict:
     """
     Headers for BettingPros API endpoints.
     Based on observed browser patterns for api.bettingpros.com requests.
+
+    NOTE: Removed 'br' (Brotli) from Accept-Encoding because the brotli
+    package is not installed. Without it, requests can't decompress Brotli
+    responses, causing JSON decode failures. (Fixed 2026-01-10)
     """
     base = {
         "User-Agent": _ua(),
         "Accept": "application/json, text/plain, */*",
-        "Accept-Encoding": "gzip, deflate, br",
+        "Accept-Encoding": "gzip, deflate",  # No 'br' - brotli package not installed
         "Accept-Language": "en-US,en;q=0.9",
         "Cache-Control": "no-cache",
         "Origin": "https://www.bettingpros.com",
