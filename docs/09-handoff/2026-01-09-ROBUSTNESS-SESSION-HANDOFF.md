@@ -237,3 +237,140 @@ ROI: +44.5%
 | Betting Performance | How often beat Vegas? | `has_prop_line = true` AND `recommendation IN ('OVER', 'UNDER')` |
 
 See `docs/08-projects/current/pipeline-reliability-improvements/EVALUATION-METHODOLOGY.md` for full details.
+
+---
+
+## 2026-01-10 Session: Confidence Tier Filtering & Monitoring
+
+### Summary
+
+Implemented filtering for underperforming 88-90 confidence tier with shadow tracking and automated weekly Slack reports.
+
+### Commits Made
+
+```
+c17b2e5 feat(monitoring): Add weekly shadow performance Slack report
+5a20ed7 feat(filtering): Implement 88-90 confidence tier filtering with shadow tracking
+```
+
+---
+
+### 88-90 Confidence Tier Analysis
+
+**Finding:** The 88-90% confidence tier consistently underperforms:
+
+| Season | 90+ Tier | 88-90 Tier | 86-88 Tier |
+|--------|----------|------------|------------|
+| 2021-22 | 77.4% | 63.7% | 77.1% |
+| 2022-23 | 76.0% | 67.2% | 77.5% |
+| 2023-24 | 73.9% | 60.0% | 72.5% |
+| 2024-25 | 76.1% | 59.7% | 72.1% |
+| 2025-26 | 75.7% | **46.4%** | 69.6% |
+
+The 88-90 tier is now **below breakeven** (need 52.4% at -110 juice).
+
+### Implementation
+
+| Component | Status | Details |
+|-----------|--------|---------|
+| Schema changes | ✅ | Added `is_actionable` (BOOL), `filter_reason` (STRING) to both tables |
+| worker.py | ✅ | Filters 88-90 tier, preserves original recommendation |
+| batch_staging_writer.py | ✅ | Includes new columns in MERGE |
+| Grading processor | ✅ | Passes through filtering fields |
+| Health alert | ✅ | Added filtered ratio check (warns if >20%) |
+| Shadow view | ✅ | `v_shadow_performance` for monitoring |
+| Backfill | ✅ | 121,596 predictions + 3,219 graded records |
+
+### Key Design Decisions
+
+1. **Original recommendation preserved** - OVER/UNDER not changed to PASS
+2. **Filtered picks still graded** - Shadow performance tracking
+3. **Easy rollback** - Single SQL UPDATE or code comment
+4. **Re-enable criteria** - 70%+ hit rate for 3 consecutive months, 200+ picks/month
+
+### Verification Results
+
+```
+Actionable (is_actionable=true): 107,633 picks, 73.7% hit rate
+Filtered (88-90 tier):           13,963 picks, 45.7% hit rate
+```
+
+---
+
+### Weekly Shadow Report Automation
+
+Created Cloud Function for automated monitoring:
+
+| Component | Status | Details |
+|-----------|--------|---------|
+| Function | ✅ DEPLOYED | `shadow-performance-report` |
+| Scheduler | ✅ CREATED | Monday 9 AM ET |
+| Slack webhook | ⚠️ PENDING | Webhook returns 404, needs new URL |
+
+**Function URL:** `https://us-west2-nba-props-platform.cloudfunctions.net/shadow-performance-report`
+
+**Report includes:**
+- This week's hit rate + trend arrow
+- Weekly breakdown (last 4 weeks)
+- Comparison to active 90+ tier
+- Re-enable criteria check
+
+**To update Slack webhook:**
+```bash
+gcloud run services update shadow-performance-report \
+    --region us-west2 \
+    --update-env-vars SLACK_WEBHOOK_URL="YOUR_NEW_WEBHOOK_URL"
+```
+
+---
+
+### System Health Check (2026-01-10 Evening)
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| Prediction Worker | ⚠️ | Working, retry storm for 2 missing players |
+| CatBoost Model | ✅ | Loading correctly, no fallback warnings |
+| Predictions Pipeline | ✅ | 144 predictions today, 32 actionable |
+| Grading Pipeline | ✅ | Current through Jan 7, 65-72% hit rate |
+| Cloud Functions | ✅ | All 3 ACTIVE |
+| Scheduler Jobs | ✅ | All ENABLED |
+| Slack Alerts | ❌ | Webhook not working (404) |
+
+**Recent Performance by Confidence Tier:**
+
+| Date | 90+ (High) | 85-90 | 88-90 (Filtered) |
+|------|------------|-------|------------------|
+| Jan 7 | 75.3% (93) | 47.2% (36) | 75.0% (8) |
+| Jan 5 | 71.2% (66) | 72.0% (25) | 75.0% (4) |
+| Jan 4 | 78.4% (51) | 35.7% (14) | 40.0% (5) |
+| Jan 3 | 71.9% (64) | 59.4% (32) | 25.0% (4) |
+
+### Known Issues
+
+1. **Slack webhook invalid** - Returns 404, need new webhook from Slack
+2. **Retry storm** - `treymurphyiii`, `jaimejaquezjr` missing features for Jan 4
+3. **Jan 8 feature gap** - No feature store data (verify if games existed)
+
+---
+
+### Files Modified/Created
+
+```
+docs/08-projects/current/pipeline-reliability-improvements/FILTER-DECISIONS.md (NEW)
+docs/08-projects/current/pipeline-reliability-improvements/CONFIDENCE-TIER-FILTERING-IMPLEMENTATION.md (updated)
+predictions/worker/worker.py (+25 lines)
+predictions/worker/batch_staging_writer.py (+4 lines)
+data_processors/grading/prediction_accuracy/prediction_accuracy_processor.py (+10 lines)
+orchestration/cloud_functions/prediction_health_alert/main.py (+23 lines)
+orchestration/cloud_functions/shadow_performance_report/main.py (NEW)
+orchestration/cloud_functions/shadow_performance_report/requirements.txt (NEW)
+```
+
+---
+
+### Next Steps
+
+1. **Get new Slack webhook URL** - Update both functions
+2. **Monitor shadow performance** - Weekly reports starting next Monday
+3. **Investigate retry storm** - Consider dead-letter queue for `no_features` errors
+4. **Review in 4 weeks** - Check if 88-90 tier should be re-enabled
