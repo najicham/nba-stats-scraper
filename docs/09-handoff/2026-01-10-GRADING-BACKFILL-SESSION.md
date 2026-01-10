@@ -1,7 +1,7 @@
 # Session Handoff: Grading Backfill & Fair Comparison
 
 **Date:** 2026-01-10
-**Status:** IN PROGRESS - Phase 5B Running
+**Status:** COMPLETE
 
 ---
 
@@ -10,7 +10,18 @@
 This session identified and fixed a critical gap in the model comparison process:
 - CatBoost v8 predictions were backfilled (121K) but never graded
 - This caused misleading comparisons (1,500 vs 50,000 picks)
-- Phase 5B grading backfill is now running to fix this
+- Phase 5B grading backfill completed - **485K predictions graded**
+
+### Final Fair Comparison Results
+
+| System | Picks | Win Rate | MAE |
+|--------|-------|----------|-----|
+| **catboost_v8** | 47,995 | **74.4%** | **4.00** |
+| moving_average_baseline | 45,132 | 59.7% | 5.00 |
+| ensemble_v1 | 39,617 | 58.6% | 5.03 |
+| zone_matchup_v1 | 48,838 | 51.3% | 6.64 |
+
+**CatBoost v8 outperforms by 14.7 percentage points** with comparable pick counts.
 
 ---
 
@@ -73,9 +84,15 @@ Estimated completion: ~2-3 hours (851 dates × ~12 sec/date)
 
 ---
 
-## Pending Actions
+## Completed Actions
 
-### When Phase 5B Completes
+### Phase 5B Grading (DONE)
+
+- Started: 2026-01-10 ~11:00 PM
+- Completed: 2026-01-10 ~2:06 AM
+- Results: 851 dates, 485,191 predictions graded, 0 failures
+
+### Phase 5C Daily Performance (DONE)
 
 1. **Run Phase 5C** to regenerate daily performance:
 ```bash
@@ -192,22 +209,27 @@ PYTHONPATH=. .venv/bin/python backfill_jobs/grading/prediction_accuracy/predicti
 
 ---
 
-## Expected Final Results
+## Actual Final Results
 
-After grading completes, the fair comparison should show:
+After grading completed, the fair comparison shows:
 
-| System | Expected Picks | Expected Win Rate |
-|--------|---------------|-------------------|
-| catboost_v8 | ~10K-20K | 65-75% |
-| Other systems | ~10K-20K | 50-60% |
+| System | Picks | Win Rate | MAE |
+|--------|-------|----------|-----|
+| **catboost_v8** | 47,995 | **74.4%** | **4.00** |
+| moving_average_baseline | 45,132 | 59.7% | 5.00 |
+| ensemble_v1 | 39,617 | 58.6% | 5.03 |
+| zone_matchup_v1 | 48,838 | 51.3% | 6.64 |
+| similarity_balanced_v1 | 26,165 | 50.8% | 5.41 |
 
-The pick counts should be comparable, and catboost_v8 should still clearly outperform.
+**Pick counts are now comparable** (26K-49K each), and **catboost_v8 outperforms by 14.7 percentage points**.
 
 ---
 
 ## Commits This Session
 
 ```
+234a92f docs(analysis): Update with final fair comparison results
 980c2c5 docs(ml-v8): Add grading backfill steps to champion-challenger framework
 d697548 docs(analysis): Add fair system comparison analysis
+b49b6b3 docs(handoff): Add grading backfill session handoff
 ```
