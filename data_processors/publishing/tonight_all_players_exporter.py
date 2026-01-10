@@ -122,7 +122,7 @@ class TonightAllPlayersExporter(BaseExporter):
                 pp.current_points_line
             FROM `nba-props-platform.nba_predictions.player_prop_predictions` pp
             WHERE pp.game_date = @target_date
-              AND pp.system_id = 'ensemble_v1'
+              AND pp.system_id = 'catboost_v8'
             QUALIFY ROW_NUMBER() OVER (
                 PARTITION BY pp.player_lookup, pp.game_id
                 ORDER BY pp.created_at DESC

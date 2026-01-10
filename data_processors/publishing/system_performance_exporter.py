@@ -18,35 +18,41 @@ logger = logging.getLogger(__name__)
 
 # System metadata for display
 SYSTEM_METADATA = {
+    'catboost_v8': {
+        'display_name': 'CatBoost V8',
+        'description': 'CatBoost gradient boosting with 33 features and real Vegas lines',
+        'is_primary': True,
+        'ranking': 1
+    },
     'ensemble_v1': {
         'display_name': 'Ensemble',
         'description': 'Weighted combination of all prediction systems',
-        'is_primary': True,
-        'ranking': 1
+        'is_primary': False,
+        'ranking': 2
     },
     'xgboost_v1': {
         'display_name': 'XGBoost ML',
         'description': 'Gradient boosted trees trained on historical data',
         'is_primary': False,
-        'ranking': 2
+        'ranking': 3
     },
     'moving_average_baseline_v1': {
         'display_name': 'Moving Average',
         'description': 'Weighted moving averages of recent performance',
         'is_primary': False,
-        'ranking': 3
+        'ranking': 4
     },
     'similarity_balanced_v1': {
         'display_name': 'Similarity',
         'description': 'K-nearest neighbor matching to similar historical games',
         'is_primary': False,
-        'ranking': 4
+        'ranking': 5
     },
     'zone_matchup_v1': {
         'display_name': 'Zone Matchup',
         'description': 'Shot zone analysis against opponent defense',
         'is_primary': False,
-        'ranking': 5
+        'ranking': 6
     }
 }
 
@@ -64,8 +70,8 @@ class SystemPerformanceExporter(BaseExporter):
         "generated_at": "2025-12-10T...",
         "systems": [
             {
-                "system_id": "ensemble_v1",
-                "display_name": "Ensemble",
+                "system_id": "catboost_v8",
+                "display_name": "CatBoost V8",
                 "is_primary": true,
                 "windows": {
                     "last_7_days": {...},
