@@ -817,8 +817,8 @@ class ProcessorBase(RunHistoryMixin):
                 stats = self.get_idempotency_stats()
                 if stats.get('rows_skipped', 0) > 0:
                     return True
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"get_idempotency_stats() failed (falling back): {e}")
 
         # Method 3: Check self.stats dict for idempotency markers
         if self.stats.get('idempotency_skipped', 0) > 0:
@@ -831,8 +831,8 @@ class ProcessorBase(RunHistoryMixin):
         if hasattr(self, 'get_idempotency_stats'):
             try:
                 return self.get_idempotency_stats()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"get_idempotency_stats() failed (using fallback): {e}")
 
         if hasattr(self, '_idempotency_stats'):
             return self._idempotency_stats
@@ -996,7 +996,8 @@ class ProcessorBase(RunHistoryMixin):
             else:
                 return "Regular season day"
 
-        except Exception:
+        except (ValueError, TypeError, AttributeError) as e:
+            logger.debug(f"Could not determine day description: {e}")
             return "Unknown"
 
     def _check_transform_filters(self) -> Optional[str]:

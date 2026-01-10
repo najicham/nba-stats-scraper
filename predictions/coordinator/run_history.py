@@ -288,8 +288,9 @@ class CoordinatorRunHistory:
                 table_ref = self.bq_client.get_table(table_id)
                 valid_fields = {field.name for field in table_ref.schema}
                 filtered_record = {k: v for k, v in record.items() if k in valid_fields and v is not None}
-            except Exception:
+            except Exception as e:
                 # If we can't get schema, use record as-is
+                logger.debug(f"Could not get table schema (using record as-is): {e}")
                 filtered_record = {k: v for k, v in record.items() if v is not None}
 
             # Use batch loading instead of streaming inserts

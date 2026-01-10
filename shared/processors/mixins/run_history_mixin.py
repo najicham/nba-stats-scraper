@@ -442,8 +442,9 @@ class RunHistoryMixin:
                 table = bq_client.get_table(table_id)
                 valid_fields = {field.name for field in table.schema}
                 filtered_record = {k: v for k, v in record.items() if k in valid_fields}
-            except Exception:
+            except Exception as e:
                 # If we can't get schema, try with all fields
+                logger.debug(f"Could not get table schema (using all fields): {e}")
                 filtered_record = record
 
             # Use batch loading instead of streaming inserts to avoid the 90-minute

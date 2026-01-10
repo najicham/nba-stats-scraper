@@ -197,9 +197,10 @@ class ScraperPubSubPublisher:
             try:
                 import sentry_sdk
                 sentry_sdk.capture_exception(e)
-            except Exception:
-                # Sentry SDK import or capture failed - non-blocking, safe to ignore
-                pass
+            except ImportError:
+                logger.debug("Sentry SDK not installed, skipping exception capture")
+            except Exception as sentry_error:
+                logger.debug(f"Sentry capture failed (non-critical): {sentry_error}")
 
             return None
     
