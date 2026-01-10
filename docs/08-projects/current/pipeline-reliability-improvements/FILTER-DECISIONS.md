@@ -208,10 +208,46 @@ ORDER BY 1 DESC;
 
 ---
 
+### Automated Weekly Slack Report
+
+A Cloud Function sends a weekly Slack report every Monday at 9 AM ET with:
+- This week's shadow hit rate and trend
+- Weekly breakdown (last 4 weeks)
+- Comparison to active tiers
+- Re-enable criteria check
+
+**Deployment:**
+```bash
+# Deploy the Cloud Function
+gcloud functions deploy shadow-performance-report \
+    --gen2 \
+    --runtime python311 \
+    --region us-west2 \
+    --source orchestration/cloud_functions/shadow_performance_report \
+    --entry-point send_shadow_report \
+    --trigger-http \
+    --allow-unauthenticated \
+    --set-env-vars GCP_PROJECT=nba-props-platform,SLACK_WEBHOOK_URL=$SLACK_WEBHOOK_URL
+
+# Create scheduler job (Monday 9 AM ET)
+gcloud scheduler jobs create http shadow-performance-report-job \
+    --schedule "0 9 * * 1" \
+    --time-zone "America/New_York" \
+    --uri "https://FUNCTION_URL" \
+    --http-method GET \
+    --location us-west2
+```
+
+**Test with dry run:**
+```bash
+curl "https://FUNCTION_URL?dry_run=true"
+```
+
 ### Review Schedule
 
 | Review Type | Frequency | Query/Action |
 |-------------|-----------|--------------|
+| Automated Slack report | Weekly (Mon 9AM ET) | Cloud Function sends to Slack |
 | Shadow performance check | Weekly | Run shadow view query |
 | Formal review | Monthly | Full analysis, update this doc |
 | Re-enable consideration | Quarterly | Check against re-enabling criteria |
@@ -224,6 +260,7 @@ ORDER BY 1 DESC;
 |------|--------|--------|
 | 2026-01-09 | Initial analysis and decision | Claude + Naji |
 | 2026-01-10 | Implementation and documentation | Claude + Naji |
+| 2026-01-10 | Added weekly Slack report automation | Claude + Naji |
 
 ---
 
