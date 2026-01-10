@@ -26,6 +26,10 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel \
 COPY shared/ /app/shared/
 COPY scrapers/utils/ /app/scrapers/utils/
 COPY data_processors/reference/ /app/data_processors/reference/
+# Copy raw processor base (dependency for registry_processor_base)
+COPY data_processors/raw/__init__.py /app/data_processors/raw/
+COPY data_processors/raw/processor_base.py /app/data_processors/raw/
+COPY data_processors/raw/smart_idempotency_mixin.py /app/data_processors/raw/
 
 # Set Python path and environment
 ENV PYTHONPATH=/app:$PYTHONPATH \
