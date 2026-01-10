@@ -203,7 +203,8 @@ class DataFreshnessChecker:
                     # Wait for completion with timeout to prevent indefinite hangs
                     self.bq_client.query(test_query).result(timeout=60)
                     return name
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"Column '{name}' not valid for {table}: {e}")
                     continue
 
             # Default fallback

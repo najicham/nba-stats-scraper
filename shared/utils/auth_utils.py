@@ -77,7 +77,8 @@ def is_authenticated() -> bool:
     try:
         credentials = get_service_account_credentials()
         return credentials is not None
-    except Exception:
+    except Exception as e:
+        logger.debug(f"Authentication check failed: {e}")
         return False
 
 
