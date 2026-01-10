@@ -521,3 +521,151 @@ echo "✅ Deployment validation passed"
 5. **Monitoring gaps compound** - Multiple missing alerts let issues cascade
 6. **Assertions at boundaries** - Validate at every system interface
 7. **Existing infrastructure helps** - Circuit breakers and AlertManager already available
+
+---
+
+## Priority 6: Retry Storm Prevention (Added 2026-01-10)
+
+### Problem Statement
+
+The prediction worker returns HTTP 500 for **all** empty predictions, triggering Pub/Sub automatic retries. This works for transient failures (data not ready yet) but causes **infinite retry storms** for permanent failures (data will never exist).
+
+**Example:** Players `treymurphyiii` and `jaimejaquezjr` missing from `ml_feature_store_v2` for Jan 4:
+- Every retry queries the same empty result
+- Retries continue for 7 days until Pub/Sub gives up
+- Wastes compute resources and pollutes logs
+
+### Solution: Failure Classification + DLQ
+
+**Two-pronged approach:**
+
+1. **Worker-level classification:** Distinguish transient vs permanent failures, return appropriate HTTP status
+2. **Pub/Sub DLQ:** Safety net for edge cases, moves failed messages to dead-letter topic after max retries
+
+### 6.1 Failure Classification (worker.py)
+
+**Status:** ✅ IMPLEMENTED
+
+```python
+# Permanent failures - data won't magically appear, don't retry
+PERMANENT_SKIP_REASONS = {
+    'no_features',           # Player not in feature store
+    'player_not_found',      # Player lookup invalid
+    'no_prop_lines',         # No betting lines scraped for player
+    'game_not_found',        # Game doesn't exist
+    'player_inactive',       # Player not playing
+}
+
+# Transient failures - might resolve on retry
+TRANSIENT_SKIP_REASONS = {
+    'feature_store_timeout', # Temporary connectivity issue
+    'model_load_error',      # Model loading failed (might be transient)
+    'bigquery_timeout',      # Temporary BQ issue
+    'rate_limited',          # External API rate limit
+}
+
+# In handle_prediction_request():
+if not predictions:
+    skip_reason = metadata.get('skip_reason', 'unknown')
+
+    if skip_reason in PERMANENT_SKIP_REASONS:
+        # Don't retry - publish to DLQ for investigation
+        logger.warning(f"Permanent failure for {player_lookup}: {skip_reason}")
+        return ('', 204)  # Ack message, stop retries
+    else:
+        # Transient - trigger retry
+        logger.error(f"Transient failure for {player_lookup}: {skip_reason}")
+        return ('Transient failure - triggering retry', 500)
+```
+
+### 6.2 Pub/Sub DLQ Configuration
+
+**Status:** ✅ IMPLEMENTED
+
+Infrastructure created:
+- **DLQ Topic:** `prediction-request-dlq`
+- **DLQ Subscription:** `prediction-request-dlq-sub`
+- **Max retries:** 5 attempts before moving to DLQ (Pub/Sub minimum is 5)
+
+```bash
+# Create DLQ topic
+gcloud pubsub topics create prediction-request-dlq
+
+# Create DLQ subscription (for monitoring/recovery)
+gcloud pubsub subscriptions create prediction-request-dlq-sub \
+    --topic prediction-request-dlq \
+    --ack-deadline=60 \
+    --message-retention-duration=7d
+
+# Grant Pub/Sub SA permission to publish to DLQ
+PROJECT_NUMBER=$(gcloud projects describe nba-props-platform --format="value(projectNumber)")
+gcloud pubsub topics add-iam-policy-binding prediction-request-dlq \
+    --member="serviceAccount:service-${PROJECT_NUMBER}@gcp-sa-pubsub.iam.gserviceaccount.com" \
+    --role="roles/pubsub.publisher"
+
+# Update main subscription with dead-letter policy
+gcloud pubsub subscriptions update prediction-request-prod \
+    --dead-letter-topic=projects/nba-props-platform/topics/prediction-request-dlq \
+    --max-delivery-attempts=5
+```
+
+### 6.3 DLQ Monitoring
+
+**Status:** ✅ IMPLEMENTED
+
+Added `prediction-request-dlq-sub` to `dlq_monitor.py`:
+
+```python
+DLQ_SUBSCRIPTIONS = {
+    # ... existing DLQs ...
+
+    # Phase 5: Prediction worker failures
+    'prediction-request-dlq-sub': {
+        'description': 'Prediction Worker Failures',
+        'phase_from': 'Coordinator',
+        'phase_to': 'Prediction Worker',
+        'severity': 'warning',
+        'recovery_command': 'Check feature store for missing players, verify player_lookup mappings',
+    },
+}
+```
+
+### 6.4 Recovery Workflow
+
+When messages appear in the prediction DLQ:
+
+1. **Investigate:** Check `prediction_worker_runs` for `skip_reason`
+2. **Common causes:**
+   - `no_features`: Player missing from feature store (pipeline gap)
+   - `player_not_found`: Invalid player_lookup (mapping issue)
+   - `no_prop_lines`: Props not scraped (timing issue)
+3. **Resolution:**
+   - For pipeline gaps: Run backfill for missing date
+   - For mapping issues: Fix player lookup in source
+   - For timing issues: Usually already resolved, discard message
+4. **Replay (if needed):** Pull message, fix root cause, republish to main topic
+
+### 6.5 Metrics to Track
+
+| Metric | Source | Alert Threshold |
+|--------|--------|-----------------|
+| Permanent failures/hour | `prediction_worker_runs` WHERE `skip_reason` IN permanent | > 50 |
+| DLQ message count | Pub/Sub monitoring | > 0 |
+| Retry storm detection | Same player+date > 3 executions | Any occurrence |
+
+### Design Rationale
+
+**Why classify at worker level?**
+- Immediate feedback - no wasted retries
+- Clear logging of failure type
+- Worker has context (skip_reason) to make decision
+
+**Why also have DLQ?**
+- Safety net for unclassified errors
+- Investigation queue for edge cases
+- Prevents 7-day message backlog
+
+**Why 3 max retries?**
+- Enough for transient issues to resolve
+- Fast enough to not waste resources
+- Matches existing DLQ patterns in codebase

@@ -136,6 +136,27 @@ PREDICTIONS_TABLE = os.environ.get('PREDICTIONS_TABLE', 'nba_predictions.player_
 PUBSUB_READY_TOPIC = os.environ.get('PUBSUB_READY_TOPIC', 'prediction-ready')
 logger.info("✓ Environment configuration loaded")
 
+# Failure Classification for Retry Logic
+# Permanent failures - data won't appear on retry, ack message immediately
+PERMANENT_SKIP_REASONS = {
+    'no_features',           # Player not in ml_feature_store_v2
+    'player_not_found',      # Invalid player_lookup
+    'no_prop_lines',         # No betting lines scraped for player
+    'game_not_found',        # Game doesn't exist in schedule
+    'player_inactive',       # Player not active/playing
+    'no_historical_data',    # No historical games for player
+}
+
+# Transient failures - might resolve on retry, return 500 to trigger Pub/Sub retry
+TRANSIENT_SKIP_REASONS = {
+    'feature_store_timeout', # Temporary BigQuery connectivity
+    'model_load_error',      # Model loading failed temporarily
+    'bigquery_timeout',      # Temporary BQ query timeout
+    'rate_limited',          # External API rate limit
+    'circuit_breaker_open',  # All systems tripped, might recover
+}
+logger.info("✓ Failure classification loaded")
+
 # Lazy-loaded components (initialized on first request to avoid cold start timeout)
 _data_loader: Optional['PredictionDataLoader'] = None
 _bq_client: Optional['bigquery.Client'] = None
@@ -415,15 +436,26 @@ def handle_prediction_request():
                 circuits_opened=metadata.get('circuits_opened', [])
             )
 
-            # P1-PROC-2: Return 500 to trigger Pub/Sub retry instead of 204
-            # Empty predictions indicate a transient failure (data not ready, systems failed, etc.)
-            # Pub/Sub will retry the message, allowing the worker to succeed on subsequent attempts
-            error_reason = metadata.get('skip_reason') or metadata.get('error_type') or 'unknown'
-            logger.error(
-                f"No predictions generated for {player_lookup} on {game_date_str} - "
-                f"returning 500 to trigger Pub/Sub retry. Reason: {error_reason}"
-            )
-            return ('Empty predictions - triggering retry', 500)
+            # Classify failure to determine retry behavior
+            skip_reason = metadata.get('skip_reason') or 'unknown'
+            error_type = metadata.get('error_type') or 'UnknownError'
+
+            if skip_reason in PERMANENT_SKIP_REASONS:
+                # Permanent failure - data won't appear on retry
+                # Return 204 to ack message and stop retries (prevents retry storm)
+                logger.warning(
+                    f"PERMANENT failure for {player_lookup} on {game_date_str} - "
+                    f"acknowledging message (no retry). Reason: {skip_reason}"
+                )
+                return ('', 204)
+            else:
+                # Transient failure (or unknown) - might resolve on retry
+                # Return 500 to trigger Pub/Sub retry
+                logger.error(
+                    f"TRANSIENT failure for {player_lookup} on {game_date_str} - "
+                    f"returning 500 to trigger Pub/Sub retry. Reason: {skip_reason}, Error: {error_type}"
+                )
+                return ('Transient failure - triggering retry', 500)
 
         # Write to BigQuery staging table (consolidation happens later by coordinator)
         write_start = time.time()
