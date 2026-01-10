@@ -374,7 +374,9 @@ class BatchConsolidator:
             estimation_method = S.estimation_method,
             scoring_tier = S.scoring_tier,
             tier_adjustment = S.tier_adjustment,
-            adjusted_points = S.adjusted_points
+            adjusted_points = S.adjusted_points,
+            is_actionable = S.is_actionable,
+            filter_reason = S.filter_reason
         WHEN NOT MATCHED THEN
           INSERT ROW
         """

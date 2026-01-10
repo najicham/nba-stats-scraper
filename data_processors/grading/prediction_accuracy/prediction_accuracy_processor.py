@@ -133,7 +133,10 @@ class PredictionAccuracyProcessor:
             -- Line source tracking (for no-line player analysis)
             COALESCE(has_prop_line, TRUE) as has_prop_line,
             COALESCE(line_source, 'ACTUAL_PROP') as line_source,
-            estimated_line_value
+            estimated_line_value,
+            -- Confidence tier filtering (v3.4 - shadow tracking)
+            COALESCE(is_actionable, TRUE) as is_actionable,
+            filter_reason
         FROM `{self.predictions_table}`
         WHERE game_date = '{game_date}'
         """
@@ -334,6 +337,11 @@ class PredictionAccuracyProcessor:
             'has_prop_line': bool(prediction.get('has_prop_line', True)),
             'line_source': self._safe_string(prediction.get('line_source', 'ACTUAL_PROP')),
             'estimated_line_value': round_numeric(self._safe_float(prediction.get('estimated_line_value')), 1),
+
+            # Confidence tier filtering (v3.4 - shadow tracking)
+            # Enables tracking of filtered picks' actual performance
+            'is_actionable': bool(prediction.get('is_actionable', True)),
+            'filter_reason': self._safe_string(prediction.get('filter_reason')),
 
             # Metadata
             'model_version': self._safe_string(prediction.get('model_version')),

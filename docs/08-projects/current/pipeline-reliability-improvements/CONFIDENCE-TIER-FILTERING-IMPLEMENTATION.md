@@ -467,8 +467,104 @@ After implementation:
 
 ---
 
+## Ongoing Monitoring & Review Plan
+
+### Related Documentation
+
+- **Decision Rationale:** See [FILTER-DECISIONS.md](./FILTER-DECISIONS.md) for full analysis and rollback instructions
+
+### Weekly Shadow Performance Check
+
+Run this query weekly to monitor how filtered picks are performing:
+
+```sql
+-- Weekly shadow performance check
+SELECT
+  DATE_TRUNC(game_date, WEEK) as week,
+  COUNT(*) as filtered_picks,
+  COUNTIF(prediction_correct = true) as wins,
+  COUNTIF(prediction_correct = false) as losses,
+  ROUND(SAFE_DIVIDE(
+    COUNTIF(prediction_correct = true),
+    NULLIF(COUNTIF(prediction_correct IS NOT NULL), 0)
+  ) * 100, 1) as shadow_hit_rate,
+  ROUND((COUNTIF(prediction_correct = true) * 91.0 -
+         COUNTIF(prediction_correct = false) * 100.0) /
+        NULLIF(COUNT(*) * 110.0, 0) * 100, 1) as shadow_roi
+FROM `nba-props-platform.nba_predictions.prediction_accuracy`
+WHERE filter_reason = 'confidence_tier_88_90'
+  AND game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 28 DAY)
+GROUP BY 1
+ORDER BY 1 DESC;
+```
+
+### Monthly Review Checklist
+
+| Check | Query/Action | Decision |
+|-------|--------------|----------|
+| Shadow hit rate trend | Run weekly query, check 4-week trend | If > 70% for 4 weeks, flag for review |
+| Sample size | Check picks per week | Need 50+ picks/week for significance |
+| Compare to 90+ tier | Run tier comparison query | Gap should be narrowing |
+| OVER vs UNDER split | Check directional balance | Should be balanced |
+
+### Monthly Comparison Query
+
+```sql
+-- Monthly comparison: filtered tier vs active tiers
+WITH all_predictions AS (
+  SELECT
+    DATE_TRUNC(game_date, MONTH) as month,
+    CASE
+      WHEN filter_reason = 'confidence_tier_88_90' THEN 'FILTERED: 88-90'
+      WHEN confidence_score >= 90 OR (confidence_score >= 0.90 AND confidence_score <= 1) THEN 'ACTIVE: 90+'
+      WHEN (confidence_score >= 86 AND confidence_score < 88) OR (confidence_score >= 0.86 AND confidence_score < 0.88) THEN 'ACTIVE: 86-88'
+      ELSE 'OTHER'
+    END as tier,
+    prediction_correct
+  FROM `nba-props-platform.nba_predictions.prediction_accuracy`
+  WHERE has_prop_line = true
+    AND recommendation IN ('OVER', 'UNDER')
+    AND game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY)
+)
+SELECT
+  month,
+  tier,
+  COUNT(*) as picks,
+  ROUND(SAFE_DIVIDE(
+    COUNTIF(prediction_correct = true),
+    NULLIF(COUNTIF(prediction_correct IS NOT NULL), 0)
+  ) * 100, 1) as hit_rate
+FROM all_predictions
+WHERE tier != 'OTHER'
+GROUP BY 1, 2
+ORDER BY 1 DESC, 2;
+```
+
+### Re-enabling Decision Framework
+
+If shadow performance shows sustained improvement (see [FILTER-DECISIONS.md](./FILTER-DECISIONS.md#re-enabling-criteria)):
+
+1. **Confirm criteria met:** 70%+ hit rate, 3 months, 200+ picks/month
+2. **Run rollback SQL:** Quick re-enable without code deploy
+3. **Monitor closely:** Check daily for first week
+4. **Update documentation:** Record decision in FILTER-DECISIONS.md
+
+### Review Schedule
+
+| Date | Review Type | Status |
+|------|-------------|--------|
+| 2026-01-17 | Week 1 shadow check | Pending |
+| 2026-01-24 | Week 2 shadow check | Pending |
+| 2026-01-31 | Week 3 shadow check | Pending |
+| 2026-02-07 | Week 4 + Monthly review | Pending |
+| 2026-03-07 | Month 2 review | Pending |
+| 2026-04-07 | Quarterly decision point | Pending |
+
+---
+
 ## Document History
 
 | Date | Change |
 |------|--------|
 | 2026-01-09 | Initial implementation guide created |
+| 2026-01-10 | Added monitoring/review plan, linked to FILTER-DECISIONS.md |
