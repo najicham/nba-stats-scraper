@@ -1311,6 +1311,327 @@ class PlayerGameSummaryProcessor(
             )
             return None
 
+    # =========================================================================
+    # Single Game Reprocessing (for resolved player names)
+    # =========================================================================
+
+    def process_single_game(self, game_id: str, game_date: str, season: str) -> bool:
+        """
+        Process a single game to enable reprocessing after alias creation.
+
+        This method is called by reprocess_resolved.py when player names have been
+        resolved and we need to re-run analytics for affected games.
+
+        Args:
+            game_id: The game ID to reprocess (e.g., '20251206_LAL_GSW')
+            game_date: Game date in YYYY-MM-DD format
+            season: Season string (e.g., '2024-25')
+
+        Returns:
+            True if processing succeeded (even if 0 records), False on error
+
+        Flow:
+        1. Extract Phase 2 data for this specific game_id
+        2. Get players from this game
+        3. Batch-lookup their registry IDs (with fresh alias data)
+        4. Calculate analytics for these players
+        5. MERGE-update to player_game_summary table
+        6. Return success status
+        """
+        logger.info(f"🔄 REPROCESSING: game_id={game_id}, date={game_date}, season={season}")
+
+        try:
+            # Initialize minimal state for processing
+            self.opts = {
+                'start_date': game_date,
+                'end_date': game_date,
+                'skip_downstream_trigger': True,  # Don't trigger Phase 4 for reprocessing
+            }
+            self.raw_data = pd.DataFrame()
+            self.transformed_data = []
+            self.registry_failures = []
+            self.registry_stats = {
+                'players_found': 0,
+                'players_not_found': 0,
+                'records_skipped': 0
+            }
+            self.shot_zone_data = {}
+            self.shot_zones_available = False
+            self.shot_zones_source = None
+
+            # Step 1: Extract Phase 2 data for this specific game
+            self._extract_single_game_data(game_id, game_date)
+
+            if self.raw_data.empty:
+                logger.warning(f"No data found for game {game_id} on {game_date}")
+                return True  # Not an error, just no data
+
+            logger.info(f"Extracted {len(self.raw_data)} player records for game {game_id}")
+
+            # Step 2: Extract shot zones for this game
+            self._extract_player_shot_zones(game_date, game_date)
+
+            # Step 3: Set registry context and do batch lookup
+            self.registry.set_default_context(season=season)
+
+            unique_players = self.raw_data['player_lookup'].dropna().unique().tolist()
+            logger.info(f"Looking up {len(unique_players)} players in registry")
+
+            uid_map = self.registry.get_universal_ids_batch(
+                unique_players,
+                skip_unresolved_logging=True
+            )
+
+            self.registry_stats['players_found'] = len(uid_map)
+            self.registry_stats['players_not_found'] = len(unique_players) - len(uid_map)
+
+            logger.info(
+                f"Registry: {self.registry_stats['players_found']} found, "
+                f"{self.registry_stats['players_not_found']} not found"
+            )
+
+            # Step 4: Process records (use serial for single game - simpler)
+            records = []
+            for idx, row in self.raw_data.iterrows():
+                record = self._process_single_player_game(idx, row, uid_map)
+                if record is not None:
+                    records.append(record)
+
+            if not records:
+                logger.warning(f"No records processed for game {game_id} (all players unresolved?)")
+                return True  # Not an error, just no resolvable players
+
+            self.transformed_data = records
+            logger.info(f"Processed {len(records)} records for game {game_id}")
+
+            # Step 5: Save to BigQuery using MERGE
+            self._save_single_game_records(records)
+
+            logger.info(f"✅ REPROCESSING COMPLETE: {game_id} - {len(records)} records saved")
+            return True
+
+        except Exception as e:
+            logger.error(f"❌ REPROCESSING FAILED for {game_id}: {e}", exc_info=True)
+            return False
+
+    def _extract_single_game_data(self, game_id: str, game_date: str) -> None:
+        """
+        Extract Phase 2 data for a single game.
+
+        Similar to extract_raw_data() but filtered to one game_id.
+        """
+        query = f"""
+        WITH nba_com_data AS (
+            SELECT
+                game_id,
+                game_date,
+                season_year,
+                player_lookup,
+                player_name as player_full_name,
+                team_abbr,
+                player_status,
+                home_team_abbr as source_home_team,
+                away_team_abbr as source_away_team,
+                points,
+                assists,
+                total_rebounds,
+                offensive_rebounds,
+                defensive_rebounds,
+                steals,
+                blocks,
+                turnovers,
+                personal_fouls,
+                field_goals_made,
+                field_goals_attempted,
+                three_pointers_made,
+                three_pointers_attempted,
+                free_throws_made,
+                free_throws_attempted,
+                minutes,
+                plus_minus,
+                processed_at as source_processed_at,
+                'nbac_gamebook' as primary_source
+            FROM `{self.project_id}.nba_raw.nbac_gamebook_player_stats`
+            WHERE game_id = @game_id
+                AND player_status = 'active'
+        ),
+
+        bdl_data AS (
+            SELECT
+                game_id,
+                game_date,
+                season_year,
+                player_lookup,
+                player_full_name,
+                team_abbr,
+                'active' as player_status,
+                CAST(NULL AS STRING) as source_home_team,
+                CAST(NULL AS STRING) as source_away_team,
+                points,
+                assists,
+                rebounds as total_rebounds,
+                NULL as offensive_rebounds,
+                NULL as defensive_rebounds,
+                steals,
+                blocks,
+                turnovers,
+                personal_fouls,
+                field_goals_made,
+                NULL as field_goals_attempted,
+                three_pointers_made,
+                NULL as three_pointers_attempted,
+                free_throws_made,
+                NULL as free_throws_attempted,
+                minutes,
+                NULL as plus_minus,
+                processed_at as source_processed_at,
+                'bdl_boxscores' as primary_source
+            FROM `{self.project_id}.nba_raw.bdl_player_boxscores`
+            WHERE game_id = @game_id
+        ),
+
+        combined_data AS (
+            SELECT * FROM nba_com_data
+            UNION ALL
+            SELECT * FROM bdl_data
+            WHERE game_id NOT IN (SELECT DISTINCT game_id FROM nba_com_data)
+        ),
+
+        deduplicated_props AS (
+            SELECT
+                game_id,
+                player_lookup,
+                points_line,
+                over_price_american,
+                under_price_american,
+                bookmaker,
+                ROW_NUMBER() OVER (
+                    PARTITION BY game_id, player_lookup
+                    ORDER BY
+                        CASE bookmaker
+                            WHEN 'draftkings' THEN 1
+                            WHEN 'fanduel' THEN 2
+                            ELSE 3
+                        END,
+                        bookmaker
+                ) as rn
+            FROM `{self.project_id}.nba_raw.odds_api_player_points_props`
+            WHERE game_id = @game_id
+        ),
+
+        with_props AS (
+            SELECT
+                c.*,
+                p.points_line,
+                p.over_price_american,
+                p.under_price_american,
+                p.bookmaker as points_line_source
+            FROM combined_data c
+            LEFT JOIN deduplicated_props p
+                ON c.game_id = p.game_id
+                AND c.player_lookup = p.player_lookup
+                AND p.rn = 1
+        ),
+
+        games_context AS (
+            SELECT DISTINCT
+                game_id,
+                game_date,
+                source_home_team,
+                source_away_team,
+                COALESCE(
+                    source_away_team,
+                    CASE WHEN game_id LIKE '%_%_%' THEN SPLIT(game_id, '_')[SAFE_OFFSET(1)] END
+                ) as away_team_abbr,
+                COALESCE(
+                    source_home_team,
+                    CASE WHEN game_id LIKE '%_%_%' THEN SPLIT(game_id, '_')[SAFE_OFFSET(2)] END
+                ) as home_team_abbr
+            FROM combined_data
+        ),
+
+        team_stats AS (
+            SELECT
+                game_id,
+                team_abbr,
+                fg_attempts as team_fg_attempts,
+                ft_attempts as team_ft_attempts,
+                turnovers as team_turnovers,
+                possessions as team_possessions
+            FROM `{self.project_id}.nba_analytics.team_offense_game_summary`
+            WHERE game_id = @game_id
+        )
+
+        SELECT
+            wp.*,
+            gc.away_team_abbr,
+            gc.home_team_abbr,
+            ts.team_fg_attempts,
+            ts.team_ft_attempts,
+            ts.team_turnovers,
+            ts.team_possessions,
+            COALESCE(
+                CASE
+                    WHEN wp.team_abbr = gc.home_team_abbr THEN gc.away_team_abbr
+                    ELSE gc.home_team_abbr
+                END,
+                ''
+            ) as opponent_team_abbr,
+            CASE
+                WHEN wp.team_abbr = gc.home_team_abbr THEN TRUE
+                ELSE FALSE
+            END as home_game
+        FROM with_props wp
+        LEFT JOIN games_context gc ON wp.game_id = gc.game_id
+        LEFT JOIN team_stats ts ON wp.game_id = ts.game_id AND wp.team_abbr = ts.team_abbr
+        ORDER BY wp.player_lookup
+        """
+
+        from google.cloud import bigquery
+
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("game_id", "STRING", game_id)
+            ]
+        )
+
+        try:
+            self.raw_data = self.bq_client.query(query, job_config=job_config).to_dataframe()
+
+            if not self.raw_data.empty:
+                # Clean numeric columns
+                self._clean_numeric_columns()
+                source_counts = self.raw_data['primary_source'].value_counts()
+                logger.info(f"Source distribution: {dict(source_counts)}")
+
+        except Exception as e:
+            logger.error(f"BigQuery extraction failed for game {game_id}: {e}")
+            raise
+
+    def _save_single_game_records(self, records: List[Dict]) -> None:
+        """
+        Save processed records for a single game using MERGE.
+
+        Uses the base class _save_with_proper_merge() for atomic upsert.
+        """
+        if not records:
+            return
+
+        table_id = f"{self.project_id}.{self.dataset_id}.{self.table_name}"
+
+        # Get table schema
+        try:
+            table_ref = self.bq_client.get_table(table_id)
+            table_schema = table_ref.schema
+        except Exception as e:
+            logger.warning(f"Could not get table schema: {e}")
+            table_schema = None
+
+        # Use parent class MERGE method
+        self._save_with_proper_merge(records, table_id, table_schema)
+
+        logger.info(f"Saved {len(records)} records to {table_id}")
+
     def _process_player_games_serial(self, uid_map: dict) -> List[Dict]:
         """Original serial processing (kept for fallback)."""
         logger.info(f"Processing {len(self.raw_data)} player-game records (serial mode)")

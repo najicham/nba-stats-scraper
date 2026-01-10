@@ -184,14 +184,16 @@ class ReprocessingOrchestrator:
             if not game_date:
                 return (False, f"Could not find game date for {game_id}")
 
+            # Convert date to string format (YYYY-MM-DD)
+            game_date_str = game_date.isoformat() if hasattr(game_date, 'isoformat') else str(game_date)
+
             # Process this specific game
-            # Note: The processor needs to handle single-game reprocessing
-            result = processor.process_single_game(game_id, game_date, season)
+            result = processor.process_single_game(game_id, game_date_str, season)
 
             if result:
                 return (True, f"Reprocessed {game_id}")
             else:
-                return (False, f"No data returned for {game_id}")
+                return (False, f"Processing returned False for {game_id}")
 
         except AttributeError as e:
             # process_single_game might not exist
