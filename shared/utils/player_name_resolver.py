@@ -267,24 +267,36 @@ class PlayerNameResolver:
             normalized_lookup = normalize_name_for_lookup(input_name)
             try:
                 cached_resolution = self._resolution_cache.get_cached(normalized_lookup)
-                if cached_resolution and cached_resolution.resolution_type == 'MATCH':
-                    # Found a cached MATCH decision - auto-create alias and return
-                    canonical_lookup = cached_resolution.canonical_lookup
-                    if canonical_lookup:
-                        # Get the display name for the canonical player
-                        canonical_display = self._get_canonical_display_name(canonical_lookup)
-                        if canonical_display:
-                            # Create alias for future fast lookups
-                            self.create_alias_mapping(
-                                alias_name=input_name,
-                                canonical_name=canonical_display,
-                                alias_type='ai_resolved',
-                                alias_source=source,
-                                notes=f"Auto-created from cached AI resolution: {cached_resolution.reasoning}",
-                                created_by='ai_cache_lookup'
-                            )
-                            logger.info(f"Used cached AI resolution: '{input_name}' -> '{canonical_display}'")
-                            return canonical_display
+                if cached_resolution:
+                    if cached_resolution.resolution_type == 'MATCH':
+                        # Found a cached MATCH decision - auto-create alias and return
+                        canonical_lookup = cached_resolution.canonical_lookup
+                        if canonical_lookup:
+                            # Get the display name for the canonical player
+                            canonical_display = self._get_canonical_display_name(canonical_lookup)
+                            if canonical_display:
+                                # Create alias for future fast lookups
+                                alias_created = self.create_alias_mapping(
+                                    alias_name=input_name,
+                                    canonical_name=canonical_display,
+                                    alias_type='ai_resolved',
+                                    alias_source=source,
+                                    notes=f"Auto-created from cached AI resolution: {cached_resolution.reasoning}",
+                                    created_by='ai_cache_lookup'
+                                )
+                                if not alias_created:
+                                    logger.warning(f"Failed to create alias for '{input_name}' -> '{canonical_display}', but returning cached resolution")
+                                else:
+                                    logger.info(f"Used cached AI resolution: '{input_name}' -> '{canonical_display}'")
+                                # Return resolved name even if alias creation failed
+                                # The cached AI decision is still valid
+                                return canonical_display
+                    elif cached_resolution.resolution_type == 'DATA_ERROR':
+                        # Known bad name - don't re-add to unresolved queue
+                        logger.debug(f"Cached DATA_ERROR for '{input_name}': {cached_resolution.reasoning}")
+                        return None
+                    # NEW_PLAYER and other types fall through to unresolved queue
+                    # as they may need manual review or roster updates
             except Exception as e:
                 logger.debug(f"Cache lookup failed for '{input_name}': {e}")
                 # Continue to unresolved queue on cache lookup errors
