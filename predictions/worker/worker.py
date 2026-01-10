@@ -1003,6 +1003,24 @@ def format_prediction_for_bigquery(
     estimation_method = features.get('estimation_method')
     actual_prop_line = features.get('actual_prop_line')
 
+    # v3.4: Confidence tier filtering
+    # 88-90% confidence tier has 61.8% hit rate vs 74-76% for other tiers
+    # Filter these picks but preserve original recommendation for shadow tracking
+    # See: docs/08-projects/current/pipeline-reliability-improvements/FILTER-DECISIONS.md
+    confidence = prediction['confidence']
+    confidence_decimal = confidence / 100.0 if confidence > 1 else confidence
+
+    is_actionable = True
+    filter_reason = None
+
+    if 0.88 <= confidence_decimal < 0.90:
+        is_actionable = False
+        filter_reason = 'confidence_tier_88_90'
+        logger.info(
+            f"Filtered pick for {player_lookup}: confidence={confidence_decimal:.3f} "
+            f"in 88-90 tier, original_recommendation={prediction['recommendation']}"
+        )
+
     # Determine recommendation and line values based on has_prop_line
     if has_prop_line:
         # Player has prop line - use normal recommendation
@@ -1044,7 +1062,12 @@ def format_prediction_for_bigquery(
         'is_active': True,
         'created_at': datetime.utcnow().isoformat(),
         'updated_at': None,
-        'superseded_by': None
+        'superseded_by': None,
+
+        # v3.4: Confidence tier filtering (shadow tracking)
+        # See: docs/08-projects/current/pipeline-reliability-improvements/FILTER-DECISIONS.md
+        'is_actionable': is_actionable,
+        'filter_reason': filter_reason
     }
     
     # Add system-specific fields

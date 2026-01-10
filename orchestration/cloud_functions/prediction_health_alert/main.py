@@ -85,7 +85,12 @@ def get_prediction_health(bq_client: bigquery.Client, game_date: date) -> Dict:
         -- Feature store health
         (SELECT COUNT(*)
          FROM `{PROJECT_ID}.nba_predictions.ml_feature_store_v2`
-         WHERE game_date = @game_date AND feature_version = 'v2_33features') as feature_store_rows
+         WHERE game_date = @game_date AND feature_version = 'v2_33features') as feature_store_rows,
+
+        -- Filtered predictions (v3.4 - confidence tier filtering)
+        (SELECT COUNTIF(is_actionable = false)
+         FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions`
+         WHERE game_date = @game_date AND system_id = 'catboost_v8') as filtered_predictions
     """
 
     job_config = bigquery.QueryJobConfig(
@@ -102,6 +107,7 @@ def get_prediction_health(bq_client: bigquery.Client, game_date: date) -> Dict:
         'actionable_predictions': row.actionable_predictions or 0,
         'catboost_avg_confidence': row.catboost_avg_confidence,
         'feature_store_rows': row.feature_store_rows or 0,
+        'filtered_predictions': row.filtered_predictions or 0,
     }
 
 
@@ -157,6 +163,19 @@ def check_health_status(health: Dict) -> tuple:
             f"Model confidence may be too low."
         )
 
+    # WARNING: High filter ratio (>20% indicates broader model issues)
+    # Expected: ~5-10% filtered (88-90 confidence tier)
+    total_predictions = health['actionable_predictions'] + health['filtered_predictions']
+    if total_predictions > 0:
+        filter_ratio = health['filtered_predictions'] / total_predictions
+        if filter_ratio > 0.20:
+            return (
+                'WARNING',
+                f"High filter ratio: {filter_ratio:.1%} of picks filtered. "
+                f"({health['filtered_predictions']} filtered out of {total_predictions} total). "
+                f"This may indicate model confidence distribution issues."
+            )
+
     return ('OK', None)
 
 
@@ -197,7 +216,7 @@ def send_slack_alert(status: str, message: str, health: Dict) -> bool:
                             {"type": "mrkdwn", "text": f"*Players Predicted:*\n{health['players_predicted']}"},
                             {"type": "mrkdwn", "text": f"*Actionable:*\n{health['actionable_predictions']}"},
                             {"type": "mrkdwn", "text": f"*Avg Confidence:*\n{health['catboost_avg_confidence']}"},
-                            {"type": "mrkdwn", "text": f"*Feature Store Rows:*\n{health['feature_store_rows']}"},
+                            {"type": "mrkdwn", "text": f"*Filtered:*\n{health['filtered_predictions']}"},
                         ]
                     }
                 ]
