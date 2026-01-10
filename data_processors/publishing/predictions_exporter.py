@@ -96,9 +96,9 @@ class PredictionsExporter(BaseExporter):
             ON p.player_lookup = pa.player_lookup
             AND p.game_id = pa.game_id
             AND p.game_date = pa.game_date
-            AND pa.system_id = 'ensemble_v1'
+            AND pa.system_id = 'catboost_v8'
         WHERE p.game_date = @target_date
-          AND p.system_id = 'ensemble_v1'
+          AND p.system_id = 'catboost_v8'
         ORDER BY p.game_id, p.confidence_score DESC
         """
 

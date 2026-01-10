@@ -187,7 +187,7 @@ class ResultsExporter(BaseExporter):
             ON pa.player_lookup = fd.player_lookup
             AND pa.game_id = fd.game_id
         WHERE pa.game_date = @target_date
-          AND pa.system_id = 'ensemble_v1'
+          AND pa.system_id = 'catboost_v8'
         ORDER BY pa.game_id, pa.player_lookup
         """
 
