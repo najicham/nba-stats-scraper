@@ -57,8 +57,9 @@
 
 ### 3. Auto-Trigger Reprocessing After AI Resolution
 **Priority:** P1 - High
-**Status:** PLANNED
+**Status:** ✅ COMPLETE
 **Effort:** Medium (4-8 hours)
+**Commit:** (pending)
 
 **Problem:** After AI creates aliases, reprocessing requires manual CLI run. Data stays incomplete.
 
