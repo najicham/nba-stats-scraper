@@ -36,6 +36,9 @@ from .notification_system import (
     notify_info
 )
 
+# Import AI resolution cache for cached decision lookup
+from .player_registry.resolution_cache import ResolutionCache
+
 logger = logging.getLogger(__name__)
 
 
@@ -83,11 +86,21 @@ class PlayerNameResolver:
         self._alias_cache = {}
         self._registry_cache = {}
         self._cache_expiry = None
-        
+
         # Track consecutive infrastructure failures
         self._consecutive_failures = 0
         self._failure_threshold = 5
-        
+
+        # Initialize AI resolution cache for cached decision lookup
+        # This allows using prior AI decisions without making new API calls
+        try:
+            self._resolution_cache = ResolutionCache(project_id=self.project_id)
+            self._use_resolution_cache = True
+        except Exception as e:
+            logger.warning(f"Failed to initialize ResolutionCache, cache lookup disabled: {e}")
+            self._resolution_cache = None
+            self._use_resolution_cache = False
+
         logger.info(f"Initialized PlayerNameResolver for project: {self.project_id}")
     
     def resolve_to_nba_name(self, input_name: str) -> str:
@@ -244,21 +257,84 @@ class PlayerNameResolver:
         # Step 2: Validate against registry
         season = game_context.get('season')
         team = game_context.get('team')
-        
+
         if self.is_valid_nba_player(resolved_name, season, team):
             return resolved_name
-        
-        # Step 3: No resolution found - add to manual review queue
+
+        # Step 3: Check AI resolution cache for prior decisions
+        # This uses cached AI decisions without making new API calls
+        if self._use_resolution_cache and self._resolution_cache:
+            normalized_lookup = normalize_name_for_lookup(input_name)
+            try:
+                cached_resolution = self._resolution_cache.get_cached(normalized_lookup)
+                if cached_resolution and cached_resolution.resolution_type == 'MATCH':
+                    # Found a cached MATCH decision - auto-create alias and return
+                    canonical_lookup = cached_resolution.canonical_lookup
+                    if canonical_lookup:
+                        # Get the display name for the canonical player
+                        canonical_display = self._get_canonical_display_name(canonical_lookup)
+                        if canonical_display:
+                            # Create alias for future fast lookups
+                            self.create_alias_mapping(
+                                alias_name=input_name,
+                                canonical_name=canonical_display,
+                                alias_type='ai_resolved',
+                                alias_source=source,
+                                notes=f"Auto-created from cached AI resolution: {cached_resolution.reasoning}",
+                                created_by='ai_cache_lookup'
+                            )
+                            logger.info(f"Used cached AI resolution: '{input_name}' -> '{canonical_display}'")
+                            return canonical_display
+            except Exception as e:
+                logger.debug(f"Cache lookup failed for '{input_name}': {e}")
+                # Continue to unresolved queue on cache lookup errors
+
+        # Step 4: No resolution found - add to manual review queue
         # (This is normal operation, not an error - don't notify here)
         self.add_to_unresolved_queue(
             source=source,
             original_name=input_name,
             game_context=game_context
         )
-        
+
         logger.warning(f"Player '{input_name}' from {source} needs manual review")
         return None  # Signals manual review needed
     
+    def _get_canonical_display_name(self, canonical_lookup: str) -> Optional[str]:
+        """
+        Get the display name for a player from their normalized lookup.
+
+        Args:
+            canonical_lookup: Normalized player lookup (e.g., 'leblonjames')
+
+        Returns:
+            Display name (e.g., 'LeBron James') or None if not found
+        """
+        try:
+            query = """
+                SELECT player_name
+                FROM `{project}.nba_reference.nba_players_registry`
+                WHERE player_lookup = @lookup
+                LIMIT 1
+            """.format(project=self.project_id)
+
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("lookup", "STRING", canonical_lookup)
+                ]
+            )
+
+            results = self.bq_client.query(query, job_config=job_config).to_dataframe()
+
+            if not results.empty:
+                return results.iloc[0]['player_name']
+
+            return None
+
+        except Exception as e:
+            logger.debug(f"Error getting display name for '{canonical_lookup}': {e}")
+            return None
+
     def add_to_unresolved_queue(self, source: str, original_name: str, game_context: Dict):
         """Add unresolved player name to manual review queue."""
         if not original_name:

@@ -132,11 +132,11 @@ class ReprocessingOrchestrator:
         query = f"""
         SELECT DISTINCT
             game_id,
-            season,
+            season_year as season,
             game_date
-        FROM `{self.project_id}.nba_raw.game_boxscores`
+        FROM `{self.project_id}.nba_raw.bdl_player_boxscores`
         WHERE game_date BETWEEN @start_date AND @end_date
-        AND REGEXP_REPLACE(LOWER(player_name), r'[^a-z]', '') IN UNNEST(@lookups)
+        AND player_lookup IN UNNEST(@lookups)
         ORDER BY game_id
         """
 
@@ -204,7 +204,7 @@ class ReprocessingOrchestrator:
         """Get game date from boxscores."""
         query = f"""
         SELECT DISTINCT game_date
-        FROM `{self.project_id}.nba_raw.game_boxscores`
+        FROM `{self.project_id}.nba_raw.bdl_player_boxscores`
         WHERE game_id = @game_id
         LIMIT 1
         """

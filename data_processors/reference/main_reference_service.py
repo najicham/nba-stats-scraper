@@ -625,6 +625,126 @@ def gamebook_specific_trigger(action: str):
         }), 500
 
 
+@app.route('/resolve-pending', methods=['POST'])
+def resolve_pending_names():
+    """
+    Run AI batch resolution on pending unresolved player names.
+
+    This endpoint is triggered by Cloud Scheduler nightly to process
+    any unresolved names accumulated during daily data processing.
+
+    Request body (optional):
+        {
+            "limit": 100,  # Max names to process (default: all)
+            "dry_run": false  # If true, don't make changes
+        }
+    """
+    try:
+        params = request.get_json() or {}
+        limit = params.get('limit')
+        dry_run = params.get('dry_run', False)
+
+        logger.info(f"Starting AI name resolution (limit={limit}, dry_run={dry_run})")
+
+        # Import batch resolver
+        from tools.player_registry.resolve_unresolved_batch import BatchResolver
+
+        resolver = BatchResolver()
+        results = resolver.process_all(limit=limit, dry_run=dry_run)
+
+        logger.info(f"AI resolution complete: {results}")
+
+        return jsonify({
+            'status': 'success',
+            'dry_run': dry_run,
+            'results': results
+        })
+
+    except Exception as e:
+        error_msg = f"Error in AI name resolution: {str(e)}"
+        logger.error(error_msg)
+
+        try:
+            notify_error(
+                title="Registry Service: AI Resolution Failed",
+                message=f"Failed to run AI name resolution: {str(e)}",
+                details={
+                    'service': 'reference-service',
+                    'endpoint': '/resolve-pending',
+                    'error_type': type(e).__name__,
+                    'error': str(e)
+                },
+                processor_name="Reference Service"
+            )
+        except Exception as notify_ex:
+            logger.warning(f"Failed to send notification: {notify_ex}")
+
+        return jsonify({
+            'status': 'error',
+            'message': error_msg
+        }), 500
+
+
+@app.route('/health-check', methods=['POST', 'GET'])
+def registry_health_check():
+    """
+    Run registry health check and return status.
+
+    Returns metrics on:
+    - Pending unresolved names
+    - Resolution rate
+    - Stale entries
+    - Cache statistics
+    """
+    try:
+        logger.info("Running registry health check")
+
+        # Import health check
+        from monitoring.resolution_health_check import ResolutionHealthMonitor
+
+        monitor = ResolutionHealthMonitor()
+        results = monitor.run_full_health_check()
+
+        # Determine if we should alert
+        overall_status = results.get('overall_status', 'UNKNOWN')
+
+        if overall_status == 'CRITICAL':
+            try:
+                notify_error(
+                    title="Registry Health: CRITICAL",
+                    message="Registry health check found critical issues",
+                    details=results,
+                    processor_name="Registry Health Check"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+
+        elif overall_status == 'WARNING':
+            try:
+                notify_warning(
+                    title="Registry Health: WARNING",
+                    message="Registry health check found warnings",
+                    details=results
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+
+        return jsonify({
+            'status': 'success',
+            'overall_status': overall_status,
+            'results': results
+        })
+
+    except Exception as e:
+        error_msg = f"Error in health check: {str(e)}"
+        logger.error(error_msg)
+
+        return jsonify({
+            'status': 'error',
+            'message': error_msg
+        }), 500
+
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))
     app.run(host='0.0.0.0', port=port)
