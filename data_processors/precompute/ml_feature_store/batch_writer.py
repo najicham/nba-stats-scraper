@@ -200,6 +200,10 @@ class BatchWriter:
             if "processed_at" in required_fields and out.get("processed_at") is None:
                 out["processed_at"] = current_utc.isoformat()
 
+            # Handle features field - must never be null for BigQuery
+            if "features" in required_fields and out.get("features") is None:
+                out["features"] = []
+
             validated.append(out)
 
         return validated
@@ -273,7 +277,18 @@ class BatchWriter:
             else:
                 return value
 
-        return {key: sanitize_value(value) for key, value in row.items()}
+        sanitized = {key: sanitize_value(value) for key, value in row.items()}
+
+        # Ensure 'features' field is never null (BigQuery schema requires it)
+        if 'features' in sanitized and sanitized['features'] is None:
+            sanitized['features'] = []
+
+        # For REPEATED FLOAT fields like 'features', replace None with 0.0
+        # (BigQuery doesn't allow NULL inside REPEATED arrays)
+        if 'features' in sanitized and isinstance(sanitized['features'], list):
+            sanitized['features'] = [0.0 if v is None else v for v in sanitized['features']]
+
+        return sanitized
 
     def _load_to_temp_table(self, temp_table_id: str, rows: List[Dict],
                            schema: List) -> bool:
