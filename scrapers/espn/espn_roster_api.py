@@ -312,7 +312,7 @@ class GetEspnTeamRosterAPI(ScraperBase, ScraperFlaskMixin):
             "playerCount": len(players),
             "players": players,
         }
-        logger.info("Parsed %d players for %s (ESPN: %s, NBA.com: %s, ESPN ID: %s)",
+        logger.info("Parsed %d players for %s (NBA.com: %s, ESPN ID: %s)",
                 len(players), espn_team_abbr, nba_team_abbr, team_id)
 
         # Update success notification
