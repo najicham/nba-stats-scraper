@@ -111,7 +111,7 @@ PYTHONPATH=. python ml/backfill_v9_predictions.py --start-date 2024-01-01
 PYTHONPATH=. python ml/backfill_v9_predictions.py --dry-run
 ```
 
-### 2.3 Verify Backfill
+### 2.3 Verify Prediction Backfill
 
 ```sql
 -- Check backfill completeness
@@ -122,6 +122,46 @@ SELECT
     COUNT(*) as total_predictions,
     COUNTIF(current_points_line IS NOT NULL AND current_points_line != 20) as real_lines
 FROM nba_predictions.player_prop_predictions
+WHERE system_id IN ('catboost_v8', 'catboost_v9')
+GROUP BY system_id
+```
+
+### 2.4 Run Grading Backfill (Phase 5B) - CRITICAL
+
+**This step is required for fair comparisons.** Without grading, predictions exist but aren't evaluated against actual results.
+
+```bash
+# Grade all predictions against actual game results
+PYTHONPATH=. .venv/bin/python backfill_jobs/grading/prediction_accuracy/prediction_accuracy_grading_backfill.py \
+  --start-date 2021-11-02 --end-date 2026-01-08
+```
+
+This will:
+- Read predictions from `player_prop_predictions`
+- Match against actual points from `player_game_summary`
+- Write graded results to `prediction_accuracy`
+- Takes ~20-30 minutes for 4 seasons
+
+### 2.5 Regenerate Daily Performance (Phase 5C)
+
+After grading, regenerate the aggregated daily performance table:
+
+```bash
+PYTHONPATH=. .venv/bin/python data_processors/grading/system_daily_performance/system_daily_performance_processor.py \
+  --start-date 2021-11-02 --end-date 2026-01-08
+```
+
+### 2.6 Verify Grading Complete
+
+```sql
+-- Check grading coverage matches predictions
+SELECT
+    system_id,
+    COUNT(*) as graded_predictions,
+    MIN(game_date) as first_graded,
+    MAX(game_date) as last_graded,
+    ROUND(COUNTIF(prediction_correct) / COUNTIF(recommendation IN ('OVER', 'UNDER')) * 100, 1) as win_rate
+FROM nba_predictions.prediction_accuracy
 WHERE system_id IN ('catboost_v8', 'catboost_v9')
 GROUP BY system_id
 ```
@@ -334,20 +374,40 @@ vim predictions/worker/prediction_systems/catboost_v9.py
 cp ml/backfill_v8_predictions.py ml/backfill_v9_predictions.py
 # Edit to use catboost_v9
 
-# 3. Run backfill (4 seasons)
+# 3. Run prediction backfill (Phase 5A, ~20 min)
 PYTHONPATH=. python ml/backfill_v9_predictions.py
 
-# 4. Verify backfill
+# 4. Verify prediction backfill
 bq query "SELECT system_id, COUNT(*) FROM nba_predictions.player_prop_predictions
           WHERE system_id = 'catboost_v9' GROUP BY 1"
 
-# 5. Run comparison report
+# 5. Run grading backfill (Phase 5B, ~20 min) - CRITICAL!
+PYTHONPATH=. .venv/bin/python backfill_jobs/grading/prediction_accuracy/prediction_accuracy_grading_backfill.py \
+  --start-date 2021-11-02 --end-date 2026-01-08
+
+# 6. Regenerate daily performance (Phase 5C, ~5 min)
+PYTHONPATH=. .venv/bin/python data_processors/grading/system_daily_performance/system_daily_performance_processor.py \
+  --start-date 2021-11-02 --end-date 2026-01-08
+
+# 7. Verify grading complete
+bq query "SELECT system_id, COUNT(*) as graded,
+          ROUND(COUNTIF(prediction_correct)/COUNTIF(recommendation IN ('OVER','UNDER'))*100,1) as win_rate
+          FROM nba_predictions.prediction_accuracy WHERE system_id = 'catboost_v9' GROUP BY 1"
+
+# 8. Run comparison report
 PYTHONPATH=. python predictions/shadow_mode_report.py --systems catboost_v8,catboost_v9
 
-# 6. Monitor daily via system_performance_alert
+# 9. Monitor daily via system_performance_alert
 
-# 7. Promote when criteria met (update exporters + monitoring)
+# 10. Promote when criteria met (update exporters + monitoring)
 ```
+
+### Common Pitfall: Forgetting Grading Backfill
+
+If you only run the prediction backfill (Step 3) without the grading backfill (Step 5), your new model will have:
+- Predictions in `player_prop_predictions` ✓
+- NO graded results in `prediction_accuracy` ✗
+- Unfair comparisons (new model appears to have fewer picks)
 
 ---
 
@@ -370,3 +430,4 @@ PYTHONPATH=. python predictions/shadow_mode_report.py --systems catboost_v8,catb
 | Date | Change |
 |------|--------|
 | 2026-01-10 | Initial creation - champion/challenger framework |
+| 2026-01-10 | Added Phase 5B/5C grading backfill steps (critical for fair comparisons) |
