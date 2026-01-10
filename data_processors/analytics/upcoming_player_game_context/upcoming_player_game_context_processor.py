@@ -783,10 +783,24 @@ class UpcomingPlayerGameContextProcessor(
                     'injury_status': row.get('injury_status')  # Include injury info
                 })
 
+            # Count unique teams for coverage monitoring
+            unique_teams = set(row.get('team_abbr') for row in self.players_to_process if row.get('team_abbr'))
+            teams_count = len(unique_teams)
+
             logger.info(
                 f"[DAILY MODE] Found {len(self.players_to_process)} players for {self.target_date} "
-                f"({players_with_props} with prop lines, {len(self.players_to_process) - players_with_props} without)"
+                f"({players_with_props} with prop lines, {len(self.players_to_process) - players_with_props} without) "
+                f"from {teams_count} teams"
             )
+
+            # MONITORING: Alert if roster coverage is critically low
+            # Expected: 10-16 teams per day (5-8 games), alert if < 6 teams
+            if teams_count < 6 and len(self.players_to_process) > 0:
+                logger.warning(
+                    f"⚠️ LOW ROSTER COVERAGE: Only {teams_count} teams found for {self.target_date}. "
+                    f"Expected 10-16 teams. Check ESPN roster scraper and schedule data."
+                )
+                self._send_roster_coverage_alert(self.target_date, teams_count, len(self.players_to_process))
 
         except Exception as e:
             logger.error(f"Error extracting players (daily mode): {e}")
@@ -2925,6 +2939,48 @@ class UpcomingPlayerGameContextProcessor(
         except Exception as e:
             # Don't fail processing if alert fails
             logger.error(f"Failed to send prop coverage alert: {e}")
+
+    def _send_roster_coverage_alert(self, target_date: date, teams_count: int,
+                                     players_count: int) -> None:
+        """
+        Send alert when roster/team coverage is critically low.
+
+        This alerts operations when the roster data is incomplete,
+        typically due to ESPN scraper failures or roster query issues.
+
+        Args:
+            target_date: Date being processed
+            teams_count: Number of unique teams found
+            players_count: Total players found
+        """
+        try:
+            from shared.alerts.alert_manager import AlertManager
+
+            alert_mgr = AlertManager()
+            alert_mgr.send_alert(
+                severity='critical',
+                title=f'UPGC: Low Roster Coverage - Only {teams_count} Teams',
+                message=(
+                    f'UPGC for {target_date} found only {teams_count} teams ({players_count} players). '
+                    f'Expected 10-16 teams for a typical game day. '
+                    f'This typically indicates ESPN roster scraper failure or schedule data missing. '
+                    f'Check: 1) ESPN roster scraper status 2) nbac_schedule for {target_date} '
+                    f'3) espn_team_rosters latest date.'
+                ),
+                category='upgc_roster_coverage',
+                context={
+                    'game_date': target_date.isoformat(),
+                    'teams_count': teams_count,
+                    'players_count': players_count,
+                    'expected_teams': '10-16'
+                }
+            )
+            logger.warning(
+                f"🚨 ALERT SENT: Low roster coverage - only {teams_count} teams for {target_date}"
+            )
+        except Exception as e:
+            # Don't fail processing if alert fails
+            logger.error(f"Failed to send roster coverage alert: {e}")
 
 
 # Entry point for script execution
