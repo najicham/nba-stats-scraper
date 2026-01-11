@@ -62,9 +62,54 @@ pipeline-reliability-improvements/
 
 ---
 
-## Current Status (Jan 10, 2026)
+## Current Status (Jan 11, 2026)
 
-### 🔴 ACTIVE INVESTIGATION: Prediction Coverage Gap (31.5%)
+### ✅ Completed Jan 11 Session - SCHEDULE MERGE FIX DEPLOYED!
+
+**CRITICAL BUG FIXED:**
+- 🐛 **Schedule processor used WRITE_APPEND instead of MERGE**
+  - Root cause: Processor claimed MERGE_UPDATE but used DELETE (season) + WRITE_APPEND
+  - Impact: Duplicate rows with conflicting game_status (Scheduled + Final for same game)
+  - Downstream: `nbac_team_boxscore` scraper failed for 60+ games
+
+**FIX DEPLOYED:**
+1. ✅ **View Created**: `nba_raw.v_nbac_schedule_latest`
+   - Returns only one row per game_id (highest status wins)
+   - 90-day past / 30-day future range for partition elimination
+
+2. ✅ **Processor Fixed**: `nbac_schedule_processor.py`
+   - Added `PRIMARY_KEY_FIELDS = ['game_id', 'game_date']`
+   - Replaced DELETE + APPEND with atomic SQL MERGE
+   - Uses temp table → MERGE → cleanup pattern
+
+3. ✅ **Post-Game Refresh Added**: `config/workflows.yaml`
+   - Added `nbac_schedule_api` to `post_game_window_2` (1 AM ET)
+   - Added `nbac_schedule_api` to `post_game_window_3` (4 AM ET)
+   - Fixes root cause: schedule wasn't refreshing after games finished
+
+4. ✅ **Monitoring Added**: `validation/queries/raw/nbac_schedule/duplicate_detection_check.sql`
+   - Detects duplicate game_ids in schedule table
+
+5. ✅ **Unit Tests Added**: `tests/processors/raw/nbacom/nbac_schedule/test_unit.py`
+   - 19 tests covering PRIMARY_KEY_FIELDS, sanitization, MERGE logic
+
+**DEPLOYMENT:**
+- Revision: `nba-phase2-raw-processors-00084-znv`
+- Commit: `9afe84a` (MERGE fix), `55034d2` (monitoring)
+- Status: ✅ Serving 100% traffic, health check passed
+
+**AUDIT RESULTS:**
+- Checked all raw processors for similar MERGE vs APPEND issues
+- Only schedule processor had the bug (DELETE scope was season-wide)
+- Other processors use properly-scoped DELETEs or true MERGE
+
+**Documentation:**
+- `docs/09-handoff/2026-01-11-SCHEDULE-MERGE-FIX-HANDOFF.md` - Complete handoff
+- `docs/02-operations/daily-validation-checklist.md` - Updated with view usage
+
+---
+
+### 🔴 PREVIOUS INVESTIGATION: Prediction Coverage Gap (31.5%)
 
 **Discovered:** 2026-01-10 during registry system fix validation
 **Symptom:** Only 46 of 146 players with betting lines have predictions (31.5% coverage)
@@ -749,9 +794,10 @@ See `QUICK-WINS-CHECKLIST.md` and `SESSION-DEC31-FINAL-SUMMARY.md`
 
 **🎉 MAJOR WIN:** Deployed 42% faster pipeline + 57% faster Phase 3 + $5.1K/yr savings!
 
-*Last Updated: December 31, 2025 3:00 PM ET*
+*Last Updated: January 11, 2026 9:50 AM PT*
 *Investigation Status: Complete ✅*
-*Implementation Status: 6 Quick Wins Deployed ✅*
+*Implementation Status: 6 Quick Wins + Schedule MERGE Fix Deployed ✅*
 *Cost Savings: $5,100/yr deployed*
 *Performance: 57% faster Phase 3 (deployed & tested)*
+*Latest Fix: Schedule MERGE prevents duplicate game statuses*
 *Ready for Next Phase: Yes - See SESSION-DEC31-FINAL-SUMMARY.md*
