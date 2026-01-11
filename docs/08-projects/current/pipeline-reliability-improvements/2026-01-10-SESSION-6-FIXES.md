@@ -209,6 +209,37 @@ After these fixes, prediction coverage should improve:
 
 ---
 
+## Additional Fix: Incremental Prediction Mode
+
+**File:** `backfill_jobs/prediction/player_prop_predictions_backfill.py`
+
+**Problem:** The backfill deleted ALL predictions before regenerating, which could change existing predictions and break user-facing pick consistency.
+
+**Fix Applied:**
+- Default mode is now **incremental** (only fill gaps)
+- Added `--force` flag for full regeneration (admin use only)
+- Predictions users have already seen remain stable
+
+```bash
+# Incremental (default) - safe for production
+python player_prop_predictions_backfill.py --dates 2026-01-09
+
+# Force mode - admin recovery only
+python player_prop_predictions_backfill.py --dates 2026-01-09 --force
+```
+
+---
+
+## Name Mismatch Resolution
+
+**Root Cause:** Betting APIs use legal names, rosters use nicknames.
+
+**Aliases Created:**
+- `carltoncarrington` → `bubcarrington` (Carlton "Bub" Carrington)
+- `nicolasclaxton` → `nicclaxton` (Nicolas "Nic" Claxton)
+
+---
+
 **Author:** Claude Code (Opus 4.5)
 **Session:** 6
 **Date:** 2026-01-10
