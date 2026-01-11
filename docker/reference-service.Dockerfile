@@ -30,6 +30,9 @@ COPY data_processors/reference/ /app/data_processors/reference/
 COPY data_processors/raw/__init__.py /app/data_processors/raw/
 COPY data_processors/raw/processor_base.py /app/data_processors/raw/
 COPY data_processors/raw/smart_idempotency_mixin.py /app/data_processors/raw/
+# Copy tools for AI resolution endpoint
+COPY tools/__init__.py /app/tools/
+COPY tools/player_registry/ /app/tools/player_registry/
 
 # Set Python path and environment
 ENV PYTHONPATH=/app:$PYTHONPATH \

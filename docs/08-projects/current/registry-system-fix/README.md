@@ -2,7 +2,7 @@
 
 **Date Started:** 2026-01-10
 **Last Updated:** 2026-01-10
-**Status:** Phase 3 Complete - Monitoring Integrated
+**Status:** Phase 4 Complete - Deployment In Progress
 **Priority:** Critical
 
 ## Problem Statement
@@ -120,12 +120,11 @@ Data Complete in player_game_summary
 
 ## Historical Data Analysis
 
-From backfill investigation:
+Current state after backfill recovery (2026-01-10):
 
 | Category | Failures | Players | Action |
 |----------|----------|---------|--------|
-| Resolved, ready to reprocess | 2,138 | 38 | Run `--reprocess-only` |
-| In registry but unresolved | 1,064 | 569 | Run `recover_backfill_failures.py` |
+| Ready to reprocess | 3,202 | 607 | Run `--reprocess-only` after deployment |
 | Truly missing | 1,074 | 19 | AI resolution needed |
 | **Total** | 4,276 | 626 | |
 
@@ -182,10 +181,19 @@ python tools/monitoring/check_prediction_coverage.py --date $(date -d 'yesterday
 
 ## Remaining Work
 
-1. **Deploy reference service** with new endpoints
-2. **Run scheduler setup**: `./bin/orchestration/add_registry_scheduler_jobs.sh`
-3. **Process historical failures**: Run `recover_backfill_failures.py`
-4. **Standardize scraper normalization** (10+ files need updates - future project)
+### Deployment Phase (In Progress)
+- [x] Push all commits to origin/main (14 commits pushed 2026-01-10)
+- [x] Create BigQuery `reprocessing_runs` table (created 2026-01-10)
+- [x] **Deploy reference service** to Cloud Run (deployed 2026-01-10, URL: `nba-reference-service-756957797294.us-west2.run.app`)
+- [x] **Run scheduler setup**: Created `registry-ai-resolution` (4:30 AM ET) and `registry-health-check` (5:00 AM ET)
+
+### Data Recovery
+- [x] **Run backfill recovery**: 1,064 failures marked as resolved (2026-01-10)
+- [ ] **Run reprocessing**: 3,202 records ready to reprocess (needs deployment or API key)
+- [ ] **Run AI resolution** for 19 missing players (rookies/G-League)
+
+### Future Work
+- [ ] **Standardize scraper normalization** (10+ files need updates - future project)
 
 ## Related Documentation
 
