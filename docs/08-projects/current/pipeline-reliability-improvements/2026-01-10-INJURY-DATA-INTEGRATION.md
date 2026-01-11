@@ -26,6 +26,8 @@ def _extract_injuries(self) -> None:
 
 ### Query Logic
 
+Uses parameterized queries for security and filters by both `game_date` and `game_id` for precision:
+
 ```sql
 WITH latest_report AS (
     SELECT
@@ -38,8 +40,9 @@ WITH latest_report AS (
             ORDER BY report_date DESC, processed_at DESC
         ) as rn
     FROM nbac_injury_report
-    WHERE player_lookup IN (...)
+    WHERE player_lookup IN UNNEST(@player_lookups)
       AND game_date = @target_date
+      AND game_id IN UNNEST(@game_ids)
 )
 SELECT player_lookup, injury_status, reason, reason_category
 FROM latest_report
@@ -84,6 +87,22 @@ jamalmurray: status=out, report=unknown
 kristapsporzingis: status=out, report=unknown
 zaccharierisacher: status=out, report=Injury/Illness - Left Knee; Inflammation
 lebronJames: (not on injury report - None/None)
+```
+
+---
+
+## Source Tracking
+
+Injury extraction populates `source_tracking['injuries']` for observability:
+
+```python
+{
+    'last_updated': datetime,     # Latest processed_at from injury report
+    'rows_found': int,            # Number of injury records found
+    'players_with_status': int,   # Players with injury status populated
+    'status_breakdown': dict,     # Count by status: {'out': 3, 'questionable': 2}
+    'error': str                  # If extraction failed
+}
 ```
 
 ---
