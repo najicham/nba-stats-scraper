@@ -62,7 +62,54 @@ pipeline-reliability-improvements/
 
 ---
 
-## Current Status (Jan 3, 2026 - Evening)
+## Current Status (Jan 10, 2026)
+
+### 🔴 ACTIVE INVESTIGATION: Prediction Coverage Gap (31.5%)
+
+**Discovered:** 2026-01-10 during registry system fix validation
+**Symptom:** Only 46 of 146 players with betting lines have predictions (31.5% coverage)
+
+#### Root Causes Identified
+
+**Issue 1: Incomplete Raw Data (6 teams missing from boxscores)**
+| Teams with boxscores (14) | Teams missing boxscores (6) |
+|---------------------------|----------------------------|
+| ATL, BKN, BOS, DEN, LAC, MEM, NOP, NYK, OKC, ORL, PHI, PHX, TOR, WAS | GSW, HOU, LAL, MIL, POR, SAC |
+
+**Issue 2: Incomplete Context Generation (7 more teams missing)**
+| Teams with context (7) | Teams with boxscores but NO context (7) |
+|------------------------|----------------------------------------|
+| ATL, DEN, NOP, NYK, ORL, PHX, WAS | BKN, BOS, LAC, MEM, OKC, PHI, TOR |
+
+**Data Flow Breakdown:**
+```
+Phase 2: bdl_player_boxscores    → 14/20 teams (70%)
+Phase 3: upcoming_player_game_context → 7/20 teams (35%)
+Phase 4: player_prop_predictions → 46/146 players (31.5%)
+```
+
+**Context Processor Analysis:**
+- Processor: `upcoming_player_game_context_processor.py`
+- Uses DAILY mode (schedule + roster) or BACKFILL mode (gamebook)
+- Triggered by: `bdl_player_boxscores`, `nbac_injury_report`, `odds_api_player_points_props`
+- Processing happened: Jan 9 19:20 - Jan 10 03:06
+
+**Hypothesis:**
+1. Context processor only received Pub/Sub messages for some games
+2. Processing failed for 7 teams but errors weren't captured
+3. Mode detection (DAILY vs BACKFILL) may have caused some games to be skipped
+
+**Immediate Actions:**
+1. Run context backfill for Jan 9: `python backfill_jobs/analytics/upcoming_player_game_context/upcoming_player_game_context_analytics_backfill.py --start-date 2026-01-09 --end-date 2026-01-09`
+2. Investigate BDL scraper for 6 missing teams
+3. Check context processor logs for failed teams
+
+**Related Fix (Completed):**
+- Created alias: `vincentwilliamsjr` → `vincewilliamsjr` (name variation from odds API)
+
+---
+
+## Previous Status (Jan 3, 2026 - Evening)
 
 ### 🎯 **PROJECT STATUS: DISCOVERY WORKFLOWS FIXED + ALL MONITORING LAYERS FUNCTIONAL** ✅
 
