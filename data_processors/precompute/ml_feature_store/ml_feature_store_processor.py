@@ -793,14 +793,24 @@ class MLFeatureStoreProcessor(
         # OPTIMIZATION (Session 64): Skip slow completeness check in backfill mode
         # Backfill already has preflight checks at date-level; player-level is redundant
         # Session 170: Also skip in same-day mode (skip_dependency_check=True or strict_mode=False)
+        # Session 6 (2026-01-10): Also skip for same-day/future games where player_game_summary
+        # won't have data yet because games haven't been played. Players with valid context
+        # from upcoming_player_game_context should be processed even without completeness data.
         step_start = time.time()
+        is_same_day_or_future = analysis_date >= date.today()
         skip_completeness = (
             self.is_backfill_mode or
             self.opts.get('skip_dependency_check', False) or
-            not self.opts.get('strict_mode', True)
+            not self.opts.get('strict_mode', True) or
+            is_same_day_or_future  # Games haven't been played yet, skip completeness check
         )
         if skip_completeness:
-            mode_reason = "BACKFILL" if self.is_backfill_mode else "SAME-DAY"
+            if self.is_backfill_mode:
+                mode_reason = "BACKFILL"
+            elif is_same_day_or_future:
+                mode_reason = "SAME-DAY/FUTURE"
+            else:
+                mode_reason = "SAME-DAY"
             logger.info(f"⏭️ {mode_reason} MODE: Skipping completeness check for {len(all_players)} players")
             # Use actual game counts from already-loaded data (feature_extractor has last 10 games)
             # This makes metadata accurate for debugging without additional BQ queries
@@ -1370,11 +1380,14 @@ class MLFeatureStoreProcessor(
 
             # BACKFILL MODE FIX: Skip completeness checks in backfill mode
             # Session 170: Also skip in same-day mode (skip_dependency_check=True or strict_mode=False)
+            # Session 6 (2026-01-10): Also skip for same-day/future games (games haven't been played)
+            is_same_day_or_future = analysis_date >= date.today()
             skip_completeness_checks = (
                 self.is_backfill_mode or
                 is_bootstrap or
                 self.opts.get('skip_dependency_check', False) or
-                not self.opts.get('strict_mode', True)
+                not self.opts.get('strict_mode', True) or
+                is_same_day_or_future  # Games haven't been played yet
             )
 
             # Check production readiness (skip if incomplete, unless in bootstrap/backfill/same-day mode)
