@@ -402,9 +402,10 @@ class PredictionBackfill:
     def write_predictions_to_bq(
         self,
         predictions: List[Dict],
-        game_date: date
+        game_date: date,
+        force: bool = False
     ) -> int:
-        """Write predictions to BigQuery with idempotency.
+        """Write predictions to BigQuery with optional idempotency.
 
         The table schema expects ONE row per prediction system per player:
         - system_id: identifies the prediction system (moving_average, zone_matchup, etc.)
@@ -412,8 +413,15 @@ class PredictionBackfill:
         - confidence_score: confidence level (0-1)
         - recommendation: OVER/UNDER/HOLD
 
-        Idempotency: Deletes existing predictions for this date before inserting,
-        allowing safe re-runs without creating duplicates.
+        Args:
+            predictions: List of prediction dicts to write
+            game_date: Date being processed
+            force: If True, delete existing predictions first (idempotent full regeneration)
+                   If False (default), append only (incremental mode, preserves existing)
+
+        Session 6 (2026-01-10): Added force parameter to support incremental mode.
+        Default is now incremental (append-only) to preserve existing predictions
+        and avoid breaking user-facing pick consistency.
         """
         if not predictions:
             return 0
@@ -421,16 +429,18 @@ class PredictionBackfill:
         try:
             from datetime import timezone
 
-            # IDEMPOTENCY: Delete existing predictions for this date first
-            delete_query = f"""
-            DELETE FROM `{PREDICTIONS_TABLE}`
-            WHERE game_date = '{game_date.isoformat()}'
-            """
-            delete_job = self.bq_client.query(delete_query)
-            delete_job.result(timeout=60)  # Wait for completion
-            deleted_count = delete_job.num_dml_affected_rows or 0
-            if deleted_count > 0:
-                logger.info(f"  Deleted {deleted_count} existing predictions for {game_date} (idempotency)")
+            # FORCE MODE: Delete existing predictions for this date first
+            # INCREMENTAL MODE: Skip deletion, append only
+            if force:
+                delete_query = f"""
+                DELETE FROM `{PREDICTIONS_TABLE}`
+                WHERE game_date = '{game_date.isoformat()}'
+                """
+                delete_job = self.bq_client.query(delete_query)
+                delete_job.result(timeout=60)  # Wait for completion
+                deleted_count = delete_job.num_dml_affected_rows or 0
+                if deleted_count > 0:
+                    logger.info(f"  FORCE MODE: Deleted {deleted_count} existing predictions for {game_date}")
 
             # Prepare rows for BigQuery - one row per system per player
             rows = []
@@ -538,12 +548,32 @@ class PredictionBackfill:
             logger.error(f"Error writing predictions to BigQuery: {e}")
             return 0
 
+    def get_existing_predictions_for_date(self, game_date: date) -> set:
+        """Get player_lookups that already have predictions for this date.
+
+        Used for incremental mode to skip players with existing predictions.
+        """
+        query = f"""
+        SELECT DISTINCT player_lookup
+        FROM `{PREDICTIONS_TABLE}`
+        WHERE game_date = '{game_date.isoformat()}'
+          AND is_active = TRUE
+        """
+        try:
+            results = self.bq_client.query(query).result()
+            return {row.player_lookup for row in results}
+        except Exception as e:
+            logger.warning(f"Error getting existing predictions: {e}")
+            return set()
+
     def run_predictions_for_date(
         self,
         game_date: date,
         dry_run: bool = False,
         require_complete_mlfs: bool = True,
-        min_mlfs_coverage_pct: float = 90.0
+        min_mlfs_coverage_pct: float = 90.0,
+        incremental: bool = True,
+        force: bool = False
     ) -> Dict:
         """Run predictions for all players on a specific date.
 
@@ -556,6 +586,8 @@ class PredictionBackfill:
             dry_run: If True, only check dependencies without processing
             require_complete_mlfs: If True, skip dates with incomplete MLFS (default True)
             min_mlfs_coverage_pct: Minimum MLFS coverage required (default 90%)
+            incremental: If True (default), only generate for players without predictions
+            force: If True, delete all existing predictions and regenerate (overrides incremental)
         """
         if is_bootstrap_date(game_date):
             return {
@@ -604,6 +636,31 @@ class PredictionBackfill:
                 'status': 'no_players',
                 'date': game_date.isoformat()
             }
+
+        # INCREMENTAL MODE: Filter out players who already have predictions
+        # Session 6 (2026-01-10): Added to prevent regenerating existing predictions
+        # which could change values and break user-facing pick consistency
+        skipped_existing = 0
+        if incremental and not force:
+            existing_players = self.get_existing_predictions_for_date(game_date)
+            if existing_players:
+                original_count = len(players)
+                players = [p for p in players if p['player_lookup'] not in existing_players]
+                skipped_existing = original_count - len(players)
+                logger.info(
+                    f"INCREMENTAL MODE: Skipping {skipped_existing} players with existing predictions, "
+                    f"processing {len(players)} new players"
+                )
+
+                if not players:
+                    return {
+                        'status': 'all_players_have_predictions',
+                        'date': game_date.isoformat(),
+                        'existing_count': skipped_existing,
+                        'message': 'All players already have predictions. Use --force to regenerate.'
+                    }
+        elif force:
+            logger.warning(f"FORCE MODE: Will delete and regenerate ALL predictions for {game_date}")
 
         # Initialize prediction systems (lazy load)
         self._init_prediction_systems()
@@ -661,16 +718,18 @@ class PredictionBackfill:
                 logger.debug(f"Player {player_lookup} failed: {e}")
                 failed += 1
 
-        # Write to BigQuery
-        written = self.write_predictions_to_bq(all_predictions, game_date)
+        # Write to BigQuery (only delete existing if force=True)
+        written = self.write_predictions_to_bq(all_predictions, game_date, force=force)
 
         return {
             'status': 'success' if successful > 0 else 'failed',
             'date': game_date.isoformat(),
-            'players_found': len(players),
+            'players_found': len(players) + skipped_existing,
+            'skipped_existing': skipped_existing,
             'predictions_generated': successful,
             'failed': failed,
-            'written_to_bq': written
+            'written_to_bq': written,
+            'mode': 'force' if force else 'incremental'
         }
 
     def _generate_predictions_with_data(
@@ -784,13 +843,17 @@ class PredictionBackfill:
         dry_run: bool = False,
         checkpoint: BackfillCheckpoint = None,
         require_complete_mlfs: bool = True,
-        min_mlfs_coverage_pct: float = 90.0
+        min_mlfs_coverage_pct: float = 90.0,
+        incremental: bool = True,
+        force: bool = False
     ):
         """Run backfill processing day-by-day with checkpoint support.
 
         Args:
             require_complete_mlfs: If True, skip dates with incomplete MLFS data
             min_mlfs_coverage_pct: Minimum MLFS coverage required (default 90%)
+            incremental: If True (default), only generate for players without predictions
+            force: If True, delete all existing and regenerate (overrides incremental)
         """
         logger.info(f"Starting Phase 5 prediction backfill from {start_date} to {end_date}")
 
@@ -839,7 +902,9 @@ class PredictionBackfill:
                 current_date,
                 dry_run=dry_run,
                 require_complete_mlfs=require_complete_mlfs,
-                min_mlfs_coverage_pct=min_mlfs_coverage_pct
+                min_mlfs_coverage_pct=min_mlfs_coverage_pct,
+                incremental=incremental,
+                force=force
             )
             elapsed = time.time() - start_time
 
@@ -864,6 +929,14 @@ class PredictionBackfill:
                 logger.info(f"  ⏭ Skipped: bootstrap period")
                 if checkpoint:
                     checkpoint.mark_date_skipped(current_date)
+
+            elif result['status'] == 'all_players_have_predictions':
+                # Incremental mode: all players already have predictions
+                existing = result.get('existing_count', 0)
+                logger.info(f"  ✓ Complete: all {existing} players already have predictions (use --force to regenerate)")
+                successful_days += 1  # Count as success since predictions exist
+                if checkpoint:
+                    checkpoint.mark_date_complete(current_date)
 
             elif result['status'] == 'missing_dependencies':
                 failed_days.append(current_date)
@@ -901,17 +974,34 @@ class PredictionBackfill:
         dates: List[date],
         dry_run: bool = False,
         require_complete_mlfs: bool = True,
-        min_mlfs_coverage_pct: float = 90.0
+        min_mlfs_coverage_pct: float = 90.0,
+        incremental: bool = True,
+        force: bool = False
     ):
-        """Process specific dates (for retrying failed dates)."""
+        """Process specific dates (for retrying failed dates).
+
+        Args:
+            dates: List of dates to process
+            dry_run: If True, only check dependencies
+            require_complete_mlfs: If True, skip dates with incomplete MLFS
+            min_mlfs_coverage_pct: Minimum MLFS coverage required
+            incremental: If True (default), only generate for players without predictions
+            force: If True, delete all existing and regenerate (overrides incremental)
+        """
         for single_date in dates:
             result = self.run_predictions_for_date(
                 single_date,
                 dry_run=dry_run,
                 require_complete_mlfs=require_complete_mlfs,
-                min_mlfs_coverage_pct=min_mlfs_coverage_pct
+                min_mlfs_coverage_pct=min_mlfs_coverage_pct,
+                incremental=incremental,
+                force=force
             )
-            logger.info(f"{single_date}: {result['status']}")
+            status = result['status']
+            mode = result.get('mode', 'unknown')
+            skipped = result.get('skipped_existing', 0)
+            generated = result.get('predictions_generated', 0)
+            logger.info(f"{single_date}: {status} (mode={mode}, generated={generated}, skipped_existing={skipped})")
 
 
 def main():
@@ -937,9 +1027,19 @@ def main():
                         help='Skip MLFS completeness check (allows running on incomplete MLFS data)')
     parser.add_argument('--min-mlfs-coverage', type=float, default=90.0,
                         help='Minimum MLFS coverage percentage required (default: 90)')
+    parser.add_argument('--force', action='store_true',
+                        help='Force regeneration: delete all existing predictions and regenerate '
+                             '(use with caution - changes existing predictions)')
+    parser.add_argument('--no-incremental', action='store_true',
+                        help='Disable incremental mode (same as --force, kept for backwards compatibility)')
 
     args = parser.parse_args()
     backfiller = PredictionBackfill()
+
+    # Determine force mode (--force or --no-incremental both trigger force mode)
+    force_mode = args.force or args.no_incremental
+    if force_mode:
+        logger.warning("FORCE MODE ENABLED: Will delete and regenerate existing predictions")
 
     # Handle specific dates
     if args.dates:
@@ -951,7 +1051,9 @@ def main():
             date_list,
             dry_run=args.dry_run,
             require_complete_mlfs=not args.skip_mlfs_check,
-            min_mlfs_coverage_pct=args.min_mlfs_coverage
+            min_mlfs_coverage_pct=args.min_mlfs_coverage,
+            incremental=not force_mode,
+            force=force_mode
         )
         return
 
@@ -1006,13 +1108,16 @@ def main():
             logger.info(f"   Counts: {deps}")
 
     logger.info(f"Checkpoint: {checkpoint.checkpoint_path}")
+    logger.info(f"Mode: {'FORCE (regenerate all)' if force_mode else 'INCREMENTAL (fill gaps only)'}")
     backfiller.run_backfill(
         start_date,
         end_date,
         dry_run=args.dry_run,
         checkpoint=checkpoint if not args.dry_run else None,
         require_complete_mlfs=not args.skip_mlfs_check,
-        min_mlfs_coverage_pct=args.min_mlfs_coverage
+        min_mlfs_coverage_pct=args.min_mlfs_coverage,
+        incremental=not force_mode,
+        force=force_mode
     )
 
 
