@@ -59,12 +59,19 @@ WHERE state != 'CLOSED'
 ORDER BY updated_at DESC"
 
 # 0.4 Check schedule freshness (CRITICAL - schedule must show games as Final)
+# Use v_nbac_schedule_latest view to get deduplicated status per game
 bq query --use_legacy_sql=false --format=pretty "
 SELECT game_date, game_status, game_status_text, COUNT(*) as games
-FROM nba_raw.nbac_schedule
+FROM nba_raw.v_nbac_schedule_latest
 WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 2 DAY)
 GROUP BY game_date, game_status, game_status_text
 ORDER BY game_date DESC, game_status"
+
+# Alternative: Check raw table for duplicates (should be 0 after MERGE fix)
+# bq query --use_legacy_sql=false "
+# SELECT game_id, COUNT(*) as rows FROM nba_raw.nbac_schedule
+# WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 2 DAY)
+# GROUP BY game_id HAVING COUNT(*) > 1"
 
 # 0.5 Compare schedule to NBA.com live (should match)
 curl -s 'https://cdn.nba.com/static/json/liveData/scoreboard/todaysScoreboard_00.json' | \
@@ -692,6 +699,35 @@ See `docs/07-monitoring/observability-gaps.md` for full details. Key gaps:
 
 ## Known Issues (Session 8 - January 11, 2026)
 
+### Schedule Duplicate Status (FIXED - January 11, 2026)
+
+**Issue:** The schedule processor was using WRITE_APPEND instead of proper MERGE, causing duplicate rows with conflicting statuses (same game_id appearing as both "Scheduled" and "Final").
+
+**Fix Applied:**
+1. **View Created:** `nba_raw.v_nbac_schedule_latest` returns only one row per game (highest status wins)
+2. **Processor Fixed:** `nbac_schedule_processor.py` now uses proper SQL MERGE with PRIMARY_KEY_FIELDS
+
+**Detection (use to verify fix working):**
+```bash
+# Check for duplicates (should be 0 after fix)
+bq query --use_legacy_sql=false "
+SELECT game_id, COUNT(*) as rows FROM nba_raw.nbac_schedule
+WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 3 DAY)
+GROUP BY game_id HAVING COUNT(*) > 1"
+
+# Use view for clean data
+bq query --use_legacy_sql=false "
+SELECT game_id, game_status_text
+FROM nba_raw.v_nbac_schedule_latest WHERE game_date = CURRENT_DATE()
+ORDER BY game_id"
+```
+
+**When to use the view:**
+- `v_nbac_schedule_latest` - Use when you need current game status (deduplicates)
+- `nbac_schedule` - Use for historical analysis or when you need all records
+
+---
+
 ### Schedule Not Refreshing After Games Finish
 
 **Issue:** The schedule scraper runs during morning_operations and schedule_dependency workflows, but if games finish AFTER these run, the schedule table still shows games as "Scheduled" instead of "Final".
@@ -704,11 +740,11 @@ See `docs/07-monitoring/observability-gaps.md` for full details. Key gaps:
 **Detection:**
 ```bash
 # Compare our schedule to NBA.com
-# Our schedule:
+# Our schedule (use view for clean data):
 bq query --use_legacy_sql=false "
 SELECT game_id, game_status_text
-FROM nba_raw.nbac_schedule WHERE game_date = CURRENT_DATE()
-GROUP BY game_id, game_status_text ORDER BY game_id"
+FROM nba_raw.v_nbac_schedule_latest WHERE game_date = CURRENT_DATE()
+ORDER BY game_id"
 
 # NBA.com live (should match):
 curl -s 'https://cdn.nba.com/static/json/liveData/scoreboard/todaysScoreboard_00.json' | \

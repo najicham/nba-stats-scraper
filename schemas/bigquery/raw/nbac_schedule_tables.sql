@@ -152,3 +152,32 @@ FROM `nba_raw.nbac_schedule`
 WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 730 DAY)
 GROUP BY season_nba_format, data_source
 ORDER BY season_nba_format DESC, data_source;
+
+-- =========================================================================
+-- Deduplication View: Returns latest status per game
+-- =========================================================================
+-- IMPORTANT: Use this view when you need current game status.
+-- The base table can have duplicate rows with conflicting statuses
+-- (e.g., game_status=1 "Scheduled" AND game_status=3 "Final" for same game_id)
+-- due to WRITE_APPEND behavior during schedule updates.
+--
+-- This view returns only the most recent status per game by:
+-- 1. Partitioning by game_id
+-- 2. Ordering by game_status DESC (Final=3 > InProgress=2 > Scheduled=1)
+-- 3. Breaking ties by processed_at DESC (most recent write wins)
+--
+-- NOTE: Date range limited to 90 days past / 30 days future to allow
+-- partition elimination on the underlying table.
+CREATE OR REPLACE VIEW `nba_raw.v_nbac_schedule_latest` AS
+SELECT * EXCEPT(rn)
+FROM (
+  SELECT *,
+    ROW_NUMBER() OVER (
+      PARTITION BY game_id
+      ORDER BY game_status DESC, processed_at DESC
+    ) as rn
+  FROM `nba_raw.nbac_schedule`
+  WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY)
+    AND game_date <= DATE_ADD(CURRENT_DATE(), INTERVAL 30 DAY)
+)
+WHERE rn = 1;
