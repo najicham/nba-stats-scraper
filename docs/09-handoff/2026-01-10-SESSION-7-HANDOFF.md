@@ -121,19 +121,41 @@ Prediction Coverage:
 
 ---
 
+## Part 3: Injury Data Integration
+
+Implemented the `_extract_injuries()` method that was previously a TODO stub.
+
+### What It Does
+
+- Queries `nbac_injury_report` for latest injury status per player
+- Populates `player_status` and `injury_report` fields in player context
+- Supports: out, doubtful, questionable, probable, available
+
+### Test Results
+
+```
+jamalmurray: status=out, report=unknown
+kristapsporzingis: status=out, report=unknown
+zaccharierisacher: status=out, report=Injury/Illness - Left Knee; Inflammation
+lebronJames: (not on injury report - None/None)
+```
+
+---
+
 ## Commits
 
 1. `fb7a894` - fix(coverage): Add comprehensive alias resolution and DID_NOT_PLAY detection
 2. `ec4dc65` - docs(session7): Add coverage check alias resolution documentation
 3. `7d5bf4b` - fix(coverage): Exclude DNP players from coverage gaps (bets voided)
+4. `f52c61b` - feat(context): Implement injury data integration
 
 ---
 
 ## Next Steps for Future Sessions
 
-1. **Implement injury data integration**: The `_extract_injuries()` method is a TODO stub
-2. **Feature store backfill**: Consider backfilling features for recently traded players
-3. **Grading system**: When implementing pick grading, exclude 0-minute players from accuracy calculations
+1. **Feature store backfill**: Consider backfilling features for recently traded players
+2. **Grading system**: When implementing pick grading, exclude 0-minute players from accuracy calculations
+3. **Pre-game filtering**: Use injury status to skip predictions for out/doubtful players
 
 ---
 
