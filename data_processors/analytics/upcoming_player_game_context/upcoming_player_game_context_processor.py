@@ -1636,7 +1636,8 @@ class UpcomingPlayerGameContextProcessor(
                     upstream_entity_field='player_lookup',
                     lookback_window=lookback,
                     window_type=window_type,
-                    season_start_date=self.season_start_date
+                    season_start_date=self.season_start_date,
+                    dnp_aware=True  # Exclude DNP games from expected count to prevent false positives
                 ))
 
             # Run all 5 completeness checks in parallel
