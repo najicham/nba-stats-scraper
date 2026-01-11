@@ -1503,14 +1503,16 @@ class UpcomingPlayerGameContextProcessor(
             logger.info("No players to lookup injuries for")
             return
 
-        # Get unique player lookups and game_ids for precise matching
+        # Get unique player lookups for matching
         unique_players = list(set(p['player_lookup'] for p in self.players_to_process))
-        unique_game_ids = list(set(p['game_id'] for p in self.players_to_process))
 
         logger.info(f"Extracting injury data for {len(unique_players)} players")
 
         # Use parameterized query to avoid SQL injection
-        # Filter by both game_date and game_id for precision
+        # NOTE: We filter by game_date only, not game_id, because:
+        # - Injury report uses format like "20260110_CHA_UTA"
+        # - Context table uses format like "0022500543"
+        # - Same-day doubleheaders are extremely rare in NBA
         query = f"""
         WITH latest_report AS (
             SELECT
@@ -1527,7 +1529,6 @@ class UpcomingPlayerGameContextProcessor(
             FROM `{self.project_id}.nba_raw.nbac_injury_report`
             WHERE player_lookup IN UNNEST(@player_lookups)
               AND game_date = @target_date
-              AND game_id IN UNNEST(@game_ids)
         )
         SELECT
             player_lookup,
@@ -1542,7 +1543,6 @@ class UpcomingPlayerGameContextProcessor(
         job_config = bigquery.QueryJobConfig(
             query_parameters=[
                 bigquery.ArrayQueryParameter("player_lookups", "STRING", unique_players),
-                bigquery.ArrayQueryParameter("game_ids", "STRING", unique_game_ids),
                 bigquery.ScalarQueryParameter("target_date", "DATE", self.target_date.isoformat()),
             ]
         )
