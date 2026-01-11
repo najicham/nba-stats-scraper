@@ -2,7 +2,7 @@
 
 **Date Started:** 2026-01-10
 **Last Updated:** 2026-01-10
-**Status:** Phase 4 Complete - Deployment In Progress
+**Status:** Complete - Deployed and Operational
 **Priority:** Critical
 
 ## Problem Statement
@@ -189,8 +189,13 @@ python tools/monitoring/check_prediction_coverage.py --date $(date -d 'yesterday
 
 ### Data Recovery
 - [x] **Run backfill recovery**: 1,064 failures marked as resolved (2026-01-10)
-- [ ] **Run reprocessing**: 3,202 records ready to reprocess (needs deployment or API key)
-- [ ] **Run AI resolution** for 19 missing players (rookies/G-League)
+- [x] **AI resolution endpoint**: Working (ran via Cloud Run, 0 pending names found)
+- [ ] **Reprocessing**: 3,202 records ready - will happen automatically via scheduled job
+
+### Known Data Gaps (19 players)
+The 19 "truly missing" players (alexantetokounmpo, airiousbailey, etc.) are cached as DATA_ERROR.
+These are G-League/two-way/rookie players not in the registry when first encountered.
+To fix: Add players to registry, invalidate cache entries, re-run AI resolution.
 
 ### Future Work
 - [ ] **Standardize scraper normalization** (10+ files need updates - future project)
