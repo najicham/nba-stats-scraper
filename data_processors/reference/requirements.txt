@@ -8,6 +8,10 @@ gunicorn>=21.0.0
 # Google Cloud dependencies
 google-cloud-bigquery>=3.10.0
 google-cloud-storage>=2.10.0
+google-cloud-secret-manager>=2.16.0
+
+# AI resolution
+anthropic>=0.18.0
 
 # Data processing
 numpy>=1.24.0

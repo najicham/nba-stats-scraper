@@ -34,6 +34,8 @@ docker-compose.dev.yml
 infra/
 # monitoring/
 tools/
+!tools/__init__.py
+!tools/player_registry/
 workflows/
 
 # Test data
