@@ -896,10 +896,21 @@ class PredictionBackfill:
             logger.info(f"  Failed dates: {failed_days[:10]}")
         logger.info("=" * 80)
 
-    def process_specific_dates(self, dates: List[date], dry_run: bool = False):
+    def process_specific_dates(
+        self,
+        dates: List[date],
+        dry_run: bool = False,
+        require_complete_mlfs: bool = True,
+        min_mlfs_coverage_pct: float = 90.0
+    ):
         """Process specific dates (for retrying failed dates)."""
         for single_date in dates:
-            result = self.run_predictions_for_date(single_date, dry_run)
+            result = self.run_predictions_for_date(
+                single_date,
+                dry_run=dry_run,
+                require_complete_mlfs=require_complete_mlfs,
+                min_mlfs_coverage_pct=min_mlfs_coverage_pct
+            )
             logger.info(f"{single_date}: {result['status']}")
 
 
@@ -936,7 +947,12 @@ def main():
             datetime.strptime(d.strip(), '%Y-%m-%d').date()
             for d in args.dates.split(',')
         ]
-        backfiller.process_specific_dates(date_list, dry_run=args.dry_run)
+        backfiller.process_specific_dates(
+            date_list,
+            dry_run=args.dry_run,
+            require_complete_mlfs=not args.skip_mlfs_check,
+            min_mlfs_coverage_pct=args.min_mlfs_coverage
+        )
         return
 
     # Parse date range
