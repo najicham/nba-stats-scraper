@@ -1494,19 +1494,23 @@ class UpcomingPlayerGameContextProcessor(
         - 'questionable': Uncertain (usually 50% chance)
         - 'probable': Likely to play (usually 75% chance)
         - 'available': Was on report but cleared to play
+
+        NOTE: For real-time processing, this returns the current injury status.
+        For backfill, this returns the FINAL status (which may be 'out' for DNP players).
+        This is intentional - backfill DNP players are excluded via BET_VOIDED_DNP anyway.
         """
         if not self.players_to_process:
             logger.info("No players to lookup injuries for")
             return
 
-        # Get unique player lookups
+        # Get unique player lookups and game_ids for precise matching
         unique_players = list(set(p['player_lookup'] for p in self.players_to_process))
-        player_lookups_str = "', '".join(unique_players)
+        unique_game_ids = list(set(p['game_id'] for p in self.players_to_process))
 
         logger.info(f"Extracting injury data for {len(unique_players)} players")
 
-        # Query for latest injury status for each player on the target date
-        # We want the most recent report for the game date
+        # Use parameterized query to avoid SQL injection
+        # Filter by both game_date and game_id for precision
         query = f"""
         WITH latest_report AS (
             SELECT
@@ -1521,34 +1525,64 @@ class UpcomingPlayerGameContextProcessor(
                     ORDER BY report_date DESC, processed_at DESC
                 ) as rn
             FROM `{self.project_id}.nba_raw.nbac_injury_report`
-            WHERE player_lookup IN ('{player_lookups_str}')
-              AND game_date = '{self.target_date}'
+            WHERE player_lookup IN UNNEST(@player_lookups)
+              AND game_date = @target_date
+              AND game_id IN UNNEST(@game_ids)
         )
         SELECT
             player_lookup,
             injury_status,
             reason,
-            reason_category
+            reason_category,
+            processed_at
         FROM latest_report
         WHERE rn = 1
         """
 
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ArrayQueryParameter("player_lookups", "STRING", unique_players),
+                bigquery.ArrayQueryParameter("game_ids", "STRING", unique_game_ids),
+                bigquery.ScalarQueryParameter("target_date", "DATE", self.target_date.isoformat()),
+            ]
+        )
+
         try:
-            df = self.bq_client.query(query).to_dataframe()
+            df = self.bq_client.query(query, job_config=job_config).to_dataframe()
 
             if df.empty:
                 logger.info("No injury report data found for target date")
+                # Track in source_tracking for observability
+                self.source_tracking['injuries'] = {
+                    'last_updated': None,
+                    'rows_found': 0,
+                    'players_with_status': 0
+                }
                 return
+
+            # Track latest update time for source tracking
+            latest_processed = df['processed_at'].max() if 'processed_at' in df.columns else None
 
             # Build injuries dict
             for _, row in df.iterrows():
                 player_lookup = row['player_lookup']
+                reason = row['reason']
+                reason_category = row['reason_category']
+
+                # Build a meaningful report string
+                if reason and str(reason).lower() not in ('unknown', 'nan', 'none', ''):
+                    report = reason
+                elif reason_category and str(reason_category).lower() not in ('unknown', 'nan', 'none', ''):
+                    report = reason_category
+                else:
+                    report = None  # No reason available
+
                 self.injuries[player_lookup] = {
                     'status': row['injury_status'],
-                    'report': row['reason'] if row['reason'] else row['reason_category']
+                    'report': report
                 }
 
-            # Log summary
+            # Log summary by status
             status_counts = {}
             for info in self.injuries.values():
                 status = info['status']
@@ -1559,8 +1593,22 @@ class UpcomingPlayerGameContextProcessor(
                 f"{', '.join(f'{k}={v}' for k, v in sorted(status_counts.items()))}"
             )
 
+            # Track in source_tracking for observability
+            self.source_tracking['injuries'] = {
+                'last_updated': latest_processed,
+                'rows_found': len(df),
+                'players_with_status': len(self.injuries),
+                'status_breakdown': status_counts
+            }
+
         except Exception as e:
             logger.warning(f"Error extracting injury data: {e}. Continuing without injury info.")
+            self.source_tracking['injuries'] = {
+                'last_updated': None,
+                'rows_found': 0,
+                'players_with_status': 0,
+                'error': str(e)
+            }
     
     def _extract_registry(self) -> None:
         """
