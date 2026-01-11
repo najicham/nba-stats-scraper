@@ -103,7 +103,8 @@ class CompletenessChecker:
         window_type: str = 'games',
         season_start_date: Optional[date] = None,
         fail_on_incomplete: bool = False,
-        completeness_threshold: float = 90.0
+        completeness_threshold: float = 90.0,
+        dnp_aware: bool = False
     ) -> Dict[str, Dict]:
         """
         Check completeness for multiple entities in single query (batch operation).
@@ -119,6 +120,9 @@ class CompletenessChecker:
             season_start_date: Start of season (optional, for game-count windows)
             fail_on_incomplete: If True, raise DependencyError when completeness below threshold
             completeness_threshold: Minimum completeness % required (default: 90.0)
+            dnp_aware: If True, exclude DNP games (0 minutes in raw boxscores) from expected count.
+                       This prevents penalizing players for legitimate absences (injury, rest).
+                       Only applies to entity_type='player'.
 
         Returns:
             Dictionary mapping entity_id to completeness metrics:
@@ -129,7 +133,11 @@ class CompletenessChecker:
                     'completeness_pct': 88.2,
                     'missing_count': 2,
                     'is_complete': False,
-                    'is_production_ready': False
+                    'is_production_ready': False,
+                    # When dnp_aware=True, also includes:
+                    'dnp_count': 2,              # Games where player had 0 minutes
+                    'adjusted_expected': 15,     # expected_count - dnp_count
+                    'gap_classification': 'NO_GAP'  # NO_GAP | DATA_GAP | NAME_UNRESOLVED
                 },
                 ...
             }
@@ -140,6 +148,7 @@ class CompletenessChecker:
         logger.info(
             f"Checking completeness for {len(entity_ids)} {entity_type}s "
             f"({window_type} window: {lookback_window})"
+            + (", DNP-aware" if dnp_aware else "")
         )
 
         # Query 1: Expected games from schedule
@@ -154,28 +163,75 @@ class CompletenessChecker:
             analysis_date, lookback_window, window_type, season_start_date
         )
 
+        # Query 3 (optional): DNP games from raw boxscores
+        dnp_data = {}
+        if dnp_aware and entity_type == 'player':
+            dnp_data = self._query_dnp_games(
+                entity_ids, analysis_date, lookback_window, window_type
+            )
+
         # Calculate completeness per entity
         results = {}
         for entity_id in entity_ids:
             expected = self._get_count(expected_df, entity_id)
             actual = self._get_count(actual_df, entity_id)
 
-            completeness_pct = (actual / expected * 100) if expected > 0 else 0
-            is_complete = actual >= expected
+            # DNP-aware adjustment
+            dnp_count = dnp_data.get(entity_id, 0) if dnp_aware else 0
+            adjusted_expected = max(0, expected - dnp_count)
+
+            # Use adjusted expected for completeness calculation when DNP-aware
+            calc_expected = adjusted_expected if dnp_aware else expected
+
+            # Calculate completeness percentage
+            if calc_expected > 0:
+                completeness_pct = actual / calc_expected * 100
+            elif dnp_aware and dnp_count > 0:
+                # All games were DNP - no data expected, consider complete
+                completeness_pct = 100.0
+            elif expected == 0:
+                # No team games found - consider complete (edge case: new player, no team)
+                completeness_pct = 100.0
+            else:
+                # expected > 0 but calc_expected = 0 without DNPs - should not happen
+                completeness_pct = 0.0
+
+            is_complete = actual >= calc_expected
             is_production_ready = completeness_pct >= self.production_ready_threshold
+
+            # Classify the gap type (for DNP-aware mode)
+            gap_classification = 'NO_GAP'
+            if dnp_aware:
+                if actual == 0 and dnp_count == 0 and expected > 0:
+                    # No games in raw boxscores at all - likely name resolution issue
+                    gap_classification = 'NAME_UNRESOLVED'
+                elif actual < adjusted_expected:
+                    # Has some data but missing games they played
+                    gap_classification = 'DATA_GAP'
+                else:
+                    gap_classification = 'NO_GAP'
 
             results[entity_id] = {
                 'expected_count': expected,
                 'actual_count': actual,
                 'completeness_pct': round(completeness_pct, 1),
-                'missing_count': max(0, expected - actual),
+                'missing_count': max(0, calc_expected - actual),
                 'is_complete': is_complete,
                 'is_production_ready': is_production_ready
             }
 
+            # Add DNP-aware fields
+            if dnp_aware:
+                results[entity_id].update({
+                    'dnp_count': dnp_count,
+                    'adjusted_expected': adjusted_expected,
+                    'gap_classification': gap_classification
+                })
+
             logger.debug(
                 f"{entity_id}: {completeness_pct:.1f}% complete "
-                f"({actual}/{expected} games)"
+                f"({actual}/{calc_expected} games)"
+                + (f", {dnp_count} DNP excluded" if dnp_aware and dnp_count > 0 else "")
             )
 
         # Strict mode: Fail if any entity below threshold
@@ -520,6 +576,98 @@ class CompletenessChecker:
             return 0
 
         return int(entity_rows['count'].iloc[0])
+
+    def _query_dnp_games(
+        self,
+        player_lookups: List[str],
+        analysis_date: date,
+        lookback_window: int,
+        window_type: str
+    ) -> Dict[str, int]:
+        """
+        Query DNP (Did Not Play) games from raw boxscores.
+
+        A DNP game is one where the player appears in the boxscore with 0 minutes.
+        This indicates they were on the roster but didn't play (injury, rest, coach decision).
+
+        Args:
+            player_lookups: List of player lookup keys
+            analysis_date: Date being analyzed (exclusive - games before this date)
+            lookback_window: Window size (games or days)
+            window_type: 'games' or 'days'
+
+        Returns:
+            Dictionary mapping player_lookup to count of DNP games in the window
+        """
+        from google.cloud import bigquery
+
+        if not player_lookups:
+            return {}
+
+        # Build date filter based on window type
+        if window_type == 'days':
+            start_date = analysis_date - timedelta(days=lookback_window)
+            date_filter = f"game_date >= DATE('{start_date}') AND game_date < DATE('{analysis_date}')"
+        else:
+            # For game-count windows, we need to look at all games up to analysis_date
+            # and let the expected games query handle the count limiting
+            # For DNP, we query all games in reasonable lookback and count DNPs
+            # Use 30 days as reasonable lookback for game-count windows
+            start_date = analysis_date - timedelta(days=30)
+            date_filter = f"game_date >= DATE('{start_date}') AND game_date < DATE('{analysis_date}')"
+
+        query = f"""
+        WITH player_dnp_games AS (
+            SELECT
+                player_lookup,
+                game_date,
+                minutes
+            FROM `{self.project_id}.nba_raw.bdl_player_boxscores`
+            WHERE player_lookup IN UNNEST(@player_lookups)
+              AND {date_filter}
+        ),
+        -- For game-count windows, we need to rank games and only count DNPs within the window
+        ranked_games AS (
+            SELECT
+                player_lookup,
+                game_date,
+                minutes,
+                ROW_NUMBER() OVER (
+                    PARTITION BY player_lookup
+                    ORDER BY game_date DESC
+                ) as game_num
+            FROM player_dnp_games
+        )
+        SELECT
+            player_lookup,
+            COUNT(DISTINCT game_date) as dnp_count
+        FROM ranked_games
+        WHERE (minutes = '00' OR minutes = '' OR minutes IS NULL OR minutes = '0')
+          {"AND game_num <= " + str(lookback_window) if window_type == 'games' else ""}
+        GROUP BY player_lookup
+        """
+
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ArrayQueryParameter("player_lookups", "STRING", player_lookups),
+            ]
+        )
+
+        try:
+            result = self.bq_client.query(query, job_config=job_config).result(timeout=60)
+            dnp_counts = {row.player_lookup: row.dnp_count for row in result}
+
+            total_dnp = sum(dnp_counts.values())
+            if total_dnp > 0:
+                logger.info(
+                    f"DNP check: {len(dnp_counts)} players with DNP games, "
+                    f"{total_dnp} total DNP games in window"
+                )
+
+            return dnp_counts
+        except Exception as e:
+            logger.warning(f"Error querying DNP games: {e}")
+            return {}
 
     def is_bootstrap_mode(
         self,
