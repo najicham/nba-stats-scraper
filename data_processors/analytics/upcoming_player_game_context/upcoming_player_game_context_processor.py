@@ -1482,9 +1482,85 @@ class UpcomingPlayerGameContextProcessor(
         pass
     
     def _extract_injuries(self) -> None:
-        """Extract injury report data (optional enhancement)."""
-        # TODO: Implement injury extraction from nba_raw.nbac_injury_report
-        pass
+        """
+        Extract injury report data from NBA.com injury report.
+
+        Gets the latest injury status for each player for the target game date.
+        Stores results in self.injuries as {player_lookup: {'status': ..., 'report': ...}}.
+
+        Injury statuses:
+        - 'out': Definitely not playing
+        - 'doubtful': Unlikely to play (usually 25% chance)
+        - 'questionable': Uncertain (usually 50% chance)
+        - 'probable': Likely to play (usually 75% chance)
+        - 'available': Was on report but cleared to play
+        """
+        if not self.players_to_process:
+            logger.info("No players to lookup injuries for")
+            return
+
+        # Get unique player lookups
+        unique_players = list(set(p['player_lookup'] for p in self.players_to_process))
+        player_lookups_str = "', '".join(unique_players)
+
+        logger.info(f"Extracting injury data for {len(unique_players)} players")
+
+        # Query for latest injury status for each player on the target date
+        # We want the most recent report for the game date
+        query = f"""
+        WITH latest_report AS (
+            SELECT
+                player_lookup,
+                injury_status,
+                reason,
+                reason_category,
+                report_date,
+                processed_at,
+                ROW_NUMBER() OVER (
+                    PARTITION BY player_lookup
+                    ORDER BY report_date DESC, processed_at DESC
+                ) as rn
+            FROM `{self.project_id}.nba_raw.nbac_injury_report`
+            WHERE player_lookup IN ('{player_lookups_str}')
+              AND game_date = '{self.target_date}'
+        )
+        SELECT
+            player_lookup,
+            injury_status,
+            reason,
+            reason_category
+        FROM latest_report
+        WHERE rn = 1
+        """
+
+        try:
+            df = self.bq_client.query(query).to_dataframe()
+
+            if df.empty:
+                logger.info("No injury report data found for target date")
+                return
+
+            # Build injuries dict
+            for _, row in df.iterrows():
+                player_lookup = row['player_lookup']
+                self.injuries[player_lookup] = {
+                    'status': row['injury_status'],
+                    'report': row['reason'] if row['reason'] else row['reason_category']
+                }
+
+            # Log summary
+            status_counts = {}
+            for info in self.injuries.values():
+                status = info['status']
+                status_counts[status] = status_counts.get(status, 0) + 1
+
+            logger.info(
+                f"Extracted injury data for {len(self.injuries)} players: "
+                f"{', '.join(f'{k}={v}' for k, v in sorted(status_counts.items()))}"
+            )
+
+        except Exception as e:
+            logger.warning(f"Error extracting injury data: {e}. Continuing without injury info.")
     
     def _extract_registry(self) -> None:
         """
