@@ -129,20 +129,35 @@ Please check that today's (Jan 10) daily orchestration ran properly:
 # Check prediction coverage for tomorrow
 python tools/monitoring/check_prediction_coverage.py --date 2026-01-11
 
-# Check recent pipeline runs
+# Check workflow decisions (what the orchestrator decided to run)
 bq query --use_legacy_sql=false "
-SELECT job_name, status, start_time, end_time
-FROM nba_analytics.pipeline_run_history
-WHERE start_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)
-ORDER BY start_time DESC
+SELECT decision_time, workflow_name, action, reason, alert_level
+FROM nba_orchestration.workflow_decisions
+WHERE decision_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)
+ORDER BY decision_time DESC
 LIMIT 20"
 
-# Check grading results for today
+# Check workflow executions (what actually ran)
 bq query --use_legacy_sql=false "
-SELECT game_date, COUNT(*) as graded_predictions
-FROM nba_predictions.prediction_grades
+SELECT execution_time, workflow_name, status, scrapers_succeeded, scrapers_failed, error_message
+FROM nba_orchestration.workflow_executions
+WHERE execution_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)
+ORDER BY execution_time DESC
+LIMIT 20"
+
+# Check predictions for a date
+bq query --use_legacy_sql=false "
+SELECT game_date, COUNT(*) as prediction_count, COUNT(DISTINCT player_lookup) as unique_players
+FROM nba_predictions.player_prop_predictions
 WHERE game_date = '2026-01-10'
 GROUP BY game_date"
+
+# Check circuit breaker state
+bq query --use_legacy_sql=false "
+SELECT processor_name, state, failure_count, updated_at
+FROM nba_orchestration.circuit_breaker_state
+WHERE state != 'CLOSED'
+ORDER BY updated_at DESC"
 ```
 
 ### Priority 2: Pre-Game Prediction Filtering (Optional)
