@@ -148,25 +148,38 @@ def trigger_phase3(target_date):
 
 
 def trigger_phase4(target_date):
-    """Trigger Phase 4 ML Feature Store with skip_dependency_check."""
+    """Trigger ALL Phase 4 processors with skip_dependency_check.
+
+    Phase 4 has 5 processors with dependencies:
+    1. TeamDefenseZoneAnalysisProcessor - no deps
+    2. PlayerShotZoneAnalysisProcessor - no deps
+    3. PlayerDailyCacheProcessor - no deps
+    4. PlayerCompositeFactorsProcessor - depends on 1-3
+    5. MLFeatureStoreProcessor - depends on 1-4
+
+    By passing empty processors list, the service runs ALL in order.
+    """
     token = get_auth_token(PHASE4_URL)
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json"
     }
 
+    # Empty processors list = run ALL Phase 4 processors in correct order
+    # Previously only ran MLFeatureStoreProcessor, which caused missing features
     payload = {
         "analysis_date": target_date,
-        "processors": ["MLFeatureStoreProcessor"],
+        "processors": [],  # Run ALL processors, not just MLFeatureStoreProcessor
         "strict_mode": False,
         "skip_dependency_check": True
     }
 
+    # Increased timeout to 300s (5 min) since we now run all 5 processors
     response = requests.post(
         f"{PHASE4_URL}/process-date",
         headers=headers,
         json=payload,
-        timeout=120
+        timeout=300
     )
 
     logger.info(f"Phase 4 response: {response.status_code} - {response.text[:200]}")
