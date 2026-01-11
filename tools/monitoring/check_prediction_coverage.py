@@ -45,10 +45,14 @@ class PredictionCoverageChecker:
         self.client = bigquery.Client(project=project_id)
 
     def get_coverage_summary(self, game_date: date) -> Dict:
-        """Get coverage summary for a specific date."""
-        # NOTE 2026-01-10: Added alias resolution to properly match betting line names
-        # to predictions. Betting APIs use legal names (carltoncarrington) but predictions
-        # are stored with roster names (bubcarrington). Aliases bridge this gap.
+        """Get coverage summary for a specific date.
+
+        NOTE 2026-01-10: Coverage is now calculated based on players who ACTUALLY PLAYED,
+        not all betting lines. Players with 0 minutes (DNP/inactive) have their bets voided
+        by sportsbooks, so they shouldn't count against our coverage.
+
+        Coverage = predictions for players who played / players who played with betting lines
+        """
         query = f"""
         WITH betting_lines AS (
             SELECT DISTINCT
@@ -63,6 +67,12 @@ class PredictionCoverageChecker:
             FROM `{self.project_id}.nba_predictions.player_prop_predictions`
             WHERE game_date = @game_date
         ),
+        -- Players who actually played (minutes > 0 in box score)
+        played_game AS (
+            SELECT DISTINCT player_lookup
+            FROM `{self.project_id}.nba_analytics.player_game_summary`
+            WHERE game_date = @game_date
+        ),
         -- Alias resolution: map betting API names to roster names
         aliases AS (
             SELECT alias_lookup, nba_canonical_lookup
@@ -70,15 +80,45 @@ class PredictionCoverageChecker:
             WHERE is_active = TRUE
         )
         SELECT
+            -- Total betting lines
             COUNT(DISTINCT bl.player_lookup) as total_lines,
-            COUNT(DISTINCT CASE WHEN p.player_lookup IS NOT NULL OR p_via_alias.player_lookup IS NOT NULL THEN bl.player_lookup END) as with_predictions,
-            COUNT(DISTINCT bl.player_lookup) - COUNT(DISTINCT CASE WHEN p.player_lookup IS NOT NULL OR p_via_alias.player_lookup IS NOT NULL THEN bl.player_lookup END) as gap
+
+            -- Players who actually played (with betting lines)
+            COUNT(DISTINCT CASE
+                WHEN pg.player_lookup IS NOT NULL OR pg_via_alias.player_lookup IS NOT NULL
+                THEN bl.player_lookup
+            END) as players_who_played,
+
+            -- Voided bets (had lines but didn't play - DNP/inactive)
+            COUNT(DISTINCT CASE
+                WHEN pg.player_lookup IS NULL AND pg_via_alias.player_lookup IS NULL
+                THEN bl.player_lookup
+            END) as voided_dnp,
+
+            -- Predictions for players who played
+            COUNT(DISTINCT CASE
+                WHEN (p.player_lookup IS NOT NULL OR p_via_alias.player_lookup IS NOT NULL)
+                AND (pg.player_lookup IS NOT NULL OR pg_via_alias.player_lookup IS NOT NULL)
+                THEN bl.player_lookup
+            END) as predictions_for_played,
+
+            -- All predictions (including for DNP - legacy metric)
+            COUNT(DISTINCT CASE
+                WHEN p.player_lookup IS NOT NULL OR p_via_alias.player_lookup IS NOT NULL
+                THEN bl.player_lookup
+            END) as total_predictions
+
         FROM betting_lines bl
+        -- Alias resolution
+        LEFT JOIN aliases a ON bl.player_lookup = a.alias_lookup
         -- Direct match to predictions
         LEFT JOIN predictions p ON bl.player_lookup = p.player_lookup
-        -- Alias-resolved match to predictions
-        LEFT JOIN aliases a ON bl.player_lookup = a.alias_lookup
+        -- Alias-resolved predictions
         LEFT JOIN predictions p_via_alias ON a.nba_canonical_lookup = p_via_alias.player_lookup
+        -- Direct match to played game
+        LEFT JOIN played_game pg ON bl.player_lookup = pg.player_lookup
+        -- Alias-resolved played game
+        LEFT JOIN played_game pg_via_alias ON a.nba_canonical_lookup = pg_via_alias.player_lookup
         """
 
         job_config = bigquery.QueryJobConfig(
@@ -88,14 +128,26 @@ class PredictionCoverageChecker:
         )
 
         result = list(self.client.query(query, job_config=job_config).result())[0]
-        coverage_pct = (result.with_predictions / result.total_lines * 100) if result.total_lines > 0 else 0
+
+        # Effective coverage: predictions / players who played (excludes voided bets)
+        effective_coverage = (result.predictions_for_played / result.players_who_played * 100) if result.players_who_played > 0 else 0
+
+        # Real gaps: players who played but no prediction
+        real_gaps = result.players_who_played - result.predictions_for_played
 
         return {
             'game_date': game_date,
             'total_lines': result.total_lines,
-            'with_predictions': result.with_predictions,
-            'coverage_gap': result.gap,
-            'coverage_pct': coverage_pct
+            'players_who_played': result.players_who_played,
+            'voided_dnp': result.voided_dnp,
+            'predictions_for_played': result.predictions_for_played,
+            'total_predictions': result.total_predictions,
+            'real_gaps': real_gaps,
+            'effective_coverage_pct': effective_coverage,
+            # Legacy metrics for backwards compatibility
+            'with_predictions': result.total_predictions,
+            'coverage_gap': result.total_lines - result.total_predictions,
+            'coverage_pct': (result.total_predictions / result.total_lines * 100) if result.total_lines > 0 else 0
         }
 
     def get_coverage_gaps(self, game_date: date) -> List[Dict]:
@@ -179,16 +231,20 @@ class PredictionCoverageChecker:
             -- Check if player actually played (has box score data)
             (pg.player_lookup IS NOT NULL OR pg_via_alias.player_lookup IS NOT NULL) as actually_played,
             CASE
-                -- Check both direct registry match and alias-resolved match
+                -- FIRST: Check if player didn't play - bet would be voided by sportsbook
+                -- This takes priority because if they didn't play, other reasons are moot
+                WHEN pg.player_lookup IS NULL AND pg_via_alias.player_lookup IS NULL THEN 'BET_VOIDED_DNP'
+                -- Player played but not in registry
                 WHEN r.player_lookup IS NULL AND r_via_alias.player_lookup IS NULL THEN 'NOT_IN_REGISTRY'
+                -- Player played but name unresolved
                 WHEN u.player_lookup IS NOT NULL THEN 'NAME_UNRESOLVED'
-                -- Check context with alias resolution
+                -- Player played but no context
                 WHEN pc.player_lookup IS NULL AND pc_via_alias.player_lookup IS NULL THEN 'NOT_IN_PLAYER_CONTEXT'
-                -- Check features with alias resolution
+                -- Player played but no features
                 WHEN f.player_lookup IS NULL AND f_via_alias.player_lookup IS NULL THEN 'NO_FEATURES'
+                -- Player played but low quality features
                 WHEN COALESCE(f.feature_quality_score, f_via_alias.feature_quality_score) < 50 THEN 'LOW_QUALITY_FEATURES'
-                -- Check if player didn't play (has features/context but no box score)
-                WHEN pg.player_lookup IS NULL AND pg_via_alias.player_lookup IS NULL THEN 'DID_NOT_PLAY'
+                -- Player played, has features/context, but still no prediction
                 ELSE 'UNKNOWN_REASON'
             END as gap_reason
         FROM betting_lines bl
@@ -269,23 +325,44 @@ class PredictionCoverageChecker:
 
         # Summary
         summary = self.get_coverage_summary(game_date)
-        logger.info(f"\nSummary:")
-        logger.info(f"  Total players with betting lines: {summary['total_lines']}")
-        logger.info(f"  Players with predictions:         {summary['with_predictions']}")
-        logger.info(f"  Coverage gap:                     {summary['coverage_gap']}")
-        logger.info(f"  Coverage percentage:              {summary['coverage_pct']:.1f}%")
 
-        if summary['coverage_gap'] == 0:
+        logger.info(f"\nBetting Lines Overview:")
+        logger.info(f"  Total betting lines:              {summary['total_lines']}")
+        logger.info(f"  Players who actually played:      {summary['players_who_played']}")
+        logger.info(f"  Voided (DNP/inactive):            {summary['voided_dnp']}")
+
+        logger.info(f"\nPrediction Coverage:")
+        logger.info(f"  Predictions for players who played: {summary['predictions_for_played']}")
+        logger.info(f"  Real gaps (played, no prediction):  {summary['real_gaps']}")
+        logger.info(f"  Effective coverage:                  {summary['effective_coverage_pct']:.1f}%")
+
+        if summary['real_gaps'] == 0 and summary['voided_dnp'] == 0:
             logger.info("\n✅ Full coverage! No gaps found.")
             return
+
+        if summary['real_gaps'] == 0 and not detailed:
+            logger.info(f"\n✅ Full effective coverage! All {summary['voided_dnp']} gaps are voided bets (DNP).")
+            return
+
+        if summary['real_gaps'] == 0:
+            logger.info(f"\n✅ Full effective coverage! All {summary['voided_dnp']} gaps are voided bets (DNP).")
 
         # Get detailed gaps
         gaps = self.get_coverage_gaps(game_date)
         breakdown = self.get_gap_breakdown(gaps)
 
-        logger.info(f"\nGap Breakdown by Reason:")
-        for reason, players in sorted(breakdown.items(), key=lambda x: -len(x[1])):
-            logger.info(f"  {reason}: {len(players)} players")
+        # Separate voided from real gaps
+        voided_count = len(breakdown.get('BET_VOIDED_DNP', []))
+        real_gap_reasons = {k: v for k, v in breakdown.items() if k != 'BET_VOIDED_DNP'}
+
+        logger.info(f"\nGap Breakdown:")
+        if voided_count > 0:
+            logger.info(f"  BET_VOIDED_DNP: {voided_count} players (not counted - bets voided)")
+
+        if real_gap_reasons:
+            logger.info(f"\n  Real Gaps (actionable):")
+            for reason, players in sorted(real_gap_reasons.items(), key=lambda x: -len(x[1])):
+                logger.info(f"    {reason}: {len(players)} players")
 
         # Name resolution issues (actionable)
         name_issues = breakdown.get('NOT_IN_REGISTRY', []) + breakdown.get('NAME_UNRESOLVED', [])
@@ -299,16 +376,32 @@ class PredictionCoverageChecker:
                 logger.info(f"     ... and {len(name_issues) - 10} more")
 
         if detailed:
-            logger.info(f"\nAll Gaps (sorted by line value):")
-            for gap in gaps[:30]:
-                logger.info(
-                    f"  {gap['player_lookup']:<25} "
-                    f"line={gap['line_value']:<6} "
-                    f"reason={gap['gap_reason']:<25} "
-                    f"team={gap['team_abbr'] or 'N/A'}"
-                )
-            if len(gaps) > 30:
-                logger.info(f"  ... and {len(gaps) - 30} more")
+            # Show real gaps first
+            real_gaps = [g for g in gaps if g['gap_reason'] != 'BET_VOIDED_DNP']
+            voided_gaps = [g for g in gaps if g['gap_reason'] == 'BET_VOIDED_DNP']
+
+            if real_gaps:
+                logger.info(f"\nReal Gaps (sorted by line value):")
+                for gap in real_gaps[:20]:
+                    logger.info(
+                        f"  {gap['player_lookup']:<25} "
+                        f"line={gap['line_value']:<6} "
+                        f"reason={gap['gap_reason']:<25} "
+                        f"team={gap['team_abbr'] or 'N/A'}"
+                    )
+                if len(real_gaps) > 20:
+                    logger.info(f"  ... and {len(real_gaps) - 20} more")
+
+            if voided_gaps:
+                logger.info(f"\nVoided Bets (DNP - not counted as gaps):")
+                for gap in voided_gaps[:10]:
+                    logger.info(
+                        f"  {gap['player_lookup']:<25} "
+                        f"line={gap['line_value']:<6} "
+                        f"team={gap['team_abbr'] or 'N/A'}"
+                    )
+                if len(voided_gaps) > 10:
+                    logger.info(f"  ... and {len(voided_gaps) - 10} more")
 
     def export_gaps(self, game_date: date, output_file: str):
         """Export gaps to CSV."""
