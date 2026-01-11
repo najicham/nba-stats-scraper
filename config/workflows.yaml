@@ -315,6 +315,31 @@ workflows:
     alerts:
       missing_games: "CRITICAL"  # Should have all games by now
   
+  # Session 6 (2026-01-10): Added window between 2 and 3 to catch late West Coast games
+  # West Coast games can finish around 10:30 PM PT (01:30 AM ET), and window 2 at 01:00 ET
+  # may miss games still in progress. This window at 02:00 ET provides buffer.
+  post_game_window_2b:
+    enabled: true
+    priority: "HIGH"
+    decision_type: "game_aware_yesterday"
+    description: "Late game collection - 2 AM ET (West Coast games complete)"
+
+    schedule:
+      game_aware: true
+      target_date: "yesterday"
+      fixed_time: "02:00"  # 2 AM ET (07:00 UTC)
+      tolerance_minutes: 30
+
+    execution_plan:
+      type: "parallel"
+      scrapers:
+        - bdl_box_scores
+        - nbac_team_boxscore
+        - nbac_player_boxscore
+
+    alerts:
+      missing_games: "CRITICAL"  # Most games should be complete by now
+
   post_game_window_3:
     enabled: true
     priority: "HIGH"

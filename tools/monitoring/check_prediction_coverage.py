@@ -87,6 +87,9 @@ class PredictionCoverageChecker:
 
     def get_coverage_gaps(self, game_date: date) -> List[Dict]:
         """Get detailed gaps for a specific date."""
+        # NOTE 2026-01-10: Added alias resolution to properly check registry membership
+        # Previously, players like vincentwilliamsjr would show NOT_IN_REGISTRY even though
+        # an alias existed mapping them to vincewilliamsjr (the canonical player)
         query = f"""
         WITH betting_lines AS (
             SELECT
@@ -118,6 +121,12 @@ class PredictionCoverageChecker:
             FROM `{self.project_id}.nba_predictions.ml_feature_store_v2`
             WHERE game_date = @game_date
         ),
+        -- Alias resolution: map alias_lookup -> canonical player_lookup
+        aliases AS (
+            SELECT alias_lookup, nba_canonical_lookup
+            FROM `{self.project_id}.nba_reference.player_aliases`
+            WHERE is_active = TRUE
+        ),
         registry AS (
             SELECT DISTINCT player_lookup
             FROM `{self.project_id}.nba_reference.nba_players_registry`
@@ -136,10 +145,13 @@ class PredictionCoverageChecker:
             pc.days_rest,
             pc.current_points_line as context_line,
             f.feature_quality_score as feature_quality,
-            r.player_lookup IS NOT NULL as in_registry,
+            -- Check if player is in registry directly OR via alias
+            (r.player_lookup IS NOT NULL OR r_via_alias.player_lookup IS NOT NULL) as in_registry,
+            a.nba_canonical_lookup as resolved_via_alias,
             u.player_lookup IS NOT NULL as is_unresolved,
             CASE
-                WHEN r.player_lookup IS NULL THEN 'NOT_IN_REGISTRY'
+                -- Check both direct registry match and alias-resolved match
+                WHEN r.player_lookup IS NULL AND r_via_alias.player_lookup IS NULL THEN 'NOT_IN_REGISTRY'
                 WHEN u.player_lookup IS NOT NULL THEN 'NAME_UNRESOLVED'
                 WHEN pc.player_lookup IS NULL THEN 'NOT_IN_PLAYER_CONTEXT'
                 WHEN f.player_lookup IS NULL THEN 'NO_FEATURES'
@@ -152,7 +164,11 @@ class PredictionCoverageChecker:
             AND bl.game_date = p.game_date
         LEFT JOIN player_context pc ON bl.player_lookup = pc.player_lookup
         LEFT JOIN features f ON bl.player_lookup = f.player_lookup
+        -- Direct registry lookup
         LEFT JOIN registry r ON bl.player_lookup = r.player_lookup
+        -- Alias-resolved registry lookup
+        LEFT JOIN aliases a ON bl.player_lookup = a.alias_lookup
+        LEFT JOIN registry r_via_alias ON a.nba_canonical_lookup = r_via_alias.player_lookup
         LEFT JOIN unresolved u ON bl.player_lookup = u.player_lookup
         WHERE p.player_lookup IS NULL
         ORDER BY bl.line_value DESC
@@ -176,6 +192,7 @@ class PredictionCoverageChecker:
                 'context_line': row.context_line,
                 'feature_quality': row.feature_quality,
                 'in_registry': row.in_registry,
+                'resolved_via_alias': row.resolved_via_alias,  # New: shows canonical player if resolved via alias
                 'is_unresolved': row.is_unresolved,
                 'gap_reason': row.gap_reason
             })
@@ -250,7 +267,7 @@ class PredictionCoverageChecker:
         with open(output_file, 'w', newline='') as f:
             writer = csv.DictWriter(f, fieldnames=[
                 'player_lookup', 'line_value', 'line_source', 'team_abbr',
-                'gap_reason', 'in_registry', 'is_unresolved',
+                'gap_reason', 'in_registry', 'resolved_via_alias', 'is_unresolved',
                 'has_universal_id', 'days_rest', 'context_line', 'feature_quality'
             ])
             writer.writeheader()
