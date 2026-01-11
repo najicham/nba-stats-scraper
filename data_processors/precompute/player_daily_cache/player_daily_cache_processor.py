@@ -1362,6 +1362,8 @@ class PlayerDailyCacheProcessor(
         ]
 
         # Helper function to run single completeness check
+        # DNP-aware mode excludes Did Not Play games (0 minutes) from expected count
+        # This prevents penalizing players for legitimate absences (injury, rest, etc.)
         def run_completeness_check(window_config):
             name, lookback, window_type = window_config
             return (name, self.completeness_checker.check_completeness_batch(
@@ -1372,7 +1374,8 @@ class PlayerDailyCacheProcessor(
                 upstream_entity_field='player_lookup',
                 lookback_window=lookback,
                 window_type=window_type,
-                season_start_date=self.season_start_date
+                season_start_date=self.season_start_date,
+                dnp_aware=True  # Exclude DNP games from expected count
             ))
 
         # Run all 4 completeness checks in parallel
