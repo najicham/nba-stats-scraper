@@ -823,6 +823,46 @@ def publish_batch_summary_from_firestore(batch_id: str):
             print(f"❌ Failed to publish Phase 5 completion: {e}", flush=True)
             logger.error(f"Failed to publish completion message: {e}", exc_info=True)
 
+        # Step 3: Log batch completion to processor_run_history for unified monitoring
+        # (This was missing from Firestore path - fixes "running" status stuck forever)
+        try:
+            completed = len(batch_state.completed_players)
+            expected = batch_state.expected_players
+            failed = len(batch_state.failed_players)
+
+            # Determine status based on completion
+            if completed == expected:
+                status = 'success'
+            elif completed > 0:
+                status = 'partial'
+            else:
+                status = 'failed'
+
+            # Calculate duration
+            duration_seconds = None
+            if batch_state.start_time and batch_state.completion_time:
+                duration_seconds = (batch_state.completion_time - batch_state.start_time).total_seconds()
+
+            get_run_history().complete_batch(
+                status=status,
+                records_processed=completed,
+                records_failed=failed,
+                duration_seconds=duration_seconds or 0,
+                summary={
+                    'expected': expected,
+                    'completed': completed,
+                    'failed': failed,
+                    'total_predictions': batch_state.total_predictions,
+                    'completion_percentage': batch_state.get_completion_percentage()
+                }
+            )
+            print(f"✅ Run history updated: status={status}, completed={completed}/{expected}", flush=True)
+            logger.info(f"Run history updated for batch {batch_id}: status={status}")
+        except Exception as e:
+            # Don't fail the batch if run history logging fails
+            print(f"⚠️ Failed to update run history (non-fatal): {e}", flush=True)
+            logger.warning(f"Failed to log batch completion (non-fatal): {e}")
+
         print(f"✅ Batch summary published successfully: {batch_id}", flush=True)
         logger.info(f"✅ Batch summary published successfully: {batch_id}")
 
