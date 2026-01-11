@@ -73,6 +73,23 @@ Changes:
 - Added duplicate detection query as alternative check
 - Updated Known Issues section with fix details and when to use view
 
+### 4. Added Schedule Refresh to Post-Game Workflows
+
+**File:** `config/workflows.yaml`
+
+Added `nbac_schedule_api` scraper to:
+- `post_game_window_2` (1 AM ET) - Refresh after most games complete
+- `post_game_window_3` (4 AM ET) - Final refresh, all games must show Final
+
+This fixes the root cause where games remained "Scheduled" after finishing because
+the schedule scraper only ran during morning_operations.
+
+### 5. Added Duplicate Detection Monitoring
+
+**File:** `validation/queries/raw/nbac_schedule/duplicate_detection_check.sql`
+
+Query to detect any duplicate game_ids in the schedule table. Expected result: 0 rows.
+
 ---
 
 ## Files Changed
@@ -82,6 +99,8 @@ Changes:
 | `schemas/bigquery/raw/nbac_schedule_tables.sql` | Added view definition |
 | `data_processors/raw/nbacom/nbac_schedule_processor.py` | Replaced save_data() with MERGE |
 | `docs/02-operations/daily-validation-checklist.md` | Updated with view usage |
+| `config/workflows.yaml` | Added nbac_schedule_api to post_game_window_2 and post_game_window_3 |
+| `validation/queries/raw/nbac_schedule/duplicate_detection_check.sql` | New monitoring query |
 
 ---
 
