@@ -9,6 +9,7 @@ Detects:
 - No actionable predictions (0 OVER/UNDER recommendations)
 - Feature store issues (no v2_33features for today)
 - Low prediction coverage
+- High NO_LINE predictions (indicates prop data gap - added 2026-01-11)
 
 Triggered by: Cloud Scheduler (recommended: run 30 minutes after predictions complete)
 
@@ -55,6 +56,11 @@ MIN_PLAYERS_PREDICTED = int(os.environ.get('MIN_PLAYERS_PREDICTED', '50'))
 MIN_ACTIONABLE_PREDICTIONS = int(os.environ.get('MIN_ACTIONABLE_PREDICTIONS', '10'))
 FALLBACK_CONFIDENCE = 50.0
 
+# NO_LINE thresholds (added 2026-01-11 after prop data gap incident)
+# If >10% of predictions have NO_LINE, prop scraper may not be working
+MAX_NO_LINE_RATIO_WARNING = float(os.environ.get('MAX_NO_LINE_RATIO_WARNING', '0.10'))
+MAX_NO_LINE_RATIO_CRITICAL = float(os.environ.get('MAX_NO_LINE_RATIO_CRITICAL', '0.50'))
+
 # Slack webhook (for alerts)
 SLACK_WEBHOOK_URL = os.environ.get('SLACK_WEBHOOK_URL')
 
@@ -90,7 +96,13 @@ def get_prediction_health(bq_client: bigquery.Client, game_date: date) -> Dict:
         -- Filtered predictions (v3.4 - confidence tier filtering)
         (SELECT COUNTIF(is_actionable = false)
          FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions`
-         WHERE game_date = @game_date AND system_id = 'catboost_v8') as filtered_predictions
+         WHERE game_date = @game_date AND system_id = 'catboost_v8') as filtered_predictions,
+
+        -- NO_LINE predictions (added 2026-01-11: indicates prop data gap)
+        -- If high, prop scraper may not be running
+        (SELECT COUNTIF(has_prop_line = false OR has_prop_line IS NULL)
+         FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions`
+         WHERE game_date = @game_date AND system_id = 'catboost_v8') as no_line_predictions
     """
 
     job_config = bigquery.QueryJobConfig(
@@ -108,6 +120,7 @@ def get_prediction_health(bq_client: bigquery.Client, game_date: date) -> Dict:
         'catboost_avg_confidence': row.catboost_avg_confidence,
         'feature_store_rows': row.feature_store_rows or 0,
         'filtered_predictions': row.filtered_predictions or 0,
+        'no_line_predictions': row.no_line_predictions or 0,
     }
 
 
@@ -176,6 +189,28 @@ def check_health_status(health: Dict) -> tuple:
                 f"This may indicate model confidence distribution issues."
             )
 
+    # CRITICAL/WARNING: High NO_LINE ratio (added 2026-01-11)
+    # Indicates prop data gap - scraper may not be running
+    if health['players_predicted'] > 0:
+        no_line_ratio = health['no_line_predictions'] / health['players_predicted']
+
+        if no_line_ratio >= MAX_NO_LINE_RATIO_CRITICAL:
+            return (
+                'CRITICAL',
+                f"PROP DATA GAP DETECTED: {no_line_ratio:.1%} of predictions have no prop lines! "
+                f"({health['no_line_predictions']} out of {health['players_predicted']} players). "
+                f"This indicates the Odds API prop scraper may not be running. "
+                f"Check GCS gs://nba-scraped-data/odds-api/player-props/ and Phase 2 processor logs."
+            )
+
+        if no_line_ratio >= MAX_NO_LINE_RATIO_WARNING:
+            return (
+                'WARNING',
+                f"High NO_LINE ratio: {no_line_ratio:.1%} of predictions have no prop lines. "
+                f"({health['no_line_predictions']} out of {health['players_predicted']} players). "
+                f"Prop scraper may be partially failing. Check Odds API quota and GCS data."
+            )
+
     return ('OK', None)
 
 
@@ -217,6 +252,7 @@ def send_slack_alert(status: str, message: str, health: Dict) -> bool:
                             {"type": "mrkdwn", "text": f"*Actionable:*\n{health['actionable_predictions']}"},
                             {"type": "mrkdwn", "text": f"*Avg Confidence:*\n{health['catboost_avg_confidence']}"},
                             {"type": "mrkdwn", "text": f"*Filtered:*\n{health['filtered_predictions']}"},
+                            {"type": "mrkdwn", "text": f"*NO_LINE:*\n{health['no_line_predictions']}"},
                         ]
                     }
                 ]

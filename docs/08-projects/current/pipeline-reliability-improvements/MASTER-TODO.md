@@ -1,9 +1,32 @@
 # Pipeline Reliability Master TODO
 
 **Created:** December 30, 2025
-**Last Updated:** December 30, 2025 (Evening - Post Agent Analysis)
+**Last Updated:** January 11, 2026 (Prop Data Gap Incident - Session 10)
 **Status:** Active - Comprehensive tracking document
-**Total Items:** 98 (was 23, added 75+ from agent findings)
+**Total Items:** 112+ (added 7 from prop data gap incident)
+
+---
+
+## Session 10 Progress (Jan 11, 2026)
+
+### Completed This Session
+- [x] **YESTERDAY Bug Fix Deployed** - Phase 3 analytics now handles YESTERDAY date correctly
+- [x] **Pick Subset Tracking Schema** - Multi-model aware performance tracking tables created
+- [x] **NO_LINE Alerting Added** - prediction_health_alert now detects prop data gaps
+- [x] **Prop Gap Detection Enabled** - Added odds_api_player_props to processor_config.py
+- [x] **Props Backfill Script Created** - scripts/backfill_odds_api_props.py
+- [x] **Prop Freshness Monitor Created** - tools/monitoring/check_prop_freshness.py
+- [ ] **Props Backfill Running** - Nov 14 - Dec 31 (47 dates, ~1105 files)
+
+### Key Files Modified
+- `data_processors/analytics/main_analytics_service.py` - YESTERDAY fix
+- `orchestration/cloud_functions/prediction_health_alert/main.py` - NO_LINE alerting
+- `monitoring/processors/gap_detection/config/processor_config.py` - Enabled prop monitoring
+- `schemas/bigquery/predictions/*.sql` - Subset tracking tables
+
+### Documentation Created
+- `docs/08-projects/current/pipeline-reliability-improvements/2026-01-11-PROP-DATA-GAP-INCIDENT.md`
+- `docs/08-projects/current/ml-model-v8-deployment/PERFORMANCE-ANALYSIS-GUIDE.md`
 
 ---
 
@@ -14,6 +37,7 @@ This document consolidates ALL pipeline improvement work discovered from:
 - 5-agent deep exploration (75+ new items)
 - Existing documentation review
 - Handoff document patterns
+- **Jan 2026 Prop Data Gap Incident** (7 new items)
 
 ---
 

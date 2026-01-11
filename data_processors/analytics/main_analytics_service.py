@@ -226,16 +226,20 @@ def process_date_range():
         if not start_date or not end_date:
             return jsonify({"error": "start_date and end_date required"}), 400
 
-        # Handle special date values (TODAY/TOMORROW = relative to ET timezone)
+        # Handle special date values (TODAY/TOMORROW/YESTERDAY = relative to ET timezone)
         from zoneinfo import ZoneInfo
         from datetime import timedelta
         et_now = datetime.now(ZoneInfo('America/New_York'))
         today_et = et_now.date().strftime('%Y-%m-%d')
+        yesterday_et = (et_now.date() - timedelta(days=1)).strftime('%Y-%m-%d')
         tomorrow_et = (et_now.date() + timedelta(days=1)).strftime('%Y-%m-%d')
 
         if start_date == "TODAY":
             start_date = today_et
             logger.info(f"TODAY start_date resolved to: {start_date}")
+        elif start_date == "YESTERDAY":
+            start_date = yesterday_et
+            logger.info(f"YESTERDAY start_date resolved to: {start_date}")
         elif start_date == "TOMORROW":
             start_date = tomorrow_et
             logger.info(f"TOMORROW start_date resolved to: {start_date}")
@@ -243,6 +247,9 @@ def process_date_range():
         if end_date == "TODAY":
             end_date = today_et
             logger.info(f"TODAY end_date resolved to: {end_date}")
+        elif end_date == "YESTERDAY":
+            end_date = yesterday_et
+            logger.info(f"YESTERDAY end_date resolved to: {end_date}")
         elif end_date == "TOMORROW":
             end_date = tomorrow_et
             logger.info(f"TOMORROW end_date resolved to: {end_date}")

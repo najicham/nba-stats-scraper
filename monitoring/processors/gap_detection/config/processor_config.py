@@ -222,6 +222,39 @@ PROCESSOR_MONITORING_CONFIG = {
         'notes': 'FUTURE: Requires enhanced GCS inspector for hourly subdirectories'
     },
     
+    'odds_api_player_props': {
+        'display_name': 'Odds API Player Props (Current)',
+        'gcs_bucket': 'nba-scraped-data',
+        'gcs_pattern': 'odds-api/player-props/{date}/',
+        'gcs_pattern_type': 'date_nested',
+        'nested_structure': 'event_id',  # Has subdirectories by event ID (e.g., eventid-AWYHOME)
+        'bigquery_dataset': 'nba_raw',
+        'bigquery_table': 'odds_api_player_points_props',
+        'source_file_field': 'source_file_path',
+        'processor_class': 'odds_api_props_processor.OddsApiPropsProcessor',
+
+        'frequency': 'daily',
+        'expected_runs_per_day': 3,  # Multiple snapshots per day
+        'tolerance_hours': 8,  # Alert if no props 8 hours after expected scrape
+
+        'pubsub_topic': 'nba-data-processing',
+        'pubsub_attributes': {
+            'processor': 'odds_api_props',
+            'source': 'odds_api',
+            'data_type': 'current'
+        },
+
+        'expected_record_count': {
+            'min': 500,   # ~8 games * 15 players * 4 bookmakers
+            'max': 5000   # ~15 games * 20 players * 8 bookmakers * multiple snapshots
+        },
+
+        'enabled': True,  # ENABLED 2026-01-11: Critical for prop prediction pipeline
+        'priority': 'critical',
+        'revenue_impact': True,
+        'notes': 'Critical for prop bet predictions. Gap detected Jan 2026 led to 2 months of missing predictions.'
+    },
+
     'odds_api_props_history': {
         'display_name': 'Odds API Player Props History',
         'gcs_bucket': 'nba-scraped-data',
@@ -232,27 +265,27 @@ PROCESSOR_MONITORING_CONFIG = {
         'bigquery_table': 'odds_api_player_points_props',
         'source_file_field': 'source_file_path',
         'processor_class': 'odds_api_props_processor.OddsApiPropsProcessor',
-        
+
         'frequency': 'daily',
         'expected_runs_per_day': 1,
         'tolerance_hours': 4,
-        
+
         'pubsub_topic': 'nba-data-processing',
         'pubsub_attributes': {
             'processor': 'odds_api_props',
             'source': 'odds_api',
             'data_type': 'history'
         },
-        
+
         'expected_record_count': {
             'min': 100,
             'max': 500
         },
-        
-        'enabled': False,  # Disable until nested path support added
+
+        'enabled': False,  # Historical endpoint - not used for daily monitoring
         'priority': 'critical',
         'revenue_impact': True,
-        'notes': 'FUTURE: Requires enhanced GCS inspector for event-based subdirectories'
+        'notes': 'Historical endpoint for backfills only. Use odds_api_player_props for daily monitoring.'
     },
     
     # ========================================================================

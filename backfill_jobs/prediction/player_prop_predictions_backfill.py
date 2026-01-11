@@ -111,6 +111,7 @@ class PredictionBackfill:
         from prediction_systems.similarity_balanced_v1 import SimilarityBalancedV1
         from prediction_systems.xgboost_v1 import XGBoostV1
         from prediction_systems.ensemble_v1 import EnsembleV1
+        from prediction_systems.catboost_v8 import CatBoostV8
         from data_loaders import PredictionDataLoader
 
         self._moving_average = MovingAverageBaseline()
@@ -123,6 +124,8 @@ class PredictionBackfill:
             similarity_system=self._similarity,
             xgboost_system=self._xgboost
         )
+        self._catboost = CatBoostV8()
+        logger.info("Initialized 6 prediction systems including CatBoost V8")
         self._data_loader = PredictionDataLoader(PROJECT_ID)
         self._prediction_systems = True
         logger.info("Prediction systems initialized")
@@ -452,7 +455,8 @@ class PredictionBackfill:
                 'zone_matchup': 'zone_matchup_v1',
                 'similarity': 'similarity_balanced_v1',
                 'xgboost': 'xgboost_v1',
-                'ensemble': 'ensemble_v1'
+                'ensemble': 'ensemble_v1',
+                'catboost': 'catboost_v8'
             }
 
             for pred in predictions:
@@ -833,6 +837,22 @@ class PredictionBackfill:
             }
         except Exception as e:
             logger.debug(f"Ensemble failed for {player_lookup}: {e}")
+
+        # 6. CatBoost V8 (production model)
+        try:
+            cb_result = self._catboost.predict(
+                player_lookup=player_lookup,
+                features=features,
+                betting_line=betting_line
+            )
+            if cb_result and 'error' not in cb_result:
+                predictions['catboost'] = {
+                    'predicted_value': cb_result.get('predicted_points'),
+                    'confidence': cb_result.get('confidence_score', 0) / 100.0,
+                    'recommendation': cb_result.get('recommendation')
+                }
+        except Exception as e:
+            logger.debug(f"CatBoost failed for {player_lookup}: {e}")
 
         return predictions if predictions else None
 
