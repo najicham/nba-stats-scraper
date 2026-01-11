@@ -181,6 +181,39 @@ def validate_grading_prerequisites(target_date: str) -> Dict:
         }
 
 
+def get_auth_token(audience: str) -> str:
+    """
+    Get identity token for authenticated service calls using GCP metadata server.
+
+    This works in Cloud Run/Cloud Functions environments where the metadata
+    server is available to provide identity tokens for the service account.
+
+    Args:
+        audience: The target service URL to authenticate to
+
+    Returns:
+        Identity token string
+
+    Raises:
+        Exception: If token cannot be obtained
+    """
+    import urllib.request
+
+    # Use the GCP metadata server to get identity token
+    metadata_url = (
+        f"http://metadata.google.internal/computeMetadata/v1/"
+        f"instance/service-accounts/default/identity?audience={audience}"
+    )
+    req = urllib.request.Request(metadata_url, headers={"Metadata-Flavor": "Google"})
+
+    try:
+        with urllib.request.urlopen(req, timeout=10) as response:
+            return response.read().decode("utf-8")
+    except Exception as e:
+        logger.error(f"Failed to get auth token for {audience}: {e}")
+        raise
+
+
 def trigger_phase3_analytics(target_date: str) -> bool:
     """
     Trigger Phase 3 analytics to generate player_game_summary for a date.
@@ -195,20 +228,34 @@ def trigger_phase3_analytics(target_date: str) -> bool:
     """
     import requests
 
-    PHASE3_URL = "https://nba-phase3-analytics-processors-f7p3g7f6ya-wl.a.run.app/process-date-range"
+    PHASE3_BASE_URL = "https://nba-phase3-analytics-processors-f7p3g7f6ya-wl.a.run.app"
+    PHASE3_ENDPOINT = f"{PHASE3_BASE_URL}/process-date-range"
 
     logger.info(f"Auto-triggering Phase 3 analytics for {target_date}")
 
     try:
+        # Get authentication token for Phase 3 service
+        try:
+            token = get_auth_token(PHASE3_BASE_URL)
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json"
+            }
+            logger.info("Successfully obtained auth token for Phase 3")
+        except Exception as e:
+            logger.warning(f"Could not get auth token, trying without auth: {e}")
+            headers = {"Content-Type": "application/json"}
+
         # Trigger PlayerGameSummaryProcessor for the target date
         response = requests.post(
-            PHASE3_URL,
+            PHASE3_ENDPOINT,
             json={
                 "start_date": target_date,
                 "end_date": target_date,
                 "processors": ["PlayerGameSummaryProcessor"],
                 "backfill_mode": True
             },
+            headers=headers,
             timeout=300  # 5 minute timeout
         )
 
