@@ -1136,8 +1136,8 @@ class TeamDefenseGameSummaryProcessor(
                 how='left',
                 suffixes=('', '_pbp')
             )
-            blocks_with_data = (merged_df['blocks_paint'].notna() | merged_df['blocks_mid_range'].notna() | merged_df['blocks_three_pt'].notna()).sum()
-            logger.info(f"Merged shot zone data - {merged_df['opp_paint_attempts'].notna().sum()} records have paint data, {blocks_with_data} have block zone data")
+            blocks_with_data = int((merged_df['blocks_paint'].notna() | merged_df['blocks_mid_range'].notna() | merged_df['blocks_three_pt'].notna()).sum())
+            logger.info(f"Merged shot zone data - {int(merged_df['opp_paint_attempts'].notna().sum())} records have paint data, {blocks_with_data} have block zone data")
         else:
             # No shot zone data - initialize columns as None
             merged_df['opp_paint_attempts'] = None
