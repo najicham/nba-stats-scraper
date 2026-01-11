@@ -4,10 +4,12 @@
 # UPDATED: Added source tracking (API vs CDN) for dual scraper support
 # Integrated notification system for monitoring and alerts
 
+import io
 import json
 import logging
 import os
 import re
+import uuid
 from datetime import datetime, date
 from typing import Dict, List, Optional
 import pytz
@@ -40,6 +42,10 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
         'away_team_tricode',
         'game_status'
     ]
+
+    # Primary key fields for MERGE operations (prevents duplicates)
+    # game_id uniquely identifies a game; game_date included for partition awareness
+    PRIMARY_KEY_FIELDS = ['game_id', 'game_date']
 
     def __init__(self):
         super().__init__()
@@ -586,97 +592,130 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
             raise e
     
     def save_data(self) -> None:
-        """Save transformed data to BigQuery (overrides ProcessorBase.save_data())."""
+        """
+        Save transformed data to BigQuery using proper SQL MERGE.
+
+        This method uses atomic MERGE instead of DELETE + APPEND to prevent
+        duplicate rows with conflicting game statuses.
+
+        Pattern: Load to temp table → MERGE on primary keys → Cleanup temp table
+        """
         rows = self.transformed_data
-        """Load transformed data into BigQuery."""
         if not rows:
             logging.warning("No rows to load")
             return {'rows_processed': 0, 'errors': []}
-        
+
         table_id = f"{self.project_id}.{self.table_name}"
         errors = []
-        
+
+        # Create unique temp table name
+        temp_table_name = f"nbac_schedule_temp_{uuid.uuid4().hex[:8]}"
+        temp_table_id = f"{self.project_id}.nba_raw.{temp_table_name}"
+
         try:
-            if self.processing_strategy == 'MERGE_UPDATE':
-                # Delete existing season data with partition filter
-                season_year = rows[0].get('season_year')
-                if season_year:
-                    # Calculate season date range for partition elimination
-                    # NBA season runs from October of season_year to June of season_year+1
-                    start_date = f"{season_year}-07-01"  # Start from July 1st to catch any early events
-                    end_date = f"{season_year + 1}-09-30"  # End at September 30th to catch any late events
-                    
-                    delete_query = f"""
-                    DELETE FROM `{table_id}` 
-                    WHERE season_year = {season_year}
-                      AND game_date >= '{start_date}'
-                      AND game_date <= '{end_date}'
-                    """
-                    
-                    try:
-                        self.bq_client.query(delete_query).result(timeout=60)
-                        logging.info(f"Deleted existing records for season {season_year} (date range: {start_date} to {end_date})")
-                    except Exception as e:
-                        logging.error(f"Error deleting existing data: {e}")
-                        
-                        # Notify about delete failure
-                        try:
-                            notify_error(
-                                title="BigQuery Delete Failed",
-                                message=f"Failed to delete existing schedule data: {str(e)}",
-                                details={
-                                    'season_year': season_year,
-                                    'date_range': f"{start_date} to {end_date}",
-                                    'table_id': table_id,
-                                    'error_type': type(e).__name__,
-                                    'data_source': self.data_source
-                                },
-                                processor_name="NBA.com Schedule Processor"
-                            )
-                        except Exception as notify_ex:
-                            logging.warning(f"Failed to send notification: {notify_ex}")
-                        
-                        raise e
-            
-            # Insert new data using batch loading (not streaming insert)
-            # This avoids the 20 DML limit and streaming buffer issues
-            logging.info(f"Loading {len(rows)} rows to {table_id} using batch load")
-
-            # Get table schema for load job
+            # Get target table schema
             table = self.bq_client.get_table(table_id)
+            table_schema = table.schema
 
-            # Configure batch load job
+            logging.info(f"Using SQL MERGE to load {len(rows)} rows to {table_id}")
+            logging.info(f"Primary keys for MERGE: {self.PRIMARY_KEY_FIELDS}")
+
+            # Step 1: Sanitize rows for JSON serialization
+            sanitized_rows = []
+            for i, row in enumerate(rows):
+                try:
+                    sanitized = self._sanitize_row_for_bq(row)
+                    json.dumps(sanitized)  # Validate JSON serialization
+                    sanitized_rows.append(sanitized)
+                except (TypeError, ValueError) as e:
+                    logging.warning(f"Skipping row {i} due to JSON error: {e}")
+                    continue
+
+            if not sanitized_rows:
+                logging.warning("No valid rows after sanitization")
+                return {'rows_processed': 0, 'errors': ['No valid rows after sanitization']}
+
+            # Step 2: Load data into temp table
+            ndjson_data = "\n".join(json.dumps(row) for row in sanitized_rows)
+            ndjson_bytes = ndjson_data.encode('utf-8')
+
             job_config = bigquery.LoadJobConfig(
-                schema=table.schema,
-                autodetect=False,
-                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
-                create_disposition=bigquery.CreateDisposition.CREATE_IF_NEEDED
+                schema=table_schema,
+                source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+                write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
+                autodetect=False
             )
 
-            # Load using batch job
-            load_job = self.bq_client.load_table_from_json(
-                rows,
-                table_id,
+            load_job = self.bq_client.load_table_from_file(
+                io.BytesIO(ndjson_bytes),
+                temp_table_id,
                 job_config=job_config
             )
 
-            # Wait for completion
-            load_job.result(timeout=60)
+            load_job.result(timeout=300)
+            logging.info(f"Loaded {len(sanitized_rows)} rows into temp table {temp_table_name}")
+
+            # Step 3: Build and execute MERGE statement
+            primary_keys = self.PRIMARY_KEY_FIELDS
+            on_clause = ' AND '.join([f"target.{key} = source.{key}" for key in primary_keys])
+
+            # Get all field names from schema
+            all_fields = [field.name for field in table_schema]
+
+            # Fields to update (all except primary keys)
+            update_fields = [f for f in all_fields if f not in primary_keys]
+
+            # Build UPDATE SET clause
+            update_set = ', '.join([f"{field} = source.{field}" for field in update_fields])
+
+            # Build INSERT clause
+            insert_fields = ', '.join(all_fields)
+            insert_values = ', '.join([f"source.{field}" for field in all_fields])
+
+            # Get date range for partition filter (required by table)
+            game_dates = [row.get('game_date') for row in sanitized_rows if row.get('game_date')]
+            if game_dates:
+                min_date = min(game_dates)
+                max_date = max(game_dates)
+                partition_filter = f"AND target.game_date >= '{min_date}' AND target.game_date <= '{max_date}'"
+            else:
+                partition_filter = ""
+
+            merge_query = f"""
+            MERGE `{table_id}` AS target
+            USING `{temp_table_id}` AS source
+            ON {on_clause} {partition_filter}
+            WHEN MATCHED THEN
+                UPDATE SET {update_set}
+            WHEN NOT MATCHED THEN
+                INSERT ({insert_fields})
+                VALUES ({insert_values})
+            """
+
+            logging.info(f"Executing MERGE on primary keys: {', '.join(primary_keys)}")
+            merge_job = self.bq_client.query(merge_query)
+            merge_job.result(timeout=300)
+
+            # Get stats
+            if merge_job.num_dml_affected_rows is not None:
+                logging.info(f"MERGE completed: {merge_job.num_dml_affected_rows} rows affected")
+            else:
+                logging.info("MERGE completed successfully")
 
             # CRITICAL: Update stats for tracking (required by base class and Layer 5 validation)
-            self.stats["rows_inserted"] = len(rows)
-            logging.info(f"Successfully loaded {len(rows)} rows to {self.table_name} (source: {self.data_source})")
+            self.stats["rows_inserted"] = len(sanitized_rows)
+            logging.info(f"Successfully merged {len(sanitized_rows)} rows to {self.table_name} (source: {self.data_source})")
 
         except Exception as e:
             error_msg = str(e)
             errors.append(error_msg)
             logging.error(f"Error loading data to BigQuery: {error_msg}")
-            
+
             # Notify about load failure
             try:
                 notify_error(
-                    title="Schedule Load Failed",
-                    message=f"Failed to load schedule data to BigQuery: {error_msg}",
+                    title="Schedule MERGE Failed",
+                    message=f"Failed to merge schedule data to BigQuery: {error_msg}",
                     details={
                         'table_id': table_id,
                         'rows_attempted': len(rows),
@@ -688,8 +727,32 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
                 )
             except Exception as notify_ex:
                 logging.warning(f"Failed to send notification: {notify_ex}")
-        
+
+        finally:
+            # Always clean up temp table
+            try:
+                self.bq_client.delete_table(temp_table_id, not_found_ok=True)
+                logging.debug(f"Cleaned up temp table: {temp_table_name}")
+            except Exception as cleanup_e:
+                logging.warning(f"Could not clean up temp table: {cleanup_e}")
+
         return {'rows_processed': len(rows) if not errors else 0, 'errors': errors}
+
+    def _sanitize_row_for_bq(self, row: Dict) -> Dict:
+        """Sanitize a row for BigQuery JSON loading."""
+        sanitized = {}
+        for key, value in row.items():
+            if value is None:
+                sanitized[key] = None
+            elif isinstance(value, datetime):
+                sanitized[key] = value.isoformat()
+            elif isinstance(value, date):
+                sanitized[key] = value.isoformat()
+            elif isinstance(value, (list, dict)):
+                sanitized[key] = json.dumps(value) if isinstance(value, (list, dict)) else value
+            else:
+                sanitized[key] = value
+        return sanitized
     
     def process_file(self, file_path: str, **kwargs) -> Dict:
         """Process a single file - CRITICAL method for backfill integration."""
