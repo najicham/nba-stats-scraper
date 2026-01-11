@@ -214,7 +214,8 @@ workflows:
       scrapers:
         - nbac_schedule_api     # CRITICAL FIRST (but can be parallel)
         - nbac_player_list
-        - br_season_roster
+        # NOTE: br_season_roster removed - now runs via br-rosters-batch-daily scheduler
+        # to avoid DML throttling (30 individual MERGEs → 1 batch MERGE)
         - bdl_standings
         - bdl_active_players
         - espn_roster           # ESPN rosters for Phase 3 game context
