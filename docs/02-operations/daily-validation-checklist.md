@@ -30,6 +30,76 @@ This script validates all 5 phases, checks chain completeness, and identifies mi
 
 ---
 
+## Step 0: Orchestration Health Check (NEW - Run First)
+
+These commands use the correct orchestration tables discovered in Session 8:
+
+```bash
+# 0.1 Check workflow decisions (what the orchestrator decided to run)
+bq query --use_legacy_sql=false --format=pretty "
+SELECT decision_time, workflow_name, action, reason, alert_level
+FROM nba_orchestration.workflow_decisions
+WHERE decision_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)
+ORDER BY decision_time DESC
+LIMIT 15"
+
+# 0.2 Check workflow executions (what actually ran and succeeded/failed)
+bq query --use_legacy_sql=false --format=pretty "
+SELECT execution_time, workflow_name, status, scrapers_succeeded, scrapers_failed
+FROM nba_orchestration.workflow_executions
+WHERE execution_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)
+ORDER BY execution_time DESC
+LIMIT 15"
+
+# 0.3 Check circuit breaker state (any open breakers?)
+bq query --use_legacy_sql=false --format=pretty "
+SELECT processor_name, state, failure_count, updated_at
+FROM nba_orchestration.circuit_breaker_state
+WHERE state != 'CLOSED'
+ORDER BY updated_at DESC"
+
+# 0.4 Check schedule freshness (CRITICAL - schedule must show games as Final)
+bq query --use_legacy_sql=false --format=pretty "
+SELECT game_date, game_status, game_status_text, COUNT(*) as games
+FROM nba_raw.nbac_schedule
+WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 2 DAY)
+GROUP BY game_date, game_status, game_status_text
+ORDER BY game_date DESC, game_status"
+
+# 0.5 Compare schedule to NBA.com live (should match)
+curl -s 'https://cdn.nba.com/static/json/liveData/scoreboard/todaysScoreboard_00.json' | \
+  jq '{date: .scoreboard.gameDate, games: [.scoreboard.games[] | {id: .gameId, status: .gameStatusText}]}'
+
+# 0.6 Check live scoring activity
+bq query --use_legacy_sql=false --format=pretty "
+SELECT game_date, COUNT(DISTINCT game_id) as games_polled, COUNT(*) as records,
+       MIN(poll_timestamp) as first_poll, MAX(poll_timestamp) as last_poll
+FROM nba_raw.bdl_live_boxscores
+WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 2 DAY)
+GROUP BY game_date
+ORDER BY game_date DESC"
+
+# 0.7 Check scraper execution summary
+bq query --use_legacy_sql=false --format=pretty "
+SELECT scraper_name, status, COUNT(*) as runs
+FROM nba_orchestration.scraper_execution_log
+WHERE triggered_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)
+GROUP BY scraper_name, status
+ORDER BY scraper_name, status"
+```
+
+**Key Tables Reference:**
+| Dataset | Table | Purpose |
+|---------|-------|---------|
+| `nba_orchestration` | `workflow_decisions` | Hourly orchestrator decisions (RUN/SKIP/ABORT) |
+| `nba_orchestration` | `workflow_executions` | Execution results per workflow |
+| `nba_orchestration` | `circuit_breaker_state` | Circuit breaker status per processor |
+| `nba_orchestration` | `scraper_execution_log` | Individual scraper run details |
+| `nba_predictions` | `player_prop_predictions` | Main predictions table |
+| `nba_analytics` | `upcoming_player_game_context` | Player context with injury status |
+
+---
+
 ## Quick Summary Commands
 
 Run these first for a quick health overview:
@@ -618,5 +688,42 @@ See `docs/07-monitoring/observability-gaps.md` for full details. Key gaps:
 
 ---
 
+---
+
+## Known Issues (Session 8 - January 11, 2026)
+
+### Schedule Not Refreshing After Games Finish
+
+**Issue:** The schedule scraper runs during morning_operations and schedule_dependency workflows, but if games finish AFTER these run, the schedule table still shows games as "Scheduled" instead of "Final".
+
+**Impact:**
+- `nbac_team_boxscore` scraper fails (returns 0 teams for unfinished games)
+- Predictions may not be generated for games that finish late
+- Coverage checks show incorrect data
+
+**Detection:**
+```bash
+# Compare our schedule to NBA.com
+# Our schedule:
+bq query --use_legacy_sql=false "
+SELECT game_id, game_status_text
+FROM nba_raw.nbac_schedule WHERE game_date = CURRENT_DATE()
+GROUP BY game_id, game_status_text ORDER BY game_id"
+
+# NBA.com live (should match):
+curl -s 'https://cdn.nba.com/static/json/liveData/scoreboard/todaysScoreboard_00.json' | \
+  jq '[.scoreboard.games[] | {id: .gameId, status: .gameStatusText}]'
+```
+
+**Workaround:** Manually trigger schedule scraper after games finish:
+```bash
+# Trigger morning_operations to refresh schedule
+gcloud scheduler jobs run execute-workflows --location=us-west2
+```
+
+**Fix Needed:** Add a post-game schedule refresh to post_game_window workflows, or schedule `nbac_schedule_api` scraper to run at 1 AM and 4 AM ET.
+
+---
+
 *Created: December 27, 2025*
-*Last Updated: January 9, 2026 (added News Pipeline Validation section)*
+*Last Updated: January 11, 2026 (added Step 0 Orchestration Health Check and Known Issues)*
