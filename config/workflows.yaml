@@ -298,16 +298,17 @@ workflows:
     priority: "HIGH"
     decision_type: "game_aware_yesterday"
     description: "Second box score collection - 1 AM ET (most games complete)"
-    
+
     schedule:
       game_aware: true
       target_date: "yesterday"
       fixed_time: "01:00"  # 1 AM ET
       tolerance_minutes: 30
-    
+
     execution_plan:
       type: "parallel"
       scrapers:
+        - nbac_schedule_api    # Session 9: Refresh schedule to update game_status to Final
         - bdl_box_scores
         - nbac_team_boxscore
         - nbac_player_boxscore
@@ -355,6 +356,7 @@ workflows:
     execution_plan:
       type: "parallel"
       scrapers:
+        - nbac_schedule_api        # Session 9: Final schedule refresh - all games must show Final
         - bdl_box_scores           # Final retry
         - bigdataball_pbp          # Enhanced data
         - nbac_play_by_play
