@@ -669,11 +669,16 @@ def process_player_predictions(
     # LENIENT: Accept if ANY of these conditions are true:
     # - production_ready flag set
     # - bootstrap_mode flag set
-    # - quality score >= 50 (lowered from 70 for self-healing)
+    # - quality score >= 35 (lowered from 50 to prevent filtering valid players)
+    # - has valid context (player is expected to play today)
+    # NOTE: 2026-01-10 - Lowered from 50 to 35 to fix UNKNOWN_REASON gaps where
+    # players had context + features + betting lines but no predictions (e.g., Murray, Porzingis)
+    has_valid_context = features.get('context', {}).get('is_starter') is not None
     is_acceptable = (
         completeness.get('is_production_ready', False) or
         completeness.get('backfill_bootstrap_mode', False) or
-        quality_score >= 50  # Lowered for self-healing (confidence_level tracks actual quality)
+        quality_score >= 35 or  # Lowered for self-healing (confidence_level tracks actual quality)
+        has_valid_context  # If we have player context, allow prediction attempt
     )
 
     if not is_acceptable:

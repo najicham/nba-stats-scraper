@@ -606,30 +606,69 @@ class BdlBoxscoresProcessor(SmartIdempotencyMixin, ProcessorBase):
                             'recent_rows': delete_result.get('recent_rows', 'unknown')
                         })
                 
-                # If there are streaming conflicts, abort to prevent duplicates
+                # Session 6 (2026-01-10): Instead of aborting entire batch on streaming conflicts,
+                # skip only the conflicting games and load the rest. This allows new games to be
+                # processed even when some games have streaming buffer issues.
                 if streaming_conflicts:
-                    error_msg = f"Streaming buffer conflicts detected for {len(streaming_conflicts)} games: {[c['game_id'] for c in streaming_conflicts[:3]]}"
-                    errors.append(error_msg)
-                    logger.error(error_msg)
-                    logger.error("Aborting processing to prevent duplicate data creation")
-                    
-                    # Notify about streaming conflicts aborting processing
-                    try:
-                        notify_error(
-                            title="Streaming Buffer Conflicts - Processing Aborted",
-                            message=f"Aborting due to {len(streaming_conflicts)} streaming buffer conflicts",
-                            details={
-                                'conflict_count': len(streaming_conflicts),
-                                'affected_games': [c['game_id'] for c in streaming_conflicts[:5]],
-                                'action_taken': 'aborted_to_prevent_duplicates',
-                                'processor': 'BDL Box Scores'
-                            },
-                            processor_name="BDL Box Scores Processor"
+                    conflict_game_ids = {c['game_id'] for c in streaming_conflicts}
+                    original_row_count = len(rows)
+
+                    # Check for --force flag to bypass streaming buffer protection
+                    force_mode = self.opts.get('force', False)
+
+                    if force_mode:
+                        logger.warning(f"FORCE MODE: Ignoring {len(streaming_conflicts)} streaming conflicts and loading all data")
+                    else:
+                        # Filter out rows for games with streaming conflicts
+                        rows = [row for row in rows if row['game_id'] not in conflict_game_ids]
+                        skipped_rows = original_row_count - len(rows)
+
+                        logger.warning(
+                            f"Skipping {len(streaming_conflicts)} games with streaming buffer conflicts: "
+                            f"{[c['game_id'] for c in streaming_conflicts[:3]]}"
                         )
-                    except Exception as e:
-                        logger.warning(f"Failed to send notification: {e}")
-                    
-                    return {'rows_processed': 0, 'errors': errors, 'streaming_conflicts': streaming_conflicts}
+                        logger.info(f"Proceeding with {len(rows)} rows for games without conflicts")
+
+                        # If all games had conflicts, nothing to load
+                        if not rows:
+                            error_msg = f"All {len(streaming_conflicts)} games have streaming conflicts, nothing to load"
+                            errors.append(error_msg)
+                            logger.warning(error_msg)
+
+                            try:
+                                notify_error(
+                                    title="Streaming Buffer Conflicts - All Games Skipped",
+                                    message=f"Skipped all {len(streaming_conflicts)} games due to streaming conflicts",
+                                    details={
+                                        'conflict_count': len(streaming_conflicts),
+                                        'affected_games': [c['game_id'] for c in streaming_conflicts[:5]],
+                                        'action_taken': 'skipped_all_games',
+                                        'hint': 'Use --force to bypass streaming buffer protection',
+                                        'processor': 'BDL Box Scores'
+                                    },
+                                    processor_name="BDL Box Scores Processor"
+                                )
+                            except Exception as e:
+                                logger.warning(f"Failed to send notification: {e}")
+
+                            return {'rows_processed': 0, 'errors': errors, 'streaming_conflicts': streaming_conflicts}
+
+                        # Notify that some games were skipped but processing continues
+                        try:
+                            notify_info(
+                                title="Streaming Buffer Conflicts - Partial Processing",
+                                message=f"Skipped {len(streaming_conflicts)} games, processing {len(rows)} rows for remaining games",
+                                details={
+                                    'conflict_count': len(streaming_conflicts),
+                                    'skipped_games': [c['game_id'] for c in streaming_conflicts[:5]],
+                                    'remaining_rows': len(rows),
+                                    'action_taken': 'partial_processing',
+                                    'hint': 'Conflicting games will be retried in next window',
+                                    'processor': 'BDL Box Scores'
+                                }
+                            )
+                        except Exception as e:
+                            logger.warning(f"Failed to send notification: {e}")
             
             # Insert new data using batch loading (not streaming insert)
             # This avoids the 20 DML limit and streaming buffer issues
