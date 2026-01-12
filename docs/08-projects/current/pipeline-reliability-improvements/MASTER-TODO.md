@@ -282,15 +282,18 @@ curl https://phase4-timeout-check-f7p3g7f6ya-wl.a.run.app
 ## P1 - HIGH PRIORITY (This Week)
 
 ### P1-PERF-1: Add BigQuery Query Timeouts
-**Status:** 🔴 Not Started
-**File:** `predictions/worker/data_loaders.py` lines 112-183, 270-312
+**Status:** ✅ COMPLETE (verified Jan 12, 2026 - Session 18)
+**File:** `predictions/worker/data_loaders.py` line 31
 
-**Problem:** BigQuery queries have no timeout - workers can hang indefinitely
+**Solution Applied:**
+- `QUERY_TIMEOUT_SECONDS = 30` defined at module level
+- Applied to all 5 query locations (lines 305, 489, 596, 699, 829)
+- Prevents workers from hanging indefinitely on slow queries
 
-**Fix:**
-```python
-# Add timeout parameter to all queries
-results = self.client.query(query, job_config=job_config).result(timeout=30)
+**Verification:**
+```bash
+grep -n "QUERY_TIMEOUT_SECONDS" predictions/worker/data_loaders.py
+# Shows: 31:QUERY_TIMEOUT_SECONDS = 30
 ```
 
 ---
@@ -380,12 +383,25 @@ def health(request):
 ---
 
 ### P1-DATA-1: Fix Prediction Duplicates
-**Status:** 🔴 Not Started
-**File:** `predictions/worker/worker.py` lines 996-1041
+**Status:** ✅ COMPLETE (verified Jan 12, 2026 - Session 18)
+**File:** `predictions/worker/batch_staging_writer.py` lines 281-384
 
-**Problem:** Uses `WRITE_APPEND` which creates duplicates on Pub/Sub retry
+**Solution Applied:**
+Two-phase write pattern eliminates duplicates:
+1. **Phase 1 (Workers):** Write to staging tables with `WRITE_APPEND` (no DML limits)
+2. **Phase 2 (Coordinator):** MERGE with ROW_NUMBER deduplication
 
-**Fix:** Use MERGE statement instead of load_table_from_json
+**Key Implementation (lines 289-332):**
+- Merge key: `game_id + player_lookup + system_id + current_points_line`
+- Uses `COALESCE(..., -1)` for NULL-safe comparison
+- ROW_NUMBER keeps most recent prediction per key
+- Comment in code: "P1-DATA-1 FIX"
+
+**Verification:**
+```bash
+grep -n "P1-DATA-1" predictions/worker/batch_staging_writer.py
+# Shows: 291, 313 - Fix comments in MERGE query builder
+```
 
 ---
 
@@ -404,63 +420,57 @@ def health(request):
 ---
 
 ### P1-DATA-3: Fix ESPN Roster player_lookup Normalization
-**Status:** ✅ Code Complete (Jan 12, 2026) - Pending Deploy
-**File:** `data_processors/raw/espn/espn_team_roster_processor.py` lines 162, 443-458
-**Impact:** HIGH - Suffix players (Jr., Sr., II, III) don't match props
+**Status:** ✅ DEPLOYED (Jan 12, 2026 - Session 18)
+**File:** `data_processors/raw/espn/espn_team_roster_processor.py` line 166
+**Deployment:** `nba-phase2-raw-processors-00086-xgg`
 
-**Problem:**
-Custom `_normalize_player_name()` REMOVES suffixes, but Odds API props KEEP suffixes.
-- ESPN roster: "Michael Porter Jr." → `michaelporter`
-- Odds API props: "Michael Porter Jr." → `michaelporterjr`
-- Result: JOIN fails, predictions use default line_value = 20
+**Solution Applied:**
+- Uses shared `normalize_name()` which KEEPS suffixes
+- Line 166: `player_lookup = normalize_name(full_name)`
+- Comment documents the fix and links to normalization mismatch doc
 
-**Fix:**
-```python
-# Add import at top of file
-from data_processors.raw.utils.name_utils import normalize_name
-
-# Replace line 162:
-# OLD: player_lookup = self._normalize_player_name(full_name)
-# NEW: player_lookup = normalize_name(full_name)
-```
-
-**Related:** See `data-quality/2026-01-12-PLAYER-LOOKUP-NORMALIZATION-MISMATCH.md`
+**Impact:** Suffix players (Jr., Sr., II, III) now match Odds API props correctly
 
 ---
 
 ### P1-DATA-4: Fix BettingPros Props player_lookup Normalization
-**Status:** ✅ Code Complete (Jan 12, 2026) - Pending Deploy
-**File:** `data_processors/raw/bettingpros/bettingpros_player_props_processor.py` lines 149-158
-**Impact:** HIGH - Same issue as P1-DATA-3
+**Status:** ✅ DEPLOYED (Jan 12, 2026 - Session 18)
+**File:** `data_processors/raw/bettingpros/bettingpros_player_props_processor.py` line 306
+**Deployment:** `nba-phase2-raw-processors-00086-xgg`
 
-**Problem:**
-Custom `normalize_player_name()` REMOVES suffixes, inconsistent with Odds API.
+**Solution Applied:**
+- Uses shared `normalize_name()` which KEEPS suffixes
+- Line 306: `player_lookup = normalize_name(player_name)`
+- Old method marked DEPRECATED with documentation
 
-**Fix:**
-```python
-# Add import at top of file
-from data_processors.raw.utils.name_utils import normalize_name
-
-# Replace all calls to self.normalize_player_name(x) with normalize_name(x)
-```
-
-**Related:** See `data-quality/2026-01-12-PLAYER-LOOKUP-NORMALIZATION-MISMATCH.md`
+**Impact:** Same as P1-DATA-3 - consistent normalization across all processors
 
 ---
 
 ### P1-MON-1: Implement DLQ Monitoring
-**Status:** 🔴 Not Started
+**Status:** 🟡 Partial (Jan 12, 2026 - Session 18)
 
-**Existing DLQs:**
-- `analytics-ready-dead-letter`
-- `line-changed-dead-letter`
-- `phase2-raw-complete-dlq`
-- `phase3-analytics-complete-dlq`
+**What's Working:**
+- `dlq-monitor` Cloud Function: ACTIVE
+- `dlq-monitor-job` Scheduler: Created, runs every 15 min
+- Function checks 6 DLQ subscriptions and logs results
 
-**Fix:**
-- Create Cloud Monitoring alert on message count > 0
-- Add DLQ status to admin dashboard
-- Consider auto-replay mechanism
+**What's Missing:**
+- Slack webhook not configured (`slack-webhook-default` secret)
+- 5/6 DLQ subscriptions don't exist (only `prediction-request-dlq-sub`)
+
+**Finding:** 83 failed predictions in `prediction-request-dlq-sub` from Jan 4-10
+
+**To Complete:**
+```bash
+# 1. Create Slack webhook secret
+gcloud secrets create slack-webhook-default --project=nba-props-platform
+echo -n "https://hooks.slack.com/YOUR/WEBHOOK" | \
+  gcloud secrets versions add slack-webhook-default --data-file=-
+
+# 2. Create missing DLQ subscriptions (optional)
+# Run: bin/infrastructure/create_phase2_phase3_topics.sh
+```
 
 ---
 
