@@ -144,10 +144,22 @@ GROUP BY void_reason
 - All dates re-graded with voiding
 - 200 predictions voided
 
-### Priority 2: Nov-Dec 2025
-- High DNP rate suggests prediction system bug
-- Consider whether to backfill or flag as "data quality issue"
-- ~11,000 predictions affected
+### Priority 2: Nov-Dec 2025 - INVESTIGATED (Session 22)
+
+**Root Cause Found:** NOT actual DNPs - this is a **BDL API data quality issue**.
+
+The BDL API returned incorrect player-team assignments for 2025-26 season:
+- Anthony Davis → DAL (should be LAL)
+- Jimmy Butler → GSW (should be MIA)
+- Jrue Holiday → POR (should be BOS)
+- 125+ players have team mismatches
+
+**Impact:**
+- Nov 2025: 44% "null minutes" (7,371 predictions)
+- Dec 2025: 31% "null minutes" (6,425 predictions)
+
+**Decision:** Flag as data quality issue. Do NOT backfill voiding.
+The voiding system works correctly for Jan 2026+ where BDL data quality is better
 
 ### Priority 3: Historical (2021-2024)
 - Very low DNP rates (<0.1%)
