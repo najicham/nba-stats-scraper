@@ -1,8 +1,9 @@
 # Issue: BDL West Coast Game Gap
 
 **Priority:** P2
-**Status:** Root cause identified, fix needed
+**Status:** RESOLVED
 **Created:** January 12, 2026 (Session 23)
+**Resolved:** January 12, 2026 (Session 25)
 
 ---
 
@@ -147,3 +148,65 @@ After fix:
 1. West coast games appear in BigQuery `bdl_player_boxscores` table
 2. Games are associated with correct game date
 3. No manual backfill needed for late games
+
+---
+
+## Resolution (Session 25)
+
+All three options were implemented:
+
+### Option A: Late Boxscores Scheduler - DEPLOYED
+
+```bash
+# Created scheduler job
+gcloud scheduler jobs create http nba-bdl-boxscores-late \
+    --schedule='5 7 * * *' \
+    --time-zone='UTC' \
+    ...
+
+# Verify:
+gcloud scheduler jobs list --location=us-west2 | grep nba-bdl-boxscores-late
+```
+
+**Result:** Job `nba-bdl-boxscores-late` runs daily at 7:05 AM UTC (2:05 AM ET)
+
+### Option B: Live Scraper Date Fix - IMPLEMENTED
+
+Added `extract_opts_from_data()` override in `scrapers/balldontlie/bdl_live_box_scores.py`:
+
+```python
+def extract_opts_from_data(self) -> None:
+    """Extract game date from API response for correct GCS folder."""
+    live_games = self.decoded_data.get("data", [])
+    if live_games:
+        first_game = live_games[0]
+        game_obj = first_game.get("game", {})
+        game_date = game_obj.get("date")
+        if game_date:
+            self.opts["date"] = game_date
+```
+
+**Result:** Live scraper now uses game date from API for folder path, not current ET date.
+
+### Option C: Recovery Module - CREATED
+
+New file: `data_processors/raw/balldontlie/bdl_late_game_recovery.py`
+
+```bash
+# Find orphaned files for a date
+python -m data_processors.raw.balldontlie.bdl_late_game_recovery \
+    --date 2026-01-11 --dry-run
+```
+
+**Result:** Utility to find and report files in wrong date folders.
+
+### Deployment Note
+
+Option B requires redeploying the Phase 1 scrapers service:
+```bash
+./bin/scrapers/deploy/deploy_scrapers.sh prod
+```
+
+---
+
+*Resolved: 2026-01-12 (Session 25)*
