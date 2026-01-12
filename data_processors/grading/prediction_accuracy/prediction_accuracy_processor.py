@@ -7,6 +7,7 @@ Compares predictions from all 5 systems to actual points scored.
 Reads from:
 - nba_predictions.player_prop_predictions (Phase 5A)
 - nba_analytics.player_game_summary (Phase 3) for actual points
+- nba_raw.nbac_injury_report (for DNP/injury correlation)
 
 Writes to:
 - nba_predictions.prediction_accuracy
@@ -18,6 +19,7 @@ Key Features:
 - Tracks threshold accuracy (within_3_points, within_5_points)
 - Computes margin analysis for betting evaluation
 - Tracks line source (has_prop_line, line_source) for no-line player analysis
+- DNP/Injury voiding (v4): Marks DNP players as voided like sportsbooks void bets
 """
 
 import logging
@@ -55,10 +57,15 @@ class PredictionAccuracyProcessor:
         # Construct table names with optional prefix
         predictions_dataset = f"{dataset_prefix}_nba_predictions" if dataset_prefix else "nba_predictions"
         analytics_dataset = f"{dataset_prefix}_nba_analytics" if dataset_prefix else "nba_analytics"
+        raw_dataset = f"{dataset_prefix}_nba_raw" if dataset_prefix else "nba_raw"
 
         self.predictions_table = f'{project_id}.{predictions_dataset}.player_prop_predictions'
         self.actuals_table = f'{project_id}.{analytics_dataset}.player_game_summary'
         self.accuracy_table = f'{project_id}.{predictions_dataset}.prediction_accuracy'
+        self.injury_table = f'{project_id}.{raw_dataset}.nbac_injury_report'
+
+        # Cache for injury status lookups (populated per-date)
+        self._injury_cache: Dict[str, Dict] = {}
 
         logger.info(f"Initialized PredictionAccuracyProcessor (dataset_prefix: {dataset_prefix or 'production'})")
 
@@ -105,6 +112,135 @@ class PredictionAccuracyProcessor:
             return s[:500] if len(s) > 500 else s
         except (TypeError, ValueError):
             return None
+
+    def load_injury_status_for_date(self, game_date: date) -> Dict[str, Dict]:
+        """
+        Load injury status for all players on a game date.
+
+        Returns dict mapping player_lookup -> {
+            'injury_status': 'OUT', 'DOUBTFUL', 'QUESTIONABLE', etc.
+            'reason': injury reason text
+        }
+
+        Uses the latest report for each player on the game date.
+        """
+        query = f"""
+        SELECT
+            player_lookup,
+            injury_status,
+            reason
+        FROM (
+            SELECT
+                player_lookup,
+                UPPER(injury_status) as injury_status,
+                reason,
+                ROW_NUMBER() OVER (
+                    PARTITION BY player_lookup, game_id
+                    ORDER BY report_date DESC, report_hour DESC
+                ) as rn
+            FROM `{self.injury_table}`
+            WHERE game_date = '{game_date}'
+        )
+        WHERE rn = 1
+        """
+
+        try:
+            result = self.bq_client.query(query).to_dataframe()
+            injury_map = {}
+            for _, row in result.iterrows():
+                injury_map[row['player_lookup']] = {
+                    'injury_status': row['injury_status'],
+                    'reason': row['reason']
+                }
+            logger.info(f"  Loaded {len(injury_map)} injury reports for {game_date}")
+            return injury_map
+        except Exception as e:
+            logger.warning(f"Error loading injury status for {game_date}: {e}")
+            return {}
+
+    def get_injury_status(self, player_lookup: str, game_date: date) -> Optional[Dict]:
+        """
+        Get injury status for a player on a game date.
+
+        Returns:
+            Dict with 'injury_status' and 'reason', or None if no injury report
+        """
+        cache_key = game_date.isoformat()
+        if cache_key not in self._injury_cache:
+            self._injury_cache[cache_key] = self.load_injury_status_for_date(game_date)
+
+        return self._injury_cache.get(cache_key, {}).get(player_lookup)
+
+    def detect_dnp_voiding(
+        self,
+        actual_points: int,
+        minutes_played: Optional[float],
+        player_lookup: str,
+        game_date: date
+    ) -> Dict:
+        """
+        Detect if a prediction should be voided due to DNP (Did Not Play).
+
+        Like sportsbooks, we void bets when a player doesn't play.
+        This prevents DNP games from counting against prediction accuracy.
+
+        Args:
+            actual_points: Points scored (0 for DNP)
+            minutes_played: Minutes played (0 or None for DNP)
+            player_lookup: Player identifier
+            game_date: Game date for injury lookup
+
+        Returns:
+            Dict with voiding fields:
+            - is_voided: True if should be excluded from accuracy metrics
+            - void_reason: 'dnp_injury_confirmed', 'dnp_late_scratch', 'dnp_unknown'
+            - pre_game_injury_flag: True if injury was known pre-game
+            - pre_game_injury_status: The injury status if flagged
+            - injury_confirmed_postgame: True if DNP matches injury report
+        """
+        # Default: not voided
+        result = {
+            'is_voided': False,
+            'void_reason': None,
+            'pre_game_injury_flag': False,
+            'pre_game_injury_status': None,
+            'injury_confirmed_postgame': False
+        }
+
+        # Check for DNP: 0 points AND (0 minutes or no minutes data)
+        is_dnp = (actual_points == 0) and (minutes_played is None or minutes_played == 0)
+
+        if not is_dnp:
+            return result
+
+        # Player DNP'd - check injury report
+        injury_info = self.get_injury_status(player_lookup, game_date)
+
+        result['is_voided'] = True
+
+        if injury_info:
+            injury_status = injury_info.get('injury_status', '').upper()
+            result['pre_game_injury_status'] = injury_status
+
+            if injury_status in ('OUT', 'DOUBTFUL'):
+                # Injury was flagged pre-game
+                result['void_reason'] = 'dnp_injury_confirmed'
+                result['pre_game_injury_flag'] = True
+                result['injury_confirmed_postgame'] = True
+            elif injury_status in ('QUESTIONABLE', 'PROBABLE'):
+                # Player was questionable but ended up not playing
+                result['void_reason'] = 'dnp_late_scratch'
+                result['pre_game_injury_flag'] = True
+                result['injury_confirmed_postgame'] = True
+            else:
+                # Injury report exists but status was available/unknown
+                result['void_reason'] = 'dnp_unknown'
+                result['injury_confirmed_postgame'] = False
+        else:
+            # No injury report - unexpected DNP (late scratch, coach decision, etc.)
+            result['void_reason'] = 'dnp_unknown'
+
+        return result
 
     def get_predictions_for_date(self, game_date: date) -> List[Dict]:
         """
@@ -235,7 +371,8 @@ class PredictionAccuracyProcessor:
     def grade_prediction(
         self,
         prediction: Dict,
-        actual_data: Dict
+        actual_data: Dict,
+        game_date: date
     ) -> Dict:
         """
         Grade a single prediction against actual results.
@@ -243,6 +380,7 @@ class PredictionAccuracyProcessor:
         Args:
             prediction: Dict with predicted_points, confidence_score, etc.
             actual_data: Dict with actual_points, team_abbr, opponent_team_abbr, minutes_played
+            game_date: Game date for injury lookup
 
         Returns:
             Dict ready for insertion into prediction_accuracy table
@@ -252,6 +390,16 @@ class PredictionAccuracyProcessor:
         line_value = prediction.get('line_value')
         recommendation = prediction.get('recommendation')
         confidence_score = prediction.get('confidence_score')
+        minutes_played = actual_data.get('minutes_played')
+        player_lookup = prediction['player_lookup']
+
+        # Detect DNP voiding (v4)
+        voiding_info = self.detect_dnp_voiding(
+            actual_points=actual_points,
+            minutes_played=minutes_played,
+            player_lookup=player_lookup,
+            game_date=game_date
+        )
 
         # Compute errors
         if predicted_points is not None:
@@ -342,6 +490,13 @@ class PredictionAccuracyProcessor:
             # Enables tracking of filtered picks' actual performance
             'is_actionable': bool(prediction.get('is_actionable', True)),
             'filter_reason': self._safe_string(prediction.get('filter_reason')),
+
+            # DNP/Injury Voiding (v4) - Treat DNP like sportsbook voided bets
+            'is_voided': voiding_info['is_voided'],
+            'void_reason': voiding_info['void_reason'],
+            'pre_game_injury_flag': voiding_info['pre_game_injury_flag'],
+            'pre_game_injury_status': voiding_info['pre_game_injury_status'],
+            'injury_confirmed_postgame': voiding_info['injury_confirmed_postgame'],
 
             # Metadata
             'model_version': self._safe_string(prediction.get('model_version')),
@@ -488,13 +643,13 @@ class PredictionAccuracyProcessor:
 
         for pred in predictions:
             player_lookup = pred['player_lookup']
-            actual_points = actuals.get(player_lookup)
+            actual_data = actuals.get(player_lookup)
 
-            if actual_points is None:
+            if actual_data is None:
                 missing_actuals += 1
                 continue
 
-            graded = self.grade_prediction(pred, actual_points)
+            graded = self.grade_prediction(pred, actual_data, game_date)
             graded_results.append(graded)
 
         # Write to BigQuery
@@ -502,6 +657,7 @@ class PredictionAccuracyProcessor:
 
         # Compute summary statistics
         if graded_results:
+            # Overall stats (including voided)
             errors = [r['absolute_error'] for r in graded_results if r['absolute_error'] is not None]
             mae = sum(errors) / len(errors) if errors else None
 
@@ -511,10 +667,30 @@ class PredictionAccuracyProcessor:
             correct_count = sum(1 for r in graded_results if r['prediction_correct'] is True)
             incorrect_count = sum(1 for r in graded_results if r['prediction_correct'] is False)
             accuracy = correct_count / (correct_count + incorrect_count) if (correct_count + incorrect_count) > 0 else None
+
+            # Voiding stats (v4)
+            voided_count = sum(1 for r in graded_results if r.get('is_voided', False))
+            voided_injury = sum(1 for r in graded_results if r.get('void_reason') == 'dnp_injury_confirmed')
+            voided_scratch = sum(1 for r in graded_results if r.get('void_reason') == 'dnp_late_scratch')
+            voided_unknown = sum(1 for r in graded_results if r.get('void_reason') == 'dnp_unknown')
+
+            # Net accuracy (excluding voided) - this is the "real" accuracy like sportsbooks
+            non_voided = [r for r in graded_results if not r.get('is_voided', False)]
+            net_correct = sum(1 for r in non_voided if r['prediction_correct'] is True)
+            net_incorrect = sum(1 for r in non_voided if r['prediction_correct'] is False)
+            net_accuracy = net_correct / (net_correct + net_incorrect) if (net_correct + net_incorrect) > 0 else None
+
+            if voided_count > 0:
+                logger.info(f"  Voided {voided_count} predictions (injury: {voided_injury}, scratch: {voided_scratch}, unknown: {voided_unknown})")
         else:
             mae = None
             bias = None
             accuracy = None
+            voided_count = 0
+            voided_injury = 0
+            voided_scratch = 0
+            voided_unknown = 0
+            net_accuracy = None
 
         return {
             'status': 'success' if written > 0 else 'failed',
@@ -525,7 +701,13 @@ class PredictionAccuracyProcessor:
             'graded': written,
             'mae': round(mae, 2) if mae is not None else None,
             'bias': round(bias, 2) if bias is not None else None,
-            'recommendation_accuracy': round(accuracy * 100, 1) if accuracy is not None else None
+            'recommendation_accuracy': round(accuracy * 100, 1) if accuracy is not None else None,
+            # Voiding stats (v4)
+            'voided_count': voided_count,
+            'voided_injury': voided_injury,
+            'voided_scratch': voided_scratch,
+            'voided_unknown': voided_unknown,
+            'net_accuracy': round(net_accuracy * 100, 1) if net_accuracy is not None else None
         }
 
     def check_predictions_exist(self, game_date: date) -> Dict:
