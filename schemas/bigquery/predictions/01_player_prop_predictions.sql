@@ -78,7 +78,14 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.player_prop_predi
   -- Status (2 fields)
   is_active BOOLEAN NOT NULL DEFAULT TRUE,          -- FALSE when superseded by newer version
   superseded_by STRING,                             -- prediction_id that replaced this one
-  
+
+  -- Pre-game Injury Tracking (4 fields - v3.4)
+  -- Captures injury status AT PREDICTION TIME for expected vs surprise void analysis
+  injury_status_at_prediction STRING,               -- OUT, DOUBTFUL, QUESTIONABLE, PROBABLE, or NULL if healthy
+  injury_flag_at_prediction BOOLEAN,                -- TRUE if any injury concern (OUT/DOUBTFUL/QUESTIONABLE)
+  injury_reason_at_prediction STRING,               -- Injury reason text (e.g., "Left Knee - Soreness")
+  injury_checked_at TIMESTAMP,                      -- When injury status was checked
+
   -- Timestamps (2 fields)
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP() NOT NULL,
   updated_at TIMESTAMP
@@ -174,6 +181,20 @@ ADD COLUMN IF NOT EXISTS sportsbook STRING
 ADD COLUMN IF NOT EXISTS was_line_fallback BOOLEAN
   OPTIONS (description='TRUE if line came from fallback source (not primary)');
 
+-- v3.4: Add pre-game injury status tracking (enables expected vs surprise void analysis)
+-- Captures injury status AT PREDICTION TIME so we can distinguish:
+-- - Expected voids: Player was flagged with injury concern before game (we had warning)
+-- - Surprise voids: Player DNP'd without prior warning (late scratch)
+ALTER TABLE `nba-props-platform.nba_predictions.player_prop_predictions`
+ADD COLUMN IF NOT EXISTS injury_status_at_prediction STRING
+  OPTIONS (description='Injury status when prediction was made: OUT, DOUBTFUL, QUESTIONABLE, PROBABLE, or NULL if healthy'),
+ADD COLUMN IF NOT EXISTS injury_flag_at_prediction BOOLEAN
+  OPTIONS (description='TRUE if player had any injury concern at prediction time (OUT/DOUBTFUL/QUESTIONABLE)'),
+ADD COLUMN IF NOT EXISTS injury_reason_at_prediction STRING
+  OPTIONS (description='Injury reason text at prediction time (e.g., "Left Knee - Soreness")'),
+ADD COLUMN IF NOT EXISTS injury_checked_at TIMESTAMP
+  OPTIONS (description='Timestamp when injury status was checked during prediction');
+
 -- ============================================================================
 -- VERSION HISTORY
 -- ============================================================================
@@ -186,6 +207,10 @@ ADD COLUMN IF NOT EXISTS was_line_fallback BOOLEAN
 -- v3.3 (+source_track): Added line_source_api, sportsbook, was_line_fallback
 --                       Enables analysis of hit rate by API source and sportsbook
 --                       Supports future fallback logic (DraftKings -> FanDuel -> BettingPros)
+-- v3.4 (+injury_track): Added injury_status_at_prediction, injury_flag_at_prediction,
+--                       injury_reason_at_prediction, injury_checked_at
+--                       Enables distinguishing expected vs surprise voids
+--                       Captures injury status AT PREDICTION TIME for better analysis
 --
 -- Last Updated: January 2026
 -- Status: Production Ready
