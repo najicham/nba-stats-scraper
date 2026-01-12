@@ -167,6 +167,39 @@ class BdlLiveBoxScoresScraper(ScraperBase, ScraperFlaskMixin):
             raise
 
     # ------------------------------------------------------------------ #
+    # Extract game date from API response for correct GCS folder         #
+    # ------------------------------------------------------------------ #
+    def extract_opts_from_data(self) -> None:
+        """
+        Override to use game date from API response for GCS folder path.
+
+        Fixes west coast game gap: games at 10+ PM ET should be filed under
+        their game date, not the current date (which may be next day after
+        midnight ET).
+
+        Live API structure: data[i]["game"]["date"] = "2026-01-09"
+        """
+        super().extract_opts_from_data()
+
+        live_games = self.decoded_data.get("data", [])
+
+        if live_games:
+            # Get game date from first game (all games in live poll are same day)
+            first_game = live_games[0]
+            game_obj = first_game.get("game", {})
+            game_date = game_obj.get("date")
+
+            if game_date:
+                if game_date != self.opts.get("date"):
+                    logger.info(
+                        f"Using game date from API: {game_date} "
+                        f"(was: {self.opts.get('date')})"
+                    )
+                self.opts["date"] = game_date
+            else:
+                logger.warning("No 'date' in game object, using current ET date")
+
+    # ------------------------------------------------------------------ #
     # Transform                                                          #
     # ------------------------------------------------------------------ #
     def transform_data(self) -> None:
