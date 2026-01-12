@@ -21,6 +21,7 @@ from shared.utils.notification_system import (
 )
 from shared.utils.player_registry import RegistryReader, PlayerNotFoundError
 from shared.utils.bigquery_retry import SERIALIZATION_RETRY
+from data_processors.raw.utils.name_utils import normalize_name
 
 logger = logging.getLogger(__name__)
 
@@ -159,7 +160,10 @@ class EspnTeamRosterProcessor(SmartIdempotencyMixin, ProcessorBase):
                     continue
                 
                 # Generate normalized lookup name
-                player_lookup = self._normalize_player_name(full_name)
+                # NOTE: Using shared normalize_name() which KEEPS suffixes (Jr., Sr., II, III)
+                # This ensures consistency with Odds API props for correct JOIN matching
+                # See: docs/08-projects/.../data-quality/2026-01-12-PLAYER-LOOKUP-NORMALIZATION-MISMATCH.md
+                player_lookup = normalize_name(full_name)
                 
                 # Try to resolve universal player ID (lenient mode)
                 universal_player_id = self.registry.get_universal_id(
@@ -441,18 +445,26 @@ class EspnTeamRosterProcessor(SmartIdempotencyMixin, ProcessorBase):
     # HELPER METHODS
     # ================================================================
     def _normalize_player_name(self, name: str) -> str:
-        """Normalize player name for consistent lookup."""
+        """
+        DEPRECATED: This method removed suffixes which caused mismatches with Odds API props.
+
+        Use normalize_name() from data_processors.raw.utils.name_utils instead.
+        That function KEEPS suffixes (Jr., Sr., II, III) for consistent matching.
+
+        Keeping this method for reference only - DO NOT USE.
+        See: docs/08-projects/.../data-quality/2026-01-12-PLAYER-LOOKUP-NORMALIZATION-MISMATCH.md
+        """
         if not name:
             return ""
-        
+
         normalized = name.lower().strip()
-        
-        # Remove common suffixes
+
+        # DEPRECATED: This suffix removal caused JOIN failures with Odds API props
         suffixes = [' jr.', ' jr', ' sr.', ' sr', ' ii', ' iii', ' iv', ' v']
         for suffix in suffixes:
             if normalized.endswith(suffix):
                 normalized = normalized[:-len(suffix)].strip()
-        
+
         # Remove all non-alphanumeric characters
         normalized = re.sub(r'[^a-z0-9]', '', normalized)
         return normalized
