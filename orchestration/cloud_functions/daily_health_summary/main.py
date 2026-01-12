@@ -184,6 +184,25 @@ class HealthChecker:
             return r
         return {'total_records': 0, 'correct': 0, 'win_rate': 0, 'mae': 0}
 
+    def check_registry_failures(self) -> Dict:
+        """Check for pending registry failures (unresolved player names).
+
+        Registry failures indicate players that couldn't be matched to the
+        canonical registry. These block predictions for those players.
+
+        Returns:
+            Dict with pending_players and pending_records counts
+        """
+        query = f"""
+        SELECT
+            COUNT(DISTINCT player_lookup) as pending_players,
+            COUNT(*) as pending_records
+        FROM `{PROJECT_ID}.nba_processing.registry_failures`
+        WHERE resolved_at IS NULL
+        """
+        results = self.run_query(query)
+        return results[0] if results else {'pending_players': 0, 'pending_records': 0}
+
     def run_health_check(self) -> Dict:
         """Run comprehensive health check and return results."""
         today, yesterday, tomorrow = get_dates()
@@ -250,6 +269,15 @@ class HealthChecker:
         trend = self.check_7day_performance()
         results['checks']['7day_trend'] = trend
 
+        # 8. Registry Failures (unresolved player names)
+        registry = self.check_registry_failures()
+        results['checks']['registry_failures'] = registry
+
+        if registry['pending_players'] > 20:
+            self.issues.append(f"Registry: {registry['pending_players']} pending player failures")
+        elif registry['pending_players'] > 5:
+            self.warnings.append(f"Registry: {registry['pending_players']} pending player failures")
+
         # Determine overall status
         if self.issues:
             results['status'] = 'CRITICAL'
@@ -283,6 +311,7 @@ def send_slack_summary(results: Dict) -> bool:
         schedule_today = checks.get('schedule', {}).get('today', {})
         schedule_yesterday = checks.get('schedule', {}).get('yesterday', {})
         trend = checks.get('7day_trend', {})
+        registry = checks.get('registry_failures', {})
 
         # Build status line
         status_line = f"{results['status_emoji']} *Daily Health Summary - {results['status']}*"
@@ -299,7 +328,9 @@ def send_slack_summary(results: Dict) -> bool:
             f"Games: {schedule_today.get('total_games', 0)} scheduled\n\n"
             f"*7-Day Trend*\n"
             f"Win Rate: {trend.get('win_rate', 0)}%\n"
-            f"MAE: {trend.get('mae', 0)}"
+            f"MAE: {trend.get('mae', 0)}\n\n"
+            f"*Registry Status*\n"
+            f"Pending Failures: {registry.get('pending_players', 0)} players"
         )
 
         blocks = [
