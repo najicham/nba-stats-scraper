@@ -4,29 +4,33 @@ Slack Channel Utilities
 Provides direct Slack posting to specific channels for specialized alerts.
 Complements the notification_system.py which routes by severity level.
 
-Channel Mapping (5 channels):
-- #nba-pipeline-health: Daily health, backfill progress (INFO level)
+Channel Mapping (6 channels):
+- #daily-orchestration: Daily health, stale cleanup, phase timeouts (primary orchestration channel)
+- #nba-pipeline-health: Backfill progress (INFO level) - legacy
 - #nba-predictions: Prediction completion (special channel)
 - #nba-alerts: Stalls, quality issues, stale data (WARNING level)
 - #app-error-alerts: Processor failures, critical issues (ERROR/CRITICAL level)
 - #gap-monitoring: Gap detection alerts (existing, unchanged)
 
 Environment Variables:
-- SLACK_WEBHOOK_URL_INFO: #nba-pipeline-health
+- SLACK_WEBHOOK_URL: #daily-orchestration (primary - used by Cloud Functions)
+- SLACK_WEBHOOK_URL_INFO: #nba-pipeline-health (legacy)
 - SLACK_WEBHOOK_URL_PREDICTIONS: #nba-predictions
 - SLACK_WEBHOOK_URL_WARNING: #nba-alerts
 - SLACK_WEBHOOK_URL_ERROR: #app-error-alerts
 - SLACK_WEBHOOK_URL_CRITICAL: #app-error-alerts
 
-Webhook URLs:
-- #nba-pipeline-health: https://hooks.slack.com/services/T0900NBTAET/B0A0JN42AF7/...
+Webhook URLs (updated 2026-01-12):
+- #daily-orchestration: https://hooks.slack.com/services/T0900NBTAET/B0A85Q6BB45/...
+- #nba-pipeline-health: https://hooks.slack.com/services/T0900NBTAET/B0A0JN42AF7/... (legacy)
 - #nba-predictions: https://hooks.slack.com/services/T0900NBTAET/B0A11329F1P/...
 - #nba-alerts: https://hooks.slack.com/services/T0900NBTAET/B0A0FPJUVK5/...
 - #app-error-alerts: https://hooks.slack.com/services/T0900NBTAET/B09HHJXMN8M/...
 - #gap-monitoring: https://hooks.slack.com/services/T0900NBTAET/B09JTE8TUR2/...
 
-Version: 1.1
+Version: 1.2
 Created: 2025-11-30
+Updated: 2026-01-12 - Added #daily-orchestration as primary channel
 """
 
 import json
