@@ -16,6 +16,9 @@ Usage:
     # With parallelism
     python scripts/backfill_odds_api_props.py --start-date 2025-11-14 --end-date 2025-12-31 --parallel 5
 
+    # Load HISTORICAL props (from odds-api/player-props-history/ instead of odds-api/player-props/)
+    python scripts/backfill_odds_api_props.py --start-date 2025-10-22 --end-date 2025-11-13 --historical
+
 Created: 2026-01-11
 Purpose: Recover 47 dates of prop data that was scraped to GCS but never loaded to BigQuery
 """
@@ -33,6 +36,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 PHASE2_URL = "https://nba-phase2-raw-processors-f7p3g7f6ya-wl.a.run.app/process"
 GCS_BUCKET = "nba-scraped-data"
 GCS_PREFIX = "odds-api/player-props"
+GCS_PREFIX_HISTORICAL = "odds-api/player-props-history"
 
 
 def get_identity_token():
@@ -45,9 +49,15 @@ def get_identity_token():
     return result.stdout.strip()
 
 
-def list_gcs_files(date_str: str) -> list:
-    """List all JSON files for a given date."""
-    path = f"gs://{GCS_BUCKET}/{GCS_PREFIX}/{date_str}/**"
+def list_gcs_files(date_str: str, historical: bool = False) -> list:
+    """List all JSON files for a given date.
+
+    Args:
+        date_str: Date in YYYY-MM-DD format
+        historical: If True, read from player-props-history/ instead of player-props/
+    """
+    prefix = GCS_PREFIX_HISTORICAL if historical else GCS_PREFIX
+    path = f"gs://{GCS_BUCKET}/{prefix}/{date_str}/**"
     result = subprocess.run(
         ["gsutil", "ls", "-r", path],
         capture_output=True,
@@ -106,6 +116,8 @@ def main():
     parser.add_argument("--parallel", type=int, default=1, help="Number of parallel requests (default: 1)")
     parser.add_argument("--verbose", action="store_true", help="Show per-file status")
     parser.add_argument("--delay", type=float, default=0.5, help="Delay between sequential requests (seconds)")
+    parser.add_argument("--historical", action="store_true",
+                        help="Read from odds-api/player-props-history/ instead of odds-api/player-props/")
     args = parser.parse_args()
 
     start = datetime.strptime(args.start_date, "%Y-%m-%d")
@@ -113,6 +125,10 @@ def main():
 
     print(f"\n{'='*60}")
     print(f"Odds API Props Backfill: {args.start_date} to {args.end_date}")
+    if args.historical:
+        print(f"Source: {GCS_PREFIX_HISTORICAL}/ (historical)")
+    else:
+        print(f"Source: {GCS_PREFIX}/")
     print(f"{'='*60}")
 
     # Get auth token
@@ -134,7 +150,7 @@ def main():
     current = start
     while current <= end:
         date_str = current.strftime("%Y-%m-%d")
-        files = list_gcs_files(date_str)
+        files = list_gcs_files(date_str, historical=args.historical)
 
         if not files or files == ['']:
             print(f"\n{date_str}: No files found")
