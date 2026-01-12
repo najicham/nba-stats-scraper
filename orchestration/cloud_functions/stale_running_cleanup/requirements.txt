@@ -1,0 +1,5 @@
+functions-framework==3.*
+google-cloud-bigquery==3.*
+google-auth==2.*
+requests==2.*
+flask==3.*
