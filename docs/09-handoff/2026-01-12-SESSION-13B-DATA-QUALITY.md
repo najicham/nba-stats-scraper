@@ -75,10 +75,64 @@ The investigation confirmed that:
 
 ---
 
+## Implementation Complete
+
+### Code Changes Made
+| File | Change |
+|------|--------|
+| `data_processors/raw/espn/espn_team_roster_processor.py` | Import `normalize_name`, use at line 166, old method deprecated |
+| `data_processors/raw/bettingpros/bettingpros_player_props_processor.py` | Import `normalize_name`, use at line 297, old method deprecated |
+
+### Files Created
+| File | Purpose |
+|------|---------|
+| `bin/patches/patch_player_lookup_normalization.sql` | Backfill SQL scripts with verification queries |
+| `bin/patches/verify_normalization_fix.py` | Pre-deployment verification script |
+
+### Verification Passed
+```bash
+$ PYTHONPATH=. python bin/patches/verify_normalization_fix.py
+# All 22 tests passed
+# ESPN processor: Import + usage + deprecation verified
+# BettingPros processor: Import + usage + deprecation verified
+```
+
+---
+
+## Deployment Instructions
+
+### Step 1: Deploy Code Changes
+```bash
+# Deploy the Phase 2 raw processors service
+gcloud run deploy nba-phase2-raw-processors \
+    --source . \
+    --region us-west2 \
+    --project nba-props-platform
+```
+
+### Step 2: Run Backfill SQL (in BigQuery Console)
+Run queries from `bin/patches/patch_player_lookup_normalization.sql`:
+1. **Step 0:** Verify the problem (run SELECT queries)
+2. **Step 4:** Test normalization equivalence (verify SQL matches Python)
+3. **Step 1:** UPDATE ESPN rosters
+4. **Step 2:** UPDATE BettingPros props
+5. **Step 3:** Verify JOINs now work
+
+### Step 3: Regenerate Downstream Data
+```bash
+# Regenerate upcoming_player_game_context for affected dates
+python backfill_jobs/analytics/upcoming_player_game_context/upcoming_player_game_context_analytics_backfill.py \
+    --start-date 2025-11-01 --end-date 2025-12-31
+```
+
+---
+
 ## Documentation Created
 
 - **Investigation Report:** `docs/08-projects/current/pipeline-reliability-improvements/data-quality/2026-01-12-PLAYER-LOOKUP-NORMALIZATION-MISMATCH.md`
 - **TODO Items Added:** MASTER-TODO.md updated with P1-DATA-3, P1-DATA-4, P2-DATA-3, P2-DATA-4
+- **Backfill Script:** `bin/patches/patch_player_lookup_normalization.sql`
+- **Verification Script:** `bin/patches/verify_normalization_fix.py`
 
 ---
 
