@@ -396,7 +396,7 @@ class PlayerLoader:
         Get betting lines for player with source tracking (v3.2, v3.3)
 
         Strategy:
-        1. Try to query from odds_player_props table (Phase 2) with sportsbook fallback
+        1. Try to query from odds_api_player_points_props table (Phase 2) with sportsbook fallback
         2. If no odds available, use estimated line based on season average
         3. If use_multiple_lines=True, generate +/- 2 points from base line
 
@@ -487,7 +487,7 @@ class PlayerLoader:
         game_date: date
     ) -> Optional[Dict[str, Any]]:
         """
-        Query actual betting line from odds_player_props table with fallback chain.
+        Query actual betting line from odds_api_player_points_props table with fallback chain.
 
         Gets the most recent line for this player/date.
         Fallback order: DraftKings -> FanDuel -> BetMGM
@@ -505,14 +505,15 @@ class PlayerLoader:
         # Sportsbook preference order
         sportsbook_priority = ['draftkings', 'fanduel', 'betmgm', 'pointsbet', 'caesars']
 
+        # v3.4: Fixed table name - was querying non-existent odds_player_props
+        # Correct table is odds_api_player_points_props (already filtered to player_points)
         query = """
         SELECT
-            line_value,
+            points_line as line_value,
             bookmaker
-        FROM `{project}.nba_raw.odds_player_props`
+        FROM `{project}.nba_raw.odds_api_player_points_props`
         WHERE player_lookup = @player_lookup
           AND game_date = @game_date
-          AND market = 'player_points'
           AND bookmaker IN UNNEST(@sportsbooks)
         ORDER BY
             CASE bookmaker
