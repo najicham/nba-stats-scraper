@@ -1404,26 +1404,45 @@ class PlayerDailyCacheProcessor(
         )
         is_season_boundary = self.completeness_checker.is_season_boundary(analysis_date)
 
+        # Check for same-day/future predictions mode
+        # For same-day predictions, games haven't been played yet so player_game_summary
+        # won't have today's data. We should skip completeness checks in this case.
+        from datetime import date
+        is_same_day_or_future = analysis_date >= date.today()
+        skip_dependency_check = self.opts.get('skip_dependency_check', False)
+        strict_mode = self.opts.get('strict_mode', True)
+
+        # Determine if we should skip completeness checks
+        # Same logic as MLFeatureStoreProcessor for consistency
+        skip_completeness_checks = (
+            is_bootstrap or
+            is_season_boundary or
+            is_same_day_or_future or
+            skip_dependency_check or
+            not strict_mode
+        )
+
         completeness_elapsed = time.time() - completeness_start
         logger.info(
             f"Completeness check complete in {completeness_elapsed:.1f}s (4 windows, parallel). "
-            f"Bootstrap mode: {is_bootstrap}, Season boundary: {is_season_boundary}"
+            f"Bootstrap mode: {is_bootstrap}, Season boundary: {is_season_boundary}, "
+            f"Same-day mode: {is_same_day_or_future}, Skip completeness: {skip_completeness_checks}"
         )
         # ============================================================
 
         # ============================================================
         # PRE-FETCH CIRCUIT BREAKER STATUS (for ProcessPoolExecutor compatibility)
-        # Skip in bootstrap/season boundary mode for speed
+        # Skip in bootstrap/season boundary/same-day mode for speed
         # ============================================================
         circuit_breaker_map = {}
-        if not is_bootstrap and not is_season_boundary:
+        if not skip_completeness_checks:
             logger.info(f"Checking circuit breakers for {len(all_players)} players...")
             cb_start = time.time()
             circuit_breaker_map = self._check_circuit_breakers_batch(list(all_players), analysis_date)
             cb_elapsed = time.time() - cb_start
             logger.info(f"Circuit breaker check complete in {cb_elapsed:.1f}s")
         else:
-            # Default status for all players in bootstrap/boundary mode
+            # Default status for all players in bootstrap/boundary/same-day mode
             circuit_breaker_map = {
                 player: {'active': False, 'attempts': 0, 'until': None}
                 for player in all_players
@@ -1435,15 +1454,20 @@ class PlayerDailyCacheProcessor(
         # ============================================================
         ENABLE_PARALLELIZATION = os.environ.get('ENABLE_PLAYER_PARALLELIZATION', 'true').lower() == 'true'
 
+        # When skip_completeness_checks is True, we pass it as is_bootstrap=True
+        # to bypass the completeness validation in process_single_player
+        # This is simpler than changing the function signature of all internal methods
+        effective_is_bootstrap = is_bootstrap or skip_completeness_checks
+
         if ENABLE_PARALLELIZATION:
             successful, failed = self._process_players_parallel(
                 all_players, completeness_l5, completeness_l10, completeness_l7d, completeness_l14d,
-                is_bootstrap, is_season_boundary, analysis_date, circuit_breaker_map
+                effective_is_bootstrap, is_season_boundary, analysis_date, circuit_breaker_map
             )
         else:
             successful, failed = self._process_players_serial(
                 all_players, completeness_l5, completeness_l10, completeness_l7d, completeness_l14d,
-                is_bootstrap, is_season_boundary, analysis_date
+                effective_is_bootstrap, is_season_boundary, analysis_date
             )
 
         self.transformed_data = successful
