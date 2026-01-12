@@ -72,6 +72,7 @@ PREDICTION_COORDINATOR_URL = os.environ.get(
     'PREDICTION_COORDINATOR_URL',
     'https://prediction-coordinator-756957797294.us-west2.run.app'
 )
+SLACK_WEBHOOK_URL = os.environ.get('SLACK_WEBHOOK_URL')
 
 # Import expected processors from centralized config
 try:
@@ -133,6 +134,74 @@ def normalize_processor_name(raw_name: str, output_table: Optional[str] = None) 
 
     logger.debug(f"Normalized '{raw_name}' -> '{name}'")
     return name
+
+
+def send_timeout_alert(game_date: str, completed_count: int, expected_count: int, missing_processors: List[str], wait_hours: float) -> bool:
+    """
+    Send Slack alert when Phase 4→5 timeout fires.
+
+    Args:
+        game_date: The date being processed
+        completed_count: How many processors completed
+        expected_count: How many processors were expected
+        missing_processors: List of processors that didn't complete
+        wait_hours: How long we waited before timeout
+
+    Returns:
+        True if alert sent successfully, False otherwise
+    """
+    if not SLACK_WEBHOOK_URL:
+        logger.warning("SLACK_WEBHOOK_URL not configured, skipping timeout alert")
+        return False
+
+    try:
+        payload = {
+            "attachments": [{
+                "color": "#FF0000",  # Red for critical
+                "blocks": [
+                    {
+                        "type": "header",
+                        "text": {
+                            "type": "plain_text",
+                            "text": ":rotating_light: Phase 4→5 Timeout Alert",
+                            "emoji": True
+                        }
+                    },
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": f"*Pipeline timeout reached!* Phase 5 predictions triggered with incomplete Phase 4 data."
+                        }
+                    },
+                    {
+                        "type": "section",
+                        "fields": [
+                            {"type": "mrkdwn", "text": f"*Date:*\n{game_date}"},
+                            {"type": "mrkdwn", "text": f"*Wait Time:*\n{wait_hours:.1f} hours"},
+                            {"type": "mrkdwn", "text": f"*Processors:*\n{completed_count}/{expected_count}"},
+                            {"type": "mrkdwn", "text": f"*Missing:*\n{', '.join(missing_processors) if missing_processors else 'None'}"},
+                        ]
+                    },
+                    {
+                        "type": "context",
+                        "elements": [{
+                            "type": "mrkdwn",
+                            "text": "Predictions will proceed with available data. Check Cloud Function logs for details."
+                        }]
+                    }
+                ]
+            }]
+        }
+
+        response = requests.post(SLACK_WEBHOOK_URL, json=payload, timeout=10)
+        response.raise_for_status()
+        logger.info(f"Timeout alert sent successfully for {game_date}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Failed to send timeout alert: {e}")
+        return False
 
 
 @functions_framework.cloud_event
@@ -220,6 +289,15 @@ def orchestrate_phase4_to_phase5(cloud_event):
                 logger.warning(
                     f"⚠️ TIMEOUT: Triggering Phase 5 for {game_date} with partial data. "
                     f"Missing processors: {missing}"
+                )
+                # Send Slack alert for timeout
+                completed_count = EXPECTED_PROCESSOR_COUNT - len(missing)
+                send_timeout_alert(
+                    game_date=game_date,
+                    completed_count=completed_count,
+                    expected_count=EXPECTED_PROCESSOR_COUNT,
+                    missing_processors=missing,
+                    wait_hours=MAX_WAIT_HOURS
                 )
         elif trigger_reason == 'waiting':
             # Still waiting for more processors
@@ -424,7 +502,7 @@ def trigger_prediction_coordinator(game_date: str, correlation_id: str) -> None:
 
     except Exception as e:
         logger.error(f"Error triggering prediction coordinator: {e}")
-        raise
+        # Don't raise - Pub/Sub message was sent, self-heal will catch it if needed
 
 
 def parse_pubsub_message(cloud_event) -> Dict:

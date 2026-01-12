@@ -445,6 +445,102 @@ If `player_game_summary` is empty for a date:
 
 ---
 
+## Sportsbook Analysis
+
+### Hit Rate by Sportsbook
+
+Use this query to analyze performance against different sportsbooks' lines:
+
+```sql
+WITH latest_lines AS (
+  -- Get latest line per player/game/bookmaker
+  SELECT
+    player_lookup,
+    game_date,
+    bookmaker,
+    points_line as line_value,
+    ROW_NUMBER() OVER (PARTITION BY player_lookup, game_date, bookmaker ORDER BY created_at DESC) as rn
+  FROM `nba-props-platform.nba_raw.bettingpros_player_points_props`
+  WHERE game_date >= '2025-10-01'
+    AND bookmaker IN ('DraftKings', 'FanDuel', 'BetMGM', 'Caesars', 'ESPN Bet')
+    AND bet_side = 'over'  -- Just need one side for the line value
+),
+predictions AS (
+  SELECT
+    player_lookup,
+    game_date,
+    predicted_points,
+    actual_points,
+    prediction_correct,
+    absolute_error
+  FROM `nba-props-platform.nba_predictions.prediction_accuracy`
+  WHERE game_date >= '2025-10-01'
+    AND system_id = 'catboost_v8'
+    AND recommendation IN ('OVER', 'UNDER')
+    AND has_prop_line = TRUE
+    AND line_value != 20  -- CRITICAL: Exclude default lines
+),
+joined AS (
+  SELECT
+    p.*,
+    ll.bookmaker,
+    ll.line_value as sportsbook_line,
+    CASE
+      WHEN p.predicted_points > ll.line_value AND p.actual_points > ll.line_value THEN TRUE
+      WHEN p.predicted_points < ll.line_value AND p.actual_points < ll.line_value THEN TRUE
+      ELSE FALSE
+    END as would_win_vs_this_sportsbook
+  FROM predictions p
+  JOIN latest_lines ll ON p.player_lookup = ll.player_lookup AND p.game_date = ll.game_date AND ll.rn = 1
+)
+SELECT
+  bookmaker,
+  COUNT(*) as picks,
+  COUNTIF(would_win_vs_this_sportsbook = TRUE) as wins,
+  ROUND(SAFE_DIVIDE(COUNTIF(would_win_vs_this_sportsbook = TRUE), COUNT(*)) * 100, 1) as win_rate
+FROM joined
+GROUP BY bookmaker
+ORDER BY picks DESC
+```
+
+### Sportsbook Performance Baseline (Jan 2026)
+
+| Sportsbook | Picks | Wins | Win Rate |
+|------------|-------|------|----------|
+| Caesars | 1,528 | 1,098 | **71.9%** |
+| DraftKings | 1,506 | 1,080 | **71.7%** |
+| BetMGM | 1,550 | 1,109 | **71.5%** |
+| FanDuel | 1,503 | 1,073 | **71.4%** |
+| ESPN Bet | 1,629 | 1,160 | **71.2%** |
+
+**Key findings:**
+- Performance is consistent across sportsbooks (71-72%)
+- No significant edge at any single book
+- Caesars has slightly better value (71.9%)
+- After deploying sportsbook tracking (v3.3), use `line_source_api` and `sportsbook` columns for analysis
+
+### Important: Default Line Filter
+
+**Always filter out `line_value = 20`** when analyzing performance. This is the default line used when no actual betting line exists.
+
+Before the normalization fix (Jan 2026), 78% of predictions used default lines due to player name mismatch. Use this query to check default line contamination:
+
+```sql
+SELECT
+  game_date,
+  COUNT(*) as total,
+  COUNTIF(line_value = 20) as default_lines,
+  ROUND(COUNTIF(line_value = 20) * 100.0 / COUNT(*), 1) as default_pct
+FROM `nba-props-platform.nba_predictions.prediction_accuracy`
+WHERE game_date >= '2025-12-01'
+  AND system_id = 'catboost_v8'
+GROUP BY game_date
+ORDER BY game_date DESC
+LIMIT 15
+```
+
+---
+
 ## Known Issues
 
 ### 88-90% Confidence Problem Tier

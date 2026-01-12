@@ -380,13 +380,17 @@ def handle_prediction_request():
         else:
             data_loader = get_data_loader()  # Use cached production loader
 
-        # v3.2: Extract line source tracking info
+        # v3.2: Extract line source tracking info, v3.3: Add API/sportsbook tracking
         line_source_info = {
             'has_prop_line': request_data.get('has_prop_line', True),  # Default True for backwards compat
             'actual_prop_line': request_data.get('actual_prop_line'),
             'line_source': request_data.get('line_source', 'ACTUAL_PROP'),  # Default to actual
             'estimated_line_value': request_data.get('estimated_line_value'),
-            'estimation_method': request_data.get('estimation_method')
+            'estimation_method': request_data.get('estimation_method'),
+            # v3.3: Line source API and sportsbook tracking
+            'line_source_api': request_data.get('line_source_api'),  # 'ODDS_API', 'BETTINGPROS', 'ESTIMATED'
+            'sportsbook': request_data.get('sportsbook'),  # 'DRAFTKINGS', 'FANDUEL', etc.
+            'was_line_fallback': request_data.get('was_line_fallback', False)  # True if not primary
         }
 
         # Convert date string to date object
@@ -660,6 +664,10 @@ def process_player_predictions(
     features['actual_prop_line'] = line_source_info.get('actual_prop_line')
     features['estimated_line_value'] = line_source_info.get('estimated_line_value')
     features['estimation_method'] = line_source_info.get('estimation_method')
+    # v3.3: Add line source API and sportsbook tracking
+    features['line_source_api'] = line_source_info.get('line_source_api')
+    features['sportsbook'] = line_source_info.get('sportsbook')
+    features['was_line_fallback'] = line_source_info.get('was_line_fallback', False)
 
     # Step 2.5: Check feature completeness (Phase 5)
     # SELF-HEALING: Made more lenient - proceed with warnings instead of blocking
@@ -1040,6 +1048,11 @@ def format_prediction_for_bigquery(
     estimation_method = features.get('estimation_method')
     actual_prop_line = features.get('actual_prop_line')
 
+    # v3.3: Get line source API and sportsbook tracking
+    line_source_api = features.get('line_source_api')
+    sportsbook = features.get('sportsbook')
+    was_line_fallback = features.get('was_line_fallback', False)
+
     # v3.4: Confidence tier filtering
     # 88-90% confidence tier has 61.8% hit rate vs 74-76% for other tiers
     # Filter these picks but preserve original recommendation for shadow tracking
@@ -1094,6 +1107,11 @@ def format_prediction_for_bigquery(
         'line_source': line_source,  # 'ACTUAL_PROP' or 'ESTIMATED_AVG'
         'estimated_line_value': round(estimated_line_value, 1) if estimated_line_value else None,
         'estimation_method': estimation_method,  # 'points_avg_last_5', 'points_avg_last_10', 'default_15.5'
+
+        # v3.3: Line source API and sportsbook tracking (enables hit rate by source analysis)
+        'line_source_api': line_source_api,  # 'ODDS_API', 'BETTINGPROS', 'ESTIMATED'
+        'sportsbook': sportsbook,  # 'DRAFTKINGS', 'FANDUEL', 'BETMGM', etc.
+        'was_line_fallback': was_line_fallback,  # True if line came from fallback source
 
         # Status
         'is_active': True,

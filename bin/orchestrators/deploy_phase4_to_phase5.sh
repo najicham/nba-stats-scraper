@@ -40,6 +40,14 @@ SOURCE_DIR="orchestration/cloud_functions/phase4_to_phase5"
 # Prediction coordinator URL (for direct HTTP trigger)
 PREDICTION_COORDINATOR_URL="https://prediction-coordinator-f7p3g7f6ya-wl.a.run.app"
 
+# Slack webhook URL for timeout alerts
+# Can be set via environment variable or passed as argument
+SLACK_WEBHOOK_URL="${SLACK_WEBHOOK_URL:-}"
+if [ -z "$SLACK_WEBHOOK_URL" ]; then
+    echo -e "${YELLOW}Warning: SLACK_WEBHOOK_URL not set. Timeout alerts will be disabled.${NC}"
+    echo -e "${YELLOW}To enable alerts, run: export SLACK_WEBHOOK_URL=<your-webhook-url>${NC}"
+fi
+
 echo -e "${BLUE}========================================${NC}"
 echo -e "${BLUE}Phase 4→5 Orchestrator Deployment${NC}"
 echo -e "${BLUE}========================================${NC}"
@@ -112,6 +120,13 @@ echo -e "${BLUE}Deploying Cloud Function...${NC}"
 echo -e "${BLUE}========================================${NC}"
 echo ""
 
+# Build env vars string
+ENV_VARS="GCP_PROJECT=$PROJECT_ID,PREDICTION_COORDINATOR_URL=$PREDICTION_COORDINATOR_URL"
+if [ -n "$SLACK_WEBHOOK_URL" ]; then
+    ENV_VARS="$ENV_VARS,SLACK_WEBHOOK_URL=$SLACK_WEBHOOK_URL"
+    echo -e "${GREEN}✓ SLACK_WEBHOOK_URL configured for timeout alerts${NC}"
+fi
+
 gcloud functions deploy $FUNCTION_NAME \
     --gen2 \
     --runtime $RUNTIME \
@@ -119,7 +134,7 @@ gcloud functions deploy $FUNCTION_NAME \
     --source $SOURCE_DIR \
     --entry-point $ENTRY_POINT \
     --trigger-topic $TRIGGER_TOPIC \
-    --set-env-vars "GCP_PROJECT=$PROJECT_ID,PREDICTION_COORDINATOR_URL=$PREDICTION_COORDINATOR_URL" \
+    --set-env-vars "$ENV_VARS" \
     --memory $MEMORY \
     --timeout $TIMEOUT \
     --max-instances $MAX_INSTANCES \
