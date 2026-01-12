@@ -3,6 +3,7 @@
 **Date:** January 12, 2026
 **Focus:** Investigate why 6,000+ picks have line_value = 20 instead of real prop lines
 **Priority:** P1 - This is causing OVER picks to show 51.6% win rate instead of 73.1%
+**Status:** ROOT CAUSE IDENTIFIED - Fix Planned
 
 ---
 
@@ -17,11 +18,71 @@ OVER picks appear to have 51.6% win rate, but this is WRONG. The actual performa
 | With default line (line_value = 20) | 36.7% | 97.9% |
 | Combined (corrupted) | 51.6% | 94.3% |
 
-### Root Cause (Identified)
-- `line_value = 20` is a DEFAULT value used when props aren't matched
-- Props EXIST in `nba_raw.odds_api_player_points_props` but aren't being joined
-- 6,000+ picks across many dates use this default value
-- Line_source incorrectly shows "ACTUAL_PROP" for these
+### Root Cause (CONFIRMED)
+**Player name normalization inconsistency** between data sources:
+
+| Processor | Suffixes | `"Michael Porter Jr."` → |
+|-----------|----------|--------------------------|
+| ESPN Rosters | **REMOVES** | `michaelporter` |
+| BettingPros Props | **REMOVES** | `michaelporter` |
+| Odds API Props | KEEPS | `michaelporterjr` |
+
+**Result:** JOIN fails for all suffix players (Jr., Sr., II, III, etc.)
+
+### Affected Players
+- Michael Porter Jr., Kelly Oubre Jr., Gary Payton II, Tim Hardaway Jr.
+- Jaren Jackson Jr., Marcus Morris Sr., Larry Nance Jr., Wendell Carter Jr.
+- And all other players with suffixes
+
+---
+
+## Investigation Results
+
+### Hypothesis #2 CONFIRMED: player_lookup Format Mismatch
+
+The investigation confirmed that:
+1. ESPN roster processor uses custom `_normalize_player_name()` that REMOVES suffixes
+2. BettingPros props processor uses custom `normalize_player_name()` that REMOVES suffixes
+3. Odds API props processor uses shared `normalize_name()` that KEEPS suffixes
+4. When `upcoming_player_game_context` JOINs ESPN rosters with Odds API props, suffix players don't match
+5. Coordinator falls back to estimated/default line when no match found
+
+### Files with Inconsistent Normalization
+- `data_processors/raw/espn/espn_team_roster_processor.py:443-458` - Custom, removes suffixes
+- `data_processors/raw/bettingpros/bettingpros_player_props_processor.py:149-158` - Custom, removes suffixes
+
+### Files with Correct Normalization (Standard)
+- `data_processors/raw/utils/name_utils.py:14` - Shared, keeps suffixes
+- `shared/utils/player_name_normalizer.py:16` - Shared, keeps suffixes
+- `data_processors/raw/oddsapi/odds_api_props_processor.py:483` - Uses shared
+- `data_processors/raw/nbacom/nbac_gamebook_processor.py:662` - Uses shared
+
+---
+
+## Fix Plan
+
+### Phase 1: Code Changes (P1)
+1. **P1-DATA-3:** Update ESPN roster processor to use `normalize_name()` from `name_utils.py`
+2. **P1-DATA-4:** Update BettingPros props processor to use `normalize_name()` from `name_utils.py`
+
+### Phase 2: Data Backfill (P2)
+3. **P2-DATA-3:** Backfill `espn_team_rosters.player_lookup` with correct normalization
+4. **P2-DATA-4:** Backfill `bettingpros_player_points_props.player_lookup` with correct normalization
+
+### Phase 3: Downstream (P2)
+5. Regenerate `upcoming_player_game_context` for affected dates
+6. Optionally re-run predictions/grading for historical data
+
+---
+
+## Documentation Created
+
+- **Investigation Report:** `docs/08-projects/current/pipeline-reliability-improvements/data-quality/2026-01-12-PLAYER-LOOKUP-NORMALIZATION-MISMATCH.md`
+- **TODO Items Added:** MASTER-TODO.md updated with P1-DATA-3, P1-DATA-4, P2-DATA-3, P2-DATA-4
+
+---
+
+## Original Investigation Context
 
 ---
 

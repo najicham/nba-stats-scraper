@@ -2,7 +2,7 @@
 
 **Date:** January 12, 2026
 **Focus:** Complete pipeline gap recovery for Jan 8-11
-**Status:** IN PROGRESS
+**Status:** PARTIAL - Phase 4 done, predictions partially working
 
 ---
 
@@ -87,3 +87,34 @@ These are handled by other sessions:
 1. Predictions exist for Jan 8, 9, 10, 11
 2. Grading complete for Jan 8, 9, 10
 3. Cache fix committed
+
+---
+
+## Current State (End of Session)
+
+### What's Working
+- ✅ Phase 4 features: Jan 8 (115), Jan 9 (456), Jan 10 (290), Jan 11 (268)
+- ✅ Cache fix deployed: `prediction-worker-00028-m5w`
+- ✅ Jan 9: 5 systems have 163-208 predictions each
+- ✅ Jan 10: 6 systems have predictions
+
+### What's NOT Working
+- ❌ Jan 8: NO predictions generated (requests published but not appearing)
+- ❌ Jan 9: catboost_v8 missing (other systems work)
+- ❌ Jan 11: Only 3 predictions (should be ~200+)
+
+### Issue to Investigate
+Predictions are triggered but not appearing. Check:
+1. Prediction worker logs for errors
+2. Batch state manager for stuck batches
+3. BigQuery staging table for pending writes
+
+```bash
+# Check worker logs
+gcloud logging read 'resource.labels.service_name="prediction-worker"' --limit=50
+
+# Check batch status
+COORD_URL=$(gcloud run services describe prediction-coordinator --region=us-west2 --format='value(status.url)')
+TOKEN=$(gcloud auth print-identity-token)
+curl -s "${COORD_URL}/status?batch_id=batch_2026-01-08_1768190520" -H "Authorization: Bearer ${TOKEN}"
+```
