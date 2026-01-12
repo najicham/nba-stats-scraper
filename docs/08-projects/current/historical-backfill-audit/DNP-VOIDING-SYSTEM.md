@@ -153,16 +153,62 @@ GROUP BY void_reason
 - Very low DNP rates (<0.1%)
 - Optional backfill - minimal impact expected
 
+## Pre-game Injury Flagging (v3.4) - Implemented Session 22
+
+### Overview
+
+Captures injury status AT PREDICTION TIME so we can distinguish:
+- **Expected voids**: Player was flagged with injury concern before game (we had warning)
+- **Surprise voids**: Player DNP'd without prior warning (late scratch)
+
+### Schema Changes
+
+Added to `player_prop_predictions` table (v3.4):
+
+```sql
+injury_status_at_prediction STRING,    -- OUT, DOUBTFUL, QUESTIONABLE, PROBABLE, or NULL
+injury_flag_at_prediction BOOLEAN,     -- TRUE if any injury concern at prediction time
+injury_reason_at_prediction STRING,    -- Injury reason text (e.g., "Left Knee - Soreness")
+injury_checked_at TIMESTAMP            -- When injury status was checked
+```
+
+### How It Works
+
+1. **At Prediction Time (Worker)**:
+   - InjuryFilter queries `nbac_injury_report` for the player
+   - Stores injury status, flag, and reason in the prediction record
+   - Logs warnings for players with injury flags
+
+2. **At Grading Time (Processor)**:
+   - Reads captured injury status from predictions (if available)
+   - Uses it to categorize voids as "expected" (had warning) or "surprise" (no warning)
+   - Falls back to retroactive lookup for historical predictions
+
+### Pre-game Visibility
+
+The Phase 6 exporter (`tonight_player_exporter.py`) already includes injury status in the exported predictions JSON. Users can see injury status before games at:
+- `game_context.injury_status`
+- `game_context.injury_reason`
+
+### Files Modified (Session 22)
+
+1. **Schema**: `schemas/bigquery/predictions/01_player_prop_predictions.sql` - Added 4 injury tracking fields
+2. **Worker**: `predictions/worker/worker.py` - Added InjuryFilter check and stores status
+3. **Grading Processor**: `data_processors/grading/prediction_accuracy/prediction_accuracy_processor.py` - Uses captured status with fallback
+
 ## Future Enhancements
 
-1. **Pre-game flagging**: Store injury status at prediction time in `player_prop_predictions`
-2. **Early warning**: Alert when making predictions for QUESTIONABLE players
+1. ~~**Pre-game flagging**: Store injury status at prediction time~~ ✅ DONE (Session 22)
+2. **Early warning Slack alert**: Alert when making predictions for QUESTIONABLE players
 3. **Dashboard**: Show voiding rates in daily health summary
 4. **ML Training**: Exclude voided predictions from model training data
 
 ## Related Files
 
-- Schema: `schemas/bigquery/nba_predictions/prediction_accuracy.sql`
-- Processor: `data_processors/grading/prediction_accuracy/prediction_accuracy_processor.py`
+- Schema (predictions): `schemas/bigquery/predictions/01_player_prop_predictions.sql`
+- Schema (accuracy): `schemas/bigquery/nba_predictions/prediction_accuracy.sql`
+- Worker: `predictions/worker/worker.py`
+- Grading Processor: `data_processors/grading/prediction_accuracy/prediction_accuracy_processor.py`
+- Injury Filter: `predictions/shared/injury_filter.py`
 - Injury data: `nba_raw.nbac_injury_report`
 - Handoff: `docs/09-handoff/2026-01-12-SESSION-21-HANDOFF.md`
