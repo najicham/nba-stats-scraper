@@ -1,19 +1,24 @@
 # Issues Found During Backfill Audit
 
-**Last Updated:** January 12, 2026 (Session 22 - Extended)
+**Last Updated:** January 12, 2026 (Session 23)
 **Total Issues:** 48+
-**Fixed:** 21 (44%)
-**Outstanding:** 27 (56%)
+**Fixed:** 22 (46%)
+**Outstanding:** 26 (54%)
 
 ---
 
 ## P0 - Critical (Fix Immediately)
 
-### 1. Slack Webhook Invalid (404)
-- **Status:** OUTSTANDING
-- **Impact:** ALL alerting functions non-functional
+### 1. Slack Webhook Invalid (404) - ✅ FIXED Session 23
+- **Status:** ✅ RESOLVED
+- **Impact:** Was: ALL alerting functions non-functional
 - **Affects:** daily-health-summary, phase4-timeout-check, live-freshness-monitor, grading-delay-alert
-- **Fix:** Configure valid Slack webhook URL in Secret Manager
+- **Fix Applied:**
+  - `.env` webhook URL updated (Jan 12, 11:59 AM PST)
+  - Webhook tested and returns 200 ✅
+  - Cloud Functions redeployed with new webhook:
+    - `daily-health-summary`: 2:56 PM PST
+    - `phase4-timeout-check`: 12:22 PM PST
 
 ### 2. Player Normalization Backfill Pending
 - **Status:** Code FIXED, SQL NOT RUN
@@ -174,6 +179,7 @@
 
 | # | Issue | Fixed In | Notes |
 |---|-------|----------|-------|
+| 0 | Slack Webhook Invalid (404) | S23 | .env updated, functions redeployed |
 | 1 | Player Name Normalization (code) | S13B | SQL backfill still pending |
 | 2 | Phase 4→5 Timeout Alerting | S17, S18 | Cloud functions deployed |
 | 3 | Sportsbook Fallback Query Bug | S19 | Wrong table name fixed |
@@ -212,13 +218,16 @@
 
 ### Pattern 4: BDL Scraper West Coast Game Gap
 - **Frequency:** Any day with late west coast games (10 PM ET tip-off)
-- **Root Cause:** Final BDL scrape runs at 3:05 AM UTC (10:05 PM ET), before west coast games finish
+- **Root Cause (Session 23 Investigation):**
+  1. Daily boxscores scraper runs at 3:05 AM UTC (10:05 PM ET) - before west coast games finish
+  2. Live scraper runs correctly until 1:59 AM ET, BUT writes to **next day's folder** (uses current ET date)
+  3. Processor only looks in game date folder, missing late-night data
 - **Examples:** Jan 7 (MIL@GSW, HOU@POR), potentially others
 - **Impact:** Minor - gamebook has complete data, only BDL source affected
-- **Mitigation Options:**
-  1. Add later scrape run (6:05 AM UTC / 1:05 AM ET)
-  2. Accept gap since gamebook is complete
-  3. Implement "next-day" backfill job for west coast games
+- **Recommended Fix:** Add second boxscores scrape at **7:05 AM UTC (2:05 AM ET)** when all games complete
+- **Alternative Fixes:**
+  1. Fix live scraper to use game date from API response (medium effort)
+  2. Accept gap since gamebook is complete (no code change)
 
 ---
 
