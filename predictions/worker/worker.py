@@ -121,6 +121,7 @@ if TYPE_CHECKING:
     from execution_logger import ExecutionLogger
     from shared.utils.player_registry import RegistryReader, PlayerNotFoundError
     from batch_staging_writer import BatchStagingWriter, get_worker_id
+    from predictions.shared.injury_filter import InjuryFilter, InjuryStatus
 
 from write_metrics import PredictionWriteMetrics
 
@@ -168,6 +169,7 @@ _similarity: Optional['SimilarityBalancedV1'] = None
 _xgboost: Optional['XGBoostV1'] = None
 _ensemble: Optional['EnsembleV1'] = None
 _staging_writer: Optional['BatchStagingWriter'] = None
+_injury_filter: Optional['InjuryFilter'] = None
 
 def get_data_loader() -> 'PredictionDataLoader':
     """Lazy-load data loader on first use"""
@@ -222,6 +224,17 @@ def get_player_registry() -> 'RegistryReader':
         )
         logger.info("Player registry initialized")
     return _player_registry
+
+
+def get_injury_filter() -> 'InjuryFilter':
+    """Lazy-load injury filter on first use"""
+    from predictions.shared.injury_filter import InjuryFilter
+    global _injury_filter
+    if _injury_filter is None:
+        logger.info("Initializing InjuryFilter...")
+        _injury_filter = InjuryFilter(project_id=PROJECT_ID)
+        logger.info("InjuryFilter initialized")
+    return _injury_filter
 
 def get_prediction_systems() -> tuple:
     """Lazy-load all prediction systems on first use"""
@@ -668,6 +681,36 @@ def process_player_predictions(
     features['line_source_api'] = line_source_info.get('line_source_api')
     features['sportsbook'] = line_source_info.get('sportsbook')
     features['was_line_fallback'] = line_source_info.get('was_line_fallback', False)
+
+    # v3.4: Check and inject injury status at prediction time
+    # This enables distinguishing expected vs surprise voids after game completes
+    try:
+        injury_filter = get_injury_filter()
+        injury_status = injury_filter.check_player(player_lookup, game_date)
+
+        # Inject injury info into features for format_prediction_for_bigquery
+        features['injury_status_at_prediction'] = injury_status.injury_status.upper() if injury_status.injury_status else None
+        features['injury_flag_at_prediction'] = injury_status.has_warning or injury_status.should_skip
+        features['injury_reason_at_prediction'] = injury_status.reason
+        features['injury_checked_at'] = datetime.utcnow().isoformat()
+
+        # Track in metadata
+        metadata['injury_status'] = injury_status.injury_status
+        metadata['injury_has_warning'] = injury_status.has_warning
+        metadata['injury_should_skip'] = injury_status.should_skip
+
+        if injury_status.has_warning:
+            logger.info(
+                f"⚠️ Injury flag for {player_lookup}: {injury_status.injury_status} - "
+                f"{injury_status.reason or 'no reason'}"
+            )
+    except Exception as e:
+        # Non-fatal: continue prediction without injury info (fail-open)
+        logger.warning(f"Failed to check injury status for {player_lookup}: {e}")
+        features['injury_status_at_prediction'] = None
+        features['injury_flag_at_prediction'] = None
+        features['injury_reason_at_prediction'] = None
+        features['injury_checked_at'] = None
 
     # Step 2.5: Check feature completeness (Phase 5)
     # SELF-HEALING: Made more lenient - proceed with warnings instead of blocking
@@ -1122,9 +1165,15 @@ def format_prediction_for_bigquery(
         # v3.4: Confidence tier filtering (shadow tracking)
         # See: docs/08-projects/current/pipeline-reliability-improvements/FILTER-DECISIONS.md
         'is_actionable': is_actionable,
-        'filter_reason': filter_reason
+        'filter_reason': filter_reason,
+
+        # v3.4: Pre-game injury tracking (enables expected vs surprise void analysis)
+        'injury_status_at_prediction': features.get('injury_status_at_prediction'),
+        'injury_flag_at_prediction': features.get('injury_flag_at_prediction'),
+        'injury_reason_at_prediction': features.get('injury_reason_at_prediction'),
+        'injury_checked_at': features.get('injury_checked_at')
     }
-    
+
     # Add system-specific fields
     if system_id == 'similarity_balanced_v1' and 'metadata' in prediction:
         metadata = prediction['metadata']
