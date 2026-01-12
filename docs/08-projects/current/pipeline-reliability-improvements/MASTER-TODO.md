@@ -1,9 +1,102 @@
 # Pipeline Reliability Master TODO
 
 **Created:** December 30, 2025
-**Last Updated:** January 12, 2026 (Session 19 - Sportsbook Table Bug Fix)
+**Last Updated:** January 12, 2026 (Session 20 - Stale Running Fix)
 **Status:** Active - Comprehensive tracking document
-**Total Items:** 117+ (added sportsbook table fix)
+**Total Items:** 117+ (added stale running fix)
+
+---
+
+## Session 21 Progress (Jan 12, 2026 - Long-Term Reliability Planning)
+
+### Summary
+Comprehensive planning session focused on achieving long-term pipeline reliability with self-healing, clear error reporting, and full visibility.
+
+### Current State Assessment
+- **196 stuck running records** across multiple processors (need Layer 2 cleanup)
+- **Slack webhook invalid (404)** - all alerting disabled
+- **player_daily_cache** has Jan 11 data (199 records), Jan 12 pending games
+- **Odds data** accumulating normally (396 records for Jan 12)
+
+### Three-Layer Defense Model Documented
+1. **Layer 1: Graceful Degradation** - ✅ DEPLOYED (stale running detection)
+2. **Layer 2: Self-Healing** - ❌ Stale cleanup job NOT IMPLEMENTED
+3. **Layer 3: Observability** - ❌ Slack alerting BROKEN
+
+### Priority Action Items Identified
+1. **P0:** Implement Layer 2 stale cleanup job (every 30 min)
+2. **P0:** Fix Slack webhook (create new, update .env, redeploy)
+3. **P1:** Verify sportsbook tracking (after 24h)
+4. **P1:** Verify self-heal function working
+5. **P2:** Add registry automation monitoring
+6. **P2:** Improve DLQ monitoring
+
+### Files Created
+- `docs/09-handoff/2026-01-12-SESSION-21-HANDOFF.md` - Comprehensive handoff with implementation guides
+
+### Next Session Should
+1. Implement Layer 2 stale cleanup job (code provided in handoff)
+2. Fix Slack webhook
+3. Run one-time cleanup of 196 stuck records
+4. Verify all monitoring functions alerting
+
+---
+
+## Session 20 Progress (Jan 12, 2026 - Stale Running Fix & BigQuery Investigation)
+
+### Critical Issue Discovered & Fixed
+
+**Problem:** Pipeline blocked by stale "running" records in `processor_run_history`.
+
+Processors were writing `status='running'` at start but crashing before updating to `success`/`failed`. The defensive checks in Phase 4 required `status='success'`, causing a cascade of failures.
+
+**Impact:**
+- `player_daily_cache` missing data for Jan 11-12
+- All Phase 4 processors blocked
+- Predictions running with stale data
+
+### Completed This Session
+
+- [x] **ROOT CAUSE IDENTIFIED:** Stale running records (>4 hours old) blocking pipeline
+- [x] **LAYER 1 FIX:** Modified `check_upstream_processor_status()` in `completeness_checker.py`
+  - Added `stale_threshold_hours` parameter (default: 4 hours)
+  - Stale running now returns `safe_to_process=True`
+  - Added WARNING level logging for visibility
+- [x] **DEPLOYED:** Revision `nba-phase4-precompute-processors-00036-ldn`
+- [x] **VERIFIED:** Stale running detection working correctly
+
+### Secondary Issue Discovered
+
+**BigQuery Save Error:** After fixing stale running, processor fails during save:
+```
+JSON table encountered too many errors, giving up. Rows: 1; errors: 1
+```
+
+- Added error logging enhancement to capture actual field causing issue
+- **DEPLOYED:** Revision `nba-phase4-precompute-processors-00037-xj2`
+
+### Files Modified
+
+| File | Change |
+|------|--------|
+| `shared/utils/completeness_checker.py` | Added stale running handling |
+| `data_processors/precompute/precompute_base.py` | Added BigQuery load job error logging |
+
+### Next Steps (For Next Session)
+
+1. Wait for revision 00037 deployment to complete
+2. Test player_daily_cache, analyze actual BigQuery error
+3. Fix specific field causing JSON error
+4. Backfill data for Jan 11-12
+5. Investigate odds scraper (no data for today)
+
+### Other Issues Noted
+
+- **Odds data missing:** 0 records for Jan 12 in `odds_api_player_points_props`
+- **Slack webhook 404:** All alerting disabled
+- **Live export stale:** 373 hours old
+
+**Handoff Doc:** `docs/09-handoff/2026-01-12-SESSION-20-HANDOFF.md`
 
 ---
 
