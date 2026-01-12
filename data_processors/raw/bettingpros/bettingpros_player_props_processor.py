@@ -16,6 +16,7 @@ from shared.utils.notification_system import (
     notify_warning,
     notify_info
 )
+from data_processors.raw.utils.name_utils import normalize_name
 
 logger = logging.getLogger(__name__)
 
@@ -147,14 +148,23 @@ class BettingPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
             return False
     
     def normalize_player_name(self, player_name: str) -> str:
-        """Create normalized player lookup key."""
+        """
+        DEPRECATED: This method removed suffixes which caused mismatches with Odds API props.
+
+        Use normalize_name() from data_processors.raw.utils.name_utils instead.
+        That function KEEPS suffixes (Jr., Sr., II, III) for consistent matching.
+
+        Keeping this method for reference only - DO NOT USE.
+        See: docs/08-projects/.../data-quality/2026-01-12-PLAYER-LOOKUP-NORMALIZATION-MISMATCH.md
+        """
         if not player_name:
             return ""
-        
+
         normalized = player_name.lower().strip()
+        # DEPRECATED: This suffix removal caused JOIN failures with Odds API props
         normalized = re.sub(r'\s+(jr\.?|sr\.?|ii|iii|iv)$', '', normalized)
         normalized = re.sub(r'[^a-z0-9]', '', normalized)
-        
+
         return normalized
     
     def extract_scrape_timestamp_from_path(self, file_path: str) -> Optional[datetime]:
@@ -290,8 +300,11 @@ class BettingPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
                 player_team = prop.get('player_team', '')
                 player_position = prop.get('player_position', '')
                 
-                player_lookup = self.normalize_player_name(player_name)
-                
+                # NOTE: Using shared normalize_name() which KEEPS suffixes (Jr., Sr., II, III)
+                # This ensures consistency with Odds API props for correct JOIN matching
+                # See: docs/08-projects/.../data-quality/2026-01-12-PLAYER-LOOKUP-NORMALIZATION-MISMATCH.md
+                player_lookup = normalize_name(player_name)
+
                 if game_date:
                     processing_time = current_time
                     validation_confidence = self.calculate_validation_confidence(processing_time, game_date)
