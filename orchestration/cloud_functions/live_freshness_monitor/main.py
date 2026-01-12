@@ -11,6 +11,10 @@ Key features:
 4. Sends alerts on persistent issues
 5. Updates status.json with any issues found
 
+UPDATED 2026-01-12: Added 4-hour critical alert threshold
+- If data is >4 hours old during game hours, sends Slack alert
+- This catches cases where auto-refresh has repeatedly failed
+
 Schedule: */5 16-23,0-1 * * * (every 5 min, 4 PM - 1 AM ET)
 """
 
@@ -30,9 +34,11 @@ logger = logging.getLogger(__name__)
 PROJECT_ID = os.environ.get("GCP_PROJECT", "nba-props-platform")
 GCS_BUCKET = "nba-props-platform-api"
 LIVE_EXPORT_URL = "https://us-west2-nba-props-platform.cloudfunctions.net/live-export"
+SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL")
 
 # Thresholds
-STALE_THRESHOLD_MINUTES = 10  # Data is stale if older than this
+STALE_THRESHOLD_MINUTES = 10  # Data is stale if older than this - triggers auto-refresh
+CRITICAL_STALE_HOURS = 4  # Data is critically stale - sends Slack alert
 MAX_RETRIES = 2  # Max times to retry live export before alerting
 
 
@@ -153,13 +159,81 @@ def trigger_live_export() -> dict:
         return {"status": "error", "error": str(e)}
 
 
-def send_alert(message: str, severity: str = "warning"):
-    """Send alert via notification system."""
+def send_slack_alert(message: str, severity: str = "warning", context: dict = None):
+    """
+    Send alert to Slack webhook.
+
+    Args:
+        message: Alert message
+        severity: 'warning' or 'critical'
+        context: Optional dict with additional context
+    """
+    if not SLACK_WEBHOOK_URL:
+        logger.warning("SLACK_WEBHOOK_URL not configured, skipping Slack alert")
+        return False
+
     try:
-        # Try to use the notification system if available
+        emoji = ":rotating_light:" if severity == "critical" else ":warning:"
+        color = "#FF0000" if severity == "critical" else "#FFA500"
+
+        blocks = [
+            {
+                "type": "header",
+                "text": {
+                    "type": "plain_text",
+                    "text": f"{emoji} Live Export Alert: {severity.upper()}",
+                    "emoji": True
+                }
+            },
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": message
+                }
+            }
+        ]
+
+        if context:
+            fields = []
+            for key, value in context.items():
+                fields.append({
+                    "type": "mrkdwn",
+                    "text": f"*{key}:*\n{value}"
+                })
+            if fields:
+                blocks.append({
+                    "type": "section",
+                    "fields": fields[:8]  # Slack limit
+                })
+
+        payload = {
+            "attachments": [{
+                "color": color,
+                "blocks": blocks
+            }]
+        }
+
+        response = requests.post(SLACK_WEBHOOK_URL, json=payload, timeout=10)
+        response.raise_for_status()
+        logger.info(f"Slack alert sent successfully: {severity}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Failed to send Slack alert: {e}")
+        return False
+
+
+def send_alert(message: str, severity: str = "warning"):
+    """Send alert via notification system and Slack."""
+    # Try Slack first (primary alert channel)
+    slack_sent = send_slack_alert(message, severity)
+
+    # Also try the internal notification system as backup
+    try:
         from shared.utils.notification_system import notify_warning, notify_error
 
-        if severity == "error":
+        if severity in ("error", "critical"):
             notify_error(
                 title="Live Data Freshness Issue",
                 message=message,
@@ -173,7 +247,8 @@ def send_alert(message: str, severity: str = "warning"):
             )
     except Exception as e:
         # Just log if notification fails
-        logger.error(f"Failed to send alert: {e}")
+        if not slack_sent:
+            logger.error(f"Failed to send any alert: {e}")
 
 
 @functions_framework.http
@@ -215,6 +290,28 @@ def main(request):
         result["action_taken"] = "none"
         result["message"] = "Data is fresh"
         return jsonify(result), 200
+
+    # Step 2.5: Check for CRITICAL staleness (>4 hours)
+    # This sends an immediate alert without waiting for refresh attempts
+    age_minutes = freshness.get("age_minutes")
+    if age_minutes and age_minutes > (CRITICAL_STALE_HOURS * 60):
+        age_hours = round(age_minutes / 60, 1)
+        logger.error(f"CRITICAL: Live data is {age_hours} hours old (threshold: {CRITICAL_STALE_HOURS}h)")
+        result["critical_alert"] = True
+
+        send_slack_alert(
+            message=f"CRITICAL: Live export data is {age_hours} hours old!\n"
+                    f"This exceeds the {CRITICAL_STALE_HOURS}-hour threshold. "
+                    f"The live export system may be completely broken.",
+            severity="critical",
+            context={
+                "Age": f"{age_hours} hours",
+                "Threshold": f"{CRITICAL_STALE_HOURS} hours",
+                "Last Update": freshness.get("last_update", "Unknown"),
+                "Game Date": freshness.get("game_date", "Unknown"),
+                "Expected Date": freshness.get("expected_date", "Unknown")
+            }
+        )
 
     # Step 3: Data is stale or has wrong date - trigger refresh
     issue = "stale" if freshness.get("is_stale") else "date_mismatch"

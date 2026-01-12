@@ -1,7 +1,23 @@
 # Pipeline Reliability Improvements - Task List
 
-**Last Updated:** December 30, 2025 (Evening Session)
+**Last Updated:** January 12, 2026 (Session 13C)
 **Status:** Active Development
+
+---
+
+## Session 13C Completed (Jan 12, 2026)
+
+- [x] **Grading Delay Alert** - New Cloud Function at 10 AM ET
+  - Location: `orchestration/cloud_functions/grading_alert/main.py`
+  - Checks `prediction_accuracy` for yesterday, alerts if empty
+
+- [x] **Phase 3 Self-Healing** - Extended self_heal/main.py
+  - Now checks `player_game_summary` exists for yesterday
+  - Triggers Phase 3 if missing (before checking predictions)
+
+- [x] **Live Export 4-Hour Critical Alert**
+  - Added to `live_freshness_monitor/main.py`
+  - Sends Slack alert when >4 hours old during games
 
 ---
 

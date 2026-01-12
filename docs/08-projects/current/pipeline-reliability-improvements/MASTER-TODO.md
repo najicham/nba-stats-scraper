@@ -1,9 +1,103 @@
 # Pipeline Reliability Master TODO
 
 **Created:** December 30, 2025
-**Last Updated:** January 11, 2026 (Prop Data Gap Incident - Session 10)
+**Last Updated:** January 12, 2026 (Session 13C - Reliability Improvements)
 **Status:** Active - Comprehensive tracking document
-**Total Items:** 112+ (added 7 from prop data gap incident)
+**Total Items:** 116+ (added 4 from player_lookup normalization mismatch)
+
+---
+
+## Session 13C Progress (Jan 12, 2026 - Reliability Improvements)
+
+### Completed This Session
+- [x] **Grading Delay Alert** - New Cloud Function at 10 AM ET
+  - Checks `prediction_accuracy` table for yesterday
+  - Alerts via Slack if no grading records exist
+  - File: `orchestration/cloud_functions/grading_alert/main.py`
+
+- [x] **Phase 3 Self-Healing** - Extended `self_heal/main.py`
+  - Now checks `player_game_summary` for yesterday before checking predictions
+  - Triggers Phase 3 if analytics data is missing
+  - Catches Phase 3 failures that would otherwise go undetected
+  - File: `orchestration/cloud_functions/self_heal/main.py`
+
+- [x] **Live Export 4-Hour Critical Alert** - Enhanced `live_freshness_monitor/main.py`
+  - Added 4-hour critical staleness threshold
+  - Sends Slack alert when data is >4 hours old during game hours
+  - Complements existing 10-minute auto-refresh mechanism
+  - File: `orchestration/cloud_functions/live_freshness_monitor/main.py`
+
+### Tasks Addressed
+- **P1-2:** PlayerGameSummaryProcessor Retry Mechanism (self-heal extension)
+- **P2-2:** Grading Delay Alert (new function)
+- **P2-3:** Live Export Staleness Alert (enhanced existing function)
+
+### Deployment Commands
+```bash
+# Grading Delay Alert
+gcloud functions deploy grading-delay-alert \
+    --gen2 --runtime python311 --region us-west2 \
+    --source orchestration/cloud_functions/grading_alert \
+    --entry-point check_grading_status \
+    --trigger-http --allow-unauthenticated
+
+gcloud scheduler jobs create http grading-delay-alert-job \
+    --schedule "0 10 * * *" --time-zone "America/New_York" \
+    --uri https://FUNCTION_URL --http-method GET --location us-west2
+
+# Self-Heal (redeploy with Phase 3 checking)
+gcloud functions deploy self-heal-check \
+    --gen2 --runtime python311 --region us-west2 \
+    --source orchestration/cloud_functions/self_heal \
+    --entry-point self_heal_check \
+    --trigger-http --allow-unauthenticated
+
+# Live Freshness Monitor (redeploy with 4-hour alert)
+gcloud functions deploy live-freshness-monitor \
+    --gen2 --runtime python311 --region us-west2 \
+    --source orchestration/cloud_functions/live_freshness_monitor \
+    --entry-point main \
+    --trigger-http --allow-unauthenticated \
+    --set-env-vars SLACK_WEBHOOK_URL=<webhook>
+```
+
+---
+
+## Session 13B Progress (Jan 12, 2026 - Data Quality Investigation)
+
+### Root Cause Identified: player_lookup Normalization Mismatch
+
+**Problem:** 6,000+ predictions have `line_value = 20` (default) instead of real prop lines, causing:
+- OVER picks appear to have 51.6% win rate instead of actual **73.1%**
+- Props exist in database but JOIN fails for suffix players
+
+**Root Cause:** Inconsistent name normalization across processors:
+| Processor | Suffixes | `"Michael Porter Jr."` → |
+|-----------|----------|--------------------------|
+| ESPN Rosters | REMOVES | `michaelporter` |
+| BettingPros Props | REMOVES | `michaelporter` |
+| Odds API Props | **KEEPS** | `michaelporterjr` |
+
+**Affected Players:** Michael Porter Jr., Gary Payton II, Tim Hardaway Jr., Jaren Jackson Jr., Kelly Oubre Jr., Marcus Morris Sr., and all other suffix players.
+
+### Completed This Session
+- [x] **P1-DATA-3:** Fix ESPN roster processor - now uses shared `normalize_name()`
+- [x] **P1-DATA-4:** Fix BettingPros props processor - now uses shared `normalize_name()`
+- [x] **Backfill Script Created:** `bin/patches/patch_player_lookup_normalization.sql`
+
+### Pending (Requires Deploy + Execution)
+- [ ] Deploy code changes to production
+- [ ] **P2-DATA-3:** Run backfill SQL for ESPN rosters
+- [ ] **P2-DATA-4:** Run backfill SQL for BettingPros props
+- [ ] Regenerate `upcoming_player_game_context` for affected dates
+
+### Files Modified
+- `data_processors/raw/espn/espn_team_roster_processor.py` - Uses shared normalizer
+- `data_processors/raw/bettingpros/bettingpros_player_props_processor.py` - Uses shared normalizer
+- `bin/patches/patch_player_lookup_normalization.sql` - Backfill script (NEW)
+
+### Documentation Created
+- `docs/08-projects/.../data-quality/2026-01-12-PLAYER-LOOKUP-NORMALIZATION-MISMATCH.md`
 
 ---
 
@@ -271,6 +365,51 @@ def health(request):
 
 ---
 
+### P1-DATA-3: Fix ESPN Roster player_lookup Normalization
+**Status:** ✅ Code Complete (Jan 12, 2026) - Pending Deploy
+**File:** `data_processors/raw/espn/espn_team_roster_processor.py` lines 162, 443-458
+**Impact:** HIGH - Suffix players (Jr., Sr., II, III) don't match props
+
+**Problem:**
+Custom `_normalize_player_name()` REMOVES suffixes, but Odds API props KEEP suffixes.
+- ESPN roster: "Michael Porter Jr." → `michaelporter`
+- Odds API props: "Michael Porter Jr." → `michaelporterjr`
+- Result: JOIN fails, predictions use default line_value = 20
+
+**Fix:**
+```python
+# Add import at top of file
+from data_processors.raw.utils.name_utils import normalize_name
+
+# Replace line 162:
+# OLD: player_lookup = self._normalize_player_name(full_name)
+# NEW: player_lookup = normalize_name(full_name)
+```
+
+**Related:** See `data-quality/2026-01-12-PLAYER-LOOKUP-NORMALIZATION-MISMATCH.md`
+
+---
+
+### P1-DATA-4: Fix BettingPros Props player_lookup Normalization
+**Status:** ✅ Code Complete (Jan 12, 2026) - Pending Deploy
+**File:** `data_processors/raw/bettingpros/bettingpros_player_props_processor.py` lines 149-158
+**Impact:** HIGH - Same issue as P1-DATA-3
+
+**Problem:**
+Custom `normalize_player_name()` REMOVES suffixes, inconsistent with Odds API.
+
+**Fix:**
+```python
+# Add import at top of file
+from data_processors.raw.utils.name_utils import normalize_name
+
+# Replace all calls to self.normalize_player_name(x) with normalize_name(x)
+```
+
+**Related:** See `data-quality/2026-01-12-PLAYER-LOOKUP-NORMALIZATION-MISMATCH.md`
+
+---
+
 ### P1-MON-1: Implement DLQ Monitoring
 **Status:** 🔴 Not Started
 
@@ -388,6 +527,48 @@ if not predictions:
 **File:** `orchestration/cloud_functions/self_heal/main.py`
 - Currently only checks predictions
 - Add boxscore, game context, prop lines checks
+
+### P2-DATA-3: Backfill ESPN Rosters player_lookup
+**Status:** 🔴 Not Started (depends on P1-DATA-3)
+**Table:** `nba_raw.espn_team_rosters`
+
+**Problem:** Historical data has old normalization (suffixes removed).
+
+**Fix:**
+```sql
+-- Recompute player_lookup with correct normalization
+UPDATE `nba-props-platform.nba_raw.espn_team_rosters`
+SET player_lookup = LOWER(REGEXP_REPLACE(
+    NORMALIZE(player_full_name, NFD),
+    r'[^a-z0-9]', ''
+))
+WHERE player_lookup IS NOT NULL;
+```
+
+**Verification:**
+```sql
+SELECT player_full_name, player_lookup
+FROM `nba-props-platform.nba_raw.espn_team_rosters`
+WHERE player_full_name LIKE '%Jr.%' OR player_full_name LIKE '%II%'
+LIMIT 10;
+```
+
+### P2-DATA-4: Backfill BettingPros Props player_lookup
+**Status:** 🔴 Not Started (depends on P1-DATA-4)
+**Table:** `nba_raw.bettingpros_player_points_props`
+
+**Problem:** Historical data has old normalization (suffixes removed).
+
+**Fix:**
+```sql
+-- Recompute player_lookup with correct normalization
+UPDATE `nba-props-platform.nba_raw.bettingpros_player_points_props`
+SET player_lookup = LOWER(REGEXP_REPLACE(
+    NORMALIZE(player_name, NFD),
+    r'[^a-z0-9]', ''
+))
+WHERE player_lookup IS NOT NULL;
+```
 
 ### P2-PROC-1: Generic Exception Handling
 **File:** `data_processors/analytics/analytics_base.py`
