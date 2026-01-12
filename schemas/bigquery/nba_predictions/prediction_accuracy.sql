@@ -1,13 +1,14 @@
 -- ============================================================================
--- Prediction Accuracy Table Schema (v3)
+-- Prediction Accuracy Table Schema (v4)
 -- ============================================================================
 -- Dataset: nba_predictions
 -- Table: prediction_accuracy
 -- Purpose: Grade predictions against actual results for ML training
--- Updated: 2025-12-10 - v3: Added team context, minutes, confidence_decile
+-- Updated: 2026-01-12 - v4: Added DNP/injury voiding fields
 -- History:
 --   v2: Added system_id, signed_error, margin fields, thresholds
 --   v3: Added team_abbr, opponent_team_abbr, minutes_played, confidence_decile
+--   v4: Added is_voided, void_reason, pre_game_injury_flag, injury tracking
 -- ============================================================================
 
 CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.prediction_accuracy` (
@@ -49,6 +50,13 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.prediction_accura
   -- Threshold Accuracy (was prediction within N points?)
   within_3_points BOOLEAN,
   within_5_points BOOLEAN,
+
+  -- DNP/Injury Voiding (v4) - Treat DNP like voided bets
+  is_voided BOOLEAN,                    -- TRUE = exclude from accuracy metrics (like sportsbook void)
+  void_reason STRING,                   -- 'dnp_injury_confirmed', 'dnp_late_scratch', 'dnp_unknown'
+  pre_game_injury_flag BOOLEAN,         -- TRUE if player was flagged with injury concern pre-game
+  pre_game_injury_status STRING,        -- Injury status at prediction time: 'OUT', 'DOUBTFUL', 'QUESTIONABLE', 'PROBABLE'
+  injury_confirmed_postgame BOOLEAN,    -- TRUE if DNP matched a pre-game injury flag
 
   -- Metadata
   model_version STRING,
