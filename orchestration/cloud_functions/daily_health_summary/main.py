@@ -31,8 +31,9 @@ Scheduler:
         --http-method GET \
         --location us-west2
 
-Version: 1.0
+Version: 1.1 (Added gross vs net accuracy, voiding stats)
 Created: 2026-01-12
+Updated: 2026-01-12 (Session 22)
 """
 
 import json
@@ -103,23 +104,40 @@ class HealthChecker:
         return {'total_games': 0, 'final_games': 0, 'pending_games': 0}
 
     def check_grading(self, date: str) -> Dict:
-        """Check grading records for a date."""
+        """Check grading records for a date including voiding stats (v4)."""
         query = f"""
         SELECT
+            -- Gross stats (all predictions)
             COUNT(*) as total_records,
             COUNTIF(recommendation IN ('OVER', 'UNDER')) as actionable,
             COUNTIF(prediction_correct = TRUE) as correct,
-            ROUND(AVG(absolute_error), 2) as mae
+            ROUND(AVG(absolute_error), 2) as mae,
+
+            -- Voiding stats (v4)
+            COUNTIF(is_voided = TRUE) as voided_count,
+            COUNTIF(void_reason = 'dnp_injury_confirmed') as voided_expected,
+            COUNTIF(void_reason IN ('dnp_late_scratch', 'dnp_unknown')) as voided_surprise,
+
+            -- Net stats (excluding voided - like sportsbooks)
+            COUNTIF(recommendation IN ('OVER', 'UNDER') AND is_voided = FALSE) as net_actionable,
+            COUNTIF(prediction_correct = TRUE AND is_voided = FALSE) as net_correct
         FROM `{PROJECT_ID}.nba_predictions.prediction_accuracy`
         WHERE game_date = '{date}'
         """
         results = self.run_query(query)
         if results:
             r = results[0]
+            # Gross win rate (all predictions)
             r['win_rate'] = round(r['correct'] / r['actionable'] * 100, 1) if r.get('actionable', 0) > 0 else 0
+            # Net win rate (excluding voided - this is the "real" accuracy like sportsbooks)
+            r['net_win_rate'] = round(r['net_correct'] / r['net_actionable'] * 100, 1) if r.get('net_actionable', 0) > 0 else 0
             r['mae'] = r.get('mae') or 0
             return r
-        return {'total_records': 0, 'actionable': 0, 'correct': 0, 'win_rate': 0, 'mae': 0}
+        return {
+            'total_records': 0, 'actionable': 0, 'correct': 0, 'win_rate': 0, 'mae': 0,
+            'voided_count': 0, 'voided_expected': 0, 'voided_surprise': 0,
+            'net_actionable': 0, 'net_correct': 0, 'net_win_rate': 0
+        }
 
     def check_predictions(self, date: str) -> Dict:
         """Check predictions for a date."""
@@ -167,12 +185,20 @@ class HealthChecker:
         return self.run_query(query)
 
     def check_7day_performance(self) -> Dict:
-        """Check 7-day grading performance for trend analysis."""
+        """Check 7-day grading performance for trend analysis (with voiding)."""
         query = f"""
         SELECT
+            -- Gross stats
             COUNT(*) as total_records,
             COUNTIF(prediction_correct = TRUE) as correct,
-            ROUND(AVG(absolute_error), 2) as mae
+            ROUND(AVG(absolute_error), 2) as mae,
+
+            -- Net stats (excluding voided)
+            COUNTIF(is_voided = FALSE) as net_total,
+            COUNTIF(prediction_correct = TRUE AND is_voided = FALSE) as net_correct,
+
+            -- Voiding stats
+            COUNTIF(is_voided = TRUE) as voided_count
         FROM `{PROJECT_ID}.nba_predictions.prediction_accuracy`
         WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
         AND recommendation IN ('OVER', 'UNDER')
@@ -180,9 +206,12 @@ class HealthChecker:
         results = self.run_query(query)
         if results:
             r = results[0]
+            # Gross win rate (all predictions)
             r['win_rate'] = round(r['correct'] / r['total_records'] * 100, 1) if r.get('total_records', 0) > 0 else 0
+            # Net win rate (excluding voided - this is the "real" accuracy)
+            r['net_win_rate'] = round(r['net_correct'] / r['net_total'] * 100, 1) if r.get('net_total', 0) > 0 else 0
             return r
-        return {'total_records': 0, 'correct': 0, 'win_rate': 0, 'mae': 0}
+        return {'total_records': 0, 'correct': 0, 'win_rate': 0, 'mae': 0, 'net_total': 0, 'net_correct': 0, 'net_win_rate': 0, 'voided_count': 0}
 
     def check_registry_failures(self) -> Dict:
         """Check for pending registry failures (unresolved player names).
@@ -316,10 +345,20 @@ def send_slack_summary(results: Dict) -> bool:
         # Build status line
         status_line = f"{results['status_emoji']} *Daily Health Summary - {results['status']}*"
 
-        # Build metrics section
+        # Build voiding stats line if any voids
+        voided_count = grading.get('voided_count', 0)
+        voiding_text = ""
+        if voided_count > 0:
+            expected = grading.get('voided_expected', 0)
+            surprise = grading.get('voided_surprise', 0)
+            voiding_text = f"Voided: {voided_count} ({expected} expected, {surprise} surprise)\n"
+
+        # Build metrics section with gross vs net accuracy
         metrics_text = (
             f"*Yesterday's Grading*\n"
-            f"Win Rate: {grading.get('win_rate', 0)}% ({grading.get('correct', 0)}/{grading.get('actionable', 0)})\n"
+            f"Net Win Rate: {grading.get('net_win_rate', 0)}% ({grading.get('net_correct', 0)}/{grading.get('net_actionable', 0)})\n"
+            f"Gross Win Rate: {grading.get('win_rate', 0)}% ({grading.get('correct', 0)}/{grading.get('actionable', 0)})\n"
+            f"{voiding_text}"
             f"MAE: {grading.get('mae', 0)}\n"
             f"Games: {schedule_yesterday.get('final_games', 0)} Final\n\n"
             f"*Today's Predictions*\n"
@@ -327,7 +366,9 @@ def send_slack_summary(results: Dict) -> bool:
             f"Predictions: {predictions.get('total', 0)}\n"
             f"Games: {schedule_today.get('total_games', 0)} scheduled\n\n"
             f"*7-Day Trend*\n"
-            f"Win Rate: {trend.get('win_rate', 0)}%\n"
+            f"Net Win Rate: {trend.get('net_win_rate', 0)}%\n"
+            f"Gross Win Rate: {trend.get('win_rate', 0)}%\n"
+            f"Voided: {trend.get('voided_count', 0)}\n"
             f"MAE: {trend.get('mae', 0)}\n\n"
             f"*Registry Status*\n"
             f"Pending Failures: {registry.get('pending_players', 0)} players"
