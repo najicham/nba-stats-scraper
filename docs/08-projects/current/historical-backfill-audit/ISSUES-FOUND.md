@@ -1,9 +1,9 @@
 # Issues Found During Backfill Audit
 
-**Last Updated:** January 12, 2026 (Session 21)
-**Total Issues:** 47+
-**Fixed:** 18 (38%)
-**Outstanding:** 29 (62%)
+**Last Updated:** January 12, 2026 (Session 22 - Extended)
+**Total Issues:** 48+
+**Fixed:** 21 (44%)
+**Outstanding:** 27 (56%)
 
 ---
 
@@ -32,6 +32,21 @@
   - Jan 11: 9/10 → 10/10 box scores ✅
   - 1,153 player records backfilled
 - **Fixed:** Ran `bdl_boxscores_raw_backfill.py --dates=2026-01-10,2026-01-11,2026-01-12`
+
+### 3a. Missing BDL Box Scores (Jan 7) - ⚠️ PARTIAL FIX Session 22
+- **Status:** ⚠️ PARTIALLY RESOLVED (10/12 games)
+- **Impact:** Minor - gamebook has all 12 games, only BDL source incomplete
+- **Details:**
+  - Before: 0/12 games in BigQuery
+  - After: 10/12 games, 349 player records
+  - Missing: MIL @ GSW, HOU @ POR (west coast games)
+- **Root Cause:** Scraper timing issue
+  - Final BDL scrape runs at 3:05 AM UTC (10:05 PM ET)
+  - West coast games (10 PM ET tip-off) hadn't started yet
+  - GCS file has 0-0 scores and 0 player data for these games
+- **Fix Applied:** Ran `bdl_boxscores_raw_backfill.py --dates=2026-01-07`
+- **Remaining Gap:** 2 games unrecoverable from BDL source - data never scraped
+- **Mitigation:** `nbac_gamebook_player_stats` has all 12 games ✅
 
 ### 4. PSZA Upstream Issues (214 Players) - ✅ FIXED Session 21
 - **Status:** ✅ RESOLVED
@@ -195,6 +210,16 @@
 - **Examples:** Pub/Sub topics, model paths, webhook URLs
 - **Mitigation Needed:** Configuration validation in CI/CD
 
+### Pattern 4: BDL Scraper West Coast Game Gap
+- **Frequency:** Any day with late west coast games (10 PM ET tip-off)
+- **Root Cause:** Final BDL scrape runs at 3:05 AM UTC (10:05 PM ET), before west coast games finish
+- **Examples:** Jan 7 (MIL@GSW, HOU@POR), potentially others
+- **Impact:** Minor - gamebook has complete data, only BDL source affected
+- **Mitigation Options:**
+  1. Add later scrape run (6:05 AM UTC / 1:05 AM ET)
+  2. Accept gap since gamebook is complete
+  3. Implement "next-day" backfill job for west coast games
+
 ---
 
 ## Issue Discovery Timeline
@@ -207,6 +232,8 @@
 | Jan 12 | S15-S16 | True performance analysis, sportsbook fallback code |
 | Jan 12 | S17-S19 | Registry IAM, timeout alerting, sportsbook query bug |
 | Jan 12 | S20 | BDL box scores missing (Jan 10-11), PSZA upstream errors, BDL validator bug, registry cleared |
+| Jan 12 | S21 | Fixed BDL validator, team defense PRIMARY_KEY_FIELDS, backfilled Jan 10-11 |
+| Jan 12 | S22 | Jan 7 BDL gap investigation, scraper timing pattern identified, backfilled 10/12 games |
 
 ---
 
@@ -244,4 +271,63 @@
 
 ---
 
-*Last Updated: January 12, 2026 (Session 21)*
+## Session 22 Fixes Summary
+
+### Part 1: Jan 7 BDL Gap Investigation
+
+**Investigation Completed:**
+- Jan 7 BDL gap root cause identified: Scraper timing issue (not processor failure)
+- GCS files existed but final scrape ran before west coast games finished
+- Confirmed `nbac_gamebook_player_stats` has all 12 games
+
+**Data Backfill Completed:**
+- BDL Box Scores: Jan 7 (349 records, 10 games)
+- Team Defense Game Summary: Jan 7 (24 records)
+- PSZA: Jan 7 (429 players)
+- Remaining 2 BDL games (MIL@GSW, HOU@POR) unrecoverable - never scraped
+
+**New Pattern Documented:**
+- Pattern 4: BDL Scraper West Coast Game Gap
+
+### Part 2: Priority-Based Recovery
+
+**Priority Analysis (Ultrathink):**
+- P1: Jan 8 MIA@CHI - most recent gap
+- P2: Jan 1 gamebook - historical completeness for ML training
+
+**Jan 8 Recovery Attempt:**
+- Ran gamebook backfill - 3/3 games recovered (IND@CHA, CLE@MIN, DAL@UTA)
+- **MIA@CHI: 404 from NBA.com** - PDF never published, permanent gap
+- Re-ran TDGS: 6 records
+
+**Jan 1 Recovery - FULL SUCCESS:**
+- Ran gamebook backfill - **5/5 games recovered!** (HOU@BKN, MIA@DET, PHI@DAL, BOS@SAC, UTA@LAC)
+- Re-ran TDGS: 8 records → now 5/5 games (was 3/5)
+
+### Final Data Coverage (Post Session 22)
+
+| Date | Scheduled | Gamebook | TDGS | Status |
+|------|-----------|----------|------|--------|
+| Jan 1 | 5 | **5** | **5** | ✅ FIXED |
+| Jan 2 | 10 | 10 | 10 | ✅ |
+| Jan 3 | 8 | 8 | 8 | ✅ |
+| Jan 4 | 8 | 8 | 8 | ✅ |
+| Jan 5 | 8 | 8 | 8 | ✅ |
+| Jan 6 | 6 | 6 | 6 | ✅ |
+| Jan 7 | 12 | 12 | 12 | ✅ FIXED |
+| Jan 8 | 4 | 3 | 3 | ⚠️ MIA@CHI 404 |
+| Jan 9 | 10 | 10 | 10 | ✅ |
+| Jan 10 | 6 | 6 | 6 | ✅ |
+| Jan 11 | 10 | 10 | 10 | ✅ |
+
+**Permanent Gaps (Unrecoverable):**
+1. **Jan 8 MIA@CHI** - NBA.com PDF returns 404 (never published)
+2. **BDL west coast games** - Data never scraped due to timing
+
+**BDL Coverage (for reference - not critical since gamebook is complete):**
+- Jan 1-3, 5-8: 60-83% (west coast gaps)
+- Jan 4, 9-11: 100% ✅
+
+---
+
+*Last Updated: January 12, 2026 (Session 22 - Extended)*
