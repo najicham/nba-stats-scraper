@@ -15,6 +15,13 @@ REGION="us-west2"
 FUNCTION_NAME="live-freshness-monitor"
 SERVICE_ACCOUNT="processor-sa@${PROJECT_ID}.iam.gserviceaccount.com"
 
+# Slack webhook URL for alerts
+SLACK_WEBHOOK_URL="${SLACK_WEBHOOK_URL:-}"
+if [ -z "$SLACK_WEBHOOK_URL" ]; then
+    echo "Warning: SLACK_WEBHOOK_URL not set. Staleness alerts will be disabled."
+    echo "To enable alerts, run: export SLACK_WEBHOOK_URL=<your-webhook-url>"
+fi
+
 echo "=== Live Freshness Monitor Deployment ==="
 echo "Project: $PROJECT_ID"
 echo "Region: $REGION"
@@ -27,6 +34,13 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 FUNC_SRC="$PROJECT_ROOT/orchestration/cloud_functions/live_freshness_monitor"
 
 echo "=== Deploying Cloud Function ==="
+
+# Build env vars string
+ENV_VARS="GCP_PROJECT=$PROJECT_ID"
+if [ -n "$SLACK_WEBHOOK_URL" ]; then
+    ENV_VARS="$ENV_VARS,SLACK_WEBHOOK_URL=$SLACK_WEBHOOK_URL"
+    echo "SLACK_WEBHOOK_URL configured for staleness alerts"
+fi
 
 # Deploy the function
 gcloud functions deploy "$FUNCTION_NAME" \
@@ -42,7 +56,7 @@ gcloud functions deploy "$FUNCTION_NAME" \
     --allow-unauthenticated \
     --service-account="$SERVICE_ACCOUNT" \
     --source="$FUNC_SRC" \
-    --set-env-vars="GCP_PROJECT=$PROJECT_ID" \
+    --set-env-vars="$ENV_VARS" \
     --no-gen2
 
 # Get the function URL
