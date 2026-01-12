@@ -216,12 +216,12 @@ class BdlBoxscoresValidator(BaseValidator):
         WITH player_sums AS (
           SELECT 
             game_id,
-            team_abbreviation,
+            team_abbr,
             SUM(points) as player_total
           FROM `{self.project_id}.nba_raw.bdl_player_boxscores`
           WHERE game_date >= '{start_date}'
             AND game_date <= '{end_date}'
-          GROUP BY game_id, team_abbreviation
+          GROUP BY game_id, team_abbr
         ),
         team_scores AS (
           SELECT 
@@ -242,14 +242,14 @@ class BdlBoxscoresValidator(BaseValidator):
         )
         SELECT 
           p.game_id,
-          p.team_abbreviation,
+          p.team_abbr,
           p.player_total,
           t.team_total,
           ABS(p.player_total - t.team_total) as diff
         FROM player_sums p
         JOIN team_scores t 
           ON p.game_id = t.game_id 
-          AND p.team_abbreviation = t.team
+          AND p.team_abbr = t.team
         WHERE ABS(p.player_total - t.team_total) > 2  -- Allow 2 point tolerance for rounding
         ORDER BY diff DESC
         LIMIT 20
@@ -257,7 +257,7 @@ class BdlBoxscoresValidator(BaseValidator):
         
         try:
             result = self._execute_query(query, start_date, end_date)
-            mismatches = [(row.game_id, row.team_abbreviation, row.player_total, 
+            mismatches = [(row.game_id, row.team_abbr, row.player_total, 
                           row.team_total, row.diff) for row in result]
             
             passed = len(mismatches) == 0
@@ -307,7 +307,7 @@ class BdlBoxscoresValidator(BaseValidator):
             game_date,
             player_lookup,
             minutes_played,
-            team_abbreviation
+            team_abbr
           FROM `{self.project_id}.nba_raw.bdl_player_boxscores`
           WHERE game_date >= '{start_date}'
             AND game_date <= '{end_date}'
@@ -317,7 +317,7 @@ class BdlBoxscoresValidator(BaseValidator):
           game_id,
           game_date,
           player_lookup,
-          team_abbreviation,
+          team_abbr,
           minutes_played
         FROM player_minutes
         ORDER BY game_date, game_id
@@ -327,7 +327,7 @@ class BdlBoxscoresValidator(BaseValidator):
         try:
             result = self._execute_query(query, start_date, end_date)
             anomalies = [(row.game_id, str(row.game_date), row.player_lookup, 
-                         row.team_abbreviation, row.minutes_played) for row in result]
+                         row.team_abbr, row.minutes_played) for row in result]
             
             passed = len(anomalies) == 0
             duration = time.time() - check_start
