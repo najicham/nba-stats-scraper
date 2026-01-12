@@ -355,7 +355,7 @@ class PlayerLoader:
             use_multiple_lines
         )
 
-        # Create request message with line source tracking (v3.2)
+        # Create request message with line source tracking (v3.2, v3.3)
         request = {
             'player_lookup': player['player_lookup'],
             'game_date': game_date.isoformat(),
@@ -375,6 +375,11 @@ class PlayerLoader:
             'estimated_line_value': line_info['base_line'] if line_info['line_source'] == 'ESTIMATED_AVG' else None,
             'estimation_method': line_info['estimation_method'],  # 'points_avg_last_5', 'points_avg_last_10', 'needs_bootstrap'
 
+            # v3.3: Line source API and sportsbook tracking
+            'line_source_api': line_info.get('line_source_api'),  # 'ODDS_API', 'BETTINGPROS', 'ESTIMATED'
+            'sportsbook': line_info.get('sportsbook'),  # 'DRAFTKINGS', 'FANDUEL', etc.
+            'was_line_fallback': line_info.get('was_line_fallback', False),  # True if not primary sportsbook
+
             # Issue 3: New player handling
             'needs_bootstrap': line_info.get('needs_bootstrap', False)
         }
@@ -388,15 +393,18 @@ class PlayerLoader:
         use_multiple_lines: bool
     ) -> Dict[str, Any]:
         """
-        Get betting lines for player with source tracking (v3.2)
+        Get betting lines for player with source tracking (v3.2, v3.3)
 
         Strategy:
-        1. Try to query from odds_player_props table (Phase 2)
+        1. Try to query from odds_player_props table (Phase 2) with sportsbook fallback
         2. If no odds available, use estimated line based on season average
         3. If use_multiple_lines=True, generate +/- 2 points from base line
 
         v3.2 CHANGE: Now returns dict with line source information for tracking
         when predictions were made with estimated vs actual lines.
+
+        v3.3 CHANGE: Added line_source_api, sportsbook, was_line_fallback fields
+        for granular tracking of which API/sportsbook provided the line.
 
         Args:
             player_lookup: Player identifier
@@ -409,15 +417,21 @@ class PlayerLoader:
                 'line_source': 'ACTUAL_PROP' or 'ESTIMATED_AVG'
                 'base_line': The base line used
                 'estimation_method': How line was estimated (if applicable)
+                'line_source_api': 'ODDS_API', 'BETTINGPROS', or 'ESTIMATED' (v3.3)
+                'sportsbook': 'DRAFTKINGS', 'FANDUEL', etc. (v3.3)
+                'was_line_fallback': True if not primary sportsbook (v3.3)
         """
-        # Try to get actual betting line from odds data
-        actual_line = self._query_actual_betting_line(player_lookup, game_date)
+        # Try to get actual betting line from odds data (now returns dict with sportsbook info)
+        line_result = self._query_actual_betting_line(player_lookup, game_date)
 
-        if actual_line is not None:
-            base_line = actual_line
+        if line_result is not None:
+            base_line = line_result['line_value']
             line_source = 'ACTUAL_PROP'
             estimation_method = None
-            logger.debug(f"Using actual betting line {base_line} for {player_lookup}")
+            line_source_api = line_result['line_source_api']
+            sportsbook = line_result['sportsbook']
+            was_line_fallback = line_result['was_fallback']
+            logger.debug(f"Using actual betting line {base_line} ({sportsbook}) for {player_lookup}")
         else:
             # Fallback: Estimate from season average
             base_line, estimation_method = self._estimate_betting_line_with_method(player_lookup)
@@ -430,10 +444,16 @@ class PlayerLoader:
                     'line_source': 'NEEDS_BOOTSTRAP',
                     'base_line': None,
                     'estimation_method': estimation_method,
-                    'needs_bootstrap': True
+                    'needs_bootstrap': True,
+                    'line_source_api': 'ESTIMATED',
+                    'sportsbook': None,
+                    'was_line_fallback': False
                 }
 
             line_source = 'ESTIMATED_AVG'
+            line_source_api = 'ESTIMATED'
+            sportsbook = None
+            was_line_fallback = False
             logger.debug(f"Using estimated line {base_line} ({estimation_method}) for {player_lookup}")
 
         # Generate multiple lines if requested
@@ -455,54 +475,83 @@ class PlayerLoader:
             'line_source': line_source,
             'base_line': round(base_line, 1),
             'estimation_method': estimation_method,
-            'needs_bootstrap': False
+            'needs_bootstrap': False,
+            'line_source_api': line_source_api,
+            'sportsbook': sportsbook,
+            'was_line_fallback': was_line_fallback
         }
-    
+
     def _query_actual_betting_line(
         self,
         player_lookup: str,
         game_date: date
-    ) -> Optional[float]:
+    ) -> Optional[Dict[str, Any]]:
         """
-        Query actual betting line from odds_player_props table
-        
-        Gets the most recent line for this player/date
-        
+        Query actual betting line from odds_player_props table with fallback chain.
+
+        Gets the most recent line for this player/date.
+        Fallback order: DraftKings -> FanDuel -> BetMGM
+
+        v3.3: Now returns dict with line_value, sportsbook, and was_fallback
+
         Args:
             player_lookup: Player identifier
             game_date: Game date
-        
+
         Returns:
-            float: Betting line or None if not found
+            Dict with line_value, sportsbook, was_fallback, line_source_api
+            or None if no line found
         """
+        # Sportsbook preference order
+        sportsbook_priority = ['draftkings', 'fanduel', 'betmgm', 'pointsbet', 'caesars']
+
         query = """
         SELECT
-            line_value
+            line_value,
+            bookmaker
         FROM `{project}.nba_raw.odds_player_props`
         WHERE player_lookup = @player_lookup
           AND game_date = @game_date
           AND market = 'player_points'
-          AND bookmaker = 'draftkings'  -- Use DraftKings as default
-        ORDER BY snapshot_timestamp DESC
+          AND bookmaker IN UNNEST(@sportsbooks)
+        ORDER BY
+            CASE bookmaker
+                WHEN 'draftkings' THEN 1
+                WHEN 'fanduel' THEN 2
+                WHEN 'betmgm' THEN 3
+                WHEN 'pointsbet' THEN 4
+                WHEN 'caesars' THEN 5
+                ELSE 99
+            END,
+            snapshot_timestamp DESC
         LIMIT 1
         """.format(project=self.project_id)
-        
+
         job_config = bigquery.QueryJobConfig(
             query_parameters=[
                 bigquery.ScalarQueryParameter("player_lookup", "STRING", player_lookup),
-                bigquery.ScalarQueryParameter("game_date", "DATE", game_date)
+                bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+                bigquery.ArrayQueryParameter("sportsbooks", "STRING", sportsbook_priority)
             ]
         )
-        
+
         try:
             results = self.client.query(query, job_config=job_config).result(timeout=60)
             row = next(results, None)
-            
+
             if row is not None and row.line_value is not None:
-                return float(row.line_value)
-            
+                sportsbook = row.bookmaker.upper() if row.bookmaker else 'UNKNOWN'
+                was_fallback = row.bookmaker and row.bookmaker.lower() != 'draftkings'
+
+                return {
+                    'line_value': float(row.line_value),
+                    'sportsbook': sportsbook,
+                    'was_fallback': was_fallback,
+                    'line_source_api': 'ODDS_API'
+                }
+
             return None
-            
+
         except Exception as e:
             logger.debug(f"No betting line found for {player_lookup}: {e}")
             return None

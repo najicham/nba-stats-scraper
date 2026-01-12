@@ -40,11 +40,14 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.player_prop_predi
   line_margin NUMERIC(5,2),                         -- predicted_points - current_points_line (NULL if no prop)
   ml_model_id STRING,                               -- Model used (ML systems only)
 
-  -- Line Source Tracking (3 fields - v3.2 All-Player Predictions)
+  -- Line Source Tracking (6 fields - v3.2 All-Player Predictions, v3.3 adds API/sportsbook)
   -- Tracks what line was used when making the prediction
   line_source STRING,                               -- 'ACTUAL_PROP' or 'ESTIMATED_AVG'
   estimated_line_value NUMERIC(4,1),                -- The estimated line used if no prop existed
   estimation_method STRING,                         -- 'points_avg_last_5', 'points_avg_last_10', 'default_15.5'
+  line_source_api STRING,                           -- 'ODDS_API', 'BETTINGPROS', 'ESTIMATED' (v3.3)
+  sportsbook STRING,                                -- 'DRAFTKINGS', 'FANDUEL', 'BETMGM', etc. (v3.3)
+  was_line_fallback BOOLEAN DEFAULT FALSE,          -- TRUE if line came from fallback source (v3.3)
   
   -- Multi-System Analysis (3 fields) - Added in migration
   prediction_variance NUMERIC(5,2),                 -- Variance across all active systems
@@ -162,6 +165,15 @@ ADD COLUMN IF NOT EXISTS estimated_line_value NUMERIC(4,1)
 ADD COLUMN IF NOT EXISTS estimation_method STRING
   OPTIONS (description='How line was estimated: points_avg_last_5, points_avg_last_10, default_15.5');
 
+-- v3.3: Add line source API and sportsbook tracking (enables hit rate by source analysis)
+ALTER TABLE `nba-props-platform.nba_predictions.player_prop_predictions`
+ADD COLUMN IF NOT EXISTS line_source_api STRING
+  OPTIONS (description='Line source API: ODDS_API, BETTINGPROS, or ESTIMATED'),
+ADD COLUMN IF NOT EXISTS sportsbook STRING
+  OPTIONS (description='Sportsbook name: DRAFTKINGS, FANDUEL, BETMGM, etc.'),
+ADD COLUMN IF NOT EXISTS was_line_fallback BOOLEAN
+  OPTIONS (description='TRUE if line came from fallback source (not primary)');
+
 -- ============================================================================
 -- VERSION HISTORY
 -- ============================================================================
@@ -171,7 +183,10 @@ ADD COLUMN IF NOT EXISTS estimation_method STRING
 --                       Added line_source, estimated_line_value, estimation_method
 --                       for tracking what line was used when no prop existed
 --                       Now generates predictions for ALL players, not just prop-line players
+-- v3.3 (+source_track): Added line_source_api, sportsbook, was_line_fallback
+--                       Enables analysis of hit rate by API source and sportsbook
+--                       Supports future fallback logic (DraftKings -> FanDuel -> BettingPros)
 --
--- Last Updated: December 2025
+-- Last Updated: January 2026
 -- Status: Production Ready
 -- ============================================================================
