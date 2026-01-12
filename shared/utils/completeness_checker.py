@@ -874,7 +874,8 @@ class CompletenessChecker:
     def check_upstream_processor_status(
         self,
         processor_name: str,
-        data_date: date
+        data_date: date,
+        stale_threshold_hours: int = 4
     ) -> Dict:
         """
         Check if upstream processor succeeded for a given date.
@@ -882,18 +883,26 @@ class CompletenessChecker:
         Queries processor_run_history to check for failures. This prevents
         processing with incomplete upstream data.
 
+        Handles stale 'running' records gracefully:
+        - If status='running' and age > stale_threshold_hours, treats as stale
+        - Stale running allows downstream processing (returns safe_to_process=True)
+        - This prevents stuck pipelines when processors crash without updating status
+
         Args:
             processor_name: Name of upstream processor (e.g., 'PlayerBoxscoreProcessor')
             data_date: Date to check
+            stale_threshold_hours: Hours after which 'running' status is considered stale
+                                   (default: 4 hours)
 
         Returns:
             Dictionary with processor status:
             {
                 'processor_succeeded': bool,
-                'status': str,  # 'success', 'failed', 'not_found'
+                'status': str,  # 'success', 'failed', 'not_found', 'running', 'stale_running'
                 'safe_to_process': bool,
                 'error_message': Optional[str],
-                'run_id': Optional[str]
+                'run_id': Optional[str],
+                'stale_age_hours': Optional[float]  # Only present if stale_running
             }
 
         Example:
@@ -910,6 +919,7 @@ class CompletenessChecker:
             }
         """
         from google.cloud import bigquery
+        from datetime import timezone
         import json
 
         query = """
@@ -949,6 +959,51 @@ class CompletenessChecker:
                 'error_message': f'No run found for {processor_name} on {data_date}',
                 'run_id': None
             }
+
+        # Handle 'running' status with stale detection
+        if row.status == 'running':
+            # Calculate age of the running record
+            now = datetime.now(timezone.utc)
+            started_at = row.started_at
+
+            # Ensure started_at is timezone-aware for comparison
+            if started_at.tzinfo is None:
+                started_at = started_at.replace(tzinfo=timezone.utc)
+
+            age = now - started_at
+            age_hours = age.total_seconds() / 3600
+
+            if age_hours > stale_threshold_hours:
+                # STALE RUNNING: Processor likely crashed without updating status
+                # Log at WARNING level for visibility - operators should investigate
+                logger.warning(
+                    f"⚠️  STALE RUNNING DETECTED: {processor_name} on {data_date} "
+                    f"has been 'running' for {age_hours:.1f} hours (threshold: {stale_threshold_hours}h). "
+                    f"Run ID: {row.run_id}. "
+                    f"Treating as stale and allowing downstream processing. "
+                    f"Investigation recommended: processor may have crashed without cleanup."
+                )
+                return {
+                    'processor_succeeded': False,
+                    'status': 'stale_running',
+                    'safe_to_process': True,  # Allow downstream to proceed
+                    'error_message': f'Stale running status (age: {age_hours:.1f}h, threshold: {stale_threshold_hours}h)',
+                    'run_id': row.run_id,
+                    'stale_age_hours': round(age_hours, 2)
+                }
+            else:
+                # ACTIVELY RUNNING: Processor is still working
+                logger.info(
+                    f"Upstream check: {processor_name} on {data_date} - "
+                    f"🔄 currently running (age: {age_hours:.1f}h, run_id: {row.run_id})"
+                )
+                return {
+                    'processor_succeeded': False,
+                    'status': 'running',
+                    'safe_to_process': False,  # Wait for completion
+                    'error_message': f'Processor currently running (started {age_hours:.1f}h ago)',
+                    'run_id': row.run_id
+                }
 
         succeeded = row.status == 'success'
 
