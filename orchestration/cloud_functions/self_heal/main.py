@@ -6,6 +6,11 @@ Runs 15 minutes BEFORE Phase 6 tonight-picks export to allow time for
 self-healing before exports run.
 
 Schedule: 12:45 PM ET daily (45 12 * * * America/New_York)
+
+UPDATED 2026-01-12: Added Phase 3 data validation
+- Now checks if player_game_summary exists for yesterday
+- If Phase 3 data is missing, triggers Phase 3 before checking predictions
+- This catches Phase 3 failures that would otherwise go undetected
 """
 
 import functions_framework
@@ -59,6 +64,14 @@ def get_tomorrow_date():
     return tomorrow.strftime("%Y-%m-%d")
 
 
+def get_yesterday_date():
+    """Get yesterday's date in ET timezone."""
+    from zoneinfo import ZoneInfo
+    et = ZoneInfo("America/New_York")
+    yesterday = datetime.now(et) - timedelta(days=1)
+    return yesterday.strftime("%Y-%m-%d")
+
+
 def check_games_scheduled(bq_client, target_date):
     """Check if games are scheduled for the target date."""
     query = f"""
@@ -94,6 +107,70 @@ def check_quality_score(bq_client, target_date):
     if result and result[0].avg_quality:
         return float(result[0].avg_quality)
     return None
+
+
+def check_phase3_data(bq_client, target_date):
+    """
+    Check if Phase 3 data (player_game_summary) exists for the target date.
+
+    Phase 3 processes game results into analytics. If this data is missing
+    for yesterday, predictions for today/tomorrow may be affected.
+
+    Returns:
+        dict with:
+        - records: Number of player_game_summary records
+        - players: Number of distinct players
+        - exists: True if records > 0
+    """
+    query = f"""
+    SELECT
+        COUNT(*) as records,
+        COUNT(DISTINCT player_lookup) as players
+    FROM `{PROJECT_ID}.nba_analytics.player_game_summary`
+    WHERE game_date = '{target_date}'
+    """
+    result = list(bq_client.query(query).result(timeout=60))
+    if result:
+        records = result[0].records or 0
+        players = result[0].players or 0
+        return {
+            'records': records,
+            'players': players,
+            'exists': records > 0
+        }
+    return {'records': 0, 'players': 0, 'exists': False}
+
+
+def trigger_phase3_only(target_date):
+    """
+    Trigger Phase 3 for a specific date without triggering the full pipeline.
+
+    Used when Phase 3 data is missing but we want to generate it first
+    before checking if predictions need to be regenerated.
+    """
+    token = get_auth_token(PHASE3_URL)
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+
+    payload = {
+        "start_date": target_date,
+        "end_date": target_date,
+        "processors": ["PlayerGameSummaryProcessor"],
+        "backfill_mode": False,  # Must be False - True would query empty player_game_summary
+        "skip_dependency_check": True
+    }
+
+    response = requests.post(
+        f"{PHASE3_URL}/process-date-range",
+        headers=headers,
+        json=payload,
+        timeout=180  # 3 minutes for just Phase 3
+    )
+
+    logger.info(f"Phase 3 only response for {target_date}: {response.status_code} - {response.text[:200]}")
+    return response.status_code == 200
 
 
 def clear_stuck_run_history():
@@ -257,15 +334,19 @@ def self_heal_check(request):
     """
     Main self-healing check function.
 
-    UPDATED: Now checks BOTH today AND tomorrow for missing predictions.
+    UPDATED 2026-01-12: Now includes Phase 3 data validation.
 
-    1. Check if TODAY has games scheduled and predictions exist
-    2. Check if TOMORROW has games scheduled and predictions exist
-    3. If either is missing predictions, trigger self-healing pipeline
+    Checks performed:
+    1. Phase 3 data check: Verify player_game_summary exists for yesterday
+       - If missing, trigger Phase 3 to generate analytics
+    2. Today prediction check: Verify predictions exist for today's games
+    3. Tomorrow prediction check: Verify predictions exist for tomorrow's games
+    4. If predictions missing, trigger full healing pipeline (Phase 3→4→Predictions)
     """
     today = get_today_date()
     tomorrow = get_tomorrow_date()
-    logger.info(f"Self-heal check for today={today} and tomorrow={tomorrow}")
+    yesterday = get_yesterday_date()
+    logger.info(f"Self-heal check: yesterday={yesterday}, today={today}, tomorrow={tomorrow}")
 
     result = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -276,6 +357,62 @@ def self_heal_check(request):
 
     try:
         bq_client = bigquery.Client()
+
+        # =================================================================
+        # PHASE 3 DATA CHECK (NEW)
+        # Check if player_game_summary exists for yesterday's games
+        # This catches Phase 3 failures that would otherwise go undetected
+        # =================================================================
+        yesterday_games = check_games_scheduled(bq_client, yesterday)
+        if yesterday_games > 0:
+            phase3_data = check_phase3_data(bq_client, yesterday)
+
+            phase3_check = {
+                "date": yesterday,
+                "type": "phase3_analytics",
+                "games_played": yesterday_games,
+                "records": phase3_data['records'],
+                "players": phase3_data['players']
+            }
+            result["checks"].append(phase3_check)
+
+            if not phase3_data['exists']:
+                logger.warning(
+                    f"PHASE 3 DATA MISSING: {yesterday_games} games played yesterday "
+                    f"but no player_game_summary records. Triggering Phase 3."
+                )
+                phase3_check["status"] = "missing"
+                result["status"] = "healing_phase3"
+
+                # Clear stuck entries first
+                if not result.get("_cleared_stuck"):
+                    cleared = clear_stuck_run_history()
+                    if cleared > 0:
+                        result["actions_taken"].append(f"Cleared {cleared} stuck run_history entries")
+                    result["_cleared_stuck"] = True
+
+                # Trigger Phase 3 only (not full pipeline)
+                try:
+                    if trigger_phase3_only(yesterday):
+                        result["actions_taken"].append(f"Phase 3 triggered for {yesterday} (missing analytics)")
+                    else:
+                        result["actions_taken"].append(f"Phase 3 trigger failed for {yesterday}")
+                except Exception as e:
+                    result["actions_taken"].append(f"Phase 3 error ({yesterday}): {str(e)[:50]}")
+            else:
+                phase3_check["status"] = "healthy"
+                logger.info(
+                    f"Phase 3 OK for {yesterday}: {phase3_data['records']} records "
+                    f"for {phase3_data['players']} players"
+                )
+        else:
+            result["checks"].append({
+                "date": yesterday,
+                "type": "phase3_analytics",
+                "games_played": 0,
+                "status": "no_games"
+            })
+            logger.info(f"No games were played yesterday ({yesterday})")
 
         # Check TODAY first (most important for same-day predictions)
         today_games = check_games_scheduled(bq_client, today)
@@ -295,7 +432,11 @@ def self_heal_check(request):
 
             if today_predictions == 0:
                 logger.warning(f"No predictions for TODAY ({today}) - triggering self-healing")
-                result["status"] = "healing_today"
+                # Update status based on what we're already healing
+                if result["status"] == "healing_phase3":
+                    result["status"] = "healing_phase3_and_today"
+                else:
+                    result["status"] = "healing_today"
                 heal_for_date(today, result)
             elif today_quality and today_quality < 70:
                 logger.warning(f"Low quality ({today_quality}%) for TODAY ({today})")
@@ -330,10 +471,16 @@ def self_heal_check(request):
 
             if tomorrow_predictions == 0:
                 logger.warning(f"No predictions for TOMORROW ({tomorrow}) - triggering self-healing")
-                if result["status"] == "healthy":
+                # Update status based on what we're already healing
+                current_status = result["status"]
+                if current_status == "healthy":
                     result["status"] = "healing_tomorrow"
+                elif current_status == "healing_phase3":
+                    result["status"] = "healing_phase3_and_tomorrow"
+                elif current_status in ("healing_today", "healing_phase3_and_today"):
+                    result["status"] = "healing_all"
                 else:
-                    result["status"] = "healing_both"
+                    result["status"] = "healing_multiple"
                 heal_for_date(tomorrow, result)
             elif tomorrow_quality and tomorrow_quality < 70:
                 logger.warning(f"Low quality ({tomorrow_quality}%) for TOMORROW ({tomorrow})")
