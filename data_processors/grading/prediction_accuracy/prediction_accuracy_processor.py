@@ -176,7 +176,10 @@ class PredictionAccuracyProcessor:
         actual_points: int,
         minutes_played: Optional[float],
         player_lookup: str,
-        game_date: date
+        game_date: date,
+        captured_injury_status: Optional[str] = None,
+        captured_injury_flag: Optional[bool] = None,
+        captured_injury_reason: Optional[str] = None
     ) -> Dict:
         """
         Detect if a prediction should be voided due to DNP (Did Not Play).
@@ -189,6 +192,9 @@ class PredictionAccuracyProcessor:
             minutes_played: Minutes played (0 or None for DNP)
             player_lookup: Player identifier
             game_date: Game date for injury lookup
+            captured_injury_status: Injury status captured at prediction time (v3.4)
+            captured_injury_flag: Injury flag captured at prediction time (v3.4)
+            captured_injury_reason: Injury reason captured at prediction time (v3.4)
 
         Returns:
             Dict with voiding fields:
@@ -196,7 +202,7 @@ class PredictionAccuracyProcessor:
             - void_reason: 'dnp_injury_confirmed', 'dnp_late_scratch', 'dnp_unknown'
             - pre_game_injury_flag: True if injury was known pre-game
             - pre_game_injury_status: The injury status if flagged
-            - injury_confirmed_postgame: True if DNP matches injury report
+            - injury_confirmed_postgame: True if DNP matched a pre-game injury flag
         """
         # Default: not voided
         result = {
@@ -213,32 +219,61 @@ class PredictionAccuracyProcessor:
         if not is_dnp:
             return result
 
-        # Player DNP'd - check injury report
-        injury_info = self.get_injury_status(player_lookup, game_date)
-
+        # Player DNP'd - determine injury status
         result['is_voided'] = True
 
-        if injury_info:
-            injury_status = injury_info.get('injury_status', '').upper()
+        # v3.4: Use captured injury status if available (more accurate - what we knew at prediction time)
+        # Otherwise fall back to retroactive lookup for historical predictions
+        if captured_injury_status is not None or captured_injury_flag is not None:
+            # Use captured status from prediction time
+            injury_status = captured_injury_status.upper() if captured_injury_status else None
+            had_injury_flag = captured_injury_flag or False
+
             result['pre_game_injury_status'] = injury_status
 
-            if injury_status in ('OUT', 'DOUBTFUL'):
-                # Injury was flagged pre-game
-                result['void_reason'] = 'dnp_injury_confirmed'
+            if had_injury_flag:
                 result['pre_game_injury_flag'] = True
-                result['injury_confirmed_postgame'] = True
-            elif injury_status in ('QUESTIONABLE', 'PROBABLE'):
-                # Player was questionable but ended up not playing
-                result['void_reason'] = 'dnp_late_scratch'
-                result['pre_game_injury_flag'] = True
-                result['injury_confirmed_postgame'] = True
+                if injury_status in ('OUT', 'DOUBTFUL'):
+                    # Expected void - injury was flagged pre-game
+                    result['void_reason'] = 'dnp_injury_confirmed'
+                    result['injury_confirmed_postgame'] = True
+                elif injury_status in ('QUESTIONABLE', 'PROBABLE'):
+                    # Player was questionable but ended up not playing
+                    result['void_reason'] = 'dnp_late_scratch'
+                    result['injury_confirmed_postgame'] = True
+                else:
+                    # Had a flag but unknown status
+                    result['void_reason'] = 'dnp_unknown'
+                    result['injury_confirmed_postgame'] = False
             else:
-                # Injury report exists but status was available/unknown
+                # No injury flag at prediction time - this is a surprise DNP
                 result['void_reason'] = 'dnp_unknown'
                 result['injury_confirmed_postgame'] = False
         else:
-            # No injury report - unexpected DNP (late scratch, coach decision, etc.)
-            result['void_reason'] = 'dnp_unknown'
+            # Fall back to retroactive lookup (for historical predictions without captured status)
+            injury_info = self.get_injury_status(player_lookup, game_date)
+
+            if injury_info:
+                injury_status = injury_info.get('injury_status', '').upper()
+                result['pre_game_injury_status'] = injury_status
+
+                if injury_status in ('OUT', 'DOUBTFUL'):
+                    # Injury was flagged pre-game (based on retroactive lookup)
+                    result['void_reason'] = 'dnp_injury_confirmed'
+                    result['pre_game_injury_flag'] = True
+                    result['injury_confirmed_postgame'] = True
+                elif injury_status in ('QUESTIONABLE', 'PROBABLE'):
+                    # Player was questionable but ended up not playing
+                    result['void_reason'] = 'dnp_late_scratch'
+                    result['pre_game_injury_flag'] = True
+                    result['injury_confirmed_postgame'] = True
+                else:
+                    # Injury report exists but status was available/unknown
+                    result['void_reason'] = 'dnp_unknown'
+                    result['injury_confirmed_postgame'] = False
+            else:
+                # No injury report - unexpected DNP (late scratch, coach decision, etc.)
+                result['void_reason'] = 'dnp_unknown'
 
         return result
 
@@ -272,7 +307,12 @@ class PredictionAccuracyProcessor:
             estimated_line_value,
             -- Confidence tier filtering (v3.4 - shadow tracking)
             COALESCE(is_actionable, TRUE) as is_actionable,
-            filter_reason
+            filter_reason,
+            -- v3.4: Pre-game injury tracking (captured at prediction time)
+            injury_status_at_prediction,
+            injury_flag_at_prediction,
+            injury_reason_at_prediction,
+            injury_checked_at
         FROM `{self.predictions_table}`
         WHERE game_date = '{game_date}'
         """
@@ -393,12 +433,20 @@ class PredictionAccuracyProcessor:
         minutes_played = actual_data.get('minutes_played')
         player_lookup = prediction['player_lookup']
 
-        # Detect DNP voiding (v4)
+        # v3.4: Get captured injury status from prediction (if available)
+        captured_injury_status = prediction.get('injury_status_at_prediction')
+        captured_injury_flag = prediction.get('injury_flag_at_prediction')
+        captured_injury_reason = prediction.get('injury_reason_at_prediction')
+
+        # Detect DNP voiding (v4) - uses captured injury status if available
         voiding_info = self.detect_dnp_voiding(
             actual_points=actual_points,
             minutes_played=minutes_played,
             player_lookup=player_lookup,
-            game_date=game_date
+            game_date=game_date,
+            captured_injury_status=captured_injury_status,
+            captured_injury_flag=captured_injury_flag,
+            captured_injury_reason=captured_injury_reason
         )
 
         # Compute errors
