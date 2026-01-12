@@ -30,6 +30,12 @@ logger = logging.getLogger(__name__)
 # Query timeout in seconds - prevents worker hangs on slow/stuck queries
 QUERY_TIMEOUT_SECONDS = 30
 
+# Cache TTL settings (in seconds)
+# Same-day predictions: short TTL because features may be updated multiple times
+# Historical dates: longer TTL since data shouldn't change
+FEATURES_CACHE_TTL_SAME_DAY = 300  # 5 minutes for today's date
+FEATURES_CACHE_TTL_HISTORICAL = 3600  # 1 hour for historical dates
+
 
 class PredictionDataLoader:
     """Loads data from BigQuery for Phase 5 predictions"""
@@ -62,13 +68,45 @@ class PredictionDataLoader:
         # This provides ~7-8x speedup (15s → 2s for 150 players)
         self._features_cache: Dict[date, Dict[str, Dict]] = {}
 
+        # Cache timestamps for TTL management
+        # Same-day predictions use short TTL (5 min) to pick up new features
+        # Historical dates use longer TTL (1 hour) since data is stable
+        self._features_cache_timestamps: Dict[date, datetime] = {}
+
         # Instance-level cache for game context (keyed by game_date)
         # First request for a game_date batch-loads all players, subsequent requests use cache
         # This provides ~10x speedup (8-12s → <1s for 150 players)
         self._game_context_cache: Dict[date, Dict[str, Dict]] = {}
 
         logger.info(f"Initialized PredictionDataLoader for project {project_id} in {location} (dataset_prefix: {dataset_prefix or 'production'})")
-    
+
+    def invalidate_features_cache(self, game_date: Optional[date] = None) -> int:
+        """
+        Invalidate features cache for a specific date or all dates.
+
+        Useful for forcing a refresh when features have been updated in BigQuery.
+
+        Args:
+            game_date: Date to invalidate. If None, clears entire cache.
+
+        Returns:
+            Number of cache entries cleared
+        """
+        if game_date is None:
+            count = len(self._features_cache)
+            self._features_cache.clear()
+            self._features_cache_timestamps.clear()
+            logger.info(f"Cleared entire features cache ({count} entries)")
+            return count
+        else:
+            if game_date in self._features_cache:
+                del self._features_cache[game_date]
+                if game_date in self._features_cache_timestamps:
+                    del self._features_cache_timestamps[game_date]
+                logger.info(f"Invalidated features cache for {game_date}")
+                return 1
+            return 0
+
     # ========================================================================
     # FEATURES LOADING (Required by ALL systems)
     # ========================================================================
@@ -107,15 +145,31 @@ class PredictionDataLoader:
         """
         # Check cache first (7-8x speedup via batch loading)
         if game_date in self._features_cache:
-            cached = self._features_cache[game_date].get(player_lookup)
-            if cached:
-                logger.debug(f"Cache hit for {player_lookup} features")
-                return cached
-            # Player not in cache - might not have features, return None
-            logger.debug(f"Cache miss for {player_lookup} (date cached but player not found)")
-            return None
+            # Check if cache is stale
+            cache_timestamp = self._features_cache_timestamps.get(game_date)
+            is_stale = False
 
-        # Cache miss for date - batch load all players for this game_date
+            if cache_timestamp:
+                cache_age_seconds = (datetime.now() - cache_timestamp).total_seconds()
+                # Use short TTL for same-day, longer for historical
+                ttl = FEATURES_CACHE_TTL_SAME_DAY if game_date >= date.today() else FEATURES_CACHE_TTL_HISTORICAL
+                is_stale = cache_age_seconds > ttl
+
+                if is_stale:
+                    logger.info(f"Cache expired for {game_date} (age: {cache_age_seconds:.0f}s > TTL: {ttl}s)")
+                    del self._features_cache[game_date]
+                    del self._features_cache_timestamps[game_date]
+
+            if not is_stale:
+                cached = self._features_cache[game_date].get(player_lookup)
+                if cached:
+                    logger.debug(f"Cache hit for {player_lookup} features")
+                    return cached
+                # Player not in cache - might not have features, return None
+                logger.debug(f"Cache miss for {player_lookup} (date cached but player not found)")
+                return None
+
+        # Cache miss for date (or expired) - batch load all players for this game_date
         try:
             # Get all player_lookups with games on this date
             all_players = self._get_players_for_date(game_date)
@@ -123,11 +177,14 @@ class PredictionDataLoader:
                 logger.info(f"Batch loading features for {len(all_players)} players on {game_date}")
                 batch_result = self.load_features_batch_for_date(all_players, game_date, feature_version)
                 self._features_cache[game_date] = batch_result
+                self._features_cache_timestamps[game_date] = datetime.now()
                 # Return from cache
                 return batch_result.get(player_lookup)
             else:
-                # No players found for this date - cache empty dict to avoid repeated queries
+                # No players found for this date - cache empty dict with short TTL
+                # Use short TTL so we retry if features become available
                 self._features_cache[game_date] = {}
+                self._features_cache_timestamps[game_date] = datetime.now()
                 logger.warning(f"No players found for {game_date}")
                 return None
         except Exception as e:
