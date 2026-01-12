@@ -1352,6 +1352,7 @@ class PrecomputeProcessorBase(RunHistoryMixin):
 
         logger.info(f"Using proper SQL MERGE with temp table: {temp_table_name}")
 
+        load_job = None  # Initialize for error handling
         try:
             # Step 1: Sanitize rows
             def sanitize_row(row):
@@ -1455,6 +1456,21 @@ class PrecomputeProcessorBase(RunHistoryMixin):
         except Exception as e:
             error_msg = f"MERGE operation failed: {str(e)}"
             logger.error(error_msg)
+
+            # Log BigQuery load job errors if available
+            try:
+                if load_job is not None:
+                    if hasattr(load_job, 'errors') and load_job.errors:
+                        logger.error(f"BigQuery load job errors ({len(load_job.errors)} total):")
+                        for i, err in enumerate(load_job.errors[:5]):  # Log first 5 errors
+                            logger.error(f"  Error {i+1}: {err}")
+                    if hasattr(load_job, 'error_result') and load_job.error_result:
+                        logger.error(f"BigQuery error result: {load_job.error_result}")
+            except NameError:
+                pass  # load_job not defined yet
+            except Exception as log_err:
+                logger.warning(f"Could not log load job errors: {log_err}")
+
             raise
 
         finally:
