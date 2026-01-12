@@ -1,9 +1,54 @@
 # Pipeline Reliability Master TODO
 
 **Created:** December 30, 2025
-**Last Updated:** January 12, 2026 (Session 13C - Reliability Improvements)
+**Last Updated:** January 12, 2026 (Session 19 - Sportsbook Table Bug Fix)
 **Status:** Active - Comprehensive tracking document
-**Total Items:** 116+ (added 4 from player_lookup normalization mismatch)
+**Total Items:** 117+ (added sportsbook table fix)
+
+---
+
+## Session 19 Progress (Jan 12, 2026 - Sportsbook Table Bug Fix)
+
+### Critical Bug Discovered & Fixed
+
+**Problem:** Sportsbook fallback chain (deployed Session 16) was querying a non-existent table.
+
+| Issue | Code Had | Correct Value |
+|-------|----------|---------------|
+| Table name | `odds_player_props` | `odds_api_player_points_props` |
+| Line column | `line_value` | `points_line` |
+| Market filter | `market = 'player_points'` | (not needed - table is pre-filtered) |
+
+**Evidence:**
+- Jan 12 predictions: 1,357 with `sportsbook=NULL` (no data captured)
+- Odds API table: 154 players with DraftKings data on Jan 11
+
+**Impact:**
+- Hit rate by sportsbook analysis: BLOCKED
+- Line source tracking: Only ESTIMATED was being populated
+- Sportsbook fallback chain: Not working at all
+
+### Completed This Session
+- [x] **P0-BUG-SPORTSBOOK:** Fixed table name in `player_loader.py:508-529`
+  - Changed `odds_player_props` → `odds_api_player_points_props`
+  - Changed `line_value` → `points_line as line_value`
+  - Removed invalid `market = 'player_points'` filter
+  - Updated docstrings at lines 399 and 490
+  - File: `predictions/coordinator/player_loader.py`
+- [x] **Deployed** prediction-coordinator revision **00034-scr**
+- [x] **Verified** health check passes
+
+### Deployment
+```bash
+./bin/predictions/deploy/deploy_prediction_coordinator.sh prod
+# Deployed: prediction-coordinator-00034-scr
+# Duration: 498s
+```
+
+### Next Steps
+1. Wait 24h for sportsbook data to accumulate in predictions
+2. Run hit rate analysis by sportsbook
+3. Configure SLACK_WEBHOOK_URL for alerting functions
 
 ---
 
@@ -171,73 +216,66 @@ This document consolidates ALL pipeline improvement work discovered from:
 ## P0 - CRITICAL (Fix Immediately)
 
 ### P0-SEC-1: No Authentication on Coordinator Endpoints
-**Status:** 🔴 Not Started
-**File:** `predictions/coordinator/coordinator.py` lines 153, 296
-**Risk:** CRITICAL - Remote code execution potential
+**Status:** ✅ COMPLETE (verified Jan 12, 2026)
+**File:** `predictions/coordinator/coordinator.py` lines 89-215
+**Risk:** ~~CRITICAL~~ MITIGATED
 
-**Problem:**
-- `/start` endpoint has NO authentication
-- `/complete` endpoint has NO authentication
-- Anyone can trigger prediction batches
-- Anyone can inject completion events
+**Solution Applied:**
+- `require_api_key` decorator implemented at line 89
+- Applied to `/start` (line 215), `/complete` (line 412), `/status` (line 492)
+- Checks X-API-Key header or Bearer token for GCP service accounts
+- COORDINATOR_API_KEY loaded from Secret Manager
 
-**Fix:**
-```python
-# Add to coordinator.py before route handlers
-def require_api_key(f):
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        api_key = request.headers.get('X-API-Key')
-        if api_key != os.environ.get('COORDINATOR_API_KEY'):
-            return jsonify({'error': 'Unauthorized'}), 401
-        return f(*args, **kwargs)
-    return decorated
-
-@app.route('/start', methods=['POST'])
-@require_api_key
-def start_batch():
-    ...
+**Verification:**
+```bash
+# This should return 401 Unauthorized
+curl -X POST https://prediction-coordinator-url/start
 ```
 
 ---
 
 ### P0-ORCH-1: Cleanup Processor is Non-Functional
-**Status:** 🔴 Not Started
-**File:** `orchestration/cleanup_processor.py` lines 252-267
-**Risk:** HIGH - Self-healing doesn't work
+**Status:** ✅ COMPLETE (verified Jan 12, 2026)
+**File:** `orchestration/cleanup_processor.py` lines 255-290
+**Risk:** ~~HIGH~~ MITIGATED
 
-**Problem:**
+**Solution Applied:**
+- Actual Pub/Sub publishing implemented at line 287
+- Creates recovery messages with proper format
+- Publishes to Phase 1 complete topic
+- Includes correlation tracking (original_execution_id, recovery_reason)
+
+**Code now:**
 ```python
-# Line 252-267 - TODO comment, never implemented!
-# TODO: Implement actual Pub/Sub publishing
-# from shared.utils.pubsub_utils import publish_message
-
-# For now, just log
-logger.info(f"🔄 Would republish: {file_info['scraper_name']}")
-republished_count += 1  # MISLEADING - doesn't actually republish!
+# Line 287 - Actual publishing, not logging!
+future = self.publisher.publish(self.topic_path, data=message_data)
 ```
-
-**Fix:**
-- Import and use actual Pub/Sub publishing
-- Test with simulated missing files
 
 ---
 
 ### P0-ORCH-2: Phase 4→5 Has No Timeout
-**Status:** 🔴 Not Started
-**File:** `orchestration/cloud_functions/phase4_to_phase5/main.py` line 54
-**Risk:** HIGH - Pipeline can get stuck indefinitely
+**Status:** ✅ COMPLETE (Session 17, Jan 12, 2026)
+**Files:**
+- `orchestration/cloud_functions/phase4_to_phase5/main.py` - HTTP error handling fixed
+- `orchestration/cloud_functions/phase4_timeout_check/main.py` - NEW scheduled function
+**Risk:** ~~HIGH~~ MITIGATED
 
-**Problem:**
-```python
-trigger_mode: str = 'all_complete'  # No timeout, no fallback
+**Solution Applied:**
+1. **Fix 1:** HTTP error handling changed from `raise` to graceful error handling (line 505)
+2. **Fix 2:** New `phase4-timeout-check` Cloud Function deployed
+   - Runs every 30 minutes via Cloud Scheduler
+   - Checks for stale Phase 4 states (>4 hours)
+   - Force-triggers Phase 5 if timeout exceeded
+   - Sends Slack alert with missing processors
+
+**Verification:**
+```bash
+# Check function exists
+gcloud functions describe phase4-timeout-check --region=us-west2
+
+# Test manually
+curl https://phase4-timeout-check-f7p3g7f6ya-wl.a.run.app
 ```
-If ANY Phase 4 processor fails to publish completion, Phase 5 NEVER triggers.
-
-**Fix:**
-- Add `max_wait_hours: float = 4.0` parameter
-- Implement timeout-based trigger
-- Log warning when timeout triggers
 
 ---
 
@@ -614,13 +652,15 @@ WHERE player_lookup IS NOT NULL;
 
 | Category | P0 | P1 | P2 | P3 | Total |
 |----------|-----|-----|-----|-----|-------|
-| Security | 1 | 0 | 2 | 0 | 3 |
+| Security | ~~1~~ 0 ✅ | 0 | 2 | 0 | 3 |
 | Performance | 0 | 3 | 2 | 2 | 7 |
-| Orchestration | 2 | 2 | 2 | 3 | 9 |
+| Orchestration | ~~2~~ 0 ✅ | 2 | 2 | 3 | 9 |
 | Data Reliability | 0 | 2 | 2 | 2 | 6 |
 | Monitoring | 0 | 2 | 4 | 4 | 10 |
 | Processors | 0 | 2 | 3 | 0 | 5 |
-| **TOTAL** | **3** | **11** | **15** | **11** | **40** |
+| **TOTAL** | ~~**3**~~ **0** | **11** | **15** | **11** | **40** |
+
+**P0 Status:** All 3 P0 items verified COMPLETE as of Jan 12, 2026 (Session 18)
 
 *Note: Full count is 75+ when including all sub-items from agent findings*
 
@@ -653,4 +693,4 @@ WHERE player_lookup IS NOT NULL;
 
 ---
 
-*Last Updated: December 30, 2025 Evening*
+*Last Updated: January 12, 2026 (Session 18 - P0 verification)*
