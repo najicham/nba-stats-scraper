@@ -462,6 +462,7 @@ class BigDataBallPbpProcessor(SmartIdempotencyMixin, ProcessorBase):
         """Load data to BigQuery using streaming-compatible strategy"""
         if not rows:
             logging.warning("No rows to load")
+            self.stats['rows_inserted'] = 0
             return {'rows_processed': 0, 'errors': []}
         
         table_id = f"{self.project_id}.{self.table_name}"
@@ -500,9 +501,10 @@ class BigDataBallPbpProcessor(SmartIdempotencyMixin, ProcessorBase):
                     )
                 except Exception as notify_ex:
                     logging.warning(f"Failed to send notification: {notify_ex}")
-                
+
+                self.stats['rows_inserted'] = 0
                 return {
-                    'rows_processed': 0, 
+                    'rows_processed': 0,
                     'errors': [],
                     'game_id': game_id,
                     'message': f'Skipped - game already processed with {existing_rows} rows'
@@ -534,6 +536,9 @@ class BigDataBallPbpProcessor(SmartIdempotencyMixin, ProcessorBase):
                 load_job.result(timeout=60)
                 logging.info(f"Successfully loaded {len(rows)} play-by-play events for game {game_id}")
 
+                # Update stats for processor_base tracking
+                self.stats['rows_inserted'] = len(rows)
+
                 # Success - send info notification
                 try:
                     notify_info(
@@ -554,7 +559,10 @@ class BigDataBallPbpProcessor(SmartIdempotencyMixin, ProcessorBase):
             error_msg = str(e)
             errors.append(error_msg)
             logging.error(f"Error loading data: {error_msg}")
-            
+
+            # Update stats for failure tracking
+            self.stats['rows_inserted'] = 0
+
             # Notify unexpected error
             try:
                 notify_error(

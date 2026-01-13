@@ -540,8 +540,9 @@ class OddsApiPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
         import datetime
         
         if not rows:
+            self.stats['rows_inserted'] = 0
             return {'rows_processed': 0, 'errors': []}
-        
+
         # Convert datetime objects to ISO format strings
         for row in rows:
             for key, value in row.items():
@@ -592,6 +593,9 @@ class OddsApiPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
+
+                # Update stats for failure tracking
+                self.stats['rows_inserted'] = 0
 
                 return {'rows_processed': 0, 'errors': errors}
 
@@ -656,7 +660,10 @@ class OddsApiPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
-                
+
+                # Update stats for graceful failure
+                self.stats['rows_inserted'] = 0
+
                 return {'rows_processed': 0, 'errors': [], 'skipped_streaming_buffer': True}
             else:
                 # Real error
@@ -677,7 +684,10 @@ class OddsApiPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
-                
+
+                # Update stats for failure tracking
+                self.stats['rows_inserted'] = 0
+
                 return {'rows_processed': 0, 'errors': errors}
 
     def get_processor_stats(self) -> Dict:

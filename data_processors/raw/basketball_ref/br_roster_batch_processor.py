@@ -163,6 +163,7 @@ class BasketballRefRosterBatchProcessor(ProcessorBase):
         """Save all teams in a single MERGE operation."""
         if not self.team_data:
             logger.warning("No data to save")
+            self.stats['rows_inserted'] = 0
             return
 
         project = self.opts.get('project', 'nba-props-platform')
@@ -210,6 +211,15 @@ class BasketballRefRosterBatchProcessor(ProcessorBase):
 
             # Track stats
             self.stats['rows_inserted'] = self.stats.get('rows_merged', 0)
+
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"Failed to save data: {error_msg}")
+
+            # Update stats for failure tracking
+            self.stats['rows_inserted'] = 0
+
+            raise
 
         finally:
             # Clean up temp table

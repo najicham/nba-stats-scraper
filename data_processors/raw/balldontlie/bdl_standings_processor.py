@@ -306,7 +306,9 @@ class BdlStandingsProcessor(SmartIdempotencyMixin, ProcessorBase):
                 )
             except Exception as e:
                 logging.warning(f"Failed to send notification: {e}")
-            
+
+
+            self.stats["rows_inserted"] = 0
             return {'rows_processed': 0, 'errors': []}
         
         table_id = f"{self.project_id}.{self.table_name}"
@@ -380,6 +382,8 @@ class BdlStandingsProcessor(SmartIdempotencyMixin, ProcessorBase):
             load_job.result(timeout=60)
             logging.info(f"Successfully loaded {len(rows)} standings for {date_recorded}")
 
+            self.stats["rows_inserted"] = len(rows)
+
             # Calculate summary statistics
             east_teams = sum(1 for row in rows if row['conference'] == 'East')
             west_teams = sum(1 for row in rows if row['conference'] == 'West')
@@ -417,6 +421,8 @@ class BdlStandingsProcessor(SmartIdempotencyMixin, ProcessorBase):
             error_msg = f"Error loading standings data: {str(e)}"
             logging.error(error_msg)
             errors.append(error_msg)
+
+            self.stats["rows_inserted"] = 0
             
             # Notify about general processing error
             try:

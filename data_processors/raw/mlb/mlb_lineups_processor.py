@@ -254,6 +254,7 @@ class MlbLineupsProcessor(ProcessorBase):
 
         if not game_rows:
             logger.info("No game rows to save")
+            self.stats["rows_inserted"] = 0
             return {'rows_processed': 0, 'errors': []}
 
         errors = []
@@ -291,6 +292,7 @@ class MlbLineupsProcessor(ProcessorBase):
             error_msg = str(e)
             errors.append(error_msg)
             logger.error(f"Error loading data: {error_msg}")
+            self.stats["rows_inserted"] = 0
 
             notify_error(
                 title="MLB Lineups Processing Failed",

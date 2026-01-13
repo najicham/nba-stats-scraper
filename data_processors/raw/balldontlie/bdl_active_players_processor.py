@@ -365,6 +365,7 @@ class BdlActivePlayersProcessor(SmartIdempotencyMixin, ProcessorBase):
             except Exception as e:
                 logging.warning(f"Failed to send notification: {e}")
 
+            self.stats["rows_inserted"] = 0
             return
         
         table_id = f"{self.project_id}.{self.table_name}"
@@ -425,6 +426,8 @@ class BdlActivePlayersProcessor(SmartIdempotencyMixin, ProcessorBase):
             load_job.result(timeout=60)
             logging.info(f"Successfully loaded {len(rows)} rows into {table_id}")
 
+            self.stats["rows_inserted"] = len(rows)
+
             # Log validation summary
             total_issues = sum(1 for row in rows if row['has_validation_issues'])
             missing_nba_com = sum(1 for row in rows if row['validation_status'] == 'missing_nba_com')
@@ -472,7 +475,9 @@ class BdlActivePlayersProcessor(SmartIdempotencyMixin, ProcessorBase):
         except Exception as e:
             errors.append(str(e))
             logging.error(f"Error loading data: {e}")
-            
+
+            self.stats["rows_inserted"] = 0
+
             # Notify about general processing error
             try:
                 notify_error(

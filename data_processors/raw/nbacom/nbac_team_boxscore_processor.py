@@ -551,11 +551,13 @@ class NbacTeamBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
 
         if not rows:
             logger.warning("No rows to save")
+            self.stats['rows_inserted'] = 0
             return
 
         # Smart idempotency check: Skip write if data unchanged
         if self.should_skip_write():
             logger.info("Skipping write - data unchanged (smart idempotency)")
+            self.stats['rows_inserted'] = 0
             return
 
         table_id = f"{self.project_id}.{self.table_name}"
@@ -608,9 +610,16 @@ class NbacTeamBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
 
             logger.info(f"Successfully loaded {len(rows)} rows to {self.table_name}")
 
+            # Update stats for processor_base tracking
+            self.stats['rows_inserted'] = len(rows)
+
         except Exception as e:
             error_msg = str(e)
             logger.error(f"Error loading data to BigQuery: {error_msg}")
+
+            # Update stats for failure tracking
+            self.stats['rows_inserted'] = 0
+
             raise
     
     def process_file(self, file_path: str, **kwargs) -> Dict:
