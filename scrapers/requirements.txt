@@ -1,5 +1,8 @@
 # NBA Scrapers specific dependencies (change more frequently)
 
+# Compression handling (needed for Brotli responses from some APIs)
+brotli>=1.1.0
+
 # PDF processing (scraper-specific)
 pdfreader==0.1.15
 pdfplumber==0.11.7

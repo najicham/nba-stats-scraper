@@ -1,14 +1,32 @@
 # Issue: BettingPros API Errors
 
 **Priority:** P3
-**Status:** Investigation needed
+**Status:** RESOLVED
 **Created:** January 12, 2026 (Session 23)
+**Resolved:** January 12, 2026 (Session 25)
+
+---
+
+## Resolution Summary
+
+**Root Cause:** BettingPros API (via CloudFront CDN) was returning Brotli-compressed responses, but the `brotli` Python package was not installed. The `requests` library couldn't auto-decompress these responses, resulting in binary data being passed to JSON decode, which failed.
+
+**Fix Applied:**
+1. Added `brotli>=1.1.0` to `scrapers/requirements.txt`
+2. Added automatic Brotli detection and decompression in `scrapers/scraper_base.py:decode_download_content()`
+3. Updated header documentation in `scrapers/utils/nba_header_utils.py`
+
+**Verification:**
+- `bp_events` scraper: Successfully fetched 6 events for Jan 12
+- `bp_player_props` scraper: Successfully fetched 94 props for 94 players
+
+**Deployment Required:** Yes - Cloud Run needs to be redeployed to pick up the new `brotli` dependency.
 
 ---
 
 ## Problem Statement
 
-BettingPros scrapers are failing with:
+BettingPros scrapers were failing with:
 1. "No events found for date" errors
 2. JSON decode errors (empty responses)
 3. Encoding issues (UTF-8 decode failures)
@@ -34,137 +52,104 @@ WARNING:scraper_base:UTF-8 decode failed for BettingProsEvents, trying latin-1: 
 
 ---
 
-## Evidence
+## Root Cause Analysis
 
-```bash
-# Jan 11 has data (5 files)
-gsutil ls "gs://nba-scraped-data/bettingpros/events/2026-01-11/"
-# First file: 2026-01-11T14:05:19Z (9:05 AM ET)
+The byte `0x85` at position 1 is characteristic of Brotli-compressed data. Investigation revealed:
 
-# Jan 12 has NO data
-gsutil ls "gs://nba-scraped-data/bettingpros/events/2026-01-12/"
-# 0 files
+1. **API Response:** BettingPros API returns valid JSON compressed with gzip or Brotli
+2. **CDN Behavior:** CloudFront CDN sometimes serves cached Brotli responses even when `Accept-Encoding: br` is not in the request
+3. **Missing Dependency:** The `brotli` Python package was not installed
+4. **Requests Behavior:** Without `brotli`, the requests library cannot auto-decompress Brotli content
+5. **Result:** Raw compressed bytes were passed to `json.loads()`, causing decode failures
 
-# Error count (all on Jan 12)
-gcloud logging read 'resource.type="cloud_run_revision" AND "bettingpros" AND "No events found"' --limit=50 | grep -c "Jan 12"
-# 24 errors
+Timeline of events:
+- **Jan 10:** Original fix removed `br` from Accept-Encoding (commit 3f21072)
+- **Jan 12:** Errors continued because CDN was still serving cached Brotli responses
+- **Jan 12 (Session 25):** Root cause identified and proper fix applied
+
+---
+
+## Changes Made
+
+### 1. scrapers/requirements.txt
+```diff
++ # Compression handling (needed for Brotli responses from some APIs)
++ brotli>=1.1.0
 ```
 
----
-
-## Affected Scrapers
-
-| Scraper | File | Issue |
-|---------|------|-------|
-| `BettingProsEvents` | `scrapers/bettingpros/bp_events.py` | Empty/binary responses |
-| `BettingProsPlayerProps` | `scrapers/bettingpros/bp_player_props.py` | Depends on events, fails cascade |
-
----
-
-## Scraper Configuration
-
+### 2. scrapers/scraper_base.py (decode_download_content)
 ```python
-# From bp_events.py
-class BettingProsEvents(ScraperBase, ScraperFlaskMixin):
-    header_profile = "bettingpros"  # Uses BettingPros headers
-    proxy_enabled = True            # May need proxy for high volume
-    download_type = DownloadType.JSON
+# Added Brotli detection after gzip handling
+elif content and content[0:1] not in (b'{', b'[', b'"', b' ', b'\n', b'\t'):
+    try:
+        import brotli
+        decompressed = brotli.decompress(content)
+        content = decompressed
+        logger.info("Manually decompressed brotli response")
+    except ImportError:
+        logger.warning("Brotli package not installed")
+    except Exception as e:
+        logger.debug("Brotli decompression not applicable: %s", e)
+```
 
-# API endpoint
-# https://api.bettingpros.com/v3/events?sport=NBA&date=YYYY-MM-DD
+### 3. scrapers/utils/nba_header_utils.py
+Updated docstring to reflect that brotli is now installed and fallback exists.
+
+---
+
+## Verification Results
+
+### bp_events Test
+```
+INFO:scraper_base:Validation passed: 6 events found for 2026-01-12
+INFO:scraper_base:Processed 6 events for 2026-01-12: UTH@CLE, PHI@TOR, BOS@IND, BKN@DAL, LAL@SAC...
+```
+
+### bp_player_props Test
+```
+INFO:scraper_base:Completed pagination: 94 total offers from 9 pages
+INFO:scraper_base:Validation passed: 94 total offers found
+INFO:scraper_base:Processed 94 props for 94 players
 ```
 
 ---
 
-## Possible Causes
+## Deployment Instructions
 
-1. **API Rate Limiting** - BettingPros blocking requests
-2. **Proxy Issues** - Proxy not working or blocked
-3. **API Changes** - Endpoint or response format changed
-4. **Timing Issue** - Data not available yet for game day
-5. **Authentication** - Headers or API key issues
+To deploy the fix to Cloud Run:
 
----
-
-## Investigation Steps
-
-### 1. Test API Directly
 ```bash
-# Test from local machine
-curl -v "https://api.bettingpros.com/v3/events?sport=NBA&date=2026-01-13"
+# Deploy scrapers service
+./bin/scrapers/deploy/deploy_scrapers_simple.sh
 
-# Check response headers and content
-```
-
-### 2. Check Proxy Status
-```bash
-# Review proxy configuration
-grep -r "proxy" scrapers/bettingpros/
-
-# Check if proxy service is healthy
-```
-
-### 3. Compare Headers
-```bash
-# Check header profile
-cat shared/utils/nba_header_utils.py | grep -A20 "bettingpros"
-```
-
-### 4. Check Recent Changes
-```bash
-# Any recent changes to BettingPros scrapers?
-git log --oneline -10 -- scrapers/bettingpros/
-```
-
-### 5. Check Cloud Logs for More Context
-```bash
-gcloud logging read 'resource.type="cloud_run_revision" AND "bettingpros"' --limit=50 --format='table(timestamp,textPayload)'
+# Verify deployment
+gcloud run services describe nba-scrapers --region us-west2 --format='value(status.latestReadyRevisionName)'
 ```
 
 ---
 
-## Key Files
+## Prevention
 
-| File | Purpose |
-|------|---------|
-| `scrapers/bettingpros/bp_events.py` | Events scraper |
-| `scrapers/bettingpros/bp_player_props.py` | Player props scraper |
-| `shared/utils/nba_header_utils.py` | Header profiles |
-| `scrapers/scraper_base.py:1713` | JSON decode logic |
+This fix provides defense in depth:
+1. **Primary:** `brotli` package enables automatic Brotli decompression by requests library
+2. **Fallback:** Manual detection and decompression in `decode_download_content()`
+3. **Header Strategy:** Keep `Accept-Encoding: gzip, deflate` (no br) to prefer simpler compression, but handle Brotli if CDN serves it anyway
 
 ---
 
-## Impact Assessment
+## Success Criteria (Verified)
 
-- **Data loss:** BettingPros odds/props data
-- **Alternative sources:** Odds API is primary source (working)
-- **Analytics impact:** Minimal - BettingPros is secondary/comparison source
-- **Urgency:** P3 - system functions without this data
-
----
-
-## Potential Fixes
-
-### If Rate Limited
-- Add exponential backoff
-- Reduce scrape frequency
-- Rotate proxy IPs
-
-### If API Changed
-- Update endpoint URL
-- Modify response parsing
-- Update headers
-
-### If Proxy Issue
-- Check proxy service health
-- Test without proxy locally
-- Consider alternative proxy
+1. ✅ `BettingProsEvents` scraper completes successfully
+2. ⏳ GCS files appear in `bettingpros/events/{date}/` (pending deployment)
+3. ✅ `BettingProsPlayerProps` can fetch event IDs
+4. ✅ No JSON decode errors in local tests
 
 ---
 
-## Success Criteria
+## Related Files
 
-1. `BettingProsEvents` scraper completes successfully
-2. GCS files appear in `bettingpros/events/{date}/`
-3. `BettingProsPlayerProps` can fetch event IDs
-4. No JSON decode errors in logs
+| File | Change |
+|------|--------|
+| `scrapers/requirements.txt` | Added brotli>=1.1.0 |
+| `scrapers/scraper_base.py:1723-1740` | Added Brotli detection/decompression |
+| `scrapers/utils/nba_header_utils.py:129-138` | Updated docstring |
