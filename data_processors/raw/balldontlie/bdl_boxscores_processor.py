@@ -583,6 +583,7 @@ class BdlBoxscoresProcessor(SmartIdempotencyMixin, ProcessorBase):
         rows = self.transformed_data
         """Load transformed data to BigQuery with streaming buffer protection."""
         if not rows:
+            self.stats["rows_inserted"] = 0  # Fix for tracking bug - Session 32
             return {'rows_processed': 0, 'errors': []}
         
         table_id = f"{self.project_id}.{self.table_name}"
@@ -616,7 +617,8 @@ class BdlBoxscoresProcessor(SmartIdempotencyMixin, ProcessorBase):
                     )
                 except Exception as e:
                     logger.warning(f"Failed to send notification: {e}")
-                
+
+                self.stats["rows_inserted"] = 0  # Fix for tracking bug - Session 32
                 return {'rows_processed': 0, 'errors': errors}
             
             if self.processing_strategy == 'MERGE_UPDATE':
@@ -682,6 +684,7 @@ class BdlBoxscoresProcessor(SmartIdempotencyMixin, ProcessorBase):
                             except Exception as e:
                                 logger.warning(f"Failed to send notification: {e}")
 
+                            self.stats["rows_inserted"] = 0  # Fix for tracking bug - Session 32
                             return {'rows_processed': 0, 'errors': errors, 'streaming_conflicts': streaming_conflicts}
 
                         # Notify that some games were skipped but processing continues
@@ -726,6 +729,10 @@ class BdlBoxscoresProcessor(SmartIdempotencyMixin, ProcessorBase):
 
             # Wait for completion
             load_job.result(timeout=60)
+
+            # Set stats for run_history tracking (fix for tracking bug - Session 32)
+            self.stats["rows_inserted"] = len(rows)
+
             logger.info(f"Successfully loaded {len(rows)} rows for {len(game_ids)} games")
 
             # Log game ID format compliance
@@ -768,7 +775,10 @@ class BdlBoxscoresProcessor(SmartIdempotencyMixin, ProcessorBase):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-        
+
+            # Set stats to 0 on error (fix for tracking bug - Session 32)
+            self.stats["rows_inserted"] = 0
+
         return {
             'rows_processed': len(rows) if not errors else 0,
             'errors': errors,
