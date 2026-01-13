@@ -410,6 +410,7 @@ class EspnScoreboardProcessor(SmartIdempotencyMixin, ProcessorBase):
         # 0 rows is valid (not an error)
         if not rows:
             logging.info("No games to load (valid for All-Star Weekend, off-days, or filtered games)")
+            self.stats['rows_inserted'] = 0
             return {
                 'rows_processed': 0,
                 'rows_affected': 0,
@@ -498,9 +499,12 @@ class EspnScoreboardProcessor(SmartIdempotencyMixin, ProcessorBase):
             
             # Get affected rows count
             rows_affected = merge_result.total_rows if hasattr(merge_result, 'total_rows') else len(rows)
-            
+
             logging.info(f"✅ MERGE completed successfully: {rows_affected} rows affected")
-            
+
+            # Update stats for processor_base tracking
+            self.stats['rows_inserted'] = len(rows)
+
             return {
                 'rows_processed': len(rows),
                 'rows_affected': rows_affected,
@@ -528,7 +532,10 @@ class EspnScoreboardProcessor(SmartIdempotencyMixin, ProcessorBase):
                     )
                 except Exception as notify_ex:
                     logging.warning(f"Failed to send notification: {notify_ex}")
-                
+
+                # Update stats for graceful failure
+                self.stats['rows_inserted'] = 0
+
                 # Return graceful failure (not an error)
                 return {
                     'rows_processed': 0,
@@ -539,7 +546,10 @@ class EspnScoreboardProcessor(SmartIdempotencyMixin, ProcessorBase):
             
             # Other errors are genuine problems
             logging.error(f"Error loading data to BigQuery: {error_msg}", exc_info=True)
-            
+
+            # Update stats for failure tracking
+            self.stats['rows_inserted'] = 0
+
             try:
                 notify_error(
                     title="ESPN Scoreboard: BigQuery Load Failed",

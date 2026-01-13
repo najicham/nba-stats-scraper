@@ -445,6 +445,7 @@ class MlbBatterPropsProcessor(ProcessorBase):
 
         except Exception as e:
             logger.error(f"Failed to save data: {e}", exc_info=True)
+            self.stats["rows_inserted"] = 0
             notify_error(
                 title="MLB Batter Props Save Failed",
                 message=f"Error saving to BigQuery: {str(e)[:200]}",

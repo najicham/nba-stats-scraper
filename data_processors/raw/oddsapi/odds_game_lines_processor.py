@@ -476,8 +476,9 @@ class OddsGameLinesProcessor(SmartIdempotencyMixin, ProcessorBase):
         and MERGE operations instead of DELETE + streaming insert.
         """
         if not rows:
+            self.stats['rows_inserted'] = 0
             return {'rows_processed': 0, 'errors': []}
-        
+
         table_id = f"{self.project_id}.{self.table_name}"
         temp_table_id = None
         errors = []
@@ -687,7 +688,10 @@ class OddsGameLinesProcessor(SmartIdempotencyMixin, ProcessorBase):
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
-                
+
+                # Update stats for graceful failure
+                self.stats['rows_inserted'] = 0
+
                 return {'rows_processed': 0, 'errors': [], 'skipped_streaming_buffer': True}
             else:
                 # Non-streaming-buffer error - this is a real problem
@@ -708,7 +712,10 @@ class OddsGameLinesProcessor(SmartIdempotencyMixin, ProcessorBase):
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
-                
+
+                # Update stats for failure tracking
+                self.stats['rows_inserted'] = 0
+
                 return {'rows_processed': 0, 'errors': errors}
         
         finally:

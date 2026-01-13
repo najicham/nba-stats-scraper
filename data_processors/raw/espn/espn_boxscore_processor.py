@@ -453,6 +453,7 @@ class EspnBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
         rows = self.transformed_data
         """Load data to BigQuery with MERGE_UPDATE strategy."""
         if not rows:
+            self.stats['rows_inserted'] = 0
             return {'rows_processed': 0, 'errors': []}
         
         table_id = f"{self.project_id}.{self.table_name}"
@@ -493,12 +494,18 @@ class EspnBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
             # Wait for completion
             load_job.result(timeout=60)
             logging.info(f"Successfully loaded {len(rows)} rows")
-        
+
+            # Update stats for processor_base tracking
+            self.stats['rows_inserted'] = len(rows)
+
         except Exception as e:
             error_msg = str(e)
             errors.append(error_msg)
             logging.error(f"Error loading data: {error_msg}")
-            
+
+            # Update stats for failure tracking
+            self.stats['rows_inserted'] = 0
+
             # Send error notification for general BigQuery failures
             try:
                 notify_error(

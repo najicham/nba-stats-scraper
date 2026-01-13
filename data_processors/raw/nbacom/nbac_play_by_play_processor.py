@@ -625,6 +625,7 @@ class NbacPlayByPlayProcessor(SmartIdempotencyMixin, ProcessorBase):
         rows = self.transformed_data
         """Load play-by-play data to BigQuery."""
         if not rows:
+            self.stats['rows_inserted'] = 0
             return {'rows_processed': 0, 'errors': []}
         
         table_id = f"{self.project_id}.{self.table_name}"
@@ -686,11 +687,17 @@ class NbacPlayByPlayProcessor(SmartIdempotencyMixin, ProcessorBase):
             # Wait for completion
             load_job.result(timeout=60)
             logging.info(f"Successfully loaded {len(rows)} play-by-play events")
-        
+
+            # Update stats for processor_base tracking
+            self.stats['rows_inserted'] = len(rows)
+
         except Exception as e:
             errors.append(str(e))
             logging.error(f"Error loading play-by-play data: {e}")
-            
+
+            # Update stats for failure tracking
+            self.stats['rows_inserted'] = 0
+
             # Notify about load failure
             try:
                 notify_error(

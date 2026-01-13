@@ -378,6 +378,7 @@ class NbacScoreboardV2Processor(SmartIdempotencyMixin, ProcessorBase):
         """Load transformed data into BigQuery using MERGE."""
         if not rows:
             logging.warning("No rows to load")
+            self.stats['rows_inserted'] = 0
             return {'rows_processed': 0, 'errors': []}
         
         table_id = f"{self.project_id}.{self.table_name}"
@@ -416,7 +417,10 @@ class NbacScoreboardV2Processor(SmartIdempotencyMixin, ProcessorBase):
                     self.bq_client.delete_table(temp_table_id, not_found_ok=True)
                 except Exception:
                     pass
-                
+
+                # Update stats for failure tracking
+                self.stats['rows_inserted'] = 0
+
                 return {'rows_processed': 0, 'errors': errors}
             
             logging.info(f"Loaded {len(rows)} rows into temp table")
@@ -486,7 +490,10 @@ class NbacScoreboardV2Processor(SmartIdempotencyMixin, ProcessorBase):
                 logging.warning(f"Failed to delete temp table: {e}")
             
             logging.info(f"Successfully loaded {len(rows)} rows using MERGE")
-            
+
+            # Update stats for processor_base tracking
+            self.stats['rows_inserted'] = len(rows)
+
             # Send success notification
             try:
                 notify_info(
@@ -508,7 +515,10 @@ class NbacScoreboardV2Processor(SmartIdempotencyMixin, ProcessorBase):
             error_msg = str(e)
             errors.append(error_msg)
             logging.error(f"Error loading data to BigQuery: {error_msg}")
-            
+
+            # Update stats for failure tracking
+            self.stats['rows_inserted'] = 0
+
             # Notify about load failure
             try:
                 notify_error(
