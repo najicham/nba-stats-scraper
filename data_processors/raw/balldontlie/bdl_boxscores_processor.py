@@ -346,7 +346,38 @@ class BdlBoxscoresProcessor(SmartIdempotencyMixin, ProcessorBase):
                     rows.append(row)
         
         logger.info(f"Generated {len(rows)} player records from {len(box_scores)} games in {file_path}")
-        
+
+        # Data Quality Check: Detect if 0 records due to upcoming games
+        if len(rows) == 0 and len(box_scores) > 0:
+            # Check if all games are upcoming (period=0, no player data)
+            upcoming_games = sum(1 for game in box_scores if game.get('period', 0) == 0)
+
+            if upcoming_games == len(box_scores):
+                logger.warning(
+                    f"⚠️  Processed 0 records - all {len(box_scores)} games are upcoming (period=0, no player data yet). "
+                    f"File: {file_path}"
+                )
+                # Notify about upcoming games (info level, not error)
+                try:
+                    notify_info(
+                        title="BDL Boxscores: Upcoming Games Only",
+                        message=f"Processed {len(box_scores)} upcoming games with no player data yet",
+                        details={
+                            'file_path': file_path,
+                            'game_count': len(box_scores),
+                            'upcoming_games': upcoming_games,
+                            'reason': 'Games not yet played - player data not available',
+                            'processor': 'BDL Box Scores'
+                        }
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to send notification: {e}")
+            else:
+                logger.error(
+                    f"⚠️  Processed 0 records from {len(box_scores)} games, but only {upcoming_games} are upcoming. "
+                    f"This may indicate a data quality issue. File: {file_path}"
+                )
+
         # Send warning if games were skipped
         if skipped_games:
             try:
