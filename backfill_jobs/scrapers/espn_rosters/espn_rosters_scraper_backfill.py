@@ -65,8 +65,9 @@ class EspnRostersBatchBackfill:
     # All 30 ESPN team codes
     ESPN_TEAMS = sorted(ESPN_TEAM_IDS.keys())
 
-    # Default threshold for success (83% of 30 teams)
-    DEFAULT_MIN_TEAMS = 25
+    # Default threshold for success (97% of 30 teams - allow only 1 failure)
+    # Raised from 25 to 29 per Session 26 to fail fast on incomplete scrapes
+    DEFAULT_MIN_TEAMS = 29
 
     def __init__(
         self,
@@ -82,8 +83,9 @@ class EspnRostersBatchBackfill:
         self.delay_seconds = delay_seconds
         self.debug = debug
         self.max_retries = max_retries
-        # Default threshold: 83% of requested teams, minimum 1
-        self.min_teams_threshold = min_teams_threshold if min_teams_threshold is not None else max(1, int(len(self.teams) * 0.83))
+        # Default threshold: 97% of requested teams, minimum 1 (allow only 1 failure)
+        # Raised from 83% to 97% per Session 26 to fail fast on incomplete scrapes
+        self.min_teams_threshold = min_teams_threshold if min_teams_threshold is not None else max(1, int(len(self.teams) * 0.97))
 
         # Stats tracking
         self.completed_teams = []
@@ -182,6 +184,10 @@ class EspnRostersBatchBackfill:
 
         Returns:
             (success: bool, player_count: int)
+
+        Side effects:
+            - Logs HTTP status code and latency for debugging
+            - Increases delay_seconds if 429 rate limit detected
         """
         opts = {
             'team_abbr': team_abbr,
@@ -193,12 +199,33 @@ class EspnRostersBatchBackfill:
             opts['debug'] = True
 
         scraper = GetEspnTeamRosterAPI()
+
+        # Track latency
+        start_time = time.time()
         success = scraper.run(opts)
+        latency = time.time() - start_time
 
+        # Extract HTTP status code if available (for debugging failures)
+        status_code = None
+        if hasattr(scraper, 'raw_response') and scraper.raw_response is not None:
+            status_code = getattr(scraper.raw_response, 'status_code', None)
+
+        # Log detailed info for debugging
         if success and scraper.data:
-            return True, scraper.data.get('playerCount', 0)
+            player_count = scraper.data.get('playerCount', 0)
+            logger.debug(f"  {team_abbr}: status={status_code}, players={player_count}, latency={latency:.1f}s")
+            return True, player_count
+        else:
+            # Log failure details for root cause analysis
+            logger.warning(f"  {team_abbr} FAILED: status={status_code}, latency={latency:.1f}s")
 
-        return False, 0
+            # Detect rate limiting (429) and adapt delay
+            if status_code == 429:
+                old_delay = self.delay_seconds
+                self.delay_seconds = min(self.delay_seconds * 2, 10.0)  # Double delay, cap at 10s
+                logger.warning(f"  Rate limited (429)! Increasing delay: {old_delay}s -> {self.delay_seconds}s")
+
+            return False, 0
 
     def _send_incomplete_alert(self):
         """Send alert when scrape is incomplete (below threshold)."""
@@ -340,7 +367,7 @@ def main():
         '--min-teams',
         type=int,
         default=None,
-        help='Minimum teams required for success (default: 83%% of requested teams, i.e., 25 for all 30)'
+        help='Minimum teams required for success (default: 97%% of requested teams, i.e., 29 for all 30)'
     )
 
     parser.add_argument(
