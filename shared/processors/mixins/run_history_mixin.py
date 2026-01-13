@@ -557,7 +557,8 @@ class RunHistoryMixin:
                     started_at,
                     processed_at,
                     run_id,
-                    game_code
+                    game_code,
+                    records_processed
                 FROM `{project_id}.{self.RUN_HISTORY_TABLE}`
                 WHERE processor_name = @processor_name
                   AND data_date = @data_date
@@ -581,7 +582,8 @@ class RunHistoryMixin:
                     status,
                     started_at,
                     processed_at,
-                    run_id
+                    run_id,
+                    records_processed
                 FROM `{project_id}.{self.RUN_HISTORY_TABLE}`
                 WHERE processor_name = @processor_name
                   AND data_date = @data_date
@@ -624,9 +626,23 @@ class RunHistoryMixin:
 
             else:  # status is 'success' or 'partial'
                 identifier = f"{check_date}/{game_code}" if game_code else check_date
+
+                # Check if the previous run processed 0 records
+                # If so, allow retry (data may be available now)
+                records_processed = getattr(row, 'records_processed', None)
+
+                if records_processed == 0:
+                    logger.warning(
+                        f"Processor {processor_name} previously processed {identifier} "
+                        f"with status '{row.status}' but 0 records (run_id: {row.run_id}). "
+                        f"Allowing retry in case data is now available."
+                    )
+                    return False  # Allow retry when previous run had 0 records
+
                 logger.info(
                     f"Processor {processor_name} already processed {identifier} "
-                    f"with status '{row.status}' (run_id: {row.run_id}). Skipping duplicate."
+                    f"with status '{row.status}' and {records_processed} records "
+                    f"(run_id: {row.run_id}). Skipping duplicate."
                 )
                 return True  # Already completed successfully
 
