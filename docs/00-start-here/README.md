@@ -5,15 +5,37 @@
 
 ---
 
+## AI Session Quick Start
+
+**Starting a new Claude Code session? Start here:**
+
+| Task | Guide |
+|------|-------|
+| **Daily orchestration check** | [DAILY-SESSION-START.md](DAILY-SESSION-START.md) |
+| **Verify overnight/backfill data** | [BACKFILL-VERIFICATION-GUIDE.md](BACKFILL-VERIFICATION-GUIDE.md) |
+| **Session prompt template** | [SESSION-PROMPT-TEMPLATE.md](SESSION-PROMPT-TEMPLATE.md) |
+| **Latest session handoff** | [../09-handoff/](../09-handoff/) (most recent by date) |
+
+**When you find issues or improvements:**
+
+| What Happened | Document It Here |
+|---------------|------------------|
+| Found a bug/failure | [../08-projects/current/daily-orchestration-tracking/ISSUES-LOG.md](../08-projects/current/daily-orchestration-tracking/ISSUES-LOG.md) |
+| Discovered useful query/check | [../08-projects/current/daily-orchestration-tracking/VALIDATION-IMPROVEMENTS.md](../08-projects/current/daily-orchestration-tracking/VALIDATION-IMPROVEMENTS.md) |
+| See recurring pattern | [../08-projects/current/daily-orchestration-tracking/PATTERNS.md](../08-projects/current/daily-orchestration-tracking/PATTERNS.md) |
+| Backfill-specific issue | [../08-projects/current/historical-backfill-audit/ISSUES-FOUND.md](../08-projects/current/historical-backfill-audit/ISSUES-FOUND.md) |
+
+---
+
 ## Quick Start
 
 | I need to... | Go here |
 |--------------|---------|
 | **Check system status** | [SYSTEM_STATUS.md](SYSTEM_STATUS.md) |
 | **Understand the system** | [../01-architecture/quick-reference.md](../01-architecture/quick-reference.md) |
-| **Run daily health check** | [../02-operations/](../02-operations/README.md) |
+| **Run daily health check** | [DAILY-SESSION-START.md](DAILY-SESSION-START.md) |
 | **Fix a production issue** | [../02-operations/troubleshooting-matrix.md](../02-operations/troubleshooting-matrix.md) |
-| **Run a backfill** | [../02-operations/backfill/master-guide.md](../02-operations/backfill/master-guide.md) |
+| **Run a backfill** | [BACKFILL-VERIFICATION-GUIDE.md](BACKFILL-VERIFICATION-GUIDE.md) |
 | **Monitor system health** | [../07-monitoring/unified-monitoring-guide.md](../07-monitoring/unified-monitoring-guide.md) |
 | **Train ML model** | [../05-development/ml/training-procedures.md](../05-development/ml/training-procedures.md) |
 | **Documentation guide** | [DOCUMENTATION-GUIDE.md](DOCUMENTATION-GUIDE.md) |
