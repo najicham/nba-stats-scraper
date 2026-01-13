@@ -2,8 +2,8 @@
 
 **Date:** January 12, 2026 (Evening)
 **Previous Session:** Session 24 (v3.4 Deployment)
-**Status:** Investigation Complete, Verification Pending
-**Focus:** Jan 12 Verification + Player Normalization Investigation
+**Status:** BDL West Coast Gap RESOLVED, Verification Pending
+**Focus:** BDL West Coast Game Gap Fix + Jan 12 Verification
 
 ---
 
@@ -38,11 +38,73 @@ GROUP BY 1 ORDER BY 1"
 
 ---
 
+## BDL West Coast Game Gap - RESOLVED
+
+**Issue:** West coast NBA games (10 PM ET tip-off) were missing from BDL box scores data.
+
+**Root Causes:**
+1. Daily boxscores scraper ran at 10:05 PM ET, before west coast games finished
+2. Live scraper used current ET date for GCS folder path instead of game date from API
+
+### All Three Options Implemented
+
+| Option | Description | Status |
+|--------|-------------|--------|
+| **A** | Late-night scheduler job at 2:05 AM ET | DEPLOYED |
+| **B** | Live scraper uses game date from API | DEPLOYED (revision 00097) |
+| **C** | Recovery module for orphaned files | CREATED |
+
+### Option A: Late Boxscores Scheduler
+
+```bash
+# Created and active
+gcloud scheduler jobs list --location=us-west2 | grep nba-bdl-boxscores-late
+# nba-bdl-boxscores-late    5 7 * * *    UTC    ENABLED
+```
+
+### Option B: Live Scraper Date Fix
+
+Added `extract_opts_from_data()` in `scrapers/balldontlie/bdl_live_box_scores.py`:
+- Extracts game date from API response: `data[i]["game"]["date"]`
+- Sets correct date before GCS export
+- Deployed via `./bin/scrapers/deploy/deploy_scrapers_simple.sh`
+- Revision: `nba-phase1-scrapers-00097-5fm`
+
+### Option C: Recovery Module
+
+New file: `data_processors/raw/balldontlie/bdl_late_game_recovery.py`
+```bash
+# Find orphaned files for a date
+python -m data_processors.raw.balldontlie.bdl_late_game_recovery --date 2026-01-12 --dry-run
+```
+
+### Verification (After Tonight's Games)
+
+```bash
+# Check live scraper used correct date folder (run after 1 AM ET)
+gsutil ls "gs://nba-scraped-data/ball-dont-lie/live-boxscores/$(date +%Y-%m-%d)/" | tail -5
+
+# BigQuery data completeness
+bq query --use_legacy_sql=false "
+SELECT game_date, COUNT(DISTINCT game_id) as games
+FROM \`nba_raw.bdl_live_boxscores\`
+WHERE game_date >= '2026-01-12'
+GROUP BY 1 ORDER BY 1"
+```
+
+**Commit:** `0e0a92f` - fix(bdl): West coast game gap - all three options implemented
+
+---
+
 ## Session 25 Summary
 
 ### Completed
 
-1. **Jan 12 Verification - Status Check**
+1. **BDL West Coast Game Gap - FULLY RESOLVED**
+   - All three fix options implemented and deployed
+   - See detailed section above
+
+2. **Jan 12 Verification - Status Check**
    - Current time was 7 PM ET - games were just starting
    - 6 games scheduled for Jan 12 (UTA@CLE, PHI@TOR, BOS@IND, BKN@DAL, LAL@SAC, CHA@LAC)
    - **Jan 10-11 data confirmed healthy** (6 and 10 games respectively)
@@ -132,7 +194,7 @@ The SQL backfill (`bin/patches/patch_player_lookup_normalization.sql`) would fix
 | Daily Health Summary v1.1 | ✅ Deployed | Session 24 |
 | Player Normalization | ✅ Fixed | Code deployed, working for new data |
 | Gamebook/TDGS | ✅ Healthy | Jan 10-11 complete |
-| BDL Box Scores | ⚠️ Known gap | West coast timing (another chat working on it) |
+| BDL Box Scores | ✅ Fixed | West coast gap resolved (all 3 options deployed) |
 | BettingPros API | ❌ Down | API returning no data for Jan 12 (P3) |
 
 ---
@@ -144,7 +206,7 @@ The SQL backfill (`bin/patches/patch_player_lookup_normalization.sql`) would fix
 - [ ] Check workflow executions completed
 
 ### P1 - This Week
-- [ ] **BDL West Coast Gap** - Add late scraper at 2 AM ET (another chat may be handling)
+- [x] **BDL West Coast Gap** - ✅ RESOLVED (all 3 options deployed)
 - [ ] **ESPN Roster Scraper** - Recurring reliability issues (only scrapes 2-3 teams sometimes)
 
 ### P2 - Optional
@@ -225,5 +287,19 @@ Key prevention measures:
 ---
 
 *Created: January 12, 2026 ~7:30 PM ET*
-*Session Duration: ~1.5 hours*
+*Updated: January 12, 2026 ~4:00 PM PT (BDL fix deployed)*
+*Session Duration: ~2.5 hours total*
 *Next Priority: Verify Jan 12 overnight processing (morning of Jan 13)*
+
+---
+
+## Files Changed This Session
+
+| File | Change |
+|------|--------|
+| `scrapers/balldontlie/bdl_live_box_scores.py` | Added `extract_opts_from_data()` for date fix |
+| `data_processors/raw/balldontlie/bdl_late_game_recovery.py` | NEW: Recovery utility |
+| `docs/09-handoff/2026-01-12-ISSUE-BDL-WEST-COAST-GAP.md` | Updated status to RESOLVED |
+
+**Commits:**
+- `0e0a92f` - fix(bdl): West coast game gap - all three options implemented
