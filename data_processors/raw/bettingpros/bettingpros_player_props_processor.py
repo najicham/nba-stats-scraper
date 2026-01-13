@@ -424,8 +424,9 @@ class BettingPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
         streaming buffer issues that would block future operations.
         """
         if not rows:
+            self.stats['rows_inserted'] = 0
             return {'rows_processed': 0, 'errors': []}
-        
+
         table_id = f"{self.project_id}.{self.table_name}"
         errors = []
         

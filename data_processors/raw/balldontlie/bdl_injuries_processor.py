@@ -457,7 +457,9 @@ class BdlInjuriesProcessor(SmartIdempotencyMixin, ProcessorBase):
                 )
             except Exception as e:
                 logger.warning(f"Failed to send notification: {e}")
-            
+
+
+            self.stats["rows_inserted"] = 0
             return {'rows_processed': 0, 'errors': []}
         
         table_id = f"{os.environ['GCP_PROJECT_ID']}.{self.table_name}"
@@ -480,6 +482,8 @@ class BdlInjuriesProcessor(SmartIdempotencyMixin, ProcessorBase):
 
             load_job = self.bq_client.load_table_from_json(rows, table_id, job_config=job_config)
             load_job.result(timeout=60)
+
+            self.stats["rows_inserted"] = len(rows) if not load_job.errors else 0
 
             if load_job.errors:
                 errors.extend([str(e) for e in load_job.errors])
@@ -537,6 +541,8 @@ class BdlInjuriesProcessor(SmartIdempotencyMixin, ProcessorBase):
             error_msg = f"Failed to insert data: {str(e)}"
             errors.append(error_msg)
             logger.error(error_msg)
+
+            self.stats["rows_inserted"] = 0
             
             # Notify about general processing error
             try:

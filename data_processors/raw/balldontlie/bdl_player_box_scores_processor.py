@@ -335,6 +335,7 @@ class BdlPlayerBoxScoresProcessor(SmartIdempotencyMixin, ProcessorBase):
 
         if not rows:
             logger.info("No rows to save")
+            self.stats["rows_inserted"] = 0
             return {'rows_processed': 0, 'errors': []}
 
         table_id = f"{self.project_id}.{self.table_name}"
@@ -411,6 +412,8 @@ class BdlPlayerBoxScoresProcessor(SmartIdempotencyMixin, ProcessorBase):
             error_msg = str(e)
             errors.append(error_msg)
             logger.error(f"Error loading data: {error_msg}")
+
+            self.stats["rows_inserted"] = 0
 
             try:
                 notify_error(

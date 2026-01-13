@@ -459,6 +459,7 @@ class NbacPlayerBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
         """
         if not rows:
             logging.warning("No rows to load")
+            self.stats['rows_inserted'] = 0
             return {'rows_processed': 0, 'errors': []}
 
         table_id = f"{self.project_id}.{self.dataset_id}.{self.table_name}"
@@ -511,10 +512,16 @@ class NbacPlayerBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
 
             logging.info(f"Successfully loaded {len(rows)} rows for {len(game_ids)} games")
 
+            # Update stats for processor_base tracking
+            self.stats['rows_inserted'] = len(rows)
+
         except Exception as e:
             error_msg = str(e)
             errors.append(error_msg)
             logging.error(f"Error loading data to BigQuery: {error_msg}")
+
+            # Update stats for failure tracking
+            self.stats['rows_inserted'] = 0
 
         return {
             'rows_processed': len(rows) if not errors else 0,
@@ -525,9 +532,9 @@ class NbacPlayerBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
     def save_data(self) -> None:
         """Override save to use custom load method."""
         result = self.load_data_to_bq(self.transformed_data)
-        self.stats['rows_inserted'] = result.get('rows_processed', 0)
+        # Note: load_data_to_bq already sets self.stats['rows_inserted']
         self.stats['games_processed'] = result.get('games_processed', 0)
-        
+
         if result.get('errors'):
             raise Exception(f"BigQuery load errors: {result['errors']}")
     
