@@ -1,342 +1,205 @@
 # Session 20 Handoff - January 12, 2026
 
-**Session Focus:** Pipeline Reliability - Stale Running Fix & BigQuery Save Error Investigation
-**Duration:** ~2 hours
-**Status:** Partially Complete - Deployment in progress
+**Date:** January 12, 2026 (12:15 PM ET)
+**Previous Session:** Session 18C (Prediction Infrastructure Fixes)
+**Status:** AUDIT COMPLETE - Action Items Identified
+**Focus:** Historical Backfill Audit for 4 Seasons + Current Season
 
 ---
 
-## Executive Summary
+## Quick Start for Next Session
 
-This session diagnosed and fixed a critical pipeline blocker where **stale "running" records** in `processor_run_history` were blocking all Phase 4 processors. A secondary **BigQuery save error** was discovered and is under investigation.
+```bash
+# 1. Check the project documentation first
+cat docs/08-projects/current/historical-backfill-audit/README.md
+cat docs/08-projects/current/historical-backfill-audit/STATUS.md
+
+# 2. Most urgent: Backfill missing BDL box scores
+# Jan 10 has 0/6 box scores, Jan 11 has 9/10
+bq query --use_legacy_sql=false "
+SELECT game_date, COUNT(DISTINCT game_id) as games
+FROM \`nba_raw.bdl_player_boxscores\`
+WHERE game_date >= '2026-01-09'
+GROUP BY game_date ORDER BY game_date"
+
+# 3. Run the BDL scraper backfill for missing dates
+ls backfill_jobs/scrapers/bdl*/
+
+# 4. After box scores backfilled, re-run Phase 3 team_defense_game_summary
+# Then re-run PSZA for Jan 8, 9, 11
+```
+
+---
+
+## Session 20 Summary
+
+This session conducted a **comprehensive data audit** across all 5 NBA seasons (2021-22 through 2025-26) to identify and document all data gaps, validation issues, and pipeline problems.
 
 ### Key Accomplishments
-1. **Root Cause Identified**: Stale running records (processors crashed without updating status)
-2. **Layer 1 Fix Deployed**: Modified `check_upstream_processor_status()` to handle stale running
-3. **Error Logging Added**: Enhanced BigQuery load job error visibility
-4. **Deployment In Progress**: Revision 00037 deploying with error logging fix
+
+1. **Created project directory** for tracking backfill audit
+   - Location: `docs/08-projects/current/historical-backfill-audit/`
+   - Contains: README, STATUS, ISSUES-FOUND, REMEDIATION-PLAN, VALIDATION-QUERIES
+
+2. **Ran validation scripts** and BQ queries across all phases
+
+3. **Identified critical issues:**
+   - Jan 10: ALL 6 BDL box scores missing
+   - Jan 11: 1 BDL box score missing  
+   - 214 player-date combinations need PSZA reprocessing
+   - BDL validator has column name bug
+
+4. **Documented deferred features** (not bugs):
+   - `opponent_strength_score` = 0 is BY DESIGN
+   - `pace_score` = 0 is BY DESIGN
+   - `usage_spike_score` = 0 is BY DESIGN
+
+5. **Confirmed registry backlog cleared** (was 2,099, now 0 pending)
 
 ---
 
-## Problem Statement
+## Critical Findings
 
-### Original Symptom
-`player_daily_cache` table had no data for January 11-12, 2026. Health check showed:
-```
-[FAIL] player_daily_cache: 0 records (today)
-```
+### P0 - Fix Immediately
 
-### Root Cause #1: Stale Running Records (FIXED)
-Processors were writing `status='running'` at start but crashing before writing `status='success'` or `status='failed'`. The defensive checks in Phase 4 processors required upstream `status='success'`, causing a cascade of failures.
+#### 1. Missing BDL Box Scores (Jan 10-11)
 
-**Evidence:**
 ```
-⚠️  STALE RUNNING DETECTED: PlayerGameSummaryProcessor on 2026-01-11
-has been 'running' for 6.4 hours (threshold: 4h). Run ID: PlayerGameSummaryProcessor_20260112_113008_d1cb5a05
+Jan 10: 0/6 box scores (ALL MISSING)
+Jan 11: 9/10 box scores (1 missing)
 ```
 
-### Root Cause #2: BigQuery Save Error (INVESTIGATING)
-After fixing stale running, the processor still fails during BigQuery save:
-```
-google.api_core.exceptions.BadRequest: 400 Error while reading data,
-error message: JSON table encountered too many errors, giving up. Rows: 1; errors: 1.
-```
+**Impact:** Cascades to team_defense_game_summary → PSZA → PCF → predictions
 
-Only 1 row out of 199 is causing the failure - likely a field type mismatch.
-
----
-
-## Fixes Implemented
-
-### Fix 1: Stale Running Handling (Layer 1)
-
-**File:** `shared/utils/completeness_checker.py`
-
-**Change:** Modified `check_upstream_processor_status()` to detect and handle stale running records.
-
-**Key Logic:**
-```python
-if row.status == 'running':
-    age_hours = (now - started_at).total_seconds() / 3600
-    if age_hours > stale_threshold_hours:  # Default: 4 hours
-        logger.warning(f"⚠️  STALE RUNNING DETECTED: {processor_name}...")
-        return {
-            'status': 'stale_running',
-            'safe_to_process': True,  # Allow downstream to proceed
-            'stale_age_hours': age_hours
-        }
-```
-
-**Deployment:** Revision `nba-phase4-precompute-processors-00036-ldn` (deployed and verified)
-
-**Verification:**
+**Fix:**
 ```bash
-PYTHONPATH=. python -c "
-from datetime import date
-from google.cloud import bigquery
-from shared.utils.completeness_checker import CompletenessChecker
-checker = CompletenessChecker(bigquery.Client(), 'nba-props-platform')
-result = checker.check_upstream_processor_status('PlayerGameSummaryProcessor', date(2026, 1, 11))
-print(f'Status: {result[\"status\"]}, safe_to_process: {result[\"safe_to_process\"]}')"
+# Find and run BDL scraper backfill
+ls backfill_jobs/scrapers/bdl*/
+PYTHONPATH=. .venv/bin/python backfill_jobs/scrapers/bdl_boxscores/bdl_boxscores_scraper_backfill.py \
+  --start-date 2026-01-10 --end-date 2026-01-11
 ```
 
-Expected output: `Status: stale_running, safe_to_process: True`
+#### 2. PSZA Upstream Issues (214 Players)
 
-### Fix 2: Enhanced Error Logging
+| Date | Players Affected | Error |
+|------|------------------|-------|
+| Jan 8 | 73 | INCOMPLETE_UPSTREAM |
+| Jan 9 | 69 | INCOMPLETE_UPSTREAM |
+| Jan 11 | 72 | INCOMPLETE_UPSTREAM |
 
-**File:** `data_processors/precompute/precompute_base.py`
-
-**Change:** Added BigQuery load job error details to exception handler (lines 1459-1471).
-
-**Purpose:** Capture actual field causing the "JSON table encountered too many errors" issue.
-
-**Deployment:** In progress (revision 00037)
-
----
-
-## Current State
-
-### Deployments
-| Component | Revision | Status |
-|-----------|----------|--------|
-| nba-phase4-precompute-processors | 00037-xj2 | Running (stale fix + error logging) |
-
-### Data State
-| Table | Date | Records | Status |
-|-------|------|---------|--------|
-| player_daily_cache | 2026-01-12 | 0 | Missing |
-| player_daily_cache | 2026-01-11 | 0 | Missing |
-| player_daily_cache | 2026-01-10 | 103 | OK |
-| player_game_summary | 2026-01-11 | 324 | OK |
-| player_game_summary | 2026-01-10 | 136 | OK |
-
-### Firestore State
-Phase 4 completion for 2026-01-12 shows all 5 processors "completed" but this is misleading - they ran but failed during save:
-```
-phase4_completion/2026-01-12:
-  team_defense_zone_analysis: completed
-  player_shot_zone_analysis: completed
-  player_composite_factors: completed
-  player_daily_cache: completed  # Actually failed during save
-  ml_feature_store: completed
-  _triggered: True
-```
-
----
-
-## Immediate Next Steps
-
-### Step 1: Wait for Deployment
+**Fix:** After BDL backfill, re-run PSZA:
 ```bash
-# Check deployment status
-gcloud run services describe nba-phase4-precompute-processors --region us-west2 \
-  --format="value(status.latestReadyRevisionName)"
-# Should show 00037-xxx when complete
+PYTHONPATH=. .venv/bin/python backfill_jobs/precompute/player_shot_zone_analysis/player_shot_zone_analysis_precompute_backfill.py \
+  --start-date 2026-01-08 --end-date 2026-01-11
 ```
 
-### Step 2: Test player_daily_cache with New Logging
+### P1 - Fix This Week
+
+#### 3. BDL Validator Column Name Bug
+
+**File:** `validation/validators/raw/bdl_boxscores_validator.py`
+**Issue:** Uses `team_abbreviation` but actual column is `team_abbr`
+**Lines:** 219, 224, 245, 252, 260, 310, 320, 330
+
+**Fix:**
 ```bash
-SERVICE_URL="https://nba-phase4-precompute-processors-f7p3g7f6ya-wl.a.run.app"
-TOKEN=$(gcloud auth print-identity-token)
-
-curl -X POST "$SERVICE_URL/process-date" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"processors": ["PlayerDailyCacheProcessor"], "analysis_date": "2026-01-11"}'
-```
-
-### Step 3: Analyze Error from Logs
-```bash
-gcloud logging read 'resource.type="cloud_run_revision" AND
-  resource.labels.service_name="nba-phase4-precompute-processors" AND
-  textPayload=~"BigQuery load job errors"' \
-  --limit 10 --format=json | jq -r '.[].textPayload'
-```
-
-### Step 4: Fix the Specific Field
-Once the actual error is identified, fix the field type/format in:
-- `data_processors/precompute/player_daily_cache/player_daily_cache_processor.py`
-
-### Step 5: Backfill Data
-After fixing, run for both dates:
-```bash
-# Jan 11
-curl -X POST "$SERVICE_URL/process-date" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"processors": ["PlayerDailyCacheProcessor"], "analysis_date": "2026-01-11"}'
-
-# Jan 12
-curl -X POST "$SERVICE_URL/process-date" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"processors": ["PlayerDailyCacheProcessor"], "analysis_date": "2026-01-12"}'
+sed -i 's/team_abbreviation/team_abbr/g' validation/validators/raw/bdl_boxscores_validator.py
 ```
 
 ---
 
-## Other Issues Discovered
+## Data Coverage Summary
 
-### 1. No Odds Data for Today
-```sql
--- Returns 0 for Jan 12
-SELECT COUNT(*) FROM nba_raw.odds_api_player_points_props
-WHERE DATE(game_date) = '2026-01-12'
-```
-- Impact: Predictions use ESTIMATED lines, sportsbook column is NULL
-- Action: Investigate odds scraper - no scheduler job found for odds
+### By Season
 
-### 2. Slack Webhook Invalid (404)
-- All alerting functions deployed but webhook returns 404
-- Affected: `daily-health-summary`, `phase4-timeout-check`, `phase4-to-phase5-orchestrator`
-- Fix: Create new webhook at https://api.slack.com/apps
+| Season | Phase 3 | Phase 4 | Phase 5 | Notes |
+|--------|---------|---------|---------|-------|
+| 2021-22 | 100% | 95%* | 29% | Missing historical odds data (unrecoverable) |
+| 2022-23 | 100% | 100% | 94% | OK |
+| 2023-24 | 100% | 100% | 91% | OK |
+| 2024-25 | 100% | 100% | 92% | OK |
+| 2025-26 | 99% | 100% | 100% | Current season |
 
-### 3. Live Export Stale (373 hours)
-- `today.json` shows Dec 28 data
-- Root cause: "No best bets found for 2026-01-12"
-- Downstream of player_daily_cache issue
+*October bootstrap gaps expected by design
 
-### 4. Batch Reprocess Type Mismatch
-```
-Query column 9 has type INT64 which cannot be inserted into column
-circuit_breaker_until, which has type TIMESTAMP
-```
-- Has working fallback to individual inserts
-- Low priority
+### Odds API Props
 
----
+- 2021-22: 0% (unrecoverable)
+- 2022-23 Oct-Apr: 0% (unrecoverable)
+- 2023-24 to Present: 100%
 
-## Key Files Modified
+### Recent Coverage (Jan 2026)
 
-| File | Changes |
-|------|---------|
-| `shared/utils/completeness_checker.py` | Added stale running handling to `check_upstream_processor_status()` |
-| `data_processors/precompute/precompute_base.py` | Added BigQuery load job error logging |
+| Processor | OK | Investigate |
+|-----------|---:|------------:|
+| PDC | 10 | 0 |
+| PSZA | 8 | 3 |
+| PCF | 10 | 1 |
+| MLFS | 11 | 0 |
+| TDZA | 11 | 0 |
 
 ---
 
-## Architecture Context
+## Deferred Features (NOT Bugs)
 
-### Pipeline Flow
-```
-Phase 3 (Analytics)
-    ↓ writes to processor_run_history (status='success')
-Phase 4 (Precompute)
-    ↓ checks processor_run_history for upstream status
-    ↓ if status='running' for >4h → treat as stale, allow processing
-    ↓ writes to nba_precompute.player_daily_cache
-Phase 5 (Predictions)
-    ↓ loads cache for fast predictions
-```
+These fields are **intentionally always 0**:
+- `opponent_strength_score`
+- `pace_score`
+- `usage_spike_score`
+- `referee_adj`, `look_ahead_adj`, `travel_adj`
 
-### Defensive Checks in precompute_base.py
-1. **DEFENSE 1**: Check upstream processor status (now handles stale running)
-2. **DEFENSE 2**: Check for data gaps in lookback window
-
-### Stale Running Pattern
-```
-Processor starts → writes status='running'
-Processor crashes → no status update
-Next run → sees 'running', blocks
-After 4h → Layer 1 fix treats as 'stale_running', allows processing
-```
+**Active fields (working):**
+- `fatigue_score` - 100% populated
+- `shot_zone_mismatch_score` - 79% populated
 
 ---
 
-## Useful Commands
+## Project Documentation
 
-### Check Pipeline Health
-```bash
-PYTHONPATH=. python tools/monitoring/check_pipeline_health.py
-```
+**All details in:** `docs/08-projects/current/historical-backfill-audit/`
 
-### Check Stale Running Records
-```bash
-PYTHONPATH=. python -c "
-from google.cloud import bigquery
-client = bigquery.Client()
-query = '''
-SELECT processor_name, data_date, COUNT(*) as stuck_count
-FROM nba_reference.processor_run_history
-WHERE status = 'running'
-  AND started_at < TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 4 HOUR)
-GROUP BY 1, 2
-ORDER BY 2 DESC
-LIMIT 20
-'''
-for row in client.query(query).result():
-    print(f'{row.data_date}: {row.processor_name} ({row.stuck_count} stuck)')
-"
-```
-
-### Check player_daily_cache Data
-```bash
-PYTHONPATH=. python -c "
-from google.cloud import bigquery
-client = bigquery.Client()
-query = '''
-SELECT DATE(cache_date) as date, COUNT(*) as count
-FROM nba_precompute.player_daily_cache
-WHERE cache_date >= '2026-01-08'
-GROUP BY 1 ORDER BY 1 DESC
-'''
-for row in client.query(query).result():
-    print(f'{row.date}: {row.count} records')
-"
-```
-
-### Check Recent Processor Logs
-```bash
-gcloud run services logs read nba-phase4-precompute-processors \
-  --region us-west2 --limit 50 2>/dev/null | grep -i "error\|fail\|stale"
-```
+| File | Contents |
+|------|----------|
+| README.md | Project overview |
+| STATUS.md | Current validation status |
+| ISSUES-FOUND.md | All 47+ issues identified |
+| REMEDIATION-PLAN.md | Step-by-step fix procedures |
+| VALIDATION-QUERIES.md | SQL queries for validation |
+| logs/ | Validation run outputs |
 
 ---
 
-## Long-Term Recommendations
+## Action Items for Next Session
 
-### Layer 2: Stale Cleanup Job (Not Yet Implemented)
-Create scheduled function to mark stale running records as failed:
-```sql
-UPDATE nba_reference.processor_run_history
-SET status = 'failed', errors = 'stale_running_cleanup'
-WHERE status = 'running'
-  AND started_at < TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 4 HOUR)
-```
+### Immediate (P0)
+- [ ] Backfill BDL box scores for Jan 10 (6 games)
+- [ ] Backfill BDL box scores for Jan 11 (1 game)
+- [ ] Re-run team_defense_game_summary for Jan 10-11
+- [ ] Re-run PSZA for Jan 8, 9, 11 (214 players)
 
-### Potential BigQuery Save Error Causes
-1. **Date serialization**: Check if any `date` objects not converted to strings
-2. **NUMERIC precision**: BigQuery NUMERIC fields have strict precision
-3. **Empty arrays**: `data_quality_issues: []` for REPEATED STRING
-4. **Enum values**: `quality_tier` might return unexpected type
+### This Week (P1)
+- [ ] Fix BDL validator column name bug
+- [ ] Verify predictions regenerated after fixes
+- [ ] Run full validation to confirm resolution
 
----
-
-## Session Timeline
-
-| Time (UTC) | Event |
-|------------|-------|
-| 16:38 | Started daily orchestration check |
-| 16:45 | Identified stale running as root cause |
-| 17:15 | Implemented Layer 1 fix |
-| 17:36 | Deployed revision 00036 (stale fix) |
-| 17:53 | Tested - stale fix working, BigQuery save error discovered |
-| 18:04 | Added error logging enhancement |
-| 18:10 | Started deployment of revision 00037 |
-| 18:15 | Wrote handoff document |
+### Optional (P2)
+- [ ] Create nbac_schedule_validator.py
+- [ ] Configure Slack webhook (currently 404)
 
 ---
 
-## Files Referenced
+## System Status
 
-- `docs/09-handoff/2026-01-12-DAILY-ORCHESTRATION-CHECK.md` - Original check guide
-- `docs/09-handoff/2026-01-12-SESSION-19-HANDOFF.md` - Previous session context
-- `shared/utils/completeness_checker.py` - Stale running fix location
-- `data_processors/precompute/precompute_base.py` - Error logging location
-- `data_processors/precompute/player_daily_cache/player_daily_cache_processor.py` - Processor code
-- `schemas/bigquery/precompute/player_daily_cache.sql` - Table schema
+| Component | Status |
+|-----------|--------|
+| Phase 3 | team_defense_game_summary missing Jan 4,8-12 |
+| Phase 4 | PSZA has 214 upstream errors |
+| Phase 5 | Current but using incomplete features |
+| Registry | Backlog cleared (0 pending) |
+| Alerting | Slack webhook returns 404 |
 
 ---
 
-*Handoff written: 2026-01-12 18:15 UTC*
-*Next session should: Complete BigQuery error investigation and backfill missing data*
+*Created: January 12, 2026 12:15 PM ET*
+*Session Duration: ~2 hours*
+*Next Priority: Backfill BDL box scores for Jan 10-11*
