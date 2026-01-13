@@ -1704,7 +1704,7 @@ class ScraperBase:
         If BINARY, do nothing special.
 
         Handles encoding issues by falling back to latin-1 if UTF-8 fails.
-        Also handles gzip-compressed responses that weren't auto-decompressed.
+        Also handles gzip and brotli compressed responses that weren't auto-decompressed.
         """
         logger.debug("Decoding raw response as '%s'", self.download_type)
         if self.download_type == DownloadType.JSON:
@@ -1719,6 +1719,25 @@ class ScraperBase:
                     logger.info("Manually decompressed gzip response")
                 except Exception as e:
                     logger.warning("Failed to decompress gzip response: %s", e)
+
+            # Check if response is brotli-compressed but wasn't auto-decompressed
+            # (can happen when server ignores Accept-Encoding or CDN sends cached brotli)
+            # Brotli doesn't have a magic number, but we can detect it by:
+            # 1. Content starts with non-UTF8 bytes and
+            # 2. Doesn't start with { or [ (valid JSON start)
+            # 3. Is not gzip (already handled above)
+            elif content and content[0:1] not in (b'{', b'[', b'"', b' ', b'\n', b'\t'):
+                try:
+                    import brotli
+                    decompressed = brotli.decompress(content)
+                    content = decompressed
+                    logger.info("Manually decompressed brotli response (%d -> %d bytes)",
+                               len(self.raw_response.content), len(content))
+                except ImportError:
+                    logger.warning("Brotli package not installed - cannot decompress brotli response")
+                except Exception as e:
+                    # Not brotli or decompression failed - continue with original content
+                    logger.debug("Brotli decompression not applicable: %s", e)
 
             try:
                 self.decoded_data = json.loads(content)
