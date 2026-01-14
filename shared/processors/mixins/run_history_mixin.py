@@ -235,7 +235,8 @@ class RunHistoryMixin:
         records_skipped: int = 0,
         error: Optional[Exception] = None,
         summary: Optional[Dict] = None,
-        warnings: Optional[List[str]] = None
+        warnings: Optional[List[str]] = None,
+        failure_category: Optional[str] = None
     ) -> None:
         """
         Record completed processor run to BigQuery.
@@ -253,6 +254,13 @@ class RunHistoryMixin:
             error: Exception if failed
             summary: Additional summary data
             warnings: List of warning messages
+            failure_category: Category of failure for filtering alerts (NEW!)
+                - 'no_data_available': Expected, no data to process (don't alert)
+                - 'upstream_failure': Dependency failed
+                - 'processing_error': Real processing error (ALERT!)
+                - 'timeout': Operation timed out
+                - 'configuration_error': Missing required options
+                - 'unknown': Default for backward compatibility
         """
         if not self._run_start_time:
             logger.warning("No run start time - call start_run_tracking() first")
@@ -362,6 +370,10 @@ class RunHistoryMixin:
             'retry_attempt': self._retry_attempt,
             'skipped': self._skipped,
             'skip_reason': self._skip_reason,
+
+            # NEW: Failure categorization (2026-01-14, Session 35)
+            # Used to filter expected failures from monitoring alerts
+            'failure_category': failure_category,
         }
 
         # Remove None values and new fields if schema doesn't have them yet
@@ -496,12 +508,31 @@ class RunHistoryMixin:
             summary=summary
         )
 
-    def record_failure(self, error: Exception, summary: Optional[Dict] = None) -> None:
-        """Convenience method to record failed run."""
+    def record_failure(
+        self,
+        error: Exception,
+        summary: Optional[Dict] = None,
+        failure_category: Optional[str] = None
+    ) -> None:
+        """
+        Convenience method to record failed run.
+
+        Args:
+            error: The exception that caused the failure
+            summary: Optional summary data
+            failure_category: Category of failure for filtering alerts
+                - 'no_data_available': Expected, no data to process
+                - 'upstream_failure': Dependency failed
+                - 'processing_error': Real processing error
+                - 'timeout': Operation timed out
+                - 'configuration_error': Missing required options
+                - 'unknown': Default for backward compatibility
+        """
         self.record_run_complete(
             status='failed',
             error=error,
-            summary=summary
+            summary=summary,
+            failure_category=failure_category
         )
 
     def record_skipped(self, reason: str) -> None:
