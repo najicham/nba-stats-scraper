@@ -255,9 +255,26 @@ class BestBetsExporter(BaseExporter):
                     ELSE 4
                 END as tier_order
             FROM predictions
+        ),
+        ranked AS (
+            -- Rank picks within each tier by composite score
+            -- This enables per-tier limits: 5 premium, 10 strong, 10 value
+            SELECT
+                *,
+                ROW_NUMBER() OVER (PARTITION BY tier ORDER BY composite_score DESC) as tier_rank
+            FROM scored
+        ),
+        filtered AS (
+            -- Apply per-tier limits based on TIER_CONFIG max_picks
+            SELECT *
+            FROM ranked
+            WHERE (tier = 'premium' AND tier_rank <= 5)
+               OR (tier = 'strong' AND tier_rank <= 10)
+               OR (tier = 'value' AND tier_rank <= 10)
+               OR (tier = 'standard' AND tier_rank <= 10)
         )
         SELECT *
-        FROM scored
+        FROM filtered
         ORDER BY tier_order ASC, composite_score DESC
         LIMIT @top_n
         """
