@@ -1,17 +1,33 @@
 # Best Bets Selection Strategy
 
 **Created:** 2026-01-14
-**Status:** Analysis Complete - Recommendations for Implementation
+**Updated:** 2026-01-14 (Major findings added)
+**Status:** Analysis Complete - Critical Findings Require Implementation
 
 ---
 
 ## Executive Summary
 
-Analysis of 2,000+ graded picks reveals that **confidence + edge combination** is the strongest predictor of success. The optimal "Best Bets" strategy should prioritize:
+Analysis of 10,000+ graded picks reveals **massive performance variations** that should fundamentally change our best bets strategy:
 
-1. **90%+ confidence** (72-76% base hit rate)
-2. **4+ point edge** (adds 10-20% to hit rate)
-3. **Exclude 88-90% confidence tier** (already implemented)
+### Critical Finding: UNDER Dramatically Outperforms OVER
+
+| Recommendation | 90%+ Confidence | Hit Rate |
+|----------------|-----------------|----------|
+| **UNDER** | 7,709 picks | **95.4%** |
+| OVER | 1,794 picks | **53.2%** |
+
+**This is the single biggest edge in our system.**
+
+### Optimal Strategy (Prioritized)
+
+1. **UNDER only** at high confidence (95%+ hit rate vs 53% for OVER)
+2. **5+ point edge** (92.9% hit rate vs 24% for <2 edge)
+3. **Bench/rotation players** (89% hit rate vs 43% for stars)
+4. **Mid-week games** (Thu-Fri 83-85% vs Mon 76%)
+5. **Exclude 88-90% confidence tier** (already implemented)
+
+**See Also:** [ANALYSIS-FRAMEWORK.md](../ml-model-v8-deployment/ANALYSIS-FRAMEWORK.md) for complete dimensional analysis.
 
 ---
 
@@ -40,10 +56,18 @@ Analysis of 2,000+ graded picks reveals that **confidence + edge combination** i
    - Even high edge (4+ pts) only hits 42.1%
    - Filter is correctly applied
 
-3. **OVER vs UNDER (90%+ tier)**
-   - OVER: 74.0% (749 picks)
-   - UNDER: 75.6% (512 picks)
-   - Slight UNDER advantage (not significant)
+3. **OVER vs UNDER (90%+ tier) - CRITICAL UPDATE**
+
+   **Previous analysis was WRONG.** Updated with full season data:
+
+   | Rec | Confidence | Picks | Wins | Hit Rate |
+   |-----|------------|-------|------|----------|
+   | **UNDER** | 92%+ | 5,358 | 5,089 | **95.0%** |
+   | **UNDER** | 90-92% | 2,351 | 2,250 | **95.7%** |
+   | OVER | 92%+ | 908 | 521 | 57.4% |
+   | OVER | 90-92% | 886 | 433 | 48.9% |
+
+   **Recommendation:** Best bets should be **UNDER only** at high confidence
 
 ---
 
@@ -261,8 +285,145 @@ For -110 juice, breakeven is 52.4%. Recommended bet sizing by tier:
 
 ---
 
+---
+
+## Additional Dimensional Analysis
+
+### Player Scoring Tier (NEW FINDING)
+
+| Player Tier | Predicted Pts | Hit Rate | MAE |
+|-------------|---------------|----------|-----|
+| **Bench** | <12 | **89.0%** | 3.13 |
+| **Rotation** | 12-17 | 73.1% | 5.31 |
+| Starter | 18-24 | 36.3% | 7.13 |
+| Star | 25+ | 43.6% | 16.55 |
+
+**Key Insight:** We are MUCH better at predicting bench/rotation players than stars!
+- Star players: 43.6% hit rate with MAE of 16.55 (terrible)
+- Bench players: 89% hit rate with MAE of 3.13 (excellent)
+
+**Recommendation:** Exclude star players (predicted 25+) from best bets entirely.
+
+---
+
+### Day of Week Patterns
+
+| Day | Hit Rate | Recommendation |
+|-----|----------|----------------|
+| Thursday | **85.2%** | Prioritize |
+| Friday | **83.3%** | Prioritize |
+| Wednesday | **83.2%** | Prioritize |
+| Saturday | 77.8% | Standard |
+| Sunday | 78.2% | Standard |
+| Tuesday | 76.8% | Caution |
+| Monday | 75.8% | Caution |
+
+**Recommendation:** Weight Thu-Fri picks higher; de-prioritize Monday/Tuesday.
+
+---
+
+### Multi-System Comparison
+
+| System | Picks | Hit Rate | MAE |
+|--------|-------|----------|-----|
+| **xgboost_v1** | 6,548 | **87.5%** | 4.71 |
+| catboost_v8 | 8,769 | 74.8% | 6.24 |
+| similarity_balanced_v1 | 5,717 | 68.4% | 5.03 |
+| ensemble_v1 | 8,756 | 63.4% | 4.60 |
+| moving_average_baseline_v1 | 8,216 | 59.6% | 4.37 |
+| zone_matchup_v1 | 8,756 | 59.3% | 5.34 |
+
+**Key Insight:** xgboost_v1 significantly outperforms catboost_v8!
+
+**Recommendations:**
+1. Investigate why xgboost_v1 (87.5%) beats catboost_v8 (74.8%)
+2. Consider system-specific selection for best bets
+3. May want to filter by system_id = 'xgboost_v1' for premium tier
+
+---
+
+### Multi-System Strategy Options
+
+**Option A: Best System Only**
+- Filter best bets to xgboost_v1 predictions only
+- Reduces volume, increases quality
+
+**Option B: System-Specific Thresholds**
+- xgboost_v1: 85%+ confidence threshold
+- catboost_v8: 90%+ confidence threshold
+- ensemble_v1: 92%+ confidence threshold
+
+**Option C: Time-Based System Selection**
+- Early slate (afternoon): similarity_balanced (recency weighted)
+- Prime time (evening): ensemble (full context)
+- Late slate (West Coast): xgboost (fatigue handling)
+
+---
+
+### Team-Specific Performance (Top Teams)
+
+| Team | Picks | Hit Rate |
+|------|-------|----------|
+| UTA | 229 | **90.0%** |
+| LAC | 327 | **89.3%** |
+| LAL | 295 | **88.1%** |
+| PHI | 274 | 86.5% |
+| MIL | 384 | 85.9% |
+| BOS | 237 | 85.2% |
+
+**Recommendation:** Consider team-based filters for premium tier.
+
+---
+
+## Revised Optimal Best Bets Criteria
+
+Based on ALL analysis above, the revised optimal pick profile is:
+
+### Tier 1: Premium (Target: 92%+ hit rate)
+
+```sql
+WHERE recommendation = 'UNDER'
+  AND confidence_score >= 0.90
+  AND ABS(predicted_points - line_value) >= 5.0
+  AND predicted_points < 18
+  -- Optional: AND system_id = 'xgboost_v1'
+  -- Optional: AND EXTRACT(DAYOFWEEK FROM game_date) IN (4, 5, 6)  -- Wed-Fri
+```
+
+### Tier 2: Strong (Target: 85%+ hit rate)
+
+```sql
+WHERE recommendation = 'UNDER'
+  AND confidence_score >= 0.90
+  AND ABS(predicted_points - line_value) >= 4.0
+  AND predicted_points < 20
+```
+
+### Tier 3: Value (Target: 75%+ hit rate)
+
+```sql
+WHERE recommendation = 'UNDER'
+  AND confidence_score >= 0.80
+  AND ABS(predicted_points - line_value) >= 5.0
+  AND predicted_points < 22
+```
+
+### AVOID (Never Include)
+
+```sql
+-- These criteria should EXCLUDE picks:
+WHERE recommendation = 'OVER'  -- 53% hit rate
+  OR ABS(predicted_points - line_value) < 2.0  -- 17-24% hit rate
+  OR predicted_points >= 25  -- Star players, 43% hit rate
+  OR (confidence_score >= 0.88 AND confidence_score < 0.90)  -- Broken tier
+```
+
+---
+
 ## Related Documents
 
+- [ANALYSIS-FRAMEWORK.md](../ml-model-v8-deployment/ANALYSIS-FRAMEWORK.md) - Complete dimensional analysis
 - [CONFIDENCE-TIER-FILTERING-IMPLEMENTATION.md](./CONFIDENCE-TIER-FILTERING-IMPLEMENTATION.md)
 - [FILTER-DECISIONS.md](./FILTER-DECISIONS.md)
 - [TRAINING-DATA-STRATEGY.md](../ml-model-v8-deployment/TRAINING-DATA-STRATEGY.md)
+- [CHAMPION-CHALLENGER-FRAMEWORK.md](../ml-model-v8-deployment/CHAMPION-CHALLENGER-FRAMEWORK.md)
