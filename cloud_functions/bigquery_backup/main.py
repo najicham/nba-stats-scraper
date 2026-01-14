@@ -1,15 +1,20 @@
 """
-Cloud Function to execute BigQuery table backups.
+Cloud Function to execute BigQuery table backups (Gen2).
 Triggered daily by Cloud Scheduler.
+
+Updated: 2026-01-14 (Session 36) - Migrated to Gen2 HTTP signature
 """
 import subprocess
 import logging
+
+import functions_framework
 from flask import jsonify
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+@functions_framework.http
 def backup_bigquery_tables(request):
     """
     HTTP Cloud Function to execute BigQuery backup script.

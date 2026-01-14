@@ -1,0 +1,824 @@
+# NBA Stats Scraper - Processor Registry
+# Created: 2026-01-14 (Session 36)
+# Purpose: Central registry of all processors with dependencies, criticality, and SLAs
+#
+# Criticality Levels:
+#   P0 - Critical: System fails without this, immediate response required
+#   P1 - High: Major feature degraded, respond within 1 hour
+#   P2 - Medium: Minor feature degraded, respond within 4 hours
+#   P3 - Low: Nice to have, respond when convenient
+#
+# Processing Strategies:
+#   MERGE_UPDATE - Upsert with change detection
+#   APPEND_ALWAYS - Append without dedup (historical records)
+#   APPEND_ONLY - Append with dedup (time-series)
+#   DELETE_INSERT - Full refresh
+#   MERGE_VIA_STAGING - Large batch via staging table
+#   INSERT_NEW_ONLY - Insert only new records
+
+metadata:
+  version: "1.0"
+  last_updated: "2026-01-14"
+  total_processors: 62
+  total_cloud_functions: 27
+
+# =============================================================================
+# PHASE 2: RAW PROCESSORS (34 processors)
+# =============================================================================
+
+phase_2_raw:
+  description: "Ingest raw data from external sources into BigQuery"
+  location: "data_processors/raw/"
+  total_count: 34
+
+  processors:
+    # -------------------------------------------------------------------------
+    # NBA.COM (10 processors)
+    # -------------------------------------------------------------------------
+    - name: NbacRefereeProcessor
+      file: data_processors/raw/nbac/nbac_referee_processor.py
+      criticality: P2
+      source: NBA.com API
+      table: nba_raw.nbac_referees
+      strategy: MERGE_UPDATE
+      dependencies: []
+      description: Referee assignments per game
+
+    - name: NbacPlayerListProcessor
+      file: data_processors/raw/nbac/nbac_player_list_processor.py
+      criticality: P1
+      source: NBA.com API
+      table: nba_raw.nbac_player_list
+      strategy: MERGE_VIA_STAGING
+      dependencies: []
+      description: Player roster assignments
+
+    - name: NbacPlayerMovementProcessor
+      file: data_processors/raw/nbac/nbac_player_movement_processor.py
+      criticality: P2
+      source: NBA.com API
+      table: nba_raw.nbac_player_movement
+      strategy: INSERT_NEW_ONLY
+      dependencies: []
+      description: Player transactions and movements
+
+    - name: NbacInjuryReportProcessor
+      file: data_processors/raw/nbac/nbac_injury_report_processor.py
+      criticality: P0
+      source: NBA.com API
+      table: nba_raw.nbac_injury_report
+      strategy: APPEND_ALWAYS
+      dependencies: []
+      description: Official injury/availability reports
+      notes: Critical for predictions - affects player availability
+
+    - name: NbacGamebookProcessor
+      file: data_processors/raw/nbac/nbac_gamebook_processor.py
+      criticality: P0
+      source: NBA.com API
+      table: nba_raw.nbac_gamebook
+      strategy: MERGE_UPDATE
+      dependencies: []
+      description: Box scores with DNP tracking
+      notes: Primary source for Phase 3 analytics
+
+    - name: NbacPlayerBoxscoreProcessor
+      file: data_processors/raw/nbac/nbac_player_boxscore_processor.py
+      criticality: P1
+      source: NBA.com API
+      table: nba_raw.nbac_player_boxscores
+      strategy: MERGE_UPDATE
+      dependencies: []
+      description: Player-level box scores
+
+    - name: NbacTeamBoxscoreProcessor
+      file: data_processors/raw/nbac/nbac_team_boxscore_processor.py
+      criticality: P1
+      source: NBA.com API
+      table: nba_raw.nbac_team_boxscores
+      strategy: MERGE_UPDATE
+      dependencies: []
+      description: Team-level box scores
+
+    - name: NbacPlayByPlayProcessor
+      file: data_processors/raw/nbac/nbac_play_by_play_processor.py
+      criticality: P1
+      source: NBA.com API
+      table: nba_raw.nbac_play_by_play
+      strategy: MERGE_UPDATE
+      dependencies: []
+      description: Game play-by-play events
+
+    - name: NbacScheduleProcessor
+      file: data_processors/raw/nbac/nbac_schedule_processor.py
+      criticality: P0
+      source: NBA.com API
+      table: nba_raw.nbac_schedule
+      strategy: MERGE_UPDATE
+      dependencies: []
+      description: Game schedule data
+      notes: Critical for knowing which games to process
+
+    - name: NbacScoreboardV2Processor
+      file: data_processors/raw/nbac/nbac_scoreboard_v2_processor.py
+      criticality: P1
+      source: NBA.com API
+      table: nba_raw.nbac_scoreboard_v2
+      strategy: MERGE_UPDATE
+      dependencies: []
+      description: Live game scoreboards
+
+    # -------------------------------------------------------------------------
+    # Ball Don't Lie (6 processors)
+    # -------------------------------------------------------------------------
+    - name: BdlLiveBoxscoresProcessor
+      file: data_processors/raw/bdl/bdl_live_boxscores_processor.py
+      criticality: P1
+      source: Ball Don't Lie API
+      table: nba_raw.bdl_live_boxscores
+      strategy: APPEND_ONLY
+      dependencies: []
+      description: In-game live snapshots
+      notes: Time-series data, never updates existing rows
+
+    - name: BdlActivePlayersProcessor
+      file: data_processors/raw/bdl/bdl_active_players_processor.py
+      criticality: P2
+      source: Ball Don't Lie API
+      table: nba_raw.bdl_active_players
+      strategy: MERGE_UPDATE
+      dependencies: []
+      description: Active player registry
+
+    - name: BdlStandingsProcessor
+      file: data_processors/raw/bdl/bdl_standings_processor.py
+      criticality: P2
+      source: Ball Don't Lie API
+      table: nba_raw.bdl_standings
+      strategy: MERGE_UPDATE
+      dependencies: []
+      description: Team standings
+
+    - name: BdlPlayerBoxScoresProcessor
+      file: data_processors/raw/bdl/bdl_player_boxscores_processor.py
+      criticality: P1
+      source: Ball Don't Lie API
+      table: nba_raw.bdl_player_boxscores
+      strategy: MERGE_UPDATE
+      dependencies: []
+      description: Player box scores (backup source)
+
+    - name: BdlInjuriesProcessor
+      file: data_processors/raw/bdl/bdl_injuries_processor.py
+      criticality: P1
+      source: Ball Don't Lie API
+      table: nba_raw.bdl_injuries
+      strategy: MERGE_UPDATE
+      dependencies: []
+      description: Injury data (backup source)
+
+    - name: BdlBoxscoresProcessor
+      file: data_processors/raw/bdl/bdl_boxscores_processor.py
+      criticality: P1
+      source: Ball Don't Lie API
+      table: nba_raw.bdl_boxscores
+      strategy: MERGE_UPDATE
+      dependencies: []
+      description: Team box scores
+
+    # -------------------------------------------------------------------------
+    # ESPN (4 processors)
+    # -------------------------------------------------------------------------
+    - name: EspnTeamRosterProcessor
+      file: data_processors/raw/espn/espn_team_roster_processor.py
+      criticality: P1
+      source: ESPN API
+      table: nba_raw.espn_rosters
+      strategy: DELETE_INSERT
+      dependencies: []
+      description: Roster API (multi-threaded)
+      notes: Full refresh on each run
+
+    - name: EspnRosterBatchProcessor
+      file: data_processors/raw/espn/espn_roster_batch_processor.py
+      criticality: P1
+      source: ESPN API
+      table: nba_raw.espn_rosters
+      strategy: MERGE_UPDATE
+      dependencies: []
+      description: Batch roster processing with Firestore lock
+
+    - name: EspnBoxscoreProcessor
+      file: data_processors/raw/espn/espn_boxscore_processor.py
+      criticality: P1
+      source: ESPN API
+      table: nba_raw.espn_boxscores
+      strategy: MERGE_UPDATE
+      dependencies: []
+      description: Box score data
+
+    - name: EspnScoreboardProcessor
+      file: data_processors/raw/espn/espn_scoreboard_processor.py
+      criticality: P1
+      source: ESPN API
+      table: nba_raw.espn_scoreboard
+      strategy: MERGE_UPDATE
+      dependencies: []
+      description: Live scoreboards
+
+    # -------------------------------------------------------------------------
+    # Basketball Reference (2 processors)
+    # -------------------------------------------------------------------------
+    - name: BasketballRefRosterProcessor
+      file: data_processors/raw/basketball_ref/br_roster_processor.py
+      criticality: P2
+      source: Basketball Reference (scraped)
+      table: nba_raw.br_rosters_current
+      strategy: MERGE_UPDATE
+      dependencies: []
+      description: Historical rosters with first_seen tracking
+
+    - name: BasketballRefRosterBatchProcessor
+      file: data_processors/raw/basketball_ref/br_roster_batch_processor.py
+      criticality: P2
+      source: Basketball Reference (scraped)
+      table: nba_raw.br_rosters_current
+      strategy: MERGE_UPDATE
+      dependencies: []
+      description: Batch processing with Firestore lock
+      notes: Added Session 35 to prevent retry storm
+
+    # -------------------------------------------------------------------------
+    # MLB Data (8 processors)
+    # -------------------------------------------------------------------------
+    - name: MlbLineupsProcessor
+      file: data_processors/raw/mlb/mlb_lineups_processor.py
+      criticality: P1
+      source: MLB API
+      table: mlb_raw.mlb_lineups
+      strategy: MERGE_UPDATE
+      dependencies: []
+      description: Game lineups
+
+    - name: MlbGameLinesProcessor
+      file: data_processors/raw/mlb/mlb_game_lines_processor.py
+      criticality: P1
+      source: Odds API
+      table: mlb_raw.mlb_game_lines
+      strategy: MERGE_UPDATE
+      dependencies: []
+      description: Game lines/odds
+
+    - name: MlbPitcherStatsProcessor
+      file: data_processors/raw/mlb/mlb_pitcher_stats_processor.py
+      criticality: P0
+      source: MLB API
+      table: mlb_raw.mlb_pitcher_stats
+      strategy: MERGE_UPDATE
+      dependencies: []
+      description: Pitcher statistics
+      notes: Critical for pitcher strikeout predictions
+
+    - name: MlbBatterStatsProcessor
+      file: data_processors/raw/mlb/mlb_batter_stats_processor.py
+      criticality: P1
+      source: MLB API
+      table: mlb_raw.mlb_batter_stats
+      strategy: MERGE_UPDATE
+      dependencies: []
+      description: Batter statistics
+
+    - name: MlbEventsProcessor
+      file: data_processors/raw/mlb/mlb_events_processor.py
+      criticality: P2
+      source: MLB API
+      table: mlb_raw.mlb_events
+      strategy: MERGE_UPDATE
+      dependencies: []
+      description: Game events
+
+    - name: MlbBatterPropsProcessor
+      file: data_processors/raw/mlb/mlb_batter_props_processor.py
+      criticality: P1
+      source: Odds API
+      table: mlb_raw.mlb_batter_props
+      strategy: MERGE_UPDATE
+      dependencies: []
+      description: Batter props odds
+
+    - name: MlbPitcherPropsProcessor
+      file: data_processors/raw/mlb/mlb_pitcher_props_processor.py
+      criticality: P0
+      source: Odds API
+      table: mlb_raw.mlb_pitcher_props
+      strategy: MERGE_UPDATE
+      dependencies: []
+      description: Pitcher props (strikeouts, etc.)
+      notes: Critical for pitcher strikeout predictions
+
+    - name: MlbScheduleProcessor
+      file: data_processors/raw/mlb/mlb_schedule_processor.py
+      criticality: P1
+      source: MLB API
+      table: mlb_raw.mlb_schedule
+      strategy: MERGE_UPDATE
+      dependencies: []
+      description: Schedule data
+
+    # -------------------------------------------------------------------------
+    # Betting/Odds (3 processors)
+    # -------------------------------------------------------------------------
+    - name: BettingPropsProcessor
+      file: data_processors/raw/bettingpros/bp_player_props_processor.py
+      criticality: P1
+      source: BettingPros API
+      table: nba_raw.bp_player_props
+      strategy: MERGE_UPDATE
+      dependencies: []
+      description: BettingPros player props
+
+    - name: OddsGameLinesProcessor
+      file: data_processors/raw/odds_api/odds_game_lines_processor.py
+      criticality: P1
+      source: Odds API
+      table: nba_raw.odds_game_lines
+      strategy: MERGE_UPDATE
+      dependencies: []
+      description: Game lines from Odds API
+
+    - name: OddsApiPropsProcessor
+      file: data_processors/raw/odds_api/odds_api_props_processor.py
+      criticality: P0
+      source: Odds API
+      table: nba_raw.odds_player_props
+      strategy: MERGE_UPDATE
+      dependencies: []
+      description: Player props from Odds API
+      notes: Critical for predictions - consensus betting lines
+
+    # -------------------------------------------------------------------------
+    # Alternative Data (1 processor)
+    # -------------------------------------------------------------------------
+    - name: BigDataBallPbpProcessor
+      file: data_processors/raw/bigdataball/bdb_pbp_processor.py
+      criticality: P3
+      source: BigDataBall
+      table: nba_raw.bdb_play_by_play
+      strategy: MERGE_UPDATE
+      dependencies: []
+      description: Alternative play-by-play source
+
+# =============================================================================
+# PHASE 3: ANALYTICS PROCESSORS (7 processors)
+# =============================================================================
+
+phase_3_analytics:
+  description: "Transform raw data into analytics-ready formats"
+  location: "data_processors/analytics/"
+  total_count: 7
+
+  processors:
+    # -------------------------------------------------------------------------
+    # NBA Analytics (5 processors)
+    # -------------------------------------------------------------------------
+    - name: PlayerGameSummaryProcessor
+      file: data_processors/analytics/nba/player_game_summary_processor.py
+      criticality: P0
+      table: nba_analytics.player_game_summary
+      strategy: MERGE_UPDATE
+      dependencies:
+        - nba_raw.nbac_gamebook
+        - nba_raw.bdl_boxscores
+        - nba_raw.nbac_play_by_play
+        - nba_raw.odds_player_props
+        - nba_raw.espn_boxscores
+        - nba_raw.bdl_player_boxscores
+      description: Multi-source player stats with fallback logic
+      features:
+        - RegistryReader
+        - SmartSkipMixin
+        - EarlyExitMixin
+        - CircuitBreakerMixin
+      notes: Primary analytics table, feeds Phase 4 and 5
+
+    - name: TeamDefenseGameSummaryProcessor
+      file: data_processors/analytics/nba/team_defense_game_summary_processor.py
+      criticality: P1
+      table: nba_analytics.team_defense_game_summary
+      strategy: MERGE_UPDATE
+      dependencies:
+        - nba_analytics.player_game_summary
+      description: Defense analytics per team per game
+
+    - name: TeamOffenseGameSummaryProcessor
+      file: data_processors/analytics/nba/team_offense_game_summary_processor.py
+      criticality: P1
+      table: nba_analytics.team_offense_game_summary
+      strategy: MERGE_UPDATE
+      dependencies:
+        - nba_analytics.player_game_summary
+      description: Offense analytics per team per game
+
+    - name: UpcomingPlayerGameContextProcessor
+      file: data_processors/analytics/nba/upcoming_player_game_context_processor.py
+      criticality: P1
+      table: nba_analytics.upcoming_player_game_context
+      strategy: MERGE_UPDATE
+      dependencies:
+        - nba_raw.nbac_schedule
+        - nba_raw.nbac_injury_report
+      description: Context for upcoming player games
+
+    - name: UpcomingTeamGameContextProcessor
+      file: data_processors/analytics/nba/upcoming_team_game_context_processor.py
+      criticality: P1
+      table: nba_analytics.upcoming_team_game_context
+      strategy: MERGE_UPDATE
+      dependencies:
+        - nba_raw.nbac_schedule
+      description: Team game forecasting context
+
+    # -------------------------------------------------------------------------
+    # MLB Analytics (2 processors)
+    # -------------------------------------------------------------------------
+    - name: MlbPitcherGameSummaryProcessor
+      file: data_processors/analytics/mlb/mlb_pitcher_game_summary_processor.py
+      criticality: P0
+      table: mlb_analytics.mlb_pitcher_game_summary
+      strategy: MERGE_UPDATE
+      dependencies:
+        - mlb_raw.mlb_pitcher_stats
+        - mlb_raw.mlb_events
+      description: Pitcher game analytics
+      notes: Critical for pitcher strikeout predictions
+
+    - name: MlbBatterGameSummaryProcessor
+      file: data_processors/analytics/mlb/mlb_batter_game_summary_processor.py
+      criticality: P1
+      table: mlb_analytics.mlb_batter_game_summary
+      strategy: MERGE_UPDATE
+      dependencies:
+        - mlb_raw.mlb_batter_stats
+        - mlb_raw.mlb_events
+      description: Batter game analytics
+
+# =============================================================================
+# PHASE 4: PRECOMPUTE PROCESSORS (7 processors)
+# =============================================================================
+
+phase_4_precompute:
+  description: "Precompute features for ML models"
+  location: "data_processors/precompute/"
+  total_count: 7
+
+  processors:
+    # -------------------------------------------------------------------------
+    # NBA Precompute (5 processors)
+    # -------------------------------------------------------------------------
+    - name: PlayerDailyCacheProcessor
+      file: data_processors/precompute/player_daily_cache/player_daily_cache_processor.py
+      criticality: P1
+      table: nba_precompute.player_daily_cache
+      strategy: MERGE_UPDATE
+      dependencies:
+        - nba_analytics.player_game_summary
+      description: Daily aggregated player stats
+
+    - name: PlayerCompositeFactorsProcessor
+      file: data_processors/precompute/player_composite_factors/player_composite_factors_processor.py
+      criticality: P0
+      table: nba_precompute.player_composite_factors
+      strategy: MERGE_UPDATE
+      dependencies:
+        - nba_analytics.player_game_summary
+        - nba_analytics.team_defense_game_summary
+      description: 8 composite adjustment factors
+      features:
+        - CompletenessChecker
+        - ProcessPoolExecutor (parallel processing)
+      active_factors:
+        - Fatigue
+        - Shot Zone Mismatch
+        - Pace
+        - Usage
+      deferred_factors:
+        - Referee
+        - Pressure
+        - Travel
+        - Opponent
+      notes: Critical for prediction accuracy
+
+    - name: PlayerShotZoneAnalysisProcessor
+      file: data_processors/precompute/player_shot_zone/player_shot_zone_analysis_processor.py
+      criticality: P1
+      table: nba_precompute.player_shot_zone_analysis
+      strategy: MERGE_UPDATE
+      dependencies:
+        - nba_raw.nbac_play_by_play
+      description: Shot zone effectiveness analysis
+
+    - name: TeamDefenseZoneAnalysisProcessor
+      file: data_processors/precompute/team_defense_zone/team_defense_zone_analysis_processor.py
+      criticality: P1
+      table: nba_precompute.team_defense_zone_analysis
+      strategy: MERGE_UPDATE
+      dependencies:
+        - nba_raw.nbac_play_by_play
+      description: Defense zone analytics
+
+    - name: MLFeatureStoreProcessor
+      file: data_processors/precompute/ml_feature_store/ml_feature_store_processor.py
+      criticality: P0
+      table: nba_precompute.ml_feature_store
+      strategy: MERGE_UPDATE
+      dependencies:
+        - nba_precompute.player_daily_cache
+        - nba_precompute.player_composite_factors
+        - nba_analytics.player_game_summary
+      description: Feature engineering for ML models
+      notes: Direct input to Phase 5 predictions
+
+    # -------------------------------------------------------------------------
+    # MLB Precompute (2 processors)
+    # -------------------------------------------------------------------------
+    - name: MlbPitcherFeaturesProcessor
+      file: data_processors/precompute/mlb/mlb_pitcher_features_processor.py
+      criticality: P0
+      table: mlb_precompute.mlb_pitcher_features
+      strategy: MERGE_UPDATE
+      dependencies:
+        - mlb_analytics.mlb_pitcher_game_summary
+        - mlb_raw.mlb_pitcher_props
+      description: Feature engineering for pitcher predictions
+      notes: 19 features for strikeout predictions
+
+    - name: MlbLineupKAnalysisProcessor
+      file: data_processors/precompute/mlb/mlb_lineup_k_analysis_processor.py
+      criticality: P1
+      table: mlb_precompute.mlb_lineup_k_analysis
+      strategy: MERGE_UPDATE
+      dependencies:
+        - mlb_raw.mlb_lineups
+        - mlb_raw.mlb_batter_stats
+      description: Strikeout vs lineup analysis
+
+# =============================================================================
+# PHASE 5: PREDICTIONS (8 systems)
+# =============================================================================
+
+phase_5_predictions:
+  description: "Generate predictions using ML models"
+  location: "predictions/"
+  total_count: 8
+
+  processors:
+    # -------------------------------------------------------------------------
+    # MLB Predictions (1 processor)
+    # -------------------------------------------------------------------------
+    - name: PitcherStrikeoutsPredictor
+      file: predictions/mlb/pitcher_strikeouts_predictor.py
+      criticality: P0
+      model: mlb_pitcher_strikeouts_v1
+      table: mlb_predictions.pitcher_strikeouts
+      dependencies:
+        - mlb_precompute.mlb_pitcher_features
+        - mlb_raw.mlb_pitcher_props
+      description: XGBoost K prediction
+      metrics:
+        mae: 1.71
+        baseline_improvement: "11%"
+      features_count: 19
+      notes: Primary MLB prediction system
+
+    # -------------------------------------------------------------------------
+    # NBA Predictions (7 systems)
+    # -------------------------------------------------------------------------
+    - name: BasePredictor
+      file: predictions/nba/base_predictor.py
+      criticality: P0
+      description: Abstract base class for all NBA predictors
+      methods:
+        - predict()
+        - calculate_confidence()
+        - calculate_recommendation()
+      notes: Not a processor, but defines interface
+
+    - name: MovingAverageBaseline
+      file: predictions/nba/moving_average_baseline.py
+      criticality: P2
+      model: moving_average_v1
+      description: Rule-based baseline predictor
+      notes: Used for comparison, not production
+
+    - name: XGBoostV1
+      file: predictions/nba/xgboost_v1.py
+      criticality: P1
+      model: xgboost_v1
+      description: XGBoost model for NBA props
+
+    - name: ZoneMatchupV1
+      file: predictions/nba/zone_matchup_v1.py
+      criticality: P1
+      model: zone_matchup_v1
+      description: Zone-based matchup analysis
+      dependencies:
+        - nba_precompute.player_shot_zone_analysis
+        - nba_precompute.team_defense_zone_analysis
+
+    - name: SimilarityBalancedV1
+      file: predictions/nba/similarity_balanced_v1.py
+      criticality: P1
+      model: similarity_balanced_v1
+      description: Player similarity analysis
+
+    - name: EnsembleV1
+      file: predictions/nba/ensemble_v1.py
+      criticality: P0
+      model: ensemble_v1
+      description: Meta-predictor combining multiple models
+      dependencies:
+        - XGBoostV1
+        - ZoneMatchupV1
+        - SimilarityBalancedV1
+      notes: Primary production predictor
+
+    - name: CatBoostV8
+      file: predictions/nba/catboost_v8.py
+      criticality: P1
+      model: catboost_v8
+      description: CatBoost with categorical support
+      notes: Alternative to ensemble
+
+# =============================================================================
+# CLOUD FUNCTIONS (27 functions)
+# =============================================================================
+
+cloud_functions:
+  description: "Orchestration, monitoring, and automation functions"
+  location: "orchestration/cloud_functions/"
+  total_count: 27
+
+  pipeline_orchestrators:
+    - name: phase2_to_phase3
+      trigger: "Pub/Sub: nba-phase2-raw-complete"
+      criticality: P2
+      description: Monitors Phase 2 completion (observability only)
+
+    - name: phase3_to_phase4
+      trigger: "Pub/Sub: nba-phase3-analytics-complete"
+      criticality: P1
+      description: Triggers Phase 4 via nba-phase4-trigger
+
+    - name: phase4_to_phase5
+      trigger: "Pub/Sub: nba-phase4-precompute-complete"
+      criticality: P0
+      description: Triggers prediction coordinator
+
+    - name: phase4_timeout_check
+      trigger: "Cloud Scheduler: every 30 min"
+      criticality: P1
+      description: Force-triggers Phase 5 if stuck >4 hours
+
+    - name: phase5_to_phase6
+      trigger: "Pub/Sub: nba-phase5-predictions-complete"
+      criticality: P1
+      description: Triggers Phase 6 export
+
+    - name: phase6_export
+      trigger: "Pub/Sub: nba-phase6-export-trigger"
+      criticality: P1
+      description: Exports predictions to GCS
+
+  mlb_orchestrators:
+    - name: mlb_phase3_to_phase4
+      trigger: "Pub/Sub: mlb-phase3-analytics-complete"
+      criticality: P1
+      description: MLB Phase 3 → 4 orchestration
+
+    - name: mlb_phase4_to_phase5
+      trigger: "Pub/Sub: mlb-phase4-precompute-complete"
+      criticality: P1
+      description: MLB Phase 4 → 5 orchestration
+
+    - name: mlb_phase5_to_phase6
+      trigger: "Pub/Sub: mlb-phase5-predictions-complete"
+      criticality: P1
+      description: MLB Phase 5 → 6 orchestration
+
+  self_healing:
+    - name: self_heal
+      trigger: "Cloud Scheduler: 12:45 PM ET daily"
+      criticality: P0
+      description: Checks for missing predictions, triggers healing
+
+    - name: mlb_self_heal
+      trigger: "Cloud Scheduler: 12:45 PM ET daily"
+      criticality: P0
+      description: MLB-specific healing pipeline
+
+  monitoring:
+    - name: dlq_monitor
+      trigger: "Cloud Scheduler: every 15 min"
+      criticality: P1
+      description: Monitors Pub/Sub dead letter queues
+
+    - name: grading
+      trigger: "Pub/Sub: nba-grading-trigger"
+      criticality: P0
+      description: Grades predictions against actuals
+
+    - name: grading_alert
+      trigger: "Cloud Scheduler: 10 AM ET daily"
+      criticality: P1
+      description: Alerts if no grading records
+
+    - name: prediction_health_alert
+      trigger: "Cloud Scheduler: 7 PM ET daily"
+      criticality: P1
+      description: Monitors prediction health
+
+    - name: daily_health_summary
+      trigger: "Cloud Scheduler: 7 AM ET daily"
+      criticality: P1
+      description: Morning Slack summary
+
+  data_management:
+    - name: live_export
+      trigger: "Cloud Scheduler: every 2-5 min during games"
+      criticality: P1
+      description: Exports live scores to GCS
+
+    - name: live_freshness_monitor
+      trigger: "Cloud Scheduler: every 5 min, 4 PM - 1 AM ET"
+      criticality: P1
+      description: Monitors live data freshness
+
+    - name: upcoming_tables_cleanup
+      trigger: "Cloud Scheduler: 4 AM ET daily"
+      criticality: P2
+      description: Removes stale upcoming_* records
+
+    - name: stale_running_cleanup
+      trigger: "Cloud Scheduler: every 30 min"
+      criticality: P1
+      description: Marks stuck runs as failed
+
+# =============================================================================
+# DEPENDENCY GRAPH
+# =============================================================================
+
+dependency_graph:
+  phase_1_to_2:
+    description: "Scrapers → Raw Processors (GCS trigger)"
+    flow: "GCS file upload → Pub/Sub → Cloud Run"
+
+  phase_2_to_3:
+    description: "Raw → Analytics (Pub/Sub)"
+    flow: "Phase 2 complete → nba-phase3-trigger → Cloud Run"
+    critical_path:
+      - NbacGamebookProcessor → PlayerGameSummaryProcessor
+      - OddsApiPropsProcessor → PlayerGameSummaryProcessor
+
+  phase_3_to_4:
+    description: "Analytics → Precompute (Pub/Sub via orchestrator)"
+    flow: "Phase 3 complete → phase3_to_phase4 → nba-phase4-trigger"
+    critical_path:
+      - PlayerGameSummaryProcessor → PlayerCompositeFactorsProcessor
+      - PlayerGameSummaryProcessor → MLFeatureStoreProcessor
+
+  phase_4_to_5:
+    description: "Precompute → Predictions (Pub/Sub via orchestrator)"
+    flow: "Phase 4 complete → phase4_to_phase5 → prediction-coordinator"
+    critical_path:
+      - MLFeatureStoreProcessor → EnsembleV1
+      - PlayerCompositeFactorsProcessor → EnsembleV1
+
+  phase_5_to_6:
+    description: "Predictions → Export (Pub/Sub via orchestrator)"
+    flow: "Phase 5 complete → phase5_to_phase6 → phase6_export"
+
+# =============================================================================
+# SLA TARGETS
+# =============================================================================
+
+sla_targets:
+  phase_2:
+    max_duration_minutes: 15
+    success_rate_target: 95%
+
+  phase_3:
+    max_duration_minutes: 30
+    success_rate_target: 95%
+
+  phase_4:
+    max_duration_minutes: 60
+    success_rate_target: 90%
+    timeout_threshold_hours: 4
+
+  phase_5:
+    max_duration_minutes: 30
+    success_rate_target: 85%
+
+  overall:
+    end_to_end_minutes: 120
+    prediction_coverage: 90%
