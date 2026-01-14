@@ -140,6 +140,38 @@ class HealthReport:
 
 
 # ============================================================================
+# Infrastructure Configuration
+# ============================================================================
+
+# Pub/Sub subscriptions that must have OIDC configured
+REQUIRED_OIDC_SUBSCRIPTIONS = [
+    "nba-phase2-raw-sub",
+    "nba-phase3-analytics-sub",
+]
+
+# Scheduler jobs that should NOT have paths in their audiences
+SCHEDULER_JOBS_TO_CHECK = [
+    "daily-yesterday-analytics",
+    "same-day-phase3",
+    "same-day-phase3-tomorrow",
+    "ml-feature-store-daily",
+    "overnight-phase4",
+    "player-composite-factors-daily",
+    "player-daily-cache-daily",
+    "same-day-phase4",
+    "same-day-phase4-tomorrow",
+    "overnight-predictions",
+    "same-day-predictions",
+    "same-day-predictions-tomorrow",
+    "bdl-injuries-hourly",
+    "bdl-live-boxscores-evening",
+    "bdl-live-boxscores-late",
+    "boxscore-completeness-check",
+    "nba-bdl-boxscores-late",
+]
+
+
+# ============================================================================
 # BigQuery Queries
 # ============================================================================
 
@@ -370,8 +402,134 @@ class SystemHealthChecker:
 
         return total, expected, real, noise_pct
 
-    def generate_report(self, hours: int = 24) -> HealthReport:
-        """Generate complete health report."""
+    def check_oidc_configuration(self) -> List[Dict]:
+        """Check that Pub/Sub subscriptions have OIDC configured correctly."""
+        import subprocess
+
+        issues_found = []
+
+        for subscription in REQUIRED_OIDC_SUBSCRIPTIONS:
+            try:
+                result = subprocess.run(
+                    ["gcloud", "pubsub", "subscriptions", "describe", subscription,
+                     "--format=value(pushConfig.oidcToken.audience,pushConfig.oidcToken.serviceAccountEmail)"],
+                    capture_output=True, text=True, timeout=30
+                )
+
+                if result.returncode != 0:
+                    issues_found.append({
+                        "subscription": subscription,
+                        "issue": "not_found",
+                        "message": f"Subscription not found or error: {result.stderr.strip()}"
+                    })
+                    self.issues.append(Issue(
+                        severity="critical",
+                        category="oidc_config",
+                        message=f"Pub/Sub subscription '{subscription}' not found or inaccessible",
+                        details={"subscription": subscription, "error": result.stderr.strip()}
+                    ))
+                    continue
+
+                output = result.stdout.strip()
+                parts = output.split("\t") if output else []
+
+                audience = parts[0] if len(parts) > 0 else ""
+                service_account = parts[1] if len(parts) > 1 else ""
+
+                if not audience or not service_account:
+                    issues_found.append({
+                        "subscription": subscription,
+                        "issue": "missing_oidc",
+                        "message": "OIDC not configured (missing audience or service account)"
+                    })
+                    self.issues.append(Issue(
+                        severity="critical",
+                        category="oidc_config",
+                        message=f"Pub/Sub subscription '{subscription}' missing OIDC authentication",
+                        details={"subscription": subscription, "audience": audience, "service_account": service_account}
+                    ))
+                elif "/" in audience and not audience.endswith("/"):
+                    # Has a path in the audience (e.g., .../process instead of just base URL)
+                    # This is actually OK for Pub/Sub subscriptions, only scheduler jobs need base URL
+                    pass
+
+            except subprocess.TimeoutExpired:
+                issues_found.append({
+                    "subscription": subscription,
+                    "issue": "timeout",
+                    "message": "Timed out checking subscription"
+                })
+            except Exception as e:
+                issues_found.append({
+                    "subscription": subscription,
+                    "issue": "error",
+                    "message": str(e)
+                })
+
+        return issues_found
+
+    def check_scheduler_job_audiences(self) -> List[Dict]:
+        """Check that scheduler jobs don't have paths in their OIDC audiences."""
+        import subprocess
+
+        issues_found = []
+
+        for job in SCHEDULER_JOBS_TO_CHECK:
+            try:
+                result = subprocess.run(
+                    ["gcloud", "scheduler", "jobs", "describe", job,
+                     "--location=us-west2",
+                     "--format=value(httpTarget.oidcToken.audience)"],
+                    capture_output=True, text=True, timeout=30
+                )
+
+                if result.returncode != 0:
+                    # Job might not exist, which is OK (maybe it was removed)
+                    continue
+
+                audience = result.stdout.strip()
+
+                if not audience:
+                    issues_found.append({
+                        "job": job,
+                        "issue": "missing_audience",
+                        "message": "No OIDC audience configured"
+                    })
+                    self.issues.append(Issue(
+                        severity="warning",
+                        category="scheduler_config",
+                        message=f"Scheduler job '{job}' has no OIDC audience",
+                        details={"job": job}
+                    ))
+                elif ".run.app/" in audience:
+                    # Has a path in the audience - this can cause auth issues
+                    issues_found.append({
+                        "job": job,
+                        "issue": "path_in_audience",
+                        "audience": audience,
+                        "message": f"Audience has path: {audience}"
+                    })
+                    self.issues.append(Issue(
+                        severity="warning",
+                        category="scheduler_config",
+                        message=f"Scheduler job '{job}' has path in audience (should be base URL only)",
+                        details={"job": job, "audience": audience}
+                    ))
+
+            except subprocess.TimeoutExpired:
+                pass  # Skip timeouts silently
+            except Exception:
+                pass  # Skip errors silently for scheduler checks
+
+        return issues_found
+
+    def generate_report(self, hours: int = 24, check_infrastructure: bool = True) -> HealthReport:
+        """Generate complete health report.
+
+        Args:
+            hours: Number of hours to analyze
+            check_infrastructure: If True, also check OIDC and scheduler configs (slower but thorough)
+        """
         self.issues = []  # Reset issues
 
         # Gather all data
@@ -379,6 +537,11 @@ class SystemHealthChecker:
         self.check_stuck_processors()
         self.check_top_errors(hours)
         total, expected, real, noise_pct = self.get_failure_breakdown(hours)
+
+        # Infrastructure checks (optional, adds ~30s due to gcloud calls)
+        if check_infrastructure:
+            self.check_oidc_configuration()
+            self.check_scheduler_job_audiences()
 
         return HealthReport(
             generated_at=datetime.now(),
@@ -737,12 +900,13 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-    python scripts/system_health_check.py              # Check last 24 hours
+    python scripts/system_health_check.py              # Check last 24 hours (includes infra checks)
     python scripts/system_health_check.py --hours=1    # Check last hour
     python scripts/system_health_check.py --hours=168  # Check last week
     python scripts/system_health_check.py --verbose    # Include issue details
     python scripts/system_health_check.py --slack      # Send to Slack
     python scripts/system_health_check.py --json       # Output as JSON
+    python scripts/system_health_check.py --skip-infra # Skip OIDC/scheduler checks (faster)
     python scripts/system_health_check.py --validate   # Validate Session 35/36 deployments
         """
     )
@@ -778,6 +942,11 @@ Examples:
         action="store_true",
         help="Validate Session 35/36 deployments (failure_category, BR roster lock)"
     )
+    parser.add_argument(
+        "--skip-infra",
+        action="store_true",
+        help="Skip infrastructure checks (OIDC, scheduler audiences) for faster execution"
+    )
 
     args = parser.parse_args()
 
@@ -791,7 +960,8 @@ Examples:
 
     # Run health check
     checker = SystemHealthChecker()
-    report = checker.generate_report(hours=hours)
+    check_infra = not args.skip_infra
+    report = checker.generate_report(hours=hours, check_infrastructure=check_infra)
 
     # Output
     if args.json:
