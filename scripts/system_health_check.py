@@ -144,7 +144,12 @@ class HealthReport:
 # ============================================================================
 
 def get_phase_health_query(hours: int) -> str:
-    """Query for phase-by-phase health metrics."""
+    """Query for phase-by-phase health metrics.
+
+    Note: Filters to processed_at IS NOT NULL to exclude duplicate 'running' status entries.
+    Each run_id has an initial entry (no processed_at) and a final entry (with processed_at).
+    We only count the final entries to avoid double-counting.
+    """
     return f"""
     SELECT
         phase,
@@ -162,6 +167,7 @@ def get_phase_health_query(hours: int) -> str:
         ROUND(AVG(duration_seconds), 2) as avg_duration_sec
     FROM `{PROJECT_ID}.{DATASET}.{TABLE}`
     WHERE started_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL {hours} HOUR)
+        AND processed_at IS NOT NULL  -- Exclude initial 'running' entries (dedup)
     GROUP BY phase
     ORDER BY phase
     """
@@ -197,6 +203,7 @@ def get_top_errors_query(hours: int) -> str:
     FROM `{PROJECT_ID}.{DATASET}.{TABLE}`
     WHERE started_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL {hours} HOUR)
         AND status = 'failed'
+        AND processed_at IS NOT NULL  -- Exclude initial entries (dedup)
         AND COALESCE(failure_category, 'unknown') NOT IN ('no_data_available')
     GROUP BY processor_name, failure_category, error_message
     ORDER BY occurrence_count DESC
@@ -214,6 +221,7 @@ def get_failure_category_breakdown_query(hours: int) -> str:
     FROM `{PROJECT_ID}.{DATASET}.{TABLE}`
     WHERE started_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL {hours} HOUR)
         AND status = 'failed'
+        AND processed_at IS NOT NULL  -- Exclude initial entries (dedup)
     GROUP BY failure_category
     ORDER BY count DESC
     """
@@ -231,6 +239,7 @@ def get_processor_failures_query(hours: int) -> str:
     FROM `{PROJECT_ID}.{DATASET}.{TABLE}`
     WHERE started_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL {hours} HOUR)
         AND status = 'failed'
+        AND processed_at IS NOT NULL  -- Exclude initial entries (dedup)
     GROUP BY processor_name, phase
     HAVING real_failures > 0
     ORDER BY real_failures DESC
