@@ -107,10 +107,11 @@ class MlbStatcastPitcherScraper(ScraperBase, ScraperFlaskMixin):
         self.opts["timestamp"] = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
 
         # Default to yesterday if no dates specified
+        # Use Pacific Time for MLB - ensures west coast late games are captured
         if not self.opts.get("start_date") and not self.opts.get("season"):
-            yesterday = datetime.now(timezone.utc).date() - timedelta(days=1)
-            self.opts["start_date"] = yesterday.isoformat()
-            self.opts["end_date"] = yesterday.isoformat()
+            from scrapers.utils.date_utils import get_yesterday_pacific
+            self.opts["start_date"] = get_yesterday_pacific()
+            self.opts["end_date"] = get_yesterday_pacific()
 
     def set_url(self) -> None:
         # Not using URL - data comes from pybaseball

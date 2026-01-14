@@ -90,9 +90,10 @@ class MlbBoxScoresScraper(ScraperBase, ScraperFlaskMixin):
         self.opts["timestamp"] = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
 
         # Default to yesterday (for completed games)
+        # Use Pacific Time for MLB - ensures west coast late games are captured
         if not self.opts.get("date") and not self.opts.get("game_ids"):
-            yesterday = datetime.now(timezone.utc).date() - timedelta(days=1)
-            self.opts["date"] = yesterday.isoformat()
+            from scrapers.utils.date_utils import get_yesterday_pacific
+            self.opts["date"] = get_yesterday_pacific()
 
     _API_ROOT = "https://api.balldontlie.io/mlb/v1/box_scores"
 
