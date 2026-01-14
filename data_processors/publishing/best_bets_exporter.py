@@ -228,12 +228,19 @@ class BestBetsExporter(BaseExporter):
                 *,
                 -- Edge factor: 1 + edge/10, capped at 1.5
                 LEAST(1.5, 1.0 + edge / 10.0) as edge_factor,
-                -- Historical factor: use player accuracy if available, else 0.85
-                COALESCE(player_historical_accuracy, 0.85) as hist_factor,
+                -- Historical factor: only use player accuracy if sample_size >= 5
+                -- This prevents inflated scores from 1-4 game samples (e.g., 100% on 1 game)
+                CASE
+                    WHEN player_sample_size >= 5 THEN player_historical_accuracy
+                    ELSE 0.85  -- Default for unknown/low-sample players
+                END as hist_factor,
                 -- Composite score
                 confidence_score
                     * LEAST(1.5, 1.0 + edge / 10.0)
-                    * COALESCE(player_historical_accuracy, 0.85) as composite_score,
+                    * CASE
+                        WHEN player_sample_size >= 5 THEN player_historical_accuracy
+                        ELSE 0.85
+                      END as composite_score,
                 -- Tier classification based on analysis
                 CASE
                     WHEN confidence_score >= 0.90
