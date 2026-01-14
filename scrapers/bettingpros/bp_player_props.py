@@ -137,9 +137,17 @@ class BettingProsPlayerProps(ScraperBase, ScraperFlaskMixin):
     decode_download_data = True
     header_profile = "bettingpros"  # Use BettingPros headers from nba_header_utils
     proxy_enabled = True
-    
+
+    # Timeout: Increase from default 20s to handle slow proxy/API responses
+    # BettingPros API through proxy can take 30-40s during peak times
+    timeout_http = 45
+
     # Rate limiting: More conservative for paginated requests
     RATE_LIMIT_DELAY = 2.5  # 2.5 seconds between requests
+
+    # Retry settings for fetching events (transient failures)
+    EVENTS_FETCH_MAX_RETRIES = 3
+    EVENTS_FETCH_BACKOFF_BASE = 15  # seconds, will be 15, 30, 60
     
     BASE_URL = "https://api.bettingpros.com/v3/offers"
 
@@ -265,64 +273,74 @@ class BettingProsPlayerProps(ScraperBase, ScraperFlaskMixin):
                 market_type, self.opts["market_id"])
     
     def _fetch_event_ids_from_date(self) -> None:
-        """Fetch event IDs using the events scraper"""
+        """
+        Fetch event IDs using the events scraper with retry logic.
+
+        Retries up to EVENTS_FETCH_MAX_RETRIES times with exponential backoff
+        (15s, 30s, 60s delays) to handle transient proxy/API failures.
+        """
         date = self.opts["date"]
         logger.info("Fetching event IDs for date: %s", date)
-        
-        # Create events scraper and fetch events
-        events_scraper = BettingProsEvents()
-        events_opts = {
-            "date": date,
-            "sport": self.opts.get("sport", "NBA"),
-            "group": "capture",  # Use capture group to avoid GCS exports
-            "run_id": f"{self.run_id}_events"  # Sub-run ID
-        }
-        
-        try:
-            events_result = events_scraper.run(events_opts)
-            if events_result and hasattr(events_scraper, 'data') and 'events' in events_scraper.data:
-                event_ids = list(events_scraper.data['events'].keys())  # Now already strings
-                self.opts["event_ids"] = ",".join(event_ids)
-                logger.info("Fetched %d event IDs from date %s: %s", 
-                           len(event_ids), date, event_ids[:3])
-            else:
-                # No events found for date
-                try:
-                    notify_error(
-                        title="No Events Found for Date",
-                        message=f"Failed to fetch events for date {date}",
-                        details={
-                            'scraper': 'bp_player_props',
-                            'date': date,
-                            'sport': self.opts.get('sport', 'NBA'),
-                            'error': 'Events scraper returned no events'
-                        },
-                        processor_name="BettingPros Player Props Scraper"
-                    )
-                except Exception as notify_ex:
-                    logger.warning(f"Failed to send notification: {notify_ex}")
-                
-                raise DownloadDataException(f"No events found for date: {date}")
-                
-        except Exception as e:
-            # Failed to fetch events
+
+        last_exception = None
+
+        for attempt in range(1, self.EVENTS_FETCH_MAX_RETRIES + 1):
             try:
-                notify_error(
-                    title="Failed to Fetch Events",
-                    message=f"Error fetching events for date {date}: {str(e)}",
-                    details={
-                        'scraper': 'bp_player_props',
-                        'date': date,
-                        'sport': self.opts.get('sport', 'NBA'),
-                        'error': str(e),
-                        'error_type': type(e).__name__
-                    },
-                    processor_name="BettingPros Player Props Scraper"
-                )
-            except Exception as notify_ex:
-                logger.warning(f"Failed to send notification: {notify_ex}")
-            
-            raise DownloadDataException(f"Failed to fetch events for date {date}: {e}")
+                # Create fresh events scraper for each attempt
+                events_scraper = BettingProsEvents()
+                events_opts = {
+                    "date": date,
+                    "sport": self.opts.get("sport", "NBA"),
+                    "group": "capture",  # Use capture group to avoid GCS exports
+                    "run_id": f"{self.run_id}_events_attempt{attempt}"
+                }
+
+                events_result = events_scraper.run(events_opts)
+
+                if events_result and hasattr(events_scraper, 'data') and 'events' in events_scraper.data:
+                    event_ids = list(events_scraper.data['events'].keys())
+                    if event_ids:
+                        self.opts["event_ids"] = ",".join(event_ids)
+                        logger.info("Fetched %d event IDs from date %s (attempt %d): %s",
+                                   len(event_ids), date, attempt, event_ids[:3])
+                        return  # Success!
+
+                # No events in response - this might be legitimate (no games that day)
+                # or it might be a transient API issue. Retry a few times.
+                logger.warning("No events in response for date %s (attempt %d/%d)",
+                              date, attempt, self.EVENTS_FETCH_MAX_RETRIES)
+                last_exception = DownloadDataException(f"No events found for date: {date}")
+
+            except Exception as e:
+                logger.warning("Events fetch failed for date %s (attempt %d/%d): %s",
+                              date, attempt, self.EVENTS_FETCH_MAX_RETRIES, str(e))
+                last_exception = e
+
+            # Calculate backoff: 15 * 2^(attempt-1) = 15, 30, 60 seconds
+            if attempt < self.EVENTS_FETCH_MAX_RETRIES:
+                backoff = self.EVENTS_FETCH_BACKOFF_BASE * (2 ** (attempt - 1))
+                logger.info("Retrying events fetch in %d seconds...", backoff)
+                time.sleep(backoff)
+
+        # All retries exhausted - send notification and raise
+        try:
+            notify_error(
+                title="Events Fetch Failed After Retries",
+                message=f"Failed to fetch events for date {date} after {self.EVENTS_FETCH_MAX_RETRIES} attempts",
+                details={
+                    'scraper': 'bp_player_props',
+                    'date': date,
+                    'sport': self.opts.get('sport', 'NBA'),
+                    'max_retries': self.EVENTS_FETCH_MAX_RETRIES,
+                    'error': str(last_exception),
+                    'error_type': type(last_exception).__name__ if last_exception else 'Unknown'
+                },
+                processor_name="BettingPros Player Props Scraper"
+            )
+        except Exception as notify_ex:
+            logger.warning(f"Failed to send notification: {notify_ex}")
+
+        raise DownloadDataException(f"Failed to fetch events for date {date} after {self.EVENTS_FETCH_MAX_RETRIES} retries: {last_exception}")
     
     def set_url(self) -> None:
         """Build the first page URL - we'll modify this for pagination"""

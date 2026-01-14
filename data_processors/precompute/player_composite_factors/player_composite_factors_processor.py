@@ -672,12 +672,77 @@ class PlayerCompositeFactorsProcessor(
         """
         
         self.player_context_df = self.bq_client.query(player_context_query).to_dataframe()
-        logger.info(f"Extracted {len(self.player_context_df)} player context records")
+        upcg_count = len(self.player_context_df)
+        logger.info(f"Extracted {upcg_count} player context records from upcoming_player_game_context")
 
-        # BACKFILL MODE: Generate synthetic context from PGS if no context data exists
-        if self.player_context_df.empty and self.is_backfill_mode:
-            logger.warning(f"No upcoming_player_game_context for {analysis_date}, generating synthetic context from PGS (backfill mode)")
-            self._generate_synthetic_player_context(analysis_date)
+        # DEFENSIVE LOGGING: Compare UPCG count with expected count from player_game_summary
+        # This helps detect partial/stale data in the UPCG table
+        if self.is_backfill_mode:
+            pgs_count_query = f"""
+            SELECT COUNT(DISTINCT player_lookup) as player_count
+            FROM `{self.project_id}.nba_analytics.player_game_summary`
+            WHERE game_date = '{analysis_date}'
+            """
+            pgs_result = self.bq_client.query(pgs_count_query).to_dataframe()
+            expected_count = int(pgs_result['player_count'].iloc[0]) if not pgs_result.empty else 0
+
+            # Log data source comparison
+            coverage_pct = (upcg_count / expected_count * 100) if expected_count > 0 else 0
+            logger.info(
+                f"📊 Data source check for {analysis_date}:\n"
+                f"   - upcoming_player_game_context (UPCG): {upcg_count} players\n"
+                f"   - player_game_summary (PGS): {expected_count} players\n"
+                f"   - Coverage: {coverage_pct:.1f}%"
+            )
+
+            # Enhanced fallback decision logging
+            if upcg_count == 0:
+                logger.warning(
+                    f"⚠️  No upcoming_player_game_context for {analysis_date}\n"
+                    f"   → Falling back to synthetic context from player_game_summary\n"
+                    f"   → Will generate context for {expected_count} players"
+                )
+            elif upcg_count < expected_count * 0.9:
+                logger.error(
+                    f"❌ INCOMPLETE DATA DETECTED for {analysis_date}:\n"
+                    f"   - upcoming_player_game_context has only {upcg_count}/{expected_count} players ({coverage_pct:.1f}%)\n"
+                    f"   - This indicates stale/partial data in UPCG table\n"
+                    f"   - Missing {expected_count - upcg_count} players\n"
+                    f"   → RECOMMENDATION: Clear stale UPCG data before running backfill"
+                )
+            else:
+                logger.info(
+                    f"✅ Using upcoming_player_game_context: {upcg_count} players\n"
+                    f"   - Expected from PGS: {expected_count}\n"
+                    f"   - Data source: UPCG table"
+                )
+        else:
+            # Production mode - just log what we got
+            logger.info(f"Using upcoming_player_game_context: {upcg_count} players (production mode)")
+
+        # BACKFILL MODE: Generate synthetic context from PGS if UPCG data is missing or incomplete
+        # CRITICAL FIX: Trigger fallback on partial data, not just empty data
+        # This prevents the Jan 6, 2026 incident where 1/187 players blocked fallback
+        if self.is_backfill_mode:
+            # We already have expected_count and upcg_count from defensive logging above
+            should_use_fallback = False
+            fallback_reason = ""
+
+            if upcg_count == 0:
+                should_use_fallback = True
+                fallback_reason = "UPCG is empty"
+            elif expected_count > 0 and upcg_count < expected_count * 0.9:
+                should_use_fallback = True
+                fallback_reason = f"UPCG has incomplete data ({upcg_count}/{expected_count} = {(upcg_count/expected_count*100):.1f}%)"
+
+            if should_use_fallback:
+                logger.warning(
+                    f"🔄 TRIGGERING FALLBACK for {analysis_date}:\n"
+                    f"   - Reason: {fallback_reason}\n"
+                    f"   - Action: Generating synthetic context from player_game_summary\n"
+                    f"   - Expected coverage: {expected_count} players"
+                )
+                self._generate_synthetic_player_context(analysis_date)
 
         # Extract team context
         team_context_query = f"""

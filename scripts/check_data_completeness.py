@@ -71,6 +71,17 @@ def get_boxscore_count(target_date: str) -> int:
     return results[0]['count'] if results else 0
 
 
+def get_bettingpros_props_count(target_date: str) -> int:
+    """Get count of BettingPros player props for a date."""
+    query = f"""
+        SELECT COUNT(*) as count
+        FROM nba_raw.bettingpros_player_points_props
+        WHERE game_date = '{target_date}'
+    """
+    results = execute_bigquery(query) or []
+    return results[0]['count'] if results else 0
+
+
 def check_completeness(target_date: str) -> Dict:
     """
     Check data completeness for a specific date.
@@ -98,18 +109,25 @@ def check_completeness(target_date: str) -> Dict:
             'scheduled_games': [],
             'gamebook_count': 0,
             'boxscore_count': 0,
+            'bettingpros_count': 0,
             'is_complete': True,  # No games = complete
             'gamebook_pct': 100.0,
             'boxscore_pct': 100.0,
+            'bettingpros_ok': True,
         }
 
     # Get collected data counts
     gamebook_count = get_gamebook_count(target_date)
     boxscore_count = get_boxscore_count(target_date)
+    bettingpros_count = get_bettingpros_props_count(target_date)
 
     # Calculate percentages
     gamebook_pct = 100.0 * gamebook_count / scheduled_count
     boxscore_pct = 100.0 * boxscore_count / scheduled_count
+
+    # BettingPros: expect at least 150 props per game (rough heuristic)
+    min_expected_props = scheduled_count * 150
+    bettingpros_ok = bettingpros_count >= min_expected_props
 
     is_complete = (gamebook_count >= scheduled_count and
                    boxscore_count >= scheduled_count)
@@ -120,6 +138,9 @@ def check_completeness(target_date: str) -> Dict:
         'scheduled_games': scheduled,
         'gamebook_count': gamebook_count,
         'boxscore_count': boxscore_count,
+        'bettingpros_count': bettingpros_count,
+        'bettingpros_expected': min_expected_props,
+        'bettingpros_ok': bettingpros_ok,
         'is_complete': is_complete,
         'gamebook_pct': gamebook_pct,
         'boxscore_pct': boxscore_pct,
@@ -160,6 +181,16 @@ def print_report(result: Dict) -> None:
     print(f"\nBox Scores: {boxscore_count}/{scheduled_count} ({bs_pct:.0f}%) {bs_status}")
     if boxscore_count < scheduled_count:
         print(f"  ⚠️  Missing {scheduled_count - boxscore_count} box score(s)")
+
+    # BettingPros props
+    bp_count = result.get('bettingpros_count', 0)
+    bp_expected = result.get('bettingpros_expected', 0)
+    bp_ok = result.get('bettingpros_ok', True)
+    bp_status = "✅" if bp_ok else "⚠️"
+    print(f"\nBettingPros Props: {bp_count:,} (expected ≥{bp_expected:,}) {bp_status}")
+    if not bp_ok:
+        print(f"  ⚠️  Props count below expected - may need recovery")
+        print(f"  Run: PYTHONPATH=. python scripts/betting_props_recovery.py --date {date_str}")
 
     # Overall
     if result['is_complete']:
