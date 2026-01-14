@@ -1,0 +1,134 @@
+{
+  "simple_method": {
+    "overall": {
+      "total_bets": 5327,
+      "wins": 4157,
+      "losses": 1170,
+      "hit_rate": 78.04,
+      "edge_vs_breakeven": 25.64,
+      "over_bets": 3041,
+      "over_wins": 2291,
+      "over_hit_rate": 75.34,
+      "under_bets": 2286,
+      "under_wins": 1866,
+      "under_hit_rate": 81.63,
+      "avg_edge": 1.181,
+      "avg_edge_wins": 1.255,
+      "avg_edge_losses": 0.916
+    },
+    "by_edge_size": {
+      "0.5-1.0": {
+        "bets": 2515,
+        "wins": 1721,
+        "hit_rate": 68.43,
+        "edge_vs_breakeven": 16.03
+      },
+      "1.0-1.5": {
+        "bets": 1583,
+        "wins": 1290,
+        "hit_rate": 81.49,
+        "edge_vs_breakeven": 29.09
+      },
+      "1.5-2.0": {
+        "bets": 737,
+        "wins": 675,
+        "hit_rate": 91.59,
+        "edge_vs_breakeven": 39.19
+      },
+      "2.0+": {
+        "bets": 492,
+        "wins": 471,
+        "hit_rate": 95.73,
+        "edge_vs_breakeven": 43.33
+      }
+    },
+    "by_confidence": {
+      "75-85%": {
+        "bets": 5327,
+        "wins": 4157,
+        "hit_rate": 78.04,
+        "avg_confidence": 0.8
+      }
+    },
+    "context": {
+      "home_away": {
+        "home_bets": 2647,
+        "home_wins": 2076,
+        "home_hit_rate": 78.43,
+        "away_bets": 2680,
+        "away_wins": 2081,
+        "away_hit_rate": 77.65
+      },
+      "by_season": {
+        "2024": {
+          "bets": 2479,
+          "wins": 2058,
+          "hit_rate": 83.02
+        },
+        "2025": {
+          "bets": 2848,
+          "wins": 2099,
+          "hit_rate": 73.7
+        }
+      }
+    }
+  },
+  "adjusted_method": {
+    "overall": {
+      "total_bets": 5281,
+      "wins": 4178,
+      "losses": 1103,
+      "hit_rate": 79.11,
+      "edge_vs_breakeven": 26.71,
+      "over_bets": 2977,
+      "over_wins": 2280,
+      "over_hit_rate": 76.59,
+      "under_bets": 2304,
+      "under_wins": 1898,
+      "under_hit_rate": 82.38,
+      "avg_edge": 1.18,
+      "avg_edge_wins": 1.247,
+      "avg_edge_losses": 0.926
+    },
+    "context": {
+      "home_away": {
+        "home_bets": 2561,
+        "home_wins": 2068,
+        "home_hit_rate": 80.75,
+        "away_bets": 2720,
+        "away_wins": 2110,
+        "away_hit_rate": 77.57
+      },
+      "by_season": {
+        "2024": {
+          "bets": 2455,
+          "wins": 2071,
+          "hit_rate": 84.36
+        },
+        "2025": {
+          "bets": 2826,
+          "wins": 2107,
+          "hit_rate": 74.56
+        }
+      }
+    }
+  },
+  "verdict": {
+    "verdict": "PROMISING",
+    "recommendation": "Model shows strong value detection. Proceed with forward validation.",
+    "confidence_level": "MEDIUM-HIGH",
+    "hit_rate": 78.04,
+    "edge_vs_breakeven": 25.64,
+    "caveats": [
+      "Synthetic lines may differ significantly from real betting lines",
+      "Real markets incorporate information not in our features",
+      "This is a directional indicator, not a profitability guarantee",
+      "Forward validation with real lines is essential"
+    ],
+    "best_method": "adjusted"
+  },
+  "analysis_date": "2026-01-13T19:17:32.883110",
+  "total_predictions": 8345,
+  "edge_threshold": 0.5,
+  "breakeven_hit_rate": 52.4
+}
