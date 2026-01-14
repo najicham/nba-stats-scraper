@@ -122,8 +122,10 @@ class BdlBoxScoresScraper(ScraperBase, ScraperFlaskMixin):
     def set_additional_opts(self) -> None:
         super().set_additional_opts()
         if not self.opts.get("date"):
-            yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).date()
-            self.opts["date"] = yesterday.isoformat()
+            # Use Eastern Time for NBA games - ensures west coast late games
+            # (which end at 11 PM PT / 2 AM ET) are captured with correct date
+            from scrapers.utils.date_utils import get_yesterday_eastern
+            self.opts["date"] = get_yesterday_eastern()
 
     # ------------------------------------------------------------------ #
     # URL & headers                                                      #
