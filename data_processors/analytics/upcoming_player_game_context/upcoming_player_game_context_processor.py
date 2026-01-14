@@ -2841,7 +2841,9 @@ class UpcomingPlayerGameContextProcessor(
             step_start = time.time()
 
             # Build list of all columns for UPDATE SET clause (exclude merge keys)
-            merge_keys = {'player_lookup', 'game_id'}
+            # FIX: Use game_date instead of game_id to match PRIMARY_KEY_FIELDS
+            # game_id can have inconsistent formats, game_date is always consistent
+            merge_keys = {'player_lookup', 'game_date'}
             update_columns = [f.name for f in target_schema if f.name not in merge_keys]
             update_set_clause = ",\n                ".join(
                 f"target.{col} = source.{col}" for col in update_columns
@@ -2852,14 +2854,14 @@ class UpcomingPlayerGameContextProcessor(
             USING (
                 SELECT * EXCEPT(row_num) FROM (
                     SELECT *, ROW_NUMBER() OVER (
-                        PARTITION BY player_lookup, game_id
+                        PARTITION BY player_lookup, game_date
                         ORDER BY processed_at DESC
                     ) as row_num
                     FROM `{temp_table_id}`
                 ) WHERE row_num = 1
             ) AS source
             ON target.player_lookup = source.player_lookup
-               AND target.game_id = source.game_id
+               AND target.game_date = source.game_date
             WHEN MATCHED THEN
                 UPDATE SET
                 {update_set_clause}
