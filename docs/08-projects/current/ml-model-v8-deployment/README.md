@@ -42,13 +42,17 @@ CatBoost V8 is now **live in production** and backfilled across 121,524 historic
 
 | Document | Description |
 |----------|-------------|
-| [BACKFILL-RESULTS.md](./BACKFILL-RESULTS.md) | **NEW**: Backfill performance and 2025-26 season results |
+| [IMPLEMENTATION-PLAN-SESSION-44.md](./IMPLEMENTATION-PLAN-SESSION-44.md) | **CURRENT**: Tiered best bets implementation plan |
+| [ANALYSIS-FRAMEWORK.md](./ANALYSIS-FRAMEWORK.md) | **CRITICAL**: 10K+ prediction analysis with key findings |
+| [BACKFILL-RESULTS.md](./BACKFILL-RESULTS.md) | Backfill performance and 2025-26 season results |
 | [PRODUCTION-DEPLOYMENT.md](./PRODUCTION-DEPLOYMENT.md) | Deployment guide and configuration |
 | [MODEL-SUMMARY.md](./MODEL-SUMMARY.md) | Technical details of v8 model architecture |
 | [IMPROVEMENT-JOURNEY.md](./IMPROVEMENT-JOURNEY.md) | Full timeline of ML experiments |
 | [NEXT-STEPS.md](./NEXT-STEPS.md) | Recommendations for further work |
 | [SHADOW-MODE-GUIDE.md](./SHADOW-MODE-GUIDE.md) | Shadow mode implementation and usage |
 | [ML-EXPERIMENT-ARCHITECTURE.md](./ML-EXPERIMENT-ARCHITECTURE.md) | Multi-model experimentation pipeline |
+| [CHAMPION-CHALLENGER-FRAMEWORK.md](./CHAMPION-CHALLENGER-FRAMEWORK.md) | Model promotion criteria |
+| [TRAINING-DATA-STRATEGY.md](./TRAINING-DATA-STRATEGY.md) | ML training recommendations |
 
 ---
 
