@@ -7,11 +7,20 @@
 ## High Priority
 
 ### 1. Cloud Monitoring Alert Policy Setup
-**Status:** Pending (Manual)
+**Status:** Pending (Manual - 5 min)
 **Effort:** 5 minutes
 **Owner:** Manual Cloud Console
 
-The log-based metric exists but the alert policy needs manual setup due to CLI permission issues.
+The log-based metric exists but the alert policy needs manual setup due to CLI permission issues (gcloud alpha not installed).
+
+**Metric Details:**
+```yaml
+name: cloud_run_auth_errors
+type: logging.googleapis.com/user/cloud_run_auth_errors
+filter: resource.type="cloud_run_revision" AND (textPayload=~"401" OR textPayload=~"403" ...)
+kind: DELTA
+valueType: INT64
+```
 
 **Steps:**
 1. Go to Cloud Console > Monitoring > Alerting > Create Policy
@@ -83,68 +92,99 @@ python -c "from scrapers.utils.date_utils import get_yesterday_pacific; print(ge
 
 ---
 
-### 3. Phase 3 Intermittent 404 Investigation
-**Status:** Not Started
-**Effort:** 1 hour
-**Blocked By:** None
+### 3. Phase 3 404 Root Cause Analysis
+**Status:** COMPLETED (Session 40)
+**Root Cause:** Wrong source directory deployed
 
-The `/process-date-range` endpoint works now but had 404 errors earlier today. Need to understand why.
+**Investigation Findings:**
 
-**Investigation Steps:**
-1. Check Cloud Run logs around 11:30 AM ET:
-   ```bash
-   gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="nba-phase3-analytics-processors" AND timestamp>="2026-01-14T16:00:00Z" AND timestamp<="2026-01-14T17:00:00Z"' --limit=100
-   ```
+All 404 errors were on revision `00055-mgt`, NOT `00054-ltj`:
+```
+2026-01-14T14:48:07Z  404  /process-date-range  00055-mgt
+2026-01-14T14:47:09Z  404  /process-date-range  00055-mgt
+2026-01-14T14:12:43Z  404  /process-date-range  00055-mgt
+2026-01-14T11:30:01Z  404  /process-date-range  00055-mgt
+```
 
-2. Check if cold start timing issue:
-   - Look for startup logs before 404s
-   - Check if Flask app initialized properly
+**Source Archive Size Analysis:**
+- Revision 00054: `14.5 MB` (correct - just analytics code)
+- Revision 00055: `492.5 MB` (WRONG - entire repo uploaded!)
 
-3. Check revision traffic routing:
-   ```bash
-   gcloud run services describe nba-phase3-analytics-processors --region=us-west2 --format="yaml(status.traffic)"
-   ```
+**Root Cause:**
+1. Revision 00055 was deployed from repo root (not analytics directory)
+2. The root Procfile runs predictions service, not analytics
+3. Predictions service doesn't have `/process-date-range` endpoint
+4. Hence the 404 errors
 
-4. Check scheduler job invocation logs:
-   ```bash
-   gcloud scheduler jobs describe same-day-phase3 --location=us-west2 --format="yaml(lastAttemptTime,status)"
-   ```
+**Timeline:**
+- 00054: Created 2026-01-13T23:54:38Z (gcloud 550.0.0) - WORKING
+- 00055: Created 2026-01-14T04:50:11Z (gcloud 547.0.0) - BROKEN
+- Traffic rolled back to 00054, fixing the issue
 
-**Possible Causes:**
-- Cold start delay before Flask routes register
-- Revision rollback timing
-- DNS/routing cache staleness
+**Fix Applied:**
+Created `data_processors/analytics/Procfile` to ensure correct Flask app starts:
+```
+web: gunicorn --bind :$PORT --workers 1 --threads 5 --timeout 600 main_analytics_service:app
+```
+
+**Prevention:**
+- Always deploy Phase 3 from `data_processors/analytics/` directory
+- The new Procfile ensures correct app even if deployed from wrong location
 
 ---
 
 ## Nice to Have
 
 ### 4. Proactive Success Rate Alerts
-**Status:** Not Started
-**Effort:** 2 hours
-**Blocked By:** None
+**Status:** DESIGNED (Ready to Implement)
+**Effort:** 30 minutes
+**Blocked By:** SLACK_WEBHOOK_URL environment variable
 
-Add Cloud Monitoring alerts that fire when phase success rates drop below thresholds.
+**Finding:** `system_health_check.py` already has Slack integration!
 
-**Options:**
+**Current Capabilities (already built):**
+- Success rate thresholds: 50% critical, 80% warning
+- Phase-by-phase health assessment
+- Stuck processor detection
+- Noise reduction (expected vs real failures)
+- Slack message formatting (lines 643-749)
+- `--slack` flag to send reports
 
-**Option A: Custom Metric from Health Check**
-- Modify `system_health_check.py` to write custom metrics
-- Create alert policies on those metrics
+**Implementation Plan:**
 
-**Option B: Log-based Metrics**
-- Create log-based metrics from `processor_run_history` logs
-- Alert on failure patterns
+**Option A: Scheduled Health Check with Slack (Recommended - 30 min)**
+```bash
+# 1. Set up Slack webhook
+export SLACK_WEBHOOK_URL="https://hooks.slack.com/services/..."
 
-**Option C: Scheduled Query + Alert**
-- BigQuery scheduled query checks success rates
-- Pub/Sub notification on threshold breach
+# 2. Create scheduler job
+gcloud scheduler jobs create http health-check-hourly \
+  --location=us-west2 \
+  --schedule="0 * * * *" \
+  --uri="https://admin-service.../run-health-check" \
+  --http-method=POST \
+  --message-body='{"slack": true, "hours": 1}'
+```
 
-**Recommended Thresholds:**
-- Phase 2: < 80% success over 1 hour
-- Phase 3: < 90% success over 1 hour
-- Phase 4: < 85% success over 1 hour
-- Phase 5: < 70% success over 1 hour
+**Option B: Cloud Function Wrapper (1 hour)**
+- Create a Cloud Function that runs health check
+- Trigger on schedule via Cloud Scheduler
+- Send Slack alert only when issues detected
+
+**Thresholds (already configured in system_health_check.py):**
+```python
+THRESHOLDS = {
+    "success_rate_critical": 50.0,  # Below = critical
+    "success_rate_warning": 80.0,   # Below = warning
+    "stuck_minutes": 15,            # Stuck threshold
+}
+```
+
+**Quick Test:**
+```bash
+# Test Slack integration
+SLACK_WEBHOOK_URL="your-webhook" python scripts/system_health_check.py --hours=1 --slack
+```
 
 ---
 
@@ -176,7 +216,10 @@ gcloud logging metrics create dlq_messages \
 - [x] Stuck processor cleanup - 25 cleaned (Session 40)
 - [x] Phase 3 endpoint verification (Session 40)
 - [x] MLB scrapers Pacific Time date logic (Session 40) - `0613a02`
-- [x] Session 40 handoff documentation (Session 40) - `2d59800`
+- [x] Session 40 handoff documentation (Session 40) - `08c83dd`
+- [x] Phase 3 404 root cause analysis (Session 40) - deployment issue identified
+- [x] Phase 3 Procfile fix (Session 40) - prevents future deployment issues
+- [x] Proactive alerting design (Session 40) - system_health_check.py already supports Slack
 
 ---
 
