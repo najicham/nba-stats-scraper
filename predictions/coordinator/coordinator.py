@@ -25,6 +25,7 @@ import json
 import logging
 import os
 import secrets
+import threading
 import uuid
 from typing import Dict, List, Optional, TYPE_CHECKING
 from datetime import datetime, date
@@ -60,6 +61,76 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+
+class HeartbeatLogger:
+    """
+    Periodic heartbeat logger for long-running operations.
+
+    Logs a heartbeat message every N seconds to prove the process is still alive.
+    Helps debugging hung processes by showing where they got stuck.
+
+    Usage:
+        with HeartbeatLogger("Loading historical games", interval=300):  # 5 min
+            # Long-running operation
+            data = load_historical_games_batch(...)
+    """
+    def __init__(self, operation_name: str, interval_seconds: int = 300):
+        """
+        Args:
+            operation_name: Name of the operation for logging
+            interval_seconds: Heartbeat interval in seconds (default 5 minutes)
+        """
+        self.operation_name = operation_name
+        self.interval = interval_seconds
+        self.start_time = None
+        self.timer = None
+        self._active = False
+
+    def __enter__(self):
+        """Start heartbeat logging when entering context"""
+        self.start_time = time.time()
+        self._active = True
+        logger.info(f"HEARTBEAT START: {self.operation_name}")
+        print(f"💓 HEARTBEAT START: {self.operation_name}", flush=True)
+        self._schedule_next_heartbeat()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Stop heartbeat logging when exiting context"""
+        self._active = False
+        if self.timer:
+            self.timer.cancel()
+
+        elapsed = time.time() - self.start_time
+        elapsed_min = elapsed / 60
+
+        if exc_type:
+            logger.error(f"HEARTBEAT END (ERROR): {self.operation_name} failed after {elapsed_min:.1f} min")
+            print(f"❌ HEARTBEAT END (ERROR): {self.operation_name} failed after {elapsed_min:.1f} min", flush=True)
+        else:
+            logger.info(f"HEARTBEAT END: {self.operation_name} completed in {elapsed_min:.1f} min")
+            print(f"✅ HEARTBEAT END: {self.operation_name} completed in {elapsed_min:.1f} min", flush=True)
+
+        return False  # Don't suppress exceptions
+
+    def _schedule_next_heartbeat(self):
+        """Schedule the next heartbeat log"""
+        if not self._active:
+            return
+
+        # Log current heartbeat
+        if self.start_time:
+            elapsed = time.time() - self.start_time
+            elapsed_min = elapsed / 60
+            logger.info(f"HEARTBEAT: {self.operation_name} still running ({elapsed_min:.1f} min elapsed)")
+            print(f"💓 HEARTBEAT: {self.operation_name} still running ({elapsed_min:.1f} min elapsed)", flush=True)
+
+        # Schedule next heartbeat
+        self.timer = threading.Timer(self.interval, self._schedule_next_heartbeat)
+        self.timer.daemon = True  # Don't prevent process exit
+        self.timer.start()
+
 
 # Validate required environment variables at startup
 validate_required_env_vars(
@@ -326,20 +397,18 @@ def start_prediction_batch():
         try:
             player_lookups = [r.get('player_lookup') for r in requests if r.get('player_lookup')]
             if player_lookups:
-                # Use print for visibility in Cloud Run (logger.info gets lost in gunicorn)
-                print(f"🚀 Pre-loading historical games for {len(player_lookups)} players (batch optimization)", flush=True)
-                logger.info(f"🚀 Pre-loading historical games for {len(player_lookups)} players (batch optimization)")
+                # Use heartbeat logger to track long-running data load (5-min intervals)
+                with HeartbeatLogger(f"Loading historical games for {len(player_lookups)} players", interval=300):
+                    # Import PredictionDataLoader to use batch loading method
+                    from data_loaders import PredictionDataLoader
 
-                # Import PredictionDataLoader to use batch loading method
-                from data_loaders import PredictionDataLoader
-
-                data_loader = PredictionDataLoader(project_id=PROJECT_ID, dataset_prefix=dataset_prefix)
-                batch_historical_games = data_loader.load_historical_games_batch(
-                    player_lookups=player_lookups,
-                    game_date=game_date,
-                    lookback_days=90,
-                    max_games=30
-                )
+                    data_loader = PredictionDataLoader(project_id=PROJECT_ID, dataset_prefix=dataset_prefix)
+                    batch_historical_games = data_loader.load_historical_games_batch(
+                        player_lookups=player_lookups,
+                        game_date=game_date,
+                        lookback_days=90,
+                        max_games=30
+                    )
 
                 print(f"✅ Batch loaded historical games for {len(batch_historical_games)} players", flush=True)
                 logger.info(f"✅ Batch loaded historical games for {len(batch_historical_games)} players")
@@ -605,45 +674,47 @@ def publish_prediction_requests(
     published_count = 0
     failed_count = 0
 
-    for request_data in requests:
-        # Add batch metadata
-        message = {
-            **request_data,
-            'batch_id': batch_id,
-            'timestamp': datetime.now().isoformat()
-        }
+    # Use heartbeat logger to track long publish operations (5-min intervals)
+    with HeartbeatLogger(f"Publishing {len(requests)} prediction requests", interval=300):
+        for request_data in requests:
+            # Add batch metadata
+            message = {
+                **request_data,
+                'batch_id': batch_id,
+                'timestamp': datetime.now().isoformat()
+            }
 
-        # Add dataset_prefix for test isolation if specified
-        if dataset_prefix:
-            message['dataset_prefix'] = dataset_prefix
+            # Add dataset_prefix for test isolation if specified
+            if dataset_prefix:
+                message['dataset_prefix'] = dataset_prefix
 
-        # BATCH OPTIMIZATION: Include pre-loaded historical games if available
-        if batch_historical_games:
-            player_lookup = request_data.get('player_lookup')
-            if player_lookup and player_lookup in batch_historical_games:
-                # Add historical games to message (worker will use this instead of querying)
-                message['historical_games_batch'] = batch_historical_games[player_lookup]
+            # BATCH OPTIMIZATION: Include pre-loaded historical games if available
+            if batch_historical_games:
+                player_lookup = request_data.get('player_lookup')
+                if player_lookup and player_lookup in batch_historical_games:
+                    # Add historical games to message (worker will use this instead of querying)
+                    message['historical_games_batch'] = batch_historical_games[player_lookup]
 
-        # Publish to Pub/Sub with retry logic
-        message_bytes = json.dumps(message).encode('utf-8')
-        player_lookup = request_data.get('player_lookup', 'unknown')
+            # Publish to Pub/Sub with retry logic
+            message_bytes = json.dumps(message).encode('utf-8')
+            player_lookup = request_data.get('player_lookup', 'unknown')
 
-        if publish_with_retry(publisher, topic_path, message_bytes, player_lookup):
-            published_count += 1
+            if publish_with_retry(publisher, topic_path, message_bytes, player_lookup):
+                published_count += 1
 
-            # Log every 50 players
-            if published_count % 50 == 0:
-                logger.info(f"Published {published_count}/{len(requests)} requests")
-        else:
-            failed_count += 1
+                # Log every 50 players (more frequent than heartbeat for progress visibility)
+                if published_count % 50 == 0:
+                    logger.info(f"Published {published_count}/{len(requests)} requests")
+            else:
+                failed_count += 1
 
-            # Mark player as failed in tracker
-            if current_tracker:
-                current_tracker.mark_player_failed(
-                    player_lookup,
-                    "Pub/Sub publish failed after retries"
-                )
-    
+                # Mark player as failed in tracker
+                if current_tracker:
+                    current_tracker.mark_player_failed(
+                        player_lookup,
+                        "Pub/Sub publish failed after retries"
+                    )
+
     logger.info(
         f"Published {published_count} requests successfully, "
         f"{failed_count} failed"

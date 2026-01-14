@@ -83,7 +83,7 @@ gcloud run deploy $SERVICE_NAME \
     --port=8080 \
     --memory=$MEMORY \
     --cpu=$CPU \
-    --timeout=600 \
+    --timeout=1800 \
     --concurrency=8 \
     --min-instances=$MIN_INSTANCES \
     --max-instances=$MAX_INSTANCES \
