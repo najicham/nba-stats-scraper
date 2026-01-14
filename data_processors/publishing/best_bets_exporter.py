@@ -1,8 +1,18 @@
 """
 Best Bets Exporter for Phase 6 Publishing
 
-Exports top prediction picks ranked by composite score.
-Combines confidence, edge, and system agreement for ranking.
+Exports top prediction picks using tiered selection based on data-driven analysis.
+
+Tier Strategy (based on 10K+ prediction analysis):
+- Premium: UNDER only, 90%+ conf, 5+ edge, <18 predicted pts (target 92%+ hit rate)
+- Strong: UNDER only, 90%+ conf, 4+ edge, <20 predicted pts (target 80%+ hit rate)
+- Value: UNDER only, 80%+ conf, 5+ edge, <22 predicted pts (target 70%+ hit rate)
+
+Key Findings Applied:
+- UNDER hits 95% vs OVER 53% at 90%+ confidence
+- 5+ edge hits 92.9% vs <2 edge hits 24.1%
+- Bench players hit 89% vs Stars 43%
+- 88-90% confidence tier is broken (42% hit rate) - excluded
 """
 
 import logging
@@ -16,34 +26,79 @@ from .base_exporter import BaseExporter
 logger = logging.getLogger(__name__)
 
 
+# Tier configuration based on comprehensive analysis of 10,000+ predictions
+# See: docs/08-projects/current/ml-model-v8-deployment/ANALYSIS-FRAMEWORK.md
+TIER_CONFIG = {
+    'premium': {
+        'min_confidence': 0.90,
+        'min_edge': 5.0,
+        'max_predicted_points': 18,
+        'max_picks': 5,
+        'target_hit_rate': '92%+',
+    },
+    'strong': {
+        'min_confidence': 0.90,
+        'min_edge': 4.0,
+        'max_predicted_points': 20,
+        'max_picks': 10,
+        'target_hit_rate': '80%+',
+    },
+    'value': {
+        'min_confidence': 0.80,
+        'min_edge': 5.0,
+        'max_predicted_points': 22,
+        'max_picks': 10,
+        'target_hit_rate': '70%+',
+    },
+}
+
+# Criteria that should ALWAYS exclude a pick from best bets
+# Based on analysis showing these criteria have terrible hit rates
+AVOID_CRITERIA = {
+    'over_recommendation': True,       # OVER hits only 53% vs UNDER 95%
+    'min_edge_threshold': 2.0,         # Below 2pt edge hits only 17-24%
+    'max_predicted_points': 25,        # Star players (25+) hit only 43%
+    'exclude_confidence_range': (0.88, 0.90),  # This tier hits only 42%
+}
+
+
 class BestBetsExporter(BaseExporter):
     """
-    Export best bets (top picks) to JSON.
+    Export best bets (top picks) to JSON using tiered selection.
 
     Output files:
     - best-bets/{date}.json - Best bets for a specific date
     - best-bets/latest.json - Most recent best bets
 
-    Ranking methodology:
-    1. Filter to actionable recommendations (OVER/UNDER only)
-    2. Compute composite score = confidence * edge_factor * agreement_factor
-    3. Rank by composite score descending
-    4. Return top N picks
+    Tiered Selection Methodology (based on 10K+ prediction analysis):
+    1. Apply AVOID criteria to exclude low-quality picks:
+       - Exclude OVER recommendations (53% hit rate vs 95% for UNDER)
+       - Exclude edge < 2 points (17-24% hit rate)
+       - Exclude star players (25+ predicted points, 43% hit rate)
+       - Exclude 88-90% confidence tier (42% hit rate - broken)
+    2. Classify remaining picks into tiers:
+       - Premium: 90%+ conf, 5+ edge, <18 pts (target 92%+ hit rate)
+       - Strong: 90%+ conf, 4+ edge, <20 pts (target 80%+ hit rate)
+       - Value: 80%+ conf, 5+ edge, <22 pts (target 70%+ hit rate)
+    3. Select picks by tier priority, respecting max_picks per tier
+    4. Rank within tier by composite score
 
     JSON structure:
     {
         "game_date": "2021-11-10",
         "generated_at": "2025-12-10T...",
         "methodology": "...",
+        "tier_summary": {"premium": 3, "strong": 5, "value": 7},
         "picks": [
             {
                 "rank": 1,
-                "player_lookup": "stephen_curry",
-                "recommendation": "OVER",
-                "line": 26.5,
-                "predicted": 29.8,
-                "edge": 3.3,
-                "confidence": 0.82,
+                "tier": "premium",
+                "player_lookup": "player_name",
+                "recommendation": "UNDER",
+                "line": 12.5,
+                "predicted": 7.2,
+                "edge": 5.3,
+                "confidence": 0.92,
                 "composite_score": 0.91,
                 ...
             }
@@ -51,15 +106,15 @@ class BestBetsExporter(BaseExporter):
     }
     """
 
-    DEFAULT_TOP_N = 15
+    DEFAULT_TOP_N = 25  # Increased to accommodate tiered selection
 
     def generate_json(self, target_date: str, top_n: int = None) -> Dict[str, Any]:
         """
-        Generate best bets JSON for a specific date.
+        Generate best bets JSON for a specific date using tiered selection.
 
         Args:
             target_date: Date string in YYYY-MM-DD format
-            top_n: Number of top picks to include (default 15)
+            top_n: Number of top picks to include (default 25)
 
         Returns:
             Dictionary ready for JSON serialization
@@ -67,36 +122,51 @@ class BestBetsExporter(BaseExporter):
         if top_n is None:
             top_n = self.DEFAULT_TOP_N
 
-        # Query predictions with ranking data
+        # Query predictions with tiered ranking data
         picks = self._query_ranked_predictions(target_date, top_n)
 
         if not picks:
             logger.warning(f"No best bets found for {target_date}")
             return self._empty_response(target_date)
 
-        # Format picks
+        # Format picks with tier information
         formatted_picks = self._format_picks(picks)
+
+        # Calculate tier summary
+        tier_summary = {'premium': 0, 'strong': 0, 'value': 0, 'standard': 0}
+        for pick in formatted_picks:
+            tier = pick.get('tier', 'standard')
+            if tier in tier_summary:
+                tier_summary[tier] += 1
 
         return {
             'game_date': target_date,
             'generated_at': self.get_generated_at(),
-            'methodology': 'Ranked by composite score: confidence * edge_factor * historical_accuracy',
+            'methodology': 'Tiered selection: UNDER only, edge/confidence thresholds, excludes stars and broken 88-90% tier',
             'total_picks': len(formatted_picks),
+            'tier_summary': tier_summary,
             'picks': formatted_picks
         }
 
     def _query_ranked_predictions(self, target_date: str, top_n: int) -> List[Dict]:
         """
-        Query predictions ranked by composite score.
+        Query predictions using tiered selection based on analysis findings.
 
-        Composite score formula:
-        - Base: confidence_score (0-1)
-        - Edge factor: 1 + (edge / 10), capped at 1.5
-        - Historical factor: Player's historical accuracy
+        Filtering (AVOID criteria):
+        - UNDER only (OVER hits only 53% vs 95% for UNDER)
+        - Edge >= 2 points (below 2 hits only 17-24%)
+        - Predicted points < 25 (stars hit only 43%)
+        - Exclude 88-90% confidence tier (hits only 42%)
+
+        Tier classification:
+        - Premium: 90%+ conf, 5+ edge, <18 pts
+        - Strong: 90%+ conf, 4+ edge, <20 pts
+        - Value: 80%+ conf, 5+ edge, <22 pts
+        - Standard: meets avoid criteria but not tiered
         """
         query = """
         WITH player_history AS (
-            -- Pre-compute player historical accuracy
+            -- Pre-compute player historical accuracy (UNDER only for consistency)
             SELECT
                 player_lookup,
                 COUNT(*) as sample_size,
@@ -104,7 +174,7 @@ class BestBetsExporter(BaseExporter):
             FROM `nba-props-platform.nba_predictions.prediction_accuracy`
             WHERE system_id = 'catboost_v8'
               AND game_date < @target_date
-              AND recommendation IN ('OVER', 'UNDER')
+              AND recommendation = 'UNDER'
             GROUP BY player_lookup
         ),
         player_names AS (
@@ -146,7 +216,12 @@ class BestBetsExporter(BaseExporter):
             LEFT JOIN fatigue_data f ON p.player_lookup = f.player_lookup
             WHERE p.game_date = @target_date
               AND p.system_id = 'catboost_v8'
-              AND p.recommendation IN ('OVER', 'UNDER')
+              -- CRITICAL FILTERS based on analysis:
+              AND p.recommendation = 'UNDER'  -- UNDER hits 95% vs OVER 53%
+              AND p.predicted_points < 25     -- Exclude stars (43% hit rate)
+              AND ABS(p.predicted_points - COALESCE(p.line_value, p.predicted_points)) >= 2.0  -- Min edge (below hits 17-24%)
+              AND NOT (p.confidence_score >= 0.88 AND p.confidence_score < 0.90)  -- Exclude broken tier (42% hit rate)
+              AND p.line_value IS NOT NULL    -- Must have betting line
         ),
         scored AS (
             SELECT
@@ -158,12 +233,32 @@ class BestBetsExporter(BaseExporter):
                 -- Composite score
                 confidence_score
                     * LEAST(1.5, 1.0 + edge / 10.0)
-                    * COALESCE(player_historical_accuracy, 0.85) as composite_score
+                    * COALESCE(player_historical_accuracy, 0.85) as composite_score,
+                -- Tier classification based on analysis
+                CASE
+                    WHEN confidence_score >= 0.90
+                         AND edge >= 5.0
+                         AND predicted_points < 18 THEN 'premium'
+                    WHEN confidence_score >= 0.90
+                         AND edge >= 4.0
+                         AND predicted_points < 20 THEN 'strong'
+                    WHEN confidence_score >= 0.80
+                         AND edge >= 5.0
+                         AND predicted_points < 22 THEN 'value'
+                    ELSE 'standard'
+                END as tier,
+                -- Tier sort order for prioritization
+                CASE
+                    WHEN confidence_score >= 0.90 AND edge >= 5.0 AND predicted_points < 18 THEN 1
+                    WHEN confidence_score >= 0.90 AND edge >= 4.0 AND predicted_points < 20 THEN 2
+                    WHEN confidence_score >= 0.80 AND edge >= 5.0 AND predicted_points < 22 THEN 3
+                    ELSE 4
+                END as tier_order
             FROM predictions
         )
         SELECT *
         FROM scored
-        ORDER BY composite_score DESC
+        ORDER BY tier_order ASC, composite_score DESC
         LIMIT @top_n
         """
 
@@ -207,6 +302,7 @@ class BestBetsExporter(BaseExporter):
 
             formatted.append({
                 'rank': rank,
+                'tier': pick.get('tier', 'standard'),
                 'player_lookup': pick['player_lookup'],
                 'player_full_name': pick.get('player_full_name', pick['player_lookup']),
                 'game_id': pick['game_id'],
@@ -234,19 +330,37 @@ class BestBetsExporter(BaseExporter):
         """Build human-readable rationale for the pick."""
         rationale = []
 
+        # Tier-specific lead rationale
+        tier = pick.get('tier', 'standard')
+        if tier == 'premium':
+            rationale.append("Premium pick: highest confidence tier (target 92%+ hit rate)")
+        elif tier == 'strong':
+            rationale.append("Strong pick: high confidence tier (target 80%+ hit rate)")
+        elif tier == 'value':
+            rationale.append("Value pick: solid confidence with strong edge (target 70%+ hit rate)")
+
         # Confidence
         conf = pick.get('confidence_score')
-        if conf and conf >= 0.80:
+        if conf and conf >= 0.90:
             rationale.append(f"High confidence ({conf:.0%})")
-        elif conf and conf >= 0.70:
+        elif conf and conf >= 0.80:
             rationale.append(f"Good confidence ({conf:.0%})")
 
         # Edge
         edge = pick.get('edge')
-        if edge and edge >= 4.0:
+        if edge and edge >= 5.0:
             rationale.append(f"Strong edge ({edge:.1f} points)")
-        elif edge and edge >= 2.5:
+        elif edge and edge >= 4.0:
             rationale.append(f"Solid edge ({edge:.1f} points)")
+        elif edge and edge >= 2.0:
+            rationale.append(f"Moderate edge ({edge:.1f} points)")
+
+        # Player tier (predicted points indicates role)
+        predicted = pick.get('predicted_points')
+        if predicted and predicted < 12:
+            rationale.append("Bench player (model excels here: 89% hit rate)")
+        elif predicted and predicted < 18:
+            rationale.append("Rotation player (model performs well: 73%+ hit rate)")
 
         # Historical accuracy
         hist = pick.get('player_historical_accuracy')
@@ -265,9 +379,9 @@ class BestBetsExporter(BaseExporter):
             elif fatigue < 75:
                 rationale.append(f"Elevated fatigue (fatigue: {fatigue:.0f})")
 
-        # If no rationale, add generic
-        if not rationale:
-            rationale.append("Meets minimum criteria")
+        # If no rationale beyond tier, add generic
+        if len(rationale) <= 1:
+            rationale.append("Meets selection criteria")
 
         return rationale
 
@@ -288,8 +402,9 @@ class BestBetsExporter(BaseExporter):
         return {
             'game_date': target_date,
             'generated_at': self.get_generated_at(),
-            'methodology': 'Ranked by composite score: confidence * edge_factor * historical_accuracy',
+            'methodology': 'Tiered selection: UNDER only, edge/confidence thresholds, excludes stars and broken 88-90% tier',
             'total_picks': 0,
+            'tier_summary': {'premium': 0, 'strong': 0, 'value': 0, 'standard': 0},
             'picks': []
         }
 
