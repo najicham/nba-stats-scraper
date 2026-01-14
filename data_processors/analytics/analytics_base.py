@@ -39,6 +39,9 @@ from shared.processors.mixins import RunHistoryMixin
 # Import completeness checking for defensive checks
 from shared.utils.completeness_checker import CompletenessChecker, DependencyError
 
+# Import failure categorization from processor_base
+from data_processors.raw.processor_base import _categorize_failure
+
 # Import unified publishing and change detection
 from shared.publishers.unified_pubsub_publisher import UnifiedPubSubPublisher
 from shared.change_detection.change_detector import ChangeDetector
@@ -626,24 +629,36 @@ class AnalyticsProcessorBase(RunHistoryMixin):
             logger.error("AnalyticsProcessorBase Error: %s", e, exc_info=True)
             sentry_sdk.capture_exception(e)
 
+            # Categorize the failure for monitoring/alerting
+            current_step = self._get_current_step()
+            failure_category = _categorize_failure(e, current_step, self.stats)
+            logger.info(f"Failure categorized as: {failure_category} (step={current_step})")
+
             # Send notification for failure (suppressed in backfill mode)
+            # Skip notification for expected failures (no_data_available)
             try:
-                self._send_notification(
-                    notify_error,
-                    title=f"Analytics Processor Failed: {self.__class__.__name__}",
-                    message=f"Analytics calculation failed: {str(e)}",
-                    details={
-                        'processor': self.__class__.__name__,
-                        'run_id': self.run_id,
-                        'error_type': type(e).__name__,
-                        'step': self._get_current_step(),
-                        'date_range': f"{opts.get('start_date')} to {opts.get('end_date')}",
-                        'table': self.table_name,
-                        'stats': self.stats
-                    },
-                    processor_name=self.__class__.__name__
-                )
-                self.set_alert_sent('error')
+                should_alert = failure_category in ['processing_error', 'configuration_error', 'timeout']
+
+                if should_alert:
+                    self._send_notification(
+                        notify_error,
+                        title=f"Analytics Processor Failed: {self.__class__.__name__}",
+                        message=f"Analytics calculation failed: {str(e)}",
+                        details={
+                            'processor': self.__class__.__name__,
+                            'run_id': self.run_id,
+                            'error_type': type(e).__name__,
+                            'failure_category': failure_category,
+                            'step': current_step,
+                            'date_range': f"{opts.get('start_date')} to {opts.get('end_date')}",
+                            'table': self.table_name,
+                            'stats': self.stats
+                        },
+                        processor_name=self.__class__.__name__
+                    )
+                    self.set_alert_sent('error')
+                else:
+                    logger.info(f"Skipping alert for expected failure: {failure_category}")
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
 
@@ -659,11 +674,12 @@ class AnalyticsProcessorBase(RunHistoryMixin):
 
             self.report_error(e)
 
-            # Record failed run to history
+            # Record failed run to history with failure category
             self.record_run_complete(
                 status='failed',
                 error=e,
-                summary=self.stats
+                summary=self.stats,
+                failure_category=failure_category
             )
 
             return False

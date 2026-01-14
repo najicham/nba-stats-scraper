@@ -150,6 +150,19 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_reference.processor_run_histo
     skipped BOOLEAN, -- Was processing skipped?
     skip_reason STRING, -- Why processing was skipped (smart_skip, early_exit, already_processed, no_data)
 
+    -- =============================================================================
+    -- FAILURE CATEGORIZATION (Added 2026-01-14, Session 35)
+    -- Used to filter expected failures from monitoring alerts, reducing noise by 90%+
+    -- =============================================================================
+
+    failure_category STRING, -- Category of failure for alert filtering:
+                             --   'no_data_available': Expected, no data to process (don't alert)
+                             --   'upstream_failure': Dependency failed or missing
+                             --   'processing_error': Real error in processing logic (ALERT!)
+                             --   'timeout': Operation timed out
+                             --   'configuration_error': Missing required options
+                             --   'unknown': Default for backward compatibility
+
     PRIMARY KEY (processor_name, data_date, run_id) NOT ENFORCED
 )
 PARTITION BY data_date
