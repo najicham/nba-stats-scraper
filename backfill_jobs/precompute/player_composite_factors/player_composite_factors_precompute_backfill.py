@@ -164,6 +164,195 @@ class PlayerCompositeFactorsBackfill:
             return False
         return True
 
+    def _validate_coverage(self, analysis_date: date, players_processed: int, force: bool = False) -> bool:
+        """
+        Validate that we processed the expected number of players.
+
+        This prevents silent partial backfills by comparing actual vs expected
+        player counts from player_game_summary (source of truth).
+
+        Args:
+            analysis_date: Date being processed
+            players_processed: Number of players actually processed
+            force: If True, bypass validation and always return True (use with caution)
+
+        Returns:
+            True if coverage >= 90% or force=True, False otherwise
+
+        Raises:
+            No exceptions - returns False on error to fail safe
+        """
+        # Allow bypass with --force flag (for edge cases)
+        if force:
+            logger.warning(
+                f"  ⚠️  Coverage validation SKIPPED for {analysis_date} (--force flag used)"
+            )
+            return True
+
+        try:
+            # Get expected count from player_game_summary (source of truth)
+            query = f"""
+            SELECT COUNT(DISTINCT player_lookup) as expected_players
+            FROM `nba-props-platform.nba_analytics.player_game_summary`
+            WHERE game_date = '{analysis_date}'
+            """
+            result = self.bq_client.query(query).to_dataframe()
+            expected = int(result['expected_players'].iloc[0]) if not result.empty else 0
+
+            # Handle off-days and bootstrap periods
+            if expected == 0:
+                logger.info(f"  ℹ️  No expected players for {analysis_date} (off-day or bootstrap)")
+                return True  # Allow empty dates
+
+            # Calculate coverage percentage
+            coverage_pct = (players_processed / expected) * 100 if expected > 0 else 0
+
+            # CRITICAL THRESHOLD: Must process at least 90% of expected players
+            if coverage_pct < 90:
+                logger.error(
+                    f"  ❌ COVERAGE VALIDATION FAILED for {analysis_date}:\n"
+                    f"     Processed: {players_processed}/{expected} players ({coverage_pct:.1f}%)\n"
+                    f"     This indicates partial backfill - likely stale UPCG data"
+                )
+                return False
+
+            # WARNING THRESHOLD: Flag if less than 95% but >= 90%
+            elif coverage_pct < 95:
+                logger.warning(
+                    f"  ⚠️  Low coverage for {analysis_date}: "
+                    f"{players_processed}/{expected} players ({coverage_pct:.1f}%)"
+                )
+
+            # Success case
+            logger.info(
+                f"  ✅ Coverage validation passed: "
+                f"{players_processed}/{expected} players ({coverage_pct:.1f}%)"
+            )
+            return True
+
+        except Exception as e:
+            logger.error(f"  ❌ Coverage validation error for {analysis_date}: {e}")
+            # Fail safe: Return False to prevent checkpointing bad data
+            return False
+
+    def _pre_flight_coverage_check(self, date_range: List[date], force: bool = False) -> bool:
+        """
+        Pre-flight check: Verify upstream data completeness before starting backfill.
+
+        This catches issues early, saving time by detecting problems before processing begins.
+        Specifically checks for partial/stale data in upcoming_player_game_context.
+
+        Args:
+            date_range: List of dates to validate
+            force: If True, bypass check and always return True
+
+        Returns:
+            True if all dates look good or force=True, False if issues found
+
+        P1 Improvement - Early detection of stale UPCG data
+        """
+        if force:
+            logger.warning("⚠️  Pre-flight check SKIPPED (--force flag used)")
+            return True
+
+        logger.info("=" * 80)
+        logger.info("PRE-FLIGHT COVERAGE CHECK")
+        logger.info("=" * 80)
+        logger.info(f"Checking {len(date_range)} dates for potential data issues...")
+        logger.info("")
+
+        issues_found = []
+
+        for analysis_date in date_range:
+            try:
+                # Check player_game_summary (expected count)
+                pgs_query = f"""
+                SELECT COUNT(DISTINCT player_lookup) as player_count
+                FROM `nba-props-platform.nba_analytics.player_game_summary`
+                WHERE game_date = '{analysis_date}'
+                """
+                pgs_result = self.bq_client.query(pgs_query).to_dataframe()
+                pgs_count = int(pgs_result['player_count'].iloc[0]) if not pgs_result.empty else 0
+
+                # Check upcoming_player_game_context (actual count)
+                upcg_query = f"""
+                SELECT COUNT(DISTINCT player_lookup) as player_count
+                FROM `nba-props-platform.nba_analytics.upcoming_player_game_context`
+                WHERE game_date = '{analysis_date}'
+                """
+                upcg_result = self.bq_client.query(upcg_query).to_dataframe()
+                upcg_count = int(upcg_result['player_count'].iloc[0]) if not upcg_result.empty else 0
+
+                # Detect potential issues
+                if pgs_count == 0:
+                    # Off-day or bootstrap period - not an issue
+                    logger.debug(f"  {analysis_date}: No games (off-day or bootstrap)")
+                elif upcg_count > 0 and upcg_count < pgs_count * 0.9:
+                    # Partial UPCG data detected!
+                    issue = {
+                        'date': analysis_date,
+                        'pgs_count': pgs_count,
+                        'upcg_count': upcg_count,
+                        'coverage': (upcg_count / pgs_count * 100) if pgs_count > 0 else 0,
+                        'missing': pgs_count - upcg_count
+                    }
+                    issues_found.append(issue)
+                    logger.warning(
+                        f"  ⚠️  {analysis_date}: UPCG has partial data "
+                        f"({upcg_count}/{pgs_count} = {issue['coverage']:.1f}%, missing {issue['missing']} players)"
+                    )
+                else:
+                    # Looks good
+                    logger.info(f"  ✅ {analysis_date}: Data looks good (PGS: {pgs_count}, UPCG: {upcg_count})")
+
+            except Exception as e:
+                logger.error(f"  ❌ {analysis_date}: Pre-flight check error - {e}")
+                # Continue checking other dates
+
+        if issues_found:
+            logger.error("")
+            logger.error("=" * 80)
+            logger.error("⚠️  PRE-FLIGHT CHECK FOUND ISSUES")
+            logger.error("=" * 80)
+            logger.error(f"Found {len(issues_found)} dates with partial upcoming_player_game_context data:")
+            logger.error("")
+            for issue in issues_found:
+                logger.error(
+                    f"  📅 {issue['date']}:\n"
+                    f"     Expected (PGS): {issue['pgs_count']} players\n"
+                    f"     Actual (UPCG):  {issue['upcg_count']} players\n"
+                    f"     Coverage:       {issue['coverage']:.1f}%\n"
+                    f"     Missing:        {issue['missing']} players"
+                )
+            logger.error("")
+            logger.error("🔧 RECOMMENDED ACTIONS:")
+            logger.error("")
+            logger.error("  Option 1: Clear stale UPCG records (RECOMMENDED)")
+            logger.error("  ---------")
+            logger.error("  Run cleanup script before backfill:")
+            logger.error("    python scripts/cleanup_stale_upcoming_tables.py --dry-run")
+            logger.error("    python scripts/cleanup_stale_upcoming_tables.py")
+            logger.error("")
+            logger.error("  Option 2: Let fallback logic handle it")
+            logger.error("  ---------")
+            logger.error("  Fallback will trigger automatically during backfill")
+            logger.error("  (slower but will work correctly)")
+            logger.error("")
+            logger.error("  Option 3: Force through anyway")
+            logger.error("  ---------")
+            logger.error("  Use --force flag to bypass this check:")
+            logger.error(f"    python ...backfill.py ... --force")
+            logger.error("")
+            logger.error("=" * 80)
+
+            return False  # Issues found, recommend not proceeding
+
+        logger.info("")
+        logger.info("✅ Pre-flight coverage check complete - No issues found")
+        logger.info("=" * 80)
+        logger.info("")
+        return True
+
     def check_phase4_dependencies(self, analysis_date: date) -> Dict:
         """Check if Phase 4 dependencies exist for the date."""
         try:
@@ -245,10 +434,12 @@ class PlayerCompositeFactorsBackfill:
             }
 
     def run_backfill(self, start_date: date, end_date: date, dry_run: bool = False,
-                     checkpoint: BackfillCheckpoint = None):
+                     checkpoint: BackfillCheckpoint = None, force: bool = False):
         """Run backfill processing day-by-day with checkpoint support."""
         logger.info(f"Starting backfill from {start_date} to {end_date}")
         logger.info(f"NOTE: Requires team_defense_zone_analysis and player_shot_zone_analysis to complete first")
+        if force:
+            logger.warning("⚠️  FORCE MODE ENABLED - Coverage validation will be skipped!")
 
         if not self.validate_date_range(start_date, end_date):
             return
@@ -260,6 +451,14 @@ class PlayerCompositeFactorsBackfill:
         if not game_dates:
             logger.warning("No game dates found in the specified range!")
             return
+
+        # P1 IMPROVEMENT: Pre-flight coverage check
+        # Check for partial/stale UPCG data before starting backfill
+        if not dry_run:
+            if not self._pre_flight_coverage_check(game_dates, force=force):
+                logger.error("❌ Pre-flight check failed. Aborting backfill.")
+                logger.error("   Fix the issues above or use --force to proceed anyway.")
+                return
 
         # Handle checkpoint resume
         actual_start_idx = 0
@@ -294,11 +493,24 @@ class PlayerCompositeFactorsBackfill:
             result = self.run_precompute_processing(current_date, dry_run)
 
             if result['status'] == 'success':
-                successful_days += 1
-                total_players += result.get('players_processed', 0)
-                logger.info(f"  ✓ Success: {result.get('players_processed', 0)} players")
-                if checkpoint:
-                    checkpoint.mark_date_complete(current_date)
+                players_processed = result.get('players_processed', 0)
+
+                # VALIDATION GATE: Verify coverage before marking success
+                if not dry_run and not self._validate_coverage(current_date, players_processed, force=force):
+                    # Coverage validation failed - treat as failure
+                    failed_days.append(current_date)
+                    error_msg = f"Coverage validation failed ({players_processed} players)"
+                    logger.error(f"  ✗ Failed: {error_msg}")
+                    if checkpoint:
+                        checkpoint.mark_date_failed(current_date, error=error_msg)
+                else:
+                    # Coverage validation passed or dry run
+                    successful_days += 1
+                    total_players += players_processed
+                    logger.info(f"  ✓ Success: {players_processed} players")
+                    if checkpoint:
+                        checkpoint.mark_date_complete(current_date)
+
             elif result['status'] == 'skipped_bootstrap':
                 skipped_days += 1
                 logger.info(f"  ⏭ Skipped: bootstrap period")
@@ -335,7 +547,8 @@ class PlayerCompositeFactorsBackfill:
         end_date: date,
         dry_run: bool = False,
         checkpoint: BackfillCheckpoint = None,
-        max_workers: int = 15
+        max_workers: int = 15,
+        force: bool = False
     ):
         """Run backfill with parallel processing for massive speedup."""
         logger.info("=" * 80)
@@ -344,6 +557,8 @@ class PlayerCompositeFactorsBackfill:
         logger.info(f"   Date range: {start_date} to {end_date}")
         logger.info(f"   Expected speedup: ~{max_workers}x faster than sequential")
         logger.info(f"   NOTE: Requires team_defense_zone_analysis and player_shot_zone_analysis")
+        if force:
+            logger.warning("   ⚠️  FORCE MODE ENABLED - Coverage validation will be skipped!")
 
         if not self.validate_date_range(start_date, end_date):
             return
@@ -355,6 +570,14 @@ class PlayerCompositeFactorsBackfill:
         if not game_dates:
             logger.warning("No game dates found in the specified range!")
             return
+
+        # P1 IMPROVEMENT: Pre-flight coverage check
+        # Check for partial/stale UPCG data before starting backfill
+        if not dry_run:
+            if not self._pre_flight_coverage_check(game_dates, force=force):
+                logger.error("❌ Pre-flight check failed. Aborting backfill.")
+                logger.error("   Fix the issues above or use --force to proceed anyway.")
+                return
 
         thread_safe_checkpoint = ThreadSafeCheckpoint(checkpoint) if checkpoint else None
 
@@ -430,10 +653,27 @@ class PlayerCompositeFactorsBackfill:
 
                 # Update checkpoint and progress
                 if result['status'] == 'success':
-                    if thread_safe_checkpoint:
-                        thread_safe_checkpoint.mark_date_complete(day)
-                    progress.increment('success', result.get('players_processed', 0))
-                    logger.info(f"  ✓ {day}: {result.get('players_processed', 0)} players")
+                    players_processed = result.get('players_processed', 0)
+
+                    # VALIDATION GATE: Verify coverage before marking success
+                    # Note: We need to create a new backfiller instance to access _validate_coverage
+                    # since we're in a worker thread
+                    backfiller = PlayerCompositeFactorsBackfill()
+                    if not backfiller._validate_coverage(day, players_processed, force=force):
+                        # Coverage validation failed - treat as failure
+                        error = f"Coverage validation failed ({players_processed} players)"
+                        if thread_safe_checkpoint:
+                            thread_safe_checkpoint.mark_date_failed(day, error)
+                        progress.increment('failed')
+                        with failed_days_lock:
+                            failed_days.append(day)
+                        logger.error(f"  ✗ {day}: {error}")
+                    else:
+                        # Coverage validation passed
+                        if thread_safe_checkpoint:
+                            thread_safe_checkpoint.mark_date_complete(day)
+                        progress.increment('success', players_processed)
+                        logger.info(f"  ✓ {day}: {players_processed} players")
                 else:
                     error = result.get('error', 'Processing failed')
                     if thread_safe_checkpoint:
@@ -535,6 +775,7 @@ def main():
     parser.add_argument('--skip-preflight', action='store_true', help='Skip Phase 3 pre-flight check (not recommended)')
     parser.add_argument('--parallel', action='store_true', help='Use parallel processing (15x faster)')
     parser.add_argument('--workers', type=int, default=15, help='Number of parallel workers (default: 15)')
+    parser.add_argument('--force', action='store_true', help='Skip coverage validation (use with caution for edge cases)')
 
     args = parser.parse_args()
     backfiller = PlayerCompositeFactorsBackfill()
@@ -595,10 +836,10 @@ def main():
     if args.parallel:
         backfiller.run_backfill_parallel(start_date, end_date, dry_run=args.dry_run,
                                         checkpoint=checkpoint if not args.dry_run else None,
-                                        max_workers=args.workers)
+                                        max_workers=args.workers, force=args.force)
     else:
         backfiller.run_backfill(start_date, end_date, dry_run=args.dry_run,
-                                checkpoint=checkpoint if not args.dry_run else None)
+                                checkpoint=checkpoint if not args.dry_run else None, force=args.force)
 
 
 if __name__ == "__main__":
