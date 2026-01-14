@@ -131,9 +131,10 @@ class MlbBatterStatsScraper(ScraperBase, ScraperFlaskMixin):
     def set_additional_opts(self) -> None:
         super().set_additional_opts()
         # Default to yesterday if no date specified
+        # Use Pacific Time for MLB - ensures west coast late games are captured
         if not self.opts.get("date") and not self.opts.get("dates") and not self.opts.get("game_ids"):
-            yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).date()
-            self.opts["date"] = yesterday.isoformat()
+            from scrapers.utils.date_utils import get_yesterday_pacific
+            self.opts["date"] = get_yesterday_pacific()
 
     # ------------------------------------------------------------------ #
     # URL & headers
