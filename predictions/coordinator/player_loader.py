@@ -269,6 +269,8 @@ class PlayerLoader:
         dataset = f"{dataset_prefix}_nba_analytics" if dataset_prefix else "nba_analytics"
 
         # v3.2 CHANGE: Added has_prop_line and current_points_line for all-player predictions
+        # v3.5 FIX: Added deduplication to handle duplicate rows in Phase 3
+        # Phase 3 can create multiple rows per player when re-run. Pick the most recent one.
         query = """
         SELECT
             player_lookup,
@@ -289,6 +291,7 @@ class PlayerLoader:
           AND avg_minutes_per_game_last_7 >= @min_minutes
           AND (player_status IS NULL OR player_status NOT IN ('OUT', 'DOUBTFUL'))
           AND is_production_ready = TRUE  -- Only process players with complete upstream data
+        QUALIFY ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY created_at DESC) = 1
         ORDER BY avg_minutes_per_game_last_7 DESC
         """.format(project=self.project_id, dataset=dataset)
         
