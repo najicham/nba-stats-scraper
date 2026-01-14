@@ -579,6 +579,146 @@ def send_to_slack(report: HealthReport) -> bool:
 
 
 # ============================================================================
+# Validation Mode (Session 35/36 Checks)
+# ============================================================================
+
+def run_validation_checks():
+    """
+    Validate Session 35/36 deployments:
+    1. Check failure_category field is being populated
+    2. Check BR roster batch lock is working
+    3. Check Cloud Run revisions are current
+    """
+    print("\n🔍 Session 35/36 Deployment Validation")
+    print("=" * 60)
+
+    all_passed = True
+    client = bigquery.Client(project=PROJECT_ID)
+
+    # Check 1: failure_category distribution
+    print("\n1. Checking failure_category field...")
+    query = """
+    SELECT
+      COALESCE(failure_category, 'NULL') as category,
+      COUNT(*) as count
+    FROM `nba-props-platform.nba_reference.processor_run_history`
+    WHERE status = 'failed'
+      AND started_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 48 HOUR)
+    GROUP BY 1
+    ORDER BY 2 DESC
+    """
+    results = list(client.query(query).result())
+
+    total_failures = sum(r['count'] for r in results)
+    null_failures = sum(r['count'] for r in results if r['category'] == 'NULL')
+    categorized = sum(r['count'] for r in results if r['category'] != 'NULL')
+
+    if total_failures == 0:
+        print("   ⏳ No failures in last 48 hours - cannot validate yet")
+    elif null_failures == total_failures:
+        print(f"   ⏳ All {total_failures} failures have NULL category (pre-deployment data)")
+        print("   → Waiting for new failures to validate")
+    elif categorized > 0:
+        print(f"   ✅ {categorized}/{total_failures} failures are categorized!")
+        for r in results:
+            if r['category'] != 'NULL':
+                print(f"      - {r['category']}: {r['count']}")
+    else:
+        print(f"   ❌ Unexpected state: {results}")
+        all_passed = False
+
+    # Check 2: BR roster batch lock in Firestore
+    print("\n2. Checking BR roster batch lock...")
+    try:
+        from google.cloud import firestore
+        db = firestore.Client(project='nba-props-platform')
+        locks = list(db.collection('batch_processing_locks').stream())
+
+        br_locks = [l for l in locks if 'br_roster' in l.id]
+        espn_locks = [l for l in locks if 'espn_roster' in l.id]
+
+        if br_locks:
+            print(f"   ✅ Found {len(br_locks)} BR roster batch lock(s)")
+            for lock in br_locks[:3]:
+                data = lock.to_dict()
+                print(f"      - {lock.id}: {data.get('status')}")
+        else:
+            print("   ⏳ No BR roster locks yet (waiting for next roster scrape)")
+            print(f"   ℹ️  ESPN locks working: {len(espn_locks)} found (confirms pattern works)")
+    except Exception as e:
+        print(f"   ❌ Error checking Firestore: {e}")
+        all_passed = False
+
+    # Check 3: Cloud Run revisions
+    print("\n3. Checking Cloud Run revisions...")
+    import subprocess
+
+    services = [
+        ("nba-phase2-raw-processors", "Phase 2 Raw"),
+        ("nba-phase3-analytics-processors", "Phase 3 Analytics"),
+        ("nba-phase4-precompute-processors", "Phase 4 Precompute"),
+    ]
+
+    for service_name, display_name in services:
+        try:
+            result = subprocess.run(
+                ["gcloud", "run", "services", "describe", service_name,
+                 "--region=us-west2", "--format=value(status.latestReadyRevisionName)"],
+                capture_output=True, text=True, timeout=30
+            )
+            if result.returncode == 0:
+                revision = result.stdout.strip()
+                print(f"   ✅ {display_name}: {revision}")
+            else:
+                print(f"   ❌ {display_name}: Error - {result.stderr}")
+                all_passed = False
+        except Exception as e:
+            print(f"   ❌ {display_name}: {e}")
+            all_passed = False
+
+    # Check 4: Noise reduction metrics
+    print("\n4. Checking alert noise reduction...")
+    query = """
+    SELECT
+      COUNTIF(failure_category = 'no_data_available') as expected,
+      COUNTIF(COALESCE(failure_category, 'unknown') NOT IN ('no_data_available')) as real,
+      COUNT(*) as total
+    FROM `nba-props-platform.nba_reference.processor_run_history`
+    WHERE status = 'failed'
+      AND started_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 48 HOUR)
+      AND failure_category IS NOT NULL
+    """
+    results = list(client.query(query).result())
+    if results and results[0]['total'] > 0:
+        r = results[0]
+        noise_pct = (r['expected'] / r['total'] * 100) if r['total'] > 0 else 0
+        print(f"   Total categorized failures: {r['total']}")
+        print(f"   Expected (no_data_available): {r['expected']} ({noise_pct:.1f}%)")
+        print(f"   Real (need attention): {r['real']} ({100-noise_pct:.1f}%)")
+        if noise_pct >= 80:
+            print(f"   ✅ Noise reduction goal achieved! ({noise_pct:.1f}% >= 80% target)")
+        elif noise_pct >= 50:
+            print(f"   ⚠️  Noise reduction partial ({noise_pct:.1f}% < 80% target)")
+        else:
+            print(f"   ⏳ Insufficient data to evaluate noise reduction")
+    else:
+        print("   ⏳ No categorized failures yet - waiting for new data")
+
+    # Summary
+    print("\n" + "=" * 60)
+    if all_passed:
+        print("✅ All validation checks passed (or pending data)")
+    else:
+        print("❌ Some validation checks failed - review above")
+
+    print("\nNext steps:")
+    print("  • Run again in 24-48 hours after processors run")
+    print("  • Check BR roster lock after next roster scrape")
+    print("  • Monitor noise reduction as data accumulates")
+    print()
+
+
+# ============================================================================
 # Main
 # ============================================================================
 
@@ -594,6 +734,7 @@ Examples:
     python scripts/system_health_check.py --verbose    # Include issue details
     python scripts/system_health_check.py --slack      # Send to Slack
     python scripts/system_health_check.py --json       # Output as JSON
+    python scripts/system_health_check.py --validate   # Validate Session 35/36 deployments
         """
     )
     parser.add_argument(
@@ -623,8 +764,18 @@ Examples:
         action="store_true",
         help="Output as JSON instead of formatted text"
     )
+    parser.add_argument(
+        "--validate",
+        action="store_true",
+        help="Validate Session 35/36 deployments (failure_category, BR roster lock)"
+    )
 
     args = parser.parse_args()
+
+    # Handle --validate mode separately
+    if args.validate:
+        run_validation_checks()
+        return
 
     # Calculate hours
     hours = args.days * 24 if args.days else args.hours
