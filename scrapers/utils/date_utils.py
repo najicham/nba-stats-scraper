@@ -52,4 +52,35 @@ def is_date_string_ahead_of_today(date_string):
     if date_obj > today:
         raise Exception(f"Invalid date: {date_string} is ahead of today {today}")
 
+def get_yesterday_eastern() -> str:
+    """
+    Get yesterday's date in Eastern Time (YYYY-MM-DD format).
+
+    This is the correct date to use for NBA data since:
+    - NBA games are scheduled in Eastern Time
+    - West coast games ending at 11 PM PT (2 AM ET next day) still count as
+      the previous ET day for box score purposes
+    - Using ET ensures consistent date boundaries for all games
+
+    Returns:
+        str: Yesterday's date in YYYY-MM-DD format (Eastern Time)
+    """
+    et_tz = ZoneInfo("America/New_York")
+    et_now = datetime.now(et_tz)
+    yesterday = (et_now - timedelta(days=1)).date()
+    return yesterday.isoformat()
+
+
+def get_today_eastern() -> str:
+    """
+    Get today's date in Eastern Time (YYYY-MM-DD format).
+
+    Returns:
+        str: Today's date in YYYY-MM-DD format (Eastern Time)
+    """
+    et_tz = ZoneInfo("America/New_York")
+    et_now = datetime.now(et_tz)
+    return et_now.date().isoformat()
+
+
 # ...Add any other date/time utilities you actually need...
