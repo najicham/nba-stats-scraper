@@ -83,4 +83,34 @@ def get_today_eastern() -> str:
     return et_now.date().isoformat()
 
 
+def get_yesterday_pacific() -> str:
+    """
+    Get yesterday's date in Pacific Time (YYYY-MM-DD format).
+
+    This is the correct date to use for MLB data since:
+    - Many MLB games are played on the west coast
+    - Games ending at 10-11 PM PT still count as that PT day
+    - Using PT ensures consistent date boundaries for west coast games
+
+    Returns:
+        str: Yesterday's date in YYYY-MM-DD format (Pacific Time)
+    """
+    pt_tz = ZoneInfo("America/Los_Angeles")
+    pt_now = datetime.now(pt_tz)
+    yesterday = (pt_now - timedelta(days=1)).date()
+    return yesterday.isoformat()
+
+
+def get_today_pacific() -> str:
+    """
+    Get today's date in Pacific Time (YYYY-MM-DD format).
+
+    Returns:
+        str: Today's date in YYYY-MM-DD format (Pacific Time)
+    """
+    pt_tz = ZoneInfo("America/Los_Angeles")
+    pt_now = datetime.now(pt_tz)
+    return pt_now.date().isoformat()
+
+
 # ...Add any other date/time utilities you actually need...
