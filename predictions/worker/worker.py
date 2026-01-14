@@ -1115,16 +1115,32 @@ def format_prediction_for_bigquery(
         )
 
     # Determine recommendation and line values based on has_prop_line
+    # v3.5 FIX: Always use line_value (actual or estimated) for current_points_line
+    # This ensures predictions can be graded even when no actual prop exists.
+    # The has_prop_line and line_source fields indicate whether line was actual or estimated.
     if has_prop_line:
-        # Player has prop line - use normal recommendation
+        # Player has prop line - use actual prop line
         recommendation = prediction['recommendation']
         current_points_line = round(actual_prop_line if actual_prop_line else line_value, 1)
         line_margin = round(prediction['predicted_points'] - current_points_line, 2)
+    elif line_value is not None:
+        # Player does NOT have prop line, but we have an estimated line
+        # Still generate OVER/UNDER recommendation using estimated line
+        # Use line_source='ESTIMATED_AVG' to track these for separate analysis
+        current_points_line = round(line_value, 1)
+        line_margin = round(prediction['predicted_points'] - current_points_line, 2)
+        # Recalculate recommendation based on estimated line
+        if prediction['predicted_points'] > current_points_line:
+            recommendation = 'OVER'
+        elif prediction['predicted_points'] < current_points_line:
+            recommendation = 'UNDER'
+        else:
+            recommendation = 'PASS'
     else:
-        # Player does NOT have prop line - set NO_LINE recommendation
+        # No line at all (shouldn't happen, but handle gracefully)
         recommendation = 'NO_LINE'
-        current_points_line = None  # No actual betting line
-        line_margin = None  # Can't calculate margin without line
+        current_points_line = None
+        line_margin = None
 
     # Base record
     record = {
