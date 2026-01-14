@@ -1,7 +1,26 @@
 # Champion/Challenger Model Framework
 
 **Created:** 2026-01-10
+**Updated:** 2026-01-14
 **Current Champion:** `catboost_v8`
+
+---
+
+## Quick Links
+
+- [Training Data Strategy](./TRAINING-DATA-STRATEGY.md) - When and how to train new models
+- [Performance Analysis Guide](./PERFORMANCE-ANALYSIS-GUIDE.md) - Monitoring and grading
+- [Improvement Journey](./IMPROVEMENT-JOURNEY.md) - Model evolution history
+
+---
+
+## Key Insight: More Data ≠ Better Performance
+
+**Experiment (Jan 2026):** Trained challenger V10 with 48% more data (through Jan 2026).
+**Result:** V8 (older data) still wins 52.3% head-to-head on production picks.
+
+**Recommended training window:** 2.5-3 seasons (not all available data)
+**See:** [TRAINING-DATA-STRATEGY.md](./TRAINING-DATA-STRATEGY.md) for full analysis.
 
 ---
 
