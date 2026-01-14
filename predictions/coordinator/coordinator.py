@@ -75,14 +75,14 @@ class HeartbeatLogger:
             # Long-running operation
             data = load_historical_games_batch(...)
     """
-    def __init__(self, operation_name: str, interval_seconds: int = 300):
+    def __init__(self, operation_name: str, interval: int = 300):
         """
         Args:
             operation_name: Name of the operation for logging
-            interval_seconds: Heartbeat interval in seconds (default 5 minutes)
+            interval: Heartbeat interval in seconds (default 5 minutes)
         """
         self.operation_name = operation_name
-        self.interval = interval_seconds
+        self.interval = interval
         self.start_time = None
         self.timer = None
         self._active = False
