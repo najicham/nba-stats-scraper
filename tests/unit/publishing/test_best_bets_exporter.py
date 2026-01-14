@@ -74,6 +74,20 @@ class TestTierConfiguration:
         assert 'max_predicted_points' in AVOID_CRITERIA
         assert 'exclude_confidence_range' in AVOID_CRITERIA
 
+    def test_tier_max_picks_limits(self):
+        """Test that tier config has max_picks to prevent over-selection"""
+        # Per-tier limits ensure diversification:
+        # - Premium: max 5 picks (highest quality)
+        # - Strong: max 10 picks
+        # - Value: max 10 picks
+        # Total max: 25 picks
+        assert TIER_CONFIG['premium']['max_picks'] == 5
+        assert TIER_CONFIG['strong']['max_picks'] == 10
+        assert TIER_CONFIG['value']['max_picks'] == 10
+
+        total_max = sum(t['max_picks'] for t in TIER_CONFIG.values())
+        assert total_max == 25  # Matches DEFAULT_TOP_N
+
 
 class TestBestBetsExporterInit:
     """Test suite for initialization"""
