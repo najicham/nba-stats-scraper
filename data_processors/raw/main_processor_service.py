@@ -861,6 +861,96 @@ def process_pubsub():
                 logger.error(f"❌ Error processing ESPN roster folder: {folder_error}", exc_info=True)
                 return jsonify({"error": str(folder_error)}), 500
 
+        # ============================================================
+        # SPECIAL HANDLING: Basketball Reference roster files - BATCH MODE WITH LOCK
+        # Same pattern as ESPN rosters: use Firestore lock to ensure only ONE
+        # processor runs the batch. This eliminates BigQuery "Too many DML
+        # statements" errors caused by 30+ concurrent writes.
+        # Added: 2026-01-14, Session 35
+        # ============================================================
+        if 'basketball-ref/season-rosters' in file_path and not file_path.endswith('/'):
+            # Extract season from path: basketball-ref/season-rosters/2024-25/LAL/timestamp.json
+            season_match = re.search(r'basketball-ref/season-rosters/(\d{4}-\d{2})/', file_path)
+            if season_match:
+                season = season_match.group(1)
+                lock_id = f"br_roster_batch_{season}"
+
+                try:
+                    # Initialize Firestore client
+                    db = firestore.Client()
+                    lock_ref = db.collection('batch_processing_locks').document(lock_id)
+
+                    # Try to create lock document (atomic operation)
+                    lock_data = {
+                        'status': 'processing',
+                        'started_at': datetime.now(timezone.utc),
+                        'trigger_file': file_path,
+                        'execution_id': normalized_message.get('_execution_id', 'unknown'),
+                        'expireAt': datetime.now(timezone.utc) + timedelta(days=7)  # TTL for auto-cleanup
+                    }
+
+                    # Use create() which fails if document exists
+                    lock_ref.create(lock_data)
+
+                    # We got the lock - run batch processor for ALL teams
+                    logger.info(f"🔒 Acquired batch lock for BR rosters season {season}, running batch processor...")
+
+                    try:
+                        batch_processor = BasketballRefRosterBatchProcessor()
+                        success = batch_processor.run({
+                            'bucket': bucket,
+                            'project_id': os.environ.get('GCP_PROJECT_ID', 'nba-props-platform'),
+                            'metadata': {'season': season}
+                        })
+
+                        # Update lock with completion status
+                        lock_ref.update({
+                            'status': 'complete' if success else 'failed',
+                            'completed_at': datetime.now(timezone.utc),
+                            'stats': batch_processor.get_processor_stats() if hasattr(batch_processor, 'get_processor_stats') else {}
+                        })
+
+                        if success:
+                            logger.info(f"✅ BR roster batch complete for season {season}")
+                            return jsonify({
+                                "status": "success",
+                                "mode": "batch",
+                                "season": season,
+                                "stats": batch_processor.get_processor_stats() if hasattr(batch_processor, 'get_processor_stats') else {}
+                            }), 200
+                        else:
+                            logger.error(f"❌ BR roster batch failed for season {season}")
+                            return jsonify({
+                                "status": "error",
+                                "mode": "batch",
+                                "season": season
+                            }), 500
+
+                    except Exception as batch_error:
+                        # Update lock with error status
+                        lock_ref.update({
+                            'status': 'error',
+                            'completed_at': datetime.now(timezone.utc),
+                            'error': str(batch_error)
+                        })
+                        raise
+
+                except Exception as lock_error:
+                    # Check if it's an "already exists" error (another processor got the lock)
+                    error_str = str(lock_error)
+                    if 'already exists' in error_str.lower() or 'ALREADY_EXISTS' in error_str:
+                        logger.info(f"🔓 BR roster batch for season {season} already being processed by another instance, skipping")
+                        return jsonify({
+                            "status": "skipped",
+                            "reason": "batch_already_processing",
+                            "season": season
+                        }), 200
+                    else:
+                        # Some other Firestore error - log and fall through to individual processing
+                        logger.warning(f"⚠️ Failed to acquire batch lock for BR rosters {season}: {lock_error}")
+                        logger.warning("Falling back to individual file processing")
+                        # Continue to normal processing below
+
         # Determine processor based on file path
         processor_class = None
         for path_prefix, proc_class in PROCESSOR_REGISTRY.items():
