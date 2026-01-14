@@ -1,0 +1,4 @@
+# Phase 3 Analytics Service - Cloud Run Procfile
+# This ensures the correct Flask app is started when deploying from this directory
+
+web: gunicorn --bind :$PORT --workers 1 --threads 5 --timeout 600 main_analytics_service:app
