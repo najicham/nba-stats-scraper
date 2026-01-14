@@ -39,6 +39,9 @@ from shared.processors.mixins import RunHistoryMixin
 # Import completeness checker and DependencyError for defensive checks
 from shared.utils.completeness_checker import CompletenessChecker, DependencyError
 
+# Import failure categorization from processor_base
+from data_processors.raw.processor_base import _categorize_failure
+
 # Import unified publishing
 from shared.publishers.unified_pubsub_publisher import UnifiedPubSubPublisher
 
@@ -411,8 +414,16 @@ class PrecomputeProcessorBase(RunHistoryMixin):
             logger.error("PrecomputeProcessorBase Error: %s", e, exc_info=True)
             sentry_sdk.capture_exception(e)
 
+            # Categorize the failure for monitoring/alerting
+            current_step = self._get_current_step()
+            failure_category = _categorize_failure(e, current_step, self.stats)
+            logger.info(f"Failure categorized as: {failure_category} (step={current_step})")
+
             # Send notification for failure (skip in backfill mode to avoid spam)
-            if not self.is_backfill_mode:
+            # Also skip notification for expected failures (no_data_available)
+            should_alert = failure_category in ['processing_error', 'configuration_error', 'timeout']
+
+            if not self.is_backfill_mode and should_alert:
                 try:
                     notify_error(
                         title=f"Precompute Processor Failed: {self.__class__.__name__}",
@@ -421,7 +432,8 @@ class PrecomputeProcessorBase(RunHistoryMixin):
                             'processor': self.__class__.__name__,
                             'run_id': self.run_id,
                             'error_type': type(e).__name__,
-                            'step': self._get_current_step(),
+                            'failure_category': failure_category,
+                            'step': current_step,
                             'analysis_date': str(opts.get('analysis_date')),
                             'table': self.table_name,
                             'stats': self.stats
@@ -431,6 +443,8 @@ class PrecomputeProcessorBase(RunHistoryMixin):
                     self.set_alert_sent('error')
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
+            elif not should_alert:
+                logger.info(f"Skipping alert for expected failure: {failure_category}")
 
             # Log failed processing run
             self.log_processing_run(success=False, error=str(e))
@@ -440,11 +454,12 @@ class PrecomputeProcessorBase(RunHistoryMixin):
 
             self.report_error(e)
 
-            # Record failed run to history
+            # Record failed run to history with failure category
             self.record_run_complete(
                 status='failed',
                 error=e,
-                summary=self.stats
+                summary=self.stats,
+                failure_category=failure_category
             )
 
             return False
