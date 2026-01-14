@@ -1,0 +1,54 @@
+{
+  "overall": {
+    "total_predictions": 8345,
+    "mae": 1.455,
+    "mae_std": 1.121,
+    "rmse": 1.836,
+    "bias": 0.016,
+    "directional_accuracy_pct": 64.4,
+    "within_1k_pct": 41.8,
+    "within_2k_pct": 72.9,
+    "within_3k_pct": 89.8,
+    "avg_predicted": 5.08,
+    "avg_actual": 5.07
+  },
+  "confidence": {
+    "tier_metrics": {
+      "75-85%": {
+        "predictions": 8345,
+        "mae": 1.455,
+        "mae_std": 1.121,
+        "avg_confidence": 0.8
+      }
+    },
+    "is_calibrated": false
+  },
+  "context": {
+    "home_away": {
+      "home_predictions": 4189,
+      "home_mae": 1.46,
+      "away_predictions": 4156,
+      "away_mae": 1.449
+    },
+    "by_season": {
+      "2024": {
+        "predictions": 3869,
+        "mae": 1.375
+      },
+      "2025": {
+        "predictions": 4476,
+        "mae": 1.523
+      }
+    }
+  },
+  "verdict": {
+    "verdict": "MARGINAL",
+    "recommendation": "Forward validation required before betting deployment",
+    "confidence_level": "MEDIUM",
+    "issues": [
+      "Model confidence scores not well calibrated"
+    ]
+  },
+  "analysis_date": "2026-01-13T18:38:03.231602",
+  "data_count": 8345
+}
