@@ -1760,9 +1760,22 @@ class AnalyticsProcessorBase(RunHistoryMixin):
             insert_fields = ', '.join(all_fields)
             insert_values = ', '.join([f"source.{field}" for field in all_fields])
 
+            # Build MERGE query with ROW_NUMBER deduplication to prevent
+            # "UPDATE/MERGE must match at most one source row" errors
+            # When duplicates exist in source, picks the latest by processed_at
+            primary_keys_partition = ', '.join(primary_keys)
+
             merge_query = f"""
             MERGE `{table_id}` AS target
-            USING `{temp_table_id}` AS source
+            USING (
+                SELECT * EXCEPT(__row_num) FROM (
+                    SELECT *, ROW_NUMBER() OVER (
+                        PARTITION BY {primary_keys_partition}
+                        ORDER BY processed_at DESC
+                    ) as __row_num
+                    FROM `{temp_table_id}`
+                ) WHERE __row_num = 1
+            ) AS source
             ON {on_clause}
             WHEN MATCHED THEN
                 UPDATE SET {update_set}
