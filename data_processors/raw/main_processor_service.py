@@ -40,6 +40,7 @@ from shared.utils.enhanced_error_notifications import (
 from data_processors.raw.basketball_ref.br_roster_processor import BasketballRefRosterProcessor
 from data_processors.raw.basketball_ref.br_roster_batch_processor import BasketballRefRosterBatchProcessor
 from data_processors.raw.oddsapi.odds_api_props_processor import OddsApiPropsProcessor
+from data_processors.raw.oddsapi.oddsapi_batch_processor import OddsApiGameLinesBatchProcessor, OddsApiPropsBatchProcessor
 from data_processors.raw.nbacom.nbac_gamebook_processor import NbacGamebookProcessor
 from data_processors.raw.nbacom.nbac_player_list_processor import NbacPlayerListProcessor
 from data_processors.raw.balldontlie.bdl_standings_processor import BdlStandingsProcessor
@@ -950,6 +951,107 @@ def process_pubsub():
                         logger.warning(f"⚠️ Failed to acquire batch lock for BR rosters {season}: {lock_error}")
                         logger.warning("Falling back to individual file processing")
                         # Continue to normal processing below
+
+        # ============================================================
+        # SPECIAL HANDLING: OddsAPI files - BATCH MODE WITH LOCK
+        # When multiple OddsAPI files arrive (typically 14 per scrape cycle
+        # from 7 games x 2 endpoints), use Firestore lock to ensure only ONE
+        # processor runs the batch. This reduces MERGE operations from 14 to 1-2,
+        # cutting processing time from 60+ minutes to <5 minutes.
+        # Added: 2026-01-14, Session 45
+        # ============================================================
+        if ('odds-api/game-lines' in file_path or 'odds-api/player-props' in file_path) and not file_path.endswith('/'):
+            # Skip history paths - they have their own processing
+            if 'history' not in file_path:
+                # Extract date from path: odds-api/game-lines/2026-01-14/{event-id}/timestamp.json
+                date_match = re.search(r'odds-api/[^/]+/(\d{4}-\d{2}-\d{2})/', file_path)
+                if date_match:
+                    game_date = date_match.group(1)
+                    endpoint_type = 'game-lines' if 'game-lines' in file_path else 'player-props'
+                    lock_id = f"oddsapi_{endpoint_type}_batch_{game_date}"
+
+                    try:
+                        # Initialize Firestore client
+                        db = firestore.Client()
+                        lock_ref = db.collection('batch_processing_locks').document(lock_id)
+
+                        # Try to create lock document (atomic operation)
+                        lock_data = {
+                            'status': 'processing',
+                            'started_at': datetime.now(timezone.utc),
+                            'trigger_file': file_path,
+                            'execution_id': normalized_message.get('_execution_id', 'unknown'),
+                            'expireAt': datetime.now(timezone.utc) + timedelta(hours=2)  # 2hr TTL
+                        }
+
+                        # Use create() which fails if document exists
+                        lock_ref.create(lock_data)
+
+                        # We got the lock - run batch processor for ALL files of this type/date
+                        logger.info(f"🔒 Acquired batch lock for OddsAPI {endpoint_type} {game_date}, running batch processor...")
+
+                        try:
+                            if endpoint_type == 'game-lines':
+                                batch_processor = OddsApiGameLinesBatchProcessor()
+                            else:
+                                batch_processor = OddsApiPropsBatchProcessor()
+
+                            success = batch_processor.run({
+                                'bucket': bucket,
+                                'project_id': os.environ.get('GCP_PROJECT_ID', 'nba-props-platform'),
+                                'game_date': game_date
+                            })
+
+                            # Update lock with completion status
+                            lock_ref.update({
+                                'status': 'complete' if success else 'failed',
+                                'completed_at': datetime.now(timezone.utc),
+                                'stats': batch_processor.get_processor_stats() if hasattr(batch_processor, 'get_processor_stats') else {}
+                            })
+
+                            if success:
+                                logger.info(f"✅ OddsAPI {endpoint_type} batch complete for {game_date}")
+                                return jsonify({
+                                    "status": "success",
+                                    "mode": "batch",
+                                    "endpoint": endpoint_type,
+                                    "date": game_date,
+                                    "stats": batch_processor.get_processor_stats() if hasattr(batch_processor, 'get_processor_stats') else {}
+                                }), 200
+                            else:
+                                logger.error(f"❌ OddsAPI {endpoint_type} batch failed for {game_date}")
+                                return jsonify({
+                                    "status": "error",
+                                    "mode": "batch",
+                                    "endpoint": endpoint_type,
+                                    "date": game_date
+                                }), 500
+
+                        except Exception as batch_error:
+                            # Update lock with error status
+                            lock_ref.update({
+                                'status': 'error',
+                                'completed_at': datetime.now(timezone.utc),
+                                'error': str(batch_error)
+                            })
+                            raise
+
+                    except Exception as lock_error:
+                        # Check if it's an "already exists" error (another processor got the lock)
+                        error_str = str(lock_error)
+                        if 'already exists' in error_str.lower() or 'ALREADY_EXISTS' in error_str:
+                            logger.info(f"🔓 OddsAPI {endpoint_type} batch for {game_date} already being processed by another instance, skipping")
+                            return jsonify({
+                                "status": "skipped",
+                                "reason": "batch_already_processing",
+                                "endpoint": endpoint_type,
+                                "date": game_date
+                            }), 200
+                        else:
+                            # Some other Firestore error - log and fall through to individual processing
+                            logger.warning(f"⚠️ Failed to acquire batch lock for OddsAPI {endpoint_type} {game_date}: {lock_error}")
+                            logger.warning("Falling back to individual file processing")
+                            # Continue to normal processing below
 
         # Determine processor based on file path
         processor_class = None
