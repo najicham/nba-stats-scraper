@@ -19,8 +19,13 @@ from flask import Flask, request, jsonify
 from datetime import datetime, timezone, timedelta
 import base64
 import re
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 
 from google.cloud import storage, firestore
+
+# Timeout for OddsAPI batch processing (10 minutes)
+# This prevents runaway batch jobs from exceeding the Firestore lock TTL (2 hours)
+BATCH_PROCESSOR_TIMEOUT_SECONDS = 600
 
 # Import notification system
 from shared.utils.notification_system import (
@@ -996,11 +1001,33 @@ def process_pubsub():
                             else:
                                 batch_processor = OddsApiPropsBatchProcessor()
 
-                            success = batch_processor.run({
+                            # Execute batch processor with timeout to prevent runaway jobs
+                            # If processing exceeds timeout, we fail gracefully and update the lock
+                            batch_opts = {
                                 'bucket': bucket,
                                 'project_id': os.environ.get('GCP_PROJECT_ID', 'nba-props-platform'),
                                 'game_date': game_date
-                            })
+                            }
+
+                            try:
+                                with ThreadPoolExecutor(max_workers=1) as executor:
+                                    future = executor.submit(batch_processor.run, batch_opts)
+                                    success = future.result(timeout=BATCH_PROCESSOR_TIMEOUT_SECONDS)
+                            except FuturesTimeoutError:
+                                logger.error(f"⏰ OddsAPI {endpoint_type} batch timed out after {BATCH_PROCESSOR_TIMEOUT_SECONDS}s for {game_date}")
+                                lock_ref.update({
+                                    'status': 'timeout',
+                                    'completed_at': datetime.now(timezone.utc),
+                                    'error': f'Batch processing timed out after {BATCH_PROCESSOR_TIMEOUT_SECONDS} seconds'
+                                })
+                                return jsonify({
+                                    "status": "error",
+                                    "mode": "batch",
+                                    "endpoint": endpoint_type,
+                                    "date": game_date,
+                                    "error": "timeout",
+                                    "timeout_seconds": BATCH_PROCESSOR_TIMEOUT_SECONDS
+                                }), 500
 
                             # Update lock with completion status
                             lock_ref.update({
