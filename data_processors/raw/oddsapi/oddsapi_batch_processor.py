@@ -145,8 +145,11 @@ class OddsApiGameLinesBatchProcessor(ProcessorBase):
 
             logger.info(f"✅ Batch loaded {len(self.all_rows)} rows to temp table")
 
+            # Extract game_date for partition filter
+            game_date = self.opts.get('game_date')
+
             # Single MERGE operation for all games
-            self._execute_merge(temp_table_id, table_id)
+            self._execute_merge(temp_table_id, table_id, game_date)
 
             self.stats['rows_inserted'] = len(self.all_rows)
 
@@ -163,8 +166,13 @@ class OddsApiGameLinesBatchProcessor(ProcessorBase):
             except Exception as e:
                 logger.warning(f"Failed to delete temp table: {e}")
 
-    def _execute_merge(self, temp_table_id: str, target_table_id: str):
+    def _execute_merge(self, temp_table_id: str, target_table_id: str, game_date: str = None):
         """Execute single MERGE operation for all game lines."""
+        # Build partition filter for tables with require_partition_filter = true
+        partition_filter = ""
+        if game_date:
+            partition_filter = f"AND target.game_date = '{game_date}'"
+
         merge_query = f"""
         MERGE `{target_table_id}` AS target
         USING `{temp_table_id}` AS source
@@ -174,6 +182,7 @@ class OddsApiGameLinesBatchProcessor(ProcessorBase):
            AND target.bookmaker_key = source.bookmaker_key
            AND target.market_key = source.market_key
            AND target.outcome_name = source.outcome_name
+           {partition_filter}
 
         WHEN MATCHED THEN
             UPDATE SET
