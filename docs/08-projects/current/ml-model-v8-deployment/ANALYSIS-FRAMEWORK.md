@@ -1,7 +1,18 @@
 # Prediction Analysis Framework
 
+> **DEPRECATED - DATA INTEGRITY ISSUE DISCOVERED**
+>
+> This analysis was based on corrupted data where 26% of predictions used a fake `line_value=20` default instead of real sportsbook lines. This artificially inflated hit rates from 42% to 84%.
+>
+> **See: [CRITICAL-DATA-AUDIT-2026-01-14.md](./CRITICAL-DATA-AUDIT-2026-01-14.md) for corrected analysis.**
+>
+> Key corrections:
+> - UNDER hit rate: 95% (fake) → **57%** (real)
+> - 5+ edge hit rate: 93% (fake) → **59%** (real)
+> - catboost_v8 + 5+ edge = **88%** (validated with real lines)
+
 **Created:** 2026-01-14
-**Status:** Active Analysis - Critical Findings Documented
+**Status:** DEPRECATED - See CRITICAL-DATA-AUDIT-2026-01-14.md
 **Data Period:** 2025-26 Season (Oct 2025 - Jan 2026)
 
 ---

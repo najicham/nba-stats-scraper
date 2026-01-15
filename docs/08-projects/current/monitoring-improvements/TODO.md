@@ -220,6 +220,11 @@ gcloud logging metrics create dlq_messages \
 - [x] Phase 3 404 root cause analysis (Session 40) - deployment issue identified
 - [x] Phase 3 Procfile fix (Session 40) - prevents future deployment issues
 - [x] Proactive alerting design (Session 40) - system_health_check.py already supports Slack
+- [x] **Betting lines fix** (Session 41) - Identified root cause: timing + worker bug
+- [x] **Prediction Line Enrichment Processor** (Session 41) - Created enrichment post-processor
+- [x] **Historical backfill** (Session 41) - Enriched 1,935 predictions (Jan 1-14)
+- [x] **Worker v3.5 fix** (Session 41) - Use estimated lines when no prop exists
+- [x] **Coordinator deduplication** (Session 41) - Pick latest Phase 3 record per player
 
 ---
 
@@ -275,4 +280,27 @@ gcloud logging metrics describe cloud_run_auth_errors
 
 # Check scheduler job health
 gcloud scheduler jobs list --location=us-west2 --format="table(name,state,lastAttemptTime)"
+
+# ===== BETTING LINES ENRICHMENT (Session 41) =====
+
+# Enrich predictions with betting lines for today
+python -m data_processors.enrichment.prediction_line_enrichment.prediction_line_enrichment_processor
+
+# Enrich for specific date
+python -m data_processors.enrichment.prediction_line_enrichment.prediction_line_enrichment_processor --date 2026-01-15
+
+# Enrich date range
+python -m data_processors.enrichment.prediction_line_enrichment.prediction_line_enrichment_processor --start-date 2026-01-01 --end-date 2026-01-14
+
+# Dry run (preview only)
+python -m data_processors.enrichment.prediction_line_enrichment.prediction_line_enrichment_processor --date 2026-01-15 --dry-run
+
+# Check line coverage
+bq query --use_legacy_sql=false '
+SELECT game_date, COUNT(*) as total,
+       COUNTIF(current_points_line IS NOT NULL) as with_line,
+       ROUND(COUNTIF(current_points_line IS NOT NULL) / COUNT(*) * 100, 1) as pct
+FROM nba_predictions.player_prop_predictions
+WHERE game_date >= CURRENT_DATE() - 7
+GROUP BY game_date ORDER BY game_date'
 ```
