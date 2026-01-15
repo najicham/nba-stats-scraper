@@ -1765,21 +1765,24 @@ class AnalyticsProcessorBase(RunHistoryMixin):
             # When duplicates exist in source, picks the latest by processed_at
             primary_keys_partition = ', '.join(primary_keys)
 
-            # Check if we need partition filter for tables with require_partition_filter = true
-            # Extract unique game_date values if present in data
-            partition_filter = ""
+            # CRITICAL: For BigQuery tables with require_partition_filter=true,
+            # the partition filter MUST come FIRST in the ON clause with a literal value.
+            # This was causing TeamOffenseGameSummaryProcessor and other analytics to fail.
+            # Fixed: 2026-01-15 Session 49
+            partition_prefix = ""
             if 'game_date' in all_fields and sanitized_rows:
                 game_dates = list(set(
                     row.get('game_date') for row in sanitized_rows
                     if row.get('game_date') is not None
                 ))
                 if game_dates:
-                    # Build partition filter clause
+                    # Build partition filter with literal DATE values
+                    # Must come FIRST in ON clause for BigQuery partition pruning
                     if len(game_dates) == 1:
-                        partition_filter = f"AND target.game_date = '{game_dates[0]}'"
+                        partition_prefix = f"target.game_date = DATE('{game_dates[0]}') AND "
                     else:
-                        dates_str = "', '".join(sorted(game_dates))
-                        partition_filter = f"AND target.game_date IN ('{dates_str}')"
+                        dates_str = "', DATE('".join(sorted(game_dates))
+                        partition_prefix = f"target.game_date IN (DATE('{dates_str}')) AND "
                     logger.debug(f"Adding partition filter for game_date: {game_dates}")
 
             merge_query = f"""
@@ -1793,7 +1796,7 @@ class AnalyticsProcessorBase(RunHistoryMixin):
                     FROM `{temp_table_id}`
                 ) WHERE __row_num = 1
             ) AS source
-            ON {on_clause} {partition_filter}
+            ON {partition_prefix}{on_clause}
             WHEN MATCHED THEN
                 UPDATE SET {update_set}
             WHEN NOT MATCHED THEN
