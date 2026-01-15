@@ -60,6 +60,10 @@ from typing import Dict, List, Optional, Set, Tuple
 import requests
 from google.cloud import storage
 
+# Add project root to path for imports
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+from scrapers.utils.proxy_utils import get_proxy_urls
+
 # Setup logging
 logging.basicConfig(
     level=logging.INFO,
@@ -167,6 +171,7 @@ class MLBBettingProsBackfill:
         delay: float = DEFAULT_DELAY,
         resume: bool = True,
         dry_run: bool = False,
+        use_proxy: bool = False,
     ):
         self.markets = markets or list(MLB_MARKETS.keys())
         self.start_date = start_date
@@ -175,6 +180,7 @@ class MLBBettingProsBackfill:
         self.delay = delay
         self.resume = resume
         self.dry_run = dry_run
+        self.use_proxy = use_proxy
 
         self.stats = BackfillStats()
         self.existing_files: Set[str] = set()
@@ -190,6 +196,22 @@ class MLBBettingProsBackfill:
         # HTTP session for API calls
         self.session = requests.Session()
         self.session.headers.update(API_HEADERS)
+
+        # Configure proxy if enabled
+        if use_proxy:
+            proxy_urls = get_proxy_urls()
+            if proxy_urls:
+                proxy_url = proxy_urls[0]  # Use first proxy
+                self.session.proxies = {
+                    'http': proxy_url,
+                    'https': proxy_url
+                }
+                # Disable SSL verification for proxy (common for corporate proxies)
+                self.session.verify = False
+                # Suppress SSL warnings
+                import urllib3
+                urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+                logger.info(f"Proxy enabled: {proxy_url.split('@')[-1] if '@' in proxy_url else proxy_url}")
 
     def get_date_range(self) -> List[str]:
         """Generate list of dates to process."""
@@ -249,7 +271,7 @@ class MLBBettingProsBackfill:
 
     def fetch_props(self, market_id: int, date: str) -> Tuple[List[Dict], int]:
         """
-        Fetch all props for a market/date with pagination.
+        Fetch all props for a market/date with pagination and retry logic.
 
         Returns:
             Tuple of (props list, total API calls)
@@ -257,34 +279,54 @@ class MLBBettingProsBackfill:
         all_props = []
         page = 1
         api_calls = 0
+        max_retries = 3
 
         while True:
             url = f"{API_BASE_URL}?sport=MLB&market_id={market_id}&date={date}&limit=50&page={page}"
 
-            try:
-                response = self.session.get(url, timeout=30)
-                api_calls += 1
+            for attempt in range(max_retries):
+                try:
+                    response = self.session.get(url, timeout=60)  # Increased timeout
+                    api_calls += 1
 
-                if response.status_code != 200:
-                    logger.warning(f"API returned {response.status_code} for {market_id}/{date}")
-                    break
+                    if response.status_code != 200:
+                        logger.warning(f"API returned {response.status_code} for {market_id}/{date}")
+                        return all_props, api_calls  # Return what we have
 
-                data = response.json()
-                props = data.get('props', [])
-                pagination = data.get('_pagination', {})
+                    data = response.json()
 
-                all_props.extend(props)
+                    # Check for API timeout response
+                    if data.get('message') == 'Endpoint request timed out':
+                        if attempt < max_retries - 1:
+                            wait_time = (attempt + 1) * 5
+                            logger.warning(f"API timeout for {market_id}/{date}, retrying in {wait_time}s...")
+                            time.sleep(wait_time)
+                            continue
+                        else:
+                            logger.error(f"API timeout after {max_retries} retries for {market_id}/{date}")
+                            return all_props, api_calls
 
-                total_pages = pagination.get('total_pages', 1)
-                if page >= total_pages:
-                    break
+                    props = data.get('props', [])
+                    pagination = data.get('_pagination', {})
 
-                page += 1
-                time.sleep(self.delay)  # Rate limiting between pages
+                    all_props.extend(props)
 
-            except Exception as e:
-                logger.error(f"Error fetching {market_id}/{date} page {page}: {e}")
-                break
+                    total_pages = pagination.get('total_pages', 1)
+                    if page >= total_pages:
+                        return all_props, api_calls
+
+                    page += 1
+                    time.sleep(self.delay)  # Rate limiting between pages
+                    break  # Success, exit retry loop
+
+                except Exception as e:
+                    if attempt < max_retries - 1:
+                        wait_time = (attempt + 1) * 5
+                        logger.warning(f"Error fetching {market_id}/{date} page {page} (attempt {attempt + 1}): {e}, retrying in {wait_time}s...")
+                        time.sleep(wait_time)
+                    else:
+                        logger.error(f"Error fetching {market_id}/{date} page {page} after {max_retries} retries: {e}")
+                        return all_props, api_calls
 
         return all_props, api_calls
 
@@ -637,6 +679,11 @@ def main():
         action='store_true',
         help='Show what would be processed without making API calls'
     )
+    parser.add_argument(
+        '--proxy',
+        action='store_true',
+        help='Use proxy for API requests'
+    )
 
     args = parser.parse_args()
 
@@ -669,6 +716,7 @@ def main():
         delay=args.delay,
         resume=resume,
         dry_run=args.dry_run,
+        use_proxy=args.proxy,
     )
 
     try:
