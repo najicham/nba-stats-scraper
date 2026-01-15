@@ -100,34 +100,95 @@ class MlbPlayerSplitsScraper(ScraperBase, ScraperFlaskMixin):
     def transform_data(self) -> None:
         splits_data = self.decoded_data.get("data", {})
 
-        # Extract key splits for pitchers
+        # Extract splits from BDL API response
+        # API returns: data.byBreakdown = [{split_name: "Home", ...}, {split_name: "Away", ...}, ...]
+        by_breakdown = splits_data.get("byBreakdown", []) if isinstance(splits_data, dict) else []
+        by_arena = splits_data.get("byArena", []) if isinstance(splits_data, dict) else []
+        by_opponent = splits_data.get("byOpponent", []) if isinstance(splits_data, dict) else []
+
+        # Parse byBreakdown to find Home/Away/Day/Night splits
+        home_split = None
+        away_split = None
+        day_split = None
+        night_split = None
+
+        for split in by_breakdown:
+            split_name = split.get("split_name", "").lower()
+            if split_name == "home":
+                home_split = split
+            elif split_name == "away":
+                away_split = split
+            elif split_name == "day":
+                day_split = split
+            elif split_name == "night":
+                night_split = split
+
+        # Calculate K/9 for each split
+        def calc_k_per_9(split_data: dict) -> float:
+            if not split_data:
+                return 0.0
+            ip = split_data.get("innings_pitched", 0)
+            so = split_data.get("strikeouts_pitched", 0)
+            try:
+                ip_float = float(ip) if ip else 0
+                return (so / ip_float * 9) if ip_float > 0 else 0.0
+            except (ValueError, TypeError):
+                return 0.0
+
+        home_k_per_9 = calc_k_per_9(home_split)
+        away_k_per_9 = calc_k_per_9(away_split)
+        day_k_per_9 = calc_k_per_9(day_split)
+        night_k_per_9 = calc_k_per_9(night_split)
+
+        # Calculate diffs (positive = better in first condition)
+        home_away_k_diff = round(home_k_per_9 - away_k_per_9, 2) if home_k_per_9 and away_k_per_9 else None
+        day_night_k_diff = round(day_k_per_9 - night_k_per_9, 2) if day_k_per_9 and night_k_per_9 else None
+
+        # Build processed splits dict
         processed_splits = {
             "player_id": self.opts["player_id"],
             "season": self.opts["season"],
-            "raw_splits": splits_data,
+            # Home/Away splits
+            "home": home_split or {},
+            "away": away_split or {},
+            "home_k_per_9": round(home_k_per_9, 2) if home_k_per_9 else None,
+            "away_k_per_9": round(away_k_per_9, 2) if away_k_per_9 else None,
+            "home_away_k_diff": home_away_k_diff,
+            # Day/Night splits
+            "day": day_split or {},
+            "night": night_split or {},
+            "day_k_per_9": round(day_k_per_9, 2) if day_k_per_9 else None,
+            "night_k_per_9": round(night_k_per_9, 2) if night_k_per_9 else None,
+            "day_night_k_diff": day_night_k_diff,
+            # Additional splits
+            "by_arena": by_arena,
+            "by_opponent": by_opponent,
+            # Raw data for debugging
+            "raw_by_breakdown": by_breakdown,
         }
-
-        # Try to extract specific useful splits if they exist
-        if isinstance(splits_data, dict):
-            processed_splits["home"] = splits_data.get("home", {})
-            processed_splits["away"] = splits_data.get("away", {})
-            processed_splits["day"] = splits_data.get("day", {})
-            processed_splits["night"] = splits_data.get("night", {})
-            processed_splits["by_month"] = splits_data.get("by_month", {})
-            processed_splits["by_opponent"] = splits_data.get("by_opponent", {})
-            processed_splits["last_7_days"] = splits_data.get("last_7_days", splits_data.get("last_7", {}))
-            processed_splits["last_15_days"] = splits_data.get("last_15_days", splits_data.get("last_15", {}))
-            processed_splits["last_30_days"] = splits_data.get("last_30_days", splits_data.get("last_30", {}))
 
         self.data = {
             "player_id": self.opts["player_id"],
             "season": self.opts["season"],
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "splits": processed_splits,
+            # Convenience fields for downstream processing
+            "home_k_per_9": processed_splits["home_k_per_9"],
+            "away_k_per_9": processed_splits["away_k_per_9"],
+            "home_away_k_diff": home_away_k_diff,
+            "day_k_per_9": processed_splits["day_k_per_9"],
+            "night_k_per_9": processed_splits["night_k_per_9"],
+            "day_night_k_diff": day_night_k_diff,
         }
 
-        logger.info("Fetched splits for player %s season %s",
-                   self.opts["player_id"], self.opts["season"])
+        logger.info(
+            "Fetched splits for player %s season %s: home_k_per_9=%.2f, away_k_per_9=%.2f, diff=%.2f",
+            self.opts["player_id"],
+            self.opts["season"],
+            home_k_per_9 or 0,
+            away_k_per_9 or 0,
+            home_away_k_diff or 0
+        )
 
     def get_scraper_stats(self) -> dict:
         return {
