@@ -164,53 +164,77 @@ class MlbPitcherGameSummaryProcessor(AnalyticsProcessorBase):
               AND is_starter = TRUE  -- Only starting pitchers
         ),
 
+        -- FanGraphs season stats for SwStr% (leading indicator)
+        fangraphs_stats AS (
+            SELECT DISTINCT
+                player_lookup,
+                season_year,
+                swstr_pct,
+                csw_pct,
+                o_swing_pct as chase_pct,
+                k_pct as fg_k_pct,
+                contact_pct
+            FROM `{self.project_id}.{self.raw_dataset}.fangraphs_pitcher_season_stats`
+            WHERE snapshot_date = (
+                SELECT MAX(snapshot_date)
+                FROM `{self.project_id}.{self.raw_dataset}.fangraphs_pitcher_season_stats`
+            )
+        ),
+
         rolling_stats AS (
             -- Calculate rolling averages for each game
             SELECT
                 h.*,
 
+                -- FanGraphs season-level SwStr% (join by player + season)
+                fg.swstr_pct as season_swstr_pct,
+                fg.csw_pct as season_csw_pct,
+                fg.chase_pct as season_chase_pct,
+                fg.fg_k_pct as season_fg_k_pct,
+                fg.contact_pct as season_contact_pct,
+
                 -- Rolling K averages
                 AVG(strikeouts) OVER (
-                    PARTITION BY player_lookup
+                    PARTITION BY h.player_lookup
                     ORDER BY game_date, game_id
                     ROWS BETWEEN 3 PRECEDING AND 1 PRECEDING
                 ) as k_avg_last_3,
 
                 AVG(strikeouts) OVER (
-                    PARTITION BY player_lookup
+                    PARTITION BY h.player_lookup
                     ORDER BY game_date, game_id
                     ROWS BETWEEN 5 PRECEDING AND 1 PRECEDING
                 ) as k_avg_last_5,
 
                 AVG(strikeouts) OVER (
-                    PARTITION BY player_lookup
+                    PARTITION BY h.player_lookup
                     ORDER BY game_date, game_id
                     ROWS BETWEEN 10 PRECEDING AND 1 PRECEDING
                 ) as k_avg_last_10,
 
                 -- K volatility (std dev)
                 STDDEV(strikeouts) OVER (
-                    PARTITION BY player_lookup
+                    PARTITION BY h.player_lookup
                     ORDER BY game_date, game_id
                     ROWS BETWEEN 10 PRECEDING AND 1 PRECEDING
                 ) as k_std_last_10,
 
                 -- Rolling IP averages
                 AVG(innings_pitched) OVER (
-                    PARTITION BY player_lookup
+                    PARTITION BY h.player_lookup
                     ORDER BY game_date, game_id
                     ROWS BETWEEN 5 PRECEDING AND 1 PRECEDING
                 ) as ip_avg_last_5,
 
                 AVG(innings_pitched) OVER (
-                    PARTITION BY player_lookup
+                    PARTITION BY h.player_lookup
                     ORDER BY game_date, game_id
                     ROWS BETWEEN 10 PRECEDING AND 1 PRECEDING
                 ) as ip_avg_last_10,
 
                 -- Rolling pitch count
                 AVG(pitch_count) OVER (
-                    PARTITION BY player_lookup
+                    PARTITION BY h.player_lookup
                     ORDER BY game_date, game_id
                     ROWS BETWEEN 5 PRECEDING AND 1 PRECEDING
                 ) as pitch_count_avg_last_5,
@@ -218,12 +242,12 @@ class MlbPitcherGameSummaryProcessor(AnalyticsProcessorBase):
                 -- Rolling ERA and WHIP
                 SAFE_DIVIDE(
                     SUM(earned_runs) OVER (
-                        PARTITION BY player_lookup
+                        PARTITION BY h.player_lookup
                         ORDER BY game_date, game_id
                         ROWS BETWEEN 10 PRECEDING AND 1 PRECEDING
                     ) * 9,
                     SUM(innings_pitched) OVER (
-                        PARTITION BY player_lookup
+                        PARTITION BY h.player_lookup
                         ORDER BY game_date, game_id
                         ROWS BETWEEN 10 PRECEDING AND 1 PRECEDING
                     )
@@ -231,12 +255,12 @@ class MlbPitcherGameSummaryProcessor(AnalyticsProcessorBase):
 
                 SAFE_DIVIDE(
                     SUM(walks_allowed + hits_allowed) OVER (
-                        PARTITION BY player_lookup
+                        PARTITION BY h.player_lookup
                         ORDER BY game_date, game_id
                         ROWS BETWEEN 10 PRECEDING AND 1 PRECEDING
                     ),
                     SUM(innings_pitched) OVER (
-                        PARTITION BY player_lookup
+                        PARTITION BY h.player_lookup
                         ORDER BY game_date, game_id
                         ROWS BETWEEN 10 PRECEDING AND 1 PRECEDING
                     )
@@ -245,12 +269,12 @@ class MlbPitcherGameSummaryProcessor(AnalyticsProcessorBase):
                 -- Rolling K/9
                 SAFE_DIVIDE(
                     SUM(strikeouts) OVER (
-                        PARTITION BY player_lookup
+                        PARTITION BY h.player_lookup
                         ORDER BY game_date, game_id
                         ROWS BETWEEN 10 PRECEDING AND 1 PRECEDING
                     ) * 9,
                     SUM(innings_pitched) OVER (
-                        PARTITION BY player_lookup
+                        PARTITION BY h.player_lookup
                         ORDER BY game_date, game_id
                         ROWS BETWEEN 10 PRECEDING AND 1 PRECEDING
                     )
@@ -258,38 +282,41 @@ class MlbPitcherGameSummaryProcessor(AnalyticsProcessorBase):
 
                 -- Games in last 30 days (workload)
                 COUNT(*) OVER (
-                    PARTITION BY player_lookup
+                    PARTITION BY h.player_lookup
                     ORDER BY UNIX_DATE(game_date)
                     RANGE BETWEEN 30 PRECEDING AND 1 PRECEDING
                 ) as games_last_30_days,
 
                 -- Season totals
                 SUM(strikeouts) OVER (
-                    PARTITION BY player_lookup, season_year
+                    PARTITION BY h.player_lookup, h.season_year
                     ORDER BY game_date, game_id
                     ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
                 ) as season_strikeouts_prior,
 
                 SUM(innings_pitched) OVER (
-                    PARTITION BY player_lookup, season_year
+                    PARTITION BY h.player_lookup, h.season_year
                     ORDER BY game_date, game_id
                     ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
                 ) as season_innings_prior,
 
                 COUNT(*) OVER (
-                    PARTITION BY player_lookup, season_year
+                    PARTITION BY h.player_lookup, h.season_year
                     ORDER BY game_date, game_id
                     ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
                 ) as season_games_prior,
 
                 -- Count of rolling stats games available
                 COUNT(*) OVER (
-                    PARTITION BY player_lookup
+                    PARTITION BY h.player_lookup
                     ORDER BY game_date, game_id
                     ROWS BETWEEN 10 PRECEDING AND 1 PRECEDING
                 ) as rolling_stats_games
 
             FROM pitcher_history h
+            LEFT JOIN fangraphs_stats fg
+                ON REPLACE(h.player_lookup, '_', '') = fg.player_lookup
+                AND h.season_year = fg.season_year
         )
 
         SELECT
@@ -340,6 +367,12 @@ class MlbPitcherGameSummaryProcessor(AnalyticsProcessorBase):
             COALESCE(season_innings_prior, 0) as season_innings,
             ROUND(SAFE_DIVIDE(season_strikeouts_prior * 9, season_innings_prior), 2) as season_k_per_9,
             COALESCE(season_games_prior, 0) as season_games_started,
+
+            -- FanGraphs SwStr% metrics (LEADING INDICATORS!)
+            ROUND(season_swstr_pct, 4) as season_swstr_pct,
+            ROUND(season_csw_pct, 4) as season_csw_pct,
+            ROUND(season_chase_pct, 4) as season_chase_pct,
+            ROUND(season_contact_pct, 4) as season_contact_pct,
 
             -- Data quality
             'bdl' as stats_source,
