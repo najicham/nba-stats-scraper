@@ -109,7 +109,11 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.mlb_raw.oddsa_pitcher_props` (
   last_update TIMESTAMP,
   snapshot_time TIMESTAMP NOT NULL,
   source_file_path STRING,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
+
+  -- Line timing (v3.6 - for line timing analysis)
+  game_start_time TIMESTAMP,          -- Game commence_time from Odds API
+  minutes_before_tipoff INT64         -- Minutes from snapshot to game start
 )
 PARTITION BY game_date
 CLUSTER BY player_lookup, market_key, bookmaker;

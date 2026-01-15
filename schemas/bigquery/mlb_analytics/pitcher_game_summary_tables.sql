@@ -83,6 +83,14 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.mlb_analytics.pitcher_game_summar
   season_quality_start_pct NUMERIC(4,3),      -- Quality start percentage
 
   -- ============================================================================
+  -- FANGRAPHS SWSTR% METRICS (4 fields) - LEADING INDICATORS!
+  -- ============================================================================
+  season_swstr_pct NUMERIC(5,4),              -- Swinging strike % (key predictor!)
+  season_csw_pct NUMERIC(5,4),                -- Called Strike + Whiff %
+  season_chase_pct NUMERIC(5,4),              -- Chase rate (swings outside zone)
+  season_contact_pct NUMERIC(5,4),            -- Contact rate
+
+  -- ============================================================================
   -- SPLIT-BASED ADJUSTMENTS (8 fields) - Key for Predictions
   -- ============================================================================
   home_k_per_9 NUMERIC(4,2),                  -- K/9 at home
