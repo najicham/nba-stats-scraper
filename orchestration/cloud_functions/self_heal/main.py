@@ -141,6 +141,59 @@ def check_phase3_data(bq_client, target_date):
     return {'records': 0, 'players': 0, 'exists': False}
 
 
+def check_odds_data_freshness(bq_client, target_date):
+    """
+    Check if OddsAPI data exists and is fresh for the target date.
+
+    This catches Phase 2 OddsAPI batch processing failures that would
+    prevent accurate predictions.
+
+    ADDED: 2026-01-14 Session 48 - Enhanced self-healing for OddsAPI batch failures
+
+    Returns:
+        dict with:
+        - game_lines_count: Number of game lines records
+        - props_count: Number of player props records
+        - games_with_lines: Games with betting lines
+        - games_with_props: Games with player props
+        - is_fresh: True if data exists and is reasonably fresh
+    """
+    # Check game lines
+    lines_query = f"""
+    SELECT
+        COUNT(*) as records,
+        COUNT(DISTINCT game_id) as games
+    FROM `{PROJECT_ID}.nba_raw.odds_api_game_lines`
+    WHERE game_date = '{target_date}'
+    """
+    lines_result = list(bq_client.query(lines_query).result(timeout=60))
+    lines_count = lines_result[0].records if lines_result else 0
+    lines_games = lines_result[0].games if lines_result else 0
+
+    # Check player props
+    props_query = f"""
+    SELECT
+        COUNT(*) as records,
+        COUNT(DISTINCT game_id) as games
+    FROM `{PROJECT_ID}.nba_raw.odds_api_player_points_props`
+    WHERE game_date = '{target_date}'
+    """
+    props_result = list(bq_client.query(props_query).result(timeout=60))
+    props_count = props_result[0].records if props_result else 0
+    props_games = props_result[0].games if props_result else 0
+
+    # Data is fresh if we have both lines and props for at least one game
+    is_fresh = lines_count > 0 and props_count > 0
+
+    return {
+        'game_lines_count': lines_count,
+        'props_count': props_count,
+        'games_with_lines': lines_games,
+        'games_with_props': props_games,
+        'is_fresh': is_fresh
+    }
+
+
 def trigger_phase3_only(target_date):
     """
     Trigger Phase 3 for a specific date without triggering the full pipeline.
@@ -414,7 +467,47 @@ def self_heal_check(request):
             })
             logger.info(f"No games were played yesterday ({yesterday})")
 
-        # Check TODAY first (most important for same-day predictions)
+        # =================================================================
+        # PHASE 2 ODDSAPI DATA CHECK (NEW - Session 48)
+        # Check if OddsAPI data exists for today's games
+        # This catches Phase 2 batch processing failures
+        # =================================================================
+        today_games = check_games_scheduled(bq_client, today)
+        if today_games > 0:
+            odds_data = check_odds_data_freshness(bq_client, today)
+
+            odds_check = {
+                "date": today,
+                "type": "phase2_odds",
+                "games_scheduled": today_games,
+                "game_lines": odds_data['game_lines_count'],
+                "props": odds_data['props_count'],
+                "games_with_lines": odds_data['games_with_lines'],
+                "games_with_props": odds_data['games_with_props']
+            }
+            result["checks"].append(odds_check)
+
+            if not odds_data['is_fresh']:
+                logger.warning(
+                    f"ODDSAPI DATA MISSING: {today_games} games scheduled today "
+                    f"but odds data incomplete (lines={odds_data['game_lines_count']}, "
+                    f"props={odds_data['props_count']}). Check OddsAPI batch processing."
+                )
+                odds_check["status"] = "missing"
+                # Don't trigger healing for odds - this is informational only
+                # OddsAPI batch processing runs on file arrival, not schedule
+                result["actions_taken"].append(
+                    f"WARNING: OddsAPI data incomplete for {today} - "
+                    f"lines={odds_data['game_lines_count']}, props={odds_data['props_count']}"
+                )
+            else:
+                odds_check["status"] = "healthy"
+                logger.info(
+                    f"OddsAPI OK for {today}: {odds_data['game_lines_count']} lines, "
+                    f"{odds_data['props_count']} props for {odds_data['games_with_props']} games"
+                )
+
+        # Check TODAY predictions (most important for same-day predictions)
         today_games = check_games_scheduled(bq_client, today)
         if today_games > 0:
             today_predictions, today_players = check_predictions_exist(bq_client, today)
