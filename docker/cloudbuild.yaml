@@ -24,7 +24,7 @@ steps:
     id: 'build-scrapers'
     args: [
       'build',
-      '-f', 'scrapers/Dockerfile',
+      '-f', 'docker/scrapers.Dockerfile',
       '--build-arg', 'PROJECT_ID=$PROJECT_ID',
       '--build-arg', 'BASE_IMAGE_TAG=$BUILD_ID',
       '-t', 'gcr.io/$PROJECT_ID/nba-scrapers:$BUILD_ID',

@@ -39,8 +39,91 @@ from shared.processors.mixins import RunHistoryMixin
 # Import completeness checker and DependencyError for defensive checks
 from shared.utils.completeness_checker import CompletenessChecker, DependencyError
 
-# Import failure categorization from processor_base
-from data_processors.raw.processor_base import _categorize_failure
+# Failure categorization (inlined to avoid cross-package dependency issues in Cloud Run)
+def _categorize_failure(error: Exception, step: str, stats: dict = None) -> str:
+    """
+    Categorize a processor failure for monitoring and alerting.
+
+    This function determines whether a failure is expected (no_data_available)
+    or a real error (processing_error), enabling alert filtering to reduce
+    noise by 90%+.
+
+    Args:
+        error: The exception that caused the failure
+        step: Current processing step (initialization, load, transform, save)
+        stats: Optional processor stats dict
+
+    Returns:
+        str: Failure category
+            - 'no_data_available': Expected - no data to process
+            - 'upstream_failure': Dependency failed or missing
+            - 'processing_error': Real error in processing logic
+            - 'timeout': Operation timed out
+            - 'configuration_error': Missing required options
+            - 'unknown': Unclassified error
+    """
+    error_type = type(error).__name__
+    error_msg = str(error).lower()
+
+    # Configuration errors
+    if error_type == 'ValueError' and step == 'initialization':
+        if 'missing required option' in error_msg or 'missing' in error_msg:
+            return 'configuration_error'
+
+    # No data available scenarios (EXPECTED - don't alert)
+    no_data_patterns = [
+        'no data loaded',
+        'no data available',
+        'no games scheduled',
+        'no records found',
+        'file not found',
+        'no data to process',
+        'empty response',
+        'no results',
+        'off-season',
+        'off season',
+    ]
+    if any(pattern in error_msg for pattern in no_data_patterns):
+        return 'no_data_available'
+
+    if error_type in ['FileNotFoundError', 'NoDataAvailableError', 'NoDataAvailableSuccess']:
+        return 'no_data_available'
+
+    # Upstream/dependency failures
+    dependency_patterns = [
+        'dependency',
+        'upstream',
+        'missing dependency',
+        'stale dependency',
+        'dependency check failed',
+    ]
+    if any(pattern in error_msg for pattern in dependency_patterns):
+        return 'upstream_failure'
+
+    if error_type in ['DependencyError', 'UpstreamDependencyError', 'DataTooStaleError']:
+        return 'upstream_failure'
+
+    # Timeout errors
+    timeout_patterns = [
+        'timeout',
+        'timed out',
+        'deadline exceeded',
+    ]
+    if any(pattern in error_msg for pattern in timeout_patterns):
+        return 'timeout'
+
+    if error_type in ['TimeoutError', 'DeadlineExceeded']:
+        return 'timeout'
+
+    # BigQuery-specific errors
+    if 'bigquery' in error_msg or error_type.startswith('Google'):
+        if 'streaming buffer' in error_msg:
+            return 'no_data_available'  # Transient, will self-heal
+        return 'processing_error'
+
+    # Default: real processing error (ALERT!)
+    return 'processing_error'
+
 
 # Import unified publishing
 from shared.publishers.unified_pubsub_publisher import UnifiedPubSubPublisher
@@ -1435,6 +1518,27 @@ class PrecomputeProcessorBase(RunHistoryMixin):
                 # Fallback: use fields from first row
                 all_fields = list(sanitized_rows[0].keys()) if sanitized_rows else []
 
+            # CRITICAL: For BigQuery tables with require_partition_filter=true,
+            # the partition filter MUST come FIRST in the ON clause with a literal value.
+            # This was causing Phase 4 precompute failures (7% success rate).
+            # Fixed: 2026-01-15 Session 51
+            partition_prefix = ""
+            date_col = getattr(self.__class__, 'date_column', 'analysis_date')
+            if date_col in all_fields and sanitized_rows:
+                analysis_dates = list(set(
+                    str(row.get(date_col)) for row in sanitized_rows
+                    if row.get(date_col) is not None
+                ))
+                if analysis_dates:
+                    # Build partition filter with literal DATE values
+                    # Must come FIRST in ON clause for BigQuery partition pruning
+                    if len(analysis_dates) == 1:
+                        partition_prefix = f"target.{date_col} = DATE('{analysis_dates[0]}') AND "
+                    else:
+                        dates_str = "', DATE('".join(sorted(analysis_dates))
+                        partition_prefix = f"target.{date_col} IN (DATE('{dates_str}')) AND "
+                    logger.debug(f"Adding partition filter for {date_col}: {analysis_dates}")
+
             # Fields to update (all except primary keys)
             update_fields = [f for f in all_fields if f not in primary_keys]
 
@@ -1448,7 +1552,7 @@ class PrecomputeProcessorBase(RunHistoryMixin):
             merge_query = f"""
             MERGE `{table_id}` AS target
             USING `{temp_table_id}` AS source
-            ON {on_clause}
+            ON {partition_prefix}{on_clause}
             WHEN MATCHED THEN
                 UPDATE SET {update_set}
             WHEN NOT MATCHED THEN
@@ -1456,7 +1560,7 @@ class PrecomputeProcessorBase(RunHistoryMixin):
                 VALUES ({insert_values})
             """
 
-            logger.info(f"Executing MERGE on primary keys: {', '.join(primary_keys)}")
+            logger.info(f"Executing MERGE on primary keys: {', '.join(primary_keys)} (partition filter: {bool(partition_prefix)})")
             merge_job = self.bq_client.query(merge_query)
             merge_result = merge_job.result(timeout=300)
 
