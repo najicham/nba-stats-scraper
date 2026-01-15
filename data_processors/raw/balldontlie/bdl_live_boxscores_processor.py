@@ -34,7 +34,13 @@ class BdlLiveBoxscoresProcessor(ProcessorBase):
     Processing Strategy: APPEND_ONLY
     - Each poll creates new rows (no updates)
     - Enables time-series analysis of in-game stats
+
+    Note: SKIP_DEDUPLICATION=True because this processor runs repeatedly
+    throughout the day to capture live in-game data.
     """
+
+    # Skip deduplication - this processor runs every 3 minutes during games
+    SKIP_DEDUPLICATION: bool = True
 
     def __init__(self):
         super().__init__()
