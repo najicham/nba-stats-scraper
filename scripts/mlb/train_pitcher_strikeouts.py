@@ -219,11 +219,11 @@ pitcher_games AS (
         pgs.season_games_started as f08_season_games,
         pgs.season_strikeouts as f09_season_k_total,
 
-        -- Split adjustments (f10-f14) - simplified
+        -- Split adjustments (f10-f14) - NOW WITH REAL DATA
         IF(pgs.is_home, 1.0, 0.0) as f10_is_home,
-        0.0 as f11_home_away_k_diff,  -- Placeholder
-        0.0 as f12_is_day_game,  -- Placeholder
-        0.0 as f13_day_night_k_diff,  -- Placeholder
+        pgs.home_away_k_diff as f11_home_away_k_diff,  -- NEW: From bdl_pitcher_splits
+        0.0 as f12_is_day_game,  -- Placeholder (no data source yet)
+        pgs.day_night_k_diff as f13_day_night_k_diff,  -- NEW: From bdl_pitcher_splits
         0.0 as f14_vs_opponent_k_rate,  -- Placeholder
 
         -- Workload features (f20-f24)
@@ -242,6 +242,12 @@ pitcher_games AS (
         -- Pitcher vs opponent history (NEW FEATURES)
         pvo.avg_k_vs_opponent as f27_avg_k_vs_opponent,
         pvo.games_vs_opponent as f28_games_vs_opponent,
+
+        -- V2 NEW FEATURES (populated 100% in pitcher_game_summary)
+        pgs.opponent_team_k_rate as f15_opponent_team_k_rate,
+        pgs.ballpark_k_factor as f16_ballpark_k_factor,
+        pgs.month_of_season as f17_month_of_season,
+        pgs.days_into_season as f18_days_into_season,
 
         -- Data quality
         pgs.data_completeness_score,
@@ -294,11 +300,11 @@ SELECT
     COALESCE(f08_season_games, 5) as f08_season_games,
     COALESCE(f09_season_k_total, 30) as f09_season_k_total,
 
-    -- Split adjustments (f10-f14)
+    -- Split adjustments (f10-f14) - NOW WITH REAL DATA
     f10_is_home,
-    f11_home_away_k_diff,
+    COALESCE(f11_home_away_k_diff, 0.0) as f11_home_away_k_diff,
     f12_is_day_game,
-    f13_day_night_k_diff,
+    COALESCE(f13_day_night_k_diff, 0.0) as f13_day_night_k_diff,
     f14_vs_opponent_k_rate,
 
     -- Workload (f20-f24)
@@ -318,6 +324,12 @@ SELECT
 
     -- Weak spots (f33)
     COALESCE(f33_lineup_weak_spots, 2) as f33_lineup_weak_spots,
+
+    -- V2 NEW FEATURES (f15-f18)
+    COALESCE(f15_opponent_team_k_rate, 0.22) as f15_opponent_team_k_rate,
+    COALESCE(f16_ballpark_k_factor, 1.0) as f16_ballpark_k_factor,
+    COALESCE(f17_month_of_season, 6) as f17_month_of_season,
+    COALESCE(f18_days_into_season, 90) as f18_days_into_season,
 
     -- Data quality
     data_completeness_score,
@@ -431,8 +443,16 @@ feature_cols = [
     'f08_season_games',
     'f09_season_k_total',
 
-    # Context (f10-f14)
+    # Context (f10-f14) - NOW WITH SPLITS DATA
     'f10_is_home',
+    'f11_home_away_k_diff',  # NEW: Home-Away K/9 difference
+    'f13_day_night_k_diff',  # NEW: Day-Night K/9 difference
+
+    # V2 NEW FEATURES (f15-f18) - opponent/park/seasonal
+    'f15_opponent_team_k_rate',
+    'f16_ballpark_k_factor',
+    'f17_month_of_season',
+    'f18_days_into_season',
 
     # Workload (f20-f24)
     'f20_days_rest',
@@ -632,7 +652,7 @@ print("\n" + "=" * 80)
 print("STEP 7: SAVING MODEL")
 print("=" * 80)
 
-model_id = f"mlb_pitcher_strikeouts_v4_{datetime.now().strftime('%Y%m%d')}"
+model_id = f"mlb_pitcher_strikeouts_v1_5_splits_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 model_path = MODEL_OUTPUT_DIR / f"{model_id}.json"
 
 model.get_booster().save_model(str(model_path))
