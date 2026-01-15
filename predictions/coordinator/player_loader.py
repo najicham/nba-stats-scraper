@@ -383,6 +383,9 @@ class PlayerLoader:
             'sportsbook': line_info.get('sportsbook'),  # 'DRAFTKINGS', 'FANDUEL', etc.
             'was_line_fallback': line_info.get('was_line_fallback', False),  # True if not primary sportsbook
 
+            # v3.6: Line timing tracking (how close to closing line)
+            'line_minutes_before_game': line_info.get('line_minutes_before_game'),  # Minutes before tipoff
+
             # Issue 3: New player handling
             'needs_bootstrap': line_info.get('needs_bootstrap', False)
         }
@@ -434,7 +437,9 @@ class PlayerLoader:
             line_source_api = line_result['line_source_api']
             sportsbook = line_result['sportsbook']
             was_line_fallback = line_result['was_fallback']
-            logger.debug(f"Using actual betting line {base_line} ({sportsbook}) for {player_lookup}")
+            # v3.6: Track how many minutes before game the line was captured
+            line_minutes_before_game = line_result.get('line_minutes_before_game')
+            logger.debug(f"Using actual betting line {base_line} ({sportsbook}, {line_minutes_before_game}min before) for {player_lookup}")
         else:
             # Fallback: Estimate from season average
             base_line, estimation_method = self._estimate_betting_line_with_method(player_lookup)
@@ -450,13 +455,15 @@ class PlayerLoader:
                     'needs_bootstrap': True,
                     'line_source_api': 'ESTIMATED',
                     'sportsbook': None,
-                    'was_line_fallback': False
+                    'was_line_fallback': False,
+                    'line_minutes_before_game': None  # v3.6: No timing for bootstrap players
                 }
 
             line_source = 'ESTIMATED_AVG'
             line_source_api = 'ESTIMATED'
             sportsbook = None
             was_line_fallback = False
+            line_minutes_before_game = None  # v3.6: No timing for estimated lines
             logger.debug(f"Using estimated line {base_line} ({estimation_method}) for {player_lookup}")
 
         # Generate multiple lines if requested
@@ -481,7 +488,8 @@ class PlayerLoader:
             'needs_bootstrap': False,
             'line_source_api': line_source_api,
             'sportsbook': sportsbook,
-            'was_line_fallback': was_line_fallback
+            'was_line_fallback': was_line_fallback,
+            'line_minutes_before_game': line_minutes_before_game  # v3.6: How close to game time
         }
 
     def _query_actual_betting_line(
@@ -510,10 +518,13 @@ class PlayerLoader:
 
         # v3.4: Fixed table name - was querying non-existent odds_player_props
         # Correct table is odds_api_player_points_props (already filtered to player_points)
+        # v3.6: Added minutes_before_tipoff for line timing analysis
+        # This tells us how close to game time the line was captured (closing line vs early line)
         query = """
         SELECT
             points_line as line_value,
-            bookmaker
+            bookmaker,
+            minutes_before_tipoff
         FROM `{project}.nba_raw.odds_api_player_points_props`
         WHERE player_lookup = @player_lookup
           AND game_date = @game_date
@@ -547,11 +558,13 @@ class PlayerLoader:
                 sportsbook = row.bookmaker.upper() if row.bookmaker else 'UNKNOWN'
                 was_fallback = row.bookmaker and row.bookmaker.lower() != 'draftkings'
 
+                # v3.6: Include minutes_before_tipoff for line timing analysis
                 return {
                     'line_value': float(row.line_value),
                     'sportsbook': sportsbook,
                     'was_fallback': was_fallback,
-                    'line_source_api': 'ODDS_API'
+                    'line_source_api': 'ODDS_API',
+                    'line_minutes_before_game': int(row.minutes_before_tipoff) if row.minutes_before_tipoff else None
                 }
 
             return None
