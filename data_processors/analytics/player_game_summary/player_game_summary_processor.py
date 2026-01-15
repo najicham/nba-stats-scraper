@@ -1174,7 +1174,7 @@ class PlayerGameSummaryProcessor(
                 row['field_goals_attempted'] > 0):
 
                 fga = row['field_goals_attempted']
-                three_makes = row['three_pointers_made'] or 0
+                three_makes = row['three_pointers_made'] if pd.notna(row['three_pointers_made']) else 0
 
                 efg_pct = (row['field_goals_made'] + 0.5 * three_makes) / fga
 
@@ -1195,7 +1195,8 @@ class PlayerGameSummaryProcessor(
 
                 # Player usage components
                 player_fga = row['field_goals_attempted']
-                player_fta = row.get('free_throws_attempted', 0) or 0
+                player_fta_val = row.get('free_throws_attempted', 0)
+                player_fta = player_fta_val if pd.notna(player_fta_val) else 0
                 player_to = row['turnovers']
                 player_poss_used = player_fga + 0.44 * player_fta + player_to
 
