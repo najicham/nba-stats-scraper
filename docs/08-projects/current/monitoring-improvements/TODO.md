@@ -1,6 +1,6 @@
 # Monitoring Improvements - TODO List
 
-**Last Updated:** 2026-01-14 (Session 40)
+**Last Updated:** 2026-01-14 (Session 45)
 
 ---
 
@@ -209,6 +209,7 @@ gcloud logging metrics create dlq_messages \
 
 ## Completed
 
+- [x] **OddsAPI Batch Processing** (Session 45) - `124e871` - Reduces processing 60+ min → <5 min
 - [x] OIDC validation in system_health_check.py (Session 39)
 - [x] cleanup_stuck_processors.py script (Session 39)
 - [x] Auth error log-based metric (Session 39)
