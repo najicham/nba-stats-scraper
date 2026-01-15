@@ -403,7 +403,9 @@ def handle_prediction_request():
             # v3.3: Line source API and sportsbook tracking
             'line_source_api': request_data.get('line_source_api'),  # 'ODDS_API', 'BETTINGPROS', 'ESTIMATED'
             'sportsbook': request_data.get('sportsbook'),  # 'DRAFTKINGS', 'FANDUEL', etc.
-            'was_line_fallback': request_data.get('was_line_fallback', False)  # True if not primary
+            'was_line_fallback': request_data.get('was_line_fallback', False),  # True if not primary
+            # v3.6: Line timing tracking (how close to closing line was the captured line)
+            'line_minutes_before_game': request_data.get('line_minutes_before_game')  # Minutes before tipoff
         }
 
         # Convert date string to date object
@@ -681,6 +683,8 @@ def process_player_predictions(
     features['line_source_api'] = line_source_info.get('line_source_api')
     features['sportsbook'] = line_source_info.get('sportsbook')
     features['was_line_fallback'] = line_source_info.get('was_line_fallback', False)
+    # v3.6: Add line timing tracking (how close to closing line)
+    features['line_minutes_before_game'] = line_source_info.get('line_minutes_before_game')
 
     # v3.4: Check and inject injury status at prediction time
     # This enables distinguishing expected vs surprise voids after game completes
@@ -1171,6 +1175,9 @@ def format_prediction_for_bigquery(
         'line_source_api': line_source_api,  # 'ODDS_API', 'BETTINGPROS', 'ESTIMATED'
         'sportsbook': sportsbook,  # 'DRAFTKINGS', 'FANDUEL', 'BETMGM', etc.
         'was_line_fallback': was_line_fallback,  # True if line came from fallback source
+
+        # v3.6: Line timing tracking (enables closing line vs early line analysis)
+        'line_minutes_before_game': features.get('line_minutes_before_game'),  # Minutes before tipoff
 
         # Status
         'is_active': True,
