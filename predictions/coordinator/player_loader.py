@@ -253,9 +253,13 @@ class PlayerLoader:
         Query BigQuery for all players with games on given date
 
         Filters out:
-        - Players below minimum minutes threshold
+        - Players below minimum minutes threshold (unless they have a prop line - v3.7)
         - Inactive players
         - Injured players (OUT or DOUBTFUL status)
+
+        v3.7: Players with betting prop lines are included even if returning from injury
+        (NULL avg_minutes_per_game_last_7). This ensures we make predictions for all
+        players that sportsbooks expect to play.
 
         Args:
             game_date: Date to query
@@ -288,7 +292,7 @@ class PlayerLoader:
             current_points_line  -- v3.2: Pass through actual betting line if available
         FROM `{project}.{dataset}.upcoming_player_game_context`
         WHERE game_date = @game_date
-          AND avg_minutes_per_game_last_7 >= @min_minutes
+          AND (avg_minutes_per_game_last_7 >= @min_minutes OR has_prop_line = TRUE)  -- v3.7: Include players with prop lines even if returning from injury
           AND (player_status IS NULL OR player_status NOT IN ('OUT', 'DOUBTFUL'))
           AND is_production_ready = TRUE  -- Only process players with complete upstream data
         QUALIFY ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY created_at DESC) = 1
