@@ -1887,8 +1887,9 @@ class AnalyticsProcessorBase(RunHistoryMixin):
                 if len(game_dates) == 1:
                     partition_prefix = f"target.game_date = DATE('{game_dates[0]}') AND "
                 else:
-                    dates_str = "', DATE('".join(game_dates)
-                    partition_prefix = f"target.game_date IN (DATE('{dates_str}')) AND "
+                    # Build proper IN clause: DATE('2026-01-13'), DATE('2026-01-14')
+                    dates_list = [f"DATE('{d}')" for d in game_dates]
+                    partition_prefix = f"target.game_date IN ({', '.join(dates_list)}) AND "
                 logger.debug(f"Adding partition filter for {len(game_dates)} dates")
 
         # ============================================
@@ -2039,8 +2040,9 @@ class AnalyticsProcessorBase(RunHistoryMixin):
             if len(game_dates) == 1:
                 date_filter = f"game_date = DATE('{game_dates[0]}')"
             else:
-                dates_str = "', DATE('".join(game_dates)
-                date_filter = f"game_date IN (DATE('{dates_str}'))"
+                # Build proper IN clause: DATE('2026-01-13'), DATE('2026-01-14')
+                dates_list = [f"DATE('{d}')" for d in game_dates]
+                date_filter = f"game_date IN ({', '.join(dates_list)})"
 
             delete_query = f"DELETE FROM `{table_id}` WHERE {date_filter}"
 
