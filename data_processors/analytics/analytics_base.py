@@ -791,9 +791,9 @@ class AnalyticsProcessorBase(RunHistoryMixin):
         """Helper to determine current processing step for error context."""
         if not self.bq_client:
             return "initialization"
-        elif not self.raw_data:
+        elif self.raw_data is None or (hasattr(self.raw_data, 'empty') and self.raw_data.empty):
             return "extract"
-        elif not self.transformed_data:
+        elif self.transformed_data is None or (hasattr(self.transformed_data, 'empty') and self.transformed_data.empty):
             return "calculate"
         else:
             return "save"
@@ -1749,20 +1749,29 @@ class AnalyticsProcessorBase(RunHistoryMixin):
 
     def _save_with_proper_merge(self, rows: List[Dict], table_id: str, table_schema) -> None:
         """
-        Save data using proper SQL MERGE statement (not DELETE + INSERT).
+        Save data using proper SQL MERGE statement with comprehensive validation.
 
         This method:
-        1. Loads data into a temporary table
-        2. Executes a SQL MERGE statement to upsert records
-        3. Cleans up the temporary table
+        1. Validates all inputs before proceeding
+        2. Loads data into a temporary table
+        3. Executes a SQL MERGE statement to upsert records
+        4. Falls back to DELETE+INSERT if MERGE fails
+        5. Cleans up the temporary table
 
-        Advantages over DELETE + INSERT:
+        Advantages:
         - Single atomic operation (no streaming buffer issues)
         - No duplicates created
         - Proper upsert semantics
+        - Automatic fallback on failure
+
+        Updated: 2026-01-15 Session 56 - Added comprehensive validation and auto-fallback
         """
         import io
         import uuid
+
+        # ============================================
+        # VALIDATION PHASE - Fail fast with clear errors
+        # ============================================
 
         if not rows:
             logger.warning("No rows to merge")
@@ -1770,47 +1779,139 @@ class AnalyticsProcessorBase(RunHistoryMixin):
 
         # Check if PRIMARY_KEY_FIELDS is defined
         if not hasattr(self.__class__, 'PRIMARY_KEY_FIELDS'):
-            logger.warning(f"PRIMARY_KEY_FIELDS not defined for {self.__class__.__name__} - falling back to DELETE + INSERT")
-            # Fall back to old method
-            self._delete_existing_data_batch(rows)
+            logger.warning(f"PRIMARY_KEY_FIELDS not defined for {self.__class__.__name__} - using DELETE + INSERT")
+            self._save_with_delete_insert(rows, table_id, table_schema)
             return
 
         primary_keys = self.__class__.PRIMARY_KEY_FIELDS
         if not primary_keys or len(primary_keys) == 0:
-            logger.warning(f"PRIMARY_KEY_FIELDS is empty - falling back to DELETE + INSERT")
-            self._delete_existing_data_batch(rows)
+            logger.warning(f"PRIMARY_KEY_FIELDS is empty - using DELETE + INSERT")
+            self._save_with_delete_insert(rows, table_id, table_schema)
             return
 
-        # Create unique temp table name
+        # ============================================
+        # SANITIZATION PHASE
+        # ============================================
+
+        sanitized_rows = []
+        for i, row in enumerate(rows):
+            try:
+                sanitized = self._sanitize_row_for_json(row)
+                json.dumps(sanitized)  # Validate JSON serialization
+                sanitized_rows.append(sanitized)
+            except (TypeError, ValueError) as e:
+                logger.warning(f"Skipping row {i} due to JSON error: {e}")
+                continue
+
+        if not sanitized_rows:
+            logger.warning("No valid rows after sanitization")
+            return
+
+        # ============================================
+        # FIELD ANALYSIS PHASE
+        # ============================================
+
+        # Get all field names from schema or fallback to row keys
+        if table_schema and len(table_schema) > 0:
+            all_fields = [field.name for field in table_schema]
+            logger.debug(f"Using schema with {len(all_fields)} fields")
+        else:
+            # Fallback: use keys from first row
+            all_fields = list(sanitized_rows[0].keys()) if sanitized_rows else []
+            logger.warning(f"No schema provided, using {len(all_fields)} fields from row keys")
+
+        # CRITICAL VALIDATION: Ensure we have fields
+        if not all_fields:
+            logger.error("CRITICAL: No fields found in schema or row data - falling back to DELETE + INSERT")
+            self._save_with_delete_insert(rows, table_id, table_schema)
+            return
+
+        # Validate primary keys exist in all_fields
+        missing_pks = [pk for pk in primary_keys if pk not in all_fields]
+        if missing_pks:
+            logger.error(f"CRITICAL: Primary keys {missing_pks} not in fields - falling back to DELETE + INSERT")
+            self._save_with_delete_insert(rows, table_id, table_schema)
+            return
+
+        # Fields to update (all except primary keys)
+        update_fields = [f for f in all_fields if f not in primary_keys]
+
+        # ============================================
+        # QUERY CONSTRUCTION PHASE
+        # ============================================
+
+        def quote_identifier(name: str) -> str:
+            """Safely quote BigQuery identifier."""
+            if name is None:
+                return '`NULL`'
+            return f"`{str(name).replace('`', '')}`"
+
+        # Build ON clause
+        on_clause = ' AND '.join([
+            f"target.{quote_identifier(key)} = source.{quote_identifier(key)}"
+            for key in primary_keys
+        ])
+
+        # CRITICAL: Handle empty update_fields gracefully
+        if not update_fields:
+            logger.warning("No non-key fields to update - using no-op MERGE")
+            update_set = f"{quote_identifier(primary_keys[0])} = source.{quote_identifier(primary_keys[0])}"
+        else:
+            update_set = ', '.join([
+                f"{quote_identifier(f)} = source.{quote_identifier(f)}"
+                for f in update_fields
+            ])
+
+        # CRITICAL VALIDATION: Ensure update_set is not empty
+        if not update_set or len(update_set.strip()) == 0:
+            logger.error(f"CRITICAL: update_set is empty! primary_keys={primary_keys}, update_fields={update_fields}")
+            logger.error("Falling back to DELETE + INSERT")
+            self._save_with_delete_insert(rows, table_id, table_schema)
+            return
+
+        # Build INSERT clause
+        insert_fields = ', '.join([quote_identifier(f) for f in all_fields])
+        insert_values = ', '.join([f"source.{quote_identifier(f)}" for f in all_fields])
+
+        # Partition by clause for deduplication
+        primary_keys_partition = ', '.join(primary_keys)
+
+        # Build partition filter for BigQuery optimization
+        partition_prefix = ""
+        if 'game_date' in all_fields and sanitized_rows:
+            game_dates = sorted(set(
+                str(row.get('game_date')) for row in sanitized_rows
+                if row.get('game_date') is not None
+            ))
+            if game_dates:
+                if len(game_dates) == 1:
+                    partition_prefix = f"target.game_date = DATE('{game_dates[0]}') AND "
+                else:
+                    dates_str = "', DATE('".join(game_dates)
+                    partition_prefix = f"target.game_date IN (DATE('{dates_str}')) AND "
+                logger.debug(f"Adding partition filter for {len(game_dates)} dates")
+
+        # ============================================
+        # TEMP TABLE PHASE
+        # ============================================
+
         temp_table_name = f"{self.table_name}_temp_{uuid.uuid4().hex[:8]}"
         temp_table_id = f"{self.project_id}.{self.get_output_dataset()}.{temp_table_name}"
 
-        logger.info(f"Using proper SQL MERGE with temp table: {temp_table_name}")
+        logger.info(f"Using SQL MERGE with temp table: {temp_table_name}")
+        logger.info(f"MERGE config: {len(sanitized_rows)} rows, {len(all_fields)} fields, {len(update_fields)} update fields")
+
+        merge_query = None  # Define for error logging
 
         try:
-            # Step 1: Sanitize rows
-            sanitized_rows = []
-            for i, row in enumerate(rows):
-                try:
-                    sanitized = self._sanitize_row_for_json(row)
-                    json.dumps(sanitized)  # Validate JSON serialization
-                    sanitized_rows.append(sanitized)
-                except (TypeError, ValueError) as e:
-                    logger.warning(f"Skipping row {i} due to JSON error: {e}")
-                    continue
-
-            if not sanitized_rows:
-                logger.warning("No valid rows after sanitization")
-                return
-
-            # Step 2: Load data into temp table
+            # Load data into temp table
             ndjson_data = "\n".join(json.dumps(row) for row in sanitized_rows)
             ndjson_bytes = ndjson_data.encode('utf-8')
 
             job_config = bigquery.LoadJobConfig(
                 schema=table_schema,
                 source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
-                write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,  # Overwrite temp table
+                write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
                 autodetect=(table_schema is None)
             )
 
@@ -1819,54 +1920,12 @@ class AnalyticsProcessorBase(RunHistoryMixin):
                 temp_table_id,
                 job_config=job_config
             )
-
             load_job.result(timeout=300)
             logger.info(f"✅ Loaded {len(sanitized_rows)} rows into temp table")
 
-            # Step 3: Build and execute MERGE statement
-            on_clause = ' AND '.join([f"target.{key} = source.{key}" for key in primary_keys])
-
-            # Get all field names from schema (excluding primary keys for UPDATE)
-            if table_schema:
-                all_fields = [field.name for field in table_schema]
-            else:
-                # Fallback: use fields from first row
-                all_fields = list(sanitized_rows[0].keys()) if sanitized_rows else []
-
-            # Fields to update (all except primary keys)
-            update_fields = [f for f in all_fields if f not in primary_keys]
-
-            # Build UPDATE SET clause
-            update_set = ', '.join([f"{field} = source.{field}" for field in update_fields])
-
-            # Build INSERT clause
-            insert_fields = ', '.join(all_fields)
-            insert_values = ', '.join([f"source.{field}" for field in all_fields])
-
-            # Build MERGE query with ROW_NUMBER deduplication to prevent
-            # "UPDATE/MERGE must match at most one source row" errors
-            # When duplicates exist in source, picks the latest by processed_at
-            primary_keys_partition = ', '.join(primary_keys)
-
-            # CRITICAL: For BigQuery tables with require_partition_filter=true,
-            # the partition filter MUST come FIRST in the ON clause with a literal value.
-            # This was causing TeamOffenseGameSummaryProcessor and other analytics to fail.
-            # Fixed: 2026-01-15 Session 49
-            partition_prefix = ""
-            if 'game_date' in all_fields and sanitized_rows:
-                game_dates = list(set(
-                    row.get('game_date') for row in sanitized_rows
-                    if row.get('game_date') is not None
-                ))
-                if game_dates:
-                    # Build partition filter with literal DATE values
-                    # Must come FIRST in ON clause for BigQuery partition pruning
-                    if len(game_dates) == 1:
-                        partition_prefix = f"target.game_date = DATE('{game_dates[0]}') AND "
-                    else:
-                        dates_str = "', DATE('".join(sorted(game_dates))
-                        partition_prefix = f"target.game_date IN (DATE('{dates_str}')) AND "
-                    logger.debug(f"Adding partition filter for game_date: {game_dates}")
+            # ============================================
+            # MERGE EXECUTION PHASE
+            # ============================================
 
             merge_query = f"""
             MERGE `{table_id}` AS target
@@ -1887,30 +1946,144 @@ class AnalyticsProcessorBase(RunHistoryMixin):
                 VALUES ({insert_values})
             """
 
+            # ALWAYS log key details at INFO level for debugging
             logger.info(f"Executing MERGE on primary keys: {', '.join(primary_keys)}")
+            logger.info(f"MERGE DEBUG - update_set ({len(update_set)} chars): '{update_set[:100]}...'")
+
             merge_job = self.bq_client.query(merge_query)
             merge_result = merge_job.result(timeout=300)
 
             # Get stats
-            if merge_job.num_dml_affected_rows is not None:
-                logger.info(f"✅ MERGE completed: {merge_job.num_dml_affected_rows} rows affected")
-            else:
-                logger.info(f"✅ MERGE completed successfully")
-
+            affected = merge_job.num_dml_affected_rows or 0
+            logger.info(f"✅ MERGE completed: {affected} rows affected")
             self.stats["rows_processed"] = len(sanitized_rows)
 
         except Exception as e:
-            error_msg = f"MERGE operation failed: {str(e)}"
-            logger.error(error_msg)
+            error_msg = str(e)
+            logger.error(f"MERGE failed: {error_msg}")
+
+            # Log the full query for debugging
+            if merge_query:
+                logger.error(f"Failed MERGE query:\n{merge_query}")
+
+            # Auto-fallback: If syntax error, use DELETE+INSERT
+            if "syntax error" in error_msg.lower() or "400" in error_msg:
+                logger.warning("MERGE syntax error detected - falling back to DELETE + INSERT")
+                try:
+                    self.bq_client.delete_table(temp_table_id, not_found_ok=True)
+                except Exception:
+                    pass
+                self._save_with_delete_insert(rows, table_id, table_schema)
+                return
+
             raise
 
         finally:
-            # Step 4: Always clean up temp table
+            # Always clean up temp table
             try:
                 self.bq_client.delete_table(temp_table_id, not_found_ok=True)
                 logger.debug(f"Cleaned up temp table: {temp_table_name}")
             except Exception as cleanup_e:
                 logger.warning(f"Could not clean up temp table: {cleanup_e}")
+
+    def _save_with_delete_insert(self, rows: List[Dict], table_id: str, table_schema) -> None:
+        """
+        Save rows using DELETE + INSERT strategy (simpler, more reliable fallback).
+
+        This method:
+        1. Deletes existing records for the game_dates in the data
+        2. Inserts new records via batch load
+
+        Benefits:
+        - Simpler SQL, fewer edge cases
+        - Works reliably when MERGE fails
+        - Still prevents duplicates (via DELETE first)
+
+        Drawbacks:
+        - Not fully atomic (small window between DELETE and INSERT)
+        - Deletes ALL records for the dates, even unchanged ones
+
+        Added: 2026-01-15 Session 56 - Fallback for MERGE failures
+        """
+        import io
+
+        if not rows:
+            logger.warning("No rows for DELETE + INSERT")
+            return
+
+        logger.info(f"Using DELETE + INSERT strategy for {len(rows)} rows")
+
+        # Sanitize rows
+        sanitized_rows = []
+        for i, row in enumerate(rows):
+            try:
+                sanitized = self._sanitize_row_for_json(row)
+                json.dumps(sanitized)
+                sanitized_rows.append(sanitized)
+            except (TypeError, ValueError) as e:
+                logger.warning(f"Skipping row {i} due to JSON error: {e}")
+                continue
+
+        if not sanitized_rows:
+            logger.warning("No valid rows after sanitization")
+            return
+
+        # Extract game_dates for DELETE
+        game_dates = sorted(set(
+            str(row.get('game_date')) for row in sanitized_rows
+            if row.get('game_date') is not None
+        ))
+
+        if game_dates:
+            # Step 1: DELETE existing records for these dates
+            if len(game_dates) == 1:
+                date_filter = f"game_date = DATE('{game_dates[0]}')"
+            else:
+                dates_str = "', DATE('".join(game_dates)
+                date_filter = f"game_date IN (DATE('{dates_str}'))"
+
+            delete_query = f"DELETE FROM `{table_id}` WHERE {date_filter}"
+
+            try:
+                logger.info(f"Deleting existing records for {len(game_dates)} date(s)")
+                delete_job = self.bq_client.query(delete_query)
+                delete_job.result(timeout=300)
+                deleted = delete_job.num_dml_affected_rows or 0
+                logger.info(f"✅ Deleted {deleted} existing rows")
+            except Exception as e:
+                error_str = str(e).lower()
+                if "not found" in error_str or "404" in error_str:
+                    logger.info("Table doesn't exist yet - will be created on INSERT")
+                elif "streaming buffer" in error_str:
+                    logger.warning("Delete blocked by streaming buffer - proceeding with INSERT")
+                else:
+                    logger.error(f"DELETE failed: {e}")
+                    raise
+
+        # Step 2: INSERT new records using batch load
+        ndjson_data = "\n".join(json.dumps(row) for row in sanitized_rows)
+        ndjson_bytes = ndjson_data.encode('utf-8')
+
+        job_config = bigquery.LoadJobConfig(
+            schema=table_schema,
+            source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+            write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+            autodetect=(table_schema is None)
+        )
+
+        try:
+            logger.info(f"Inserting {len(sanitized_rows)} rows")
+            load_job = self.bq_client.load_table_from_file(
+                io.BytesIO(ndjson_bytes),
+                table_id,
+                job_config=job_config
+            )
+            load_job.result(timeout=300)
+            logger.info(f"✅ INSERT completed: {len(sanitized_rows)} rows inserted")
+            self.stats["rows_processed"] = len(sanitized_rows)
+        except Exception as e:
+            logger.error(f"INSERT failed: {e}")
+            raise
 
     def _delete_existing_data_batch(self, rows: List[Dict]) -> None:
         """
