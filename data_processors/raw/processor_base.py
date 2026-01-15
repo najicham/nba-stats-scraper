@@ -200,6 +200,11 @@ class ProcessorBase(RunHistoryMixin):
     validate_on_load: bool = True
     save_on_error: bool = True
 
+    # Deduplication settings - set to True for LIVE processors that run repeatedly
+    # Default: False = normal deduplication (skip if already processed)
+    # Set to True for: BdlLiveBoxscoresProcessor, LiveExportProcessor, etc.
+    SKIP_DEDUPLICATION: bool = False
+
     # BigQuery settings - now uses sport_config for multi-sport support
     dataset_id: str = None  # Will be set from sport_config in __init__
     table_name: str = ""  # Child classes must set
@@ -265,9 +270,10 @@ class ProcessorBase(RunHistoryMixin):
             self.init_clients()
 
             # DEDUPLICATION CHECK - Skip if already processed
+            # Note: LIVE processors (SKIP_DEDUPLICATION=True) bypass this check
             data_date = opts.get('date') or opts.get('game_date')
             game_code = opts.get('game_code')  # Optional: for game-level deduplication
-            if data_date:
+            if data_date and not self.SKIP_DEDUPLICATION:
                 # Check if already processed (prevents duplicate processing on Pub/Sub retries)
                 already_processed = self.check_already_processed(
                     processor_name=self.__class__.__name__,
