@@ -1,325 +1,431 @@
 # MLB Pitcher Strikeouts - Current Status
 
-**Last Updated**: 2026-01-07 (Evening)
-**Project Phase**: 2024 Season Collection In Progress
+**Last Updated**: 2026-01-15 (Session 58)
+**Project Phase**: V1.6 Shadow Mode Testing + Line Timing Implementation
 
 ---
 
 ## Executive Summary
 
-The MLB Pitcher Strikeouts prediction system has been **validated with real data** and is now collecting full 2024 season data.
+The MLB Pitcher Strikeouts prediction system has a **champion-challenger infrastructure** with V1.6 running in shadow mode alongside V1.4. Session 58 added parallel model testing and line timing analysis capabilities.
 
-### Current Session Progress (2026-01-07)
+### Model Performance
 
-| Step | Status | Result |
-|------|--------|--------|
-| Baseline validation | ✅ Complete | MAE: 1.92, Within 2K: 60.4% |
-| Data source research | ✅ Complete | MLB Stats API + pybaseball work |
-| Platoon splits | ✅ Complete | K% vs LHP/RHP from Statcast |
-| Collection script | ✅ Complete | `scripts/mlb/collect_2024_season.py` |
-| 2024 season collection | 🔄 In Progress | Collecting to BigQuery |
+| Model | Hit Rate | Very High OVER | High Conf OVER | Status |
+|-------|----------|----------------|----------------|--------|
+| **V1.4 (Champion)** | ~55% | ~62% | ~60% | Production |
+| **V1.6 (Challenger)** | **63.25%** | **82.2%** | **75.8%** | Shadow Testing |
 
-### Baseline Validation Results (182 pitcher starts)
-
-| Metric | Value | Target |
-|--------|-------|--------|
-| **MAE** | 1.92 | < 1.5 |
-| **Within 1K** | 31.3% | > 40% |
-| **Within 2K** | 60.4% | > 70% |
-| **Bias** | +0.17 | ≈ 0 |
-
-**Verdict**: Formula works. ML training should improve by 15-25%.
-
-**What's Complete:**
-- **28 scrapers** implemented and tested (ahead of NBA's 27)
-- **27 BigQuery tables** created (22 in mlb_raw, 3 in mlb_reference, 5 in mlb_precompute)
-- **35-feature vector** implemented (V2)
-- **Bottom-up K model** validated (MAE 1.92)
-- **31 unit tests** for feature processors
-- **Baseline validation script** (`scripts/mlb/baseline_validation.py`)
-- **Season collection script** (`scripts/mlb/collect_season.py`) - supports 2024 & 2025
-- **Platoon splits loading** (K% vs LHP/RHP from Statcast)
-
-**What's In Progress:**
-- **2025 season data collection** (186 dates, ~4,800 starts) - PRIORITY
-- **2024 season data collection** (additional training data)
-
-**What's Next:**
-- **ML training script** (after collection complete)
-- **Prediction systems** (3-5 systems like NBA)
-- **Grading pipeline** (accuracy tracking)
-
-### Data Collection Plan
-
-**OPEN QUESTION**: Should we collect 2024 or 2025 first?
-
-Some features may depend on prior season data:
-- Rolling averages at season start need prior year
-- "Season baseline" stats for early 2025 need 2024 data
-
-**Next session should**:
-1. Read `pitcher_features_processor.py` to understand dependencies
-2. Decide collection order based on findings
-3. See handoff doc: `docs/09-handoff/2026-01-07-MLB-SEASON-COLLECTION-HANDOFF.md`
-
-**BLOCKER REMOVED**: Data access confirmed working (MLB Stats API + pybaseball).
+### What's Live
+- **V1.4 Champion**: Production model (XGBoost classifier)
+- **V1.6 Challenger**: Shadow mode parallel testing
+- **Shadow Mode Runner**: Compares V1.4 vs V1.6 daily
+- **Line Timing (v3.6)**: `line_minutes_before_game` tracking
+- **Red Flag System**: IL detection, high variance, SwStr% signals
 
 ---
 
-## Layer Status
+## V1.6 Strategy & Roadmap
 
-### Layer 1: Scrapers (28 total) - COMPLETE
+### Phase 1: Shadow Testing (Current - 7+ Days)
+**Goal**: Validate V1.6 outperforms V1.4 on live data
 
-| Source | Count | Scrapers |
-|--------|-------|----------|
-| Ball Don't Lie | 13 | pitcher_stats, batter_stats, games, active_players, season_stats, injuries, player_splits, standings, box_scores, live_box_scores, team_season_stats, player_versus, teams |
-| MLB Stats API | 3 | schedule, lineups, game_feed |
-| Odds API | 8 | events, game_lines, pitcher_props, batter_props + 4 historical variants |
-| Statcast | 1 | statcast_pitcher (via pybaseball) |
-| External | 3 | umpire_stats, ballpark_factors, weather |
+```bash
+# Run daily shadow mode
+PYTHONPATH=. python predictions/mlb/shadow_mode_runner.py
+```
 
-### Layer 2: Raw Processors (8 total) - COMPLETE
+**Success Criteria**:
+- V1.6 hit rate > V1.4 hit rate by 3%+
+- V1.6 closer to actual in 55%+ of predictions
+- No regression on high-confidence bets
 
-| Processor | Source Table | Target Table |
-|-----------|--------------|--------------|
-| MlbPitcherStatsProcessor | GCS | mlb_raw.bdl_pitcher_stats |
-| MlbBatterStatsProcessor | GCS | mlb_raw.bdl_batter_stats |
-| MlbScheduleProcessor | GCS | mlb_raw.mlb_schedule |
-| MlbLineupsProcessor | GCS | mlb_raw.mlb_game_lineups, mlb_lineup_batters |
-| MlbEventsProcessor | GCS | mlb_raw.oddsa_events |
-| MlbGameLinesProcessor | GCS | mlb_raw.oddsa_game_lines |
-| MlbPitcherPropsProcessor | GCS | mlb_raw.oddsa_pitcher_props |
-| MlbBatterPropsProcessor | GCS | mlb_raw.oddsa_batter_props |
+### Phase 2: Promotion Decision (After 7 Days)
+**Query Performance**:
+```sql
+SELECT * FROM mlb_predictions.shadow_model_comparison
+```
 
-### Layer 3: Analytics Processors (2 total) - COMPLETE
+**If V1.6 Wins**:
+```bash
+# Promote to production
+export MLB_PITCHER_STRIKEOUTS_MODEL_PATH=gs://nba-scraped-data/ml-models/mlb/mlb_pitcher_strikeouts_v1_6_rolling_20260115_131149.json
+./bin/predictions/deploy/mlb/deploy_mlb_prediction_worker.sh
+```
 
-| Processor | Source | Target |
-|-----------|--------|--------|
-| MlbPitcherGameSummaryProcessor | mlb_raw.bdl_pitcher_stats | mlb_analytics.pitcher_game_summary |
-| MlbBatterGameSummaryProcessor | mlb_raw.bdl_batter_stats | mlb_analytics.batter_game_summary |
-
-### Layer 4: Feature Processor - COMPLETE (V2)
-
-**Feature Version**: `v2_35features`
-
-| Component | Status |
-|-----------|--------|
-| pitcher_features_processor.py | Complete, 35 features |
-| lineup_k_analysis_processor.py | Complete, bottom-up K model |
-| pitcher_ml_features table | Created with all columns |
-| lineup_k_analysis table | Created |
-| Unit tests | 31 tests passing |
-
-#### V1 Original Features (f00-f24):
-- f00-f04: Recent performance (K averages, std dev, IP)
-- f05-f09: Season baseline (K/9, ERA, WHIP, games, total K)
-- f10-f14: Split adjustments (home/away, day/night, vs opponent)
-- f15-f19: Matchup context (team K rate, OBP, ballpark, game total, implied runs)
-- f20-f24: Workload/fatigue (days rest, games last 30, pitch count, IP, postseason)
-
-#### V1 MLB-Specific Features (f25-f29) - NEW:
-| Feature | Name | Description |
-|---------|------|-------------|
-| f25 | bottom_up_k_expected | **THE KEY**: Sum of individual batter K probabilities |
-| f26 | lineup_k_vs_hand | Lineup K rate vs pitcher's handedness |
-| f27 | platoon_advantage | LHP vs RHH advantage (+/-) |
-| f28 | umpire_k_factor | Umpire K adjustment (+/-) |
-| f29 | projected_innings | Expected IP |
-
-#### V2 Advanced Features (f30-f34) - NEW:
-| Feature | Name | Description |
-|---------|------|-------------|
-| f30 | velocity_trend | Velocity change from baseline |
-| f31 | whiff_rate | Overall swing-and-miss rate |
-| f32 | put_away_rate | K rate with 2 strikes |
-| f33 | lineup_weak_spots | Count of high-K batters (>0.28) |
-| f34 | matchup_edge | Composite advantage (-3 to +3) |
-
-### Layer 5: ML Training - NOT STARTED
-
-- No training script exists
-- Need: `ml/train_pitcher_strikeouts_xgboost.py`
-- Blocked by: No historical data
-
-### Layer 6: Predictions - NOT STARTED
-
-- No prediction workers exist
-- Need: Coordinator, workers, grading
+### Phase 3: Future V1.7+ Candidates
+| Feature | Source | Hypothesis |
+|---------|--------|------------|
+| Opening line capture | Odds API | Line movement = sharp money signal |
+| Weather x breaking ball | Weather API | Cold/humid reduces breaking ball effectiveness |
+| Umpire K-rate | UmpScorecards | Some umps have 15%+ higher K rates |
+| Lineup-specific K rates | BallDontLie | Bottom-up K expectation per batter |
 
 ---
 
-## BigQuery Tables
+## Shadow Mode Infrastructure
 
-### mlb_raw (15 tables)
-
-| Table | Status |
-|-------|--------|
-| bdl_pitcher_stats | Created |
-| bdl_batter_stats | Created |
-| bdl_pitchers | Created (for handedness) |
-| bdl_batter_splits | Created |
-| bdl_games | Created |
-| bdl_active_players | Created |
-| bdl_injuries | Created |
-| bdl_pitcher_season_stats | Created |
-| bdl_pitcher_splits | Created |
-| mlb_schedule | Created |
-| mlb_game_lineups | Created |
-| mlb_lineup_batters | Created |
-| oddsa_events | Created |
-| oddsa_game_lines | Created |
-| oddsa_pitcher_props | Created |
-| umpire_game_assignment | **Created (V1)** |
-
-### mlb_analytics (2 tables)
-
-| Table | Status |
-|-------|--------|
-| pitcher_game_summary | Created |
-| batter_game_summary | Created |
-
-### mlb_precompute (5 tables)
-
-| Table | Status | Purpose |
-|-------|--------|---------|
-| pitcher_ml_features | Created | 35-feature vector |
-| lineup_k_analysis | **Created (V1)** | Bottom-up K calculation |
-| pitcher_innings_projection | **Created (V1)** | Expected IP |
-| pitcher_arsenal_summary | **Created (V2)** | Velocity, whiff rates |
-| batter_k_profile | **Created (V2)** | Batter K vulnerability |
-
-### mlb_reference (3 tables)
-
-| Table | Status |
-|-------|--------|
-| ballpark_factors | Created |
-| team_lookup | Created |
-| player_lookup | Created |
-
----
-
-## Key Architecture Insight
-
-### Bottom-Up K Model (The MLB Advantage)
-
-**NBA**: "Player X averages Y points against defenses like this" (probabilistic)
-
-**MLB**: "Pitcher X faces batters A-I, each with K rates. Sum = expected Ks" (deterministic)
-
-The **bottom-up model** (`f25_bottom_up_k_expected`) sums individual batter K probabilities based on the known lineup order. This is unique to MLB because:
-- We KNOW the exact 9 batters before the game
-- We KNOW their K rates vs LHP/RHP
-- We can CALCULATE expected Ks, not just estimate
-
----
-
-## Processors Created
-
-### Precompute Processors
-
-| Processor | File | Purpose |
-|-----------|------|---------|
-| MlbPitcherFeaturesProcessor | pitcher_features_processor.py | 35-feature vector |
-| MlbLineupKAnalysisProcessor | lineup_k_analysis_processor.py | Bottom-up K |
-
----
-
-## Unit Tests
-
-Location: `tests/processors/precompute/mlb/`
-
-| Test File | Tests | Status |
-|-----------|-------|--------|
-| lineup_k_analysis/test_unit.py | 9 tests | Passing |
-| pitcher_features/test_unit.py | 22 tests | Passing |
-| **Total** | **31 tests** | **All passing** |
-
-### Test Coverage:
-- Processor initialization
-- Bottom-up K calculation accuracy
-- Platoon advantage calculation
-- Lineup quality tier classification
-- Weak spots counting
-- Matchup edge calculation
-- Feature vector construction (35 elements)
-- V1/V2 feature integration
-
----
-
-## Next Steps (Prioritized)
-
-### Immediate (Ready to Implement)
-1. Create processor for pitcher_arsenal_summary (from Statcast data)
-2. Create processor for batter_k_profile (from batter_game_summary)
-3. Create processor for pitcher_innings_projection
-
-### Short-term (Before MLB Season)
-1. Run sample historical backfill to test pipeline
-2. Create ML training script for pitcher strikeouts
-3. Train initial XGBoost model
-
-### Medium-term
-1. Create prediction coordinator/workers
-2. Create grading pipeline
-3. Deploy to production
-
----
-
-## File Locations
+### How It Works
 
 ```
-scrapers/mlb/
-├── balldontlie/     (13 scrapers)
-├── mlbstatsapi/     (3 scrapers)
-├── oddsapi/         (8 scrapers)
-├── statcast/        (1 scraper)
-└── external/        (3 scrapers)
+┌──────────────────────────────────────────────────────────────┐
+│                    SHADOW MODE FLOW                          │
+├──────────────────────────────────────────────────────────────┤
+│                                                              │
+│  Daily Trigger ─────┐                                        │
+│                     │                                        │
+│                     ▼                                        │
+│            ┌──────────────────┐                              │
+│            │ shadow_mode_     │                              │
+│            │ runner.py        │                              │
+│            └────────┬─────────┘                              │
+│                     │                                        │
+│         ┌──────────┼───────────┐                             │
+│         │          │           │                             │
+│         ▼          ▼           ▼                             │
+│    ┌─────────┐ ┌─────────┐ ┌─────────────────┐              │
+│    │ V1.4    │ │ V1.6    │ │ pitcher_game_   │              │
+│    │ Model   │ │ Model   │ │ summary         │              │
+│    └────┬────┘ └────┬────┘ └────────┬────────┘              │
+│         │           │               │                        │
+│         └─────┬─────┘               │                        │
+│               │                     │                        │
+│               ▼                     │                        │
+│    ┌─────────────────────┐          │                        │
+│    │ shadow_mode_        │◀─────────┘                        │
+│    │ predictions         │                                   │
+│    │ ─────────────────── │                                   │
+│    │ v1_4_predicted      │                                   │
+│    │ v1_6_predicted      │                                   │
+│    │ prediction_diff     │                                   │
+│    │ recommendation_     │                                   │
+│    │   agrees            │                                   │
+│    └─────────────────────┘                                   │
+│               │                                              │
+│               ▼ (after games)                                │
+│    ┌─────────────────────┐                                   │
+│    │ Grading:            │                                   │
+│    │ - actual_strikeouts │                                   │
+│    │ - v1_4_correct      │                                   │
+│    │ - v1_6_correct      │                                   │
+│    │ - closer_prediction │                                   │
+│    └─────────────────────┘                                   │
+│                                                              │
+└──────────────────────────────────────────────────────────────┘
+```
 
+### Key Files
+```
+predictions/mlb/
+├── shadow_mode_runner.py           # Run both models in parallel
+├── pitcher_loader.py               # Query lines with timing
+├── pitcher_strikeouts_predictor.py # Main predictor (both versions)
+└── worker.py                       # Production worker
+
+schemas/bigquery/mlb_predictions/
+├── strikeout_predictions_tables.sql
+└── shadow_predictions_tables.sql   # NEW: Shadow comparison table
+```
+
+### Key Queries
+```sql
+-- Weekly model comparison
+SELECT * FROM mlb_predictions.shadow_model_comparison;
+
+-- Daily breakdown
+SELECT * FROM mlb_predictions.shadow_daily_comparison;
+
+-- Pending grading
+SELECT * FROM mlb_predictions.shadow_pending_grading;
+```
+
+---
+
+## Line Timing Feature (v3.6)
+
+### What It Tracks
+`line_minutes_before_game` captures how many minutes before game start a betting line was scraped.
+
+### Timing Buckets
+| Bucket | Minutes Before | Hypothesis |
+|--------|---------------|------------|
+| `VERY_EARLY` | >240 (4+ hours) | Lines less efficient, more edge potential |
+| `EARLY` | 60-240 (1-4 hours) | Moderate efficiency |
+| `CLOSING` | <60 (<1 hour) | Most efficient, all info priced in |
+
+### Data Flow
+```
+Odds API ──┐ commence_time
+           │ snapshot_time
+           ▼
+┌────────────────────────────┐
+│ mlb_pitcher_props_         │
+│ processor.py               │
+│ ─────────────────────────  │
+│ minutes_before_tipoff =    │
+│ (commence_time - snapshot) │
+│   .total_seconds() / 60    │
+└──────────────┬─────────────┘
+               │
+               ▼
+┌────────────────────────────┐
+│ oddsa_pitcher_props        │
+│ + game_start_time          │
+│ + minutes_before_tipoff    │
+└──────────────┬─────────────┘
+               │
+               ▼
+┌────────────────────────────┐
+│ pitcher_loader.py          │
+│ - queries with timing      │
+└──────────────┬─────────────┘
+               │
+               ▼
+┌────────────────────────────┐
+│ worker.py                  │
+│ - passes timing to BQ      │
+└──────────────┬─────────────┘
+               │
+               ▼
+┌────────────────────────────┐
+│ pitcher_strikeouts         │
+│ + line_minutes_before_game │
+└──────────────┬─────────────┘
+               │
+               ▼
+┌────────────────────────────┐
+│ grading_processor.py       │
+│ - analyze_timing()         │
+│ - get_timing_summary()     │
+└────────────────────────────┘
+```
+
+### Analysis Query
+```sql
+SELECT
+  CASE
+    WHEN line_minutes_before_game > 240 THEN 'VERY_EARLY'
+    WHEN line_minutes_before_game > 60 THEN 'EARLY'
+    WHEN line_minutes_before_game > 0 THEN 'CLOSING'
+  END as timing_bucket,
+  COUNT(*) as predictions,
+  COUNTIF(is_correct) as correct,
+  ROUND(COUNTIF(is_correct) * 100.0 / COUNT(*), 1) as accuracy
+FROM mlb_predictions.pitcher_strikeouts
+WHERE is_correct IS NOT NULL
+  AND line_minutes_before_game IS NOT NULL
+GROUP BY timing_bucket
+ORDER BY accuracy DESC
+```
+
+---
+
+## Champion-Challenger Setup
+
+### Switching Models
+
+```bash
+# V1.4 Champion (default)
+# No changes needed - default in predictor
+
+# V1.6 Challenger
+export MLB_PITCHER_STRIKEOUTS_MODEL_PATH=gs://nba-scraped-data/ml-models/mlb/mlb_pitcher_strikeouts_v1_6_rolling_20260115_131149.json
+```
+
+### Model Versions
+
+| Version | Features | Key Additions | Status |
+|---------|----------|---------------|--------|
+| V1.4 | 25 | Opponent K rate, ballpark factor | Champion (Production) |
+| V1.6 | 35 | Rolling SwStr%, velocity trend | Challenger (Shadow) |
+
+### GCS Paths
+```
+gs://nba-scraped-data/ml-models/mlb/
+├── mlb_pitcher_strikeouts_v1_4features_20260114_142456.json      # Champion
+├── mlb_pitcher_strikeouts_v1_4features_20260114_142456_metadata.json
+├── mlb_pitcher_strikeouts_v1_6_rolling_20260115_131149.json      # Challenger
+└── mlb_pitcher_strikeouts_v1_6_rolling_20260115_131149_metadata.json
+```
+
+---
+
+## Data Infrastructure
+
+### BigQuery Tables
+
+| Dataset | Table | Records | Purpose |
+|---------|-------|---------|---------|
+| mlb_raw | statcast_pitcher_game_stats | 39,918 | Per-game Statcast metrics |
+| mlb_raw | fangraphs_pitcher_season_stats | 1,704 | Season-level SwStr% |
+| mlb_raw | bdl_injuries | 222 | IL tracking |
+| mlb_raw | bp_pitcher_props | 100K+ | Historical betting lines |
+| mlb_raw | oddsa_pitcher_props | - | Live Odds API props + timing |
+| mlb_analytics | pitcher_game_summary | 9,800+ | Rolling stats, season stats |
+| mlb_analytics | pitcher_rolling_statcast | VIEW | Rolling SwStr%, velocity |
+| mlb_predictions | pitcher_strikeouts | - | Production predictions |
+| mlb_predictions | shadow_mode_predictions | - | V1.4 vs V1.6 comparison |
+
+### Schema Additions (Session 58)
+```sql
+-- oddsa_pitcher_props
+game_start_time TIMESTAMP,
+minutes_before_tipoff INT64
+
+-- pitcher_strikeouts
+line_minutes_before_game INT64
+```
+
+---
+
+## Model Features (V1.6)
+
+### Original Features (f00-f44)
+- Recent K performance (f00-f04)
+- Season baseline (f05-f09)
+- Context (f10-f18)
+- Season SwStr% (f19a-c)
+- Workload (f20-f24)
+- Line-relative (f30-f32)
+- BettingPros (f40-f44)
+
+### NEW Rolling Statcast Features (f50-f53)
+| Feature | Description | Backtest Result |
+|---------|-------------|-----------------|
+| f50_swstr_pct_last_3 | Per-game SwStr% (last 3 starts) | - |
+| f51_fb_velocity_last_3 | Fastball velocity (last 3 starts) | Top 10 importance |
+| f52_swstr_trend | Recent - season SwStr% | +3% = 54.6% OVER |
+| f53_velocity_change | Season - recent velocity | Moderate signal |
+
+---
+
+## Red Flag System
+
+### Hard Skip Rules
+| Rule | Condition | Reason |
+|------|-----------|--------|
+| Currently on IL | Pitcher in bdl_injuries | No valid props |
+| First Start | season_games = 0 | No data |
+| Bullpen/Opener | ip_avg < 4.0 | Not starter |
+| MLB Debut | career_starts < 2 | Too little data |
+
+### Soft Multipliers (Backtest Validated)
+| Rule | Condition | OVER Mult | UNDER Mult |
+|------|-----------|-----------|------------|
+| High Variance | k_std > 4 | 0.4x | 1.1x |
+| Elite SwStr% | swstr > 12% | 1.1x | 0.8x |
+| Low SwStr% | swstr < 8% | 0.85x | 1.05x |
+| Hot Streak | trend > +3% | 1.08x | 0.92x |
+| Cold Streak | trend < -3% | 0.92x | 1.05x |
+| Short Rest + OVER | days_rest < 4 | 0.7x | - |
+| High Workload + OVER | games_30d > 6 | 0.85x | - |
+
+---
+
+## Backfills Status
+
+| Backfill | Status | Progress |
+|----------|--------|----------|
+| BettingPros Historical | Running | ~70% |
+| Statcast 2025 | Complete | 2024-03-28 to 2025-06-28 |
+
+---
+
+## Key Files
+
+### Training Scripts
+```
+scripts/mlb/training/
+├── train_pitcher_strikeouts_classifier.py  # V1.4
+├── train_v1_6_rolling.py                   # V1.6
+└── walk_forward_validation.py              # Validation
+```
+
+### Prediction
+```
+predictions/mlb/
+├── pitcher_strikeouts_predictor.py         # Main predictor (V1)
+├── pitcher_strikeouts_predictor_v2.py      # CatBoost alternative
+├── shadow_mode_runner.py                   # V1.4 vs V1.6 comparison (NEW)
+├── pitcher_loader.py                       # Line queries with timing (NEW)
+└── worker.py                               # Production worker
+```
+
+### Data Processing
+```
 data_processors/
-├── raw/mlb/         (8 processors)
-├── analytics/mlb/   (2 processors)
-└── precompute/mlb/  (2 processors)  <-- Updated
-
-schemas/bigquery/
-├── mlb_raw/         (10 schema files)
-├── mlb_analytics/   (2 schema files)
-├── mlb_precompute/  (1 schema file)
-├── mlb_predictions/ (1 schema file)
-└── mlb_reference/   (1 schema file)
-
-tests/processors/precompute/mlb/
-├── lineup_k_analysis/test_unit.py   (9 tests)
-└── pitcher_features/test_unit.py    (22 tests)
+├── raw/mlb/mlb_pitcher_props_processor.py  # Props with timing
+└── grading/mlb/mlb_prediction_grading_processor.py  # + timing analysis
 ```
+
+---
+
+## Future Roadmap
+
+### Short-term (1-2 Weeks)
+1. **Complete shadow testing** - 7+ days of V1.4 vs V1.6 comparison
+2. **Promote V1.6** if it outperforms (expected: 5-8% improvement)
+3. **Analyze line timing** - Do closing lines predict better than early lines?
+4. **Complete BettingPros backfill** - Historical line data for backtesting
+
+### Medium-term (1-2 Months)
+1. **Opening line capture** - Track line when first posted for movement analysis
+2. **V1.7 with line movement** - Add `line_moved` feature (current - opening)
+3. **Weather integration** - Test breaking ball x cold/humid hypothesis
+4. **Umpire K-rate** - Add umpire strikeout tendency feature
+
+### Long-term (3+ Months)
+1. **Ensemble model** - Combine V1.4 + V1.6 + line movement
+2. **Live velocity monitoring** - Alert if pitcher velocity drops mid-game
+3. **Batter prop models** - Apply same approach to hits, HRs
+4. **Cross-sport learnings** - Apply NBA model improvements to MLB
 
 ---
 
 ## Verification Commands
 
 ```bash
-# Verify all 28 scrapers import
-SPORT=mlb PYTHONPATH=. .venv/bin/python -c "
-import scrapers.mlb as m
-print(f'Scrapers: {len(m.__all__)}')
+# Test V1.4 champion
+PYTHONPATH=. python -c "
+from predictions.mlb.pitcher_strikeouts_predictor import PitcherStrikeoutsPredictor
+p = PitcherStrikeoutsPredictor()
+p.load_model()
+print(f'V1.4: {p.model_metadata[\"model_id\"]}')
 "
 
-# Verify precompute processors
-PYTHONPATH=. .venv/bin/python -c "
-from data_processors.precompute.mlb.pitcher_features_processor import MlbPitcherFeaturesProcessor
-from data_processors.precompute.mlb.lineup_k_analysis_processor import MlbLineupKAnalysisProcessor
-print('pitcher_features:', MlbPitcherFeaturesProcessor().feature_version)
-print('lineup_k_analysis:', MlbLineupKAnalysisProcessor().target_table)
+# Test V1.6 challenger
+MLB_PITCHER_STRIKEOUTS_MODEL_PATH=gs://nba-scraped-data/ml-models/mlb/mlb_pitcher_strikeouts_v1_6_rolling_20260115_131149.json \
+PYTHONPATH=. python -c "
+from predictions.mlb.pitcher_strikeouts_predictor import PitcherStrikeoutsPredictor
+p = PitcherStrikeoutsPredictor()
+p.load_model()
+print(f'V1.6: {p.model_metadata[\"model_id\"]}')
 "
 
-# Run unit tests
-PYTHONPATH=. python -m pytest tests/processors/precompute/mlb/ -v
+# Run shadow mode (dry run)
+PYTHONPATH=. python predictions/mlb/shadow_mode_runner.py --dry-run
 
-# Check table schema
-bq show --schema nba-props-platform:mlb_precompute.pitcher_ml_features | python3 -c "
-import json,sys
-cols = json.load(sys.stdin)
-features = [c['name'] for c in cols if c['name'].startswith('f')]
-print(f'Feature columns: {len(features)}')
-print(f'Last feature: {sorted(features)[-1]}')
-"
+# Test pitcher loader
+PYTHONPATH=. python predictions/mlb/pitcher_loader.py --date 2025-06-15
+
+# Check shadow comparison
+bq query --nouse_legacy_sql "SELECT * FROM mlb_predictions.shadow_daily_comparison"
 ```
+
+---
+
+## Session History
+
+### Session 58 (Current)
+1. **Created shadow mode runner** - V1.4 vs V1.6 parallel comparison
+2. **Implemented line timing** - `line_minutes_before_game` full pipeline
+3. **Applied schema updates** - BigQuery tables for timing and shadow
+4. **Created pitcher loader** - Timing-aware line queries
+5. **Added timing analysis** - Grading processor methods
+
+### Session 57
+1. **Fixed Critical Bug**: Statcast name format
+2. **Validated Signals**: SwStr% trend backtest
+3. **Added Rolling Features**: f50-f53
+4. **Trained V1.6**: 63.25% test accuracy
+5. **Champion-Challenger Setup**: Environment variable switching
