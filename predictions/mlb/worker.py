@@ -361,6 +361,7 @@ def write_predictions_to_bigquery(predictions: List[Dict], game_date: date) -> i
             'strikeouts_line': pred.get('strikeouts_line'),
             'over_odds': pred.get('over_odds'),
             'under_odds': pred.get('under_odds'),
+            'line_minutes_before_game': pred.get('line_minutes_before_game'),  # v3.6
 
             # Recommendation
             'recommendation': pred['recommendation'],
