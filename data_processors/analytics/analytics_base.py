@@ -1765,6 +1765,23 @@ class AnalyticsProcessorBase(RunHistoryMixin):
             # When duplicates exist in source, picks the latest by processed_at
             primary_keys_partition = ', '.join(primary_keys)
 
+            # Check if we need partition filter for tables with require_partition_filter = true
+            # Extract unique game_date values if present in data
+            partition_filter = ""
+            if 'game_date' in all_fields and sanitized_rows:
+                game_dates = list(set(
+                    row.get('game_date') for row in sanitized_rows
+                    if row.get('game_date') is not None
+                ))
+                if game_dates:
+                    # Build partition filter clause
+                    if len(game_dates) == 1:
+                        partition_filter = f"AND target.game_date = '{game_dates[0]}'"
+                    else:
+                        dates_str = "', '".join(sorted(game_dates))
+                        partition_filter = f"AND target.game_date IN ('{dates_str}')"
+                    logger.debug(f"Adding partition filter for game_date: {game_dates}")
+
             merge_query = f"""
             MERGE `{table_id}` AS target
             USING (
@@ -1776,7 +1793,7 @@ class AnalyticsProcessorBase(RunHistoryMixin):
                     FROM `{temp_table_id}`
                 ) WHERE __row_num = 1
             ) AS source
-            ON {on_clause}
+            ON {on_clause} {partition_filter}
             WHEN MATCHED THEN
                 UPDATE SET {update_set}
             WHEN NOT MATCHED THEN
@@ -1994,10 +2011,15 @@ class AnalyticsProcessorBase(RunHistoryMixin):
     # Logging & Monitoring
     # =========================================================================
     
-    def log_processing_run(self, success: bool, error: str = None) -> None:
+    def log_processing_run(self, success: bool, error: str = None, skip_reason: str = None) -> None:
         """
         Log processing run to monitoring table.
         Uses batch loading to avoid streaming buffer issues.
+
+        Args:
+            success: Whether the processing run succeeded
+            error: Optional error message if failed
+            skip_reason: Optional reason if processing was skipped (early exit)
         """
         run_record = {
             'processor_name': self.__class__.__name__,
@@ -2011,6 +2033,11 @@ class AnalyticsProcessorBase(RunHistoryMixin):
             'errors_json': json.dumps([error] if error else []),
             'created_at': datetime.now(timezone.utc).isoformat()
         }
+
+        # Track skip reason if provided (early exit scenarios)
+        if skip_reason:
+            self.stats['skip_reason'] = skip_reason
+            run_record['skip_reason'] = skip_reason
 
         try:
             table_id = f"{self.project_id}.nba_processing.analytics_processor_runs"
