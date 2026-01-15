@@ -1,0 +1,39 @@
+# Root requirements for Cloud Run deployment
+# Each service selects its dependencies via SERVICE env var
+
+# Web framework
+flask>=2.3.0
+gunicorn>=21.2.0
+
+# Cloud integrations
+google-cloud-bigquery>=3.11.0
+google-cloud-storage>=2.10.0
+google-cloud-pubsub>=2.18.0
+db-dtypes>=1.2.0
+
+# Data processing
+pandas>=2.0.0
+numpy>=1.26.0
+pyarrow>=14.0.1
+
+# ML libraries (for analytics)
+scipy>=1.12.0
+scikit-learn>=1.4.0
+xgboost>=2.0.0
+catboost>=1.2.0
+
+# Monitoring
+sentry-sdk>=1.32.0
+
+# JSON handling
+orjson>=3.9.0
+
+# Config
+pyyaml>=6.0
+
+# HTTP
+requests>=2.31.0
+httpx>=0.24.0
+
+# Database
+sqlalchemy>=2.0.23
