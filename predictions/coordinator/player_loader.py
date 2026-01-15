@@ -286,7 +286,7 @@ class PlayerLoader:
             home_game as is_home,
             days_rest,
             back_to_back,
-            avg_minutes_per_game_last_7 as projected_minutes,
+            COALESCE(avg_minutes_per_game_last_7, 0) as projected_minutes,  -- v3.7: Default to 0 for injury-return players
             player_status as injury_status,
             COALESCE(has_prop_line, FALSE) as has_prop_line,  -- v3.2: Track if player has betting line
             current_points_line  -- v3.2: Pass through actual betting line if available
@@ -321,7 +321,7 @@ class PlayerLoader:
                     'is_home': row.is_home,
                     'days_rest': row.days_rest,
                     'back_to_back': row.back_to_back,
-                    'projected_minutes': float(row.projected_minutes),
+                    'projected_minutes': float(row.projected_minutes or 0),  # v3.7: Handle NULL for injury-return players
                     'injury_status': row.injury_status,
                     # v3.2: All-player predictions support
                     'has_prop_line': bool(row.has_prop_line) if row.has_prop_line is not None else False,
@@ -725,7 +725,7 @@ class PlayerLoader:
             player_lookup,
             team_abbr,
             opponent_team_abbr,
-            avg_minutes_per_game_last_7 as projected_minutes,
+            COALESCE(avg_minutes_per_game_last_7, 0) as projected_minutes,  -- v3.7: Default to 0 for injury-return players
             player_status as injury_status
         FROM `{project}.nba_analytics.upcoming_player_game_context`
         WHERE game_id = @game_id
@@ -747,7 +747,7 @@ class PlayerLoader:
                     'player_lookup': row.player_lookup,
                     'team_abbr': row.team_abbr,
                     'opponent_team_abbr': row.opponent_team_abbr,
-                    'projected_minutes': float(row.projected_minutes),
+                    'projected_minutes': float(row.projected_minutes or 0),  # v3.7: Handle NULL for injury-return players
                     'injury_status': row.injury_status
                 })
             
