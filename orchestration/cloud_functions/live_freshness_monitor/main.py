@@ -40,6 +40,7 @@ SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL")
 STALE_THRESHOLD_MINUTES = 10  # Data is stale if older than this - triggers auto-refresh
 CRITICAL_STALE_HOURS = 4  # Data is critically stale - sends Slack alert
 MAX_RETRIES = 2  # Max times to retry live export before alerting
+PROCESSOR_GAP_THRESHOLD_MINUTES = 15  # Alert if processor hasn't run for this long
 
 
 def get_et_now():
@@ -140,6 +141,60 @@ def check_live_data_freshness() -> dict:
             "age_minutes": None,
             "is_stale": True,
             "error": str(e)
+        }
+
+
+def check_processor_health() -> dict:
+    """
+    Check if BdlLiveBoxscoresProcessor is running regularly.
+
+    This catches the root cause of stale data - if the processor
+    isn't running, the live export will also become stale.
+
+    ADDED: 2026-01-15 Session 48 - Early detection of processor downtime
+
+    Returns:
+        dict with processor health info
+    """
+    try:
+        from google.cloud import bigquery
+        bq_client = bigquery.Client()
+
+        # Check last successful run of BdlLiveBoxscoresProcessor
+        query = """
+        SELECT
+            MAX(started_at) as last_run,
+            TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), MAX(started_at), MINUTE) as minutes_since_last_run,
+            COUNTIF(status = 'success') as success_count,
+            COUNTIF(status = 'failed') as failure_count,
+            COUNT(*) as total_runs
+        FROM `nba_reference.processor_run_history`
+        WHERE processor_name = 'BdlLiveBoxscoresProcessor'
+            AND started_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 1 HOUR)
+        """
+
+        result = list(bq_client.query(query).result(timeout=30))[0]
+
+        last_run = result.last_run
+        minutes_ago = result.minutes_since_last_run
+        is_healthy = minutes_ago is not None and minutes_ago < PROCESSOR_GAP_THRESHOLD_MINUTES
+
+        return {
+            "status": "healthy" if is_healthy else "unhealthy",
+            "last_run": str(last_run) if last_run else None,
+            "minutes_since_last_run": minutes_ago,
+            "success_count_1h": result.success_count or 0,
+            "failure_count_1h": result.failure_count or 0,
+            "total_runs_1h": result.total_runs or 0,
+            "is_healthy": is_healthy
+        }
+
+    except Exception as e:
+        logger.error(f"Error checking processor health: {e}")
+        return {
+            "status": "error",
+            "error": str(e),
+            "is_healthy": False
         }
 
 
@@ -281,6 +336,29 @@ def main(request):
         result["message"] = "No games currently active"
         return jsonify(result), 200
 
+    # Step 1.5: Check processor health (early warning for data collection issues)
+    # ADDED: 2026-01-15 Session 48 - Detect processor downtime before it causes stale exports
+    processor_health = check_processor_health()
+    result["processor_health"] = processor_health
+
+    if not processor_health.get("is_healthy"):
+        minutes_ago = processor_health.get("minutes_since_last_run")
+        if minutes_ago and minutes_ago > 30:
+            # Significant gap - send alert
+            logger.error(f"PROCESSOR DOWN: BdlLiveBoxscoresProcessor hasn't run in {minutes_ago} minutes")
+            send_slack_alert(
+                message=f"BdlLiveBoxscoresProcessor hasn't run in {minutes_ago} minutes!\n"
+                        f"This will cause live data to become stale. Check Cloud Scheduler and logs.",
+                severity="warning" if minutes_ago < 60 else "critical",
+                context={
+                    "Last Run": processor_health.get("last_run", "Unknown"),
+                    "Minutes Since Last Run": str(minutes_ago),
+                    "Runs in Last Hour": str(processor_health.get("total_runs_1h", 0)),
+                    "Failures in Last Hour": str(processor_health.get("failure_count_1h", 0))
+                }
+            )
+            result["processor_alert_sent"] = True
+
     # Step 2: Check data freshness
     freshness = check_live_data_freshness()
     result["freshness"] = freshness
@@ -289,6 +367,8 @@ def main(request):
         logger.info(f"Live data is fresh ({freshness.get('age_minutes')} min old)")
         result["action_taken"] = "none"
         result["message"] = "Data is fresh"
+        # Include processor health in the response even when data is fresh
+        result["processor_status"] = "healthy" if processor_health.get("is_healthy") else "warning"
         return jsonify(result), 200
 
     # Step 2.5: Check for CRITICAL staleness (>4 hours)
