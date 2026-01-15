@@ -1,0 +1,63 @@
+{
+  "date_range": {
+    "start": "2024-04-09",
+    "end": "2025-09-28"
+  },
+  "analysis_timestamp": "2026-01-14T11:50:57.119263",
+  "overall": {
+    "total_predictions": 7226,
+    "bets_placed": 0,
+    "wins": 0,
+    "losses": 0,
+    "pushes": 0,
+    "passes": 0,
+    "no_result": 7226,
+    "hit_rate": 0.0,
+    "breakeven": 52.38,
+    "edge_vs_breakeven": -52.38,
+    "is_profitable": false,
+    "confidence_interval_95": [
+      0.0,
+      0.0
+    ],
+    "bootstrap_ci_95": null,
+    "statistical_test": {
+      "z_statistic": 0,
+      "p_value": 1.0,
+      "significant_95": false,
+      "significant_99": false
+    },
+    "roi": {
+      "roi_pct": -100.0,
+      "ev_per_bet": -110.0,
+      "profit_per_100_bets": -10000.0,
+      "decimal_odds": 1.9091,
+      "implied_probability": 52.38
+    },
+    "kelly_criterion": {
+      "full_kelly_pct": 0,
+      "half_kelly_pct": 0,
+      "quarter_kelly_pct": 0,
+      "recommended_pct": 0
+    }
+  },
+  "by_recommendation": {
+    "OVER": {
+      "bets": 0,
+      "wins": 0,
+      "losses": 0,
+      "hit_rate": 0.0
+    },
+    "UNDER": {
+      "bets": 0,
+      "wins": 0,
+      "losses": 0,
+      "hit_rate": 0.0
+    }
+  },
+  "by_edge_bucket": {},
+  "by_season": {},
+  "by_month": {},
+  "bankroll_simulation": null,
+  "assessment": "NOT_PROFITABLE"
+}
