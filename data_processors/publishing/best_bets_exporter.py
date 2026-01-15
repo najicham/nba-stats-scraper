@@ -3,16 +3,23 @@ Best Bets Exporter for Phase 6 Publishing
 
 Exports top prediction picks using tiered selection based on data-driven analysis.
 
-Tier Strategy (based on 10K+ prediction analysis):
-- Premium: UNDER only, 90%+ conf, 5+ edge, <18 predicted pts (target 92%+ hit rate)
-- Strong: UNDER only, 90%+ conf, 4+ edge, <20 predicted pts (target 80%+ hit rate)
-- Value: UNDER only, 80%+ conf, 5+ edge, <22 predicted pts (target 70%+ hit rate)
+CRITICAL: Updated 2026-01-14 based on CRITICAL-DATA-AUDIT-2026-01-14.md
+Previous analysis used fake line_value=20 data. These are VALIDATED findings:
 
-Key Findings Applied:
-- UNDER hits 95% vs OVER 53% at 90%+ confidence
-- 5+ edge hits 92.9% vs <2 edge hits 24.1%
-- Bench players hit 89% vs Stars 43%
-- 88-90% confidence tier is broken (42% hit rate) - excluded
+Tier Strategy (validated with real sportsbook lines, catboost_v8 only):
+- Premium: catboost_v8, 5+ edge, any recommendation (target 83-88% hit rate)
+- Strong: catboost_v8, 3-5 edge (target 74-79% hit rate)
+- Value: catboost_v8, <3 edge (target 63-69% hit rate)
+
+Key Findings (VALIDATED with real lines):
+- catboost_v8 + UNDER + 5+ edge = 88.3% hit rate
+- catboost_v8 + OVER + 5+ edge = 83.9% hit rate
+- catboost_v8 + 3-5 edge = 74-79% hit rate
+- catboost_v8 + <3 edge = 63-69% hit rate
+- Other systems (ensemble, zone_matchup, etc.) = 21-26% hit rate - DO NOT USE
+- 88-90% confidence tier excluded (broken)
+
+See: docs/08-projects/current/ml-model-v8-deployment/CRITICAL-DATA-AUDIT-2026-01-14.md
 """
 
 import logging
@@ -26,39 +33,40 @@ from .base_exporter import BaseExporter
 logger = logging.getLogger(__name__)
 
 
-# Tier configuration based on comprehensive analysis of 10,000+ predictions
-# See: docs/08-projects/current/ml-model-v8-deployment/ANALYSIS-FRAMEWORK.md
+# Tier configuration VALIDATED with real sportsbook lines (catboost_v8 only)
+# See: docs/08-projects/current/ml-model-v8-deployment/CRITICAL-DATA-AUDIT-2026-01-14.md
+# IMPORTANT: Only use catboost_v8 system - other systems hit 21-26%
 TIER_CONFIG = {
     'premium': {
-        'min_confidence': 0.90,
+        'system_id': 'catboost_v8',
         'min_edge': 5.0,
-        'max_predicted_points': 18,
         'max_picks': 5,
-        'target_hit_rate': '92%+',
+        'target_hit_rate': '83-88%',  # VALIDATED: UNDER 88.3%, OVER 83.9%
     },
     'strong': {
-        'min_confidence': 0.90,
-        'min_edge': 4.0,
-        'max_predicted_points': 20,
+        'system_id': 'catboost_v8',
+        'min_edge': 3.0,
+        'max_edge': 5.0,
         'max_picks': 10,
-        'target_hit_rate': '80%+',
+        'target_hit_rate': '74-79%',  # VALIDATED: UNDER 79.3%, OVER 74.6%
     },
     'value': {
-        'min_confidence': 0.80,
-        'min_edge': 5.0,
-        'max_predicted_points': 22,
+        'system_id': 'catboost_v8',
+        'min_edge': 0.0,
+        'max_edge': 3.0,
         'max_picks': 10,
-        'target_hit_rate': '70%+',
+        'target_hit_rate': '63-69%',  # VALIDATED: UNDER 69.3%, OVER 63.3%
     },
 }
 
 # Criteria that should ALWAYS exclude a pick from best bets
-# Based on analysis showing these criteria have terrible hit rates
+# Based on VALIDATED analysis with real sportsbook lines
 AVOID_CRITERIA = {
-    'over_recommendation': True,       # OVER hits only 53% vs UNDER 95%
-    'min_edge_threshold': 2.0,         # Below 2pt edge hits only 17-24%
-    'max_predicted_points': 25,        # Star players (25+) hit only 43%
-    'exclude_confidence_range': (0.88, 0.90),  # This tier hits only 42%
+    'non_catboost_systems': True,     # Other systems hit 21-26% - NEVER USE
+    'min_edge_threshold': 0.0,        # No minimum, but tiers prioritize by edge
+    'max_predicted_points': 25,       # Star players less predictable
+    'exclude_confidence_range': (0.88, 0.90),  # This tier hits poorly
+    # NOTE: OVER is now ALLOWED - catboost_v8 + OVER + 5+ edge = 83.9%
 }
 
 
@@ -150,19 +158,20 @@ class BestBetsExporter(BaseExporter):
 
     def _query_ranked_predictions(self, target_date: str, top_n: int) -> List[Dict]:
         """
-        Query predictions using tiered selection based on analysis findings.
+        Query predictions using tiered selection based on VALIDATED analysis.
 
-        Filtering (AVOID criteria):
-        - UNDER only (OVER hits only 53% vs 95% for UNDER)
-        - Edge >= 2 points (below 2 hits only 17-24%)
-        - Predicted points < 25 (stars hit only 43%)
-        - Exclude 88-90% confidence tier (hits only 42%)
+        CRITICAL: Updated 2026-01-14 per CRITICAL-DATA-AUDIT-2026-01-14.md
 
-        Tier classification:
-        - Premium: 90%+ conf, 5+ edge, <18 pts
-        - Strong: 90%+ conf, 4+ edge, <20 pts
-        - Value: 80%+ conf, 5+ edge, <22 pts
-        - Standard: meets avoid criteria but not tiered
+        Filtering:
+        - catboost_v8 ONLY (other systems hit 21-26%)
+        - Both UNDER and OVER allowed (UNDER 88.3%, OVER 83.9% with 5+ edge)
+        - Predicted points < 25 (stars less predictable)
+        - Exclude 88-90% confidence tier (broken)
+
+        Tier classification (by edge):
+        - Premium: 5+ edge (83-88% hit rate)
+        - Strong: 3-5 edge (74-79% hit rate)
+        - Value: <3 edge (63-69% hit rate)
         """
         query = """
         WITH player_history AS (
@@ -215,13 +224,13 @@ class BestBetsExporter(BaseExporter):
             LEFT JOIN player_names pn ON p.player_lookup = pn.player_lookup
             LEFT JOIN fatigue_data f ON p.player_lookup = f.player_lookup
             WHERE p.game_date = @target_date
-              AND p.system_id = 'catboost_v8'
-              -- CRITICAL FILTERS based on analysis:
-              AND p.recommendation = 'UNDER'  -- UNDER hits 95% vs OVER 53%
-              AND p.predicted_points < 25     -- Exclude stars (43% hit rate)
-              AND ABS(p.predicted_points - COALESCE(p.line_value, p.predicted_points)) >= 2.0  -- Min edge (below hits 17-24%)
-              AND NOT (p.confidence_score >= 0.88 AND p.confidence_score < 0.90)  -- Exclude broken tier (42% hit rate)
-              AND p.line_value IS NOT NULL    -- Must have betting line
+              AND p.system_id = 'catboost_v8'  -- CRITICAL: Only catboost_v8 (other systems hit 21-26%)
+              -- VALIDATED FILTERS per CRITICAL-DATA-AUDIT-2026-01-14.md:
+              AND p.recommendation IN ('UNDER', 'OVER')  -- Both allowed: UNDER 88%, OVER 84% with 5+ edge
+              AND p.predicted_points < 25     -- Stars less predictable
+              AND NOT (p.confidence_score >= 0.88 AND p.confidence_score < 0.90)  -- Exclude broken tier
+              AND p.line_value IS NOT NULL    -- Must have real betting line
+              AND p.line_value != 20          -- Exclude fake line=20 data from pre-v3.2 worker
         ),
         scored AS (
             SELECT
@@ -241,25 +250,18 @@ class BestBetsExporter(BaseExporter):
                         WHEN player_sample_size >= 5 THEN player_historical_accuracy
                         ELSE 0.85
                       END as composite_score,
-                -- Tier classification based on analysis
+                -- Tier classification based on VALIDATED edge performance
+                -- See CRITICAL-DATA-AUDIT-2026-01-14.md for validation
                 CASE
-                    WHEN confidence_score >= 0.90
-                         AND edge >= 5.0
-                         AND predicted_points < 18 THEN 'premium'
-                    WHEN confidence_score >= 0.90
-                         AND edge >= 4.0
-                         AND predicted_points < 20 THEN 'strong'
-                    WHEN confidence_score >= 0.80
-                         AND edge >= 5.0
-                         AND predicted_points < 22 THEN 'value'
-                    ELSE 'standard'
+                    WHEN edge >= 5.0 THEN 'premium'   -- 83-88% hit rate
+                    WHEN edge >= 3.0 THEN 'strong'    -- 74-79% hit rate
+                    ELSE 'value'                       -- 63-69% hit rate
                 END as tier,
-                -- Tier sort order for prioritization
+                -- Tier sort order: edge is the primary driver of hit rate
                 CASE
-                    WHEN confidence_score >= 0.90 AND edge >= 5.0 AND predicted_points < 18 THEN 1
-                    WHEN confidence_score >= 0.90 AND edge >= 4.0 AND predicted_points < 20 THEN 2
-                    WHEN confidence_score >= 0.80 AND edge >= 5.0 AND predicted_points < 22 THEN 3
-                    ELSE 4
+                    WHEN edge >= 5.0 THEN 1  -- Premium: 83-88%
+                    WHEN edge >= 3.0 THEN 2  -- Strong: 74-79%
+                    ELSE 3                    -- Value: 63-69%
                 END as tier_order
             FROM predictions
         ),
@@ -273,12 +275,12 @@ class BestBetsExporter(BaseExporter):
         ),
         filtered AS (
             -- Apply per-tier limits based on TIER_CONFIG max_picks
+            -- Premium (5+ edge): 5 picks, Strong (3-5 edge): 10 picks, Value (<3 edge): 10 picks
             SELECT *
             FROM ranked
             WHERE (tier = 'premium' AND tier_rank <= 5)
                OR (tier = 'strong' AND tier_rank <= 10)
                OR (tier = 'value' AND tier_rank <= 10)
-               OR (tier = 'standard' AND tier_rank <= 10)
         )
         SELECT *
         FROM filtered
