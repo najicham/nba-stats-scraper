@@ -189,6 +189,66 @@ class MlbPitcherPropsProcessor(ProcessorBase):
         self.unknown_teams.add(team_name)
         return team_name[:3].upper() if team_name else ''
 
+    def decimal_to_american(self, decimal_odds: float) -> int:
+        """
+        Convert decimal odds to American odds.
+
+        Historical Odds API data uses decimal odds (e.g., 1.95, 2.1),
+        but our schema stores American odds (integers like -115, +105).
+
+        Args:
+            decimal_odds: Decimal odds (e.g., 1.95, 2.1)
+
+        Returns:
+            American odds as integer (e.g., -105, +110)
+        """
+        if decimal_odds is None:
+            return None
+
+        try:
+            decimal_odds = float(decimal_odds)
+        except (ValueError, TypeError):
+            return None
+
+        if decimal_odds >= 2.0:
+            # Positive American odds
+            return int(round((decimal_odds - 1) * 100))
+        elif decimal_odds > 1.0:
+            # Negative American odds
+            return int(round(-100 / (decimal_odds - 1)))
+        else:
+            # Invalid odds
+            return None
+
+    def normalize_odds(self, price) -> int:
+        """
+        Normalize odds to American format.
+
+        Handles both decimal odds (1.5-10.0 range) and American odds.
+
+        Args:
+            price: Odds value (could be decimal or American)
+
+        Returns:
+            American odds as integer
+        """
+        if price is None:
+            return None
+
+        try:
+            price = float(price)
+        except (ValueError, TypeError):
+            return None
+
+        # Detect format: decimal odds are typically 1.01 to ~10.0
+        # American odds are typically < -100 or > +100
+        if 1.01 <= price <= 15.0:
+            # Likely decimal odds - convert to American
+            return self.decimal_to_american(price)
+        else:
+            # Likely already American odds
+            return int(round(price))
+
     def american_to_implied_prob(self, american_odds: int) -> float:
         """
         Convert American odds to implied probability.
@@ -250,18 +310,27 @@ class MlbPitcherPropsProcessor(ProcessorBase):
         }
 
     def validate_data(self, data: Dict) -> List[str]:
-        """Validate the JSON structure."""
+        """Validate the JSON structure.
+
+        Handles both historical format (data wrapper) and current format (odds wrapper).
+        """
         errors = []
 
         if not data:
             errors.append("Empty data")
             return errors
 
-        if 'odds' not in data:
-            errors.append("Missing 'odds' field - not a valid pitcher props file")
-            return errors
+        # Detect format and get the event data
+        if 'data' in data and 'timestamp' in data:
+            # Historical format
+            odds_data = data.get('data', {})
+        elif 'odds' in data:
+            # Current format
+            odds_data = data.get('odds', {})
+        else:
+            # Direct event data or invalid
+            odds_data = data if 'bookmakers' in data else {}
 
-        odds_data = data.get('odds')
         if not odds_data:
             # Empty odds is valid (no props available yet)
             logger.info("Empty odds data - no pitcher props for this event")
@@ -282,20 +351,43 @@ class MlbPitcherPropsProcessor(ProcessorBase):
         rows = []
 
         try:
+            # Detect historical vs current format
+            # Historical format: {"timestamp": "...", "data": {"id": "...", "bookmakers": [...]}}
+            # Current format: {"odds": {"id": "...", "bookmakers": [...]}}
+            if 'data' in raw_data and 'timestamp' in raw_data:
+                # Historical format from Odds API RAW export
+                logger.debug("Detected historical format (data wrapper)")
+                odds_data = raw_data.get('data', {})
+                snapshot_timestamp_str = raw_data.get('timestamp')
+            elif 'odds' in raw_data:
+                # Current format from scraper DATA export
+                odds_data = raw_data.get('odds', {})
+                snapshot_timestamp_str = raw_data.get('snapshot_timestamp')
+            else:
+                # Fallback - try to use as direct event data
+                odds_data = raw_data
+                snapshot_timestamp_str = None
+
             # Validate first
-            errors = self.validate_data(raw_data)
+            # Create validation wrapper if needed
+            validation_data = {'odds': odds_data} if 'odds' not in raw_data else raw_data
+            errors = self.validate_data(validation_data)
             if errors:
                 logger.warning(f"Validation issues for {file_path}: {errors}")
 
             # Extract metadata from file path
             metadata = self.extract_metadata_from_path(file_path)
 
-            # Get game date from data or path
+            # Get game date from data, path, or derive from timestamp
             game_date = raw_data.get('game_date') or metadata.get('game_date')
-            event_id = raw_data.get('eventId') or metadata.get('event_id')
+            if not game_date and snapshot_timestamp_str:
+                # Extract date from timestamp
+                try:
+                    game_date = snapshot_timestamp_str[:10]
+                except (TypeError, IndexError):
+                    pass
 
-            # Get the full odds response
-            odds_data = raw_data.get('odds', {})
+            event_id = raw_data.get('eventId') or odds_data.get('id') or metadata.get('event_id')
             if isinstance(odds_data, list):
                 odds_data = odds_data[0] if odds_data else {}
 
@@ -363,10 +455,12 @@ class MlbPitcherPropsProcessor(ProcessorBase):
                             }
 
                         if outcome_type == 'Over':
-                            player_props[player_name]['over_price'] = price
+                            # Convert decimal odds to American if needed
+                            player_props[player_name]['over_price'] = self.normalize_odds(price)
                             player_props[player_name]['point'] = point
                         elif outcome_type == 'Under':
-                            player_props[player_name]['under_price'] = price
+                            # Convert decimal odds to American if needed
+                            player_props[player_name]['under_price'] = self.normalize_odds(price)
 
                     # Create a row for each player's prop
                     for player_name, props in player_props.items():
@@ -377,6 +471,12 @@ class MlbPitcherPropsProcessor(ProcessorBase):
                         # Calculate implied probabilities
                         over_implied = self.american_to_implied_prob(props['over_price'])
                         under_implied = self.american_to_implied_prob(props['under_price'])
+
+                        # Calculate minutes before tipoff (v3.6 line timing feature)
+                        if commence_dt and snapshot_time:
+                            minutes_before = int((commence_dt - snapshot_time).total_seconds() / 60)
+                        else:
+                            minutes_before = None
 
                         row = {
                             # Identifiers
@@ -409,6 +509,10 @@ class MlbPitcherPropsProcessor(ProcessorBase):
                             'snapshot_time': snapshot_time.isoformat(),
                             'source_file_path': file_path,
                             'created_at': snapshot_time.isoformat(),
+
+                            # Line timing (v3.6)
+                            'game_start_time': commence_dt.isoformat() if commence_dt else None,
+                            'minutes_before_tipoff': minutes_before,
                         }
 
                         rows.append(row)

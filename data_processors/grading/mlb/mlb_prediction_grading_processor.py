@@ -179,3 +179,107 @@ class MlbPredictionGradingProcessor:
     def get_grading_stats(self) -> Dict:
         """Get grading statistics."""
         return self.stats.copy()
+
+    def analyze_timing(self, game_date: str) -> Dict:
+        """
+        Analyze prediction accuracy by line timing buckets.
+
+        v3.6 feature: Compare accuracy for VERY_EARLY, EARLY, and CLOSING lines.
+
+        Args:
+            game_date: Game date to analyze
+
+        Returns:
+            Dict with accuracy by timing bucket
+        """
+        query = f"""
+        SELECT
+            CASE
+                WHEN line_minutes_before_game > 240 THEN 'VERY_EARLY'
+                WHEN line_minutes_before_game > 60 THEN 'EARLY'
+                WHEN line_minutes_before_game > 0 THEN 'CLOSING'
+                ELSE 'UNKNOWN'
+            END as timing_bucket,
+            COUNT(*) as predictions,
+            COUNTIF(is_correct = TRUE) as correct,
+            COUNTIF(is_correct = FALSE) as incorrect,
+            COUNTIF(is_correct IS NULL AND recommendation IN ('OVER', 'UNDER')) as push,
+            ROUND(
+                COUNTIF(is_correct = TRUE) * 100.0 /
+                NULLIF(COUNTIF(is_correct IS NOT NULL), 0),
+                1
+            ) as accuracy_pct,
+            AVG(line_minutes_before_game) as avg_minutes_before
+        FROM `{self.project_id}.mlb_predictions.pitcher_strikeouts`
+        WHERE game_date = '{game_date}'
+          AND is_correct IS NOT NULL
+          AND line_minutes_before_game IS NOT NULL
+        GROUP BY timing_bucket
+        ORDER BY avg_minutes_before DESC
+        """
+        try:
+            results = {}
+            for row in self.bq_client.query(query).result():
+                results[row.timing_bucket] = {
+                    'predictions': row.predictions,
+                    'correct': row.correct,
+                    'incorrect': row.incorrect,
+                    'push': row.push,
+                    'accuracy_pct': row.accuracy_pct,
+                    'avg_minutes_before': row.avg_minutes_before,
+                }
+            return results
+        except Exception as e:
+            logger.error(f"Error analyzing timing: {e}")
+            return {}
+
+    def get_timing_summary(self, days: int = 30) -> Dict:
+        """
+        Get timing analysis summary over multiple days.
+
+        Args:
+            days: Number of days to analyze
+
+        Returns:
+            Dict with aggregated timing analysis
+        """
+        query = f"""
+        SELECT
+            CASE
+                WHEN line_minutes_before_game > 240 THEN 'VERY_EARLY'
+                WHEN line_minutes_before_game > 60 THEN 'EARLY'
+                WHEN line_minutes_before_game > 0 THEN 'CLOSING'
+                ELSE 'UNKNOWN'
+            END as timing_bucket,
+            COUNT(*) as predictions,
+            COUNTIF(is_correct = TRUE) as correct,
+            ROUND(
+                COUNTIF(is_correct = TRUE) * 100.0 /
+                NULLIF(COUNTIF(is_correct IS NOT NULL), 0),
+                1
+            ) as accuracy_pct,
+            AVG(line_minutes_before_game) as avg_minutes_before,
+            MIN(line_minutes_before_game) as min_minutes,
+            MAX(line_minutes_before_game) as max_minutes
+        FROM `{self.project_id}.mlb_predictions.pitcher_strikeouts`
+        WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL {days} DAY)
+          AND is_correct IS NOT NULL
+          AND line_minutes_before_game IS NOT NULL
+        GROUP BY timing_bucket
+        ORDER BY avg_minutes_before DESC
+        """
+        try:
+            results = {}
+            for row in self.bq_client.query(query).result():
+                results[row.timing_bucket] = {
+                    'predictions': row.predictions,
+                    'correct': row.correct,
+                    'accuracy_pct': row.accuracy_pct,
+                    'avg_minutes_before': row.avg_minutes_before,
+                    'min_minutes': row.min_minutes,
+                    'max_minutes': row.max_minutes,
+                }
+            return results
+        except Exception as e:
+            logger.error(f"Error getting timing summary: {e}")
+            return {}

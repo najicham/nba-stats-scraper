@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.mlb_predictions.pitcher_strikeout
   under_odds INT64,                           -- Under odds (e.g., -110)
   line_source STRING,                         -- Source (odds_api, etc.)
   line_captured_at TIMESTAMP,                 -- When line was captured
+  line_minutes_before_game INT64,             -- v3.6: Minutes from line capture to game start
 
   -- ============================================================================
   -- MODEL PREDICTIONS (Ensemble approach like NBA)
