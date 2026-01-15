@@ -195,3 +195,6 @@ zcsv
 keys/
 service-account-dev.json
 catboost_info/
+
+# Model files (binary, stored in GCS)
+models/

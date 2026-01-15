@@ -30,10 +30,12 @@ IMAGE_FULL="${REGION}-docker.pkg.dev/${PROJECT_ID}/nba-props/${IMAGE_NAME}:${IMA
 IMAGE_LATEST="${REGION}-docker.pkg.dev/${PROJECT_ID}/nba-props/${IMAGE_NAME}:latest"
 
 # Model path in GCS
-MODEL_PATH="gs://nba-scraped-data/ml-models/mlb/mlb_pitcher_strikeouts_v1_20260107.json"
+# V1.6 Classifier Model - 60% win rate vs V1.4 in shadow testing, 10.6% MAE improvement
+# Previous: mlb_pitcher_strikeouts_v1_4features_20260114_142456.json (V1.4)
+MODEL_PATH="gs://nba-scraped-data/ml-models/mlb/mlb_pitcher_strikeouts_v1_6_rolling_20260115_131149.json"
 
-# Service account
-SERVICE_ACCOUNT="nba-scrapers@${PROJECT_ID}.iam.gserviceaccount.com"
+# Service account (default compute service account)
+SERVICE_ACCOUNT="756957797294-compute@developer.gserviceaccount.com"
 
 # ============================================================================
 # Functions
