@@ -168,21 +168,26 @@ class OddsApiGameLinesBatchProcessor(ProcessorBase):
 
     def _execute_merge(self, temp_table_id: str, target_table_id: str, game_date: str = None):
         """Execute single MERGE operation for all game lines."""
-        # Build partition filter for tables with require_partition_filter = true
-        partition_filter = ""
-        if game_date:
-            partition_filter = f"AND target.game_date = '{game_date}'"
+        import re
 
+        # Validate game_date to prevent SQL injection (must be YYYY-MM-DD format)
+        if not game_date:
+            raise ValueError("game_date is required for MERGE operation on partitioned table")
+        if not re.match(r'^\d{4}-\d{2}-\d{2}$', game_date):
+            raise ValueError(f"Invalid game_date format: {game_date}. Expected YYYY-MM-DD")
+
+        # CRITICAL: For BigQuery tables with require_partition_filter=true,
+        # the partition filter MUST come FIRST in the ON clause and use a literal value.
+        # Using DATE() function ensures proper type casting.
         merge_query = f"""
         MERGE `{target_table_id}` AS target
         USING `{temp_table_id}` AS source
-        ON target.game_id = source.game_id
-           AND target.game_date = source.game_date
+        ON target.game_date = DATE('{game_date}')
+           AND target.game_id = source.game_id
            AND COALESCE(target.snapshot_timestamp, TIMESTAMP('1970-01-01')) = COALESCE(source.snapshot_timestamp, TIMESTAMP('1970-01-01'))
            AND target.bookmaker_key = source.bookmaker_key
            AND target.market_key = source.market_key
            AND target.outcome_name = source.outcome_name
-           {partition_filter}
 
         WHEN MATCHED THEN
             UPDATE SET
