@@ -2,21 +2,21 @@
 # Analytics processor-specific dependencies (not in shared)
 
 # Data processing
-numpy==1.24.4
+numpy>=1.26.0
 
 # Database
-sqlalchemy==2.0.23
-psycopg2-binary==2.9.9
+sqlalchemy>=2.0.23
+psycopg2-binary>=2.9.10
 
 # Data formats
-pyarrow==14.0.1
+pyarrow>=14.0.1
 
 # JSON handling
-orjson==3.9.10
+orjson>=3.9.10
 
 # Analytics-specific
-scipy==1.11.4
-scikit-learn==1.3.2
+scipy>=1.12.0
+scikit-learn>=1.4.0
 
 # Cloud integrations
 google-cloud-bigquery>=3.11.0
