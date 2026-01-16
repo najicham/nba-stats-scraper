@@ -206,10 +206,11 @@ def send_timeout_alert(game_date: str, completed_count: int, expected_count: int
 
 # R-006: Data freshness validation before triggering Phase 5
 # Required Phase 4 tables that must have data before triggering predictions
+# NOTE: ml_feature_store_v2 is in nba_predictions, not nba_precompute
 REQUIRED_PHASE4_TABLES = [
-    ('nba_precompute', 'ml_feature_store_v2', 'analysis_date'),
-    ('nba_precompute', 'player_daily_cache', 'analysis_date'),
-    ('nba_precompute', 'player_composite_factors', 'analysis_date'),
+    ('nba_predictions', 'ml_feature_store_v2', 'game_date'),
+    ('nba_precompute', 'player_daily_cache', 'cache_date'),
+    ('nba_precompute', 'player_composite_factors', 'game_date'),
     ('nba_precompute', 'player_shot_zone_analysis', 'analysis_date'),
     ('nba_precompute', 'team_defense_zone_analysis', 'analysis_date'),
 ]
