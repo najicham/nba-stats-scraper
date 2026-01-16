@@ -204,8 +204,8 @@ class PlayerGameSummaryProcessor(
                 'date_field': 'game_date',
                 'check_type': 'date_range',
                 'expected_count_min': 200,
-                'max_age_hours_warn': 4,
-                'max_age_hours_fail': 12,
+                'max_age_hours_warn': 6,  # Increased from 4h (games finish late)
+                'max_age_hours_fail': 36,  # Increased from 12h (R-009 fix: allow overnight delays)
                 'critical': True  # Need either NBA.com OR BDL
             },
             
