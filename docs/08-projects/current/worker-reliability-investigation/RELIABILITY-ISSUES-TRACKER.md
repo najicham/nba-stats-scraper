@@ -1,0 +1,475 @@
+# Reliability Issues Tracker
+
+**Created**: 2026-01-16
+**Last Updated**: 2026-01-16
+**Status**: Active
+
+This document tracks all reliability issues identified in the codebase audit, their status, and implementation details.
+
+---
+
+## Issue Summary
+
+| ID | Title | Severity | Status | Service |
+|----|-------|----------|--------|---------|
+| R-001 | Prediction Worker Silent Data Loss | HIGH | **FIXED** | prediction-worker |
+| R-002 | Analytics Service Returns 200 on Failures | HIGH | **FIXED** | analytics-processors |
+| R-003 | Precompute Service Returns 200 on Failures | HIGH | **FIXED** | precompute-processors |
+| R-004 | Precompute Completion Without Write Verification | HIGH | Open | precompute-base |
+| R-005 | Raw Processor Batch Lock No Write Verification | MEDIUM | Open | raw-processors |
+| R-006 | Phase 4→5 No Data Freshness Validation | MEDIUM | Open | phase4-to-phase5 |
+| R-007 | No End-to-End Data Reconciliation | MEDIUM | Open | pipeline-wide |
+| R-008 | Pub/Sub Publish Failures Swallowed | LOW | Open | precompute-base |
+
+---
+
+## Detailed Issue Descriptions
+
+### R-001: Prediction Worker Silent Data Loss [FIXED]
+
+**Severity**: HIGH
+**Status**: FIXED (2026-01-16)
+**Service**: `prediction-worker`
+**Deployed**: `prediction-worker:v36-layer1-fix` (revision `00036-xhq`)
+
+#### Problem
+Workers published completion events even when BigQuery staging writes failed. The coordinator thought workers succeeded, but no staging tables existed. Consolidation failed with "Table not found" errors.
+
+#### Root Cause
+```python
+# worker.py:1349-1362 (BEFORE)
+except Exception as e:
+    logger.error(f"Error writing to staging: {e}")
+    # Don't raise - log and continue (graceful degradation)  # BUG!
+
+# worker.py:479-486 (BEFORE)
+write_predictions_to_bigquery(predictions, batch_id=batch_id)  # No return check
+publish_completion_event(...)  # Always executed!
+return ('', 204)  # Always success!
+```
+
+#### Solution Implemented
+```python
+# worker.py (AFTER)
+def write_predictions_to_bigquery(...) -> bool:
+    """Returns True on success, False on failure."""
+    if result.success:
+        return True
+    return False  # Signal failure
+
+# In handle_prediction_request:
+write_success = write_predictions_to_bigquery(...)
+if not write_success:
+    return ('Staging write failed - triggering retry', 500)  # Pub/Sub retries!
+publish_completion_event(...)  # Only on success
+return ('', 204)
+```
+
+#### Verification
+- Worker health check passing
+- DLQ empty (no immediate failures)
+- Next batch will validate fix
+
+---
+
+### R-002: Analytics Service Returns 200 on Failures [FIXED]
+
+**Severity**: HIGH
+**Status**: FIXED (2026-01-16)
+**Service**: `analytics-processors`
+**File**: `data_processors/analytics/main_analytics_service.py`
+**Lines**: 195-230
+
+#### Problem
+The `/process` endpoint returned HTTP 200 even when individual processors failed with exceptions or errors.
+
+#### Root Cause
+```python
+# BEFORE (Lines 195-200)
+return jsonify({
+    "status": "completed",  # Always says "completed"
+    "source_table": source_table,
+    "game_date": game_date,
+    "results": results  # May contain {"status": "exception"} entries
+}), 200  # Always 200!
+```
+
+#### Impact
+- Pub/Sub ACKs the message immediately (no retry opportunity)
+- Downstream Phase 4 receives "success" signal
+- Phase 4 processors run on incomplete Phase 3 data
+- Predictions ultimately use incomplete analytics
+
+#### Solution Implemented
+```python
+# AFTER - Check for failures and return appropriate status
+failures = [r for r in results if r.get('status') in ('error', 'exception', 'timeout')]
+successes = [r for r in results if r.get('status') == 'success']
+
+if not successes and failures:
+    # All failed - return 500 to trigger Pub/Sub retry
+    return jsonify({"status": "failed", ...}), 500
+
+if failures:
+    # Partial failure - return 200 but indicate partial status
+    return jsonify({"status": "partial_failure", ...}), 200
+
+# All succeeded
+return jsonify({"status": "completed", ...}), 200
+```
+
+#### Deployment Required
+Service needs redeployment to pick up changes.
+
+---
+
+### R-003: Precompute Service Returns 200 on Failures [FIXED]
+
+**Severity**: HIGH
+**Status**: FIXED (2026-01-16)
+**Service**: `precompute-processors`
+**File**: `data_processors/precompute/main_precompute_service.py`
+**Lines**: 146-180
+
+#### Problem
+Same pattern as R-002. Returned 200 even when processors failed.
+
+#### Root Cause
+```python
+# BEFORE (Lines 146-151)
+return jsonify({
+    "status": "completed",
+    "source_table": source_table,
+    "analysis_date": analysis_date,
+    "results": results
+}), 200
+```
+
+#### Impact
+- Phase 4 completion events sent even on failures
+- Phase 4→5 orchestrator triggers predictions
+- Predictions run with stale/incomplete ML features
+
+#### Solution Implemented
+Same pattern as R-002 - check for failures and return 500 if all failed.
+
+#### Deployment Required
+Service needs redeployment to pick up changes.
+
+---
+
+### R-004: Precompute Completion Without Write Verification
+
+**Severity**: HIGH
+**Status**: Open
+**Service**: `precompute-base`
+**File**: `data_processors/precompute/precompute_base.py`
+**Lines**: 1842
+
+#### Problem
+`_publish_completion_message(success=True)` is always called with `success=True` in `post_process()`, regardless of whether writes actually succeeded.
+
+#### Current Code
+```python
+# Line 1842
+def post_process(self) -> None:
+    """Post-processing - log summary stats and publish completion message."""
+    # ... logging ...
+    if self.table_name:
+        self._publish_completion_message(success=True)  # Always True!
+```
+
+#### Impact
+This is the SAME BUG PATTERN as R-001:
+- Processor runs, write may fail
+- Completion published anyway
+- Phase 4→5 orchestrator receives "success"
+- Predictions triggered on incomplete data
+
+#### Proposed Fix
+```python
+def post_process(self) -> None:
+    """Post-processing - log summary stats and publish completion message."""
+    # ... logging ...
+
+    # Only publish success if writes actually succeeded
+    if self.table_name:
+        if hasattr(self, 'write_success') and not self.write_success:
+            logger.warning(f"Skipping completion publish - write failures detected")
+            self._publish_completion_message(success=False, error="Write failures detected")
+        else:
+            self._publish_completion_message(success=True)
+```
+
+Also need to track write success in the base class:
+```python
+def __init__(self):
+    self.write_success = True  # Default to True
+
+def _save_to_bigquery(self, ...):
+    try:
+        # ... existing write logic ...
+        load_job.result(timeout=300)
+    except Exception as e:
+        self.write_success = False  # Track failure
+        raise
+```
+
+---
+
+### R-005: Raw Processor Batch Lock No Write Verification
+
+**Severity**: MEDIUM
+**Status**: Open
+**Service**: `raw-processors`
+**File**: `data_processors/raw/main_processor_service.py`
+**Lines**: 776-780
+
+#### Problem
+Batch processors (ESPN rosters, BR rosters, OddsAPI) update Firestore lock status based on processor's `success` flag, but don't verify BigQuery writes actually committed.
+
+#### Current Code
+```python
+# Lines 776-780
+lock_ref.update({
+    'status': 'complete' if success else 'failed',
+    'completed_at': datetime.now(timezone.utc),
+    'stats': batch_processor.get_processor_stats()
+})
+```
+
+#### Impact
+- Lock marked "complete"
+- BigQuery transaction could have failed to commit
+- Subsequent Pub/Sub messages for same batch are skipped
+- Data remains incomplete with no retry
+
+#### Proposed Fix
+Add verification query after marking complete:
+```python
+if success:
+    # Verify data actually exists in BigQuery
+    verification_passed = batch_processor.verify_write_success()
+    lock_ref.update({
+        'status': 'complete' if verification_passed else 'unverified',
+        'completed_at': datetime.now(timezone.utc),
+        'stats': batch_processor.get_processor_stats(),
+        'verified': verification_passed
+    })
+    if not verification_passed:
+        logger.warning(f"Batch marked complete but verification failed - may need manual review")
+```
+
+---
+
+### R-006: Phase 4→5 No Data Freshness Validation
+
+**Severity**: MEDIUM
+**Status**: Open
+**Service**: `phase4-to-phase5`
+**File**: `orchestration/cloud_functions/phase4_to_phase5/main.py`
+
+#### Problem
+Orchestrator triggers Phase 5 when all completion events received, but doesn't verify the data is actually fresh/complete in BigQuery.
+
+#### Impact
+- If a processor publishes "success" but write failed (R-004)
+- Or if data is stale from a previous run
+- Predictions run on incorrect data
+
+#### Proposed Fix
+Add pre-trigger validation function:
+```python
+def verify_phase4_data_ready(game_date: str) -> Tuple[bool, List[str]]:
+    """
+    Verify Phase 4 tables have fresh data for game_date.
+
+    Returns:
+        (is_ready, missing_tables)
+    """
+    from google.cloud import bigquery
+    bq = bigquery.Client()
+
+    required_tables = [
+        ('nba_precompute', 'ml_feature_store_v2', 'analysis_date'),
+        ('nba_precompute', 'player_daily_cache', 'analysis_date'),
+        ('nba_precompute', 'player_composite_factors', 'analysis_date'),
+    ]
+
+    missing = []
+    for dataset, table, date_col in required_tables:
+        query = f"""
+        SELECT COUNT(*) as cnt
+        FROM `{dataset}.{table}`
+        WHERE {date_col} = '{game_date}'
+        """
+        result = list(bq.query(query).result())[0]
+        if result.cnt == 0:
+            missing.append(f"{dataset}.{table}")
+
+    return (len(missing) == 0, missing)
+
+# In trigger_phase5():
+is_ready, missing = verify_phase4_data_ready(game_date)
+if not is_ready:
+    logger.error(f"Phase 4 data not ready for {game_date}: missing {missing}")
+    # Don't trigger Phase 5, send alert instead
+    send_data_not_ready_alert(game_date, missing)
+    return
+```
+
+---
+
+### R-007: No End-to-End Data Reconciliation
+
+**Severity**: MEDIUM
+**Status**: Open
+**Service**: Pipeline-wide
+
+#### Problem
+No daily job verifies data completeness across all pipeline phases. If Phase 2 partially fails, all downstream phases run on incomplete data with no detection.
+
+#### Impact
+- Silent data gaps accumulate over time
+- Prediction quality degrades without obvious cause
+- Issues only discovered during manual audits
+
+#### Proposed Solution
+Create a Cloud Function or Cloud Run job that runs daily:
+
+```python
+def daily_pipeline_reconciliation():
+    """
+    Verify data completeness across all pipeline phases.
+    Run daily at 6 AM ET (after overnight processing).
+    """
+    yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+
+    # Phase 1: Check games scraped
+    games_expected = get_games_from_schedule(yesterday)
+
+    # Phase 2: Check raw data
+    boxscores_actual = query_bdl_boxscores_count(yesterday)
+
+    # Phase 3: Check analytics
+    player_summaries = query_player_game_summary_count(yesterday)
+
+    # Phase 4: Check precompute
+    ml_features = query_ml_feature_store_count(yesterday)
+
+    # Phase 5: Check predictions
+    predictions = query_predictions_count(yesterday)
+
+    # Compare and alert on gaps
+    gaps = []
+    if boxscores_actual < games_expected * 10:  # ~10 players per game minimum
+        gaps.append(f"Phase 2: {boxscores_actual} boxscores < expected")
+    # ... more checks ...
+
+    if gaps:
+        send_reconciliation_alert(yesterday, gaps)
+```
+
+---
+
+### R-008: Pub/Sub Publish Failures Swallowed
+
+**Severity**: LOW
+**Status**: Open
+**Service**: `precompute-base`
+**File**: `data_processors/precompute/precompute_base.py`
+**Lines**: 1925-1927
+
+#### Problem
+```python
+except Exception as e:
+    logger.warning(f"Failed to publish completion message: {e}")
+    # Don't fail the whole processor if Pub/Sub publishing fails
+```
+
+#### Impact
+- Downstream phases never trigger
+- Current run marked as success
+- Pipeline stalls silently
+
+#### Assessment
+This is partially intentional - Pub/Sub failures shouldn't cause data loss. However, repeated failures cause pipeline stalls.
+
+#### Proposed Fix
+Add monitoring/alerting rather than changing behavior:
+```python
+except Exception as e:
+    logger.warning(f"Failed to publish completion message: {e}")
+    # Track metric for monitoring
+    try:
+        record_pubsub_failure_metric(
+            processor=self.__class__.__name__,
+            topic='nba-phase4-precompute-complete',
+            error=str(e)
+        )
+    except:
+        pass  # Don't fail on metric recording
+```
+
+Create alert on metric threshold.
+
+---
+
+## Implementation Priority
+
+### Phase 1: Immediate (This Session) - COMPLETE
+- [x] R-001: Prediction Worker Silent Data Loss - **FIXED & DEPLOYED**
+- [x] R-002: Analytics Service Returns 200 on Failures - **FIXED** (needs deploy)
+- [x] R-003: Precompute Service Returns 200 on Failures - **FIXED** (needs deploy)
+
+### Phase 2: Short-term (Next Session)
+- [ ] R-004: Precompute Completion Without Write Verification
+- [ ] R-006: Phase 4→5 No Data Freshness Validation
+
+### Phase 3: Medium-term (Future)
+- [ ] R-005: Raw Processor Batch Lock Verification
+- [ ] R-007: End-to-End Data Reconciliation
+- [ ] R-008: Pub/Sub Failure Monitoring
+
+---
+
+## Deployment Status
+
+| Service | Image | Fix | Deployed | Revision |
+|---------|-------|-----|----------|----------|
+| prediction-worker | v36-layer1-fix | R-001 | ✅ Yes | 00036-xhq |
+| nba-phase3-analytics-processors | v2-r002-fix | R-002 | ✅ Yes | 00068-5kh |
+| nba-phase4-precompute-processors | v2-r003-fix | R-003 | ✅ Yes | 00041-c5n |
+
+### Rollback Commands (if needed)
+```bash
+# R-001 Rollback
+gcloud run services update-traffic prediction-worker --region us-west2 --to-revisions prediction-worker-00035-4xk=100
+
+# R-002 Rollback
+gcloud run services update-traffic nba-phase3-analytics-processors --region us-west2 --to-revisions nba-phase3-analytics-processors-00067-xxx=100
+
+# R-003 Rollback
+gcloud run services update-traffic nba-phase4-precompute-processors --region us-west2 --to-revisions nba-phase4-precompute-processors-00040-xxx=100
+```
+
+---
+
+## Verification Checklist
+
+After implementing fixes, verify:
+
+- [ ] Unit tests pass for error scenarios
+- [ ] Integration tests verify retry behavior
+- [ ] Logs show correct error messages
+- [ ] Metrics/alerts fire on failures
+- [ ] DLQ receives failed messages
+- [ ] End-to-end pipeline runs successfully
+
+---
+
+## Related Documents
+
+- [README.md](./README.md) - Project overview
+- [SILENT-DATA-LOSS-ANALYSIS.md](./SILENT-DATA-LOSS-ANALYSIS.md) - Deep dive on R-001
+- [CODEBASE-RELIABILITY-AUDIT.md](./CODEBASE-RELIABILITY-AUDIT.md) - Full audit report

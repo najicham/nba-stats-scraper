@@ -143,6 +143,42 @@ def process():
                     "error": str(e)
                 })
 
+        # R-003 FIX: Check for failures and return appropriate status code
+        # Previously always returned 200, even when processors failed
+        failures = [r for r in results if r.get('status') in ('error', 'exception')]
+        successes = [r for r in results if r.get('status') == 'success']
+
+        if not successes and failures:
+            # All processors failed - return 500 to trigger Pub/Sub retry
+            logger.error(
+                f"❌ ALL {len(failures)} precompute processors failed for {analysis_date} "
+                f"(source={source_table}) - returning 500 to trigger retry"
+            )
+            return jsonify({
+                "status": "failed",
+                "source_table": source_table,
+                "analysis_date": analysis_date,
+                "failures": len(failures),
+                "results": results
+            }), 500
+
+        if failures:
+            # Partial failure - log warning but return 200 to ACK
+            # (retrying won't help if some processors succeeded)
+            logger.warning(
+                f"⚠️ PARTIAL FAILURE: {len(failures)}/{len(results)} precompute processors failed "
+                f"for {analysis_date} (source={source_table})"
+            )
+            return jsonify({
+                "status": "partial_failure",
+                "source_table": source_table,
+                "analysis_date": analysis_date,
+                "successes": len(successes),
+                "failures": len(failures),
+                "results": results
+            }), 200  # ACK to prevent infinite retries, but status indicates partial
+
+        # All succeeded
         return jsonify({
             "status": "completed",
             "source_table": source_table,
