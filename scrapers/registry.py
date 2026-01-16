@@ -104,17 +104,27 @@ NBA_SCRAPER_REGISTRY: Dict[str, Tuple[str, str]] = {
     ),
 
     # ========================================================================
-    # BettingPros Scrapers (2 total)
+    # BettingPros Scrapers (4 total: 2 NBA + 2 MLB)
     # ========================================================================
+    # NBA
     "bp_events": (
-        "scrapers.bettingpros.bp_events", 
+        "scrapers.bettingpros.bp_events",
         "BettingProsEvents"
     ),
     "bp_player_props": (
-        "scrapers.bettingpros.bp_player_props", 
+        "scrapers.bettingpros.bp_player_props",
         "BettingProsPlayerProps"
     ),
-    
+    # MLB
+    "bp_mlb_player_props": (
+        "scrapers.bettingpros.bp_mlb_player_props",
+        "BettingProsMLBPlayerProps"
+    ),
+    "bp_mlb_props_historical": (
+        "scrapers.bettingpros.bp_mlb_props_historical",
+        "BettingProsMLBHistoricalProps"
+    ),
+
     # ========================================================================
     # Basketball Reference Scrapers (1 total)
     # ========================================================================
