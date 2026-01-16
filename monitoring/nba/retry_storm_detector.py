@@ -294,14 +294,12 @@ class RetryStormDetector:
             if severity == 'critical':
                 notify_error(
                     title="NBA Retry Storm Alert - CRITICAL",
-                    message=message,
-                    context=alert
+                    message=f"{message}\n\nDetails: {alert}"
                 )
             elif severity == 'warning':
                 notify_warning(
                     title="NBA Retry Storm Alert - WARNING",
-                    message=message,
-                    context=alert
+                    message=f"{message}\n\nDetails: {alert}"
                 )
 
 
