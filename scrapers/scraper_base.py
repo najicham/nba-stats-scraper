@@ -500,15 +500,19 @@ class ScraperBase:
     
     def _determine_execution_status(self) -> tuple[str, int]:
         """
-        Determine execution status using 3-status system for orchestration.
+        Determine execution status using 4-status system for orchestration.
 
         Status values:
-          - 'success': Got data (record_count > 0)
+          - 'success': Got complete data (record_count > 0, data_status != 'partial')
+          - 'partial': Got incomplete data (record_count > 0, data_status == 'partial')
           - 'no_data': Tried but empty (record_count = 0)
           - 'failed': Error occurred (handled in _log_failed_execution_to_bigquery)
 
         This enables discovery mode: controller stops trying after 'success',
-        keeps trying after 'no_data'.
+        keeps trying after 'no_data' or 'partial'.
+
+        R-009 Fix: Added 'partial' status for cases like gamebooks with only
+        roster data (DNP/inactive players) but no active player stats.
 
         Returns:
             tuple: (status, record_count)
@@ -559,8 +563,16 @@ class ScraperBase:
             record_count = 0
             is_empty = False
 
-        # Determine status based on record count
-        if record_count > 0:
+        # R-009 Fix: Check for partial data status (e.g., roster-only gamebook data)
+        is_partial = False
+        if isinstance(self.data, dict):
+            is_partial = self.data.get('data_status') == 'partial'
+
+        # Determine status based on record count and data quality
+        if is_partial and record_count > 0:
+            # Has records but marked as partial (e.g., no active players in gamebook)
+            status = 'partial'
+        elif record_count > 0:
             status = 'success'
         elif is_empty or record_count == 0:
             status = 'no_data'
