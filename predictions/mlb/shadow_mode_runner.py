@@ -103,6 +103,7 @@ def load_pitchers_for_date(client: bigquery.Client, game_date: date) -> List[Dic
             pgs.era_rolling_10,
             pgs.whip_rolling_10,
             pgs.season_games_started as games_started,
+            pgs.rolling_stats_games,  -- For red flag checks
             pgs.season_strikeouts as strikeouts_total,
             pgs.season_k_per_9,
             pgs.days_rest,
@@ -302,6 +303,22 @@ def build_features_dict(pitcher_data: Dict, include_v1_6_features: bool = False)
             'f52_swstr_trend': pitcher_data.get('swstr_trend'),
             'f53_velocity_change': pitcher_data.get('velocity_change'),
         })
+
+    # Add raw feature names for red flag checks (predictor expects these)
+    features.update({
+        'season_games_started': pitcher_data.get('games_started'),
+        'rolling_stats_games': pitcher_data.get('rolling_stats_games'),
+        'ip_avg_last_5': pitcher_data.get('ip_avg_last_5'),
+        'k_std_last_10': pitcher_data.get('k_std_last_10'),
+        'days_rest': pitcher_data.get('days_rest'),
+        'games_last_30_days': pitcher_data.get('games_last_30_days'),
+        'season_swstr_pct': pitcher_data.get('season_swstr_pct') or pitcher_data.get('swstr_pct_season_prior'),
+        'swstr_trend': pitcher_data.get('swstr_trend'),
+        'strikeouts_line': pitcher_data.get('strikeouts_line'),
+        'team_abbr': pitcher_data.get('team_abbr'),
+        'player_lookup': pitcher_data.get('pitcher_lookup'),
+        'k_avg_last_5': pitcher_data.get('k_avg_last_5'),  # For confidence calc
+    })
 
     return features
 
