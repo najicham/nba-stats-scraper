@@ -185,7 +185,7 @@ class BettingProsLoader:
                     'market_id': market_id,
                     'market_name': market_name,
                     'event_id': prop.get('event_id'),
-                    'player_id': prop.get('player_id'),
+                    'bp_player_id': str(prop.get('player_id')) if prop.get('player_id') else None,
                     'player_name': player_name,
                     'player_lookup': player_lookup,
                     'team': prop.get('team'),
@@ -214,8 +214,7 @@ class BettingProsLoader:
                     'opposing_pitcher': prop.get('opposing_pitcher'),
                     'opposition_rank': prop.get('opposition_rank'),
                     'source_file_path': file_path,
-                    'scraped_at': scraped_at,
-                    'processed_at': processed_at,
+                    'created_at': processed_at,  # Maps to BigQuery created_at
                 }
                 rows.append(row)
 
