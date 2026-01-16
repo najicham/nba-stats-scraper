@@ -106,6 +106,7 @@ class PlayerGameSummaryProcessor(
     # Pattern #3: Early Exit Configuration
     # =========================================================================
     ENABLE_NO_GAMES_CHECK = True       # Skip if no games scheduled
+    ENABLE_GAMES_FINISHED_CHECK = True # Skip if games not finished (NEW: prevents retry storms)
     ENABLE_OFFSEASON_CHECK = True      # Skip in July-September
     ENABLE_HISTORICAL_DATE_CHECK = True  # Skip dates >90 days old
 
@@ -281,6 +282,42 @@ class PlayerGameSummaryProcessor(
             PlayerChangeDetector configured for player stats
         """
         return PlayerChangeDetector(project_id=self.project_id)
+
+    def get_upstream_data_check_query(self, start_date: str, end_date: str) -> Optional[str]:
+        """
+        Check if upstream data is available for circuit breaker auto-reset.
+
+        Prevents retry storms by checking:
+        1. Games are finished (not scheduled/in-progress)
+        2. BDL boxscore data exists
+
+        This enables the circuit breaker to automatically close when:
+        - Games finish and data becomes available
+        - Prevents wasteful retries before games start
+
+        Args:
+            start_date: Start of date range (YYYY-MM-DD)
+            end_date: End of date range (YYYY-MM-DD)
+
+        Returns:
+            SQL query that returns {data_available: boolean} or {cnt: int}
+        """
+        # Check if:
+        # 1. At least one game in date range is finished (game_status != 1)
+        # 2. BDL boxscore data exists for that game
+        #
+        # game_status values: 1=Scheduled, 2=In Progress, 3=Final
+        return f"""
+        SELECT
+            COUNTIF(
+                schedule.game_status >= 3  -- Final only
+                AND bdl.game_id IS NOT NULL
+            ) > 0 AS data_available
+        FROM `nba_raw.nbac_schedule` AS schedule
+        LEFT JOIN `nba_raw.bdl_player_boxscores` AS bdl
+            ON schedule.game_id = bdl.game_id
+        WHERE schedule.game_date BETWEEN '{start_date}' AND '{end_date}'
+        """
 
     def _calculate_data_hash(self, record: Dict) -> str:
         """

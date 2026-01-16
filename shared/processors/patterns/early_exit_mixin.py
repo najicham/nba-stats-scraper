@@ -43,6 +43,7 @@ class EarlyExitMixin:
     ENABLE_NO_GAMES_CHECK = True
     ENABLE_OFFSEASON_CHECK = True
     ENABLE_HISTORICAL_DATE_CHECK = True
+    ENABLE_GAMES_FINISHED_CHECK = False  # NEW: Skip if games not finished (opt-in)
 
     # Season configuration
     SEASON_START_MONTH = 10  # October
@@ -73,6 +74,13 @@ class EarlyExitMixin:
             if not self._has_games_scheduled(check_date):
                 logger.info(f"No games scheduled on {check_date}, skipping")
                 self._log_skip('no_games')
+                return True
+
+        # EARLY EXIT 1.5: Games not finished yet (NEW)
+        if self.ENABLE_GAMES_FINISHED_CHECK:
+            if not self._are_games_finished(check_date):
+                logger.info(f"Games on {check_date} not finished yet, skipping to prevent retry storm")
+                self._log_skip('games_not_finished')
                 return True
 
         # EARLY EXIT 2: Offseason
@@ -123,6 +131,73 @@ class EarlyExitMixin:
 
         except Exception as e:
             logger.error(f"Error checking game schedule: {e}")
+            # Fail open - proceed with processing
+            return True
+
+    def _are_games_finished(self, game_date: str) -> bool:
+        """
+        Check if all games for the date are finished.
+
+        Prevents retry storms by skipping processing attempts for games
+        that are scheduled but not yet played.
+
+        game_status values:
+        - 1: Scheduled (not started)
+        - 2: In Progress
+        - 3: Final (completed)
+
+        Returns:
+            True if all games are finished (status=3)
+            False if any games are scheduled/in-progress
+        """
+        # Need BigQuery client from parent class
+        if not hasattr(self, 'bq_client'):
+            logger.warning("No bq_client available, cannot check games status")
+            return True  # Fail open - proceed with processing
+
+        if not hasattr(self, 'project_id'):
+            logger.warning("No project_id available, cannot check games status")
+            return True  # Fail open - proceed with processing
+
+        query = f"""
+        SELECT
+            COUNT(*) as total_games,
+            COUNTIF(game_status = 3) as finished_games,
+            COUNTIF(game_status IN (1, 2)) as unfinished_games
+        FROM `{self.project_id}.nba_raw.nbac_schedule`
+        WHERE game_date = '{game_date}'
+        """
+
+        try:
+            result = list(self.bq_client.query(query).result(timeout=60))
+            if not result:
+                # No games scheduled - allow processing to continue
+                return True
+
+            row = result[0]
+            total_games = int(row.total_games)
+            finished_games = int(row.finished_games)
+            unfinished_games = int(row.unfinished_games)
+
+            if total_games == 0:
+                # No games scheduled - allow processing
+                logger.debug(f"No games scheduled on {game_date}")
+                return True
+
+            if unfinished_games > 0:
+                # Some games not finished yet
+                logger.info(
+                    f"{game_date}: {unfinished_games}/{total_games} games not finished yet "
+                    f"(finished: {finished_games})"
+                )
+                return False
+
+            # All games finished
+            logger.debug(f"All {total_games} games finished on {game_date}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error checking games finished status: {e}")
             # Fail open - proceed with processing
             return True
 

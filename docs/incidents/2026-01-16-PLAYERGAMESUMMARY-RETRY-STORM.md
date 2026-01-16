@@ -77,30 +77,68 @@ Overall processor runs today: 8,225
 
 ## Root Cause Analysis
 
-### Primary Cause
-**Something is continuously triggering PlayerGameSummaryProcessor to process Jan 16 data before games have started.**
+### Primary Cause - IDENTIFIED ✅
+**`bdl-boxscores-yesterday-catchup` scheduler triggers at 4 AM ET, attempting to process Jan 16 data before games start, creating a Pub/Sub retry storm amplified by circuit breaker cycles.**
+
+### Detailed Root Cause Chain
+
+1. **Initial Trigger** (Hour 9 / 4 AM ET)
+   - `bdl-boxscores-yesterday-catchup` Cloud Scheduler runs at 09:00 UTC (4 AM ET)
+   - Scrapes BDL boxscores for "yesterday" but also attempts Jan 16 (current day)
+   - Publishes Pub/Sub message: `bdl_player_boxscores` table updated
+
+2. **Analytics Cascade**
+   - Analytics service receives Pub/Sub message
+   - ANALYTICS_TRIGGERS mapping: `bdl_player_boxscores` → `PlayerGameSummaryProcessor`
+   - Processor attempts to process Jan 16 data (games haven't started)
+   - Fails with 0 records processed
+
+3. **Pub/Sub Retry Loop**
+   - Analytics service returns 500 (all processors failed)
+   - Pub/Sub automatic retry with exponential backoff
+   - Creates continuous stream of retry attempts
+
+4. **Circuit Breaker Cycle** (4-hour pattern)
+   - After 5 failures: Circuit opens (hour 9)
+   - After 4 hours: Circuit tries HALF_OPEN state (hour 13)
+   - Still no data: Fails again, reopens circuit
+   - **No upstream data check** - can't detect games aren't finished
+   - **Cycle repeats**: Hour 9 → 13 → 17 (peak) → 21
+
+5. **Additional Triggers** (Hour 11 / 6:30 AM ET)
+   - `daily-yesterday-analytics` scheduler also triggers
+   - Adds more Pub/Sub messages to the queue
+   - Compounds the retry storm
+
+### Hourly Pattern Evidence
+```
+Hour 9 (4 AM ET):  350 runs  - Storm begins (bdl-boxscores-yesterday-catchup)
+Hour 13 (8 AM ET): 408 runs  - Circuit reopens (4h later)
+Hour 17 (12 PM ET): 1,756 runs - PEAK (circuit + backlog)
+Hour 21 (4 PM ET): 141 runs  - Storm continuing
+```
 
 ### Contributing Factors
 
-1. **No Data Availability Check**
-   - Processor attempts to run even when source data (BDL boxscores) doesn't exist
-   - No validation: "Are games finished?" before attempting processing
+1. **Missing Upstream Data Check**
+   - PlayerGameSummaryProcessor doesn't implement `get_upstream_data_check_query()`
+   - Circuit breaker can't auto-detect when games finish
+   - Blindly retries every 4 hours regardless of data availability
 
-2. **Circuit Breaker Scope**
-   - Circuit breaker may only apply to staleness issues
-   - May not prevent retries when data is completely absent
+2. **No Pre-Execution Validation**
+   - No check: "Are games finished before processing?"
+   - Processor attempts to run on any Pub/Sub trigger
+   - No schedule-aware logic
 
-3. **Continuous Triggering**
-   - Unknown trigger causing repeated execution attempts
-   - Possible sources:
-     - Pub/Sub messages queued?
-     - Cloud Scheduler misconfigured?
-     - Workflow orchestration logic?
-     - Manual trigger loop?
+3. **Pub/Sub Retry Amplification**
+   - 500 status code triggers automatic retries
+   - Exponential backoff but still creates high volume
+   - No max retry limit per time window
 
-4. **No Backoff Strategy**
-   - Failures don't seem to trigger exponential backoff
-   - Continues at steady rate hour after hour
+4. **BDL Scraper Timing**
+   - Runs at 4 AM ET (too early for previous day's games)
+   - Should wait until games are definitely finished
+   - Or implement "skip if no data" logic
 
 ---
 
@@ -297,7 +335,15 @@ WHERE processor_name = 'PlayerGameSummaryProcessor'
 
 ## Status Updates
 
-**2026-01-16 20:46 UTC**: Incident discovered, documentation created, investigation ongoing
+**2026-01-16 20:46 UTC**: Incident discovered during Session 72, documentation created, investigation ongoing
+
+**2026-01-16 21:15 UTC**: ✅ Root cause identified:
+- Trigger: `bdl-boxscores-yesterday-catchup` scheduler at 4 AM ET
+- Amplifier: Circuit breaker 4h cycles without upstream data check
+- Pattern: Pub/Sub retry storm compounded by circuit breaker reopening
+- Storm still active: ~500 runs/hour as of 21:15 UTC
+- Hourly pattern matches circuit breaker 4h timeout exactly
+- Fix in progress: Implementing `get_upstream_data_check_query()` for auto-reset
 
 _(Add updates as incident progresses)_
 
