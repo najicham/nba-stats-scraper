@@ -151,6 +151,14 @@ create_job \
     '{"game_date": "TODAY"}' \
     "Generate pitcher strikeout predictions"
 
+# Shadow mode A/B testing (V1.4 vs V1.6) - runs 30 min after predictions
+create_job \
+    "mlb-shadow-mode-daily" \
+    "30 13 * * *" \
+    "$PREDICTIONS_URL/execute-shadow-mode" \
+    '{"game_date": "TODAY"}' \
+    "Run shadow mode comparison (V1.4 vs V1.6)"
+
 echo ""
 echo "=== Phase 6: Grading ==="
 
@@ -162,21 +170,31 @@ create_job \
     '{"game_date": "YESTERDAY"}' \
     "Grade yesterday predictions"
 
+# Grade shadow mode predictions (V1.4 vs V1.6) - runs after regular grading
+create_job \
+    "mlb-shadow-grading-daily" \
+    "30 10 * * *" \
+    "$GRADING_URL/grade-shadow" \
+    '{}' \
+    "Grade shadow mode predictions"
+
 echo ""
 echo "=============================================="
 echo "  Scheduler Setup Complete"
 echo "=============================================="
 echo ""
-echo "Jobs created (9 total):"
-echo "  mlb-schedule-daily      10:00 AM - Fetch schedule"
-echo "  mlb-lineups-morning     11:00 AM - Get lineups"
-echo "  mlb-lineups-pregame      1:00 PM - Refresh lineups"
-echo "  mlb-props-morning       10:30 AM - Get K lines"
-echo "  mlb-props-pregame       12:30 PM - Refresh K lines"
-echo "  mlb-live-boxscores      Every 5 min (1-11 PM)"
-echo "  mlb-overnight-results    2:00 AM - Final scores"
-echo "  mlb-predictions-generate 1:00 PM - Make predictions"
-echo "  mlb-grading-daily       10:00 AM - Grade yesterday"
+echo "Jobs created (11 total):"
+echo "  mlb-schedule-daily        10:00 AM - Fetch schedule"
+echo "  mlb-lineups-morning       11:00 AM - Get lineups"
+echo "  mlb-lineups-pregame        1:00 PM - Refresh lineups"
+echo "  mlb-props-morning         10:30 AM - Get K lines"
+echo "  mlb-props-pregame         12:30 PM - Refresh K lines"
+echo "  mlb-live-boxscores        Every 5 min (1-11 PM)"
+echo "  mlb-overnight-results      2:00 AM - Final scores"
+echo "  mlb-predictions-generate   1:00 PM - Make predictions"
+echo "  mlb-shadow-mode-daily      1:30 PM - Shadow mode A/B test"
+echo "  mlb-grading-daily         10:00 AM - Grade yesterday"
+echo "  mlb-shadow-grading-daily  10:30 AM - Grade shadow mode"
 echo ""
 if [[ "$PAUSE_AFTER" == "true" ]]; then
     echo "All jobs are PAUSED. To enable before MLB season:"
