@@ -21,9 +21,41 @@ import base64
 from data_processors.grading.mlb.mlb_prediction_grading_processor import MlbPredictionGradingProcessor
 from data_processors.grading.mlb.mlb_shadow_grading_processor import MLBShadowGradingProcessor
 
+# Import AlertManager for intelligent alerting
+try:
+    from shared.alerts.alert_manager import get_alert_manager
+    ALERTING_ENABLED = True
+except ImportError:
+    ALERTING_ENABLED = False
+    logging.warning("AlertManager not available, alerts disabled")
+
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Initialize AlertManager (with backfill mode detection)
+def get_mlb_alert_manager():
+    """Get AlertManager instance with MLB-specific configuration."""
+    if not ALERTING_ENABLED:
+        return None
+    backfill_mode = os.environ.get('BACKFILL_MODE', 'false').lower() == 'true'
+    return get_alert_manager(backfill_mode=backfill_mode)
+
+
+def send_mlb_alert(severity: str, title: str, message: str, context: dict = None):
+    """Send alert via AlertManager with rate limiting."""
+    alert_mgr = get_mlb_alert_manager()
+    if alert_mgr:
+        try:
+            alert_mgr.send_alert(
+                severity=severity,
+                title=title,
+                message=message,
+                category='mlb_grading_failure',
+                context=context or {}
+            )
+        except Exception as e:
+            logger.error(f"Failed to send alert: {e}")
 
 
 @app.route('/', methods=['GET'])
@@ -91,6 +123,16 @@ def process_grading():
 
     except Exception as e:
         logger.error(f"Error in grading: {e}", exc_info=True)
+        # Send alert for grading failure
+        send_mlb_alert(
+            severity='warning',
+            title='MLB Grading Failed',
+            message=str(e),
+            context={
+                'endpoint': '/process',
+                'error_type': type(e).__name__
+            }
+        )
         return jsonify({"error": str(e)}), 500
 
 
@@ -131,6 +173,17 @@ def grade_date():
 
     except Exception as e:
         logger.error(f"Error in grade-date: {e}", exc_info=True)
+        # Send alert for grading failure
+        send_mlb_alert(
+            severity='warning',
+            title='MLB Grading Failed',
+            message=str(e),
+            context={
+                'endpoint': '/grade-date',
+                'game_date': data.get('game_date') if 'data' in dir() else None,
+                'error_type': type(e).__name__
+            }
+        )
         return jsonify({"error": str(e)}), 500
 
 

@@ -1,0 +1,65 @@
+# File: validation/configs/mlb/mlb_schedule.yaml
+# Description: MLB Schedule Validation Config - Source of truth for games and probable pitchers
+
+processor:
+  name: "mlb_schedule"
+  description: "Validates MLB schedule - source of truth for games and probable pitchers"
+  table: "mlb_raw.mlb_schedule"
+  partition_required: true
+  partition_field: "game_date"
+  type: "raw"
+  layers:
+    - bigquery
+    - schedule
+
+# BigQuery Layer Validations
+bigquery_validations:
+  enabled: true
+
+  # Season completeness check
+  season_completeness:
+    enabled: true
+    query: |
+      SELECT
+        EXTRACT(YEAR FROM game_date) as season_year,
+        COUNT(*) as game_count,
+        COUNT(DISTINCT game_date) as unique_dates,
+        MIN(game_date) as season_start,
+        MAX(game_date) as season_end
+      FROM `{project_id}.mlb_raw.mlb_schedule`
+      WHERE game_date >= '{start_date}'
+        AND game_date <= '{end_date}'
+      GROUP BY season_year
+    expected_regular_season_games: 2430  # 30 teams * 162 / 2
+    tolerance: 50  # Allow for incomplete season data
+    severity: "warning"
+
+# Schedule Validations
+schedule_validations:
+  enabled: true
+
+  data_freshness:
+    enabled: true
+    target_table: "mlb_raw.mlb_schedule"
+    timestamp_field: "created_at"
+    max_age_hours: 24
+    severity: "warning"
+    message: "Schedule data is stale"
+
+# Remediation
+remediation:
+  processor_backfill_template: |
+    gcloud run jobs execute mlb-schedule-processor-backfill \
+      --args=--start-date={start_date},--end-date={end_date} \
+      --region=us-west2
+
+  scraper_backfill_template: |
+    gcloud run jobs execute mlb-schedule-scraper \
+      --args=--date={date} \
+      --region=us-west2
+
+notifications:
+  enabled: true
+  channels: ["slack"]
+  on_failure: true
+  on_success: false

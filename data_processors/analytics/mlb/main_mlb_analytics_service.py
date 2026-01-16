@@ -25,6 +25,14 @@ from data_processors.analytics.mlb import (
     MlbBatterGameSummaryProcessor,
 )
 
+# Import AlertManager for intelligent alerting
+try:
+    from shared.alerts.alert_manager import get_alert_manager
+    ALERTING_ENABLED = True
+except ImportError:
+    ALERTING_ENABLED = False
+    logging.warning("AlertManager not available, alerts disabled")
+
 # Import MLB schedule-aware utilities
 try:
     from shared.validation.context.mlb_schedule_context import (
@@ -40,6 +48,30 @@ except ImportError:
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Initialize AlertManager (with backfill mode detection)
+def get_mlb_alert_manager():
+    """Get AlertManager instance with MLB-specific configuration."""
+    if not ALERTING_ENABLED:
+        return None
+    backfill_mode = os.environ.get('BACKFILL_MODE', 'false').lower() == 'true'
+    return get_alert_manager(backfill_mode=backfill_mode)
+
+
+def send_mlb_alert(severity: str, title: str, message: str, context: dict = None):
+    """Send alert via AlertManager with rate limiting."""
+    alert_mgr = get_mlb_alert_manager()
+    if alert_mgr:
+        try:
+            alert_mgr.send_alert(
+                severity=severity,
+                title=title,
+                message=message,
+                category='mlb_analytics_failure',
+                context=context or {}
+            )
+        except Exception as e:
+            logger.error(f"Failed to send alert: {e}")
 
 
 # MLB Analytics processor registry
@@ -113,6 +145,17 @@ def run_single_processor(processor_class, opts):
             }
     except Exception as e:
         logger.error(f"Analytics processor {processor_class.__name__} failed: {e}", exc_info=True)
+        # Send alert for processor failure
+        send_mlb_alert(
+            severity='warning',
+            title=f'MLB Analytics Processor Failed: {processor_class.__name__}',
+            message=str(e),
+            context={
+                'processor': processor_class.__name__,
+                'game_date': opts.get('start_date'),
+                'error_type': type(e).__name__
+            }
+        )
         return {
             "processor": processor_class.__name__,
             "status": "exception",
@@ -217,6 +260,16 @@ def process_analytics():
 
     except Exception as e:
         logger.error(f"Error processing MLB analytics: {e}", exc_info=True)
+        # Send alert for service-level failure
+        send_mlb_alert(
+            severity='critical',
+            title='MLB Analytics Service Error',
+            message=str(e),
+            context={
+                'endpoint': '/process',
+                'error_type': type(e).__name__
+            }
+        )
         return jsonify({"error": str(e)}), 500
 
 

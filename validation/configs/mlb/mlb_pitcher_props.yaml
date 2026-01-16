@@ -1,0 +1,65 @@
+# File: validation/configs/mlb/mlb_pitcher_props.yaml
+# Description: MLB Pitcher Props Validation Config - Critical for strikeout predictions business
+
+processor:
+  name: "mlb_pitcher_props"
+  description: "Validates MLB pitcher strikeout props data from multiple sources"
+  table: "mlb_raw.bp_pitcher_props"
+  partition_required: true
+  partition_field: "game_date"
+  type: "raw"
+  layers:
+    - bigquery
+    - schedule
+
+# BigQuery Layer Validations
+bigquery_validations:
+  enabled: true
+
+  # Field validation
+  field_validation:
+    target_table: "mlb_raw.bp_pitcher_props"
+
+    required_not_null:
+      - game_date
+      - player_name
+      - player_lookup  # CRITICAL: Must be normalized
+      - over_line
+
+    # Props-specific ranges
+    value_ranges:
+      - field: over_line
+        min: 0.5
+        max: 15.5
+        severity: "warning"
+        message: "Unusual strikeout line detected (expected 0.5-15.5)"
+
+# Schedule Validations
+schedule_validations:
+  enabled: true
+
+  data_freshness:
+    enabled: true
+    target_table: "mlb_raw.bp_pitcher_props"
+    timestamp_field: "created_at"
+    max_age_hours: 8
+    severity: "warning"
+    message: "Pitcher props data is stale"
+
+# Remediation
+remediation:
+  processor_backfill_template: |
+    gcloud run jobs execute mlb-pitcher-props-processor-backfill \
+      --args=--start-date={start_date},--end-date={end_date} \
+      --region=us-west2
+
+  scraper_backfill_template: |
+    gcloud run jobs execute mlb-bettingpros-pitcher-props-scraper \
+      --args=--date={date} \
+      --region=us-west2
+
+notifications:
+  enabled: true
+  channels: ["slack"]
+  on_failure: true
+  on_success: false

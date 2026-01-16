@@ -1,0 +1,52 @@
+# Cloud Run Job Configuration for MLB Gap Detection Monitor
+# Detects files in GCS that haven't been processed to BigQuery
+
+apiVersion: run.googleapis.com/v1
+kind: Job
+metadata:
+  name: mlb-gap-detection
+  labels:
+    cloud.googleapis.com/location: us-west2
+    sport: mlb
+    type: monitoring
+    component: gap-detection
+spec:
+  template:
+    metadata:
+      annotations:
+        run.googleapis.com/execution-environment: gen2
+    spec:
+      taskCount: 1
+      template:
+        spec:
+          maxRetries: 2
+          timeoutSeconds: 600  # 10 minutes
+          serviceAccountName: mlb-monitoring-sa@nba-props-platform.iam.gserviceaccount.com
+          containers:
+          - image: us-west2-docker.pkg.dev/nba-props-platform/mlb-monitoring/gap-detection:latest
+            env:
+            - name: GCP_PROJECT_ID
+              value: "nba-props-platform"
+            - name: PYTHONPATH
+              value: "."
+            - name: ENVIRONMENT
+              value: "production"
+            resources:
+              limits:
+                cpu: "1000m"
+                memory: "512Mi"
+            args:
+            - "--lookback-days"
+            - "7"
+            - "--alert-on-critical"
+
+---
+# Dockerfile for mlb-gap-detection
+# Location: deployment/cloud-run/mlb/monitoring/Dockerfile.gap-detection
+#
+# FROM python:3.11-slim
+# WORKDIR /app
+# COPY requirements.txt .
+# RUN pip install --no-cache-dir -r requirements.txt
+# COPY . .
+# ENTRYPOINT ["python", "monitoring/mlb/mlb_gap_detection.py"]

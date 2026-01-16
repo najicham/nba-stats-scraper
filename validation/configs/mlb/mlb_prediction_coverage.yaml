@@ -1,0 +1,73 @@
+# File: validation/configs/mlb/mlb_prediction_coverage.yaml
+# Description: MLB Prediction Coverage Validation Config - Ensure all eligible pitchers get predictions
+
+processor:
+  name: "mlb_prediction_coverage"
+  description: "Validates MLB strikeout prediction coverage and quality"
+  table: "mlb_predictions.pitcher_strikeouts"
+  partition_required: true
+  partition_field: "game_date"
+  type: "predictions"
+  layers:
+    - bigquery
+    - schedule
+
+# BigQuery Layer Validations
+bigquery_validations:
+  enabled: true
+
+  # Field validation
+  field_validation:
+    target_table: "mlb_predictions.pitcher_strikeouts"
+
+    required_not_null:
+      - prediction_id
+      - game_date
+      - pitcher_lookup
+      - pitcher_name
+      - predicted_strikeouts
+      - model_version
+
+    # Prediction quality ranges
+    value_ranges:
+      - field: predicted_strikeouts
+        min: 0.0
+        max: 20.0
+        severity: "error"
+        message: "Predicted strikeouts out of reasonable range"
+
+      - field: confidence_score
+        min: 0.0
+        max: 1.0
+        severity: "error"
+        message: "Confidence score must be between 0 and 1"
+
+# Schedule Validations
+schedule_validations:
+  enabled: true
+
+  data_freshness:
+    enabled: true
+    target_table: "mlb_predictions.pitcher_strikeouts"
+    timestamp_field: "created_at"
+    max_age_hours: 6
+    severity: "warning"
+    message: "Predictions data is stale"
+
+# Remediation
+remediation:
+  prediction_regeneration_template: |
+    gcloud run jobs execute mlb-prediction-worker \
+      --args=--date={date},--mode=batch \
+      --region=us-west2
+
+  grading_backfill_template: |
+    gcloud run jobs execute mlb-grading-service \
+      --args=--start-date={start_date},--end-date={end_date} \
+      --region=us-west2
+
+notifications:
+  enabled: true
+  channels: ["slack"]
+  on_failure: true
+  on_success: false

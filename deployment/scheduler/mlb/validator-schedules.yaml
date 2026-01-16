@@ -1,0 +1,94 @@
+# Cloud Scheduler Jobs for MLB Validators
+# These schedules trigger validation jobs throughout the day
+
+---
+# Schedule Validator - Daily at 6 AM ET (before games, after overnight schedule updates)
+apiVersion: cloudscheduler.googleapis.com/v1
+kind: Job
+metadata:
+  name: mlb-schedule-validator-daily
+spec:
+  schedule: "0 11 * * *"  # 6 AM ET = 11 AM UTC
+  timeZone: "America/New_York"
+  httpTarget:
+    uri: "https://us-west2-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/nba-props-platform/jobs/mlb-schedule-validator:run"
+    httpMethod: POST
+    oauthToken:
+      serviceAccountEmail: mlb-monitoring-sa@nba-props-platform.iam.gserviceaccount.com
+  retryConfig:
+    retryCount: 2
+    maxRetryDuration: "600s"
+    minBackoffDuration: "60s"
+    maxBackoffDuration: "300s"
+
+---
+# Pitcher Props Validator - Every 4 hours during season (game days)
+apiVersion: cloudscheduler.googleapis.com/v1
+kind: Job
+metadata:
+  name: mlb-pitcher-props-validator-4hourly
+spec:
+  schedule: "0 10,14,18,22,2,6 * 4-10 *"  # Every 4 hours, April-October
+  timeZone: "UTC"
+  httpTarget:
+    uri: "https://us-west2-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/nba-props-platform/jobs/mlb-pitcher-props-validator:run"
+    httpMethod: POST
+    oauthToken:
+      serviceAccountEmail: mlb-monitoring-sa@nba-props-platform.iam.gserviceaccount.com
+  retryConfig:
+    retryCount: 2
+    maxRetryDuration: "600s"
+
+---
+# Prediction Coverage Validator - Pre-games (5 PM ET)
+apiVersion: cloudscheduler.googleapis.com/v1
+kind: Job
+metadata:
+  name: mlb-prediction-coverage-validator-pregame
+spec:
+  schedule: "0 22 * 4-10 *"  # 5 PM ET = 10 PM UTC, April-October
+  timeZone: "UTC"
+  httpTarget:
+    uri: "https://us-west2-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/nba-props-platform/jobs/mlb-prediction-coverage-validator:run"
+    httpMethod: POST
+    oauthToken:
+      serviceAccountEmail: mlb-monitoring-sa@nba-props-platform.iam.gserviceaccount.com
+  retryConfig:
+    retryCount: 2
+    maxRetryDuration: "600s"
+
+---
+# Prediction Coverage Validator - Post-games (2 AM ET)
+apiVersion: cloudscheduler.googleapis.com/v1
+kind: Job
+metadata:
+  name: mlb-prediction-coverage-validator-postgame
+spec:
+  schedule: "0 7 * 4-10 *"  # 2 AM ET = 7 AM UTC, April-October
+  timeZone: "UTC"
+  httpTarget:
+    uri: "https://us-west2-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/nba-props-platform/jobs/mlb-prediction-coverage-validator:run"
+    httpMethod: POST
+    oauthToken:
+      serviceAccountEmail: mlb-monitoring-sa@nba-props-platform.iam.gserviceaccount.com
+  retryConfig:
+    retryCount: 1
+    maxRetryDuration: "600s"
+
+---
+# Deployment commands:
+# gcloud scheduler jobs create http mlb-schedule-validator-daily \
+#   --location=us-west2 \
+#   --schedule="0 11 * * *" \
+#   --time-zone="America/New_York" \
+#   --uri="https://us-west2-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/nba-props-platform/jobs/mlb-schedule-validator:run" \
+#   --http-method=POST \
+#   --oauth-service-account-email=mlb-monitoring-sa@nba-props-platform.iam.gserviceaccount.com
+#
+# gcloud scheduler jobs create http mlb-pitcher-props-validator-4hourly \
+#   --location=us-west2 \
+#   --schedule="0 10,14,18,22,2,6 * 4-10 *" \
+#   --time-zone="UTC" \
+#   --uri="https://us-west2-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/nba-props-platform/jobs/mlb-pitcher-props-validator:run" \
+#   --http-method=POST \
+#   --oauth-service-account-email=mlb-monitoring-sa@nba-props-platform.iam.gserviceaccount.com
