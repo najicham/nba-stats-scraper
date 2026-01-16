@@ -153,10 +153,11 @@ class PipelineReconciler:
     def check_phase4_precompute(self, date: str) -> Dict:
         """Phase 4: Check precompute tables for a date."""
         # Check multiple Phase 4 tables
+        # NOTE: ml_feature_store_v2 is in nba_predictions, not nba_precompute
         tables_to_check = [
-            ('nba_precompute', 'ml_feature_store_v2', 'analysis_date'),
-            ('nba_precompute', 'player_daily_cache', 'analysis_date'),
-            ('nba_precompute', 'player_composite_factors', 'analysis_date'),
+            ('nba_predictions', 'ml_feature_store_v2', 'game_date'),
+            ('nba_precompute', 'player_daily_cache', 'cache_date'),
+            ('nba_precompute', 'player_composite_factors', 'game_date'),
         ]
 
         results = {}
