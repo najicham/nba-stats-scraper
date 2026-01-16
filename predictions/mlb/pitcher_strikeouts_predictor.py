@@ -804,6 +804,11 @@ class PitcherStrikeoutsPredictor:
         """
         Load features for a pitcher from BigQuery
 
+        Joins:
+        - pitcher_game_summary: Core rolling stats and season stats
+        - pitcher_rolling_statcast: SwStr% and velocity trends (V1.6)
+        - bp_pitcher_props: BettingPros projections for game date (V1.6)
+
         Args:
             pitcher_lookup: Pitcher identifier
             game_date: Game date
@@ -813,54 +818,102 @@ class PitcherStrikeoutsPredictor:
         """
         client = self._get_bq_client()
 
-        # Query the most recent features before game_date
+        # Query with JOINs for V1.6 features
         query = f"""
+        WITH base_features AS (
+            SELECT
+                player_lookup,
+                game_date,
+                team_abbr,
+                opponent_team_abbr,
+                is_home,
+                is_postseason,
+                days_rest,
+
+                -- Rolling stats
+                k_avg_last_3,
+                k_avg_last_5,
+                k_avg_last_10,
+                k_std_last_10,
+                ip_avg_last_5,
+
+                -- Season stats
+                season_k_per_9,
+                era_rolling_10,
+                whip_rolling_10,
+                season_games_started,
+                season_strikeouts,
+                season_innings,
+
+                -- V1.4 features (opponent/ballpark context)
+                opponent_team_k_rate,
+                ballpark_k_factor,
+                month_of_season,
+                days_into_season,
+                vs_opponent_k_per_9 as avg_k_vs_opponent,
+                vs_opponent_games as games_vs_opponent,
+
+                -- Workload
+                games_last_30_days,
+                pitch_count_avg_last_5,
+
+                -- Data quality
+                data_completeness_score,
+                rolling_stats_games
+
+            FROM `{self.project_id}.mlb_analytics.pitcher_game_summary`
+            WHERE player_lookup = @pitcher_lookup
+              AND game_date < @game_date
+              AND game_date >= DATE_SUB(@game_date, INTERVAL 30 DAY)
+            ORDER BY game_date DESC
+            LIMIT 1
+        ),
+        -- V1.6: Rolling Statcast features (most recent before game_date)
+        statcast_features AS (
+            SELECT
+                player_lookup,
+                swstr_pct_last_3,
+                fb_velocity_last_3,
+                swstr_pct_last_5,
+                swstr_pct_season_prior
+            FROM `{self.project_id}.mlb_analytics.pitcher_rolling_statcast`
+            WHERE player_lookup = @pitcher_lookup
+              AND game_date < @game_date
+            ORDER BY game_date DESC
+            LIMIT 1
+        ),
+        -- V1.6: BettingPros projections for game date
+        bp_features AS (
+            SELECT
+                player_lookup,
+                projection_value as bp_projection,
+                over_line as bp_over_line,
+                -- Calculate performance percentages
+                SAFE_DIVIDE(perf_last_5_over, perf_last_5_over + perf_last_5_under) as perf_last_5_pct,
+                SAFE_DIVIDE(perf_last_10_over, perf_last_10_over + perf_last_10_under) as perf_last_10_pct
+            FROM `{self.project_id}.mlb_raw.bp_pitcher_props`
+            WHERE player_lookup = @pitcher_lookup
+              AND game_date = @game_date
+              AND market_name = 'pitcher-strikeouts'
+            LIMIT 1
+        )
         SELECT
-            player_lookup,
-            game_date,
-            team_abbr,
-            opponent_team_abbr,
-            is_home,
-            is_postseason,
-            days_rest,
-
-            -- Rolling stats
-            k_avg_last_3,
-            k_avg_last_5,
-            k_avg_last_10,
-            k_std_last_10,
-            ip_avg_last_5,
-
-            -- Season stats
-            season_k_per_9,
-            era_rolling_10,
-            whip_rolling_10,
-            season_games_started,
-            season_strikeouts,
-            season_innings,
-
-            -- NEW V1+4 features (opponent/ballpark context)
-            opponent_team_k_rate,
-            ballpark_k_factor,
-            month_of_season,
-            days_into_season,
-            avg_k_vs_opponent,
-            games_vs_opponent,
-
-            -- Workload
-            games_last_30_days,
-            pitch_count_avg_last_5,
-
-            -- Data quality
-            data_completeness_score,
-            rolling_stats_games
-
-        FROM `{self.project_id}.mlb_analytics.pitcher_game_summary`
-        WHERE player_lookup = @pitcher_lookup
-          AND game_date < @game_date
-          AND game_date >= DATE_SUB(@game_date, INTERVAL 30 DAY)
-        ORDER BY game_date DESC
-        LIMIT 1
+            b.*,
+            -- Rolling Statcast (f50-f53)
+            s.swstr_pct_last_3,
+            s.fb_velocity_last_3,
+            -- SwStr% trend: recent vs season baseline
+            COALESCE(s.swstr_pct_last_3 - s.swstr_pct_season_prior, 0) as swstr_trend,
+            COALESCE(s.fb_velocity_last_3, 0) as velocity_last_3,
+            -- BettingPros (f40-f44)
+            bp.bp_projection,
+            COALESCE(bp.bp_projection - bp.bp_over_line, 0) as projection_diff,
+            bp.perf_last_5_pct,
+            bp.perf_last_10_pct,
+            bp.bp_over_line as strikeouts_line
+        FROM base_features b
+        LEFT JOIN statcast_features s ON b.player_lookup = s.player_lookup
+        LEFT JOIN bp_features bp ON b.player_lookup = bp.player_lookup
         """
 
         try:
@@ -894,6 +947,11 @@ class PitcherStrikeoutsPredictor:
         """
         Generate predictions for multiple pitchers
 
+        Joins V1.6 features:
+        - pitcher_game_summary: Core rolling stats
+        - pitcher_rolling_statcast: SwStr% and velocity trends
+        - bp_pitcher_props: BettingPros projections for game date
+
         Args:
             game_date: Game date
             pitcher_lookups: List of pitcher lookups (or None for all starting pitchers)
@@ -907,51 +965,92 @@ class PitcherStrikeoutsPredictor:
         client = self._get_bq_client()
 
         if pitcher_lookups:
-            pitcher_filter = "AND player_lookup IN UNNEST(@pitcher_lookups)"
+            pitcher_filter = "AND pgs.player_lookup IN UNNEST(@pitcher_lookups)"
         else:
             pitcher_filter = ""
 
         query = f"""
         WITH latest_features AS (
             SELECT
-                player_lookup,
-                game_date as feature_date,
-                team_abbr,
-                opponent_team_abbr,
-                is_home,
-                is_postseason,
-                days_rest,
-                k_avg_last_3,
-                k_avg_last_5,
-                k_avg_last_10,
-                k_std_last_10,
-                ip_avg_last_5,
-                season_k_per_9,
-                era_rolling_10,
-                whip_rolling_10,
-                season_games_started,
-                season_strikeouts,
-                season_innings,
-                -- NEW V1+4 features
-                opponent_team_k_rate,
-                ballpark_k_factor,
-                month_of_season,
-                days_into_season,
-                avg_k_vs_opponent,
-                games_vs_opponent,
+                pgs.player_lookup,
+                pgs.game_date as feature_date,
+                pgs.team_abbr,
+                pgs.opponent_team_abbr,
+                pgs.is_home,
+                pgs.is_postseason,
+                pgs.days_rest,
+                pgs.k_avg_last_3,
+                pgs.k_avg_last_5,
+                pgs.k_avg_last_10,
+                pgs.k_std_last_10,
+                pgs.ip_avg_last_5,
+                pgs.season_k_per_9,
+                pgs.era_rolling_10,
+                pgs.whip_rolling_10,
+                pgs.season_games_started,
+                pgs.season_strikeouts,
+                pgs.season_innings,
+                -- V1.4 features
+                pgs.opponent_team_k_rate,
+                pgs.ballpark_k_factor,
+                pgs.month_of_season,
+                pgs.days_into_season,
+                pgs.vs_opponent_k_per_9 as avg_k_vs_opponent,
+                pgs.vs_opponent_games as games_vs_opponent,
                 -- Workload
-                games_last_30_days,
-                pitch_count_avg_last_5,
-                data_completeness_score,
-                rolling_stats_games,
-                ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY game_date DESC) as rn
-            FROM `{self.project_id}.mlb_analytics.pitcher_game_summary`
-            WHERE game_date < @game_date
-              AND game_date >= DATE_SUB(@game_date, INTERVAL 30 DAY)
-              AND rolling_stats_games >= 3
+                pgs.games_last_30_days,
+                pgs.pitch_count_avg_last_5,
+                pgs.data_completeness_score,
+                pgs.rolling_stats_games,
+                ROW_NUMBER() OVER (PARTITION BY pgs.player_lookup ORDER BY pgs.game_date DESC) as rn
+            FROM `{self.project_id}.mlb_analytics.pitcher_game_summary` pgs
+            WHERE pgs.game_date < @game_date
+              AND pgs.game_date >= DATE_SUB(@game_date, INTERVAL 30 DAY)
+              AND pgs.rolling_stats_games >= 3
               {pitcher_filter}
+        ),
+        -- V1.6: Rolling Statcast features (most recent before game_date)
+        statcast_latest AS (
+            SELECT
+                player_lookup,
+                swstr_pct_last_3,
+                fb_velocity_last_3,
+                swstr_pct_last_5,
+                swstr_pct_season_prior,
+                ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY game_date DESC) as rn
+            FROM `{self.project_id}.mlb_analytics.pitcher_rolling_statcast`
+            WHERE game_date < @game_date
+        ),
+        -- V1.6: BettingPros projections for game date
+        bp_features AS (
+            SELECT
+                player_lookup,
+                projection_value as bp_projection,
+                over_line as bp_over_line,
+                -- Calculate performance percentages
+                SAFE_DIVIDE(perf_last_5_over, perf_last_5_over + perf_last_5_under) as perf_last_5_pct,
+                SAFE_DIVIDE(perf_last_10_over, perf_last_10_over + perf_last_10_under) as perf_last_10_pct
+            FROM `{self.project_id}.mlb_raw.bp_pitcher_props`
+            WHERE game_date = @game_date
+              AND market_name = 'pitcher-strikeouts'
         )
-        SELECT * FROM latest_features WHERE rn = 1
+        SELECT
+            lf.*,
+            -- Rolling Statcast (f50-f53)
+            s.swstr_pct_last_3,
+            s.fb_velocity_last_3,
+            COALESCE(s.swstr_pct_last_3 - s.swstr_pct_season_prior, 0) as swstr_trend,
+            COALESCE(s.fb_velocity_last_3, 0) as velocity_last_3,
+            -- BettingPros (f40-f44)
+            bp.bp_projection,
+            COALESCE(bp.bp_projection - bp.bp_over_line, 0) as projection_diff,
+            bp.perf_last_5_pct,
+            bp.perf_last_10_pct,
+            bp.bp_over_line as strikeouts_line
+        FROM latest_features lf
+        LEFT JOIN statcast_latest s ON lf.player_lookup = s.player_lookup AND s.rn = 1
+        LEFT JOIN bp_features bp ON lf.player_lookup = bp.player_lookup
+        WHERE lf.rn = 1
         """
 
         try:
@@ -970,10 +1069,12 @@ class PitcherStrikeoutsPredictor:
 
             for row in result:
                 features = dict(row)
+                # Use strikeouts_line from BettingPros if available
+                line = features.get('strikeouts_line')
                 prediction = self.predict(
                     pitcher_lookup=features['player_lookup'],
                     features=features,
-                    strikeouts_line=None  # Would need to join with props data
+                    strikeouts_line=line
                 )
                 prediction['game_date'] = game_date.isoformat()
                 prediction['team_abbr'] = features.get('team_abbr')
