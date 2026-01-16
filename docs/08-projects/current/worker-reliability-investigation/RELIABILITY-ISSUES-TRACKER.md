@@ -15,7 +15,7 @@ This document tracks all reliability issues identified in the codebase audit, th
 | R-001 | Prediction Worker Silent Data Loss | HIGH | **FIXED** | prediction-worker |
 | R-002 | Analytics Service Returns 200 on Failures | HIGH | **FIXED** | analytics-processors |
 | R-003 | Precompute Service Returns 200 on Failures | HIGH | **FIXED** | precompute-processors |
-| R-004 | Precompute Completion Without Write Verification | HIGH | Open | precompute-base |
+| R-004 | Precompute Completion Without Write Verification | HIGH | **FIXED** | precompute-base |
 | R-005 | Raw Processor Batch Lock No Write Verification | MEDIUM | Open | raw-processors |
 | R-006 | Phase 4→5 No Data Freshness Validation | MEDIUM | Open | phase4-to-phase5 |
 | R-007 | No End-to-End Data Reconciliation | MEDIUM | Open | pipeline-wide |
@@ -158,20 +158,20 @@ Service needs redeployment to pick up changes.
 
 ---
 
-### R-004: Precompute Completion Without Write Verification
+### R-004: Precompute Completion Without Write Verification [FIXED]
 
 **Severity**: HIGH
-**Status**: Open
+**Status**: FIXED (2026-01-15)
 **Service**: `precompute-base`
 **File**: `data_processors/precompute/precompute_base.py`
-**Lines**: 1842
+**Lines**: 220-222, 1389-1390, 1848-1859
 
 #### Problem
-`_publish_completion_message(success=True)` is always called with `success=True` in `post_process()`, regardless of whether writes actually succeeded.
+`_publish_completion_message(success=True)` was always called with `success=True` in `post_process()`, regardless of whether writes actually succeeded. Specifically, when BigQuery writes failed due to streaming buffer conflicts, the rows were skipped but completion was still published as success.
 
-#### Current Code
+#### Root Cause
 ```python
-# Line 1842
+# Line 1842 (BEFORE)
 def post_process(self) -> None:
     """Post-processing - log summary stats and publish completion message."""
     # ... logging ...
@@ -179,41 +179,49 @@ def post_process(self) -> None:
         self._publish_completion_message(success=True)  # Always True!
 ```
 
+The streaming buffer failure path at line 1385 returned early without raising an exception, so `post_process()` still published success=True.
+
 #### Impact
 This is the SAME BUG PATTERN as R-001:
-- Processor runs, write may fail
-- Completion published anyway
+- Processor runs, write blocked by streaming buffer
+- `rows_skipped` set but no exception raised
+- Completion published as "success"
 - Phase 4→5 orchestrator receives "success"
 - Predictions triggered on incomplete data
 
-#### Proposed Fix
-```python
-def post_process(self) -> None:
-    """Post-processing - log summary stats and publish completion message."""
-    # ... logging ...
+#### Solution Implemented
+1. Added `self.write_success = True` flag in `__init__()` (line 220-222)
+2. Set `self.write_success = False` when streaming buffer blocks writes (line 1389-1390)
+3. Check `write_success` in `post_process()` before publishing (lines 1848-1859)
 
-    # Only publish success if writes actually succeeded
-    if self.table_name:
-        if hasattr(self, 'write_success') and not self.write_success:
-            logger.warning(f"Skipping completion publish - write failures detected")
-            self._publish_completion_message(success=False, error="Write failures detected")
-        else:
-            self._publish_completion_message(success=True)
+```python
+# __init__ (line 220-222)
+# Write success tracking (R-004: verify writes before publishing completion)
+self.write_success = True
+
+# save_precompute streaming buffer handler (line 1389-1390)
+if "streaming buffer" in str(load_e).lower():
+    # ... existing logging ...
+    # R-004: Mark write as failed to prevent incorrect success completion message
+    self.write_success = False
+    return
+
+# post_process (lines 1848-1859)
+if self.table_name:
+    # R-004: Verify write success before publishing completion
+    if hasattr(self, 'write_success') and not self.write_success:
+        logger.warning(f"⚠️ Publishing completion with success=False due to write failure")
+        self._publish_completion_message(
+            success=False,
+            error=f"Write failures detected: {self.stats.get('rows_skipped', 0)} rows skipped"
+        )
+    else:
+        self._publish_completion_message(success=True)
 ```
 
-Also need to track write success in the base class:
-```python
-def __init__(self):
-    self.write_success = True  # Default to True
-
-def _save_to_bigquery(self, ...):
-    try:
-        # ... existing write logic ...
-        load_job.result(timeout=300)
-    except Exception as e:
-        self.write_success = False  # Track failure
-        raise
-```
+#### Verification
+- After deployment, monitor logs for `"Publishing completion with success=False"` warnings
+- DLQ should receive messages for failed writes instead of silent data loss
 
 ---
 

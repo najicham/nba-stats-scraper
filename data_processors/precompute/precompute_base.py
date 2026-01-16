@@ -217,6 +217,10 @@ class PrecomputeProcessorBase(RunHistoryMixin):
         # Failed entities tracking (for auditing why players are missing)
         self.failed_entities = []
 
+        # Write success tracking (R-004: verify writes before publishing completion)
+        # Set to False on write failures to prevent incorrect success messages
+        self.write_success = True
+
         # Generate run_id
         self.run_id = str(uuid.uuid4())[:8]
         self.stats["run_id"] = self.run_id
@@ -1382,6 +1386,8 @@ class PrecomputeProcessorBase(RunHistoryMixin):
                     logger.info("Records will be processed on next run")
                     self.stats["rows_skipped"] = len(rows)
                     self.stats["rows_processed"] = 0
+                    # R-004: Mark write as failed to prevent incorrect success completion message
+                    self.write_success = False
                     return
                 else:
                     raise load_e
@@ -1839,7 +1845,18 @@ class PrecomputeProcessorBase(RunHistoryMixin):
                 f"Phase 5 will not be auto-triggered for {self.table_name}"
             )
         elif self.table_name:
-            self._publish_completion_message(success=True)
+            # R-004: Verify write success before publishing completion
+            if hasattr(self, 'write_success') and not self.write_success:
+                logger.warning(
+                    f"⚠️ Publishing completion with success=False due to write failure "
+                    f"(rows_skipped={self.stats.get('rows_skipped', 0)})"
+                )
+                self._publish_completion_message(
+                    success=False,
+                    error=f"Write failures detected: {self.stats.get('rows_skipped', 0)} rows skipped"
+                )
+            else:
+                self._publish_completion_message(success=True)
     
     def get_precompute_stats(self) -> Dict:
         """Get precompute stats - child classes override."""
