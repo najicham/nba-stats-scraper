@@ -1,14 +1,37 @@
-# Worker Reliability Investigation
+# Pipeline Reliability Investigation
 
 **Started**: 2026-01-16
-**Status**: In Progress
-**Priority**: P1 - Affects prediction coverage
+**Status**: Active
+**Priority**: P1 - Affects data integrity across pipeline
 
 ---
 
-## Problem Statement
+## Overview
 
-1-2 workers per batch fail silently, resulting in missing predictions. The stall detection fix (Session 63) works around this by marking batches "complete with partial results," but the root cause is unknown.
+This project tracks reliability issues across the entire data pipeline, not just prediction workers. The initial investigation into worker failures revealed systemic patterns that affect multiple services.
+
+**Key Deliverable**: [RELIABILITY-ISSUES-TRACKER.md](./RELIABILITY-ISSUES-TRACKER.md) - Master issue tracker
+
+---
+
+## Issues Summary
+
+| ID | Issue | Severity | Status |
+|----|-------|----------|--------|
+| R-001 | Prediction Worker Silent Data Loss | HIGH | **FIXED & DEPLOYED** |
+| R-002 | Analytics Service Returns 200 on Failures | HIGH | **FIXED & DEPLOYED** |
+| R-003 | Precompute Service Returns 200 on Failures | HIGH | **FIXED & DEPLOYED** |
+| R-004 | Precompute Completion Without Write Verification | HIGH | Open |
+| R-005 | Raw Processor Batch Lock No Write Verification | MEDIUM | Open |
+| R-006 | Phase 4→5 No Data Freshness Validation | MEDIUM | Open |
+| R-007 | No End-to-End Data Reconciliation | MEDIUM | Open |
+| R-008 | Pub/Sub Publish Failures Swallowed | LOW | Open |
+
+---
+
+## Original Problem Statement
+
+1-2 workers per batch fail silently, resulting in missing predictions. Investigation revealed the actual failure rate was 30-40%, not 1-2 workers. The stall detection fix (Session 63) works around this by marking batches "complete with partial results," but the root cause was a bug in error handling.
 
 ---
 
@@ -289,15 +312,29 @@ Add alerts for:
 - Endpoint: `POST /check-stalled`
 - Body: `{"stall_threshold_minutes": 10, "min_completion_pct": 95.0}`
 
-**Rollback Command (if needed):**
+**R-002 & R-003 Deployments (same session):**
+- Analytics: `nba-phase3-analytics-processors:v2-r002-fix` → revision `00068-5kh`
+- Precompute: `nba-phase4-precompute-processors:v2-r003-fix` → revision `00041-c5n`
+- Changes: Return 500 when all processors fail, enabling Pub/Sub retry
+
+**Rollback Commands (if needed):**
 ```bash
-gcloud run services update-traffic prediction-worker \
-  --region us-west2 \
-  --to-revisions prediction-worker-00035-4xk=100
+# R-001
+gcloud run services update-traffic prediction-worker --region us-west2 --to-revisions prediction-worker-00035-4xk=100
+
+# R-002
+gcloud run services update-traffic nba-phase3-analytics-processors --region us-west2 --to-revisions nba-phase3-analytics-processors-00067-xxx=100
+
+# R-003
+gcloud run services update-traffic nba-phase4-precompute-processors --region us-west2 --to-revisions nba-phase4-precompute-processors-00040-xxx=100
 ```
 
 ---
 
-## Deep Dive Documents
+## Documentation
 
-- **[SILENT-DATA-LOSS-ANALYSIS.md](./SILENT-DATA-LOSS-ANALYSIS.md)** - Comprehensive multi-layer defense strategy
+| Document | Description |
+|----------|-------------|
+| **[RELIABILITY-ISSUES-TRACKER.md](./RELIABILITY-ISSUES-TRACKER.md)** | Master issue tracker with all identified issues |
+| **[SILENT-DATA-LOSS-ANALYSIS.md](./SILENT-DATA-LOSS-ANALYSIS.md)** | Deep dive on R-001 and multi-layer defense strategy |
+| **[CODEBASE-RELIABILITY-AUDIT.md](./CODEBASE-RELIABILITY-AUDIT.md)** | Full audit of all processors and services |
