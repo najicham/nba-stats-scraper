@@ -605,6 +605,89 @@ def get_batch_status():
     }), 200
 
 
+@app.route('/check-stalled', methods=['POST'])
+@require_api_key
+def check_stalled_batches():
+    """
+    Check for stalled batches and complete them with partial results.
+
+    This endpoint can be called manually or by a scheduled job to prevent
+    batches from waiting indefinitely for workers that will never respond.
+
+    Request body (optional):
+    {
+        "batch_id": "batch_2026-01-15_123456",  // Optional: specific batch
+        "stall_threshold_minutes": 10,          // Optional: default 10
+        "min_completion_pct": 95.0              // Optional: default 95%
+    }
+
+    Returns:
+        JSON with results of stall check
+    """
+    try:
+        request_data = request.get_json() or {}
+        batch_id = request_data.get('batch_id')
+        stall_threshold = request_data.get('stall_threshold_minutes', 10)
+        min_completion = request_data.get('min_completion_pct', 95.0)
+
+        state_manager = get_state_manager()
+        results = []
+
+        if batch_id:
+            # Check specific batch
+            completed = state_manager.check_and_complete_stalled_batch(
+                batch_id=batch_id,
+                stall_threshold_minutes=stall_threshold,
+                min_completion_pct=min_completion
+            )
+            results.append({
+                'batch_id': batch_id,
+                'was_stalled': completed,
+                'action': 'completed_with_partial' if completed else 'no_action'
+            })
+
+            # If batch was completed, trigger consolidation
+            if completed:
+                print(f"🔄 Triggering consolidation for stalled batch {batch_id}", flush=True)
+                logger.info(f"Triggering consolidation for stalled batch {batch_id}")
+                publish_batch_summary_from_firestore(batch_id)
+        else:
+            # Check all active batches
+            active_batches = state_manager.get_active_batches()
+            for batch in active_batches:
+                completed = state_manager.check_and_complete_stalled_batch(
+                    batch_id=batch.batch_id,
+                    stall_threshold_minutes=stall_threshold,
+                    min_completion_pct=min_completion
+                )
+                results.append({
+                    'batch_id': batch.batch_id,
+                    'was_stalled': completed,
+                    'progress': f"{len(batch.completed_players)}/{batch.expected_players}",
+                    'action': 'completed_with_partial' if completed else 'no_action'
+                })
+
+                if completed:
+                    print(f"🔄 Triggering consolidation for stalled batch {batch.batch_id}", flush=True)
+                    publish_batch_summary_from_firestore(batch.batch_id)
+
+        stalled_count = sum(1 for r in results if r['was_stalled'])
+
+        return jsonify({
+            'status': 'success',
+            'batches_checked': len(results),
+            'batches_completed': stalled_count,
+            'results': results
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error checking stalled batches: {e}", exc_info=True)
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
+
 def publish_with_retry(publisher, topic_path: str, message_bytes: bytes,
                        player_lookup: str, max_retries: int = 3) -> bool:
     """
