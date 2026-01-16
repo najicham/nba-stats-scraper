@@ -477,11 +477,22 @@ def handle_prediction_request():
                 return ('Transient failure - triggering retry', 500)
 
         # Write to BigQuery staging table (consolidation happens later by coordinator)
+        # CRITICAL: Check return value - if write fails, return 500 to trigger Pub/Sub retry
         write_start = time.time()
-        write_predictions_to_bigquery(predictions, batch_id=batch_id, dataset_prefix=dataset_prefix)
+        write_success = write_predictions_to_bigquery(predictions, batch_id=batch_id, dataset_prefix=dataset_prefix)
         write_duration = time.time() - write_start
 
-        # Publish completion event (include batch_id for Firestore state tracking)
+        if not write_success:
+            # LAYER 1 FIX: Staging write failed - return 500 to trigger Pub/Sub retry
+            # This prevents silent data loss by ensuring the message is retried or sent to DLQ
+            logger.error(
+                f"Staging write failed for {player_lookup} on {game_date_str} - "
+                f"returning 500 to trigger Pub/Sub retry (batch={batch_id})"
+            )
+            return ('Staging write failed - triggering retry', 500)
+
+        # Publish completion event ONLY if staging write succeeded
+        # (include batch_id for Firestore state tracking)
         pubsub_start = time.time()
         publish_completion_event(player_lookup, game_date_str, len(predictions), batch_id=batch_id)
         pubsub_duration = time.time() - pubsub_start
@@ -1268,7 +1279,7 @@ def format_prediction_for_bigquery(
     return record
 
 
-def write_predictions_to_bigquery(predictions: List[Dict], batch_id: Optional[str] = None, dataset_prefix: str = ''):
+def write_predictions_to_bigquery(predictions: List[Dict], batch_id: Optional[str] = None, dataset_prefix: str = '') -> bool:
     """
     Write predictions to a batch staging table for later consolidation.
 
@@ -1282,12 +1293,17 @@ def write_predictions_to_bigquery(predictions: List[Dict], batch_id: Optional[st
         batch_id: Unique identifier for the batch (from coordinator).
                   If not provided, generates a fallback batch_id.
         dataset_prefix: Optional dataset prefix for test isolation (e.g., "test")
+
+    Returns:
+        bool: True if staging write succeeded, False otherwise.
+              CRITICAL: Caller MUST check return value and handle failures appropriately.
+              Returning False should trigger Pub/Sub retry (return 500), NOT silent continuation.
     """
     from batch_staging_writer import get_worker_id, BatchStagingWriter
 
     if not predictions:
         logger.warning("No predictions to write")
-        return
+        return True  # No predictions is not a failure - nothing to write
 
     # Track write metrics
     write_start_time = time.time()
@@ -1333,10 +1349,14 @@ def write_predictions_to_bigquery(predictions: List[Dict], batch_id: Optional[st
                 success=True,
                 duration_seconds=write_duration
             )
+            return True  # SUCCESS: Staging write completed
         else:
-            # Staging write failed
+            # Staging write failed - this is a critical failure
             write_duration = time.time() - write_start_time
-            logger.error(f"Staging write failed: {result.error_message}")
+            logger.error(
+                f"STAGING WRITE FAILED for {player_lookup}: {result.error_message} "
+                f"(batch={batch_id}, worker={worker_id}) - will trigger Pub/Sub retry"
+            )
 
             PredictionWriteMetrics.track_write_attempt(
                 player_lookup=player_lookup,
@@ -1345,11 +1365,14 @@ def write_predictions_to_bigquery(predictions: List[Dict], batch_id: Optional[st
                 duration_seconds=write_duration,
                 error_type='StagingWriteError'
             )
+            return False  # FAILURE: Signal caller to return 500 for retry
 
     except Exception as e:
         write_duration = time.time() - write_start_time
-        error_message = str(e)
-        logger.error(f"Error writing to staging: {e}")
+        logger.error(
+            f"STAGING WRITE EXCEPTION for {player_lookup}: {type(e).__name__}: {e} "
+            f"(batch={batch_id}) - will trigger Pub/Sub retry"
+        )
 
         # Track write failure
         PredictionWriteMetrics.track_write_attempt(
@@ -1359,7 +1382,7 @@ def write_predictions_to_bigquery(predictions: List[Dict], batch_id: Optional[st
             duration_seconds=write_duration,
             error_type=type(e).__name__
         )
-        # Don't raise - log and continue (graceful degradation)
+        return False  # FAILURE: Signal caller to return 500 for retry
 
 
 def publish_completion_event(player_lookup: str, game_date: str, prediction_count: int, batch_id: str = None):
