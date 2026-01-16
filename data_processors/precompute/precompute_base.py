@@ -1941,7 +1941,24 @@ class PrecomputeProcessorBase(RunHistoryMixin):
 
         except Exception as e:
             logger.warning(f"Failed to publish completion message: {e}")
-            # Don't fail the whole processor if Pub/Sub publishing fails
+            # R-008: Add monitoring for Pub/Sub failures
+            # Don't fail the whole processor, but send alert for visibility
+            try:
+                notify_warning(
+                    title=f"R-008: Pub/Sub Publish Failed - {self.__class__.__name__}",
+                    message=f"Failed to publish Phase 4 completion message. Downstream phases may not trigger.",
+                    details={
+                        'processor': self.__class__.__name__,
+                        'run_id': self.run_id,
+                        'topic': 'nba-phase4-precompute-complete',
+                        'table': self.table_name,
+                        'analysis_date': str(self.opts.get('analysis_date')),
+                        'error_type': type(e).__name__,
+                        'error': str(e)
+                    }
+                )
+            except Exception as notify_err:
+                logger.debug(f"Could not send Pub/Sub failure notification: {notify_err}")
 
     # =========================================================================
     # Time Tracking

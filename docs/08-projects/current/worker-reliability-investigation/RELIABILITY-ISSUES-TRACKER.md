@@ -19,7 +19,7 @@ This document tracks all reliability issues identified in the codebase audit, th
 | R-005 | Raw Processor Batch Lock No Write Verification | MEDIUM | Open | raw-processors |
 | R-006 | Phase 4→5 No Data Freshness Validation | MEDIUM | **FIXED** | phase4-to-phase5 |
 | R-007 | No End-to-End Data Reconciliation | MEDIUM | Open | pipeline-wide |
-| R-008 | Pub/Sub Publish Failures Swallowed | LOW | Open | precompute-base |
+| R-008 | Pub/Sub Publish Failures Swallowed | LOW | **FIXED** | precompute-base |
 
 ---
 
@@ -369,16 +369,19 @@ def daily_pipeline_reconciliation():
 
 ---
 
-### R-008: Pub/Sub Publish Failures Swallowed
+### R-008: Pub/Sub Publish Failures Swallowed [FIXED]
 
 **Severity**: LOW
-**Status**: Open
+**Status**: FIXED (2026-01-15)
 **Service**: `precompute-base`
 **File**: `data_processors/precompute/precompute_base.py`
-**Lines**: 1925-1927
+**Lines**: 1942-1958
 
 #### Problem
+Pub/Sub publish failures were logged as warnings but had no alerting, causing silent pipeline stalls.
+
 ```python
+# BEFORE
 except Exception as e:
     logger.warning(f"Failed to publish completion message: {e}")
     # Don't fail the whole processor if Pub/Sub publishing fails
@@ -387,26 +390,34 @@ except Exception as e:
 #### Impact
 - Downstream phases never trigger
 - Current run marked as success
-- Pipeline stalls silently
+- Pipeline stalls silently with no visibility
 
-#### Assessment
-This is partially intentional - Pub/Sub failures shouldn't cause data loss. However, repeated failures cause pipeline stalls.
+#### Solution Implemented
+Added notification system alert for Pub/Sub failures. The behavior of not failing the processor is preserved (correct - prevents data loss), but now there's visibility via Slack alerts.
 
-#### Proposed Fix
-Add monitoring/alerting rather than changing behavior:
 ```python
+# AFTER
 except Exception as e:
     logger.warning(f"Failed to publish completion message: {e}")
-    # Track metric for monitoring
+    # R-008: Add monitoring for Pub/Sub failures
     try:
-        record_pubsub_failure_metric(
-            processor=self.__class__.__name__,
-            topic='nba-phase4-precompute-complete',
-            error=str(e)
+        notify_warning(
+            title=f"R-008: Pub/Sub Publish Failed - {self.__class__.__name__}",
+            message="Failed to publish Phase 4 completion. Downstream may not trigger.",
+            details={
+                'processor': self.__class__.__name__,
+                'topic': 'nba-phase4-precompute-complete',
+                'table': self.table_name,
+                'error': str(e)
+            }
         )
-    except:
-        pass  # Don't fail on metric recording
+    except Exception as notify_err:
+        logger.debug(f"Could not send notification: {notify_err}")
 ```
+
+#### Verification
+- Monitor Slack for `R-008: Pub/Sub Publish Failed` warnings
+- Logs will show both the warning and notification attempt
 
 Create alert on metric threshold.
 
