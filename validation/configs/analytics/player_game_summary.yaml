@@ -1,0 +1,309 @@
+# File: validation/configs/analytics/player_game_summary.yaml
+# Description: Player Game Summary Analytics Validation Config - Critical for ML predictions
+
+processor:
+  name: "player_game_summary"
+  description: "Validates consolidated player game analytics from BDL + NBA.com sources"
+  table: "nba_analytics.player_game_summary"
+  partition_required: true
+  partition_field: "game_date"
+  type: "analytics"
+  layers:
+    - bigquery
+    - schedule
+    - dependencies
+
+# Data source information
+data_source:
+  primary: "nba_raw.bdl_player_boxscores"
+  enhancement: "nba_raw.nbac_gamebook_player_stats"
+  pipeline_stage: "Phase 3 Analytics"
+  criticality: "HIGH - feeds ML features and predictions"
+
+# Expected data completeness
+expected_coverage:
+  players_per_game: "19-34"  # Active players only
+  players_per_team: "10-17"  # Varies by rotation
+  active_only: true  # Should only include players who played (minutes > 0 or is_active = TRUE)
+
+  thresholds:
+    min_total_players_per_game: 18  # Alert if < 18 total
+    max_total_players_per_game: 36  # Alert if > 36
+    min_players_per_team: 8   # Alert if team has < 8 active players
+
+# BigQuery Layer Validations
+bigquery_validations:
+  enabled: true
+
+  # Completeness check against schedule
+  game_completeness:
+    enabled: true
+    query: |
+      WITH scheduled_games AS (
+        SELECT DISTINCT game_id, game_date, home_team_tricode, away_team_tricode
+        FROM `{project_id}.nba_raw.nbac_schedule`
+        WHERE game_date = '{date}'
+          AND game_status_text = 'Final'
+      ),
+      analytics_games AS (
+        SELECT DISTINCT game_id, game_date
+        FROM `{project_id}.nba_analytics.player_game_summary`
+        WHERE game_date = '{date}'
+      )
+      SELECT
+        s.game_id,
+        s.game_date,
+        s.home_team_tricode,
+        s.away_team_tricode
+      FROM scheduled_games s
+      LEFT JOIN analytics_games a ON s.game_id = a.game_id
+      WHERE a.game_id IS NULL
+    severity: "error"
+    message: "Analytics missing for completed games"
+
+  # Field validation
+  field_validation:
+    target_table: "nba_analytics.player_game_summary"
+
+    required_not_null:
+      - game_id
+      - game_date
+      - player_lookup  # CRITICAL: normalized player ID
+      - team_abbr
+      - points
+      - minutes_played
+      - is_active
+
+    # Data quality ranges
+    value_ranges:
+      - field: points
+        min: 0
+        max: 80  # NBA record: 100 (Wilt), modern era max ~80
+        severity: "warning"
+        message: "Unusual points total detected"
+
+      - field: minutes_played
+        min: 0
+        max: 60  # Regular: 48 min, OT possible up to ~60
+        severity: "warning"
+        message: "Unusual minutes played (check for multiple OT)"
+
+      - field: assists
+        min: 0
+        max: 30  # NBA record: 30 (Scott Skiles)
+        severity: "warning"
+
+      - field: rebounds
+        min: 0
+        max: 40  # NBA record: 55 (Wilt), modern era ~40
+        severity: "warning"
+
+  # R-009 Fix Validation: Check for 0-active games
+  zero_active_check:
+    enabled: true
+    query: |
+      WITH game_active_counts AS (
+        SELECT
+          game_id,
+          game_date,
+          COUNT(*) as total_players,
+          COUNTIF(is_active = TRUE) as active_players,
+          COUNTIF(is_active = FALSE) as inactive_players
+        FROM `{project_id}.nba_analytics.player_game_summary`
+        WHERE game_date = '{date}'
+        GROUP BY game_id, game_date
+      )
+      SELECT *
+      FROM game_active_counts
+      WHERE active_players = 0
+    severity: "critical"
+    message: "R-009 ISSUE DETECTED: Game has 0 active players (roster-only data bug)"
+
+  # Team presence check
+  both_teams_check:
+    enabled: true
+    query: |
+      WITH game_team_counts AS (
+        SELECT
+          game_id,
+          game_date,
+          COUNT(DISTINCT team_abbr) as team_count,
+          STRING_AGG(DISTINCT team_abbr ORDER BY team_abbr) as teams_present
+        FROM `{project_id}.nba_analytics.player_game_summary`
+        WHERE game_date = '{date}'
+          AND is_active = TRUE
+        GROUP BY game_id, game_date
+      )
+      SELECT *
+      FROM game_team_counts
+      WHERE team_count < 2
+    severity: "critical"
+    message: "Game missing one team's data"
+
+  # Player count sanity check
+  player_count_check:
+    enabled: true
+    query: |
+      WITH game_player_counts AS (
+        SELECT
+          game_id,
+          game_date,
+          COUNT(*) as total_players,
+          COUNTIF(is_active = TRUE) as active_players,
+          COUNTIF(minutes_played > 0) as players_with_minutes
+        FROM `{project_id}.nba_analytics.player_game_summary`
+        WHERE game_date = '{date}'
+        GROUP BY game_id, game_date
+      )
+      SELECT *
+      FROM game_player_counts
+      WHERE active_players < 18 OR active_players > 36
+    severity: "warning"
+    message: "Unusual player count for game"
+
+  # Data quality: points total per game
+  team_points_check:
+    enabled: true
+    query: |
+      WITH team_game_totals AS (
+        SELECT
+          game_id,
+          game_date,
+          team_abbr,
+          SUM(points) as team_points,
+          COUNT(*) as players
+        FROM `{project_id}.nba_analytics.player_game_summary`
+        WHERE game_date = '{date}'
+          AND is_active = TRUE
+        GROUP BY game_id, game_date, team_abbr
+      )
+      SELECT *
+      FROM team_game_totals
+      WHERE team_points < 70 OR team_points > 180
+    severity: "warning"
+    message: "Unusual team point total (expected 70-180)"
+
+  # Duplicate detection
+  duplicate_check:
+    enabled: true
+    query: |
+      SELECT
+        game_id,
+        player_lookup,
+        COUNT(*) as duplicate_count
+      FROM `{project_id}.nba_analytics.player_game_summary`
+      WHERE game_date = '{date}'
+      GROUP BY game_id, player_lookup
+      HAVING COUNT(*) > 1
+    severity: "critical"
+    message: "Duplicate player-game records detected"
+
+# Schedule Validations
+schedule_validations:
+  enabled: true
+
+  data_freshness:
+    target_table: "nba_analytics.player_game_summary"
+    timestamp_field: "created_at"
+    max_age_hours: 6
+    severity: "warning"
+    message: "Analytics data is stale (should process within 2-6 hours post-game)"
+
+# Dependency Validations (Phase 3 depends on Phase 2)
+dependency_validations:
+  enabled: true
+
+  # BDL staleness check (from R-009 fix)
+  bdl_staleness:
+    enabled: true
+    source_table: "nba_raw.bdl_player_boxscores"
+    timestamp_field: "created_at"
+    max_age_hours: 36  # Relaxed from 12h to 36h (R-009 fix)
+    severity: "warning"
+    message: "BDL source data is stale"
+
+  # Gamebook availability
+  gamebook_availability:
+    enabled: true
+    source_table: "nba_raw.nbac_gamebook_player_stats"
+    expected_coverage: 0.8  # 80% of scheduled games should have gamebook
+    severity: "warning"
+
+# Custom validations (implemented in validator class)
+custom_validations:
+
+  - name: "coverage_vs_schedule"
+    severity: "error"
+    description: "Verify analytics exists for all completed games"
+    details: |
+      Checks:
+      - Join with schedule (game_status_text = 'Final')
+      - Identify missing games
+      - Provide backfill commands for gaps
+
+  - name: "cross_validate_boxscores"
+    severity: "warning"
+    description: "Compare analytics aggregates with source boxscores"
+    details: |
+      Validates data integrity:
+      - Points totals should match BDL source
+      - Player counts should align
+      - Flag discrepancies > 5% for investigation
+
+  - name: "active_vs_roster"
+    severity: "critical"
+    description: "Verify active player tracking (R-009)"
+    details: |
+      Post R-009 fix validation:
+      - active_records > 0 for all games
+      - is_active field properly set
+      - No roster-only games (all inactive)
+
+  - name: "stat_consistency"
+    severity: "warning"
+    description: "Internal statistical consistency checks"
+    details: |
+      Validates:
+      - FG made <= FG attempted
+      - 3PT made <= FG made
+      - FT made <= FT attempted
+      - Total rebounds = offensive + defensive rebounds
+
+# Remediation
+remediation:
+  processor_backfill_template: |
+    curl -X POST "https://nba-phase3-analytics-processors-f7p3g7f6ya-wl.a.run.app/process-date-range" \
+      -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
+      -H "Content-Type: application/json" \
+      -d '{"start_date": "{start_date}", "end_date": "{end_date}", "processors": ["PlayerGameSummaryProcessor"], "backfill_mode": true}'
+
+  dependency_check_template: |
+    # Check if BDL source data exists
+    bq query --use_legacy_sql=false "
+      SELECT COUNT(*) as bdl_records
+      FROM \`nba_raw.bdl_player_boxscores\`
+      WHERE game_date = '{date}'
+    "
+
+notifications:
+  enabled: true
+  channels: ["slack"]
+  on_failure: true
+  on_success: false
+
+  # Critical alerts
+  alert_on:
+    - "critical"  # R-009 issues, duplicates, missing teams
+    - "error"     # Missing games, field validation failures
+
+  # Slack channel for analytics monitoring
+  slack_channel: "#analytics-alerts"
+
+  # Page on-call for critical issues
+  pagerduty:
+    enabled: true
+    severity: "critical"
+    conditions:
+      - "zero_active_check fails"
+      - "both_teams_check fails"
+      - "duplicate_check fails"
