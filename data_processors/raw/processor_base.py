@@ -120,6 +120,14 @@ def _categorize_failure(error: Exception, step: str, stats: Dict = None) -> str:
         'no results',
         'off-season',
         'off season',
+        # MLB-specific patterns (rainouts, postponements, etc.)
+        'postponed',
+        'rainout',
+        'weather delay',
+        'no props available',
+        'lines not posted',
+        'doubleheader',
+        'split admission',
     ]
     if any(pattern in error_msg for pattern in no_data_patterns):
         return 'no_data_available'
