@@ -532,6 +532,83 @@ def print_summary(predictions: List[ShadowPrediction]):
     print("\n" + "=" * 70)
 
 
+def run_shadow_mode(game_date: date, dry_run: bool = False) -> Dict:
+    """
+    Run shadow mode for a given date.
+
+    This is the main entry point that can be called from both CLI and API.
+
+    Args:
+        game_date: Date to run predictions for
+        dry_run: If True, don't write to BigQuery
+
+    Returns:
+        Dict with summary statistics
+    """
+    logger.info(f"Running MLB shadow mode for {game_date}")
+
+    # Initialize BigQuery client
+    client = bigquery.Client(project=PROJECT_ID)
+
+    # Load pitchers
+    logger.info("Loading pitchers...")
+    pitchers = load_pitchers_for_date(client, game_date)
+    logger.info(f"Found {len(pitchers)} starting pitchers")
+
+    if not pitchers:
+        logger.warning("No pitchers found for this date")
+        return {
+            'game_date': game_date.isoformat(),
+            'predictions_count': 0,
+            'pitchers_found': 0,
+            'status': 'no_pitchers'
+        }
+
+    # Run predictions
+    logger.info("Running shadow predictions...")
+    predictions = run_shadow_predictions(pitchers, game_date)
+
+    # Calculate summary stats
+    summary = {
+        'game_date': game_date.isoformat(),
+        'predictions_count': len(predictions),
+        'pitchers_found': len(pitchers),
+        'dry_run': dry_run,
+        'status': 'success'
+    }
+
+    if predictions:
+        # Prediction differences
+        diffs = [p.prediction_diff for p in predictions]
+        summary['mean_prediction_diff'] = round(sum(diffs) / len(diffs), 2)
+
+        # Recommendation agreement
+        agree = sum(1 for p in predictions if p.recommendation_agrees)
+        summary['recommendation_agreement_pct'] = round(100 * agree / len(predictions), 1)
+
+        # OVER/UNDER counts
+        summary['v1_4_overs'] = sum(1 for p in predictions if p.v1_4_recommendation == 'OVER')
+        summary['v1_4_unders'] = sum(1 for p in predictions if p.v1_4_recommendation == 'UNDER')
+        summary['v1_6_overs'] = sum(1 for p in predictions if p.v1_6_recommendation == 'OVER')
+        summary['v1_6_unders'] = sum(1 for p in predictions if p.v1_6_recommendation == 'UNDER')
+
+        # Average confidence
+        summary['v1_4_avg_confidence'] = round(sum(p.v1_4_confidence for p in predictions) / len(predictions), 1)
+        summary['v1_6_avg_confidence'] = round(sum(p.v1_6_confidence for p in predictions) / len(predictions), 1)
+
+    # Print summary (for CLI visibility)
+    print_summary(predictions)
+
+    # Write to BigQuery
+    rows_written = 0
+    if predictions:
+        rows_written = write_to_bigquery(client, predictions, dry_run=dry_run)
+
+    summary['rows_written'] = rows_written
+
+    return summary
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Run MLB shadow mode predictions (V1.4 vs V1.6)"
@@ -552,30 +629,11 @@ def main():
     else:
         game_date = date.today()
 
-    logger.info(f"Running MLB shadow mode for {game_date}")
+    # Run shadow mode
+    result = run_shadow_mode(game_date, dry_run=args.dry_run)
 
-    # Initialize BigQuery client
-    client = bigquery.Client(project=PROJECT_ID)
-
-    # Load pitchers
-    logger.info("Loading pitchers...")
-    pitchers = load_pitchers_for_date(client, game_date)
-    logger.info(f"Found {len(pitchers)} starting pitchers")
-
-    if not pitchers:
-        logger.warning("No pitchers found for this date")
-        return
-
-    # Run predictions
-    logger.info("Running shadow predictions...")
-    predictions = run_shadow_predictions(pitchers, game_date)
-
-    # Print summary
-    print_summary(predictions)
-
-    # Write to BigQuery
-    if predictions:
-        write_to_bigquery(client, predictions, dry_run=args.dry_run)
+    # Print final status
+    logger.info(f"Shadow mode complete: {result['predictions_count']} predictions, {result.get('rows_written', 0)} written")
 
 
 if __name__ == "__main__":

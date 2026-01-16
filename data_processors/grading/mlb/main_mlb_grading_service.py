@@ -8,6 +8,7 @@ Endpoints:
 - /health: Health check
 - /process: Process Pub/Sub trigger
 - /grade-date: Grade specific date (HTTP trigger)
+- /grade-shadow: Grade shadow mode predictions (V1.4 vs V1.6)
 """
 
 import os
@@ -18,6 +19,7 @@ from datetime import datetime, timezone, date, timedelta
 import base64
 
 from data_processors.grading.mlb.mlb_prediction_grading_processor import MlbPredictionGradingProcessor
+from data_processors.grading.mlb.mlb_shadow_grading_processor import MLBShadowGradingProcessor
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -129,6 +131,39 @@ def grade_date():
 
     except Exception as e:
         logger.error(f"Error in grade-date: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/grade-shadow', methods=['POST'])
+def grade_shadow():
+    """
+    Grade shadow mode predictions (V1.4 vs V1.6 comparison).
+
+    Request body:
+    {
+        "dry_run": false  // optional, default: false
+    }
+
+    Returns:
+        Summary of grading results including V1.4 vs V1.6 comparison
+    """
+    try:
+        data = request.get_json() or {}
+        dry_run = data.get('dry_run', False)
+
+        logger.info(f"Grading shadow mode predictions (dry_run={dry_run})")
+
+        processor = MLBShadowGradingProcessor()
+        result = processor.grade_pending(dry_run=dry_run)
+
+        return jsonify({
+            "status": "success",
+            "dry_run": dry_run,
+            **result
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error in grade-shadow: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 

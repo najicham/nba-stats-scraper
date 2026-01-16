@@ -17,6 +17,8 @@ from typing import Dict, List, Optional, Tuple
 from datetime import date, datetime
 import numpy as np
 
+from predictions.mlb.config import get_config, PredictionConfig, RedFlagConfig
+
 logger = logging.getLogger(__name__)
 
 # Default values for missing features (comprehensive for all model versions)
@@ -212,24 +214,29 @@ class PitcherStrikeoutsPredictor:
         return self._bq_client
 
     _il_cache = None  # Class-level cache for IL status
-    _il_cache_date = None
+    _il_cache_timestamp = None
 
     def _get_current_il_pitchers(self) -> set:
         """
         Get set of pitcher_lookup values currently on IL.
-        Caches result for the day to avoid repeated queries.
+        Caches result based on config TTL to avoid repeated queries.
 
         Returns:
             set: pitcher_lookup values on IL
         """
-        from datetime import date as date_type
+        from datetime import datetime, timedelta
 
-        today = date_type.today()
+        config = get_config()
+        cache_ttl_hours = config.cache.il_cache_ttl_hours
+        now = datetime.now()
 
-        # Return cached if same day
+        # Return cached if within TTL
         if (PitcherStrikeoutsPredictor._il_cache is not None and
-            PitcherStrikeoutsPredictor._il_cache_date == today):
-            return PitcherStrikeoutsPredictor._il_cache
+            PitcherStrikeoutsPredictor._il_cache_timestamp is not None):
+            cache_age = now - PitcherStrikeoutsPredictor._il_cache_timestamp
+            if cache_age < timedelta(hours=cache_ttl_hours):
+                logger.debug(f"IL cache hit (age: {cache_age})")
+                return PitcherStrikeoutsPredictor._il_cache
 
         try:
             client = self._get_bq_client()
@@ -243,15 +250,19 @@ class PitcherStrikeoutsPredictor:
             result = client.query(query).result()
             il_pitchers = {row.player_lookup for row in result}
 
-            # Cache result
+            # Cache result with timestamp
             PitcherStrikeoutsPredictor._il_cache = il_pitchers
-            PitcherStrikeoutsPredictor._il_cache_date = today
+            PitcherStrikeoutsPredictor._il_cache_timestamp = now
 
-            logger.info(f"Loaded {len(il_pitchers)} pitchers on IL")
+            logger.info(f"Loaded {len(il_pitchers)} pitchers on IL (cache refreshed)")
             return il_pitchers
 
         except Exception as e:
-            logger.warning(f"Failed to load IL status: {e}")
+            logger.error(f"Failed to load IL status from BigQuery: {e}")
+            # Return stale cache if available (fail-safe)
+            if PitcherStrikeoutsPredictor._il_cache is not None:
+                logger.warning("Returning stale IL cache after error")
+                return PitcherStrikeoutsPredictor._il_cache
             return set()
 
     def load_model(self) -> bool:
@@ -464,10 +475,11 @@ class PitcherStrikeoutsPredictor:
                 confidence = min(100, raw_confidence * 200)  # Scale: 0.5 prob diff = 100 conf
 
                 # Direct recommendation from probability
-                # Use thresholds that correspond to ~60 confidence (prob > 0.65 or < 0.35)
-                if over_probability >= 0.53:
+                # Use configurable probability thresholds
+                pred_config = get_config().prediction
+                if over_probability >= pred_config.classifier_over_threshold:
                     recommendation = 'OVER'
-                elif over_probability <= 0.47:
+                elif over_probability <= pred_config.classifier_under_threshold:
                     recommendation = 'UNDER'
                 else:
                     recommendation = 'PASS'
@@ -616,17 +628,16 @@ class PitcherStrikeoutsPredictor:
         if strikeouts_line is None:
             return 'NO_LINE'
 
-        if confidence < 60:
+        config = get_config().prediction
+
+        if confidence < config.min_confidence:
             return 'PASS'
 
         edge = predicted_strikeouts - strikeouts_line
 
-        # Minimum edge threshold (0.5 K for strikeouts)
-        min_edge = 0.5
-
-        if edge >= min_edge:
+        if edge >= config.min_edge:
             return 'OVER'
-        elif edge <= -min_edge:
+        elif edge <= -config.min_edge:
             return 'UNDER'
         else:
             return 'PASS'
@@ -686,6 +697,9 @@ class PitcherStrikeoutsPredictor:
             flags.append("SKIP: Currently on IL")
             return RedFlagResult(skip_bet, confidence_multiplier, flags, skip_reason)
 
+        # Load red flag configuration
+        rf = get_config().red_flags
+
         # 1. First start of season - no data to predict with
         is_first_start = features.get('is_first_start', False)
         season_games = features.get('season_games_started', 0)
@@ -698,7 +712,7 @@ class PitcherStrikeoutsPredictor:
 
         # 2. Very low IP average - likely bullpen/opener
         ip_avg = features.get('ip_avg_last_5', 5.5)
-        if ip_avg is not None and ip_avg < 4.0:
+        if ip_avg is not None and ip_avg < rf.min_ip_avg:
             skip_bet = True
             skip_reason = f"Low IP avg ({ip_avg:.1f}) - likely bullpen/opener"
             flags.append(f"SKIP: Low IP avg ({ip_avg:.1f})")
@@ -706,7 +720,7 @@ class PitcherStrikeoutsPredictor:
 
         # 3. MLB debut / very few career starts
         rolling_games = features.get('rolling_stats_games', 0)
-        if rolling_games is not None and rolling_games < 2:
+        if rolling_games is not None and rolling_games < rf.min_career_starts:
             skip_bet = True
             skip_reason = f"Only {rolling_games} career starts - too little data"
             flags.append(f"SKIP: Only {rolling_games} career starts")
@@ -716,35 +730,33 @@ class PitcherStrikeoutsPredictor:
         # SOFT REDUCE RULES (cumulative)
         # =============================================================
 
-        # 4. Early season (first 3 starts)
-        if season_games < 3:
-            confidence_multiplier *= 0.7
+        # 4. Early season (limited starts)
+        if season_games < rf.early_season_starts:
+            confidence_multiplier *= rf.early_season_multiplier
             flags.append(f"REDUCE: Early season ({season_games} starts)")
 
         # 5. Very inconsistent pitcher (high K std dev)
         # BACKTEST FINDING: k_std > 4 → 34.4% OVER hit rate vs 62.5% UNDER!
         k_std = features.get('k_std_last_10', 2.0)
         if k_std is not None:
-            if k_std > 4:
+            if k_std > rf.high_variance_k_std:
                 if recommendation == 'OVER':
-                    # High variance + OVER = very bad (34.4% hit rate in backtest)
-                    confidence_multiplier *= 0.4
+                    confidence_multiplier *= rf.high_variance_over_multiplier
                     flags.append(f"REDUCE: High variance ({k_std:.1f}) strongly favors UNDER")
                 elif recommendation == 'UNDER':
-                    # High variance + UNDER = good (62.5% hit rate in backtest)
-                    confidence_multiplier *= 1.1  # Slight boost
+                    confidence_multiplier *= rf.high_variance_under_multiplier
                     flags.append(f"BOOST: High variance ({k_std:.1f}) favors UNDER")
 
         # 6. Short rest (affects OVER bets more)
         days_rest = features.get('days_rest', 5)
-        if days_rest is not None and days_rest < 4 and recommendation == 'OVER':
-            confidence_multiplier *= 0.7
+        if days_rest is not None and days_rest < rf.short_rest_days and recommendation == 'OVER':
+            confidence_multiplier *= rf.short_rest_over_multiplier
             flags.append(f"REDUCE: Short rest ({days_rest}d) for OVER bet")
 
         # 7. High recent workload (affects OVER bets)
         games_30d = features.get('games_last_30_days', 5)
-        if games_30d is not None and games_30d > 6 and recommendation == 'OVER':
-            confidence_multiplier *= 0.85
+        if games_30d is not None and games_30d > rf.high_workload_games and recommendation == 'OVER':
+            confidence_multiplier *= rf.high_workload_over_multiplier
             flags.append(f"REDUCE: High workload ({games_30d} games in 30d)")
 
         # 8. SwStr% directional signal (BACKTEST VALIDATED)
@@ -752,21 +764,21 @@ class PitcherStrikeoutsPredictor:
         # low_swstr (<8%): 47.5% OVER vs 49.7% UNDER → Lean UNDER
         swstr = features.get('season_swstr_pct')
         if swstr is not None:
-            if swstr > 0.12:
+            if swstr > rf.elite_swstr_pct:
                 # Elite stuff - favors OVER
                 if recommendation == 'OVER':
-                    confidence_multiplier *= 1.1
+                    confidence_multiplier *= rf.elite_swstr_over_multiplier
                     flags.append(f"BOOST: Elite SwStr% ({swstr:.1%}) favors OVER")
                 elif recommendation == 'UNDER':
-                    confidence_multiplier *= 0.8
+                    confidence_multiplier *= rf.elite_swstr_under_multiplier
                     flags.append(f"REDUCE: Elite SwStr% ({swstr:.1%}) - avoid UNDER")
-            elif swstr < 0.08:
+            elif swstr < rf.low_swstr_pct:
                 # Weak stuff - favors UNDER
                 if recommendation == 'OVER':
-                    confidence_multiplier *= 0.85
+                    confidence_multiplier *= rf.low_swstr_over_multiplier
                     flags.append(f"REDUCE: Low SwStr% ({swstr:.1%}) - lean UNDER")
                 elif recommendation == 'UNDER':
-                    confidence_multiplier *= 1.05
+                    confidence_multiplier *= rf.low_swstr_under_multiplier
                     flags.append(f"SLIGHT BOOST: Low SwStr% ({swstr:.1%})")
 
         # 9. SwStr% Trend Signal (BACKTEST VALIDATED - Session 57)
@@ -774,25 +786,25 @@ class PitcherStrikeoutsPredictor:
         # Cold streak (-3%): 49.8% UNDER hit rate (315 games) → Lean UNDER
         swstr_trend = features.get('swstr_trend')  # recent_swstr - season_swstr
         if swstr_trend is not None:
-            if swstr_trend > 0.03:
-                # Hot streak - recent SwStr% 3%+ above season baseline
+            if swstr_trend > rf.hot_streak_trend:
+                # Hot streak - recent SwStr% above season baseline
                 if recommendation == 'OVER':
-                    confidence_multiplier *= 1.08
+                    confidence_multiplier *= rf.hot_streak_over_multiplier
                     flags.append(f"BOOST: Hot streak (SwStr% +{swstr_trend:.1%}) favors OVER")
                 elif recommendation == 'UNDER':
-                    confidence_multiplier *= 0.92
+                    confidence_multiplier *= rf.hot_streak_under_multiplier
                     flags.append(f"REDUCE: Hot streak (SwStr% +{swstr_trend:.1%}) - avoid UNDER")
-            elif swstr_trend < -0.03:
-                # Cold streak - recent SwStr% 3%+ below season baseline
+            elif swstr_trend < rf.cold_streak_trend:
+                # Cold streak - recent SwStr% below season baseline
                 if recommendation == 'OVER':
-                    confidence_multiplier *= 0.92
+                    confidence_multiplier *= rf.cold_streak_over_multiplier
                     flags.append(f"REDUCE: Cold streak (SwStr% {swstr_trend:.1%}) - lean UNDER")
                 elif recommendation == 'UNDER':
-                    confidence_multiplier *= 1.05
+                    confidence_multiplier *= rf.cold_streak_under_multiplier
                     flags.append(f"SLIGHT BOOST: Cold streak (SwStr% {swstr_trend:.1%})")
 
         # Minimum multiplier
-        confidence_multiplier = max(0.3, confidence_multiplier)
+        confidence_multiplier = max(rf.min_confidence_multiplier, confidence_multiplier)
 
         return RedFlagResult(skip_bet, confidence_multiplier, flags, skip_reason)
 
