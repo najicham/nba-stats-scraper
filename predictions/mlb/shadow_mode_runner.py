@@ -383,6 +383,16 @@ def run_shadow_predictions(pitchers: List[Dict], game_date: date) -> List[Shadow
         v1_4_pred = v1_4_result.get('predicted_strikeouts', 0) or 0
         v1_6_pred = v1_6_result.get('predicted_strikeouts', 0) or 0
 
+        # Calculate edges (prediction - line)
+        v1_4_edge = v1_4_pred - strikeouts_line
+        v1_6_edge = v1_6_pred - strikeouts_line
+
+        # Shadow mode: NO THRESHOLDS - pure prediction vs line
+        # This gives us maximum data for learning. We can filter by edge later.
+        # OVER if predicted > line, UNDER if predicted < line
+        v1_4_recommendation = 'OVER' if v1_4_pred > strikeouts_line else 'UNDER'
+        v1_6_recommendation = 'OVER' if v1_6_pred > strikeouts_line else 'UNDER'
+
         results.append(ShadowPrediction(
             pitcher_lookup=pitcher_lookup,
             game_date=str(game_date),
@@ -393,18 +403,16 @@ def run_shadow_predictions(pitchers: List[Dict], game_date: date) -> List[Shadow
             # V1.4 results
             v1_4_predicted=v1_4_pred,
             v1_4_confidence=v1_4_result.get('confidence', 0),
-            v1_4_recommendation=v1_4_result.get('recommendation', 'PASS'),
-            v1_4_edge=v1_4_result.get('edge'),
+            v1_4_recommendation=v1_4_recommendation,
+            v1_4_edge=v1_4_edge,
             # V1.6 results
             v1_6_predicted=v1_6_pred,
             v1_6_confidence=v1_6_result.get('confidence', 0),
-            v1_6_recommendation=v1_6_result.get('recommendation', 'PASS'),
-            v1_6_edge=v1_6_result.get('edge'),
+            v1_6_recommendation=v1_6_recommendation,
+            v1_6_edge=v1_6_edge,
             # Comparison
             prediction_diff=v1_6_pred - v1_4_pred,
-            recommendation_agrees=(
-                v1_4_result.get('recommendation') == v1_6_result.get('recommendation')
-            ),
+            recommendation_agrees=(v1_4_recommendation == v1_6_recommendation),
             # Metadata
             v1_4_model_version=v1_4_result.get('model_version', 'unknown'),
             v1_6_model_version=v1_6_result.get('model_version', 'unknown'),
