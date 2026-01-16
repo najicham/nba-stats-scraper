@@ -26,6 +26,14 @@ from typing import Dict, List, Optional
 
 from flask import Flask, request, jsonify
 
+# Import AlertManager for intelligent alerting
+try:
+    from shared.alerts.alert_manager import get_alert_manager
+    ALERTING_ENABLED = True
+except ImportError:
+    ALERTING_ENABLED = False
+    logging.warning("AlertManager not available, alerts disabled")
+
 # Setup logging
 logging.basicConfig(
     level=logging.INFO,
@@ -49,6 +57,31 @@ PREDICTIONS_TABLE = os.environ.get(
 
 # Flask app
 app = Flask(__name__)
+
+# Initialize AlertManager (with backfill mode detection)
+def get_mlb_alert_manager():
+    """Get AlertManager instance with MLB-specific configuration."""
+    if not ALERTING_ENABLED:
+        return None
+    backfill_mode = os.environ.get('BACKFILL_MODE', 'false').lower() == 'true'
+    return get_alert_manager(backfill_mode=backfill_mode)
+
+
+def send_mlb_alert(severity: str, title: str, message: str, context: dict = None):
+    """Send alert via AlertManager with rate limiting."""
+    alert_mgr = get_mlb_alert_manager()
+    if alert_mgr:
+        try:
+            alert_mgr.send_alert(
+                severity=severity,
+                title=title,
+                message=message,
+                category='mlb_prediction_failure',
+                context=context or {}
+            )
+        except Exception as e:
+            logger.error(f"Failed to send alert: {e}")
+
 
 # Lazy-loaded components
 _predictor = None
@@ -184,6 +217,18 @@ def predict_single():
 
     except Exception as e:
         logger.error(f"Prediction error: {e}", exc_info=True)
+        # Send alert for prediction failure
+        send_mlb_alert(
+            severity='warning',
+            title='MLB Prediction Failed',
+            message=str(e),
+            context={
+                'endpoint': '/predict',
+                'pitcher_lookup': data.get('pitcher_lookup') if 'data' in dir() else None,
+                'game_date': data.get('game_date') if 'data' in dir() else None,
+                'error_type': type(e).__name__
+            }
+        )
         return jsonify({
             'error': str(e),
             'duration_seconds': round(time.time() - start_time, 3)
@@ -245,6 +290,17 @@ def predict_batch():
 
     except Exception as e:
         logger.error(f"Batch prediction error: {e}", exc_info=True)
+        # Send alert for batch prediction failure (critical - affects all predictions for a date)
+        send_mlb_alert(
+            severity='critical',
+            title='MLB Batch Prediction Failed',
+            message=str(e),
+            context={
+                'endpoint': '/predict-batch',
+                'game_date': data.get('game_date') if 'data' in dir() else None,
+                'error_type': type(e).__name__
+            }
+        )
         return jsonify({
             'error': str(e),
             'duration_seconds': round(time.time() - start_time, 3)
@@ -294,6 +350,17 @@ def execute_shadow_mode():
 
     except Exception as e:
         logger.error(f"Shadow mode error: {e}", exc_info=True)
+        # Send alert for shadow mode failure
+        send_mlb_alert(
+            severity='warning',
+            title='MLB Shadow Mode Failed',
+            message=str(e),
+            context={
+                'endpoint': '/execute-shadow-mode',
+                'game_date': data.get('game_date') if 'data' in dir() else None,
+                'error_type': type(e).__name__
+            }
+        )
         return jsonify({
             'error': str(e),
             'status': 'failed',
@@ -371,6 +438,16 @@ def handle_pubsub():
 
     except Exception as e:
         logger.error(f"Pub/Sub handler error: {e}", exc_info=True)
+        # Send alert for Pub/Sub handler failure (critical - production trigger)
+        send_mlb_alert(
+            severity='critical',
+            title='MLB Prediction Worker Pub/Sub Error',
+            message=str(e),
+            context={
+                'endpoint': '/pubsub',
+                'error_type': type(e).__name__
+            }
+        )
         return ('Internal Server Error', 500)
 
 

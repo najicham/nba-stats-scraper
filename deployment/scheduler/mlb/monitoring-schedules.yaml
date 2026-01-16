@@ -1,0 +1,104 @@
+# Cloud Scheduler Jobs for MLB Monitoring
+# These schedules trigger monitoring jobs throughout the day
+
+---
+# Gap Detection - Daily at 8 AM ET (detect overnight processing gaps)
+apiVersion: cloudscheduler.googleapis.com/v1
+kind: Job
+metadata:
+  name: mlb-gap-detection-daily
+spec:
+  schedule: "0 13 * * *"  # 8 AM ET = 1 PM UTC
+  timeZone: "America/New_York"
+  httpTarget:
+    uri: "https://us-west2-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/nba-props-platform/jobs/mlb-gap-detection:run"
+    httpMethod: POST
+    oauthToken:
+      serviceAccountEmail: mlb-monitoring-sa@nba-props-platform.iam.gserviceaccount.com
+  retryConfig:
+    retryCount: 2
+    maxRetryDuration: "600s"
+    minBackoffDuration: "60s"
+    maxBackoffDuration: "300s"
+
+---
+# Freshness Checker - Every 2 hours during season (6 AM - midnight ET)
+apiVersion: cloudscheduler.googleapis.com/v1
+kind: Job
+metadata:
+  name: mlb-freshness-checker-hourly
+spec:
+  schedule: "0 11-5/2 * 4-10 *"  # Every 2 hours, 11 AM - 5 AM UTC (6 AM - midnight ET), April-October
+  timeZone: "UTC"
+  httpTarget:
+    uri: "https://us-west2-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/nba-props-platform/jobs/mlb-freshness-checker:run"
+    httpMethod: POST
+    oauthToken:
+      serviceAccountEmail: mlb-monitoring-sa@nba-props-platform.iam.gserviceaccount.com
+  retryConfig:
+    retryCount: 1
+    maxRetryDuration: "300s"
+
+---
+# Prediction Coverage - 2 hours before typical game time (5 PM ET = 10 PM UTC)
+apiVersion: cloudscheduler.googleapis.com/v1
+kind: Job
+metadata:
+  name: mlb-prediction-coverage-pregame
+spec:
+  schedule: "0 22 * 4-10 *"  # 5 PM ET = 10 PM UTC, April-October
+  timeZone: "UTC"
+  httpTarget:
+    uri: "https://us-west2-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/nba-props-platform/jobs/mlb-prediction-coverage:run"
+    httpMethod: POST
+    oauthToken:
+      serviceAccountEmail: mlb-monitoring-sa@nba-props-platform.iam.gserviceaccount.com
+  retryConfig:
+    retryCount: 2
+    maxRetryDuration: "300s"
+
+---
+# Prediction Coverage - Post-games (2 AM ET = 7 AM UTC)
+apiVersion: cloudscheduler.googleapis.com/v1
+kind: Job
+metadata:
+  name: mlb-prediction-coverage-postgame
+spec:
+  schedule: "0 7 * 4-10 *"  # 2 AM ET = 7 AM UTC, April-October
+  timeZone: "UTC"
+  httpTarget:
+    uri: "https://us-west2-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/nba-props-platform/jobs/mlb-prediction-coverage:run"
+    httpMethod: POST
+    oauthToken:
+      serviceAccountEmail: mlb-monitoring-sa@nba-props-platform.iam.gserviceaccount.com
+  retryConfig:
+    retryCount: 1
+    maxRetryDuration: "300s"
+
+---
+# Stall Detector - Every hour during season (6 AM - midnight ET)
+apiVersion: cloudscheduler.googleapis.com/v1
+kind: Job
+metadata:
+  name: mlb-stall-detector-hourly
+spec:
+  schedule: "0 11-5 * 4-10 *"  # Every hour, 11 AM - 5 AM UTC (6 AM - midnight ET), April-October
+  timeZone: "UTC"
+  httpTarget:
+    uri: "https://us-west2-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/nba-props-platform/jobs/mlb-stall-detector:run"
+    httpMethod: POST
+    oauthToken:
+      serviceAccountEmail: mlb-monitoring-sa@nba-props-platform.iam.gserviceaccount.com
+  retryConfig:
+    retryCount: 1
+    maxRetryDuration: "300s"
+
+---
+# Deployment command:
+# gcloud scheduler jobs create http mlb-gap-detection-daily \
+#   --location=us-west2 \
+#   --schedule="0 13 * * *" \
+#   --time-zone="America/New_York" \
+#   --uri="https://us-west2-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/nba-props-platform/jobs/mlb-gap-detection:run" \
+#   --http-method=POST \
+#   --oauth-service-account-email=mlb-monitoring-sa@nba-props-platform.iam.gserviceaccount.com

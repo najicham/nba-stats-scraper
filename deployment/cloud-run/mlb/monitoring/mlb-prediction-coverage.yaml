@@ -1,0 +1,43 @@
+# Cloud Run Job Configuration for MLB Prediction Coverage Monitor
+# Ensures all pitchers receive predictions
+
+apiVersion: run.googleapis.com/v1
+kind: Job
+metadata:
+  name: mlb-prediction-coverage
+  labels:
+    cloud.googleapis.com/location: us-west2
+    sport: mlb
+    type: monitoring
+    component: prediction-coverage
+spec:
+  template:
+    metadata:
+      annotations:
+        run.googleapis.com/execution-environment: gen2
+    spec:
+      taskCount: 1
+      template:
+        spec:
+          maxRetries: 2
+          timeoutSeconds: 300  # 5 minutes
+          serviceAccountName: mlb-monitoring-sa@nba-props-platform.iam.gserviceaccount.com
+          containers:
+          - image: us-west2-docker.pkg.dev/nba-props-platform/mlb-monitoring/prediction-coverage:latest
+            env:
+            - name: GCP_PROJECT_ID
+              value: "nba-props-platform"
+            - name: PYTHONPATH
+              value: "."
+            - name: ENVIRONMENT
+              value: "production"
+            resources:
+              limits:
+                cpu: "1000m"
+                memory: "512Mi"
+            args:
+            - "--date"
+            - "today"
+            - "--threshold"
+            - "90"
+            - "--alert-below-threshold"
