@@ -192,13 +192,49 @@ def process_analytics():
                         "error": str(e)
                     })
         
+        # R-002 FIX: Check for failures and return appropriate status code
+        # Previously always returned 200, even when processors failed
+        failures = [r for r in results if r.get('status') in ('error', 'exception', 'timeout')]
+        successes = [r for r in results if r.get('status') == 'success']
+
+        if not successes and failures:
+            # All processors failed - return 500 to trigger Pub/Sub retry
+            logger.error(
+                f"❌ ALL {len(failures)} analytics processors failed for {game_date} "
+                f"(source={source_table}) - returning 500 to trigger retry"
+            )
+            return jsonify({
+                "status": "failed",
+                "source_table": source_table,
+                "game_date": game_date,
+                "failures": len(failures),
+                "results": results
+            }), 500
+
+        if failures:
+            # Partial failure - log warning but return 200 to ACK
+            # (retrying won't help if some processors succeeded)
+            logger.warning(
+                f"⚠️ PARTIAL FAILURE: {len(failures)}/{len(results)} analytics processors failed "
+                f"for {game_date} (source={source_table})"
+            )
+            return jsonify({
+                "status": "partial_failure",
+                "source_table": source_table,
+                "game_date": game_date,
+                "successes": len(successes),
+                "failures": len(failures),
+                "results": results
+            }), 200  # ACK to prevent infinite retries, but status indicates partial
+
+        # All succeeded
         return jsonify({
             "status": "completed",
             "source_table": source_table,
             "game_date": game_date,
             "results": results
         }), 200
-            
+
     except Exception as e:
         logger.error(f"Error processing analytics message: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
