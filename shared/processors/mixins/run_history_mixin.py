@@ -580,6 +580,7 @@ class RunHistoryMixin:
                 check_date = str(data_date)
 
             # Build query with optional game_code filter
+            # Include summary field to check for active_records (R-009 fix)
             if game_code:
                 # Game-level deduplication (for gamebook processor)
                 query = f"""
@@ -589,7 +590,8 @@ class RunHistoryMixin:
                     processed_at,
                     run_id,
                     game_code,
-                    records_processed
+                    records_processed,
+                    summary
                 FROM `{project_id}.{self.RUN_HISTORY_TABLE}`
                 WHERE processor_name = @processor_name
                   AND data_date = @data_date
@@ -614,7 +616,8 @@ class RunHistoryMixin:
                     started_at,
                     processed_at,
                     run_id,
-                    records_processed
+                    records_processed,
+                    summary
                 FROM `{project_id}.{self.RUN_HISTORY_TABLE}`
                 WHERE processor_name = @processor_name
                   AND data_date = @data_date
@@ -669,6 +672,27 @@ class RunHistoryMixin:
                         f"Allowing retry in case data is now available."
                     )
                     return False  # Allow retry when previous run had 0 records
+
+                # R-009 FIX: Check if previous run had 0 active records (roster-only data)
+                # This handles the case where gamebook scraper got DNP/inactive data
+                # but no actual game stats (PDF not yet updated by NBA.com)
+                active_records = None
+                summary_str = getattr(row, 'summary', None)
+                if summary_str:
+                    try:
+                        # Summary is stored as JSON string
+                        summary_data = json.loads(summary_str) if isinstance(summary_str, str) else summary_str
+                        active_records = summary_data.get('active_records')
+                    except (json.JSONDecodeError, TypeError, AttributeError):
+                        pass  # Summary parsing failed, continue with normal logic
+
+                if active_records == 0 and records_processed and records_processed > 0:
+                    logger.warning(
+                        f"Processor {processor_name} previously processed {identifier} "
+                        f"with {records_processed} records but 0 active records (roster-only data). "
+                        f"run_id: {row.run_id}. Allowing retry for complete data."
+                    )
+                    return False  # Allow retry when previous run had only roster data
 
                 logger.info(
                     f"Processor {processor_name} already processed {identifier} "

@@ -1348,21 +1348,31 @@ class NbacGamebookProcessor(SmartIdempotencyMixin, ProcessorBase):
                     return
 
             # Process active players
-            for player in raw_data.get('active_players', []):
+            active_players_list = raw_data.get('active_players', [])
+            for player in active_players_list:
                 row = self.process_active_player(player, game_info, file_path)
                 rows.append(row)
-            
+
             # Process DNP players with source file context
-            for player in raw_data.get('dnp_players', []):
+            dnp_players_list = raw_data.get('dnp_players', [])
+            for player in dnp_players_list:
                 row = self.process_inactive_player(player, game_info, 'dnp', file_path)
                 rows.append(row)
-            
+
             # Process inactive players with source file context
-            for player in raw_data.get('inactive_players', []):
+            inactive_players_list = raw_data.get('inactive_players', [])
+            for player in inactive_players_list:
                 row = self.process_inactive_player(player, game_info, 'inactive', file_path)
                 rows.append(row)
-            
-            logger.info(f"Processed {len(rows)} players from {file_path} (File #{self.files_processed})")
+
+            # Track active vs roster records for idempotency (R-009 fix)
+            # This enables retry when a previous run only got roster data (0 active players)
+            active_count = len(active_players_list)
+            roster_count = len(dnp_players_list) + len(inactive_players_list)
+            self.stats['active_records'] = self.stats.get('active_records', 0) + active_count
+            self.stats['roster_records'] = self.stats.get('roster_records', 0) + roster_count
+
+            logger.info(f"Processed {len(rows)} players from {file_path} (File #{self.files_processed}) - {active_count} active, {roster_count} roster")
             self.transformed_data = rows
 
             # Smart Idempotency: Add data_hash to all records
