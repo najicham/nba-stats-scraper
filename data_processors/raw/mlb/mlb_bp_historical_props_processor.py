@@ -1,22 +1,30 @@
 #!/usr/bin/env python3
 """
-MLB BettingPros Historical Props Processor
+MLB BettingPros Props Processor
 
-Processes historical MLB player prop data from BettingPros API (via GCS) to BigQuery.
-Includes actual outcomes for model training and validation.
+Processes MLB player prop data from BettingPros API (via GCS) to BigQuery.
+Handles both historical backfill data and live daily scraper output.
 
-GCS Path: bettingpros-mlb/historical/{market_name}/{date}/props.json
+GCS Paths:
+  - Historical: bettingpros-mlb/historical/{market_name}/{date}/props.json
+  - Live/Daily: bettingpros-mlb/{market_name}/{date}/props.json
+
 Target Tables:
   - mlb_raw.bp_pitcher_props (markets: pitcher-strikeouts, pitcher-earned-runs-allowed)
   - mlb_raw.bp_batter_props (9 batter markets)
 
 Key Features:
-- Actual outcomes included (actual_value, is_scored, is_push)
-- BettingPros projections (projection_value, projection_side, projection_ev)
+- BettingPros projections (projection_value, projection_side, projection_ev) - used by V1.6 model
 - Performance trends (perf_last_5_over/under, perf_season_over/under)
-- 4 years of historical data (2022-2025)
+- Actual outcomes (actual_value, is_scored, is_push) - available for historical, null for live
+- Deduplication via source_file_path
+
+Data Sources:
+- Historical: scripts/mlb/historical_bettingpros_backfill/ (4 years: 2022-2025)
+- Live: scrapers/bettingpros/bp_mlb_player_props.py (daily during season)
 
 Created: 2026-01-15
+Updated: 2026-01-16 - Added support for live scraper output path
 """
 
 import logging

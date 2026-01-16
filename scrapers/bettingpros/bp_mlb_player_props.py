@@ -1,42 +1,39 @@
 # scrapers/bettingpros/bp_mlb_player_props.py
 """
-BettingPros MLB Player Props API scraper                     v2 - 2026-01-14
+BettingPros MLB Player Props API scraper                     v3 - 2026-01-16
 ------------------------------------------------------------------------
 Gets player prop betting data for MLB player props from BettingPros API.
-Inherits from NBA scraper and overrides MLB-specific settings.
+Inherits from NBA scraper but overrides transform_data() to produce format
+compatible with MlbBpHistoricalPropsProcessor.
 
-URL: https://api.bettingpros.com/v3/offers?sport=MLB&market_id=XXX&event_id=...
+API: https://api.bettingpros.com/v3/props?sport=MLB&market_id=XXX
 
-NOTE: MLB market IDs need to be discovered when season is active. The NBA ones are:
-  156: points, 157: rebounds, 151: assists, 162: threes, 160: steals, 152: blocks
+Output Format (matches historical backfill):
+  {
+    "meta": {"sport": "MLB", "market_id": 285, "market_name": "pitcher-strikeouts", ...},
+    "props": [{"event_id": ..., "player_name": ..., "over_line": ..., ...}]
+  }
 
-For MLB, likely markets include (IDs are placeholders until discovery):
-  - pitcher_strikeouts (200) - PRIMARY for pitcher strikeouts project
-  - pitcher_outs (201)
-  - batter_hits (210)
-  - batter_home_runs (211)
-  - etc.
+GCS Path: bettingpros-mlb/{market_name}/{date}/props.json
+  - Matches processor expected path
+  - Same path for historical and live data
 
 Usage examples
 --------------
-  # With specific event IDs:
-  python scrapers/bettingpros/bp_mlb_player_props.py --event_ids "12345,12346" --debug
-
   # With date (auto-fetches MLB events):
   python scrapers/bettingpros/bp_mlb_player_props.py --date 2025-06-15 --debug
 
-  # Different prop types (once market IDs are discovered):
+  # Different prop types:
   python scrapers/bettingpros/bp_mlb_player_props.py --date 2025-06-15 --market_type pitcher_strikeouts --debug
+  python scrapers/bettingpros/bp_mlb_player_props.py --date 2025-06-15 --market_type batter_hits --debug
 
   # Test with dev group (local files):
   python scrapers/bettingpros/bp_mlb_player_props.py --date 2025-06-15 --group dev
 
-  # Discover MLB market IDs (when season active):
-  python scrapers/bettingpros/bp_mlb_player_props.py --discover-markets --date 2025-06-15
-
-Market ID Discovery:
-  When MLB season is active, use discover_mlb_market_ids.py script:
-  python scripts/mlb/setup/discover_mlb_market_ids.py --date 2025-06-15
+Market IDs (discovered 2026-01-14):
+  Pitcher: 285 (strikeouts)
+  Batter: 287 (hits), 288 (runs), 289 (rbis), 291 (doubles), 292 (triples),
+          293 (total-bases), 294 (stolen-bases), 295 (singles), 299 (home-runs)
 """
 
 from __future__ import annotations
@@ -45,7 +42,8 @@ import logging
 import os
 import sys
 import time
-from typing import Optional
+from datetime import datetime, timezone
+from typing import Optional, Dict, List, Any
 
 # Support both module execution and direct execution
 try:
@@ -156,11 +154,14 @@ class BettingProsMLBPlayerProps(BettingProsPlayerProps):
     MLB_EVENTS_FETCH_BACKOFF_BASE = 15  # seconds: 15, 30, 60
 
     # MLB-specific exporters (override parent's NBA exporters)
+    # GCS path matches processor expected path: bettingpros-mlb/{market_name}/{date}/props.json
     exporters = [
         # ========== PRODUCTION GCS ==========
+        # Path: bettingpros-mlb/{market_name}/{date}/props.json
+        # Matches MlbBpHistoricalPropsProcessor expected path
         {
             "type": "gcs",
-            "key": "bettingpros-mlb-player-props/%(date)s/%(market_type)s/props.json",
+            "key": "bettingpros-mlb/%(market_name)s/%(date)s/props.json",
             "export_mode": "DATA",
             "groups": ["prod", "gcs"],
         },
@@ -168,14 +169,14 @@ class BettingProsMLBPlayerProps(BettingProsPlayerProps):
         # ========== DEVELOPMENT FILES ==========
         {
             "type": "file",
-            "filename": "/tmp/bp_mlb_player_props_%(market_type)s_%(date)s.json",
+            "filename": "/tmp/bp_mlb_%(market_name)s_%(date)s.json",
             "export_mode": "DATA",
             "pretty_print": True,
             "groups": ["dev", "test"],
         },
         {
             "type": "file",
-            "filename": "/tmp/bp_mlb_player_props_%(market_type)s_raw_%(date)s.json",
+            "filename": "/tmp/bp_mlb_%(market_name)s_raw_%(date)s.json",
             "export_mode": "RAW",
             "pretty_print": True,
             "groups": ["dev", "test"],
@@ -382,6 +383,154 @@ class BettingProsMLBPlayerProps(BettingProsPlayerProps):
         raise DownloadDataException(
             f"Failed to fetch MLB events for date {date} after {self.MLB_EVENTS_FETCH_MAX_RETRIES} retries: {last_exception}"
         )
+
+    def transform_data(self) -> None:
+        """
+        Transform /v3/props API response to match historical backfill format.
+
+        This override produces output compatible with MlbBpHistoricalPropsProcessor:
+        {
+            "meta": {
+                "sport": "MLB",
+                "market_id": 285,
+                "market_name": "pitcher-strikeouts",
+                "date": "2025-06-15",
+                "total_props": 21,
+                "scraped_at": "2026-01-16T12:00:00Z"
+            },
+            "props": [
+                {
+                    "event_id": ...,
+                    "player_id": ...,
+                    "player_name": ...,
+                    "team": ...,
+                    "over_line": ...,
+                    "over_odds": ...,
+                    "projection_value": ...,
+                    "actual_value": null,  # Not available for live data
+                    ...
+                }
+            ]
+        }
+        """
+        # Get props from decoded data (parent class already fetched and decoded)
+        raw_props = self.decoded_data.get('props', [])
+
+        processed_props = []
+        for prop in raw_props:
+            try:
+                processed_prop = self._transform_single_prop(prop)
+                if processed_prop:
+                    processed_props.append(processed_prop)
+            except Exception as e:
+                logger.debug(f"Error processing prop: {e}")
+                continue
+
+        # Build output in historical backfill format
+        self.data = {
+            "meta": {
+                "sport": "MLB",
+                "market_id": self.opts["market_id"],
+                "market_name": self.opts["market_name"],
+                "date": self.opts.get("date", "unknown"),
+                "total_props": len(processed_props),
+                "scraped_at": datetime.now(timezone.utc).isoformat(),
+            },
+            "props": processed_props,
+        }
+
+        logger.info(f"Transformed {len(processed_props)} MLB props for {self.opts['market_name']} on {self.opts.get('date')}")
+
+        # Send success notification
+        if processed_props:
+            try:
+                notify_info(
+                    title="MLB Props Scraped",
+                    message=f"Retrieved {len(processed_props)} {self.opts['market_name']} props",
+                    details={
+                        'scraper': 'bp_mlb_player_props',
+                        'date': self.opts.get('date', 'unknown'),
+                        'market': self.opts['market_name'],
+                        'market_id': self.opts['market_id'],
+                        'props_count': len(processed_props),
+                    }
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+
+    def _transform_single_prop(self, prop: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """
+        Transform a single prop from API format to historical backfill format.
+
+        API format has nested structure (participant, over, under, projection, etc.)
+        Output format is flat with standardized field names.
+        """
+        try:
+            participant = prop.get('participant', {})
+            player = participant.get('player', {})
+            over = prop.get('over', {})
+            under = prop.get('under', {})
+            projection = prop.get('projection', {})
+            scoring = prop.get('scoring', {})
+            performance = prop.get('performance', {})
+            extra = prop.get('extra', {})
+
+            return {
+                # Identifiers
+                'event_id': prop.get('event_id'),
+                'player_id': participant.get('id'),
+                'player_name': participant.get('name'),
+                'team': player.get('team'),
+                'position': player.get('position'),
+
+                # Over line
+                'over_line': over.get('line'),
+                'over_odds': over.get('odds'),
+                'over_book_id': over.get('book'),
+                'over_consensus_line': over.get('consensus_line'),
+
+                # Under line
+                'under_line': under.get('line'),
+                'under_odds': under.get('odds'),
+                'under_book_id': under.get('book'),
+                'under_consensus_line': under.get('consensus_line'),
+
+                # Projection (BettingPros projections - key for V1.6 model)
+                'projection_value': projection.get('value'),
+                'projection_side': projection.get('recommended_side'),
+                'projection_ev': projection.get('expected_value'),
+                'projection_rating': projection.get('bet_rating'),
+
+                # Actual outcome (null for live data, filled by grading later)
+                'actual_value': scoring.get('actual'),
+                'is_scored': scoring.get('is_scored', False),
+                'is_push': scoring.get('is_push', False),
+
+                # Performance trends
+                'perf_last_5_over': self._safe_perf(performance, 'last_5', 'over'),
+                'perf_last_5_under': self._safe_perf(performance, 'last_5', 'under'),
+                'perf_last_10_over': self._safe_perf(performance, 'last_10', 'over'),
+                'perf_last_10_under': self._safe_perf(performance, 'last_10', 'under'),
+                'perf_season_over': self._safe_perf(performance, 'season', 'over'),
+                'perf_season_under': self._safe_perf(performance, 'season', 'under'),
+
+                # Context
+                'opposing_pitcher': extra.get('opposing_pitcher'),
+                'opposition_rank': extra.get('opposition_rank', {}).get('rank') if isinstance(extra.get('opposition_rank'), dict) else extra.get('opposition_rank'),
+            }
+        except Exception as e:
+            logger.warning(f"Error transforming prop: {e}")
+            return None
+
+    def _safe_perf(self, performance: Dict, period: str, side: str) -> Optional[int]:
+        """Safely extract performance value from nested structure."""
+        try:
+            period_data = performance.get(period, {})
+            if isinstance(period_data, dict):
+                return period_data.get(side)
+            return None
+        except Exception:
+            return None
 
 
 # --------------------------------------------------------------------------- #
