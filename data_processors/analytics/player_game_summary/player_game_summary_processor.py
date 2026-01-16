@@ -113,7 +113,7 @@ class PlayerGameSummaryProcessor(
     # Pattern #5: Circuit Breaker Configuration
     # =========================================================================
     CIRCUIT_BREAKER_THRESHOLD = 5  # Open after 5 consecutive failures
-    CIRCUIT_BREAKER_TIMEOUT = timedelta(minutes=30)  # Stay open 30 minutes
+    CIRCUIT_BREAKER_TIMEOUT = timedelta(hours=4)  # Stay open 4 hours (was 30 min - R-009: prevent retry storms for staleness issues)
 
     # =========================================================================
     # Pattern #3: Smart Reprocessing - Data Hash Fields
