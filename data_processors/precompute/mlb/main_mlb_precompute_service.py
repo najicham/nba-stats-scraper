@@ -24,6 +24,18 @@ from data_processors.precompute.mlb import (
     MlbLineupKAnalysisProcessor,
 )
 
+# Import MLB schedule-aware utilities
+try:
+    from shared.validation.context.mlb_schedule_context import (
+        get_mlb_schedule_context,
+        is_mlb_offseason,
+        is_mlb_all_star_break,
+    )
+    SCHEDULE_AWARE_ENABLED = True
+except ImportError:
+    SCHEDULE_AWARE_ENABLED = False
+    logging.warning("MLB schedule context not available, schedule-aware checks disabled")
+
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -40,6 +52,38 @@ MLB_PRECOMPUTE_TRIGGERS = {
     'pitcher_game_summary': [MlbPitcherFeaturesProcessor],
     'batter_game_summary': [MlbLineupKAnalysisProcessor],
 }
+
+
+def should_skip_date(game_date_str: str, skip_schedule_check: bool = False) -> tuple:
+    """
+    Check if a date should be skipped for MLB processing.
+
+    Returns:
+        Tuple of (should_skip: bool, reason: str or None)
+    """
+    if not SCHEDULE_AWARE_ENABLED or skip_schedule_check:
+        return False, None
+
+    try:
+        game_date = datetime.strptime(game_date_str, '%Y-%m-%d').date()
+
+        # Check offseason (Oct-Mar)
+        if is_mlb_offseason(game_date):
+            return True, "MLB offseason - no games scheduled"
+
+        # Check All-Star break
+        if is_mlb_all_star_break(game_date):
+            return True, "MLB All-Star break - no regular games"
+
+        # Check schedule for actual games
+        context = get_mlb_schedule_context(game_date)
+        if not context.is_valid_processing_date:
+            return True, context.skip_reason or "No games on this date"
+
+        return False, None
+    except Exception as e:
+        logger.warning(f"Schedule check failed for {game_date_str}: {e}, proceeding with processing")
+        return False, None
 
 
 def run_single_processor(processor_class, opts):
@@ -133,6 +177,18 @@ def process_precompute():
 
         logger.info(f"Processing MLB precompute for {source_table}, date: {game_date}")
 
+        # Schedule-aware early exit (if game_date provided)
+        if game_date:
+            should_skip, skip_reason = should_skip_date(game_date)
+            if should_skip:
+                logger.info(f"Skipping precompute for {game_date}: {skip_reason}")
+                return jsonify({
+                    "status": "skipped",
+                    "game_date": game_date,
+                    "reason": skip_reason,
+                    "schedule_aware": True
+                }), 200
+
         processors_to_run = MLB_PRECOMPUTE_TRIGGERS.get(source_table, [])
 
         if not processors_to_run:
@@ -177,12 +233,26 @@ def process_date():
     Request body:
     {
         "game_date": "2025-06-15",
-        "processors": ["pitcher_features", "lineup_k_analysis"]  // optional
+        "processors": ["pitcher_features", "lineup_k_analysis"],  // optional
+        "skip_schedule_check": false  // optional, set true to bypass schedule checks
     }
     """
     try:
         data = request.get_json() or {}
         game_date = data.get('game_date')
+        skip_schedule_check = data.get('skip_schedule_check', False)
+
+        # Schedule-aware early exit
+        if game_date and not skip_schedule_check:
+            should_skip, skip_reason = should_skip_date(game_date)
+            if should_skip:
+                logger.info(f"Skipping {game_date}: {skip_reason}")
+                return jsonify({
+                    "status": "skipped",
+                    "game_date": game_date,
+                    "reason": skip_reason,
+                    "schedule_aware": True
+                }), 200
 
         if not game_date:
             return jsonify({"error": "game_date is required"}), 400
