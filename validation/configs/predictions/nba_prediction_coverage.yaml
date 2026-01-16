@@ -1,0 +1,314 @@
+# File: validation/configs/predictions/nba_prediction_coverage.yaml
+# Description: NBA Prediction Coverage Validation Config - Ensure all eligible players get predictions
+
+processor:
+  name: "nba_prediction_coverage"
+  description: "Validates NBA player prop prediction coverage and quality across 5 systems"
+  table: "nba_predictions.player_prop_predictions"
+  partition_required: true
+  partition_field: "game_date"
+  type: "predictions"
+  layers:
+    - bigquery
+    - schedule
+    - dependencies
+
+# Prediction systems configuration
+prediction_systems:
+  expected_systems: 5
+  system_ids:
+    - "catboost_v8"
+    - "ensemble_v1"
+    - "moving_average"
+    - "similarity_balanced_v1"
+    - "zone_matchup_v1"
+
+# Expected coverage
+expected_coverage:
+  predictions_per_system: 335  # Based on Jan 16 validation
+  unique_players: 67
+  total_predictions_per_date: 1675  # 5 systems * 335 predictions
+  coverage_threshold: 0.9  # 90% of expected
+
+# BigQuery Layer Validations
+bigquery_validations:
+  enabled: true
+
+  # Verify all systems generated predictions
+  system_completeness:
+    enabled: true
+    query: |
+      SELECT
+        game_date,
+        system_id,
+        COUNT(*) as prediction_count,
+        COUNT(DISTINCT player_lookup) as unique_players
+      FROM `{project_id}.nba_predictions.player_prop_predictions`
+      WHERE game_date = '{date}'
+        AND is_active = TRUE
+      GROUP BY game_date, system_id
+    expected_systems: 5
+    min_predictions_per_system: 300  # Allow some variation
+    severity: "error"
+    message: "Missing predictions from one or more systems"
+
+  # Field validation
+  field_validation:
+    target_table: "nba_predictions.player_prop_predictions"
+
+    required_not_null:
+      - prediction_id
+      - game_date
+      - game_id
+      - player_lookup
+      - player_name
+      - system_id
+      - predicted_points
+      - is_active
+
+    # Prediction quality ranges
+    value_ranges:
+      - field: predicted_points
+        min: 0.0
+        max: 80.0
+        severity: "warning"
+        message: "Predicted points out of reasonable range"
+
+      - field: prediction_confidence
+        min: 0.0
+        max: 1.0
+        severity: "error"
+        message: "Confidence score must be between 0 and 1"
+
+  # Coverage vs analytics check
+  coverage_check:
+    enabled: true
+    query: |
+      WITH analytics_players AS (
+        SELECT DISTINCT
+          game_date,
+          player_lookup,
+          minutes_played
+        FROM `{project_id}.nba_analytics.player_game_summary`
+        WHERE game_date = '{date}'
+          AND is_active = TRUE
+      ),
+      prediction_players AS (
+        SELECT DISTINCT
+          game_date,
+          player_lookup
+        FROM `{project_id}.nba_predictions.player_prop_predictions`
+        WHERE game_date = '{date}'
+          AND is_active = TRUE
+          AND system_id = 'catboost_v8'  -- Use primary system as reference
+      )
+      SELECT
+        a.game_date,
+        COUNT(DISTINCT a.player_lookup) as analytics_players,
+        COUNT(DISTINCT p.player_lookup) as prediction_players,
+        ROUND(COUNT(DISTINCT p.player_lookup) * 100.0 / COUNT(DISTINCT a.player_lookup), 1) as coverage_pct
+      FROM analytics_players a
+      LEFT JOIN prediction_players p ON a.player_lookup = p.player_lookup
+      GROUP BY a.game_date
+      HAVING coverage_pct < 50
+    min_coverage_pct: 50
+    severity: "warning"
+    message: "Low prediction coverage vs analytics players"
+
+  # Duplicate detection
+  duplicate_check:
+    enabled: true
+    query: |
+      SELECT
+        game_date,
+        game_id,
+        player_lookup,
+        system_id,
+        COUNT(*) as duplicate_count
+      FROM `{project_id}.nba_predictions.player_prop_predictions`
+      WHERE game_date = '{date}'
+      GROUP BY game_date, game_id, player_lookup, system_id
+      HAVING COUNT(*) > 1
+    severity: "critical"
+    message: "Duplicate predictions detected for player-system-game"
+
+  # Grading completeness check
+  grading_completeness:
+    enabled: true
+    query: |
+      SELECT
+        game_date,
+        system_id,
+        COUNT(*) as total_predictions,
+        COUNTIF(grade IS NOT NULL) as graded_predictions,
+        COUNTIF(grade IS NULL) as ungraded_predictions,
+        ROUND(COUNTIF(grade IS NOT NULL) * 100.0 / COUNT(*), 1) as graded_pct
+      FROM `{project_id}.nba_predictions.player_prop_predictions`
+      WHERE game_date = '{date}'
+      GROUP BY game_date, system_id
+      HAVING graded_pct < 100
+    min_grading_pct: 100
+    severity: "error"
+    message: "Incomplete prediction grading (expected 100% for past games)"
+    apply_to: "past_games_only"  # Only check games that have finished
+
+  # System consistency check
+  system_consistency:
+    enabled: true
+    query: |
+      WITH system_predictions AS (
+        SELECT
+          game_date,
+          player_lookup,
+          system_id,
+          predicted_points
+        FROM `{project_id}.nba_predictions.player_prop_predictions`
+        WHERE game_date = '{date}'
+          AND is_active = TRUE
+      ),
+      prediction_stats AS (
+        SELECT
+          game_date,
+          player_lookup,
+          COUNT(DISTINCT system_id) as system_count,
+          AVG(predicted_points) as avg_prediction,
+          STDDEV(predicted_points) as stddev_prediction,
+          MAX(predicted_points) - MIN(predicted_points) as prediction_range
+        FROM system_predictions
+        GROUP BY game_date, player_lookup
+      )
+      SELECT *
+      FROM prediction_stats
+      WHERE system_count < 5  -- Should have all 5 systems
+    expected_systems_per_player: 5
+    severity: "warning"
+    message: "Player missing predictions from some systems"
+
+# Schedule Validations
+schedule_validations:
+  enabled: true
+
+  data_freshness:
+    target_table: "nba_predictions.player_prop_predictions"
+    timestamp_field: "created_at"
+    max_age_hours: 8
+    severity: "warning"
+    message: "Predictions data is stale (should generate within hours of analytics)"
+
+  # Game-day validation
+  game_day_check:
+    enabled: true
+    description: "Verify predictions exist for all scheduled games"
+    reference_table: "nba_raw.nbac_schedule"
+    reference_filter: "game_status_text = 'Scheduled'"
+    severity: "error"
+
+# Dependency Validations
+dependency_validations:
+  enabled: true
+
+  # Analytics availability (predictions depend on analytics)
+  analytics_availability:
+    enabled: true
+    source_table: "nba_analytics.player_game_summary"
+    expected_coverage: 1.0  # 100% of predictions should have analytics source
+    severity: "critical"
+    message: "Predictions generated without underlying analytics data"
+
+  # ML features availability
+  ml_features_availability:
+    enabled: true
+    source_table: "nba_ml_features.player_game_features"
+    expected_coverage: 0.95  # 95% should have ML features
+    severity: "warning"
+    message: "Some predictions missing ML feature data"
+
+# Custom validations (implemented in validator class)
+custom_validations:
+
+  - name: "system_performance_tracking"
+    severity: "info"
+    description: "Track prediction accuracy by system"
+    details: |
+      For graded predictions:
+      - Calculate accuracy metrics per system
+      - Track prediction vs actual differential
+      - Identify underperforming systems
+      - Generate performance reports
+
+  - name: "coverage_vs_props"
+    severity: "info"
+    description: "Compare prediction coverage with available betting lines"
+    details: |
+      Cross-validate with BettingPros props:
+      - What % of prop players have predictions?
+      - Identify high-value props without predictions
+      - Expected: 80-90% coverage overlap
+
+  - name: "prediction_consistency"
+    severity: "warning"
+    description: "Check for reasonable prediction variance across systems"
+    details: |
+      For each player:
+      - Predictions should be within reasonable range
+      - Flag outliers (>2 standard deviations)
+      - Investigate systematic differences
+
+  - name: "inactive_player_predictions"
+    severity: "error"
+    description: "Verify no predictions for inactive players"
+    details: |
+      Check predictions where is_active = FALSE:
+      - Should be minimal/zero
+      - Flag if inactive players getting predictions
+      - May indicate stale data or injury status issues
+
+# Remediation
+remediation:
+  prediction_regeneration_template: |
+    # Trigger prediction worker for specific date
+    curl -X POST "https://nba-prediction-worker-f7p3g7f6ya-wl.a.run.app/generate" \
+      -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
+      -H "Content-Type: application/json" \
+      -d '{"game_date": "{date}", "force": true}'
+
+  grading_backfill_template: |
+    # Trigger grading service for date range
+    curl -X POST "https://nba-grading-service-f7p3g7f6ya-wl.a.run.app/grade-range" \
+      -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
+      -H "Content-Type: application/json" \
+      -d '{"start_date": "{start_date}", "end_date": "{end_date}"}'
+
+  check_dependencies_template: |
+    # Verify analytics data exists
+    bq query --use_legacy_sql=false "
+      SELECT
+        COUNT(*) as analytics_records,
+        COUNT(DISTINCT player_lookup) as unique_players
+      FROM \`nba_analytics.player_game_summary\`
+      WHERE game_date = '{date}'
+    "
+
+notifications:
+  enabled: true
+  channels: ["slack"]
+  on_failure: true
+  on_success: false
+
+  # Alert thresholds
+  alert_on:
+    - "critical"  # Missing systems, duplicates, analytics dependency
+    - "error"     # System completeness, grading issues
+
+  # Slack channel for prediction monitoring
+  slack_channel: "#predictions-alerts"
+
+  # Summary reports
+  daily_summary:
+    enabled: true
+    schedule: "9:00 AM ET"
+    include:
+      - "Prediction counts by system"
+      - "Coverage percentages"
+      - "Grading completion status"
+      - "System performance metrics"

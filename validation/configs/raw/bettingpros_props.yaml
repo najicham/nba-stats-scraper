@@ -1,0 +1,211 @@
+# File: validation/configs/raw/bettingpros_props.yaml
+# Description: BettingPros Player Points Props Validation Config - Critical for props business
+
+processor:
+  name: "bettingpros_props"
+  description: "Validates BettingPros player points props data from 16 bookmakers"
+  table: "nba_raw.bettingpros_player_points_props"
+  partition_required: true
+  partition_field: "game_date"
+  type: "raw"
+  layers:
+    - gcs
+    - bigquery
+    - schedule
+
+# Data source information
+data_source:
+  api: "BettingPros API"
+  endpoint: "player_props"
+  update_frequency: "Every 2 hours during active window (8 AM - 8 PM ET)"
+  coverage: "16 bookmakers including DraftKings, FanDuel, BetMGM, Caesars"
+  data_format: "CSV with player props and odds"
+
+# GCS Layer Validations
+gcs_validations:
+  enabled: true
+
+  file_presence:
+    bucket: "nba-scraped-data"
+    path_pattern: "betting-pros/player-props/{date}/*.csv"
+    severity: "error"
+
+  file_structure:
+    format: "csv"
+    required_columns:
+      - player_name
+      - player_lookup
+      - game_date
+      - bookmaker
+      - over_line
+    severity: "error"
+
+# BigQuery Layer Validations
+bigquery_validations:
+  enabled: true
+
+  # Completeness check against schedule
+  completeness:
+    target_table: "nba_raw.bettingpros_player_points_props"
+    reference_table: "nba_raw.nbac_schedule"
+    match_field: "game_date"
+    reference_filter: "game_status_text != 'Postponed'"
+    severity: "warning"
+    message: "Props may not exist for all scheduled games (acceptable if games not started)"
+
+  # Field validation
+  field_validation:
+    target_table: "nba_raw.bettingpros_player_points_props"
+
+    required_not_null:
+      - game_date
+      - player_name
+      - player_lookup  # CRITICAL: Must be normalized
+      - bookmaker
+      - over_line
+
+    # Props-specific ranges
+    value_ranges:
+      - field: over_line
+        min: 5.5
+        max: 50.5
+        severity: "warning"
+        message: "Unusual points line detected (expected 5.5-50.5)"
+
+      - field: over_price_decimal
+        min: 1.01
+        max: 10.0
+        severity: "warning"
+        message: "Unusual odds detected"
+
+  # Bookmaker coverage validation (16 expected)
+  bookmaker_coverage:
+    enabled: true
+    query: |
+      SELECT
+        game_date,
+        COUNT(DISTINCT bookmaker) as bookmaker_count,
+        STRING_AGG(DISTINCT bookmaker ORDER BY bookmaker) as bookmakers_present
+      FROM `{project_id}.nba_raw.bettingpros_player_points_props`
+      WHERE game_date = '{date}'
+      GROUP BY game_date
+      HAVING bookmaker_count < 10
+    expected_bookmakers: 16
+    min_bookmakers: 10
+    primary_bookmakers:
+      - "DraftKings"
+      - "FanDuel"
+      - "BetMGM"
+      - "Caesars"
+    severity: "warning"
+    message: "Fewer than expected bookmakers (expected 16, minimum 10)"
+
+  # Player coverage validation
+  player_coverage:
+    enabled: true
+    query: |
+      SELECT
+        game_date,
+        COUNT(DISTINCT player_lookup) as player_count,
+        COUNT(*) as total_lines
+      FROM `{project_id}.nba_raw.bettingpros_player_points_props`
+      WHERE game_date = '{date}'
+      GROUP BY game_date
+      HAVING player_count < 50
+    min_players_per_date: 50  # Expecting ~60-70 players across all games
+    severity: "warning"
+    message: "Low player props coverage"
+
+  # Duplicate detection
+  duplicate_check:
+    enabled: true
+    query: |
+      SELECT
+        game_date,
+        player_lookup,
+        bookmaker,
+        COUNT(*) as duplicate_count
+      FROM `{project_id}.nba_raw.bettingpros_player_points_props`
+      WHERE game_date = '{date}'
+      GROUP BY game_date, player_lookup, bookmaker
+      HAVING COUNT(*) > 1
+    severity: "error"
+    message: "Duplicate player-bookmaker combinations detected"
+
+# Schedule Validations
+schedule_validations:
+  enabled: true
+
+  data_freshness:
+    target_table: "nba_raw.bettingpros_player_points_props"
+    timestamp_field: "scraped_at"
+    max_age_hours: 4
+    severity: "warning"
+    message: "BettingPros props data is stale (updates every 2 hours)"
+
+  # Game-aware scheduling check
+  workflow_timing:
+    enabled: true
+    description: "Verify workflow waits 6 hours before first game"
+    expected_behavior: "betting_lines_tracker waits until 6h before first game"
+    severity: "info"
+
+# Custom validations (implemented in validator class)
+custom_validations:
+
+  - name: "bookmaker_diversity"
+    severity: "warning"
+    description: "Verify sufficient bookmaker coverage per game"
+    details: |
+      Checks:
+      - At least 10 bookmakers per game date
+      - Primary bookmakers (DK, FD, BetMGM, Caesars) present
+      - Flags if missing major bookmakers
+
+  - name: "line_consistency"
+    severity: "warning"
+    description: "Check for suspicious line variations across bookmakers"
+    details: |
+      For each player on same date:
+      - Lines should be within reasonable range (e.g., ±3 points)
+      - Flag outliers that differ significantly from consensus
+      - Note: Some variation is normal (bookmaker-specific odds)
+
+  - name: "coverage_vs_analytics"
+    severity: "info"
+    description: "Compare props coverage with analytics players"
+    details: |
+      Cross-validate with nba_analytics.player_game_summary:
+      - What % of analytics players have props?
+      - Identify high-usage players without props
+      - Expected: ~50-70% coverage (starters + key bench)
+
+# Remediation
+remediation:
+  processor_backfill_template: |
+    gcloud run jobs execute bettingpros-props-processor-backfill \
+      --args=--start-date={start_date},--end-date={end_date} \
+      --region=us-west2
+
+  scraper_backfill_template: |
+    gcloud run jobs execute betting-pros-player-props-scraper \
+      --args=--date={date} \
+      --region=us-west2
+
+notifications:
+  enabled: true
+  channels: ["slack"]
+  on_failure: true
+  on_success: false
+
+  # Alert thresholds
+  alert_on:
+    - "error"
+    - "critical"
+
+  # Suppress known acceptable conditions
+  suppress:
+    - condition: "game_not_started"
+      description: "Props missing for games that haven't started yet"
+    - condition: "all_star_break"
+      description: "No props during All-Star break"
