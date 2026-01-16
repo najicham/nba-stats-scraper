@@ -6,11 +6,12 @@ Cloud Run service that generates pitcher strikeout predictions.
 Can be triggered via HTTP endpoint or Pub/Sub.
 
 Endpoints:
-    GET  /health          - Health check
-    GET  /                - Service info
-    POST /predict         - Generate prediction for single pitcher
-    POST /predict-batch   - Generate predictions for game date
-    POST /pubsub          - Pub/Sub push endpoint
+    GET  /health              - Health check
+    GET  /                    - Service info
+    POST /predict             - Generate prediction for single pitcher
+    POST /predict-batch       - Generate predictions for game date
+    POST /execute-shadow-mode - Run V1.4 vs V1.6 shadow mode comparison
+    POST /pubsub              - Pub/Sub push endpoint
 """
 
 import os
@@ -246,6 +247,56 @@ def predict_batch():
         logger.error(f"Batch prediction error: {e}", exc_info=True)
         return jsonify({
             'error': str(e),
+            'duration_seconds': round(time.time() - start_time, 3)
+        }), 500
+
+
+@app.route('/execute-shadow-mode', methods=['POST'])
+def execute_shadow_mode():
+    """
+    Execute shadow mode predictions (V1.4 vs V1.6 comparison)
+
+    Request body:
+    {
+        "game_date": "2025-06-15",  // optional, default: today
+        "dry_run": false  // optional, default: false
+    }
+
+    Returns:
+        Summary of shadow mode execution
+    """
+    start_time = time.time()
+
+    try:
+        data = request.get_json() or {}
+
+        game_date_str = data.get('game_date')
+        dry_run = data.get('dry_run', False)
+
+        # Parse date
+        if game_date_str:
+            if game_date_str.upper() == 'TODAY':
+                game_date = date.today()
+            else:
+                game_date = datetime.strptime(game_date_str, '%Y-%m-%d').date()
+        else:
+            game_date = date.today()
+
+        logger.info(f"Executing shadow mode for {game_date}, dry_run={dry_run}")
+
+        # Import and run shadow mode
+        from predictions.mlb.shadow_mode_runner import run_shadow_mode
+        result = run_shadow_mode(game_date, dry_run=dry_run)
+
+        result['duration_seconds'] = round(time.time() - start_time, 3)
+
+        return jsonify(result), 200
+
+    except Exception as e:
+        logger.error(f"Shadow mode error: {e}", exc_info=True)
+        return jsonify({
+            'error': str(e),
+            'status': 'failed',
             'duration_seconds': round(time.time() - start_time, 3)
         }), 500
 

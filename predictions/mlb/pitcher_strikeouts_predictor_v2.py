@@ -26,6 +26,8 @@ from typing import Dict, List, Optional, Tuple
 from datetime import date, datetime
 import numpy as np
 
+from predictions.mlb.config import get_config
+
 logger = logging.getLogger(__name__)
 
 # V2 Feature Set (29 features - expanded from V1's 19)
@@ -490,18 +492,17 @@ class PitcherStrikeoutsPredictorV2:
         if strikeouts_line is None:
             return 'NO_LINE'
 
-        if confidence < 60:
+        # V2 uses its own config with higher edge threshold (1.0 vs 0.5 in V1)
+        config = get_config().prediction_v2
+
+        if confidence < config.min_confidence:
             return 'PASS'
 
         edge = predicted_strikeouts - strikeouts_line
 
-        # V2 uses higher edge threshold (1.0 vs 0.5 in V1)
-        # Based on hit rate analysis showing 79%+ win rate at edge >= 1.0
-        min_edge = 1.0
-
-        if edge >= min_edge:
+        if edge >= config.min_edge:
             return 'OVER'
-        elif edge <= -min_edge:
+        elif edge <= -config.min_edge:
             return 'UNDER'
         else:
             return 'PASS'
