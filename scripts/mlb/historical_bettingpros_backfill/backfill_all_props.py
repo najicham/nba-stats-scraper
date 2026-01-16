@@ -122,6 +122,10 @@ MLB_SEASONS = {
 }
 
 
+# Retryable HTTP status codes (transient server errors)
+RETRYABLE_STATUS_CODES = {502, 503, 504}
+
+
 @dataclass
 class BackfillStats:
     """Track backfill progress and statistics."""
@@ -132,6 +136,7 @@ class BackfillStats:
     props_collected: int = 0
     files_created: int = 0
     errors: int = 0
+    partial_failures: List[Tuple[int, str, str]] = field(default_factory=list)  # (market_id, date, reason)
 
     def elapsed_seconds(self) -> float:
         return time.time() - self.start_time
@@ -269,17 +274,18 @@ class MLBBettingProsBackfill:
         """Check if file already exists in GCS."""
         return f"{market_id}:{date}" in self.existing_files
 
-    def fetch_props(self, market_id: int, date: str) -> Tuple[List[Dict], int]:
+    def fetch_props(self, market_id: int, date: str) -> Tuple[List[Dict], int, Optional[str]]:
         """
         Fetch all props for a market/date with pagination and retry logic.
 
         Returns:
-            Tuple of (props list, total API calls)
+            Tuple of (props list, total API calls, failure_reason or None)
         """
         all_props = []
         page = 1
         api_calls = 0
         max_retries = 3
+        failure_reason = None
 
         while True:
             url = f"{API_BASE_URL}?sport=MLB&market_id={market_id}&date={date}&limit=50&page={page}"
@@ -290,8 +296,15 @@ class MLBBettingProsBackfill:
                     api_calls += 1
 
                     if response.status_code != 200:
-                        logger.warning(f"API returned {response.status_code} for {market_id}/{date}")
-                        return all_props, api_calls  # Return what we have
+                        # Retry on transient server errors (502, 503, 504)
+                        if response.status_code in RETRYABLE_STATUS_CODES and attempt < max_retries - 1:
+                            wait_time = (attempt + 1) * 5
+                            logger.warning(f"API returned {response.status_code} for {market_id}/{date} page {page}, retrying in {wait_time}s...")
+                            time.sleep(wait_time)
+                            continue
+                        failure_reason = f"HTTP {response.status_code} on page {page}"
+                        logger.warning(f"API returned {response.status_code} for {market_id}/{date} (after {attempt + 1} attempts)")
+                        return all_props, api_calls, failure_reason  # Return what we have
 
                     data = response.json()
 
@@ -303,8 +316,9 @@ class MLBBettingProsBackfill:
                             time.sleep(wait_time)
                             continue
                         else:
+                            failure_reason = f"API timeout on page {page}"
                             logger.error(f"API timeout after {max_retries} retries for {market_id}/{date}")
-                            return all_props, api_calls
+                            return all_props, api_calls, failure_reason
 
                     props = data.get('props', [])
                     pagination = data.get('_pagination', {})
@@ -313,7 +327,7 @@ class MLBBettingProsBackfill:
 
                     total_pages = pagination.get('total_pages', 1)
                     if page >= total_pages:
-                        return all_props, api_calls
+                        return all_props, api_calls, None  # Success, no failure
 
                     page += 1
                     time.sleep(self.delay)  # Rate limiting between pages
@@ -325,10 +339,11 @@ class MLBBettingProsBackfill:
                         logger.warning(f"Error fetching {market_id}/{date} page {page} (attempt {attempt + 1}): {e}, retrying in {wait_time}s...")
                         time.sleep(wait_time)
                     else:
+                        failure_reason = f"Exception on page {page}: {type(e).__name__}"
                         logger.error(f"Error fetching {market_id}/{date} page {page} after {max_retries} retries: {e}")
-                        return all_props, api_calls
+                        return all_props, api_calls, failure_reason
 
-        return all_props, api_calls
+        return all_props, api_calls, None  # Should not reach here, but just in case
 
     def process_props(self, props: List[Dict]) -> List[Dict]:
         """Transform raw props into standardized format."""
@@ -456,7 +471,7 @@ class MLBBettingProsBackfill:
             }
 
         # Fetch props
-        raw_props, api_calls = self.fetch_props(market_id, date)
+        raw_props, api_calls, failure_reason = self.fetch_props(market_id, date)
 
         # Process props
         processed_props = self.process_props(raw_props)
@@ -474,6 +489,7 @@ class MLBBettingProsBackfill:
             'status': status,
             'props': len(processed_props),
             'api_calls': api_calls,
+            'failure_reason': failure_reason,
         }
 
     def run(self) -> None:
@@ -582,6 +598,14 @@ class MLBBettingProsBackfill:
         self.stats.api_calls += result['api_calls']
         self.stats.props_collected += result['props']
 
+        # Track partial failures (got some data but hit an error)
+        if result.get('failure_reason'):
+            self.stats.partial_failures.append((
+                result['market_id'],
+                result['date'],
+                result['failure_reason']
+            ))
+
     def _print_progress(self, completed: int, total: int) -> None:
         """Print progress update."""
         pct = (completed / total * 100) if total > 0 else 0
@@ -610,8 +634,42 @@ class MLBBettingProsBackfill:
         print(f"  Props collected: {self.stats.props_collected:,}")
         print(f"  API calls: {self.stats.api_calls:,}")
         print(f"  Errors: {self.stats.errors}")
+        print(f"  Partial failures: {len(self.stats.partial_failures)}")
         print(f"  Rate: {self.stats.rate_per_minute():.1f} calls/min")
         print()
+
+        # Print and save partial failures for retry
+        if self.stats.partial_failures:
+            print("=" * 70)
+            print("PARTIAL FAILURES (may have incomplete data)")
+            print("=" * 70)
+            for market_id, date, reason in self.stats.partial_failures:
+                market_name = MLB_MARKETS.get(market_id, f"unknown-{market_id}")
+                print(f"  {market_name} ({market_id}) {date}: {reason}")
+            print()
+
+            # Save to file for easy retry
+            retry_file = Path(__file__).parent / "retry_failures.json"
+            retry_data = {
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "failures": [
+                    {
+                        "market_id": m,
+                        "market_name": MLB_MARKETS.get(m, f"unknown-{m}"),
+                        "date": d,
+                        "reason": r
+                    }
+                    for m, d, r in self.stats.partial_failures
+                ],
+                "retry_commands": [
+                    f"python {Path(__file__).name} --market_id {m} --start-date {d} --end-date {d} --no-resume"
+                    for m, d, _ in self.stats.partial_failures
+                ]
+            }
+            with open(retry_file, 'w') as f:
+                json.dump(retry_data, f, indent=2)
+            print(f"Retry commands saved to: {retry_file}")
+            print()
 
 
 def main():
