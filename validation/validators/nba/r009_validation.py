@@ -271,9 +271,10 @@ class R009Validator:
 
     def check_prediction_grading(self, game_date: str) -> Dict:
         """
-        Check #4: Verify prediction grading completeness.
+        Check #4: Verify prediction coverage.
 
-        Expected: 100% of predictions graded for finished games.
+        Expected: Predictions exist for games on the date.
+        Note: Grading functionality not yet implemented.
 
         Returns:
             Dict with check results
@@ -282,8 +283,8 @@ class R009Validator:
         SELECT
             game_date,
             COUNT(*) as total_predictions,
-            COUNTIF(grade IS NOT NULL) as graded,
-            ROUND(COUNTIF(grade IS NOT NULL) * 100.0 / COUNT(*), 1) as graded_pct
+            COUNT(DISTINCT system_id) as systems,
+            COUNT(DISTINCT game_id) as games
         FROM nba_predictions.player_prop_predictions
         WHERE game_date = '{game_date}'
         GROUP BY game_date
@@ -298,39 +299,40 @@ class R009Validator:
                 return {
                     'passed': True,  # Not critical, maybe no props available
                     'total_predictions': 0,
-                    'graded': 0,
-                    'graded_pct': 0
+                    'systems': 0,
+                    'games': 0
                 }
 
             row = rows[0]
-            graded_pct = row.graded_pct
 
-            if graded_pct < 100:
+            # Check if we have predictions from all 5 expected systems
+            expected_systems = 5
+            if row.systems < expected_systems:
                 logger.warning(
-                    f"⚠️  Check #4 WARNING: {graded_pct}% grading completeness "
-                    f"({row.graded}/{row.total_predictions} graded)"
+                    f"⚠️  Check #4 WARNING: Only {row.systems}/{expected_systems} systems generated predictions "
+                    f"({row.total_predictions} total predictions)"
                 )
                 self.issues_found.append({
                     'severity': 'warning',
-                    'check': 'prediction_grading',
-                    'message': f"{graded_pct}% grading completeness ({row.graded}/{row.total_predictions})"
+                    'check': 'prediction_coverage',
+                    'message': f"Only {row.systems}/{expected_systems} systems generated predictions"
                 })
                 return {
                     'passed': False,
                     'total_predictions': row.total_predictions,
-                    'graded': row.graded,
-                    'graded_pct': graded_pct
+                    'systems': row.systems,
+                    'games': row.games
                 }
             else:
                 logger.info(
-                    f"✅ Check #4 PASSED: 100% grading completeness "
-                    f"({row.total_predictions} predictions)"
+                    f"✅ Check #4 PASSED: {row.systems} systems generated {row.total_predictions} predictions "
+                    f"for {row.games} games"
                 )
                 return {
                     'passed': True,
                     'total_predictions': row.total_predictions,
-                    'graded': row.graded,
-                    'graded_pct': graded_pct
+                    'systems': row.systems,
+                    'games': row.games
                 }
 
         except Exception as e:
@@ -497,20 +499,17 @@ class R009Validator:
         if critical_issues:
             notify_error(
                 title=f"R-009 Validation FAILED - {game_date}",
-                message=f"Found {len(critical_issues)} critical issues",
-                context=summary
+                message=f"Found {len(critical_issues)} critical issues: {', '.join([i['message'] for i in critical_issues])}"
             )
         elif warning_issues:
             notify_warning(
                 title=f"R-009 Validation - Warnings - {game_date}",
-                message=f"Found {len(warning_issues)} warnings",
-                context=summary
+                message=f"Found {len(warning_issues)} warnings: {', '.join([i['message'] for i in warning_issues[:3]])}"
             )
         else:
             notify_info(
                 title=f"R-009 Validation PASSED - {game_date}",
-                message="All checks passed",
-                context=summary
+                message="All checks passed successfully"
             )
 
         return summary
