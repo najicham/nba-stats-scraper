@@ -150,6 +150,32 @@ class PipelineReconciler:
         results = self.run_query(query)
         return results[0] if results else {'games_with_analytics': 0, 'player_records': 0, 'unique_players': 0}
 
+    def check_phase3_games_with_zero_active(self, date: str) -> Dict:
+        """Phase 3: Check for games with 0 active players (R-009 detection)."""
+        query = f"""
+        SELECT
+            COUNT(*) as total_games_checked,
+            COUNTIF(active_count = 0) as games_with_zero_active,
+            ARRAY_AGG(IF(active_count = 0, game_id, NULL) IGNORE NULLS) as zero_active_games
+        FROM (
+            SELECT
+                game_id,
+                COUNTIF(is_active = TRUE) as active_count
+            FROM `{PROJECT_ID}.nba_analytics.player_game_summary`
+            WHERE game_date = '{date}'
+            GROUP BY game_id
+        )
+        """
+        results = self.run_query(query)
+        if results:
+            row = results[0]
+            return {
+                'total_games_checked': row.get('total_games_checked', 0),
+                'games_with_zero_active': row.get('games_with_zero_active', 0),
+                'zero_active_games': row.get('zero_active_games', []) or []
+            }
+        return {'total_games_checked': 0, 'games_with_zero_active': 0, 'zero_active_games': []}
+
     def check_phase4_precompute(self, date: str) -> Dict:
         """Phase 4: Check precompute tables for a date."""
         # Check multiple Phase 4 tables
@@ -201,6 +227,7 @@ class PipelineReconciler:
         rosters = self.check_phase2_rosters(date)
         odds = self.check_phase2_odds(date)
         analytics = self.check_phase3_analytics(date)
+        zero_active = self.check_phase3_games_with_zero_active(date)  # R-009 check
         precompute = self.check_phase4_precompute(date)
         predictions = self.check_phase5_predictions(date)
 
@@ -212,6 +239,7 @@ class PipelineReconciler:
             'phase2_rosters': rosters,
             'phase2_odds': odds,
             'phase3_analytics': analytics,
+            'phase3_zero_active': zero_active,  # R-009 check
             'phase4_precompute': precompute,
             'phase5_predictions': predictions,
         }
@@ -292,6 +320,20 @@ class PipelineReconciler:
                 'actual': 0,
                 'severity': 'MEDIUM',
                 'message': f"No daily cache records for {date}"
+            })
+
+        # Check 7: Games with 0 active players (R-009 detection)
+        games_with_zero_active = zero_active.get('games_with_zero_active', 0)
+        total_games_checked = zero_active.get('total_games_checked', 0)
+        if games_with_zero_active > 0:
+            zero_active_game_ids = zero_active.get('zero_active_games', [])
+            self.gaps.append({
+                'phase': 'Phase 3',
+                'check': 'Games with 0 Active Players',
+                'expected': 'All games should have >= 1 active player',
+                'actual': f"{games_with_zero_active}/{total_games_checked} games have 0 active",
+                'severity': 'HIGH',
+                'message': f"Found {games_with_zero_active} games with 0 active players: {zero_active_game_ids[:5]}"  # Limit to 5 game IDs
             })
 
         # Summary

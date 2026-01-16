@@ -226,7 +226,38 @@ workflows:
     
     dependencies:
       required_for: ["betting_lines", "post_game_collection"]
-  
+
+  # ────────────────────────────────────────────────────────────
+  # Morning Recovery - Safety Net for Incomplete Data (R-009)
+  # ────────────────────────────────────────────────────────────
+  morning_recovery:
+    enabled: true
+    priority: "HIGH"
+    decision_type: "game_aware_yesterday"  # Key: targets yesterday's games
+    description: "Morning recovery - 6 AM ET - Re-check games with incomplete data"
+
+    schedule:
+      game_aware: true
+      target_date: "yesterday"
+      fixed_time: "06:00"        # 6 AM ET
+      tolerance_minutes: 30
+
+    execution_plan:
+      type: "parallel"
+      scrapers:
+        - nbac_schedule_api       # Verify game_status = Final
+        - bdl_box_scores          # Retry core box scores
+        - nbac_player_boxscore    # Retry player stats
+        - nbac_gamebook_pdf       # Retry gamebooks
+
+    alerts:
+      failure: "CRITICAL"
+      missing_games: "CRITICAL"
+
+    dependencies:
+      requires: ["post_game_window_3"]
+      required_for: ["morning_operations"]
+
   # ────────────────────────────────────────────────────────────
   # Betting Lines - Revenue Critical
   # ────────────────────────────────────────────────────────────

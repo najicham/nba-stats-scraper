@@ -719,11 +719,13 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
             "source": "nba_gamebook_pdf",
             "debug_info": {
                 "text_length": len(full_text),
-                "parser_used": "pdfplumber", 
+                "parser_used": "pdfplumber",
                 "debug_file": debug_file,
                 "parsing_issues": self.parsing_issues,
                 "total_issues": total_issues
-            }
+            },
+            # R-009 Fix: Mark data as partial when no active players found
+            "data_status": "partial" if len(active_players) == 0 else "complete",
         }
         
         self.decoded_data = self.data
