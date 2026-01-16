@@ -255,6 +255,7 @@ class BatchStateManager:
             expected = data.get('expected_players', 0)
 
             is_complete = completed >= expected
+            completion_pct = (completed / expected * 100) if expected > 0 else 0
 
             if is_complete:
                 # Mark as complete atomically
@@ -264,7 +265,18 @@ class BatchStateManager:
                 })
                 logger.info(f"🎉 Batch {batch_id} complete! ({completed}/{expected} players)")
             else:
-                logger.debug(f"Batch {batch_id} progress: {completed}/{expected}")
+                logger.debug(f"Batch {batch_id} progress: {completed}/{expected} ({completion_pct:.1f}%)")
+
+                # Check if we should trigger stall completion (95%+ and waiting)
+                # This runs on every completion event after 95% threshold
+                if completion_pct >= 95.0:
+                    stall_completed = self.check_and_complete_stalled_batch(
+                        batch_id=batch_id,
+                        stall_threshold_minutes=10,
+                        min_completion_pct=95.0
+                    )
+                    if stall_completed:
+                        return True
 
             return is_complete
 
@@ -331,6 +343,97 @@ class BatchStateManager:
         })
 
         logger.info(f"Marked batch as complete: {batch_id}")
+
+    def check_and_complete_stalled_batch(
+        self,
+        batch_id: str,
+        stall_threshold_minutes: int = 10,
+        min_completion_pct: float = 95.0
+    ) -> bool:
+        """
+        Check if a batch is stalled and complete it with partial results.
+
+        A batch is considered stalled if:
+        1. It has reached the minimum completion percentage (default 95%)
+        2. No new completions for stall_threshold_minutes (default 10 min)
+
+        This prevents batches from waiting indefinitely for workers that
+        will never respond (crashed, timed out, Pub/Sub issues).
+
+        Args:
+            batch_id: Batch identifier
+            stall_threshold_minutes: Minutes without progress = stalled
+            min_completion_pct: Minimum % complete to allow partial completion
+
+        Returns:
+            True if batch was marked complete (was stalled), False otherwise
+        """
+        from datetime import timedelta
+
+        state = self.get_batch_state(batch_id)
+        if not state:
+            logger.warning(f"Batch {batch_id} not found for stall check")
+            return False
+
+        if state.is_complete:
+            logger.debug(f"Batch {batch_id} already complete")
+            return False
+
+        # Check completion percentage
+        completion_pct = state.get_completion_percentage()
+        if completion_pct < min_completion_pct:
+            logger.debug(
+                f"Batch {batch_id} at {completion_pct:.1f}% - below threshold "
+                f"({min_completion_pct}%), not marking complete"
+            )
+            return False
+
+        # Check for stall (no updates for threshold minutes)
+        doc_ref = self.collection.document(batch_id)
+        doc = doc_ref.get()
+        data = doc.to_dict()
+
+        updated_at = data.get('updated_at')
+        if updated_at:
+            # Handle both Firestore timestamp and datetime
+            if hasattr(updated_at, 'timestamp'):
+                last_update = datetime.fromtimestamp(updated_at.timestamp(), tz=timezone.utc)
+            else:
+                last_update = updated_at
+
+            time_since_update = datetime.now(timezone.utc) - last_update
+            stall_threshold = timedelta(minutes=stall_threshold_minutes)
+
+            if time_since_update < stall_threshold:
+                logger.debug(
+                    f"Batch {batch_id} last updated {time_since_update.total_seconds():.0f}s ago - "
+                    f"not stalled yet (threshold: {stall_threshold_minutes} min)"
+                )
+                return False
+
+        # Batch is stalled - mark complete with partial results
+        completed = len(state.completed_players)
+        expected = state.expected_players
+
+        logger.warning(
+            f"⚠️ Batch {batch_id} STALLED at {completed}/{expected} ({completion_pct:.1f}%) - "
+            f"marking complete with partial results"
+        )
+
+        doc_ref.update({
+            'is_complete': True,
+            'completion_time': firestore.SERVER_TIMESTAMP,
+            'updated_at': firestore.SERVER_TIMESTAMP,
+            'stall_completed': True,  # Flag to indicate partial completion
+            'stall_reason': f"No progress for {stall_threshold_minutes} min at {completion_pct:.1f}%"
+        })
+
+        logger.info(
+            f"✅ Marked stalled batch {batch_id} as complete "
+            f"({completed}/{expected} players, {state.total_predictions} predictions)"
+        )
+
+        return True
 
     def get_active_batches(self) -> List[BatchState]:
         """
