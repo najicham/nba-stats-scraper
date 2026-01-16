@@ -1,4 +1,27 @@
 <!-- Status Cards for Today and Tomorrow -->
+
+<!-- Reliability Alert Banner (if gaps detected) -->
+{% if reliability_summary and reliability_summary.r007 and reliability_summary.r007.gaps_found > 0 %}
+<div class="mb-4 p-4 rounded-lg {% if reliability_summary.r007.high_severity_count > 0 %}bg-red-50 border border-red-300{% else %}bg-orange-50 border border-orange-300{% endif %}">
+    <div class="flex items-center justify-between">
+        <div class="flex items-center">
+            <svg class="w-5 h-5 mr-2 {% if reliability_summary.r007.high_severity_count > 0 %}text-red-600{% else %}text-orange-600{% endif %}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+            </svg>
+            <span class="text-sm font-medium {% if reliability_summary.r007.high_severity_count > 0 %}text-red-800{% else %}text-orange-800{% endif %}">
+                R-007: {{ reliability_summary.r007.gaps_found }} data gap(s) detected for {{ reliability_summary.r007.date }}
+                {% if reliability_summary.r007.high_severity_count > 0 %}
+                ({{ reliability_summary.r007.high_severity_count }} HIGH severity)
+                {% endif %}
+            </span>
+        </div>
+        <a href="#" @click.prevent="activeTab = 'reliability'" class="text-sm {% if reliability_summary.r007.high_severity_count > 0 %}text-red-600 hover:text-red-800{% else %}text-orange-600 hover:text-orange-800{% endif %}">
+            View Details
+        </a>
+    </div>
+</div>
+{% endif %}
+
 <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
 
     <!-- Today's Status Card -->

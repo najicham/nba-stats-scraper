@@ -68,6 +68,16 @@
             >
                 Coverage Metrics
             </button>
+            <button
+                @click="activeTab = 'reliability'"
+                :class="activeTab === 'reliability' ? 'border-orange-500 text-orange-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+                class="whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
+            >
+                Reliability
+                {% if reliability_gaps is defined and reliability_gaps > 0 %}
+                <span class="ml-2 px-2 py-0.5 bg-orange-100 text-orange-600 text-xs rounded-full">{{ reliability_gaps }}</span>
+                {% endif %}
+            </button>
         </nav>
     </div>
 
@@ -249,6 +259,28 @@
                      hx-get="/partials/coverage-metrics?sport={{ sport or 'nba' }}"
                      hx-trigger="load">
                     <div class="text-gray-500 text-center py-8">Loading coverage metrics...</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Reliability Tab (R-006, R-007, R-008) -->
+        <div x-show="activeTab === 'reliability'" x-cloak>
+            <div class="bg-white rounded-lg shadow p-6">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="text-lg font-medium text-gray-900">Pipeline Reliability Monitoring</h3>
+                    <button
+                        hx-get="/partials/reliability-tab?sport={{ sport or 'nba' }}"
+                        hx-target="#reliability-content"
+                        hx-swap="innerHTML"
+                        class="text-sm text-blue-600 hover:text-blue-800"
+                    >
+                        Refresh
+                    </button>
+                </div>
+                <div id="reliability-content"
+                     hx-get="/partials/reliability-tab?sport={{ sport or 'nba' }}"
+                     hx-trigger="load">
+                    <div class="text-gray-500 text-center py-8">Loading reliability data...</div>
                 </div>
             </div>
         </div>
