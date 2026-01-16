@@ -17,7 +17,7 @@ This document tracks all reliability issues identified in the codebase audit, th
 | R-003 | Precompute Service Returns 200 on Failures | HIGH | **FIXED** | precompute-processors |
 | R-004 | Precompute Completion Without Write Verification | HIGH | **FIXED** | precompute-base |
 | R-005 | Raw Processor Batch Lock No Write Verification | MEDIUM | Open | raw-processors |
-| R-006 | Phase 4→5 No Data Freshness Validation | MEDIUM | Open | phase4-to-phase5 |
+| R-006 | Phase 4→5 No Data Freshness Validation | MEDIUM | **FIXED** | phase4-to-phase5 |
 | R-007 | No End-to-End Data Reconciliation | MEDIUM | Open | pipeline-wide |
 | R-008 | Pub/Sub Publish Failures Swallowed | LOW | Open | precompute-base |
 
@@ -270,61 +270,50 @@ if success:
 
 ---
 
-### R-006: Phase 4→5 No Data Freshness Validation
+### R-006: Phase 4→5 No Data Freshness Validation [FIXED]
 
 **Severity**: MEDIUM
-**Status**: Open
+**Status**: FIXED (2026-01-15)
 **Service**: `phase4-to-phase5`
 **File**: `orchestration/cloud_functions/phase4_to_phase5/main.py`
 
 #### Problem
-Orchestrator triggers Phase 5 when all completion events received, but doesn't verify the data is actually fresh/complete in BigQuery.
+Orchestrator triggered Phase 5 when all completion events were received, but didn't verify the data actually existed in BigQuery. This was a belt-and-suspenders check to catch cases where R-004 might not have caught failures.
 
 #### Impact
-- If a processor publishes "success" but write failed (R-004)
-- Or if data is stale from a previous run
-- Predictions run on incorrect data
+- If a processor published "success" but write failed
+- Or if data was stale from a previous run
+- Predictions would run on incorrect/missing data
 
-#### Proposed Fix
-Add pre-trigger validation function:
+#### Solution Implemented
+Added `verify_phase4_data_ready()` function that queries BigQuery to confirm all required Phase 4 tables have data for the game date before triggering predictions.
+
+Key features:
+1. Verifies 5 required Phase 4 tables have data
+2. Returns row counts for each table
+3. Sends Slack alert if data is missing
+4. Still triggers predictions (same as timeout behavior) but with visibility
+
 ```python
-def verify_phase4_data_ready(game_date: str) -> Tuple[bool, List[str]]:
-    """
-    Verify Phase 4 tables have fresh data for game_date.
-
-    Returns:
-        (is_ready, missing_tables)
-    """
-    from google.cloud import bigquery
-    bq = bigquery.Client()
-
-    required_tables = [
-        ('nba_precompute', 'ml_feature_store_v2', 'analysis_date'),
-        ('nba_precompute', 'player_daily_cache', 'analysis_date'),
-        ('nba_precompute', 'player_composite_factors', 'analysis_date'),
-    ]
-
-    missing = []
-    for dataset, table, date_col in required_tables:
-        query = f"""
-        SELECT COUNT(*) as cnt
-        FROM `{dataset}.{table}`
-        WHERE {date_col} = '{game_date}'
-        """
-        result = list(bq.query(query).result())[0]
-        if result.cnt == 0:
-            missing.append(f"{dataset}.{table}")
-
-    return (len(missing) == 0, missing)
-
-# In trigger_phase5():
-is_ready, missing = verify_phase4_data_ready(game_date)
+# Added to trigger_phase5()
+is_ready, missing_tables, table_counts = verify_phase4_data_ready(game_date)
 if not is_ready:
-    logger.error(f"Phase 4 data not ready for {game_date}: missing {missing}")
-    # Don't trigger Phase 5, send alert instead
-    send_data_not_ready_alert(game_date, missing)
-    return
+    logger.warning(f"R-006: Data freshness check FAILED for {game_date}")
+    send_data_freshness_alert(game_date, missing_tables, table_counts)
+
+# Verification results included in trigger message
+message = {
+    ...
+    'data_freshness_verified': is_ready,
+    'missing_tables': missing_tables if not is_ready else [],
+    'table_row_counts': table_counts
+}
 ```
+
+#### Verification
+- Monitor Cloud Function logs for `R-006:` prefixed messages
+- Slack alerts will be sent if data freshness checks fail
+- Trigger messages now include `data_freshness_verified` field
 
 ---
 

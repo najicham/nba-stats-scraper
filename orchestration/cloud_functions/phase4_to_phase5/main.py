@@ -38,7 +38,7 @@ import requests
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Set
 
-from google.cloud import firestore, pubsub_v1
+from google.cloud import firestore, pubsub_v1, bigquery
 import functions_framework
 
 # Configure logging
@@ -201,6 +201,144 @@ def send_timeout_alert(game_date: str, completed_count: int, expected_count: int
 
     except Exception as e:
         logger.error(f"Failed to send timeout alert: {e}")
+        return False
+
+
+# R-006: Data freshness validation before triggering Phase 5
+# Required Phase 4 tables that must have data before triggering predictions
+REQUIRED_PHASE4_TABLES = [
+    ('nba_precompute', 'ml_feature_store_v2', 'analysis_date'),
+    ('nba_precompute', 'player_daily_cache', 'analysis_date'),
+    ('nba_precompute', 'player_composite_factors', 'analysis_date'),
+    ('nba_precompute', 'player_shot_zone_analysis', 'analysis_date'),
+    ('nba_precompute', 'team_defense_zone_analysis', 'analysis_date'),
+]
+
+
+def verify_phase4_data_ready(game_date: str) -> tuple:
+    """
+    R-006: Verify Phase 4 tables have fresh data for game_date before triggering predictions.
+
+    This is a belt-and-suspenders check - even if all processors report success,
+    verify the data actually exists in BigQuery.
+
+    Args:
+        game_date: The date to verify (YYYY-MM-DD)
+
+    Returns:
+        tuple: (is_ready: bool, missing_tables: list, table_counts: dict)
+    """
+    try:
+        bq_client = bigquery.Client()
+        missing = []
+        table_counts = {}
+
+        for dataset, table, date_col in REQUIRED_PHASE4_TABLES:
+            try:
+                query = f"""
+                SELECT COUNT(*) as cnt
+                FROM `{PROJECT_ID}.{dataset}.{table}`
+                WHERE {date_col} = '{game_date}'
+                """
+                result = list(bq_client.query(query).result())
+                count = result[0].cnt if result else 0
+                table_counts[f"{dataset}.{table}"] = count
+
+                if count == 0:
+                    missing.append(f"{dataset}.{table}")
+                    logger.warning(f"R-006: Missing data in {dataset}.{table} for {game_date}")
+
+            except Exception as query_error:
+                # If query fails (table doesn't exist, etc.), treat as missing
+                logger.error(f"R-006: Failed to verify {dataset}.{table}: {query_error}")
+                missing.append(f"{dataset}.{table}")
+                table_counts[f"{dataset}.{table}"] = -1  # Error marker
+
+        is_ready = len(missing) == 0
+        if is_ready:
+            logger.info(f"R-006: All Phase 4 tables verified for {game_date}: {table_counts}")
+        else:
+            logger.warning(f"R-006: Data freshness check FAILED for {game_date}. Missing: {missing}")
+
+        return (is_ready, missing, table_counts)
+
+    except Exception as e:
+        logger.error(f"R-006: Data freshness verification failed: {e}")
+        # On error, return False with empty details
+        return (False, ['verification_error'], {'error': str(e)})
+
+
+def send_data_freshness_alert(game_date: str, missing_tables: List[str], table_counts: Dict) -> bool:
+    """
+    Send Slack alert when Phase 4 data freshness check fails.
+
+    Args:
+        game_date: The date being processed
+        missing_tables: List of tables with no data
+        table_counts: Dict of table -> row count
+
+    Returns:
+        True if alert sent successfully, False otherwise
+    """
+    if not SLACK_WEBHOOK_URL:
+        logger.warning("SLACK_WEBHOOK_URL not configured, skipping data freshness alert")
+        return False
+
+    try:
+        # Format table counts for display
+        counts_text = "\n".join([f"• {t}: {c}" for t, c in table_counts.items()])
+
+        payload = {
+            "attachments": [{
+                "color": "#FFA500",  # Orange for warning
+                "blocks": [
+                    {
+                        "type": "header",
+                        "text": {
+                            "type": "plain_text",
+                            "text": ":warning: R-006: Phase 4 Data Freshness Alert",
+                            "emoji": True
+                        }
+                    },
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": f"*Data freshness check failed!* Some Phase 4 tables are missing data for {game_date}."
+                        }
+                    },
+                    {
+                        "type": "section",
+                        "fields": [
+                            {"type": "mrkdwn", "text": f"*Date:*\n{game_date}"},
+                            {"type": "mrkdwn", "text": f"*Missing Tables:*\n{', '.join(missing_tables)}"},
+                        ]
+                    },
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": f"*Table Row Counts:*\n```{counts_text}```"
+                        }
+                    },
+                    {
+                        "type": "context",
+                        "elements": [{
+                            "type": "mrkdwn",
+                            "text": "Phase 5 predictions will proceed, but may use incomplete data. Review Phase 4 processor logs."
+                        }]
+                    }
+                ]
+            }]
+        }
+
+        response = requests.post(SLACK_WEBHOOK_URL, json=payload, timeout=10)
+        response.raise_for_status()
+        logger.info(f"Data freshness alert sent successfully for {game_date}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Failed to send data freshness alert: {e}")
         return False
 
 
@@ -402,9 +540,10 @@ def trigger_phase5(game_date: str, correlation_id: str, upstream_message: Dict) 
     """
     Trigger Phase 5 predictions when Phase 4 is complete.
 
-    Does two things:
-    1. Publishes message to nba-phase4-precompute-complete topic
-    2. Calls prediction coordinator /start endpoint directly
+    Does three things:
+    1. R-006: Verifies Phase 4 data actually exists in BigQuery
+    2. Publishes message to nba-phase4-precompute-complete topic
+    3. Calls prediction coordinator /start endpoint directly
 
     Args:
         game_date: Date that was processed
@@ -415,6 +554,18 @@ def trigger_phase5(game_date: str, correlation_id: str, upstream_message: Dict) 
         Message ID if published successfully, None if failed
     """
     try:
+        # R-006: Verify Phase 4 data exists before triggering predictions
+        # This is a belt-and-suspenders check even when all processors report success
+        is_ready, missing_tables, table_counts = verify_phase4_data_ready(game_date)
+
+        if not is_ready:
+            logger.warning(
+                f"R-006: Data freshness check FAILED for {game_date}. "
+                f"Missing tables: {missing_tables}. Proceeding with trigger anyway."
+            )
+            # Send alert but continue triggering (same behavior as timeout)
+            send_data_freshness_alert(game_date, missing_tables, table_counts)
+
         topic_path = publisher.topic_path(PROJECT_ID, PHASE5_TRIGGER_TOPIC)
 
         # Build trigger message
@@ -429,7 +580,12 @@ def trigger_phase5(game_date: str, correlation_id: str, upstream_message: Dict) 
 
             # Optional metadata from upstream
             'parent_execution_id': upstream_message.get('execution_id'),
-            'parent_processor': 'Phase4Orchestrator'
+            'parent_processor': 'Phase4Orchestrator',
+
+            # R-006: Include data freshness verification results
+            'data_freshness_verified': is_ready,
+            'missing_tables': missing_tables if not is_ready else [],
+            'table_row_counts': table_counts
         }
 
         # Publish to Pub/Sub
