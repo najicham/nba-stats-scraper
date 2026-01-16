@@ -348,6 +348,12 @@ API_KEY = os.environ.get('ADMIN_DASHBOARD_API_KEY')
 if not API_KEY:
     logger.warning("ADMIN_DASHBOARD_API_KEY not set - all authenticated requests will be rejected")
 
+# Pipeline Reconciliation Function URL (R-007)
+RECONCILIATION_FUNCTION_URL = os.environ.get(
+    'RECONCILIATION_FUNCTION_URL',
+    'https://pipeline-reconciliation-f7p3g7f6ya-wl.a.run.app'
+)
+
 # Cloud Run service URLs (sport-specific)
 SERVICE_URLS = {
     'nba': {
@@ -574,6 +580,32 @@ def dashboard():
         logger.error(f"Error fetching errors: {e}")
         recent_errors = []
 
+    # Get reliability summary for status card banner (R-007)
+    reliability_summary = None
+    reliability_gaps = 0
+    try:
+        yesterday = (datetime.now(ZoneInfo('America/New_York')).date() - timedelta(days=1)).strftime('%Y-%m-%d')
+        response = requests.get(
+            f"{RECONCILIATION_FUNCTION_URL}?date={yesterday}",
+            timeout=10
+        )
+        if response.ok:
+            r007_data = response.json()
+            reliability_summary = {
+                'r007': {
+                    'date': yesterday,
+                    'gaps_found': r007_data.get('gaps_found', 0),
+                    'status': r007_data.get('status', 'UNKNOWN'),
+                    'high_severity_count': len([
+                        g for g in r007_data.get('gaps', [])
+                        if g.get('severity') == 'HIGH'
+                    ])
+                }
+            }
+            reliability_gaps = r007_data.get('gaps_found', 0)
+    except Exception as e:
+        logger.warning(f"Failed to fetch reliability summary: {e}")
+
     return render_template(
         'dashboard.html',
         sport=sport,
@@ -583,7 +615,9 @@ def dashboard():
         now_et=now_et,
         today_status=today_status,
         tomorrow_status=tomorrow_status,
-        recent_errors=recent_errors
+        recent_errors=recent_errors,
+        reliability_summary=reliability_summary,
+        reliability_gaps=reliability_gaps
     )
 
 
@@ -729,20 +763,51 @@ def partial_status_cards():
     if not check_auth():
         return '<div class="text-red-500">Unauthorized</div>', 401
 
+    sport = get_sport_from_request()
+    bq_svc, _ = get_service_for_sport(sport)
     today, tomorrow, now_et = get_et_dates()
 
     try:
-        today_status = bq_service.get_daily_status(today)
-        tomorrow_status = bq_service.get_daily_status(tomorrow)
+        if sport == 'mlb':
+            today_status = bq_svc.get_mlb_daily_status(today)
+            tomorrow_status = bq_svc.get_mlb_daily_status(tomorrow)
+        else:
+            today_status = bq_svc.get_daily_status(today)
+            tomorrow_status = bq_svc.get_daily_status(tomorrow)
     except Exception as e:
         return f'<div class="text-red-500">Error: {e}</div>', 500
+
+    # Get reliability summary for banner
+    reliability_summary = None
+    try:
+        yesterday = (datetime.now(ZoneInfo('America/New_York')).date() - timedelta(days=1)).strftime('%Y-%m-%d')
+        response = requests.get(
+            f"{RECONCILIATION_FUNCTION_URL}?date={yesterday}",
+            timeout=10
+        )
+        if response.ok:
+            r007_data = response.json()
+            reliability_summary = {
+                'r007': {
+                    'date': yesterday,
+                    'gaps_found': r007_data.get('gaps_found', 0),
+                    'status': r007_data.get('status', 'UNKNOWN'),
+                    'high_severity_count': len([
+                        g for g in r007_data.get('gaps', [])
+                        if g.get('severity') == 'HIGH'
+                    ])
+                }
+            }
+    except Exception as e:
+        logger.warning(f"Failed to fetch reliability summary for status cards: {e}")
 
     return render_template(
         'components/status_cards.html',
         today=today,
         tomorrow=tomorrow,
         today_status=today_status,
-        tomorrow_status=tomorrow_status
+        tomorrow_status=tomorrow_status,
+        reliability_summary=reliability_summary
     )
 
 
@@ -1046,6 +1111,194 @@ def action_trigger_self_heal():
         # Log error action to BigQuery audit trail
         audit_logger.log_action('trigger_self_heal', endpoint, parameters, 'error')
         return jsonify({'error': str(e)}), 500
+
+
+# =============================================================================
+# RELIABILITY MONITORING (R-006, R-007, R-008)
+# =============================================================================
+
+@app.route('/api/reliability/reconciliation')
+@rate_limit
+def api_reconciliation_status():
+    """
+    Get R-007 pipeline reconciliation status for recent dates.
+
+    Query params:
+        days: Number of days to check (default: 7)
+        date: Specific date to check (overrides days)
+    """
+    if not check_auth():
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    try:
+        specific_date = request.args.get('date')
+        days = int(request.args.get('days', 7))
+
+        if specific_date:
+            # Check specific date
+            response = requests.get(
+                f"{RECONCILIATION_FUNCTION_URL}?date={specific_date}",
+                timeout=30
+            )
+            if response.ok:
+                return jsonify({
+                    'dates': [response.json()],
+                    'checked': 1
+                })
+            else:
+                return jsonify({'error': f'Reconciliation check failed: {response.status_code}'}), 500
+
+        # Check multiple recent dates
+        et_tz = ZoneInfo('America/New_York')
+        today = datetime.now(et_tz).date()
+        results = []
+
+        for i in range(days):
+            check_date = today - timedelta(days=i+1)  # Start from yesterday
+            date_str = check_date.strftime('%Y-%m-%d')
+
+            try:
+                response = requests.get(
+                    f"{RECONCILIATION_FUNCTION_URL}?date={date_str}",
+                    timeout=30
+                )
+                if response.ok:
+                    results.append(response.json())
+                else:
+                    results.append({
+                        'date': date_str,
+                        'status': 'ERROR',
+                        'error': f'HTTP {response.status_code}'
+                    })
+            except requests.Timeout:
+                results.append({
+                    'date': date_str,
+                    'status': 'TIMEOUT',
+                    'error': 'Request timed out'
+                })
+            except Exception as e:
+                results.append({
+                    'date': date_str,
+                    'status': 'ERROR',
+                    'error': str(e)
+                })
+
+        return jsonify({
+            'dates': results,
+            'checked': len(results)
+        })
+
+    except Exception as e:
+        logger.error(f"Error fetching reconciliation status: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/reliability/summary')
+@rate_limit
+def api_reliability_summary():
+    """
+    Get a quick summary of reliability status for dashboard cards.
+
+    Returns counts of recent R-006, R-007, R-008 issues.
+    """
+    if not check_auth():
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    try:
+        et_tz = ZoneInfo('America/New_York')
+        yesterday = (datetime.now(et_tz).date() - timedelta(days=1)).strftime('%Y-%m-%d')
+
+        # Get yesterday's reconciliation status
+        r007_status = {'gaps_found': 0, 'status': 'UNKNOWN'}
+        try:
+            response = requests.get(
+                f"{RECONCILIATION_FUNCTION_URL}?date={yesterday}",
+                timeout=15
+            )
+            if response.ok:
+                r007_status = response.json()
+        except Exception as e:
+            logger.warning(f"Failed to get R-007 status: {e}")
+
+        # Query Cloud Logging for R-006 and R-008 alerts (last 24 hours)
+        # Note: This requires additional Cloud Logging API setup
+        # For now, return what we have from R-007
+
+        return jsonify({
+            'r007': {
+                'date': yesterday,
+                'gaps_found': r007_status.get('gaps_found', 0),
+                'status': r007_status.get('status', 'UNKNOWN'),
+                'high_severity_count': len([
+                    g for g in r007_status.get('gaps', [])
+                    if g.get('severity') == 'HIGH'
+                ])
+            },
+            'r006': {
+                'warnings_24h': 0,  # TODO: Query Cloud Logging
+                'note': 'Cloud Logging query not yet implemented'
+            },
+            'r008': {
+                'failures_24h': 0,  # TODO: Query Cloud Logging
+                'note': 'Cloud Logging query not yet implemented'
+            },
+            'last_updated': datetime.now(et_tz).isoformat()
+        })
+
+    except Exception as e:
+        logger.error(f"Error fetching reliability summary: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/partials/reliability-tab')
+@rate_limit
+def partial_reliability_tab():
+    """Render the reliability tab content."""
+    if not check_auth():
+        return '<div class="text-red-500">Unauthorized</div>', 401
+
+    try:
+        et_tz = ZoneInfo('America/New_York')
+        yesterday = (datetime.now(et_tz).date() - timedelta(days=1)).strftime('%Y-%m-%d')
+
+        # Get recent reconciliation results (last 3 days for quick view)
+        results = []
+        today = datetime.now(et_tz).date()
+
+        for i in range(3):
+            check_date = today - timedelta(days=i+1)
+            date_str = check_date.strftime('%Y-%m-%d')
+
+            try:
+                response = requests.get(
+                    f"{RECONCILIATION_FUNCTION_URL}?date={date_str}",
+                    timeout=20
+                )
+                if response.ok:
+                    results.append(response.json())
+                else:
+                    results.append({
+                        'date': date_str,
+                        'status': 'ERROR',
+                        'gaps_found': -1
+                    })
+            except Exception as e:
+                results.append({
+                    'date': date_str,
+                    'status': 'ERROR',
+                    'gaps_found': -1,
+                    'error': str(e)
+                })
+
+        return render_template(
+            'components/reliability_tab.html',
+            reconciliation_results=results,
+            last_check=datetime.now(et_tz).strftime('%Y-%m-%d %H:%M:%S ET')
+        )
+
+    except Exception as e:
+        logger.error(f"Error rendering reliability tab: {e}")
+        return f'<div class="text-red-500">Error loading reliability data: {e}</div>', 500
 
 
 if __name__ == '__main__':
