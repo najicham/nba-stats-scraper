@@ -393,29 +393,35 @@ def start_prediction_batch():
         # Instead of workers querying individually (225s total for sequential queries),
         # coordinator loads once (0.68s) and passes to workers via Pub/Sub
         # VERIFIED: Dec 31, 2025 - 118 players loaded in 0.68s, all workers used batch data
+
+        # TEMPORARY BYPASS (Session 78): Batch loading times out for large player counts
+        # Skipping batch load - workers will query individually (slower but functional)
+        # TODO: Investigate performance degradation in load_historical_games_batch()
         batch_historical_games = None
-        try:
-            player_lookups = [r.get('player_lookup') for r in requests if r.get('player_lookup')]
-            if player_lookups:
-                # Use heartbeat logger to track long-running data load (5-min intervals)
-                with HeartbeatLogger(f"Loading historical games for {len(player_lookups)} players", interval=300):
-                    # Import PredictionDataLoader to use batch loading method
-                    from data_loaders import PredictionDataLoader
+        logger.info(f"⚠️ TEMPORARY: Batch historical loading bypassed - workers will query individually")
 
-                    data_loader = PredictionDataLoader(project_id=PROJECT_ID, dataset_prefix=dataset_prefix)
-                    batch_historical_games = data_loader.load_historical_games_batch(
-                        player_lookups=player_lookups,
-                        game_date=game_date,
-                        lookback_days=90,
-                        max_games=30
-                    )
-
-                print(f"✅ Batch loaded historical games for {len(batch_historical_games)} players", flush=True)
-                logger.info(f"✅ Batch loaded historical games for {len(batch_historical_games)} players")
-        except Exception as e:
-            # Non-fatal: workers can fall back to individual queries
-            logger.warning(f"Batch historical load failed (workers will use individual queries): {e}")
-            batch_historical_games = None
+        # try:
+        #     player_lookups = [r.get('player_lookup') for r in requests if r.get('player_lookup')]
+        #     if player_lookups:
+        #         # Use heartbeat logger to track long-running data load (5-min intervals)
+        #         with HeartbeatLogger(f"Loading historical games for {len(player_lookups)} players", interval=300):
+        #             # Import PredictionDataLoader to use batch loading method
+        #             from data_loaders import PredictionDataLoader
+        #
+        #             data_loader = PredictionDataLoader(project_id=PROJECT_ID, dataset_prefix=dataset_prefix)
+        #             batch_historical_games = data_loader.load_historical_games_batch(
+        #                 player_lookups=player_lookups,
+        #                 game_date=game_date,
+        #                 lookback_days=90,
+        #                 max_games=30
+        #             )
+        #
+        #         print(f"✅ Batch loaded historical games for {len(batch_historical_games)} players", flush=True)
+        #         logger.info(f"✅ Batch loaded historical games for {len(batch_historical_games)} players")
+        # except Exception as e:
+        #     # Non-fatal: workers can fall back to individual queries
+        #     logger.warning(f"Batch historical load failed (workers will use individual queries): {e}")
+        #     batch_historical_games = None
 
         # Initialize progress tracker (DEPRECATED - keeping for backward compatibility)
         current_tracker = ProgressTracker(expected_players=len(requests))
