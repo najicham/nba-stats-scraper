@@ -1,0 +1,66 @@
+====================================================================
+COPY THIS INTO FRESH CHAT SESSION FOR FILTERING STRATEGY DESIGN
+====================================================================
+
+I need help designing an optimal filtering and subset strategy for NBA player prop prediction systems. Here's the complete context:
+
+CRITICAL FINDINGS:
+1. Some systems were evaluated against fake "placeholder" lines (20.0) instead of real DraftKings lines
+2. XGBoost V1: 100% invalid data (all placeholder lines)
+3. CatBoost V8: Only 4 weeks of valid data (Dec 20, 2025 - Jan 15, 2026)
+
+CATBOOST V8 PERFORMANCE (Real Lines Only):
+- Overall (Dec 20 - Jan 15): 50.8% win rate
+- Confidence ≥92%: 71.8% win rate ✅ ELITE (287 picks, 18% of volume)
+- Confidence 86-92%: 57.7% win rate ✅ GOOD (710 picks, 44% of volume)
+- Confidence 88-90%: 50.0% win rate ⚠️ MARGINAL (166 picks)
+- Confidence <86%: 47.6% win rate ❌ BAD (628 picks, 39% of volume)
+
+KEY QUESTIONS:
+1. Should we filter at ≥86%, ≥88%, ≥90%, or ≥92% confidence?
+2. How to handle the 88-90% sub-tier (breakeven performance)?
+3. Foundation vs Layers: Modify base systems (hard) or create SQL subsets (flexible)?
+4. What subsets to create? (e.g., premium ≥92%, quality 86-92%, premium_unders, consensus_3plus)
+5. How to tier subsets? (elite/quality/volume)
+6. Portfolio strategy: Bet only elite? Or diversify across tiers?
+
+ARCHITECTURE DECISION:
+Option A: Modify catboost_v8.py to filter heavily (e.g., only output ≥86%)
+Option B: Keep base system clean, create "virtual systems" via SQL (catboost_v8_premium, etc.)
+
+CURRENT SYSTEMS (validated with real lines):
+- moving_average: 55.8% (best)
+- catboost_v8: 55.1%
+- ensemble_v1: 55.1%
+- zone_matchup_v1: 54.4%
+- similarity_balanced_v1: 52.9%
+
+NEED RELAUNCH (100% placeholder lines):
+- xgboost_v1
+- moving_average_baseline_v1
+
+BREAKEVEN: 52.4% win rate (to beat -110 odds)
+
+DELIVERABLES REQUESTED:
+1. Recommended confidence thresholds per system
+2. List of 5-10 initial subsets with filter criteria
+3. Architecture choice (Foundation vs Layers) with justification
+4. Risk management / portfolio strategy
+5. Implementation roadmap (phases, priorities)
+
+FULL CONTEXT: See docs/09-handoff/SUBSET_FILTERING_STRATEGY_PROMPT.md
+
+DATA LOCATIONS:
+- Predictions: nba-props-platform.nba_predictions.player_prop_predictions
+- Accuracy: nba-props-platform.nba_predictions.prediction_accuracy
+- System code: predictions/worker/prediction_systems/catboost_v8.py
+
+ASSUMPTIONS:
+- Users prefer quality over quantity
+- Target ROI: 10%+ good, 20%+ excellent
+- Breakeven: 52.4% win rate
+- -110 betting odds
+
+Please provide comprehensive filtering strategy with specific recommendations.
+
+====================================================================
