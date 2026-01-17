@@ -1,0 +1,6 @@
+MLB_ACTIVE_SYSTEMS: "v1_baseline,v1_6_rolling,ensemble_v1"
+MLB_V1_MODEL_PATH: "gs://nba-scraped-data/ml-models/mlb/mlb_pitcher_strikeouts_v1_4features_20260114_142456.json"
+MLB_V1_6_MODEL_PATH: "gs://nba-scraped-data/ml-models/mlb/mlb_pitcher_strikeouts_v1_6_rolling_20260115_131149.json"
+MLB_ENSEMBLE_V1_WEIGHT: "0.3"
+MLB_ENSEMBLE_V1_6_WEIGHT: "0.5"
+GCP_PROJECT_ID: "nba-props-platform"
