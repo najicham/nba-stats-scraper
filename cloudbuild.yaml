@@ -1,0 +1,16 @@
+# Cloud Build configuration for prediction-worker
+# Builds from repository root to include shared/ module
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-f'
+      - 'docker/predictions-worker.Dockerfile'
+      - '-t'
+      - 'gcr.io/nba-props-platform/prediction-worker:latest'
+      - '.'
+
+images:
+  - 'gcr.io/nba-props-platform/prediction-worker:latest'
+
+timeout: 900s
