@@ -419,3 +419,105 @@ If you're continuing this work:
 ---
 
 **The pipeline has been down for 17 hours. Immediate action required! 🚨**
+
+---
+
+## ✅ **SESSION 80 UPDATE - VERIFICATION RESULTS**
+
+**Date**: 2026-01-17 18:00-18:15 UTC
+**Verifier**: Session 80
+**Status**: 🟡 **PARTIAL SUCCESS - Model Working, Permissions Issue Found**
+
+### Pipeline Recovery - COMPLETE ✅
+
+Session 79's fix worked perfectly:
+- ✅ Phase 3: 147 context records created (17:46-17:50)
+- ✅ Phase 4: 147 features generated (17:50-17:52)
+  - TeamDefenseZoneAnalysisProcessor: 30 records
+  - PlayerShotZoneAnalysisProcessor: 445 records
+  - PlayerDailyCacheProcessor: 123 records
+  - PlayerCompositeFactorsProcessor: 147 records
+  - MLFeatureStoreProcessor: 147 records
+- ✅ Phase 5: PredictionCoordinator ran successfully (17:52-17:53)
+- ✅ Pipeline status: **COMPLETE**
+- ✅ Total predictions: 365 (all 5 systems)
+
+**Downtime Resolution**: ~24 hours (Jan 16 17:00 - Jan 17 17:50)
+
+### CatBoost V8 Verification - PARTIAL SUCCESS 🟡
+
+**New Issue Discovered**: GCS Permissions Missing
+
+**Root Cause**:
+```
+ERROR: prediction-worker@nba-props-platform.iam.gserviceaccount.com
+does not have storage.objects.get access to the Google Cloud Storage object.
+Permission 'storage.objects.get' denied
+```
+
+**CatBoost V8 Results for 2026-01-17**:
+```
+Total predictions: 80
+├─ Model loaded successfully: 13 predictions (16%)
+│  ├─ 89% confidence: 6 predictions ✅
+│  ├─ 87% confidence: 2 predictions ✅
+│  └─ 84% confidence: 5 predictions ✅
+└─ Fallback (permission error): 67 predictions (84%)
+   └─ 50% confidence: 67 predictions ❌
+```
+
+**Evidence of Success** (sample predictions with model loaded):
+| Player | Predicted | Confidence | Recommendation |
+|--------|-----------|------------|----------------|
+| spencerjones | 0.7 | 89% | UNDER |
+| davionmitchell | 3.0 | 89% | UNDER |
+| timhardawayjr | 23.6 | 87% | OVER |
+| jadenhardy | 14.7 | 87% | UNDER |
+| cooperflagg | 34.8 | 84% | OVER |
+
+### Fix Applied ✅
+
+1. **Granted GCS Permissions**:
+```bash
+gcloud projects add-iam-policy-binding nba-props-platform \
+  --member="serviceAccount:prediction-worker@nba-props-platform.iam.gserviceaccount.com" \
+  --role="roles/storage.objectViewer"
+```
+
+2. **Retriggered Predictions**: Force-started new batch for Jan 17
+
+3. **Model Verified Working**: Fresh worker instances successfully load model and generate variable confidence (84-89%)
+
+### Why Partial Success?
+
+Cloud Run worker instances cache IAM credentials. Old instances (started before permission grant) still get 403 errors. New instances (started after) work correctly.
+
+**Expected Resolution**: Next pipeline run (2026-01-18) should show 100% model usage as all instances will have fresh credentials.
+
+### Additional Discovery: Coordinator Also Broken 🚨
+
+**Issue**: New `prediction-coordinator` revision crashes with same `ModuleNotFoundError`
+**Impact**: LOW (old working revision still serving traffic)
+**Next Steps**: Apply Docker build fix to coordinator (same as Phase 3 & 4)
+
+### Session 80 Deliverables
+
+- ✅ Verified Session 79 pipeline fix successful
+- ✅ Identified and fixed GCS permissions issue
+- ✅ Confirmed CatBoost V8 model working on fresh instances
+- ✅ Documented partial deployment state
+- ✅ Created comprehensive handoff: `2026-01-17-SESSION-80-CATBOOST-PARTIAL-SUCCESS.md`
+
+### Next Session Priorities
+
+1. **Monitor 2026-01-18 predictions** - Should be 100% model-based
+2. **Fix coordinator Docker build** - Prevent future ModuleNotFoundError
+3. **Clean historical data** - Delete broken Jan 14-15 predictions (all 50%)
+4. **Start 3-day monitoring** - Per incident checklist
+
+---
+
+**INCIDENT STATUS**: 🟡 **MOSTLY RESOLVED**
+- Pipeline: ✅ Working
+- CatBoost V8: 🟡 Partially deployed (16% working, 84% waiting for instance refresh)
+- Expected full resolution: Next pipeline run

@@ -79,8 +79,8 @@ for date in "${DATES[@]}"; do
   http_code=$(echo "$response" | tail -n1)
   response_body=$(echo "$response" | head -n-1)
 
-  if [ "$http_code" = "200" ]; then
-    echo -e "  ${GREEN}✓ Batch started${NC}"
+  if [ "$http_code" = "200" ] || [ "$http_code" = "202" ]; then
+    echo -e "  ${GREEN}✓ Batch started (HTTP $http_code)${NC}"
 
     # Extract batch_id if available
     batch_id=$(echo "$response_body" | grep -o '"batch_id":"[^"]*"' | cut -d'"' -f4 || echo "")
