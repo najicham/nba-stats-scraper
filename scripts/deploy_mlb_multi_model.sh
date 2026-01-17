@@ -94,17 +94,31 @@ gcloud builds submit \
 
 echo ""
 echo "Deploying to Cloud Run..."
+# Create temporary env vars file
+ENV_VARS_FILE=$(mktemp)
+cat > "$ENV_VARS_FILE" <<EOF
+MLB_ACTIVE_SYSTEMS: "${ACTIVE_SYSTEMS}"
+MLB_V1_MODEL_PATH: "${V1_MODEL_PATH}"
+MLB_V1_6_MODEL_PATH: "${V1_6_MODEL_PATH}"
+MLB_ENSEMBLE_V1_WEIGHT: "0.3"
+MLB_ENSEMBLE_V1_6_WEIGHT: "0.5"
+GCP_PROJECT_ID: "${PROJECT_ID}"
+EOF
+
 gcloud run deploy "$SERVICE_NAME" \
   --project="$PROJECT_ID" \
   --region="$REGION" \
   --image="gcr.io/$PROJECT_ID/$SERVICE_NAME:latest" \
-  --set-env-vars="MLB_ACTIVE_SYSTEMS=${ACTIVE_SYSTEMS},MLB_V1_MODEL_PATH=${V1_MODEL_PATH},MLB_V1_6_MODEL_PATH=${V1_6_MODEL_PATH},MLB_ENSEMBLE_V1_WEIGHT=0.3,MLB_ENSEMBLE_V1_6_WEIGHT=0.5,GCP_PROJECT_ID=${PROJECT_ID}" \
+  --env-vars-file="$ENV_VARS_FILE" \
   --memory=2Gi \
   --cpu=2 \
   --timeout=300 \
   --max-instances=10 \
   --allow-unauthenticated \
   --quiet
+
+# Clean up temp file
+rm -f "$ENV_VARS_FILE"
 
 echo ""
 echo -e "${GREEN}========================================${NC}"
