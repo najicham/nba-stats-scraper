@@ -314,16 +314,7 @@ class PredictionDataLoader:
                     all_points.append(float(row.points))
 
             # Calculate season average from available data
-            # PHASE 1 FIX: No longer default to 20.0 - skip player instead
-            if all_points:
-                season_avg = sum(all_points) / len(all_points)
-            else:
-                # Player has 0 historical games - cannot generate prediction
-                logger.warning(
-                    f"⚠️  Player {player_lookup} has 0 historical games. "
-                    f"Cannot calculate season average. Skipping prediction."
-                )
-                return []
+            season_avg = sum(all_points) / len(all_points) if all_points else 20.0
 
             # Second pass: build game records
             for i, row in enumerate(rows_list):
@@ -619,16 +610,7 @@ class PredictionDataLoader:
             # Second pass: build game records with context
             for player_lookup, rows in rows_by_player.items():
                 all_points = player_points.get(player_lookup, [])
-                # PHASE 1 FIX: No longer default to 20.0 - skip player instead
-                if all_points:
-                    season_avg = sum(all_points) / len(all_points)
-                else:
-                    # Player has 0 historical games - skip this player
-                    logger.warning(
-                        f"⚠️  Player {player_lookup} has 0 historical games in batch. "
-                        f"Cannot calculate season average. Skipping."
-                    )
-                    continue  # Skip to next player
+                season_avg = sum(all_points) / len(all_points) if all_points else 20.0
 
                 for i, row in enumerate(rows):
                     # Calculate recent form from last 5 games
