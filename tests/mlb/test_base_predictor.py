@@ -170,7 +170,11 @@ class TestBaseMLBPredictor:
     @patch.object(BaseMLBPredictor, '_get_current_il_pitchers')
     def test_red_flag_pitcher_on_il(self, mock_il_pitchers):
         """Test hard skip for pitcher on IL"""
-        mock_il_pitchers.return_value = {'gerrittcole'}
+        # Clear cache to ensure mock is used
+        BaseMLBPredictor._il_cache = None
+        BaseMLBPredictor._il_cache_timestamp = None
+
+        mock_il_pitchers.return_value = {'gerritcole'}
 
         features = {
             'player_lookup': 'gerrit_cole',
