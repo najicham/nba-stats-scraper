@@ -85,11 +85,25 @@ echo ""
 echo -e "${GREEN}Starting deployment...${NC}"
 echo ""
 
-# Deploy to Cloud Run
+# Build Docker image using Cloud Build
+echo "Building Docker image..."
+gcloud builds submit \
+  --project="$PROJECT_ID" \
+  --config=cloudbuild-mlb-worker.yaml \
+  .
+
+echo ""
+echo "Deploying to Cloud Run..."
 gcloud run deploy "$SERVICE_NAME" \
   --project="$PROJECT_ID" \
   --region="$REGION" \
-  --set-env-vars="MLB_ACTIVE_SYSTEMS=$ACTIVE_SYSTEMS,MLB_V1_MODEL_PATH=$V1_MODEL_PATH,MLB_V1_6_MODEL_PATH=$V1_6_MODEL_PATH,MLB_ENSEMBLE_V1_WEIGHT=0.3,MLB_ENSEMBLE_V1_6_WEIGHT=0.5" \
+  --image="gcr.io/$PROJECT_ID/$SERVICE_NAME:latest" \
+  --set-env-vars="MLB_ACTIVE_SYSTEMS=${ACTIVE_SYSTEMS},MLB_V1_MODEL_PATH=${V1_MODEL_PATH},MLB_V1_6_MODEL_PATH=${V1_6_MODEL_PATH},MLB_ENSEMBLE_V1_WEIGHT=0.3,MLB_ENSEMBLE_V1_6_WEIGHT=0.5,GCP_PROJECT_ID=${PROJECT_ID}" \
+  --memory=2Gi \
+  --cpu=2 \
+  --timeout=300 \
+  --max-instances=10 \
+  --allow-unauthenticated \
   --quiet
 
 echo ""

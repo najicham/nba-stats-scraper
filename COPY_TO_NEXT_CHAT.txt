@@ -1,40 +1,20 @@
-Read this handoff guide:
-  docs/09-handoff/SESSION-81-QUICK-START.md
+Read this handoff document to continue with MLB multi-model deployment:
 
-Quick context:
-- Session 79: Fixed pipeline crash (Phase 3, 4, 5 Docker builds)
-- Session 80: Fixed GCS permissions, verified CatBoost V8 working (16% deployed)
-- Today: Verify 100% deployment, fix coordinator, cleanup
+docs/09-handoff/2026-01-17-SESSION-80-DEPLOYMENT-HANDOFF.md
 
-First command to run:
-bq query --use_legacy_sql=false "
-SELECT ROUND(confidence_score*100) as confidence,
-       COUNT(*) as predictions
-FROM \`nba-props-platform.nba_predictions.player_prop_predictions\`
-WHERE system_id = 'catboost_v8' AND game_date = '2026-01-18'
-GROUP BY confidence
-ORDER BY confidence DESC"
+Quick Context:
+- Session 80 completed MLB multi-model architecture (4,800+ lines)
+- Database migration complete (16,666 predictions backfilled)
+- Phase 1 deployed successfully (V1 baseline only)
+- Phase 3 ready to deploy (all 3 systems: V1 + V1.6 + Ensemble)
+- Service URL: https://mlb-prediction-worker-f7p3g7f6ya-uc.a.run.app/
 
-Expected: Variety of confidence levels (79-95%), NO 50% predictions
-If SUCCESS: CatBoost V8 fully deployed! 🎉
-If FAILURE: Force redeploy prediction-worker (instructions in guide)
+Next Task:
+- Deploy Phase 3 with all systems (command in handoff doc)
+- Validate multi-system predictions
+- Set up monitoring
 
----
-🎯 SESSION 80 ACHIEVEMENTS
+Expected time: 10-15 minutes
+Status: 95% complete - just need final deployment
 
-✅ Verified pipeline recovery from Session 79
-✅ Fixed GCS permissions for model loading
-✅ Confirmed CatBoost V8 working (13 predictions: 84-89% confidence)
-✅ Partial deployment (16% using model, 84% cached old credentials)
-
-Expected: Full deployment by today's run (all instances refreshed)
-
----
-📋 TODAY'S TASKS
-
-1. Verify 2026-01-18 predictions (5 min) - START HERE
-2. Fix coordinator Docker build (30 min)
-3. Clean broken historical data (10 min)
-4. Start 3-day monitoring
-
-All details in SESSION-81-QUICK-START.md. Pipeline is healthy! 🚀
+All commands, documentation, and context in the handoff document!
