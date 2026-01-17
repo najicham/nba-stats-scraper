@@ -16,6 +16,7 @@
 CREATE OR REPLACE VIEW `nba-props-platform.mlb_predictions.todays_picks` AS
 SELECT
     pitcher_lookup,
+    pitcher_name,
     game_date,
     team_abbr,
     opponent_team_abbr,
@@ -25,9 +26,10 @@ SELECT
     recommendation,
     edge,
     strikeouts_line,
+    over_odds,
+    under_odds,
     model_version,
     system_id,
-    red_flags,
     created_at
 FROM `nba-props-platform.mlb_predictions.pitcher_strikeouts`
 WHERE game_date = CURRENT_DATE()
