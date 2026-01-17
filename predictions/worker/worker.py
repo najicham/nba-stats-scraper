@@ -35,7 +35,7 @@ logger.info("✓ Flask imported")
 import json
 import os
 import sys
-from typing import Dict, List, Optional, TYPE_CHECKING
+from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 from datetime import datetime, date
 import uuid
 import base64
