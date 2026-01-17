@@ -1,113 +1,74 @@
-Good afternoon! I'm continuing the XGBoost V1 regeneration project from Session 79.
+Good afternoon! I'm continuing Phase 4b (XGBoost V1 Regeneration) from Session 82.
 
-## Current Status
+**Current Situation:**
+Session 82 deployed the worker with 6 concurrent systems and completed regeneration for 31 dates. However, validation revealed two critical issues:
 
-**Progress**: 95% complete - Just need final regeneration with XGBoost V1 enabled
+1. **Validation Gate Missing**: The Phase 1 validation gate (blocks placeholder 20.0 lines) was removed in commit 63cd71a during CatBoost V8 deployment. Result: 2 placeholders passed through on Dec 4.
 
-**What's Working**:
-- ✅ Phase 1-5 complete (validation gate, monitoring, etc.)
-- ✅ Worker architecture fixed: Now runs 6 systems concurrently (XGBoost V1 + CatBoost V8)
-- ✅ First regeneration complete: 31 dates for 5 systems (catboost_v8, ensemble, etc.)
+2. **Partial XGBoost V1 Coverage**: Only 11/31 dates received XGBoost V1 predictions (35%). Missing 20 dates - all November dates, 9 December dates, and Jan 10. Other 5 systems worked fine for those dates.
 
-**What's In Progress**:
-- 🔄 Worker rebuild: Adding XGBoost V1 back alongside CatBoost V8
-- Build task: `b4146cc` (check with: `tail -100 /tmp/claude/-home-naji-code-nba-stats-scraper/tasks/b4146cc.output`)
+**Your Task:**
 
-**What's Needed**:
-- ⏳ Deploy rebuilt worker (~5 min)
-- ⏳ Re-run regeneration with XGBoost V1 (~2.5 hours)
-- ⏳ Final validation (~5 min)
+**Priority 1 - Restore Validation Gate (CRITICAL)**
+1. Read: `git show 265cf0a:predictions/worker/worker.py | sed -n '/^def validate_line_quality/,/^def [a-z]/p'`
+2. Add Tuple to typing imports in predictions/worker/worker.py:
+   ```python
+   from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
+   ```
+3. Add `validate_line_quality()` function before `@app.route('/predict')` (line ~334)
+4. Call validation in `handle_prediction_request()` before BigQuery write
+5. Build and deploy worker
+6. Test: Verify validation blocks placeholders
 
-## Your Task
+**Priority 2 - Investigate XGBoost V1 Failures**
+1. Check why XGBoost V1 worked for December but failed for November
+2. Review predictions/worker/prediction_systems/xgboost_v1.py
+3. Test manually: Trigger prediction for 2025-11-19, check if XGBoost V1 generates
+4. Hypothesis: Mock may have date limitations or missing features for old dates
 
-**Read the handoff first**: `docs/09-handoff/2026-01-17-SESSION-79-HANDOFF.md`
+**Priority 3 - Complete Regeneration**
+1. Delete 2 placeholders from Dec 4 (Jaylen Brown, Luka Doncic)
+2. Update regenerate_xgboost_v1.sh with 20 missing dates
+3. Re-run regeneration
+4. Validate: All 31 dates with 0 placeholders
 
-**Then complete these steps**:
+**Full Context:**
+- Session 82 Summary: docs/09-handoff/SESSION-82-IMPLEMENTATION-COMPLETE.md
+- Root Cause Analysis: /tmp/phase4b_root_cause_analysis.md
+- Current Worker: prediction-worker-00055-mlj (6 systems, NO validation gate)
+- Current Coordinator: prediction-coordinator-00048-sz8 (90-day validation enabled)
 
-### Step 1: Check Build Status & Deploy
-```bash
-# 1. Check if build completed
-tail -100 /tmp/claude/-home-naji-code-nba-stats-scraper/tasks/b4146cc.output
-
-# 2. Deploy worker with 6 systems
-gcloud run deploy prediction-worker \
-  --image gcr.io/nba-props-platform/prediction-worker:latest \
-  --region us-west2 \
-  --project nba-props-platform \
-  --allow-unauthenticated \
-  --set-env-vars="GCP_PROJECT_ID=nba-props-platform" \
-  --memory=2Gi \
-  --cpu=2 \
-  --timeout=300 \
-  --max-instances=20 \
-  --min-instances=0 \
-  --concurrency=5
-
-# 3. Verify 6 systems loaded
-curl -s https://prediction-worker-756957797294.us-west2.run.app/health | jq '.systems'
-# Should show: moving_average, zone_matchup, similarity, xgboost_v1, catboost_v8, ensemble
+**Current Database State:**
+```sql
+-- XGBoost V1: 2,426 predictions across 11 dates
+-- Placeholders: 2 (Dec 4)
+-- Missing: 20 dates
 ```
 
-### Step 2: Re-Run Phase 4b Regeneration
+**Missing Dates (20):**
+November: 11-19, 11-20, 11-21, 11-22, 11-23, 11-24, 11-25, 11-26, 11-28, 11-29, 11-30 (11 dates)
+December: 12-01, 12-02, 12-03, 12-05, 12-06, 12-07, 12-11, 12-13, 12-18 (9 dates)
+January: 01-10 (1 date)
+
+**Quick Start Commands:**
 ```bash
-# Run regeneration (31 dates, ~2.5 hours)
-./regenerate_xgboost_v1.sh
-
-# Monitor progress
-tail -f /tmp/xgboost_regeneration.log
-```
-
-### Step 3: Validate Results
-```bash
-# After regeneration completes
-./validate_phase4b_completion.sh
-
-# Check XGBoost V1 specifically
+# 1. Check current state
 bq query --nouse_legacy_sql "
-SELECT
-    COUNT(*) as predictions,
-    COUNT(DISTINCT game_date) as dates,
-    COUNTIF(current_points_line = 20.0) as placeholders
+SELECT COUNT(*) as total, COUNTIF(current_points_line = 20.0) as placeholders
 FROM \`nba-props-platform.nba_predictions.player_prop_predictions\`
-WHERE system_id = 'xgboost_v1'
-  AND game_date BETWEEN '2025-11-19' AND '2026-01-10'"
+WHERE system_id = 'xgboost_v1' AND created_at >= '2026-01-17'"
 
-# Expected: ~6,000 predictions, 31 dates, 0 placeholders
+# 2. Read Session 82 handoff
+cat docs/09-handoff/SESSION-82-IMPLEMENTATION-COMPLETE.md
+
+# 3. Extract validation gate function
+git show 265cf0a:predictions/worker/worker.py | sed -n '/^def validate_line_quality/,/^def [a-z]/p' | head -60
+
+# 4. Check worker health
+curl -s https://prediction-worker-756957797294.us-west2.run.app/health
 ```
 
-## Context
+**Goal:** Restore validation gate, investigate XGBoost V1 failures, complete regeneration with 31/31 dates and 0 placeholders.
 
-**Project**: Fix placeholder line issues (line_value=20.0) in NBA predictions
-**Working Directory**: `/home/naji/code/nba-stats-scraper`
-**GCP Project**: `nba-props-platform`
-
-**Key Architecture Change** (Session 79):
-- Before: XGBoost V1 was REPLACED by CatBoost V8
-- After: XGBoost V1 + CatBoost V8 run CONCURRENTLY (champion/challenger)
-- Why: Enables side-by-side comparison, future challenger additions
-
-**Current Worker**:
-- Revision: `prediction-worker-00049-jrs` (5 systems, needs update)
-- New build: Adds XGBoost V1 back as System 4
-
-**Current Coordinator**:
-- Revision: `prediction-coordinator-00048-sz8` (90-day validation, working perfectly)
-
-## Success Criteria
-
-After completing the regeneration:
-- ✅ All 6 systems have predictions for 31 dates (Nov 19, 2025 - Jan 10, 2026)
-- ✅ XGBoost V1: 0 placeholders
-- ✅ CatBoost V8: 0 placeholders
-- ✅ All other systems: 0 placeholders
-
-## Expected Timeline
-
-- Deploy worker: ~5 minutes
-- Regeneration: ~2.5 hours (31 dates × 5 min)
-- Validation: ~5 minutes
-- **Total**: ~2.5 hours
-
----
-
-Let's complete this project!
+**Project:** /home/naji/code/nba-stats-scraper
+**Estimated Time:** 3-4 hours (1h restore + 1h investigate + 2h regenerate)
