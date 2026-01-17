@@ -12,10 +12,14 @@ Available Systems:
 - ensemble_v1: Weighted ensemble combining V1 + V1.6
 
 Usage:
-    from predictions.mlb.prediction_systems.v1_baseline_predictor import V1BaselinePredictor
+    from predictions.mlb.prediction_systems import V1BaselinePredictor
     predictor = V1BaselinePredictor(model_path='gs://...')
     prediction = predictor.predict(pitcher_lookup, features, line)
 """
+
+from predictions.mlb.prediction_systems.v1_baseline_predictor import V1BaselinePredictor
+from predictions.mlb.prediction_systems.v1_6_rolling_predictor import V1_6RollingPredictor
+from predictions.mlb.prediction_systems.ensemble_v1 import MLBEnsembleV1
 
 __all__ = [
     'V1BaselinePredictor',
