@@ -17,7 +17,7 @@ Environment variables can override defaults:
 
 import os
 from dataclasses import dataclass, field
-from typing import Dict
+from typing import Dict, List
 
 
 def _env_float(key: str, default: float) -> float:
@@ -161,6 +161,35 @@ class CacheConfig:
 
 
 @dataclass
+class SystemConfig:
+    """Configuration for prediction system registry."""
+
+    # Active systems to run (comma-separated system IDs)
+    # Default: v1_baseline only (Phase 1)
+    # Phase 2: v1_baseline,v1_6_rolling
+    # Phase 3: v1_baseline,v1_6_rolling,ensemble_v1
+    active_systems: str = field(default_factory=lambda: os.environ.get('MLB_ACTIVE_SYSTEMS', 'v1_baseline'))
+
+    # Model paths for each system
+    v1_model_path: str = field(default_factory=lambda: os.environ.get(
+        'MLB_V1_MODEL_PATH',
+        'gs://nba-scraped-data/ml-models/mlb/mlb_pitcher_strikeouts_v1_4features_20260114_142456.json'
+    ))
+    v1_6_model_path: str = field(default_factory=lambda: os.environ.get(
+        'MLB_V1_6_MODEL_PATH',
+        'gs://nba-scraped-data/ml-models/mlb/mlb_pitcher_strikeouts_v1_6_rolling_20260115_131149.json'
+    ))
+
+    # Ensemble weights (V1, V1.6)
+    ensemble_v1_weight: float = field(default_factory=lambda: float(os.environ.get('MLB_ENSEMBLE_V1_WEIGHT', '0.3')))
+    ensemble_v1_6_weight: float = field(default_factory=lambda: float(os.environ.get('MLB_ENSEMBLE_V1_6_WEIGHT', '0.5')))
+
+    def get_active_systems(self) -> List[str]:
+        """Get list of active system IDs."""
+        return [s.strip() for s in self.active_systems.split(',') if s.strip()]
+
+
+@dataclass
 class MLBConfig:
     """Master configuration combining all sub-configs."""
 
@@ -168,6 +197,7 @@ class MLBConfig:
     prediction_v2: PredictionConfigV2 = field(default_factory=PredictionConfigV2)
     red_flags: RedFlagConfig = field(default_factory=RedFlagConfig)
     cache: CacheConfig = field(default_factory=CacheConfig)
+    systems: SystemConfig = field(default_factory=SystemConfig)
 
     @classmethod
     def from_env(cls) -> 'MLBConfig':
