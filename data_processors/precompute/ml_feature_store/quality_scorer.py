@@ -33,32 +33,36 @@ class QualityScorer:
     def calculate_quality_score(self, feature_sources: Dict[int, str]) -> float:
         """
         Calculate overall feature quality score.
-        
-        Quality = weighted average of source quality across all 25 features.
-        
+
+        Quality = weighted average of source quality across all features.
+
         Args:
-            feature_sources: Dict mapping feature index (0-24) to source
+            feature_sources: Dict mapping feature index to source
                            ('phase4', 'phase3', 'default', 'calculated')
-            
+                           Supports variable feature counts (25 for v1, 33 for v2)
+
         Returns:
             float: Quality score [0.0, 100.0]
         """
         if not feature_sources:
             logger.warning("No feature sources provided, returning 0")
             return 0.0
-        
+
+        # Get feature count from input (supports both v1=25 and v2=33 features)
+        num_features = len(feature_sources)
+
         # Calculate weighted sum
         total_weight = 0.0
-        for feature_idx in range(25):
+        for feature_idx in range(num_features):
             source = feature_sources.get(feature_idx, 'default')
             weight = self.SOURCE_WEIGHTS.get(source, 40)
             total_weight += weight
-        
+
         # Average
-        quality_score = total_weight / 25.0
-        
-        logger.debug(f"Quality score: {quality_score:.1f} (sources: {self._summarize_sources(feature_sources)})")
-        
+        quality_score = total_weight / float(num_features)
+
+        logger.debug(f"Quality score: {quality_score:.1f} for {num_features} features (sources: {self._summarize_sources(feature_sources)})")
+
         return round(quality_score, 2)
     
     def determine_primary_source(self, feature_sources: Dict[int, str]) -> str:
