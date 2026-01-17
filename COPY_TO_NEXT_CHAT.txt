@@ -1,72 +1,113 @@
-Read this handoff document for Session 82 NBA Alerting Implementation:
+Good afternoon! I'm continuing the XGBoost V1 regeneration project from Session 79.
 
-docs/09-handoff/SESSION-82-IMPLEMENTATION-COMPLETE.md
+## Current Status
 
-Quick Context:
-- Session 81 fixed CatBoost V8 incident (missing CATBOOST_V8_MODEL_PATH)
-- Session 82 implemented Week 1 alerting + deployment script fix
-- Detection time improved: 3 days → < 5 minutes (864x faster)
-- Root cause in deployment script now FIXED
+**Progress**: 95% complete - Just need final regeneration with XGBoost V1 enabled
 
-What Was Completed (Session 82):
-✅ Model Loading Failure Alert (< 5 min detection)
-✅ High Fallback Prediction Rate Alert (> 10% threshold)
-✅ Enhanced startup validation with clear error messages
-✅ Comprehensive runbooks with investigation/fix procedures
-✅ Automated test script (bin/alerts/test_week1_alerts.sh)
-✅ BONUS: Fixed deployment script root cause (preserves CATBOOST_V8_MODEL_PATH)
+**What's Working**:
+- ✅ Phase 1-5 complete (validation gate, monitoring, etc.)
+- ✅ Worker architecture fixed: Now runs 6 systems concurrently (XGBoost V1 + CatBoost V8)
+- ✅ First regeneration complete: 31 dates for 5 systems (catboost_v8, ensemble, etc.)
 
-Current Status:
-- Week 1 alerts: 100% implemented, ready for testing
-- Deployment script: Fixed and documented
-- Service: prediction-worker-00054-dzd (enhanced validation deployed)
-- Cloud resources: 2 metrics, 2 alert policies configured
-- Documentation: 4 comprehensive docs created
+**What's In Progress**:
+- 🔄 Worker rebuild: Adding XGBoost V1 back alongside CatBoost V8
+- Build task: `b4146cc` (check with: `tail -100 /tmp/claude/-home-naji-code-nba-stats-scraper/tasks/b4146cc.output`)
 
-Defense in Depth Achieved:
-1. Prevention - Fixed deployment script (preserves env vars)
-2. Detection - Model Loading Alert (< 5 min)
-3. Visibility - Enhanced startup validation (clear logs)
+**What's Needed**:
+- ⏳ Deploy rebuilt worker (~5 min)
+- ⏳ Re-run regeneration with XGBoost V1 (~2.5 hours)
+- ⏳ Final validation (~5 min)
 
-Next Tasks:
-⏳ Test Week 1 alerts (requires 15-min production impact window):
-   ./bin/alerts/test_week1_alerts.sh
+## Your Task
 
-📋 Week 2 Alerting (12 hours estimated):
-   - Environment variable change alerts
-   - Deep health check endpoint
-   - Health check monitoring
-   See: docs/04-deployment/IMPLEMENTATION-ROADMAP.md
+**Read the handoff first**: `docs/09-handoff/2026-01-17-SESSION-79-HANDOFF.md`
 
-⚠️  Audit 35 deployment scripts using --set-env-vars:
-   - MLB prediction worker (high priority)
-   - Other prediction/analytics services
-   See: docs/04-deployment/DEPLOYMENT-SCRIPT-FIX.md
+**Then complete these steps**:
 
-Files Created/Modified (Session 82):
-- predictions/worker/worker.py (enhanced validation)
-- bin/predictions/deploy/deploy_prediction_worker.sh (fixed)
-- docs/04-deployment/ALERT-RUNBOOKS.md (new)
-- docs/04-deployment/DEPLOYMENT-SCRIPT-FIX.md (new)
-- bin/alerts/test_week1_alerts.sh (new)
-- docs/09-handoff/SESSION-82-IMPLEMENTATION-COMPLETE.md (new)
+### Step 1: Check Build Status & Deploy
+```bash
+# 1. Check if build completed
+tail -100 /tmp/claude/-home-naji-code-nba-stats-scraper/tasks/b4146cc.output
 
-Key Documentation:
-- Alert Runbooks: docs/04-deployment/ALERT-RUNBOOKS.md
-- Alerting Strategy: docs/04-deployment/ALERTING-AND-VISIBILITY-STRATEGY.md
-- Implementation Roadmap: docs/04-deployment/IMPLEMENTATION-ROADMAP.md
-- Deployment Fix: docs/04-deployment/DEPLOYMENT-SCRIPT-FIX.md
-- Environment Variables: docs/04-deployment/NBA-ENVIRONMENT-VARIABLES.md
+# 2. Deploy worker with 6 systems
+gcloud run deploy prediction-worker \
+  --image gcr.io/nba-props-platform/prediction-worker:latest \
+  --region us-west2 \
+  --project nba-props-platform \
+  --allow-unauthenticated \
+  --set-env-vars="GCP_PROJECT_ID=nba-props-platform" \
+  --memory=2Gi \
+  --cpu=2 \
+  --timeout=300 \
+  --max-instances=20 \
+  --min-instances=0 \
+  --concurrency=5
 
-MLB Status (from Session 80):
-- Multi-model architecture complete
-- Database migration complete (16,666 predictions)
-- Phase 1 deployed (V1 baseline only)
-- Phase 3 ready to deploy (all 3 systems)
-- See: docs/09-handoff/2026-01-17-SESSION-80-DEPLOYMENT-HANDOFF.md
+# 3. Verify 6 systems loaded
+curl -s https://prediction-worker-756957797294.us-west2.run.app/health | jq '.systems'
+# Should show: moving_average, zone_matchup, similarity, xgboost_v1, catboost_v8, ensemble
+```
 
-Priority: HIGH - Week 1 alerts protect NBA production from incidents
-Expected time for testing: 15 minutes
-Expected time for Week 2: 12 hours
+### Step 2: Re-Run Phase 4b Regeneration
+```bash
+# Run regeneration (31 dates, ~2.5 hours)
+./regenerate_xgboost_v1.sh
 
-All commands, documentation, and context in the handoff documents!
+# Monitor progress
+tail -f /tmp/xgboost_regeneration.log
+```
+
+### Step 3: Validate Results
+```bash
+# After regeneration completes
+./validate_phase4b_completion.sh
+
+# Check XGBoost V1 specifically
+bq query --nouse_legacy_sql "
+SELECT
+    COUNT(*) as predictions,
+    COUNT(DISTINCT game_date) as dates,
+    COUNTIF(current_points_line = 20.0) as placeholders
+FROM \`nba-props-platform.nba_predictions.player_prop_predictions\`
+WHERE system_id = 'xgboost_v1'
+  AND game_date BETWEEN '2025-11-19' AND '2026-01-10'"
+
+# Expected: ~6,000 predictions, 31 dates, 0 placeholders
+```
+
+## Context
+
+**Project**: Fix placeholder line issues (line_value=20.0) in NBA predictions
+**Working Directory**: `/home/naji/code/nba-stats-scraper`
+**GCP Project**: `nba-props-platform`
+
+**Key Architecture Change** (Session 79):
+- Before: XGBoost V1 was REPLACED by CatBoost V8
+- After: XGBoost V1 + CatBoost V8 run CONCURRENTLY (champion/challenger)
+- Why: Enables side-by-side comparison, future challenger additions
+
+**Current Worker**:
+- Revision: `prediction-worker-00049-jrs` (5 systems, needs update)
+- New build: Adds XGBoost V1 back as System 4
+
+**Current Coordinator**:
+- Revision: `prediction-coordinator-00048-sz8` (90-day validation, working perfectly)
+
+## Success Criteria
+
+After completing the regeneration:
+- ✅ All 6 systems have predictions for 31 dates (Nov 19, 2025 - Jan 10, 2026)
+- ✅ XGBoost V1: 0 placeholders
+- ✅ CatBoost V8: 0 placeholders
+- ✅ All other systems: 0 placeholders
+
+## Expected Timeline
+
+- Deploy worker: ~5 minutes
+- Regeneration: ~2.5 hours (31 dates × 5 min)
+- Validation: ~5 minutes
+- **Total**: ~2.5 hours
+
+---
+
+Let's complete this project!
