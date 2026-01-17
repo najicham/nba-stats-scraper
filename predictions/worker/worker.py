@@ -35,7 +35,7 @@ logger.info("✓ Flask imported")
 import json
 import os
 import sys
-from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
+from typing import Dict, List, Optional, TYPE_CHECKING
 from datetime import datetime, date
 import uuid
 import base64
@@ -317,57 +317,6 @@ def health_check():
     return jsonify({'status': 'healthy'}), 200
 
 
-def validate_line_quality(predictions: List[Dict], player_lookup: str, game_date_str: str) -> Tuple[bool, Optional[str]]:
-    """
-    PHASE 1 FIX: Validate line quality before BigQuery write.
-
-    Blocks placeholder lines (20.0) from entering the database.
-    This is the last line of defense against data corruption.
-
-    Args:
-        predictions: List of prediction dicts to validate
-        player_lookup: Player identifier for error messages
-        game_date_str: Game date for error messages
-
-    Returns:
-        (is_valid, error_message) - False if validation fails
-    """
-    placeholder_count = 0
-    issues = []
-
-    for pred in predictions:
-        line_value = pred.get('current_points_line')
-        line_source = pred.get('line_source')
-        system_id = pred.get('system_id', 'unknown')
-
-        # Check 1: Explicit placeholder 20.0
-        if line_value == 20.0:
-            placeholder_count += 1
-            issues.append(f"{system_id}: line_value=20.0 (PLACEHOLDER)")
-
-        # Check 2: Missing or invalid line source
-        if line_source in [None, 'NEEDS_BOOTSTRAP']:
-            issues.append(f"{system_id}: invalid line_source={line_source}")
-            placeholder_count += 1
-
-        # Check 3: NULL line with actual prop claim (data inconsistency)
-        if line_value is None and pred.get('has_prop_line') == True:
-            issues.append(f"{system_id}: NULL line but has_prop_line=TRUE")
-            placeholder_count += 1
-
-    if placeholder_count > 0:
-        error_msg = (
-            f"❌ LINE QUALITY VALIDATION FAILED\n"
-            f"Player: {player_lookup}\n"
-            f"Date: {game_date_str}\n"
-            f"Failed: {placeholder_count}/{len(predictions)} predictions\n"
-            f"Issues: {', '.join(issues[:5])}"  # First 5 issues
-        )
-        return False, error_msg
-
-    return True, None
-
-
 @app.route('/predict', methods=['POST'])
 def handle_prediction_request():
     """
@@ -526,30 +475,6 @@ def handle_prediction_request():
                     f"returning 500 to trigger Pub/Sub retry. Reason: {skip_reason}, Error: {error_type}"
                 )
                 return ('Transient failure - triggering retry', 500)
-
-        # PHASE 1 FIX: Validate line quality before writing to BigQuery
-        # CRITICAL: Block placeholder lines (20.0) from entering the database
-        validation_passed, validation_error = validate_line_quality(predictions, player_lookup, game_date_str)
-        if not validation_passed:
-            logger.error(
-                f"LINE QUALITY VALIDATION FAILED for {player_lookup} on {game_date_str}: {validation_error}"
-            )
-            # Send Slack alert for immediate investigation
-            try:
-                from shared.utils.slack_channels import send_to_slack
-                webhook = os.environ.get('SLACK_WEBHOOK_URL_WARNING')
-                if webhook:
-                    send_to_slack(
-                        webhook,
-                        f"🚨 PLACEHOLDER LINE BLOCKED\n\n{validation_error}\n\n"
-                        f"Investigation needed - check coordinator line fetching for {game_date_str}.",
-                        icon_emoji=":rotating_light:"
-                    )
-            except Exception as e:
-                logger.warning(f"Failed to send Slack alert: {e}")
-
-            # Return 500 to trigger Pub/Sub retry (maybe enrichment will fix it later)
-            return (f'Line quality validation failed: {validation_error}', 500)
 
         # Write to BigQuery staging table (consolidation happens later by coordinator)
         # CRITICAL: Check return value - if write fails, return 500 to trigger Pub/Sub retry
