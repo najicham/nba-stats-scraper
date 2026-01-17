@@ -1,0 +1,99 @@
+================================================================================
+URGENT: CATBOOST V8 SYSTEM FAILURE - USE AGENTS TO INVESTIGATE
+================================================================================
+
+**Context**: We discovered the NBA prediction system is broken. CatBoost V8 has had zero premium picks (≥92% confidence) since Jan 8, 2026 due to feature quality degradation.
+
+**Root Cause**: Jan 7 commit (0d7af04c) modified analytics processors, broke feature_quality_score calculation, causing it to drop from 90+ to 80-89, which caps confidence at 89%.
+
+**Your Mission**: Use agents to investigate the Jan 7 commit and feature pipeline, then propose a fix.
+
+**Full Details**: Read docs/09-handoff/2026-01-17-SESSION-75-CATBOOST-INVESTIGATION-HANDOFF.md
+**Quick Start**: Read docs/09-handoff/2026-01-17-SESSION-75-QUICK-START.md
+
+================================================================================
+REQUIRED AGENT TASKS (Use Task tool with agents!)
+================================================================================
+
+Task 1: Review Jan 7 Commit
+Agent: general-purpose
+Command: git show 0d7af04c0c1e1bf6cfc5a6326cac589ccaa277dd
+File: scrapers/nba/analytics/processors/player_aggregations.py (274 lines changed)
+Question: What broke feature_quality_score calculation?
+
+Task 2: Trace Feature Quality Pipeline
+Agent: Explore (very thorough)
+Start: predictions/worker/prediction_systems/catboost_v8.py
+Question: How is feature_quality_score calculated end-to-end?
+
+Task 3: Query BigQuery Data
+Agent: general-purpose
+Table: ml_nba.ml_feature_store_v2
+Question: Compare feature quality Dec 20-Jan 7 vs Jan 8-15, what degraded?
+
+Task 4: Find Related Changes
+Agent: Explore (medium)
+Date Range: Jan 5-10, 2026
+Question: What other analytics processor changes happened?
+
+Task 5: Propose Fix
+Agent: general-purpose
+Based on: Tasks 1-4 findings
+Question: Revert commit or targeted fix? Provide diffs.
+
+================================================================================
+THE PROBLEM IN 30 SECONDS
+================================================================================
+
+BEFORE (Dec 20 - Jan 7): Healthy
+- Feature quality: 90+
+- Confidence: 60-95% (continuous distribution)
+- Premium picks: 10-50 per day
+- Win rate: 70%+
+
+AFTER (Jan 8 - Jan 16): Broken
+- Feature quality: 80-89
+- Confidence: Only 89%, 84%, 50% (three discrete values!)
+- Premium picks: ZERO for 8 days
+- Win rate at 89% confidence: 41.4% (catastrophic)
+
+ROOT CAUSE: Confidence formula uses feature quality:
+- quality >= 90: base 85 + bonus 5 = potential 90-95%
+- quality 80-89: base 82 + no bonus = stuck at 89%
+
+When features broke → quality dropped to 80-89 → 91% of picks stuck at 89% → terrible performance
+
+================================================================================
+SUCCESS CRITERIA (When Fixed)
+================================================================================
+
+✅ Premium picks (≥92%) appearing daily
+✅ Confidence continuous (not 3 values)
+✅ Feature quality ≥90
+✅ 89% picks perform >55% win rate
+✅ 3+ days of healthy data
+
+================================================================================
+REFERENCE DOCS (Read These)
+================================================================================
+
+1. docs/09-handoff/2026-01-17-SESSION-75-CATBOOST-INVESTIGATION-HANDOFF.md - Complete guide
+2. docs/09-handoff/2026-01-17-SESSION-75-QUICK-START.md - Quick reference
+3. docs/09-handoff/CATBOOST_V8_SYSTEM_INVESTIGATION_REPORT.md - Full findings
+4. docs/09-handoff/SESSION_75_SUMMARY.md - Session overview
+
+================================================================================
+START HERE
+================================================================================
+
+1. Read docs/09-handoff/2026-01-17-SESSION-75-CATBOOST-INVESTIGATION-HANDOFF.md
+2. Launch Task 1 agent to review Jan 7 commit
+3. Launch Task 2 agent to trace feature pipeline
+4. Launch Task 3 agent to query BigQuery
+5. Review agent findings
+6. Propose fix
+7. Test fix works
+
+================================================================================
+END OF QUICK START - READ FULL HANDOFF FOR DETAILS
+================================================================================

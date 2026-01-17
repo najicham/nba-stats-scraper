@@ -1,0 +1,61 @@
+================================================================================
+HISTORICAL DATA AUDIT - QUICK START PROMPT
+================================================================================
+
+I need you to audit all historical NBA prediction data to verify data quality
+and identify placeholder line issues across all systems and time periods.
+
+BACKGROUND:
+- Recently discovered: CatBoost V8 used placeholder lines (20.0) instead of 
+  real DraftKings lines from Nov 4 - Dec 19, 2025
+- XGBoost V1 used placeholders on Jan 9-10, 2026
+- Historical data shows 72-79% win rates but unknown if using real lines
+
+MISSION:
+Analyze `nba-props-platform.nba_predictions.prediction_accuracy` table to:
+1. Inventory all systems and their date ranges
+2. Identify placeholder lines (line_value = 20.0) by system and date
+3. Determine when each system transitioned to real lines
+4. Assess data quality and trustworthiness
+5. Identify gaps and missing data
+6. Provide backfill requirements
+
+KEY DETECTION:
+- Placeholder (INVALID): line_value = 20.0
+- Real line (VALID): line_value != 20.0
+
+SYSTEMS TO CHECK:
+- catboost_v8
+- xgboost_v1
+- moving_average
+- moving_average_baseline_v1
+- ensemble_v1
+- zone_matchup_v1
+- similarity_balanced_v1
+- Any others found
+
+DELIVERABLES NEEDED:
+1. System Status Table (system, date range, real line %, status)
+2. Monthly Quality Matrix (which months have clean data)
+3. Problem Periods List (date ranges with placeholders)
+4. Data Trust Assessment (what can be used for analysis)
+5. Backfill Requirements (what needs to be fixed)
+
+TASKS TO COMPLETE:
+1. System Inventory (what systems exist, date ranges, volumes)
+2. Placeholder Detection (find all placeholder usage by system/date)
+3. System Timeline (when did each switch from placeholder to real lines)
+4. Performance Comparison (real lines vs placeholders)
+5. Monthly Quality Report (data quality by month)
+6. Gap Analysis (missing dates)
+7. Line Distribution (validate line values are realistic)
+8. Cross-System Validation (consistency checks)
+
+EXPECTED TIMELINE: 30-60 minutes
+
+FULL CONTEXT: See docs/09-handoff/HISTORICAL_DATA_AUDIT_PROMPT.md
+
+Please start with Task 1 (System Inventory) and work systematically through
+all 8 tasks, then provide comprehensive deliverables.
+
+================================================================================
