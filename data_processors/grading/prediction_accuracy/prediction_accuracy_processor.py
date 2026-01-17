@@ -315,6 +315,11 @@ class PredictionAccuracyProcessor:
             injury_checked_at
         FROM `{self.predictions_table}`
         WHERE game_date = '{game_date}'
+            -- PHASE 1 FIX: Exclude placeholder lines from grading
+            AND current_points_line IS NOT NULL
+            AND current_points_line != 20.0
+            AND line_source IN ('ACTUAL_PROP', 'ODDS_API')
+            AND has_prop_line = TRUE
         """
 
         try:
