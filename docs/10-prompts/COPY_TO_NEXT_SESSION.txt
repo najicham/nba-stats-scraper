@@ -1,0 +1,16 @@
+I need you to verify the CatBoost V8 model deployment from Session 77.
+
+**Context**: Session 77 deployed the CatBoost V8 model to fix the 50% confidence issue. The model has been uploaded to GCS, Cloud Run has been updated with the CATBOOST_V8_MODEL_PATH environment variable, and monitoring infrastructure has been deployed.
+
+**Your mission**: Verify that the deployment worked by checking if predictions are now showing variable confidence (79-95%) instead of all being stuck at 50%.
+
+**Handoff document**: Read this first to understand what to do:
+`/home/naji/code/nba-stats-scraper/docs/09-handoff/2026-01-17-SESSION-78-VERIFY-CATBOOST-DEPLOYMENT.md`
+
+**Quick verification**:
+1. Check if today's predictions exist and have variable confidence (not all 50%)
+2. Check Cloud Run logs to see if model loaded successfully
+3. If successful: Delete broken historical predictions (Jan 14-15) and start 3-day monitoring
+4. If failed: Troubleshoot using the steps in the handoff doc
+
+The handoff doc has all the commands you need. Please read it and execute the verification steps.

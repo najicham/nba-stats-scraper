@@ -1,0 +1,530 @@
+# =============================================================================
+# DATA SOURCE FALLBACK CONFIGURATION
+# =============================================================================
+# This file defines all data sources, their fallback chains, and quality rules.
+#
+# Quality Scoring:
+#   Primary source = 100 (gold)
+#   First fallback = 85 (silver)
+#   Second fallback = 80 (silver/bronze boundary)
+#   Reconstructed = 85 (silver - proven accurate)
+#   Continue without = varies by importance
+#
+# on_all_fail Actions:
+#   skip: Don't process entity, continue to next
+#   placeholder: Create record with unusable quality
+#   fail: Raise exception (critical data)
+#   continue_without: Process without data, degrade quality
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# DATA SOURCE DEFINITIONS
+# -----------------------------------------------------------------------------
+sources:
+  # ===== PLAYER STATISTICS =====
+  nbac_gamebook_player_stats:
+    description: "NBA.com official gamebook player stats"
+    table: nbac_gamebook_player_stats
+    dataset: nba_raw
+    scraper: nbac_gamebook_pdf
+    is_primary: true
+    coverage_pct: 100
+    quality:
+      tier: gold
+      score: 100
+    unique_value: "Official source, DNP tracking, name resolution"
+
+  bdl_player_boxscores:
+    description: "Ball Don't Lie player boxscores"
+    table: bdl_player_boxscores
+    dataset: nba_raw
+    scraper: bdl_player_box_scores
+    is_primary: false
+    coverage_pct: 94
+    quality:
+      tier: silver
+      score: 85
+    differences: "No advanced stats, different player IDs"
+
+  espn_boxscores:
+    description: "ESPN game boxscores (players + teams)"
+    table: espn_boxscores
+    dataset: nba_raw
+    scraper: espn_game_boxscore
+    is_primary: false
+    coverage_pct: 100
+    quality:
+      tier: silver
+      score: 80
+    differences: "Different player IDs, recent data only"
+
+  # ===== TEAM STATISTICS =====
+  nbac_team_boxscore:
+    description: "NBA.com official team boxscore"
+    table: nbac_team_boxscore
+    dataset: nba_raw
+    scraper: nbac_team_boxscore
+    is_primary: true
+    coverage_pct: 100
+    quality:
+      tier: gold
+      score: 100
+    unique_value: "Official source, 2 rows per game (home/away)"
+
+  reconstructed_team_from_players:
+    description: "Team totals aggregated from player boxscores"
+    is_primary: false
+    is_virtual: true
+    reconstruction_method: aggregate_player_stats_to_team
+    quality:
+      tier: silver
+      score: 85
+    notes: "Mathematically exact (verified: GSW 121=121, LAL 114=114)"
+
+  espn_team_boxscore:
+    description: "Team stats extracted from ESPN boxscores"
+    table: espn_boxscores
+    dataset: nba_raw
+    scraper: espn_game_boxscore
+    is_primary: false
+    is_virtual: true  # Extracted from espn_boxscores, not separate table
+    extraction_method: extract_team_rows
+    coverage_pct: 100
+    quality:
+      tier: silver
+      score: 80
+    differences: "Recent data only"
+
+  # ===== PLAYER PROPS =====
+  odds_api_player_points_props:
+    description: "Odds API live player props"
+    table: odds_api_player_points_props
+    dataset: nba_raw
+    scraper: oddsa_player_props
+    is_primary: true
+    coverage_pct: 40
+    quality:
+      tier: gold
+      score: 100
+    unique_value: "Multiple bookmakers, price history"
+
+  bettingpros_player_points_props:
+    description: "BettingPros historical player props"
+    table: bettingpros_player_points_props
+    dataset: nba_raw
+    scraper: bp_player_props
+    is_primary: false
+    coverage_pct: 99.7
+    quality:
+      tier: silver
+      score: 90
+    differences: "No game_id (needs schedule JOIN), consensus only"
+
+  # ===== SCHEDULE =====
+  nbac_schedule:
+    description: "NBA.com official schedule"
+    table: nbac_schedule
+    dataset: nba_raw
+    scraper: nbac_schedule_api
+    is_primary: true
+    coverage_pct: 100
+    quality:
+      tier: gold
+      score: 100
+    unique_value: "Official source, broadcast info"
+
+  espn_scoreboard:
+    description: "ESPN scoreboard for schedule gaps"
+    table: espn_scoreboard
+    dataset: nba_raw
+    scraper: espn_scoreboard
+    is_primary: false
+    coverage_pct: 100
+    quality:
+      tier: silver
+      score: 90
+    differences: "Different game IDs, limited metadata"
+
+  # ===== GAME LINES =====
+  odds_api_game_lines:
+    description: "Odds API game spreads/totals"
+    table: odds_api_game_lines
+    dataset: nba_raw
+    scraper: oddsa_game_lines
+    is_primary: true
+    coverage_pct: 99.1
+    quality:
+      tier: gold
+      score: 100
+    notes: "Missing only All-Star weekend (expected)"
+
+  # ===== SHOT ZONES / PLAY-BY-PLAY =====
+  bigdataball_play_by_play:
+    description: "BigDataBall enhanced play-by-play"
+    table: bigdataball_play_by_play
+    dataset: nba_raw
+    scraper: bigdataball_pbp
+    is_primary: true
+    coverage_pct: 94
+    quality:
+      tier: gold
+      score: 100
+    unique_value: "10-player lineups, dual coordinates, timing data"
+
+  nbac_play_by_play:
+    description: "NBA.com play-by-play"
+    table: nbac_play_by_play
+    dataset: nba_raw
+    scraper: nbac_play_by_play
+    is_primary: false
+    coverage_pct: 100
+    quality:
+      tier: silver
+      score: 85
+    differences: "No lineup data, simpler event structure"
+
+  # ===== INJURIES =====
+  nbac_injury_report:
+    description: "NBA.com official injury report"
+    table: nbac_injury_report
+    dataset: nba_raw
+    scraper: nbac_injury_report
+    is_primary: true
+    coverage_pct: 100
+    quality:
+      tier: gold
+      score: 100
+    unique_value: "Official source, multiple daily updates"
+
+  bdl_injuries:
+    description: "Ball Don't Lie injury data"
+    table: bdl_injuries
+    dataset: nba_raw
+    scraper: bdl_injuries
+    is_primary: false
+    coverage_pct: 95
+    quality:
+      tier: silver
+      score: 85
+    differences: "Different status normalization"
+
+  # ===== ROSTERS / PLAYER REGISTRY =====
+  nbac_player_list_current:
+    description: "NBA.com official player list"
+    table: nbac_player_list_current
+    dataset: nba_raw
+    scraper: nbac_player_list
+    is_primary: true
+    coverage_pct: 100
+    quality:
+      tier: gold
+      score: 100
+    unique_value: "Official NBA player IDs"
+
+  bdl_active_players_current:
+    description: "Ball Don't Lie active players"
+    table: bdl_active_players_current
+    dataset: nba_raw
+    scraper: bdl_active_players
+    is_primary: false
+    coverage_pct: 100
+    quality:
+      tier: silver
+      score: 90
+    differences: "BDL player IDs, may have team mismatches"
+
+  br_rosters_current:
+    description: "Basketball Reference rosters"
+    table: br_rosters_current
+    dataset: nba_raw
+    scraper: br_season_roster
+    is_primary: false
+    coverage_pct: 100
+    quality:
+      tier: silver
+      score: 85
+    differences: "Historical only, different name formats"
+
+
+# -----------------------------------------------------------------------------
+# FALLBACK CHAINS
+# -----------------------------------------------------------------------------
+fallback_chains:
+  player_boxscores:
+    description: "Player game statistics"
+    phase: 3
+    consumers:
+      - PlayerGameSummaryProcessor
+    sources:
+      - nbac_gamebook_player_stats
+      - bdl_player_boxscores
+      - espn_boxscores
+    on_all_fail:
+      action: skip
+      severity: critical
+      message: "No player boxscore data available"
+
+  team_boxscores:
+    description: "Team game statistics"
+    phase: 3
+    consumers:
+      - TeamDefenseGameSummaryProcessor
+      - TeamOffenseGameSummaryProcessor
+    sources:
+      - nbac_team_boxscore
+      - reconstructed_team_from_players
+      - espn_team_boxscore
+    on_all_fail:
+      action: placeholder
+      quality_tier: unusable
+      quality_score: 0
+      severity: critical
+      message: "No team boxscore data available"
+
+  player_props:
+    description: "Player points prop lines"
+    phase: 3
+    consumers:
+      - UpcomingPlayerGameContextProcessor
+    sources:
+      - odds_api_player_points_props
+      - bettingpros_player_points_props
+    on_all_fail:
+      action: skip
+      severity: warning
+      message: "No prop line available - cannot make prediction"
+
+  game_schedule:
+    description: "Game schedule"
+    phase: 3
+    consumers:
+      - UpcomingPlayerGameContextProcessor
+      - UpcomingTeamGameContextProcessor
+    sources:
+      - nbac_schedule
+      - espn_scoreboard
+    on_all_fail:
+      action: fail
+      severity: critical
+      message: "No schedule data - cannot proceed"
+
+  game_lines:
+    description: "Game spreads and totals"
+    phase: 3
+    consumers:
+      - UpcomingTeamGameContextProcessor
+    sources:
+      - odds_api_game_lines
+    on_all_fail:
+      action: continue_without
+      quality_impact: -10
+      severity: info
+      message: "No game lines (likely All-Star weekend)"
+
+  shot_zones:
+    description: "Shot zone distribution from play-by-play"
+    phase: 3
+    consumers:
+      - PlayerGameSummaryProcessor
+      - TeamOffenseGameSummaryProcessor
+    sources:
+      - bigdataball_play_by_play
+      - nbac_play_by_play
+    on_all_fail:
+      action: continue_without
+      quality_impact: -15
+      severity: info
+      message: "No shot zone data available"
+
+  injury_reports:
+    description: "Player injury status"
+    phase: 3
+    consumers:
+      - UpcomingPlayerGameContextProcessor
+    sources:
+      - nbac_injury_report
+      - bdl_injuries
+    on_all_fail:
+      action: continue_without
+      quality_impact: -5
+      severity: info
+      message: "No injury data available"
+
+  player_roster:
+    description: "Player roster and registry data"
+    phase: reference
+    consumers:
+      - RosterRegistryProcessor
+      - RegistryReader
+    sources:
+      - nbac_player_list_current
+      - bdl_active_players_current
+      - br_rosters_current
+    on_all_fail:
+      action: fail
+      severity: critical
+      message: "No roster data - cannot resolve player IDs"
+
+
+# -----------------------------------------------------------------------------
+# QUALITY TIERS & THRESHOLDS
+# -----------------------------------------------------------------------------
+quality_tiers:
+  gold:
+    score_min: 95
+    score_max: 100
+    confidence_ceiling: 1.00
+    description: "Primary sources, complete data"
+    prediction_eligible: true
+
+  silver:
+    score_min: 75
+    score_max: 94
+    confidence_ceiling: 0.95
+    description: "Fallback source used or minor gaps"
+    prediction_eligible: true
+
+  bronze:
+    score_min: 50
+    score_max: 74
+    confidence_ceiling: 0.80
+    description: "Significant gaps or thin sample"
+    prediction_eligible: true
+
+  poor:
+    score_min: 25
+    score_max: 49
+    confidence_ceiling: 0.60
+    description: "Major issues, flagged for review"
+    prediction_eligible: true
+
+  unusable:
+    score_min: 0
+    score_max: 24
+    confidence_ceiling: 0.00
+    description: "Cannot generate reliable output"
+    prediction_eligible: false
+
+
+# -----------------------------------------------------------------------------
+# QUALITY PROPAGATION RULES
+# -----------------------------------------------------------------------------
+quality_propagation:
+  # When aggregating multiple inputs (e.g., 10-game rolling average)
+  aggregation_rule: worst_wins
+
+  # When low-quality data is included in aggregations
+  low_quality_in_lookback:
+    action: flag
+    flag_issue: "includes_low_quality_input"
+    exclude_threshold: unusable
+
+  # Phase 4 -> Phase 5 requirements
+  prediction_requirements:
+    min_quality_score: 70
+    require_production_ready: true
+
+
+# -----------------------------------------------------------------------------
+# RECONSTRUCTION METHODS
+# -----------------------------------------------------------------------------
+reconstruction_methods:
+  aggregate_player_stats_to_team:
+    description: "Sum player boxscore stats to derive team totals"
+    input_chain: player_boxscores
+    method: sql_aggregation
+    fields:
+      - points
+      - rebounds
+      - assists
+      - steals
+      - blocks
+      - turnovers
+      - field_goals_made
+      - field_goals_attempted
+      - three_pointers_made
+      - three_pointers_attempted
+      - free_throws_made
+      - free_throws_attempted
+      - offensive_rebounds
+      - defensive_rebounds
+      - personal_fouls
+    validation: "Mathematically exact (verified Oct 19 2021)"
+    quality_notes: "100% accurate when player data complete"
+
+  extract_team_rows:
+    description: "Extract team-level rows from ESPN boxscore"
+    input_table: espn_boxscores
+    method: sql_filter
+    filter: "player_lookup IS NULL AND team_abbr IS NOT NULL"
+
+
+# -----------------------------------------------------------------------------
+# REMEDIATION OPTIONS (Manual Decision Required)
+# -----------------------------------------------------------------------------
+remediation_options:
+  play_by_play_reconstruction:
+    description: "Reconstruct stats from play-by-play events"
+    requires_manual_decision: true
+    quality_tier_if_used: bronze
+    can_reconstruct:
+      - stat: points
+        accuracy: "98%"
+        complexity: low
+        method: "Sum shot_made values (2PT=2, 3PT=3, FT=1)"
+      - stat: field_goals_made
+        accuracy: "95%"
+        complexity: low
+        method: "Count shots where shot_made=TRUE"
+      - stat: field_goals_attempted
+        accuracy: "95%"
+        complexity: low
+        method: "Count all shot events"
+      - stat: three_pointers
+        accuracy: "95%"
+        complexity: low
+        method: "Filter shot_type='3PT'"
+      - stat: free_throws
+        accuracy: "95%"
+        complexity: low
+        method: "Filter shot_type='FT'"
+      - stat: assists
+        accuracy: "80%"
+        complexity: medium
+        method: "Count player_2_role='assist'"
+      - stat: turnovers
+        accuracy: "85%"
+        complexity: medium
+        method: "Count turnover events"
+    cannot_reliably_reconstruct:
+      - stat: rebounds
+        reason: "Offensive/defensive split unreliable (85%)"
+      - stat: plus_minus
+        reason: "Requires lineup tracking, complex (70%)"
+
+
+# -----------------------------------------------------------------------------
+# FUTURE DATA SOURCES (Not Yet Consumed)
+# -----------------------------------------------------------------------------
+future_sources:
+  nbac_referee_game_assignments:
+    description: "Referee assignments for games"
+    status: "Collected but not consumed"
+    future_use: "XGBoost referee_favorability_score"
+    placeholder_fields:
+      - team_offense.referee_crew_id
+      - team_defense.referee_crew_id
+      - xgboost.referee_favorability_score
+
+  bdl_standings:
+    description: "Season standings"
+    status: "Collected but not consumed"
+    future_use: "Team performance context"
+    notes: "Explicit 'No dependencies yet' in code"
+
+  nbac_player_movement:
+    description: "Player transactions (trades, signings)"
+    status: "Collected but not consumed"
+    future_use: "Player registry validation"
+    notes: "No future plans documented"

@@ -1,0 +1,164 @@
+================================================================================
+ADDITIONAL DATA ANALYSIS RESULTS - COPY THIS TO ONLINE CHAT
+================================================================================
+
+Great news - I've completed the top 5 priority analyses you requested! Here are the key findings:
+
+## 🚨 CRITICAL DISCOVERY: 88-90% Confidence Tier
+
+**The 88-90% tier is CATASTROPHICALLY BAD**: 44.3% win rate
+
+Performance by tier (Dec 20, 2025 - Jan 15, 2026):
+- 92%+: 74.8% win rate ✅
+- 90-92%: 75.1% win rate ✅  
+- **88-90%: 44.3% win rate** ❌❌❌ (7.86 pts avg error)
+- 86-88%: 67.6% win rate ✅
+- 80-86%: 52.0% win rate ⚠️
+- Below 80%: 59.8% win rate ⚠️
+
+**The answer is clear: "DONUT FILTER"**
+- Keep: ≥92%, 90-92%, 86-88%
+- EXCLUDE: 88-90% exactly
+- Result: Remove 252 terrible picks, keep 1,985 good picks
+- Volume impact: Only 10.7% reduction
+
+Filter rule:
+```
+confidence >= 0.86 AND NOT (confidence >= 0.88 AND confidence < 0.90)
+```
+
+---
+
+## PRIORITY 1: Monthly Performance
+
+**2024-25 Season (Previous Model)**:
+- Nov 2024: 77.4% win rate
+- Dec 2024: 75.0%
+- Jan 2025: 72.8%
+- Feb-Apr 2025: 72-74% (consistent)
+- May-Jun 2025: 79% (playoffs even better!)
+
+**2025-26 Season (Current with Real Lines)**:
+- Dec 2025: 74.3% win rate, 90% avg confidence
+- **Jan 2026: 61.3% win rate, 80% avg confidence** ⬇️⬇️
+
+**Findings**:
+- No seasonal pattern (72-79% consistent across all months 2024-25)
+- January 2026 is ANOMALOUS (13% drop from December)
+- Need to investigate what changed
+
+---
+
+## PRIORITY 4: Day of Week
+
+| Day | Win Rate | Avg Confidence | Picks/Day |
+|-----|----------|----------------|-----------|
+| **Monday** | **75.1%** 🏆 | 89.3% | 104.8 |
+| **Saturday** | **71.1%** 🥈 | 89.7% | 119.3 |
+| Tuesday | 65.9% | 84.3% | 115.7 |
+| Wednesday | 63.6% | 84.8% | 126.3 |
+| Thursday | 66.0% | **59.8%** ⬇️ | 153.5 (heavy) |
+| Friday | 65.0% | 90.7% | 143.5 |
+| Sunday | 60.6% | 89.9% | 105.3 |
+
+**Findings**:
+- Monday is best day (75.1%)
+- Thursday has MUCH lower confidence (59.8% vs 84-91%) but still profitable
+- Increase stakes on Mon/Sat
+
+---
+
+## PRIORITY 5: Jan 11-13 Bad Streak
+
+**ROOT CAUSE FOUND**: ZERO premium picks (≥92% confidence) from Jan 8-15!
+
+| Date | Win Rate | Avg Confidence | Premium Picks |
+|------|----------|----------------|---------------|
+| Jan 1-7 | 66.6% | **90.0%** | Many |
+| Jan 8 | 45.8% | 89.0% | **0** ❌ |
+| Jan 10 | 50.9% | 84.0% | **0** ❌ |
+| Jan 11 | **40.2%** | 89.0% | **0** ❌ |
+| Jan 12 | **21.4%** | **50.0%** | **0** ❌ |
+| Jan 13 | 45.3% | **50.0%** | **0** ❌ |
+| Jan 14 | 51.0% | **50.0%** | **0** ❌ |
+| Jan 15 | 64.5% | **50.0%** | **0** ❌ |
+
+**Critical finding**: Confidence dropped dramatically on Jan 8
+- Jan 1-7: 90% avg confidence
+- Jan 8-15: 50-89% avg confidence  
+- **Something changed between Jan 7 and Jan 8!**
+
+**Action needed**: Check system logs, deployments, config changes for Jan 7-8.
+
+---
+
+## PRIORITY 3: Model Consensus
+
+**Limited data** (only Jan 8-15, bad period), but trends:
+
+| Consensus Type | Picks | Win Rate |
+|----------------|-------|----------|
+| Strong (4+ systems agree) | 179 | 57.5% ✅ |
+| Moderate (3 systems) | 27 | 48.1% ⚠️ |
+| Split decisions | Various | 40-67% |
+
+**Finding**: Strong consensus (4+ out of 5) performs better
+**Caveat**: Small sample size, need 30+ days of data
+
+---
+
+## IMMEDIATE RECOMMENDATIONS
+
+1. **Deploy "donut filter"** today:
+   - Exclude 88-90% confidence tier
+   - Keep 86-88%, 90-92%, ≥92%
+   - Removes 252 losing picks
+
+2. **Investigate Jan 7-8 incident**:
+   - What caused confidence to drop from 90% to 50-73%?
+   - System change? Data issue? Config change?
+
+3. **Day-specific strategies**:
+   - Increase stakes on Monday/Saturday
+   - Monitor Thursday (heavy slates)
+
+4. **Set monthly alert threshold**:
+   - Expected baseline: 72-79% win rate per month
+   - Alert if below 70%
+
+5. **Wait on consensus filtering**:
+   - Need more data (currently only 7 days)
+   - Promising but not conclusive
+
+---
+
+## FULL DETAILS
+
+Complete analysis with all tables, charts, and additional context:
+`docs/09-handoff/ADDITIONAL_DATA_ANALYSIS_FOR_FILTERING_STRATEGY.md`
+
+---
+
+## NEXT QUESTIONS TO INVESTIGATE
+
+Based on these findings, I recommend investigating:
+
+1. **What changed on Jan 7-8?**
+   - Why did confidence drop 40%?
+   - Why zero premium picks?
+
+2. **Can we get finer 88-90% breakdown?**
+   - Is 88.0-88.9 bad but 89.0-89.9 ok?
+   - Or is entire range equally bad?
+
+3. **Player type analysis**:
+   - Are specific player types clustering in 88-90% tier?
+   - Stars vs role players performance
+
+4. **Line edge analysis**:
+   - What's the |predicted - line| distribution by tier?
+   - Does 88-90% represent "too close to call" picks?
+
+Let me know if you want me to dig deeper into any of these!
+
+================================================================================

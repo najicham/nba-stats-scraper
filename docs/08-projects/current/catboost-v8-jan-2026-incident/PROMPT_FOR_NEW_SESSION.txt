@@ -1,0 +1,38 @@
+I need you to investigate the CatBoost V8 January 2026 incident and prepare to execute the fixes.
+
+**Context**: Session 76 completed a comprehensive 6-hour investigation and found all root causes. All documentation and fixes are ready.
+
+**Your tasks**:
+
+1. **Use agents to study the documentation** in this directory:
+   `/home/naji/code/nba-stats-scraper/docs/08-projects/current/catboost-v8-jan-2026-incident/`
+
+   Key documents to study:
+   - README.md (overview)
+   - FINAL_SUMMARY.md (complete findings)
+   - ROOT_CAUSE_ANALYSIS.md (root causes)
+   - FIXES_READY_TO_EXECUTE.md (execution commands)
+   - EXECUTION_CHECKLIST.md (step-by-step checklist)
+   - investigation-findings/player-daily-cache-failure.md (pipeline failure details)
+   - investigation-findings/50-percent-confidence-issue.md (model loading details)
+
+2. **Use agents to examine the relevant code**:
+   - data_processors/precompute/player_daily_cache/player_daily_cache_processor.py
+   - predictions/worker/prediction_systems/catboost_v8.py
+   - data_processors/precompute/ml_feature_store/quality_scorer.py
+
+3. **After studying, provide me**:
+   - Summary of the 3 root causes found
+   - Understanding of the fixes needed
+   - Any questions or concerns before execution
+   - Readiness to execute the fixes step-by-step
+
+**Important**: Use the Task tool with agents to parallelize the study. Don't try to read everything manually - let agents do the deep dive.
+
+**Background**:
+- CatBoost V8 broke on Jan 8, 2026 (win rate 54% → 47%, all picks stuck at 50% confidence)
+- Session 76 found: (1) player_daily_cache pipeline failures, (2) model not loading, (3) deployment bugs (already fixed)
+- All fixes are ready to execute, just need to run the commands
+- Investigation cleared the Jan 7 commit (was NOT the cause)
+
+Please use agents to study everything thoroughly, then let me know you're ready to help execute the fixes.
