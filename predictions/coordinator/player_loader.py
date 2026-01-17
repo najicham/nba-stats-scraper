@@ -809,9 +809,10 @@ def validate_game_date(game_date: date) -> bool:
     """
     today = date.today()
 
-    # Allow dates up to 30 days in the past
-    if (today - game_date).days > 30:
-        logger.warning(f"Game date {game_date} is too far in the past (>30 days)")
+    # Allow dates up to 90 days in the past (extended for Phase 4 XGBoost regeneration)
+    # TEMPORARY: Increased from 30 to 90 days to allow Nov 2025 regeneration
+    if (today - game_date).days > 90:
+        logger.warning(f"Game date {game_date} is too far in the past (>90 days)")
         return False
 
     # Can't be too far in the future (more than 14 days)
