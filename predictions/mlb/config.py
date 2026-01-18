@@ -156,8 +156,8 @@ class RedFlagConfig:
 class CacheConfig:
     """Configuration for caching behavior."""
 
-    # IL pitcher cache TTL (hours)
-    il_cache_ttl_hours: int = field(default_factory=lambda: _env_int('MLB_IL_CACHE_TTL_HOURS', 6))
+    # IL pitcher cache TTL (hours) - reduced from 6 to 3 for fresher injury data
+    il_cache_ttl_hours: int = field(default_factory=lambda: _env_int('MLB_IL_CACHE_TTL_HOURS', 3))
 
 
 @dataclass
@@ -190,6 +190,32 @@ class SystemConfig:
 
 
 @dataclass
+class AlertConfig:
+    """Configuration for alert thresholds."""
+
+    # Fallback prediction alerts
+    fallback_rate_threshold: float = field(
+        default_factory=lambda: _env_float('MLB_FALLBACK_RATE_THRESHOLD', 10.0)
+    )
+    fallback_window_minutes: int = field(
+        default_factory=lambda: _env_int('MLB_FALLBACK_WINDOW_MINUTES', 10)
+    )
+
+    # Model loading alerts
+    model_load_failure_threshold: int = field(
+        default_factory=lambda: _env_int('MLB_MODEL_LOAD_FAILURE_THRESHOLD', 1)
+    )
+
+    # Feature coverage alerts
+    low_coverage_threshold: float = field(
+        default_factory=lambda: _env_float('MLB_LOW_COVERAGE_THRESHOLD', 80.0)
+    )
+    low_coverage_rate_threshold: float = field(
+        default_factory=lambda: _env_float('MLB_LOW_COVERAGE_RATE_THRESHOLD', 20.0)
+    )
+
+
+@dataclass
 class MLBConfig:
     """Master configuration combining all sub-configs."""
 
@@ -198,6 +224,7 @@ class MLBConfig:
     red_flags: RedFlagConfig = field(default_factory=RedFlagConfig)
     cache: CacheConfig = field(default_factory=CacheConfig)
     systems: SystemConfig = field(default_factory=SystemConfig)
+    alerts: AlertConfig = field(default_factory=AlertConfig)
 
     @classmethod
     def from_env(cls) -> 'MLBConfig':
