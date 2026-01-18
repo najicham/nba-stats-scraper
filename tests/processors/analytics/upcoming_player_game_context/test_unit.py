@@ -858,6 +858,45 @@ class TestPaceMetricsCalculation:
 
         assert result == 0.0
 
+    def test_get_opponent_pace_variance_normal(self, processor):
+        """Test opponent pace variance calculation with normal data."""
+        mock_row = Mock()
+        mock_row.pace_stddev = 3.5
+        mock_result = [mock_row]
+        processor.bq_client.query.return_value.result.return_value = mock_result
+
+        result = processor._get_opponent_pace_variance('GSW', date(2025, 1, 20))
+
+        assert result == pytest.approx(3.5, abs=0.1)
+        assert processor.bq_client.query.called
+
+    def test_get_opponent_pace_variance_high_variance(self, processor):
+        """Test opponent pace variance with inconsistent team."""
+        mock_row = Mock()
+        mock_row.pace_stddev = 8.2
+        mock_result = [mock_row]
+        processor.bq_client.query.return_value.result.return_value = mock_result
+
+        result = processor._get_opponent_pace_variance('LAL', date(2025, 1, 20))
+
+        assert result == pytest.approx(8.2, abs=0.1)
+
+    def test_get_opponent_pace_variance_no_data(self, processor):
+        """Test opponent pace variance when no data available."""
+        processor.bq_client.query.return_value.result.return_value = []
+
+        result = processor._get_opponent_pace_variance('GSW', date(2025, 1, 20))
+
+        assert result == 0.0
+
+    def test_get_opponent_pace_variance_query_error(self, processor):
+        """Test opponent pace variance handles BigQuery errors."""
+        processor.bq_client.query.side_effect = Exception("BigQuery error")
+
+        result = processor._get_opponent_pace_variance('GSW', date(2025, 1, 20))
+
+        assert result == 0.0
+
 
 # Run tests with: pytest test_unit.py -v
 # Run specific class: pytest test_unit.py::TestFatigueMetricsCalculation -v
