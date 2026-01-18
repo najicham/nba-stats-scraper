@@ -1,11 +1,10 @@
 # NBA Prediction Platform - Session Handoff Index
 
-**Last Updated**: 2026-01-17
-**Current Session**: 96 (Complete - ✅ ML Monitoring Reminders System Setup)
+**Last Updated**: 2026-01-18
+**Current Session**: 96 (Complete - ✅ Grading Duplicate Fix Deployed & Verified)
 **Next Sessions Available**:
-- **Session 97** (Ready - 🟡 Monitor XGBoost V1 - Wait 7 days for data)
-- **Session 95** (Ready - 🔴 CRITICAL - Implement Grading Duplicate Fix - if needed)
-**Platform Status**: ✅ Healthy - XGBoost V1 deployed, automated monitoring active
+- **Session 97** (Ready - 🟡 Monitor Production - Grading + XGBoost V1)
+**Platform Status**: ✅ Healthy - Grading duplicate fix deployed, 0 duplicates, XGBoost V1 in production
 
 ---
 
@@ -217,7 +216,63 @@ Guide: docs/02-operations/ML-MONITORING-REMINDERS.md
 - `docs/08-projects/current/ml-model-v8-deployment/SESSION-94-FIX-DESIGN.md`
 - `docs/09-handoff/SESSION-94-INVESTIGATION-COMPLETE.md`
 
-**Next**: Implementation in Session 95 (8-10 hours)
+**Next**: Implementation in Session 95-96 (complete)
+
+---
+
+### Session 95-96: Grading Duplicate Fix - Implementation & Deployment ✅
+**Status**: Complete (2026-01-18)
+**Document**: [SESSION-96-DEPLOYMENT-COMPLETE.md](./SESSION-96-DEPLOYMENT-COMPLETE.md)
+**Duration**: 3.5 hours
+
+**What was done**:
+- ✅ Deployed distributed lock fix to production (phase5b-grading Cloud Function)
+- ✅ Tested grading with lock - 0 duplicates in test runs (2/2 successful)
+- ✅ Cleaned up 214 existing duplicate rows from prediction_accuracy table
+- ✅ Verified data quality with daily validation script (Check 8 passing)
+- ✅ Created backup table before deduplication (prediction_accuracy_backup_20260118)
+- ✅ Updated deployment scripts and monitoring
+
+**Implementation Details**:
+- Refactored ConsolidationLock → DistributedLock (supports grading + consolidation)
+- Added post-grading validation (_check_for_duplicates)
+- Added Slack alerting when duplicates detected
+- Updated daily validation with Check 8 (duplicate detection)
+- Updated Cloud Function requirements (firestore, secret-manager)
+
+**Test Results**:
+- 2026-01-15: 133 rows graded, 0 duplicates ✅
+- 2026-01-14: 203 rows graded, 0 duplicates ✅
+- Deduplication: 214 rows deleted, 0 duplicates remaining ✅
+
+**Data Cleanup**:
+- Existing duplicates: 214 business keys (428 total rows)
+- Affected dates: 2026-01-04, 2026-01-10, 2026-01-11
+- All duplicates created on 2026-01-14 (before our deployment)
+- Strategy: Keep earliest graded_at, delete duplicates
+
+**Production Status**:
+- Function: phase5b-grading (ACTIVE, revision 00012-puw)
+- Deployed: 2026-01-18 04:09:09 UTC
+- Lock type: grading (Firestore-based, 5-minute timeout)
+- Cost impact: <$0.10/month
+- Duplicates after deployment: 0 ✅
+
+**Files Modified** (8 files):
+- `predictions/worker/distributed_lock.py` - Generic lock implementation
+- `data_processors/grading/prediction_accuracy/prediction_accuracy_processor.py` - Lock + validation
+- `orchestration/cloud_functions/grading/main.py` - Duplicate alerting
+- `bin/validation/daily_data_quality_check.sh` - Check 8
+- `bin/deploy/deploy_grading_function.sh` - Include predictions directory
+- `orchestration/cloud_functions/grading/requirements.txt` - Dependencies
+
+**Success Criteria Met**:
+- ✅ Zero duplicates in test runs
+- ✅ All existing duplicates removed
+- ✅ Daily validation passing
+- ✅ Cloud Function deployed and active
+
+**Next**: Monitor production for 30 days to confirm zero duplicates
 
 ---
 
