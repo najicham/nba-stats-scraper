@@ -14,6 +14,9 @@ WORKDIR /app
 # Copy shared module from repository root (relative to build context)
 COPY shared/ ./shared/
 
+# Copy predictions/shared module (contains mock models, etc.)
+COPY predictions/shared/ ./predictions/shared/
+
 # Copy worker code and dependencies
 COPY predictions/worker/ ./predictions/worker/
 
