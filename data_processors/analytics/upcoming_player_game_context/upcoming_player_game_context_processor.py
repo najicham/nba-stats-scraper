@@ -2250,7 +2250,12 @@ class UpcomingPlayerGameContextProcessor(
         
         # Calculate data quality
         data_quality = self._calculate_data_quality(historical_data, game_lines_info)
-        
+
+        # Calculate pace metrics
+        pace_differential = self._calculate_pace_differential(team_abbr, opponent_team_abbr, self.target_date)
+        opponent_pace_last_10 = self._get_opponent_pace_last_10(opponent_team_abbr, self.target_date)
+        opponent_ft_rate_allowed = self._get_opponent_ft_rate_allowed(opponent_team_abbr, self.target_date)
+
         # Get has_prop_line from player_info (passed from extract)
         has_prop_line = player_info.get('has_prop_line', False)
 
@@ -2304,10 +2309,10 @@ class UpcomingPlayerGameContextProcessor(
             'total_public_betting_pct': None,  # TODO: future
             
             # Pre-game context
-            'pace_differential': None,  # TODO: future (needs team analytics)
-            'opponent_pace_last_10': None,  # TODO: future
+            'pace_differential': pace_differential,
+            'opponent_pace_last_10': opponent_pace_last_10,
             'game_start_time_local': self._extract_game_time(game_info),
-            'opponent_ft_rate_allowed': None,  # TODO: future
+            'opponent_ft_rate_allowed': opponent_ft_rate_allowed,
             'home_game': (team_abbr == game_info['home_team_abbr']),
             'back_to_back': fatigue_metrics['back_to_back'],
             'season_phase': self._determine_season_phase(self.target_date),
@@ -2667,6 +2672,125 @@ class UpcomingPlayerGameContextProcessor(
                 continue
 
         return over_streak, under_streak
+
+    def _calculate_pace_differential(self, team_abbr: str, opponent_abbr: str, game_date: date) -> float:
+        """
+        Calculate difference between team's pace and opponent's pace (last 10 games).
+
+        Args:
+            team_abbr: Player's team abbreviation
+            opponent_abbr: Opponent team abbreviation
+            game_date: Game date to filter historical data
+
+        Returns:
+            float: Pace differential (team_pace - opponent_pace), rounded to 2 decimals
+        """
+        try:
+            query = f"""
+            WITH recent_team AS (
+                SELECT pace
+                FROM `{self.project_id}.nba_analytics.team_offense_game_summary`
+                WHERE team_abbr = '{team_abbr}'
+                  AND game_date < '{game_date}'
+                  AND game_date >= '2024-10-01'
+                ORDER BY game_date DESC
+                LIMIT 10
+            ),
+            recent_opponent AS (
+                SELECT pace
+                FROM `{self.project_id}.nba_analytics.team_offense_game_summary`
+                WHERE team_abbr = '{opponent_abbr}'
+                  AND game_date < '{game_date}'
+                  AND game_date >= '2024-10-01'
+                ORDER BY game_date DESC
+                LIMIT 10
+            )
+            SELECT
+                ROUND((SELECT AVG(pace) FROM recent_team) - (SELECT AVG(pace) FROM recent_opponent), 2) as pace_diff
+            """
+
+            result = self.bq_client.query(query).result()
+            for row in result:
+                return row.pace_diff if row.pace_diff is not None else 0.0
+
+            logger.warning(f"No pace data found for {team_abbr} vs {opponent_abbr}")
+            return 0.0
+
+        except Exception as e:
+            logger.error(f"Error calculating pace differential for {team_abbr} vs {opponent_abbr}: {e}")
+            return 0.0
+
+    def _get_opponent_pace_last_10(self, opponent_abbr: str, game_date: date) -> float:
+        """
+        Get opponent's average pace over last 10 games.
+
+        Args:
+            opponent_abbr: Opponent team abbreviation
+            game_date: Game date to filter historical data
+
+        Returns:
+            float: Average pace over last 10 games, rounded to 2 decimals
+        """
+        try:
+            query = f"""
+            WITH recent_games AS (
+                SELECT pace
+                FROM `{self.project_id}.nba_analytics.team_offense_game_summary`
+                WHERE team_abbr = '{opponent_abbr}'
+                  AND game_date < '{game_date}'
+                  AND game_date >= '2024-10-01'
+                ORDER BY game_date DESC
+                LIMIT 10
+            )
+            SELECT ROUND(AVG(pace), 2) as avg_pace
+            FROM recent_games
+            """
+
+            result = self.bq_client.query(query).result()
+            for row in result:
+                return row.avg_pace if row.avg_pace is not None else 0.0
+
+            return 0.0
+
+        except Exception as e:
+            logger.error(f"Error getting opponent pace for {opponent_abbr}: {e}")
+            return 0.0
+
+    def _get_opponent_ft_rate_allowed(self, opponent_abbr: str, game_date: date) -> float:
+        """
+        Get opponent's defensive FT rate allowed (last 10 games).
+
+        Args:
+            opponent_abbr: Opponent team abbreviation
+            game_date: Game date to filter historical data
+
+        Returns:
+            float: Average opponent FT attempts allowed per game (last 10), rounded to 2 decimals
+        """
+        try:
+            query = f"""
+            WITH recent_games AS (
+                SELECT opp_ft_attempts
+                FROM `{self.project_id}.nba_analytics.team_defense_game_summary`
+                WHERE defending_team_abbr = '{opponent_abbr}'
+                  AND game_date < '{game_date}'
+                  AND game_date >= '2024-10-01'
+                ORDER BY game_date DESC
+                LIMIT 10
+            )
+            SELECT ROUND(AVG(opp_ft_attempts), 2) as avg_opp_fta
+            FROM recent_games
+            """
+
+            result = self.bq_client.query(query).result()
+            for row in result:
+                return row.avg_opp_fta if row.avg_opp_fta is not None else 0.0
+
+            return 0.0
+
+        except Exception as e:
+            logger.error(f"Error getting FT rate allowed for {opponent_abbr}: {e}")
+            return 0.0
 
     def _calculate_data_quality(self, historical_data: pd.DataFrame,
                                 game_lines_info: Dict) -> Dict:
