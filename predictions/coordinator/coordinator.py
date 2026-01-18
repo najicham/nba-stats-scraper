@@ -396,7 +396,6 @@ def start_prediction_batch():
         # FIXED: Session 102 - Increased timeout from 30s to 120s to support 300-400 players
 
         try:
-            import time
             player_lookups = [r.get('player_lookup') for r in requests if r.get('player_lookup')]
             if player_lookups:
                 batch_start = time.time()
