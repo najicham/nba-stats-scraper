@@ -252,63 +252,266 @@ def get_auth_token(audience: str) -> str:
         raise
 
 
-def trigger_phase3_analytics(target_date: str) -> bool:
+def check_phase3_health() -> Dict:
+    """
+    Check Phase 3 analytics service health before triggering.
+
+    Returns:
+        Dict with:
+        - healthy: bool - True if service is responding
+        - status_code: int - HTTP status code
+        - response_time_ms: float - Response time in milliseconds
+        - error: str - Error message if unhealthy
+    """
+    import requests
+
+    PHASE3_BASE_URL = "https://nba-phase3-analytics-processors-f7p3g7f6ya-wl.a.run.app"
+    HEALTH_ENDPOINT = f"{PHASE3_BASE_URL}/health"
+
+    start_time = time.time()
+
+    try:
+        # Try health check without auth first (health endpoints often don't require auth)
+        response = requests.get(HEALTH_ENDPOINT, timeout=10)
+        response_time_ms = (time.time() - start_time) * 1000
+
+        if response.status_code == 200:
+            logger.info(f"Phase 3 health check passed: {response_time_ms:.0f}ms")
+            return {
+                'healthy': True,
+                'status_code': 200,
+                'response_time_ms': round(response_time_ms, 1),
+                'error': None
+            }
+        else:
+            logger.warning(f"Phase 3 health check returned {response.status_code}")
+            return {
+                'healthy': False,
+                'status_code': response.status_code,
+                'response_time_ms': round(response_time_ms, 1),
+                'error': f"HTTP {response.status_code}"
+            }
+
+    except requests.exceptions.Timeout:
+        logger.error("Phase 3 health check timed out")
+        return {
+            'healthy': False,
+            'status_code': None,
+            'response_time_ms': None,
+            'error': 'Health check timeout'
+        }
+    except Exception as e:
+        logger.error(f"Phase 3 health check failed: {e}")
+        return {
+            'healthy': False,
+            'status_code': None,
+            'response_time_ms': None,
+            'error': str(e)
+        }
+
+
+def trigger_phase3_analytics(target_date: str, max_retries: int = 3) -> Dict:
     """
     Trigger Phase 3 analytics to generate player_game_summary for a date.
 
     This is the auto-heal mechanism when grading finds no actuals.
+    Includes retry logic for 503 errors and health checking.
 
     Args:
         target_date: Date to process (YYYY-MM-DD format)
+        max_retries: Maximum retry attempts for 503 errors (default: 3)
 
     Returns:
-        True if trigger was successful
+        Dict with:
+        - success: bool - True if trigger was successful
+        - status_code: int - HTTP status code
+        - error: str - Error message if failed
+        - retries: int - Number of retries attempted
     """
     import requests
 
     PHASE3_BASE_URL = "https://nba-phase3-analytics-processors-f7p3g7f6ya-wl.a.run.app"
     PHASE3_ENDPOINT = f"{PHASE3_BASE_URL}/process-date-range"
 
-    logger.info(f"Auto-triggering Phase 3 analytics for {target_date}")
+    logger.info(f"Auto-heal: Triggering Phase 3 analytics for {target_date}")
 
-    try:
-        # Get authentication token for Phase 3 service
-        try:
-            token = get_auth_token(PHASE3_BASE_URL)
-            headers = {
-                "Authorization": f"Bearer {token}",
-                "Content-Type": "application/json"
+    # Step 1: Check Phase 3 service health first
+    health = check_phase3_health()
+    if not health['healthy']:
+        structured_logger.log_lock_event(
+            event_type='phase3_trigger_failed',
+            lock_type='auto_heal',
+            game_date=target_date,
+            details={
+                'reason': 'service_unhealthy',
+                'error': health['error']
             }
-            logger.info("Successfully obtained auth token for Phase 3")
-        except Exception as e:
-            logger.warning(f"Could not get auth token, trying without auth: {e}")
-            headers = {"Content-Type": "application/json"}
-
-        # Trigger PlayerGameSummaryProcessor for the target date
-        response = requests.post(
-            PHASE3_ENDPOINT,
-            json={
-                "start_date": target_date,
-                "end_date": target_date,
-                "processors": ["PlayerGameSummaryProcessor"],
-                "backfill_mode": True
-            },
-            headers=headers,
-            timeout=300  # 5 minute timeout
         )
+        logger.error(f"Auto-heal: Phase 3 service unhealthy, skipping trigger: {health['error']}")
+        return {
+            'success': False,
+            'status_code': health.get('status_code'),
+            'error': f"Service unhealthy: {health['error']}",
+            'retries': 0
+        }
 
-        if response.status_code == 200:
-            logger.info(f"Phase 3 analytics triggered successfully for {target_date}")
-            return True
-        else:
-            logger.error(
-                f"Phase 3 analytics trigger failed: {response.status_code} - {response.text}"
-            )
-            return False
-
+    # Step 2: Get authentication token
+    try:
+        token = get_auth_token(PHASE3_BASE_URL)
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json"
+        }
+        logger.info("Auto-heal: Successfully obtained auth token for Phase 3")
     except Exception as e:
-        logger.error(f"Error triggering Phase 3 analytics: {e}")
-        return False
+        logger.warning(f"Auto-heal: Could not get auth token, trying without auth: {e}")
+        headers = {"Content-Type": "application/json"}
+
+    # Step 3: Trigger with retry logic for 503 errors
+    retry_count = 0
+    last_error = None
+    backoff_seconds = 5  # Start with 5 second backoff
+
+    while retry_count <= max_retries:
+        try:
+            logger.info(f"Auto-heal: Triggering Phase 3 (attempt {retry_count + 1}/{max_retries + 1})")
+
+            response = requests.post(
+                PHASE3_ENDPOINT,
+                json={
+                    "start_date": target_date,
+                    "end_date": target_date,
+                    "processors": ["PlayerGameSummaryProcessor"],
+                    "backfill_mode": True
+                },
+                headers=headers,
+                timeout=60  # Reduced timeout to 60s (was 300s)
+            )
+
+            if response.status_code == 200:
+                structured_logger.log_lock_event(
+                    event_type='phase3_trigger_success',
+                    lock_type='auto_heal',
+                    game_date=target_date,
+                    details={
+                        'retries': retry_count,
+                        'response_time_ms': health.get('response_time_ms')
+                    }
+                )
+                logger.info(f"Auto-heal: Phase 3 analytics triggered successfully for {target_date} after {retry_count} retries")
+                return {
+                    'success': True,
+                    'status_code': 200,
+                    'error': None,
+                    'retries': retry_count
+                }
+
+            elif response.status_code == 503:
+                # Service unavailable - retry with exponential backoff
+                last_error = f"503 Service Unavailable: {response.text}"
+                logger.warning(f"Auto-heal: Phase 3 returned 503 (attempt {retry_count + 1}/{max_retries + 1})")
+
+                if retry_count < max_retries:
+                    logger.info(f"Auto-heal: Retrying in {backoff_seconds}s...")
+                    time.sleep(backoff_seconds)
+                    backoff_seconds *= 2  # Exponential backoff: 5s, 10s, 20s
+                    retry_count += 1
+                else:
+                    # Max retries exceeded
+                    structured_logger.log_lock_event(
+                        event_type='phase3_trigger_failed',
+                        lock_type='auto_heal',
+                        game_date=target_date,
+                        details={
+                            'reason': '503_max_retries_exceeded',
+                            'retries': retry_count,
+                            'error': last_error
+                        }
+                    )
+                    logger.error(f"Auto-heal: Phase 3 trigger failed after {max_retries + 1} attempts: {last_error}")
+                    return {
+                        'success': False,
+                        'status_code': 503,
+                        'error': f"503 after {retry_count} retries: {last_error}",
+                        'retries': retry_count
+                    }
+
+            else:
+                # Other HTTP error - don't retry
+                last_error = f"HTTP {response.status_code}: {response.text}"
+                structured_logger.log_lock_event(
+                    event_type='phase3_trigger_failed',
+                    lock_type='auto_heal',
+                    game_date=target_date,
+                    details={
+                        'reason': f'http_{response.status_code}',
+                        'error': last_error,
+                        'retries': retry_count
+                    }
+                )
+                logger.error(f"Auto-heal: Phase 3 trigger failed with {response.status_code}: {response.text}")
+                return {
+                    'success': False,
+                    'status_code': response.status_code,
+                    'error': last_error,
+                    'retries': retry_count
+                }
+
+        except requests.exceptions.Timeout:
+            last_error = "Request timeout (60s)"
+            logger.warning(f"Auto-heal: Phase 3 request timed out (attempt {retry_count + 1}/{max_retries + 1})")
+
+            if retry_count < max_retries:
+                logger.info(f"Auto-heal: Retrying after timeout in {backoff_seconds}s...")
+                time.sleep(backoff_seconds)
+                backoff_seconds *= 2
+                retry_count += 1
+            else:
+                structured_logger.log_lock_event(
+                    event_type='phase3_trigger_failed',
+                    lock_type='auto_heal',
+                    game_date=target_date,
+                    details={
+                        'reason': 'timeout_max_retries_exceeded',
+                        'retries': retry_count,
+                        'error': last_error
+                    }
+                )
+                logger.error(f"Auto-heal: Phase 3 trigger timed out after {max_retries + 1} attempts")
+                return {
+                    'success': False,
+                    'status_code': None,
+                    'error': f"Timeout after {retry_count} retries",
+                    'retries': retry_count
+                }
+
+        except Exception as e:
+            last_error = str(e)
+            structured_logger.log_lock_event(
+                event_type='phase3_trigger_failed',
+                lock_type='auto_heal',
+                game_date=target_date,
+                details={
+                    'reason': 'exception',
+                    'error': last_error,
+                    'retries': retry_count
+                }
+            )
+            logger.error(f"Auto-heal: Error triggering Phase 3 analytics: {e}")
+            return {
+                'success': False,
+                'status_code': None,
+                'error': f"Exception: {last_error}",
+                'retries': retry_count
+            }
+
+    # Should never reach here
+    return {
+        'success': False,
+        'status_code': None,
+        'error': 'Unexpected retry loop exit',
+        'retries': retry_count
+    }
 
 
 def run_prediction_accuracy_grading(target_date: str, skip_validation: bool = False) -> Dict:
@@ -345,11 +548,17 @@ def run_prediction_accuracy_grading(target_date: str, skip_validation: bool = Fa
                 logger.warning(
                     f"No actuals for {target_date} - attempting auto-heal via Phase 3"
                 )
-                # Try to trigger Phase 3 analytics
-                if trigger_phase3_analytics(target_date):
+                # Try to trigger Phase 3 analytics with retry logic
+                trigger_result = trigger_phase3_analytics(target_date, max_retries=3)
+
+                if trigger_result['success']:
+                    logger.info(
+                        f"Phase 3 triggered successfully after {trigger_result['retries']} retries. "
+                        f"Waiting 15s for processing..."
+                    )
                     # Wait a bit and re-check (Phase 3 takes a few minutes)
                     import time as time_module
-                    time_module.sleep(10)  # Short wait before proceeding
+                    time_module.sleep(15)  # Wait 15s before re-checking
 
                     # Re-validate
                     revalidation = validate_grading_prerequisites(target_date)
@@ -360,17 +569,43 @@ def run_prediction_accuracy_grading(target_date: str, skip_validation: bool = Fa
                             'predictions_found': validation['predictions_count'],
                             'actuals_found': 0,
                             'graded': 0,
-                            'message': 'Phase 3 analytics triggered, grading should retry later'
+                            'message': f'Phase 3 analytics triggered (after {trigger_result["retries"]} retries), grading should retry later',
+                            'auto_heal_retries': trigger_result['retries']
                         }
+                    else:
+                        logger.info(
+                            f"Auto-heal successful! Re-validation found {revalidation['actuals_count']} actuals. "
+                            f"Proceeding with grading..."
+                        )
+                        # Continue to grading below since we now have actuals
                 else:
+                    # Auto-heal failed
+                    error_msg = trigger_result['error']
+                    logger.error(
+                        f"Auto-heal failed for {target_date}: {error_msg} "
+                        f"(after {trigger_result['retries']} retries)"
+                    )
                     return {
-                        'status': 'no_actuals',
+                        'status': 'auto_heal_failed',
                         'date': target_date,
                         'predictions_found': validation['predictions_count'],
                         'actuals_found': 0,
                         'graded': 0,
-                        'message': 'No actuals and auto-heal failed'
+                        'message': f'No actuals and auto-heal failed: {error_msg}',
+                        'auto_heal_error': error_msg,
+                        'auto_heal_retries': trigger_result['retries'],
+                        'auto_heal_status_code': trigger_result['status_code']
                     }
+            else:
+                # Can't auto-heal or different missing reason
+                return {
+                    'status': validation['missing_reason'],
+                    'date': target_date,
+                    'predictions_found': validation['predictions_count'],
+                    'actuals_found': validation['actuals_count'],
+                    'graded': 0,
+                    'message': f"Cannot grade: {validation['missing_reason']}"
+                }
 
     logger.info(f"Running prediction accuracy grading for {target_date}")
 
@@ -624,6 +859,19 @@ def main(cloud_event):
             logger.info(
                 f"[{correlation_id}] No actuals available for {target_date}"
             )
+        elif grading_result.get('status') == 'auto_heal_pending':
+            overall_status = 'auto_heal_pending'
+            logger.info(
+                f"[{correlation_id}] Auto-heal triggered for {target_date}, grading pending. "
+                f"Retries: {grading_result.get('auto_heal_retries', 0)}"
+            )
+        elif grading_result.get('status') == 'auto_heal_failed':
+            overall_status = 'auto_heal_failed'
+            logger.error(
+                f"[{correlation_id}] Auto-heal failed for {target_date}: "
+                f"{grading_result.get('auto_heal_error')} "
+                f"(after {grading_result.get('auto_heal_retries', 0)} retries)"
+            )
         else:
             overall_status = 'failed'
             logger.error(
@@ -702,6 +950,12 @@ def publish_completion(
             'mae': grading_result.get('mae'),
             'bias': grading_result.get('bias'),
             'recommendation_accuracy': grading_result.get('recommendation_accuracy'),
+
+            # Auto-heal metrics (if attempted)
+            'auto_heal_attempted': grading_result.get('auto_heal_retries') is not None,
+            'auto_heal_retries': grading_result.get('auto_heal_retries'),
+            'auto_heal_error': grading_result.get('auto_heal_error'),
+            'auto_heal_status_code': grading_result.get('auto_heal_status_code'),
 
             # Aggregation metrics (if run)
             'aggregation_status': aggregation_result.get('status') if aggregation_result else None,
