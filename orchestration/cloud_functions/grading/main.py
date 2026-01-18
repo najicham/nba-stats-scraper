@@ -42,6 +42,44 @@ from google.cloud import pubsub_v1
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
+# SESSION 97 FIX: Structured logging for lock events
+class StructuredLogger:
+    """
+    Structured logger for Cloud Logging.
+
+    Logs events in JSON format that Cloud Logging can parse and index.
+    This makes lock events easily queryable in Cloud Console.
+    """
+
+    def __init__(self, name: str):
+        self.logger = logging.getLogger(name)
+
+    def log_lock_event(self, event_type: str, lock_type: str, game_date: str, details: Dict):
+        """
+        Log lock events in structured format for Cloud Logging.
+
+        Args:
+            event_type: 'lock_acquired', 'lock_waited', 'lock_timeout', 'lock_failed'
+            lock_type: 'grading', 'daily_performance', 'performance_summary'
+            game_date: Date being locked
+            details: Additional event details (attempts, wait_time_ms, error, etc.)
+        """
+        entry = {
+            'event_type': event_type,
+            'lock_type': lock_type,
+            'game_date': game_date,
+            'timestamp': datetime.now(timezone.utc).isoformat(),
+            'severity': 'INFO' if event_type == 'lock_acquired' else 'WARNING',
+            **details
+        }
+        # Cloud Logging will parse this as structured entry
+        self.logger.info(json.dumps(entry))
+
+
+# Initialize structured logger
+structured_logger = StructuredLogger('grading-function')
+
 # Project configuration
 PROJECT_ID = os.environ.get('GCP_PROJECT', 'nba-props-platform')
 GRADING_COMPLETE_TOPIC = 'nba-grading-complete'
@@ -420,6 +458,56 @@ def send_duplicate_alert(target_date: str, duplicate_count: int):
         # Don't fail grading if alert fails
 
 
+def send_lock_failure_alert(target_date: str, lock_type: str, reason: str):
+    """
+    Send CRITICAL alert when lock acquisition fails (SESSION 97 FIX).
+
+    This indicates grading ran WITHOUT distributed lock protection,
+    which means HIGH RISK of duplicates being created.
+
+    Args:
+        target_date: Date that was processed
+        lock_type: Type of lock that failed ('grading', 'daily_performance', etc.)
+        reason: Failure reason/error message
+    """
+    import requests
+    from google.cloud import secretmanager
+
+    try:
+        # Get Slack webhook from Secret Manager
+        client = secretmanager.SecretManagerServiceClient()
+        secret_name = f"projects/{PROJECT_ID}/secrets/slack-webhook-url/versions/latest"
+        response = client.access_secret_version(request={"name": secret_name})
+        webhook_url = response.payload.data.decode("UTF-8")
+
+        # Send CRITICAL alert
+        message = {
+            "text": f"🔴 *CRITICAL: Lock Acquisition Failed*\n\n"
+                   f"*Date:* {target_date}\n"
+                   f"*Lock Type:* {lock_type}\n"
+                   f"*Reason:* {reason}\n"
+                   f"*Status:* Operation proceeded WITHOUT distributed lock (HIGH RISK)\n"
+                   f"*Risk:* Concurrent operations may create duplicates\n\n"
+                   f"*Investigation Steps:*\n"
+                   f"  1. Check Firestore collection: {lock_type}_locks\n"
+                   f"  2. Check for stuck locks in Firestore console\n"
+                   f"  3. Check Cloud Function logs for errors\n"
+                   f"  4. Verify Firestore connectivity\n\n"
+                   f"*Next Step:* Manual verification required after operation completes\n"
+                   f"*Check for duplicates:* Run duplicate detection query immediately"
+        }
+
+        resp = requests.post(webhook_url, json=message, timeout=10)
+        if resp.status_code == 200:
+            logger.info(f"Sent lock failure alert for {target_date}")
+        else:
+            logger.warning(f"Slack alert failed: {resp.status_code} - {resp.text}")
+
+    except Exception as e:
+        logger.warning(f"Failed to send lock failure alert: {e}")
+        # Don't fail grading if alert fails
+
+
 @functions_framework.cloud_event
 def main(cloud_event):
     """
@@ -464,10 +552,53 @@ def main(cloud_event):
                 logger.warning(f"Duplicates detected for {target_date}: {duplicate_count} business keys")
                 send_duplicate_alert(target_date, duplicate_count)
 
+            # SESSION 97 FIX: Log successful lock acquisition
+            structured_logger.log_lock_event(
+                event_type='lock_acquired',
+                lock_type='grading',
+                game_date=target_date,
+                details={
+                    'graded_count': grading_result.get('graded', 0),
+                    'duplicate_count': duplicate_count
+                }
+            )
+
+        # SESSION 97 FIX: Check for lock failures (graceful degradation scenario)
+        # If lock acquisition failed, the processor logs it but continues
+        # We need to alert on this scenario even though grading "succeeded"
+        lock_failure_indicator = grading_result.get('lock_acquisition_failed', False)
+        if lock_failure_indicator:
+            logger.error(f"Lock acquisition failed for grading {target_date} - operation ran WITHOUT lock!")
+            send_lock_failure_alert(target_date, 'grading', 'Lock acquisition timeout or Firestore error')
+
         # Step 2: Run system daily performance aggregation (if enabled)
         if run_aggregation and grading_result.get('status') == 'success':
             try:
                 aggregation_result = run_system_daily_performance(target_date)
+
+                # SESSION 97 FIX: Check aggregation for duplicates and lock failures
+                if aggregation_result.get('status') == 'success':
+                    agg_duplicate_count = aggregation_result.get('duplicate_count', 0)
+                    if agg_duplicate_count > 0:
+                        logger.warning(f"Duplicates in system_daily_performance for {target_date}: {agg_duplicate_count}")
+                        send_duplicate_alert(f"{target_date} (daily_performance)", agg_duplicate_count)
+
+                    # Log successful lock acquisition
+                    structured_logger.log_lock_event(
+                        event_type='lock_acquired',
+                        lock_type='daily_performance',
+                        game_date=target_date,
+                        details={
+                            'systems': aggregation_result.get('systems', 0),
+                            'records_written': aggregation_result.get('records_written', 0)
+                        }
+                    )
+
+                # Check for lock failures
+                if aggregation_result.get('lock_acquisition_failed', False):
+                    logger.error(f"Lock acquisition failed for daily_performance {target_date}")
+                    send_lock_failure_alert(target_date, 'daily_performance', 'Lock acquisition timeout')
+
             except Exception as e:
                 logger.warning(f"Aggregation failed (non-fatal): {e}")
                 aggregation_result = {'status': 'failed', 'error': str(e)}
