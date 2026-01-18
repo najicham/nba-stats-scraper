@@ -660,8 +660,15 @@ class UpcomingPlayerGameContextProcessor(
         daily_query = f"""
         WITH games_today AS (
             -- Get all games scheduled for target date
+            -- FIXED: Use standard game_id format (YYYYMMDD_AWAY_HOME) instead of NBA official ID
             SELECT
-                game_id,
+                CONCAT(
+                    FORMAT_DATE('%Y%m%d', game_date),
+                    '_',
+                    away_team_tricode,
+                    '_',
+                    home_team_tricode
+                ) as game_id,
                 game_date,
                 home_team_tricode as home_team_abbr,
                 away_team_tricode as away_team_abbr
@@ -820,7 +827,18 @@ class UpcomingPlayerGameContextProcessor(
         backfill_query = f"""
         WITH schedule_data AS (
             -- Get schedule data with partition filter
-            SELECT game_id, home_team_tricode, away_team_tricode
+            -- FIXED: Create standard game_id format (YYYYMMDD_AWAY_HOME)
+            SELECT
+                game_id as nba_game_id,
+                CONCAT(
+                    FORMAT_DATE('%Y%m%d', game_date),
+                    '_',
+                    away_team_tricode,
+                    '_',
+                    home_team_tricode
+                ) as game_id,
+                home_team_tricode,
+                away_team_tricode
             FROM `{self.project_id}.nba_raw.nbac_schedule`
             WHERE game_date = '{self.target_date}'
         ),
@@ -828,7 +846,7 @@ class UpcomingPlayerGameContextProcessor(
             -- Get ALL active players from gamebook who have games on target date
             SELECT DISTINCT
                 g.player_lookup,
-                g.game_id,
+                s.game_id,  -- Use standard game_id from schedule
                 g.team_abbr,
                 g.player_status,
                 -- Get home/away from schedule since gamebook may not have it
@@ -836,7 +854,7 @@ class UpcomingPlayerGameContextProcessor(
                 COALESCE(s.away_team_tricode, g.team_abbr) as away_team_abbr
             FROM `{self.project_id}.nba_raw.nbac_gamebook_player_stats` g
             LEFT JOIN schedule_data s
-                ON g.game_id = s.game_id
+                ON g.game_id = s.nba_game_id  -- Join on NBA official ID
             WHERE g.game_date = '{self.target_date}'
               AND g.player_lookup IS NOT NULL
               AND (g.player_status IS NULL OR g.player_status NOT IN ('DNP', 'DND', 'NWT'))
@@ -931,8 +949,15 @@ class UpcomingPlayerGameContextProcessor(
               AND bp.is_active = TRUE
         ),
         schedule AS (
+            -- FIXED: Use standard game_id format (YYYYMMDD_AWAY_HOME)
             SELECT
-                game_id,
+                CONCAT(
+                    FORMAT_DATE('%Y%m%d', game_date),
+                    '_',
+                    away_team_tricode,
+                    '_',
+                    home_team_tricode
+                ) as game_id,
                 game_date,
                 home_team_tricode as home_team_abbr,
                 away_team_tricode as away_team_abbr
@@ -976,9 +1001,16 @@ class UpcomingPlayerGameContextProcessor(
         start_date = self.target_date - timedelta(days=5)
         end_date = self.target_date + timedelta(days=5)
         
+        # FIXED: Use standard game_id format (YYYYMMDD_AWAY_HOME) instead of NBA official ID
         query = f"""
-        SELECT 
-            game_id,
+        SELECT
+            CONCAT(
+                FORMAT_DATE('%Y%m%d', game_date),
+                '_',
+                away_team_tricode,
+                '_',
+                home_team_tricode
+            ) as game_id,
             game_date,
             home_team_tricode as home_team_abbr,
             away_team_tricode as away_team_abbr,
@@ -1361,21 +1393,39 @@ class UpcomingPlayerGameContextProcessor(
     def _get_game_line_consensus(self, game_id: str, market_key: str) -> Dict:
         """
         Get consensus line (median across bookmakers) for a market.
-        
+
         Args:
-            game_id: Game identifier
+            game_id: Game identifier (standard format: YYYYMMDD_AWAY_HOME)
             market_key: 'spreads' or 'totals'
-            
+
         Returns:
             Dict with opening, current, movement, and source
         """
-        # Get opening line (earliest snapshot, median across bookmakers)
+        # Extract teams from standard game_id format (YYYYMMDD_AWAY_HOME)
+        # Or get from schedule_data if available
+        if game_id in self.schedule_data:
+            home_team = self.schedule_data[game_id].get('home_team_abbr')
+            away_team = self.schedule_data[game_id].get('away_team_abbr')
+        else:
+            # Parse from game_id: format is YYYYMMDD_AWAY_HOME
+            parts = game_id.split('_')
+            if len(parts) == 3:
+                away_team = parts[1]
+                home_team = parts[2]
+            else:
+                logger.warning(f"Invalid game_id format: {game_id}, cannot extract teams")
+                away_team = None
+                home_team = None
+
+        # FIXED: Join on game_date + home_team + away_team instead of hash game_id
+        # odds_api_game_lines uses hash IDs, not standard game_ids
         opening_query = f"""
         WITH earliest_snapshot AS (
             SELECT MIN(snapshot_timestamp) as earliest
             FROM `{self.project_id}.nba_raw.odds_api_game_lines`
-            WHERE game_id = '{game_id}'
-              AND game_date = '{self.target_date}'
+            WHERE game_date = '{self.target_date}'
+              AND home_team_abbr = '{home_team}'
+              AND away_team_abbr = '{away_team}'
               AND market_key = '{market_key}'
         ),
         opening_lines AS (
@@ -1384,8 +1434,9 @@ class UpcomingPlayerGameContextProcessor(
                 bookmaker_key
             FROM `{self.project_id}.nba_raw.odds_api_game_lines` lines
             CROSS JOIN earliest_snapshot
-            WHERE lines.game_id = '{game_id}'
-              AND lines.game_date = '{self.target_date}'
+            WHERE lines.game_date = '{self.target_date}'
+              AND lines.home_team_abbr = '{home_team}'
+              AND lines.away_team_abbr = '{away_team}'
               AND lines.market_key = '{market_key}'
               AND lines.snapshot_timestamp = earliest_snapshot.earliest
         ),
@@ -1409,12 +1460,14 @@ class UpcomingPlayerGameContextProcessor(
         """
         
         # Get current line (latest snapshot, median across bookmakers)
+        # FIXED: Join on game_date + teams instead of hash game_id
         current_query = f"""
         WITH latest_snapshot AS (
             SELECT MAX(snapshot_timestamp) as latest
             FROM `{self.project_id}.nba_raw.odds_api_game_lines`
-            WHERE game_id = '{game_id}'
-              AND game_date = '{self.target_date}'
+            WHERE game_date = '{self.target_date}'
+              AND home_team_abbr = '{home_team}'
+              AND away_team_abbr = '{away_team}'
               AND market_key = '{market_key}'
         ),
         current_lines AS (
@@ -1423,8 +1476,9 @@ class UpcomingPlayerGameContextProcessor(
                 bookmaker_key
             FROM `{self.project_id}.nba_raw.odds_api_game_lines` lines
             CROSS JOIN latest_snapshot
-            WHERE lines.game_id = '{game_id}'
-              AND lines.game_date = '{self.target_date}'
+            WHERE lines.game_date = '{self.target_date}'
+              AND lines.home_team_abbr = '{home_team}'
+              AND lines.away_team_abbr = '{away_team}'
               AND lines.market_key = '{market_key}'
               AND lines.snapshot_timestamp = latest_snapshot.latest
         ),
