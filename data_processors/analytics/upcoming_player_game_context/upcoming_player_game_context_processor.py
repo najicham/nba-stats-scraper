@@ -2258,6 +2258,7 @@ class UpcomingPlayerGameContextProcessor(
         opponent_def_rating = self._get_opponent_def_rating_last_10(opponent_team_abbr, self.target_date)
         opponent_off_rating = self._get_opponent_off_rating_last_10(opponent_team_abbr, self.target_date)
         opponent_rebounding_rate = self._get_opponent_rebounding_rate(opponent_team_abbr, self.target_date)
+        opponent_pace_variance = self._get_opponent_pace_variance(opponent_team_abbr, self.target_date)
 
         # Get has_prop_line from player_info (passed from extract)
         has_prop_line = player_info.get('has_prop_line', False)
@@ -2341,6 +2342,7 @@ class UpcomingPlayerGameContextProcessor(
             'opponent_def_rating_last_10': opponent_def_rating,
             'opponent_off_rating_last_10': opponent_off_rating,
             'opponent_rebounding_rate': opponent_rebounding_rate,
+            'opponent_pace_variance': opponent_pace_variance,
 
             # Forward-looking schedule (TODO: future)
             'next_game_days_rest': 0,
@@ -2907,6 +2909,42 @@ class UpcomingPlayerGameContextProcessor(
 
         except Exception as e:
             logger.error(f"Error getting opponent rebounding rate for {opponent_abbr}: {e}")
+            return 0.0
+
+    def _get_opponent_pace_variance(self, opponent_abbr: str, game_date: date) -> float:
+        """
+        Get opponent's pace variance (consistency) over last 10 games.
+
+        Args:
+            opponent_abbr: Opponent team abbreviation
+            game_date: Game date to filter historical data
+
+        Returns:
+            float: Standard deviation of pace over last 10 games, rounded to 2 decimals
+        """
+        try:
+            query = f"""
+            WITH recent_games AS (
+                SELECT pace
+                FROM `{self.project_id}.nba_analytics.team_offense_game_summary`
+                WHERE team_abbr = '{opponent_abbr}'
+                  AND game_date < '{game_date}'
+                  AND game_date >= '2024-10-01'
+                ORDER BY game_date DESC
+                LIMIT 10
+            )
+            SELECT ROUND(STDDEV(pace), 2) as pace_stddev
+            FROM recent_games
+            """
+
+            result = self.bq_client.query(query).result()
+            for row in result:
+                return row.pace_stddev if row.pace_stddev is not None else 0.0
+
+            return 0.0
+
+        except Exception as e:
+            logger.error(f"Error getting opponent pace variance for {opponent_abbr}: {e}")
             return 0.0
 
     def _calculate_data_quality(self, historical_data: pd.DataFrame,
