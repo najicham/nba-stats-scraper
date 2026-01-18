@@ -1,0 +1,367 @@
+{
+  "displayName": "NBA Grading System - Health & Performance",
+  "mosaicLayout": {
+    "columns": 12,
+    "tiles": [
+      {
+        "width": 6,
+        "height": 4,
+        "widget": {
+          "title": "Grading Function Invocations (Success vs Error)",
+          "xyChart": {
+            "dataSets": [
+              {
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "filter": "resource.type=\"cloud_function\" resource.labels.function_name=\"phase5b-grading\" metric.type=\"cloudfunctions.googleapis.com/function/execution_count\"",
+                    "aggregation": {
+                      "alignmentPeriod": "300s",
+                      "perSeriesAligner": "ALIGN_RATE",
+                      "crossSeriesReducer": "REDUCE_SUM",
+                      "groupByFields": ["metric.labels.status"]
+                    }
+                  }
+                },
+                "plotType": "STACKED_AREA",
+                "targetAxis": "Y1"
+              }
+            ],
+            "timeshiftDuration": "0s",
+            "yAxis": {
+              "label": "Executions/sec",
+              "scale": "LINEAR"
+            },
+            "chartOptions": {
+              "mode": "COLOR"
+            }
+          }
+        }
+      },
+      {
+        "xPos": 6,
+        "width": 6,
+        "height": 4,
+        "widget": {
+          "title": "Grading Function Execution Time (P50, P95, P99)",
+          "xyChart": {
+            "dataSets": [
+              {
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "filter": "resource.type=\"cloud_function\" resource.labels.function_name=\"phase5b-grading\" metric.type=\"cloudfunctions.googleapis.com/function/execution_times\"",
+                    "aggregation": {
+                      "alignmentPeriod": "300s",
+                      "perSeriesAligner": "ALIGN_DELTA",
+                      "crossSeriesReducer": "REDUCE_PERCENTILE_50"
+                    }
+                  }
+                },
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "legendTemplate": "P50"
+              },
+              {
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "filter": "resource.type=\"cloud_function\" resource.labels.function_name=\"phase5b-grading\" metric.type=\"cloudfunctions.googleapis.com/function/execution_times\"",
+                    "aggregation": {
+                      "alignmentPeriod": "300s",
+                      "perSeriesAligner": "ALIGN_DELTA",
+                      "crossSeriesReducer": "REDUCE_PERCENTILE_95"
+                    }
+                  }
+                },
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "legendTemplate": "P95"
+              },
+              {
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "filter": "resource.type=\"cloud_function\" resource.labels.function_name=\"phase5b-grading\" metric.type=\"cloudfunctions.googleapis.com/function/execution_times\"",
+                    "aggregation": {
+                      "alignmentPeriod": "300s",
+                      "perSeriesAligner": "ALIGN_DELTA",
+                      "crossSeriesReducer": "REDUCE_PERCENTILE_99"
+                    }
+                  }
+                },
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "legendTemplate": "P99"
+              }
+            ],
+            "timeshiftDuration": "0s",
+            "yAxis": {
+              "label": "Duration (ms)",
+              "scale": "LINEAR"
+            }
+          }
+        }
+      },
+      {
+        "yPos": 4,
+        "width": 6,
+        "height": 4,
+        "widget": {
+          "title": "Grading Function Active Instances",
+          "xyChart": {
+            "dataSets": [
+              {
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "filter": "resource.type=\"cloud_function\" resource.labels.function_name=\"phase5b-grading\" metric.type=\"cloudfunctions.googleapis.com/function/active_instances\"",
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "perSeriesAligner": "ALIGN_MEAN"
+                    }
+                  }
+                },
+                "plotType": "LINE",
+                "targetAxis": "Y1"
+              }
+            ],
+            "timeshiftDuration": "0s",
+            "yAxis": {
+              "label": "Active Instances",
+              "scale": "LINEAR"
+            }
+          }
+        }
+      },
+      {
+        "xPos": 6,
+        "yPos": 4,
+        "width": 6,
+        "height": 4,
+        "widget": {
+          "title": "Phase 3 Analytics Service Active Instances",
+          "xyChart": {
+            "dataSets": [
+              {
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "filter": "resource.type=\"cloud_run_revision\" resource.labels.service_name=\"nba-phase3-analytics-processors\" metric.type=\"run.googleapis.com/container/instance_count\"",
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "perSeriesAligner": "ALIGN_MEAN"
+                    }
+                  }
+                },
+                "plotType": "LINE",
+                "targetAxis": "Y1"
+              }
+            ],
+            "timeshiftDuration": "0s",
+            "yAxis": {
+              "label": "Active Instances",
+              "scale": "LINEAR"
+            }
+          }
+        }
+      },
+      {
+        "yPos": 8,
+        "width": 6,
+        "height": 4,
+        "widget": {
+          "title": "Phase 3 Analytics Request Count",
+          "xyChart": {
+            "dataSets": [
+              {
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "filter": "resource.type=\"cloud_run_revision\" resource.labels.service_name=\"nba-phase3-analytics-processors\" metric.type=\"run.googleapis.com/request_count\"",
+                    "aggregation": {
+                      "alignmentPeriod": "300s",
+                      "perSeriesAligner": "ALIGN_RATE",
+                      "crossSeriesReducer": "REDUCE_SUM",
+                      "groupByFields": ["metric.labels.response_code_class"]
+                    }
+                  }
+                },
+                "plotType": "STACKED_AREA",
+                "targetAxis": "Y1"
+              }
+            ],
+            "timeshiftDuration": "0s",
+            "yAxis": {
+              "label": "Requests/sec",
+              "scale": "LINEAR"
+            }
+          }
+        }
+      },
+      {
+        "xPos": 6,
+        "yPos": 8,
+        "width": 6,
+        "height": 4,
+        "widget": {
+          "title": "Phase 3 Analytics Request Latency (P50, P95, P99)",
+          "xyChart": {
+            "dataSets": [
+              {
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "filter": "resource.type=\"cloud_run_revision\" resource.labels.service_name=\"nba-phase3-analytics-processors\" metric.type=\"run.googleapis.com/request_latencies\"",
+                    "aggregation": {
+                      "alignmentPeriod": "300s",
+                      "perSeriesAligner": "ALIGN_DELTA",
+                      "crossSeriesReducer": "REDUCE_PERCENTILE_50"
+                    }
+                  }
+                },
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "legendTemplate": "P50"
+              },
+              {
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "filter": "resource.type=\"cloud_run_revision\" resource.labels.service_name=\"nba-phase3-analytics-processors\" metric.type=\"run.googleapis.com/request_latencies\"",
+                    "aggregation": {
+                      "alignmentPeriod": "300s",
+                      "perSeriesAligner": "ALIGN_DELTA",
+                      "crossSeriesReducer": "REDUCE_PERCENTILE_95"
+                    }
+                  }
+                },
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "legendTemplate": "P95"
+              },
+              {
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "filter": "resource.type=\"cloud_run_revision\" resource.labels.service_name=\"nba-phase3-analytics-processors\" metric.type=\"run.googleapis.com/request_latencies\"",
+                    "aggregation": {
+                      "alignmentPeriod": "300s",
+                      "perSeriesAligner": "ALIGN_DELTA",
+                      "crossSeriesReducer": "REDUCE_PERCENTILE_99"
+                    }
+                  }
+                },
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "legendTemplate": "P99"
+              }
+            ],
+            "timeshiftDuration": "0s",
+            "yAxis": {
+              "label": "Latency (ms)",
+              "scale": "LINEAR"
+            }
+          }
+        }
+      },
+      {
+        "yPos": 12,
+        "width": 4,
+        "height": 3,
+        "widget": {
+          "title": "Total Grading Runs (24h)",
+          "scorecard": {
+            "timeSeriesQuery": {
+              "timeSeriesFilter": {
+                "filter": "resource.type=\"cloud_function\" resource.labels.function_name=\"phase5b-grading\" metric.type=\"cloudfunctions.googleapis.com/function/execution_count\"",
+                "aggregation": {
+                  "alignmentPeriod": "86400s",
+                  "perSeriesAligner": "ALIGN_SUM",
+                  "crossSeriesReducer": "REDUCE_SUM"
+                }
+              }
+            },
+            "sparkChartView": {
+              "sparkChartType": "SPARK_LINE"
+            }
+          }
+        }
+      },
+      {
+        "xPos": 4,
+        "yPos": 12,
+        "width": 4,
+        "height": 3,
+        "widget": {
+          "title": "Grading Error Rate (24h)",
+          "scorecard": {
+            "timeSeriesQuery": {
+              "timeSeriesFilter": {
+                "filter": "resource.type=\"cloud_function\" resource.labels.function_name=\"phase5b-grading\" metric.type=\"cloudfunctions.googleapis.com/function/execution_count\" metric.labels.status=\"error\"",
+                "aggregation": {
+                  "alignmentPeriod": "86400s",
+                  "perSeriesAligner": "ALIGN_SUM",
+                  "crossSeriesReducer": "REDUCE_SUM"
+                }
+              }
+            },
+            "sparkChartView": {
+              "sparkChartType": "SPARK_LINE"
+            },
+            "thresholds": [
+              {
+                "value": 1.0,
+                "color": "YELLOW",
+                "direction": "ABOVE"
+              },
+              {
+                "value": 5.0,
+                "color": "RED",
+                "direction": "ABOVE"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "xPos": 8,
+        "yPos": 12,
+        "width": 4,
+        "height": 3,
+        "widget": {
+          "title": "Phase 3 Analytics 5xx Errors (24h)",
+          "scorecard": {
+            "timeSeriesQuery": {
+              "timeSeriesFilter": {
+                "filter": "resource.type=\"cloud_run_revision\" resource.labels.service_name=\"nba-phase3-analytics-processors\" metric.type=\"run.googleapis.com/request_count\" metric.labels.response_code_class=\"5xx\"",
+                "aggregation": {
+                  "alignmentPeriod": "86400s",
+                  "perSeriesAligner": "ALIGN_SUM",
+                  "crossSeriesReducer": "REDUCE_SUM"
+                }
+              }
+            },
+            "sparkChartView": {
+              "sparkChartType": "SPARK_LINE"
+            },
+            "thresholds": [
+              {
+                "value": 1.0,
+                "color": "YELLOW",
+                "direction": "ABOVE"
+              },
+              {
+                "value": 10.0,
+                "color": "RED",
+                "direction": "ABOVE"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "yPos": 15,
+        "width": 12,
+        "height": 1,
+        "widget": {
+          "title": "📊 NBA Grading System Health Dashboard",
+          "text": {
+            "content": "## NBA Grading System - Health & Performance\n\nThis dashboard monitors the NBA grading system health and Phase 3 analytics performance using standard GCP metrics.\n\n### Key Metrics\n\n- **Grading Function**: Execution count, error rate, latency, and active instances\n- **Phase 3 Analytics**: Request count, 5xx errors, latency, and instance count\n\n### Alert Thresholds\n\n- 🔴 **CRITICAL**: Grading errors > 5 in 24 hours OR Phase 3 5xx errors > 10 in 24 hours\n- 🟡 **WARNING**: Any errors in 24 hours\n\n### For Advanced Monitoring\n\nTo track auto-heal retries, lock health, and 503 errors specifically:\n1. Create log-based metrics using `monitoring/create-log-based-metrics.sh`\n2. Add custom charts for these metrics to this dashboard\n\n### Related Documentation\n\n- **Monitoring Guide**: `docs/02-operations/GRADING-MONITORING-GUIDE.md`\n- **Troubleshooting**: `docs/02-operations/GRADING-TROUBLESHOOTING-RUNBOOK.md`\n- **Phase 3 Fix**: `docs/09-handoff/SESSION-99-PHASE3-FIX-COMPLETE.md`\n\n### Quick Health Check\n\n```bash\n# Check grading coverage\nbq query --use_legacy_sql=false 'SELECT game_date, COUNT(*) as graded FROM `nba-props-platform.nba_predictions.prediction_accuracy` WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY) GROUP BY game_date ORDER BY game_date DESC'\n\n# Check for 503 errors\ngcloud functions logs read phase5b-grading --region=us-west2 --limit=100 | grep \"503\"\n```\n",
+            "format": "MARKDOWN"
+          }
+        }
+      }
+    ]
+  }
+}
