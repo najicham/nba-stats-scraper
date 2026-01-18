@@ -1,8 +1,11 @@
 # NBA Prediction Platform - Session Handoff Index
 
 **Last Updated**: 2026-01-17
-**Current Session**: 89 (Complete)
-**Platform Status**: ✅ Healthy and operational
+**Current Session**: 96 (Complete - ✅ ML Monitoring Reminders System Setup)
+**Next Sessions Available**:
+- **Session 97** (Ready - 🟡 Monitor XGBoost V1 - Wait 7 days for data)
+- **Session 95** (Ready - 🔴 CRITICAL - Implement Grading Duplicate Fix - if needed)
+**Platform Status**: ✅ Healthy - XGBoost V1 deployed, automated monitoring active
 
 ---
 
@@ -52,6 +55,247 @@
 ---
 
 ## Session Details
+
+### Session 94: Prediction Accuracy Data Quality Investigation 🔴
+**Status**: Ready to Start (CRITICAL)
+**Document**: [SESSION-94-START-PROMPT.md](./SESSION-94-START-PROMPT.md)
+**Priority**: 🔴 CRITICAL
+**Time Estimate**: 3-4 hours
+
+**What to investigate**:
+- [ ] 190,815 duplicate rows in `prediction_accuracy` table (38% duplication!)
+- [ ] Root cause of Jan 10 mass duplication (188,946 duplicates in one day)
+- [ ] Ongoing duplicates (Jan 14-16 still affected)
+- [ ] Fix grading pipeline to prevent future duplicates
+- [ ] Clean up existing duplicate data
+
+**Why this is critical**:
+- All accuracy metrics are unreliable due to duplicate contamination
+- 38% of accuracy data is corrupted
+- Can't trust model performance metrics for decision-making
+- Similar to Session 92 duplicate issue but different pipeline
+
+**Copy-paste to start new chat**:
+```
+Context from Session 93 (2026-01-18):
+- Session 92 duplicate-write fix validated ✅ (zero duplicates in predictions)
+- NEW CRITICAL ISSUE: 190k duplicate rows in prediction_accuracy table
+- Jan 10: 188,946 duplicates (72% duplication rate)
+- Ongoing: duplicates still occurring through Jan 16
+- See: docs/09-handoff/SESSION-94-START-PROMPT.md
+
+Starting Session 94: Accuracy Data Quality Investigation
+Goal: Fix duplicate rows in prediction_accuracy table
+Priority: CRITICAL - All accuracy metrics unreliable
+Guide: docs/09-handoff/SESSION-94-START-PROMPT.md
+```
+
+---
+
+### Session 95: Data Cleanup and Maintenance 🟡
+**Status**: Ready to Start (MEDIUM)
+**Document**: [SESSION-95-START-PROMPT.md](./SESSION-95-START-PROMPT.md)
+**Priority**: 🟡 MEDIUM
+**Time Estimate**: 2-3 hours
+
+**What to work on**:
+- [ ] Clean up 50+ orphaned staging tables from Nov 19
+- [ ] Remove 117 historical prediction duplicates (Jan 4 + Jan 11 - before fix)
+- [ ] Investigate 175 ungraded predictions from yesterday
+- [ ] Optional: Add Slack alerts for data quality
+- [ ] Optional: Update documentation
+
+**Why do this**:
+- Free up storage (orphaned staging tables)
+- Improve data cleanliness (historical duplicates)
+- Ensure grading pipeline is working (ungraded predictions)
+- Non-blocking cleanup work
+
+**Copy-paste to start new chat**:
+```
+Context from Session 93 (2026-01-18):
+- Session 92 duplicate-write fix validated ✅
+- Session 94 handling critical accuracy table investigation (separate)
+- Cleanup tasks identified: orphaned tables, historical duplicates, ungraded predictions
+- See: docs/09-handoff/SESSION-95-START-PROMPT.md
+
+Starting Session 95: Data Cleanup and Maintenance
+Goal: Clean up orphaned resources and investigate grading lag
+Priority: MEDIUM - Non-blocking cleanup
+Guide: docs/09-handoff/SESSION-95-START-PROMPT.md
+```
+
+---
+
+### Session 96: ML Monitoring Reminders System ✅
+**Status**: Complete (2026-01-17)
+**Document**: [SESSION-96-REMINDERS-SETUP-COMPLETE.md](./SESSION-96-REMINDERS-SETUP-COMPLETE.md)
+**Duration**: 2 hours
+
+**What was done**:
+- ✅ Created comprehensive automated reminder system for XGBoost V1 monitoring
+- ✅ Set up daily cron job (9:00 AM) with Slack notifications to dedicated #reminders channel
+- ✅ Configured 5 monitoring milestones with detailed task checklists and queries
+- ✅ Updated 5 documentation files for project continuity
+- ✅ Tested Slack integration successfully
+
+**System Features**:
+- 📱 Slack notifications to #reminders with rich formatting
+- 💻 Desktop notifications (if available)
+- 📝 Console output with task details
+- 📊 Activity logging to reminder-log.txt
+
+**Monitoring Schedule**:
+- 2026-01-24 (7 days): Initial XGBoost V1 performance check
+- 2026-01-31 (14 days): Head-to-head comparison vs CatBoost V8
+- 2026-02-16 (30 days): Champion decision point
+- 2026-03-17 (60 days): Ensemble optimization
+- 2026-04-17 (Q1 end): Quarterly retrain
+
+**Files Created**:
+- `docs/02-operations/ML-MONITORING-REMINDERS.md` - Complete milestone documentation
+- `docs/09-handoff/SLACK-REMINDERS-SETUP.md` - Technical setup guide
+- `~/bin/nba-reminder.sh` - Main cron script (not in repo)
+- `~/bin/nba-slack-reminder.py` - Slack sender (not in repo)
+- `~/bin/test-slack-reminder.py` - Test script (not in repo)
+
+**Next Steps**:
+- Wait 7 days for meaningful XGBoost V1 production data
+- System will automatically send reminder on 2026-01-24
+- See ML-MONITORING-REMINDERS.md for queries to run
+
+**Copy-paste to start Session 97** (when ready to monitor):
+```
+Context from Session 96 (2026-01-17):
+- ML monitoring reminder system deployed ✅
+- XGBoost V1 running in production since 2026-01-17
+- Automated Slack reminders configured for 5 milestones
+- See: docs/02-operations/ML-MONITORING-REMINDERS.md
+
+Starting Session 97: XGBoost V1 Performance Monitoring
+Wait period: 7 days (until 2026-01-24)
+Goal: Verify production MAE ≤ 4.5, check for placeholders, validate performance
+Guide: docs/02-operations/ML-MONITORING-REMINDERS.md
+```
+
+---
+
+### Session 94: Grading Duplicate Investigation ✅
+**Status**: Complete (2026-01-17)
+**Document**: [SESSION-94-INVESTIGATION-COMPLETE.md](./SESSION-94-INVESTIGATION-COMPLETE.md)
+**Duration**: 4 hours
+
+**What was done**:
+- ✅ Deep investigation of 190,815 duplicate rows in prediction_accuracy table
+- ✅ Root cause identified: Race condition in DELETE + INSERT pattern
+- ✅ Analyzed duplicate patterns (Jan 10: 188,946 duplicates in 3 hours)
+- ✅ Confirmed source data is clean (duplicates created during grading)
+- ✅ Designed comprehensive three-layer fix (distributed lock + validation + monitoring)
+- ✅ Created production-ready implementation plan
+
+**Key Findings**:
+- Race condition when backfill + scheduled grading run concurrently
+- DELETE + INSERT is NOT atomic across concurrent operations
+- 179 minutes of grading on Jan 10 (normal: <5 minutes)
+- Accuracy metrics slightly affected (0.01-0.06% difference)
+- Ongoing issue: Jan 14-16 still have duplicates
+
+**Root Cause**:
+```python
+# Process A: DELETE + INSERT
+# Process B: DELETE + INSERT (concurrent)
+# Both DELETEs succeed, both INSERTs add data → Duplicates!
+```
+
+**Fix Design**:
+- Layer 1: Distributed lock (reuse Session 92 pattern)
+- Layer 2: Post-grading validation
+- Layer 3: Monitoring & alerting
+
+**Files Created**:
+- `docs/08-projects/current/ml-model-v8-deployment/SESSION-94-ROOT-CAUSE-ANALYSIS.md`
+- `docs/08-projects/current/ml-model-v8-deployment/SESSION-94-FIX-DESIGN.md`
+- `docs/09-handoff/SESSION-94-INVESTIGATION-COMPLETE.md`
+
+**Next**: Implementation in Session 95 (8-10 hours)
+
+---
+
+### Session 93: Duplicate-Write Fix Validation ✅
+**Status**: Complete (2026-01-18)
+**Document**: [SESSION-93-COMPLETE.md](./SESSION-93-COMPLETE.md)
+**Duration**: 1 hour
+
+**What was done**:
+- ✅ Validated Session 92 duplicate-write fix is working
+- ✅ Zero duplicates in predictions since Jan 17 deployment (1,993 predictions tested)
+- ✅ Historical duplicates confirmed (5 on Jan 11, 112 on Jan 4 - before fix)
+- ✅ Daily validation script executed
+- ❌ Discovered 190k duplicate rows in prediction_accuracy table (new critical issue)
+
+**Key Findings**:
+- Duplicate fix successful: 0/1993 predictions duplicated after deployment
+- New issue: 38% of accuracy data is duplicated (different table, different pipeline)
+- Needs immediate attention in Session 94
+
+**Files Created**:
+- `docs/09-handoff/SESSION-93-COMPLETE.md` - Session summary
+- `docs/09-handoff/SESSION-94-START-PROMPT.md` - Next session investigation guide
+
+---
+
+### Session 92: Duplicate-Write Bug Fix ✅
+**Status**: Complete (2026-01-17)
+**Document**: [SESSION-92-COMPLETE.md](./SESSION-92-COMPLETE.md)
+**Duration**: 2 hours
+
+**What was done**:
+- Fixed worker duplicate-write bug (5 duplicates on Jan 11)
+- Implemented Firestore-based distributed locking
+- Added post-consolidation validation
+- Deployed prediction-worker-00066-sm8
+
+**Files Created**:
+- `predictions/worker/distributed_lock.py` (NEW)
+- Modified `predictions/worker/batch_staging_writer.py`
+- Comprehensive technical documentation
+
+**Next**: Validated in Session 93 ✅
+
+---
+
+### Session 84: Phase 5 Production Deployment Verification ✅
+**Status**: Complete (2026-01-18)
+**Document**: [SESSION-84-HANDOFF.md](./SESSION-84-HANDOFF.md)
+**Duration**: 1.5 hours
+
+**What was done**:
+- ✅ Verified Phase 5 already deployed (49,955 predictions/day operational)
+- ✅ Fixed 2 scheduler configuration issues (wrong coordinator URLs)
+- ✅ Cleaned 71 placeholders from database
+- ✅ Confirmed validation gate active and working (0 new placeholders)
+- ✅ Verified 13 alert policies and 7 monitoring services operational
+- ✅ Created comprehensive handoff documentation
+
+**Key Achievements**:
+- Phase 5 COMPLETE: Production deployment verified
+- All monitoring active: 13 alerts, 7 services, 4 dashboards
+- Database clean: 0 placeholders
+- System operational: 49,955 predictions/day
+
+**What's Next**:
+- Optional: Monitor production for 1 week
+- Optional: Advanced monitoring (Week 4)
+- Optional: New projects (MLB, Backfill, Phase 5 ML)
+- **No critical tasks remaining** ✅
+
+**Files Created**:
+- `PHASE5_PRODUCTION_COMPLETE.md` - Comprehensive Phase 5 docs
+- `SESSION-84-COMPLETE.md` - Session summary
+- `PHASE5_QUICK_SUMMARY.md` - Quick reference
+- `docs/09-handoff/SESSION-84-HANDOFF.md` - Handoff guide
+
+---
 
 ### Session 82: Model Loading Fix + Week 1 Alerts ✅
 **Status**: Complete (2026-01-17)
@@ -265,6 +509,10 @@ Session 87-88 (MLB Optimization) ✅ Complete
 | 88 | ✅ Complete | 2026-01-16 | MLB Deployment |
 | 89 | ✅ Complete | 2026-01-17 | [SESSION-89-CALIBRATION-COMPLETE.md](./SESSION-89-CALIBRATION-COMPLETE.md) |
 | 90 | ⏳ Ready | - | Phase 3 continuation |
+| 92 | ✅ Complete | 2026-01-17 | [SESSION-92-COMPLETE.md](./SESSION-92-COMPLETE.md) |
+| 93 | ✅ Complete | 2026-01-18 | [SESSION-93-VALIDATION-COMPLETE.md](./SESSION-93-VALIDATION-COMPLETE.md) |
+| 94 | 🔴 Ready | - | [SESSION-94-START-PROMPT.md](./SESSION-94-START-PROMPT.md) CRITICAL |
+| 95 | 🟡 Ready | - | [SESSION-95-START-PROMPT.md](./SESSION-95-START-PROMPT.md) Cleanup |
 
 ---
 
