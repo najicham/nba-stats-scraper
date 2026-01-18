@@ -17,6 +17,8 @@ Comprehensive optimization initiative following the successful deployment of XGB
 ```
 prediction-system-optimization/
 ├── README.md (this file)
+├── TODO.md                           # Actionable todo list (current tasks)
+├── PLAN-NEXT-SESSION.md              # Next session execution plan
 ├── MASTER-PLAN.md                    # Comprehensive project plan
 ├── PROGRESS-LOG.md                   # Daily updates and milestones
 │
@@ -177,11 +179,11 @@ Validate complete autonomous operation of Phase 4 → Phase 5 pipeline with new 
 
 ### New to this project?
 
-1. **Start here:** Read [MASTER-PLAN.md](MASTER-PLAN.md) for full context
-2. **Check status:** Review [PROGRESS-LOG.md](PROGRESS-LOG.md) for latest updates
-3. **Pick a track:** Choose based on priority and your skills
-4. **Read track README:** Each track has detailed instructions
-5. **Start working:** Follow the implementation guide
+1. **Start here:** Read [TODO.md](TODO.md) ⭐ for actionable next steps
+2. **Understand plan:** Review [PLAN-NEXT-SESSION.md](PLAN-NEXT-SESSION.md) for execution details
+3. **Check status:** Review [PROGRESS-LOG.md](PROGRESS-LOG.md) for latest updates
+4. **Full context:** Read [MASTER-PLAN.md](MASTER-PLAN.md) for comprehensive overview
+5. **Pick a track:** Choose based on priority and your skills
 
 ### Recommended Order
 

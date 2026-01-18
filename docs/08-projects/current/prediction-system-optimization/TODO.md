@@ -1,0 +1,395 @@
+# Prediction System Optimization - TODO List
+
+**Created:** 2026-01-18 (Session 98)
+**Last Updated:** 2026-01-18
+**Current Phase:** Passive Monitoring (Track A)
+
+---
+
+## 🎯 Current Priority: Daily Monitoring (Jan 19-23)
+
+**Status:** ⏳ WAITING TO START
+**Time Commitment:** 5 minutes/day for 5 days
+**Goal:** Validate XGBoost V1 V2 production performance before Track B
+
+### Daily Tasks (Jan 19-23)
+
+#### Day 1: Jan 19 (Monday) - CRITICAL FIRST CHECK
+- [ ] **Morning:** Run monitoring query (see PLAN-NEXT-SESSION.md)
+- [ ] **Verify:** XGBoost V1 predictions graded for Jan 18
+- [ ] **Record:** MAE = ___, Win Rate = ___%, Volume = ___
+- [ ] **Check:** Status flag (✅ GOOD / ⚠️ WARNING / 🚨 CRITICAL)
+- [ ] **Validate:**
+  - [ ] Grading working (volume > 0)
+  - [ ] MAE ≤ 5.0 (acceptable first day)
+  - [ ] Win Rate ≥ 45% (acceptable first day)
+  - [ ] Zero placeholders
+- [ ] **Action:** If any 🚨 alerts → follow investigation plan
+
+**Success Criteria:**
+- Grading completed ✅
+- MAE reasonable (≤ 5.0)
+- No critical errors
+
+---
+
+#### Day 2: Jan 20 (Tuesday) - STABILITY CHECK
+- [ ] **Morning:** Run monitoring query
+- [ ] **Record:** MAE = ___, Win Rate = ___%, Volume = ___
+- [ ] **Compare:** Day 1 vs Day 2 (improving/stable/declining?)
+- [ ] **Check:** Status flag
+- [ ] **Validate:**
+  - [ ] Volume normal (200-400 predictions)
+  - [ ] MAE stable (not increasing)
+  - [ ] Win Rate ≥ 48%
+
+**Success Criteria:**
+- MAE not increasing
+- Win Rate improving or stable
+- Consistent volume
+
+---
+
+#### Day 3: Jan 21 (Wednesday) - TREND ANALYSIS
+- [ ] **Morning:** Run monitoring query
+- [ ] **Record:** MAE = ___, Win Rate = ___%, Volume = ___
+- [ ] **Analyze:** 3-day trend visible
+- [ ] **Check:** Status flag
+- [ ] **Calculate:** 3-day average MAE and Win Rate
+- [ ] **Evaluate:** Is trend positive?
+
+**Success Criteria:**
+- Clear trend emerging
+- Average MAE ≤ 4.5
+- Average Win Rate ≥ 50%
+
+---
+
+#### Day 4: Jan 22 (Thursday) - PRE-DECISION
+- [ ] **Morning:** Run monitoring query
+- [ ] **Record:** MAE = ___, Win Rate = ___%, Volume = ___
+- [ ] **Check:** Status flag
+- [ ] **Calculate:** 4-day average
+- [ ] **Assess:** Likely decision outcome?
+
+**Success Criteria:**
+- Trend clear and stable
+- Preparing for Day 5 decision
+
+---
+
+#### Day 5: Jan 23 (Friday) - DECISION DAY ⭐
+- [ ] **Morning:** Run monitoring query
+- [ ] **Record:** MAE = ___, Win Rate = ___%, Volume = ___
+- [ ] **Run:** 5-day aggregate query (see PLAN-NEXT-SESSION.md)
+- [ ] **Calculate:**
+  - [ ] 5-day average MAE = ___
+  - [ ] 5-day average Win Rate = ___
+  - [ ] Std Dev MAE = ___
+  - [ ] Performance status = ___
+- [ ] **Decide:** Use decision matrix
+  - [ ] MAE ≤ 4.0 → ✅ EXCELLENT → Track B
+  - [ ] MAE 4.0-4.2 → ✅ GOOD → Track B
+  - [ ] MAE 4.2-4.5 → ⚠️ ACCEPTABLE → Track E first
+  - [ ] MAE > 4.5 → 🚨 POOR → Investigate
+- [ ] **Document:** Update PROGRESS-LOG.md with decision
+- [ ] **Create:** Handoff for next session
+- [ ] **Plan:** Schedule next session based on decision
+
+**Success Criteria:**
+- Clear decision made
+- Next steps documented
+- Ready to proceed
+
+---
+
+## 📋 Post-Decision Tasks
+
+### If Decision: ✅ Track B (Ensemble Retraining)
+
+**Estimated Time:** 8-10 hours
+**Prerequisites:** XGBoost V1 V2 MAE ≤ 4.2, Win Rate ≥ 50%
+
+#### Phase 1: Planning & Analysis (2 hours)
+- [ ] Read track-b-ensemble/README.md thoroughly
+- [ ] Review current ensemble architecture
+- [ ] Analyze component models (XGBoost V1 V2, CatBoost V8, etc.)
+- [ ] Design new ensemble configuration
+- [ ] Create training-plan.md document
+
+#### Phase 2: Training Preparation (2 hours)
+- [ ] Update training script: ml_models/nba/train_ensemble_v1.py
+- [ ] Set XGBoost V1 V2 model path
+- [ ] Verify training data available (2021-2025 backfill)
+- [ ] Verify component predictions available
+- [ ] Configure hyperparameters (Ridge alpha, etc.)
+- [ ] Set up train/validation split
+
+#### Phase 3: Model Training (2 hours)
+- [ ] Generate base predictions from all 6 systems
+- [ ] Train meta-learner (Ridge or Stacking)
+- [ ] Monitor training progress
+- [ ] Validate results
+- [ ] Save model artifacts
+- [ ] Compare to validation baseline
+
+#### Phase 4: Validation & Analysis (2 hours)
+- [ ] Run out-of-sample testing
+- [ ] Head-to-head vs CatBoost V8 (3.40 MAE)
+- [ ] Check confidence calibration
+- [ ] Analyze meta-learner weights
+- [ ] Test OVER/UNDER balance
+- [ ] Performance by player tier
+- [ ] Document findings in validation-results.md
+
+#### Phase 5: Deployment (2 hours)
+- [ ] Upload model to GCS bucket
+- [ ] Update prediction worker environment variables
+- [ ] Test in staging (if available)
+- [ ] Deploy to production
+- [ ] Monitor first predictions
+- [ ] Verify model loaded correctly
+- [ ] Monitor for 24-48 hours
+- [ ] Document deployment in deployment-guide.md
+
+**Success Criteria:**
+- Ensemble MAE ≤ 3.5 (improvement over current)
+- Ideally: MAE ≤ 3.40 (competitive with CatBoost V8)
+- No regressions
+- Confidence calibration maintained
+
+---
+
+### If Decision: ⚠️ Track E (E2E Testing First)
+
+**Estimated Time:** 5-6 hours over 3-5 days
+**Prerequisites:** XGBoost V1 V2 MAE 4.2-4.5 (acceptable but want validation)
+
+#### Setup (1 hour)
+- [ ] Read track-e-e2e-testing/README.md
+- [ ] Review 7 test scenarios
+- [ ] Create test-scenarios.md with schedule
+- [ ] Set up monitoring alerts
+
+#### Scenario 1: Happy Path (48-72 hours passive)
+- [ ] Monitor daily orchestration at 00:00 UTC
+- [ ] Verify Phase 4 processors complete
+- [ ] Verify Phase 5 coordinator triggers at 23:00 UTC
+- [ ] Check all 6 systems generate predictions
+- [ ] Confirm predictions written to BigQuery
+- [ ] Verify grading runs next day
+- [ ] Document: Zero manual interventions needed?
+
+#### Scenario 2: XGBoost V1 V2 Validation (ongoing)
+- [ ] Track daily MAE vs validation (3.726)
+- [ ] Compare to CatBoost V8 daily
+- [ ] Verify confidence calibration holding
+- [ ] Check feature importance stability
+- [ ] Document trends
+
+#### Scenario 3: Feature Quality (3 days)
+- [ ] Check feature completeness >95%
+- [ ] Verify daily updates
+- [ ] Validate pace features populating
+- [ ] Check value ranges normal
+- [ ] Document quality metrics
+
+#### Scenario 4: Coordinator Performance (3 days)
+- [ ] Monitor batch loading times (<10s)
+- [ ] Check for timeout errors
+- [ ] Verify 100% player coverage
+- [ ] Confirm Session 102 fix working
+- [ ] Document performance
+
+#### Scenario 5: Grading & Alerts (3 days)
+- [ ] Verify grading coverage >70%
+- [ ] Test coverage alert triggers correctly
+- [ ] Check games graded within 24h
+- [ ] Confirm metrics calculating
+- [ ] Document alert behavior
+
+#### Final Report (1 hour)
+- [ ] Compile all test results
+- [ ] Create final-report.md
+- [ ] Update production-readiness-checklist.md
+- [ ] Make go/no-go decision for Track B
+- [ ] Document recommendation
+
+**Success Criteria:**
+- 100% autonomous operation (no manual intervention)
+- All systems healthy
+- Grading coverage >70%
+- XGBoost V1 V2 stabilized
+- Ready to proceed to Track B
+
+---
+
+### If Decision: 🚨 Investigate Model Issues
+
+**Estimated Time:** 2-4 hours
+**Prerequisites:** XGBoost V1 V2 MAE > 4.5 or Win Rate < 48%
+
+#### Step 1: Verify Model Loading (30 min)
+- [ ] Check worker logs for model loading
+- [ ] Verify model file path correct
+- [ ] Check for loading errors
+- [ ] Confirm model loaded successfully
+- [ ] Document findings
+
+#### Step 2: Check Feature Quality (30 min)
+- [ ] Query feature completeness for recent dates
+- [ ] Check for NULL rates higher than expected
+- [ ] Verify feature value ranges
+- [ ] Compare to training data distribution
+- [ ] Document quality issues
+
+#### Step 3: Compare Predictions to Training (1 hour)
+- [ ] Sample recent predictions
+- [ ] Check prediction reasonableness
+- [ ] Verify confidence scores make sense
+- [ ] Look for outliers
+- [ ] Compare to validation predictions
+- [ ] Document anomalies
+
+#### Step 4: Head-to-Head Comparison (30 min)
+- [ ] Compare XGBoost V1 V2 to CatBoost V8 (same dates)
+- [ ] Check if both systems have high MAE (difficult games)
+- [ ] Or if only XGBoost V1 V2 high (model issue)
+- [ ] Document comparison
+
+#### Step 5: Check Model Version (15 min)
+- [ ] Verify correct model deployed via gcloud
+- [ ] Check XGBOOST_V1_MODEL_PATH environment variable
+- [ ] Confirm using correct model file
+- [ ] Document deployment state
+
+#### Step 6: Review Training Metrics (15 min)
+- [ ] Re-check validation MAE (3.726)
+- [ ] Compare to production MAE
+- [ ] Calculate degradation percentage
+- [ ] Check if within tolerance
+- [ ] Document gap analysis
+
+#### Step 7: Decide on Action (30 min)
+- [ ] Based on findings, determine root cause:
+  - [ ] Feature quality issue → Fix extraction, redeploy
+  - [ ] Model loading issue → Fix deployment
+  - [ ] Model genuinely underperforms → Consider rollback or retrain
+  - [ ] Games were difficult → Wait for more data
+- [ ] Document decision
+- [ ] Create action plan
+- [ ] Update stakeholders
+
+**Success Criteria:**
+- Root cause identified
+- Action plan created
+- Decision made (fix, rollback, wait)
+- Next steps clear
+
+---
+
+## 📚 Reference Checklist
+
+### Before Each Session
+- [ ] Read PLAN-NEXT-SESSION.md
+- [ ] Check PROGRESS-LOG.md for latest status
+- [ ] Review previous day's results (if multi-day)
+- [ ] Have monitoring queries ready
+
+### Daily Monitoring Essentials
+- [ ] BigQuery access working
+- [ ] Queries ready to run
+- [ ] Recording spreadsheet/doc ready
+- [ ] Alert thresholds memorized
+
+### Decision Day Prep
+- [ ] All 5 days of data collected
+- [ ] Aggregate query tested
+- [ ] Decision matrix printed/available
+- [ ] Next session time blocked
+
+### Track B Prep (if going that route)
+- [ ] Training script reviewed
+- [ ] Training data verified available
+- [ ] GCS bucket access confirmed
+- [ ] 8-10 hours scheduled
+
+### Track E Prep (if going that route)
+- [ ] Test scenarios understood
+- [ ] 3-5 day period scheduled
+- [ ] Monitoring set up
+- [ ] 5-6 hours spread over days scheduled
+
+---
+
+## 🎯 Long-Term Roadmap
+
+### Week 1 (Jan 19-25)
+- [x] Track A: Monitoring setup (COMPLETE)
+- [x] Track D: Pace features (COMPLETE - already implemented!)
+- [ ] Track A: Daily monitoring (Jan 19-23)
+- [ ] Decision: Track B or E (Jan 23)
+
+### Week 2-3 (Jan 26 - Feb 8)
+- [ ] Track B: Ensemble retraining (8-10 hours)
+- [ ] Track E: E2E testing (5-6 hours) - if not done Week 1
+- [ ] Track A: Continue XGBoost V1 V2 monitoring
+
+### Week 4+ (Feb 9+)
+- [ ] Track C: Infrastructure monitoring (10-12 hours)
+  - [ ] Model performance alerts
+  - [ ] Infrastructure health alerts
+  - [ ] Data quality monitoring
+  - [ ] Real-time dashboards
+  - [ ] 4 comprehensive runbooks
+
+---
+
+## ✅ Completed Tasks
+
+### Session 98 (Jan 18)
+- [x] Investigated "XGBoost grading gap" (RESOLVED - not a bug)
+- [x] Discovered 6-system concurrent architecture
+- [x] Established XGBoost V1 V2 Day 0 baseline
+- [x] Created 5-day monitoring checklist
+- [x] Created comprehensive next session plan
+- [x] Updated all project documentation
+- [x] Marked Investigation as RESOLVED
+- [x] Updated track priorities
+- [x] Pushed all changes to remote
+
+### Previous Sessions
+- [x] Session 90: Project setup and structure
+- [x] Session 88-89: XGBoost V1 V2 training and deployment
+- [x] Session 102: Coordinator optimizations (batch loading)
+- [x] Session 103: Team pace features (already implemented)
+
+---
+
+## 🔗 Quick Links
+
+**Daily Monitoring:**
+- [Next Session Plan](./PLAN-NEXT-SESSION.md) ⭐ **START HERE**
+- [Monitoring Checklist](./track-a-monitoring/MONITORING-CHECKLIST.md)
+- [Daily Queries](./track-a-monitoring/daily-monitoring-queries.sql)
+- [Day 0 Baseline](./track-a-monitoring/day0-xgboost-v1-v2-baseline-2026-01-18.md)
+
+**Project Docs:**
+- [Master Plan](./MASTER-PLAN.md)
+- [Progress Log](./PROGRESS-LOG.md)
+- [Project README](./README.md)
+
+**Track READMEs:**
+- [Track B (Ensemble)](./track-b-ensemble/README.md)
+- [Track E (E2E Testing)](./track-e-e2e-testing/README.md)
+- [Track C (Infrastructure)](./track-c-infrastructure/README.md)
+
+**Handoffs:**
+- [Session 98 Handoff](../../09-handoff/SESSION-98-DOCS-WITH-REDACTIONS.md)
+- [Investigation (RESOLVED)](./INVESTIGATION-XGBOOST-GRADING-GAP.md)
+
+---
+
+**Last Updated:** 2026-01-18
+**Next Update:** After Day 5 decision (Jan 23)
+**Status:** ⏳ Ready for daily monitoring
