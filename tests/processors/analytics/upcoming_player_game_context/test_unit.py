@@ -566,6 +566,149 @@ class TestSeasonPhaseDetermination:
         assert result == 'playoffs'
 
 
+class TestPaceMetricsCalculation:
+    """Test pace-related analytics calculations."""
+
+    @pytest.fixture
+    def processor(self):
+        """Create processor instance with mocked BigQuery."""
+        proc = UpcomingPlayerGameContextProcessor()
+        proc.bq_client = Mock()
+        proc.project_id = 'test-project'
+        proc.target_date = date(2025, 1, 20)
+        return proc
+
+    def test_calculate_pace_differential_normal(self, processor):
+        """Test pace differential calculation with normal data."""
+        # Mock BigQuery response
+        mock_row = Mock()
+        mock_row.pace_diff = 5.2
+        mock_result = [mock_row]
+        processor.bq_client.query.return_value.result.return_value = mock_result
+
+        result = processor._calculate_pace_differential('LAL', 'GSW', date(2025, 1, 20))
+
+        assert result == pytest.approx(5.2, abs=0.01)
+        # Verify query was called
+        assert processor.bq_client.query.called
+
+    def test_calculate_pace_differential_negative(self, processor):
+        """Test pace differential with slower team pace."""
+        mock_row = Mock()
+        mock_row.pace_diff = -3.5
+        mock_result = [mock_row]
+        processor.bq_client.query.return_value.result.return_value = mock_result
+
+        result = processor._calculate_pace_differential('LAL', 'GSW', date(2025, 1, 20))
+
+        assert result == pytest.approx(-3.5, abs=0.01)
+
+    def test_calculate_pace_differential_no_data(self, processor):
+        """Test pace differential when no data available."""
+        processor.bq_client.query.return_value.result.return_value = []
+
+        result = processor._calculate_pace_differential('LAL', 'GSW', date(2025, 1, 20))
+
+        assert result == 0.0
+
+    def test_calculate_pace_differential_query_error(self, processor):
+        """Test pace differential handles BigQuery errors."""
+        processor.bq_client.query.side_effect = Exception("BigQuery error")
+
+        result = processor._calculate_pace_differential('LAL', 'GSW', date(2025, 1, 20))
+
+        assert result == 0.0
+
+    def test_get_opponent_pace_last_10_normal(self, processor):
+        """Test opponent pace calculation with normal data."""
+        mock_row = Mock()
+        mock_row.avg_pace = 102.5
+        mock_result = [mock_row]
+        processor.bq_client.query.return_value.result.return_value = mock_result
+
+        result = processor._get_opponent_pace_last_10('GSW', date(2025, 1, 20))
+
+        assert result == pytest.approx(102.5, abs=0.1)
+        assert processor.bq_client.query.called
+
+    def test_get_opponent_pace_last_10_high_pace(self, processor):
+        """Test opponent pace with high-paced team."""
+        mock_row = Mock()
+        mock_row.avg_pace = 110.2
+        mock_result = [mock_row]
+        processor.bq_client.query.return_value.result.return_value = mock_result
+
+        result = processor._get_opponent_pace_last_10('GSW', date(2025, 1, 20))
+
+        assert result == pytest.approx(110.2, abs=0.1)
+
+    def test_get_opponent_pace_last_10_no_data(self, processor):
+        """Test opponent pace when no data available."""
+        processor.bq_client.query.return_value.result.return_value = []
+
+        result = processor._get_opponent_pace_last_10('GSW', date(2025, 1, 20))
+
+        assert result == 0.0
+
+    def test_get_opponent_pace_last_10_query_error(self, processor):
+        """Test opponent pace handles BigQuery errors."""
+        processor.bq_client.query.side_effect = Exception("BigQuery error")
+
+        result = processor._get_opponent_pace_last_10('GSW', date(2025, 1, 20))
+
+        assert result == 0.0
+
+    def test_get_opponent_ft_rate_allowed_normal(self, processor):
+        """Test FT rate allowed calculation with normal data."""
+        mock_row = Mock()
+        mock_row.avg_opp_fta = 22.5
+        mock_result = [mock_row]
+        processor.bq_client.query.return_value.result.return_value = mock_result
+
+        result = processor._get_opponent_ft_rate_allowed('GSW', date(2025, 1, 20))
+
+        assert result == pytest.approx(22.5, abs=0.1)
+        assert processor.bq_client.query.called
+
+    def test_get_opponent_ft_rate_allowed_high_fouls(self, processor):
+        """Test FT rate allowed with foul-prone defense."""
+        mock_row = Mock()
+        mock_row.avg_opp_fta = 28.3
+        mock_result = [mock_row]
+        processor.bq_client.query.return_value.result.return_value = mock_result
+
+        result = processor._get_opponent_ft_rate_allowed('GSW', date(2025, 1, 20))
+
+        assert result == pytest.approx(28.3, abs=0.1)
+
+    def test_get_opponent_ft_rate_allowed_low_fouls(self, processor):
+        """Test FT rate allowed with disciplined defense."""
+        mock_row = Mock()
+        mock_row.avg_opp_fta = 18.1
+        mock_result = [mock_row]
+        processor.bq_client.query.return_value.result.return_value = mock_result
+
+        result = processor._get_opponent_ft_rate_allowed('GSW', date(2025, 1, 20))
+
+        assert result == pytest.approx(18.1, abs=0.1)
+
+    def test_get_opponent_ft_rate_allowed_no_data(self, processor):
+        """Test FT rate allowed when no data available."""
+        processor.bq_client.query.return_value.result.return_value = []
+
+        result = processor._get_opponent_ft_rate_allowed('GSW', date(2025, 1, 20))
+
+        assert result == 0.0
+
+    def test_get_opponent_ft_rate_allowed_query_error(self, processor):
+        """Test FT rate allowed handles BigQuery errors."""
+        processor.bq_client.query.side_effect = Exception("BigQuery error")
+
+        result = processor._get_opponent_ft_rate_allowed('GSW', date(2025, 1, 20))
+
+        assert result == 0.0
+
+
 # Run tests with: pytest test_unit.py -v
 # Run specific class: pytest test_unit.py::TestFatigueMetricsCalculation -v
 # Run with coverage: pytest test_unit.py --cov=data_processors.analytics.upcoming_player_game_context --cov-report=html
