@@ -1,5 +1,59 @@
 # NBA Stats Scraper - Project Reminders
 
+## Phase 3 Fix Monitoring
+
+### 📅 2026-01-19 (Day 1 Post-Fix) - Phase 3 Fix + Auto-Heal Verification
+**Status:** ⏳ Pending
+
+**What to check:**
+- Verify zero 503 errors in grading logs after Phase 3 fix deployment
+- Confirm Jan 16-17-18 graded with >70% coverage
+- Verify Phase 3 auto-heal mechanism working with NEW retry logic
+- Check Phase 3 service response time <10 seconds
+- Monitor auto-heal retry patterns (should see health check + exponential backoff)
+- Verify Cloud Monitoring dashboard displays metrics
+
+**Success criteria:**
+- Zero 503 errors in logs (all historical errors from Jan 17)
+- Jan 16 coverage >70% (238 boxscores available)
+- Jan 17 coverage >70% (247 boxscores available)
+- Jan 18 coverage >70%
+- Auto-heal success messages in logs
+- NEW: Auto-heal retry logs show health check working
+- NEW: Structured logs show phase3_trigger_success events
+- NEW: Dashboard shows grading function metrics
+
+**Queries to run:**
+```bash
+# Check for 503 errors (should be ZERO)
+gcloud functions logs read phase5b-grading --region=us-west2 --limit=100 | grep "503"
+
+# Check coverage
+bq query --use_legacy_sql=false '
+SELECT game_date, COUNT(*) as graded
+FROM `nba-props-platform.nba_predictions.prediction_accuracy`
+WHERE game_date >= "2026-01-16"
+GROUP BY game_date
+ORDER BY game_date DESC'
+
+# NEW: Check auto-heal retry logic
+gcloud functions logs read phase5b-grading --region=us-west2 --limit=200 | grep -E "Auto-heal|health check|retry"
+
+# NEW: Check structured auto-heal events
+gcloud functions logs read phase5b-grading --region=us-west2 --limit=200 --format=json | jq -r '.[] | select(.jsonPayload.event_type | startswith("phase3_trigger")) | "\(.timestamp) \(.jsonPayload.event_type) retries=\(.jsonPayload.details.retries // 0)"'
+
+# NEW: View dashboard
+# Open: https://console.cloud.google.com/monitoring/dashboards/custom/1071d9e8-2f37-45b1-abb3-91abc2aa4174?project=nba-props-platform
+```
+
+**Time required:** 20-40 minutes
+
+**References:**
+- Phase 3 Fix: `docs/09-handoff/SESSION-99-PHASE3-FIX-COMPLETE.md`
+- Auto-Heal Improvements: `docs/09-handoff/SESSION-99-AUTO-HEAL-AND-DASHBOARD-IMPROVEMENTS.md`
+
+---
+
 ## XGBoost V1 Production Monitoring Schedule
 
 ### 📅 2026-01-24 (7 days) - Initial Performance Check
@@ -126,6 +180,7 @@ WHERE system_id = 'xgboost_v1'
 5. ✅ Logging to `reminder-log.txt`
 
 **Reminder Dates:**
+- **2026-01-19** (Day 1 post-fix): Phase 3 Fix Verification
 - **2026-01-24** (7 days): XGBoost V1 Initial Performance Check
 - **2026-01-31** (14 days): Head-to-Head Comparison Start
 - **2026-02-16** (30 days): Champion Decision Point
