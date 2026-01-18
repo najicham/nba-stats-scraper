@@ -1,0 +1,52 @@
+# Deployment Record
+
+**Date:** 2026-01-18 2:30 PM ET
+**Session:** 106
+**Deployed By:** Claude Code
+**Status:** ✅ PRODUCTION
+
+## Deployed Components
+
+### Cloud Functions
+- validate-freshness (revision: validate-freshness-00003-wus)
+- check-missing (revision: check-missing-00002-wim)
+- reconcile (revision: reconcile-00001-vev)
+
+### Cloud Schedulers
+- validate-freshness-check (5:45 PM ET)
+- missing-prediction-check (7:00 PM ET)
+- daily-reconciliation (9:00 AM ET)
+
+### URLs
+- https://us-west2-nba-props-platform.cloudfunctions.net/validate-freshness
+- https://us-west2-nba-props-platform.cloudfunctions.net/check-missing
+- https://us-west2-nba-props-platform.cloudfunctions.net/reconcile
+
+## Test Results
+- ✅ All functions deployed and active
+- ✅ All schedulers enabled
+- ✅ Endpoints tested and responding
+- ✅ Slack integration working
+- ✅ Detected 14 missing players on first run
+
+## Next Scheduled Runs
+- Tonight 7:00 PM ET: missing-prediction-check
+- Tomorrow 9:00 AM ET: daily-reconciliation
+- Tomorrow 5:45 PM ET: validate-freshness-check
+
+## Documentation
+- README.md - Full system documentation
+- QUICK-START.md - Quick deployment guide
+- ../../docs/09-handoff/MONITORING-VALIDATION-GUIDE.md - Validation guide
+- ../../docs/09-handoff/SESSION-106-SUMMARY.md - Session summary
+- ../../docs/09-handoff/SESSION-106-DEPLOYMENT.md - Deployment log
+
+## Health Check Command
+```bash
+echo "=== Monitoring System Health ===" && \
+gcloud scheduler jobs list --location=us-west2 --format="table(name,state)" | grep -E "validate-freshness|missing-prediction|daily-reconciliation" && \
+curl -s "https://us-west2-nba-props-platform.cloudfunctions.net/check-missing?game_date=$(date +%Y-%m-%d)" | jq '{missing: .missing_count, coverage: .summary.coverage_percent}'
+```
+
+## Support
+For issues, check MONITORING-VALIDATION-GUIDE.md in docs/09-handoff/
