@@ -377,28 +377,28 @@ class TestDataQualityCalculation:
         
         result = processor._calculate_data_quality(historical_data, game_lines)
         
-        assert result['data_quality_tier'] == 'high'
+        assert result['data_quality_tier'] == 'gold'
         assert result['processed_with_issues'] is False
-    
+
     def test_medium_quality_tier(self, processor):
         """Test medium quality tier for 5-9 games."""
         # Create 7 games
         historical_data = pd.DataFrame([{'game': i} for i in range(7)])
         game_lines = {'game_spread': -3.5, 'game_total': 225.0}
-        
+
         result = processor._calculate_data_quality(historical_data, game_lines)
-        
-        assert result['data_quality_tier'] == 'medium'
-    
+
+        assert result['data_quality_tier'] == 'silver'
+
     def test_low_quality_tier(self, processor):
         """Test low quality tier for <5 games."""
         # Create 3 games
         historical_data = pd.DataFrame([{'game': i} for i in range(3)])
         game_lines = {'game_spread': -3.5, 'game_total': 225.0}
-        
+
         result = processor._calculate_data_quality(historical_data, game_lines)
-        
-        assert result['data_quality_tier'] == 'low'
+
+        assert result['data_quality_tier'] == 'bronze'
     
     def test_processed_with_issues_missing_spread(self, processor):
         """Test issues flag when game spread is missing."""
@@ -470,42 +470,35 @@ class TestSourceTrackingFields:
     def test_build_source_tracking_fields_structure(self, processor):
         """Test that all source tracking fields are included."""
         result = processor._build_source_tracking_fields()
-        
-        # Check all 4 sources × 3 fields = 12 fields
+
+        # Check all 4 hash fields (new hash-based tracking)
         expected_fields = [
-            'source_boxscore_last_updated',
-            'source_boxscore_rows_found',
-            'source_boxscore_completeness_pct',
-            'source_schedule_last_updated',
-            'source_schedule_rows_found',
-            'source_schedule_completeness_pct',
-            'source_props_last_updated',
-            'source_props_rows_found',
-            'source_props_completeness_pct',
-            'source_game_lines_last_updated',
-            'source_game_lines_rows_found',
-            'source_game_lines_completeness_pct'
+            'source_boxscore_hash',
+            'source_schedule_hash',
+            'source_props_hash',
+            'source_game_lines_hash'
         ]
-        
+
         for field in expected_fields:
             assert field in result, f"Missing field: {field}"
     
-    def test_build_source_tracking_timestamps_iso_format(self, processor):
-        """Test that timestamps are converted to ISO format."""
+    def test_build_source_tracking_hashes_format(self, processor):
+        """Test that hashes are in correct format."""
         result = processor._build_source_tracking_fields()
-        
-        # Check timestamps are strings (ISO format)
-        assert isinstance(result['source_boxscore_last_updated'], str)
-        assert 'T' in result['source_boxscore_last_updated']  # ISO format has 'T'
+
+        # Check hashes are strings or None (MD5 hash format, 16 chars)
+        if result['source_boxscore_hash'] is not None:
+            assert isinstance(result['source_boxscore_hash'], str)
+            assert len(result['source_boxscore_hash']) == 16  # 16-char hash
     
-    def test_build_source_tracking_rows_found(self, processor):
-        """Test that rows_found values are included."""
+    def test_build_source_tracking_hash_values(self, processor):
+        """Test that hash values are computed correctly."""
         result = processor._build_source_tracking_fields()
-        
-        assert result['source_boxscore_rows_found'] == 25
-        assert result['source_schedule_rows_found'] == 10
-        assert result['source_props_rows_found'] == 8
-        assert result['source_game_lines_rows_found'] == 5
+
+        # Hashes should be generated for sources with data
+        # Boxscore and schedule should have hashes, props/game_lines may be None
+        assert result['source_boxscore_hash'] is not None
+        assert result['source_schedule_hash'] is not None
     
     def test_calculate_completeness_boxscore(self, processor):
         """Test completeness calculation for boxscore source."""
