@@ -28,7 +28,10 @@ import logging
 logger = logging.getLogger(__name__)
 
 # Query timeout in seconds - prevents worker hangs on slow/stuck queries
-QUERY_TIMEOUT_SECONDS = 30
+# Increased from 30s to 120s (Session 102) to support batch loading for 300-400 players
+# Batch loading performance: 118 players = 0.68s, 360 players ≈ 2-3s (linear scaling)
+# 120s provides 40-60x safety buffer while enabling massive performance gains
+QUERY_TIMEOUT_SECONDS = 120
 
 # Cache TTL settings (in seconds)
 # Same-day predictions: short TTL because features may be updated multiple times
