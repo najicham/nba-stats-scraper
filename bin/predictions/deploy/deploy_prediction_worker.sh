@@ -169,9 +169,9 @@ deploy_cloud_run() {
         log "    --update-env-vars CATBOOST_V8_MODEL_PATH=gs://nba-props-platform-models/catboost/v8/[MODEL_FILE]"
     fi
 
-    # Add XGBOOST_V1_MODEL_PATH (Session 88 - Option D Phase 5A)
-    # Default to newly trained model from 2021 data
-    XGBOOST_V1_MODEL_PATH="${XGBOOST_V1_MODEL_PATH:-gs://nba-scraped-data/ml-models/xgboost_v1_33features_20260117_163206.json}"
+    # Add XGBOOST_V1_MODEL_PATH (Session 93 - Updated with real trained model)
+    # Default to newly trained model from 2021-2025 data (VAL MAE: 3.98)
+    XGBOOST_V1_MODEL_PATH="${XGBOOST_V1_MODEL_PATH:-gs://nba-scraped-data/ml-models/xgboost_v1_33features_20260117_183235.json}"
     log "Setting XGBOOST_V1_MODEL_PATH: $XGBOOST_V1_MODEL_PATH"
     ENV_VARS="${ENV_VARS},XGBOOST_V1_MODEL_PATH=${XGBOOST_V1_MODEL_PATH}"
 

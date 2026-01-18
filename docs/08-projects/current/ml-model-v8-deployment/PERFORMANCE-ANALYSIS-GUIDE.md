@@ -1,7 +1,22 @@
 # Performance Analysis & Grading Guide
 
 **Created:** 2026-01-11
+**Updated:** 2026-01-17 (Multi-model tracking added)
+**Model:** CatBoost V8 (Champion)
 **Purpose:** How to run grading, analyze season performance, and identify problem tiers
+
+---
+
+## Multi-Model Tracking
+
+**This guide focuses on CatBoost V8** (current champion model). For other models, see:
+
+| Model | System ID | Performance Guide | Status |
+|-------|-----------|-------------------|--------|
+| **CatBoost V8** | catboost_v8 | **This guide** | ✅ Champion (3.40 MAE) |
+| XGBoost V1 | xgboost_v1 | [XGBOOST-V1-PERFORMANCE-GUIDE.md](XGBOOST-V1-PERFORMANCE-GUIDE.md) | ✅ Active (3.98 MAE) |
+
+**Adding a new model?** See: [HOW-TO-ADD-MODEL-PERFORMANCE-TRACKING.md](HOW-TO-ADD-MODEL-PERFORMANCE-TRACKING.md)
 
 ---
 
